@@ -11,20 +11,23 @@ Companion skill: `designing-workstream-diagrams` owns how a diagram set is autho
 
 ## 1. Run it
 
+Only a spec whose first non-empty body line after the H1 is exactly `Architecture-Mode: diagram-driven-v1` is applicable. Missing mode is `not_applicable`; an unknown mode is a warning; duplicated, misplaced or malformed declarations are tooling errors.
+
 ```bash
 node .agents/skills/verify-architecture-diagrams/scripts/verify-diagrams.mjs \
   --workstream .memory-bank/workstreams/<WS-dir> \
-  [--scope workstream|task:<TASK-ID>|cross-task] \
+  [--scope all|workstream|task:<TASK-ID>|cross-task|code-conformance] \
   [--json] [--no-self-test]
 ```
 
 | Option | Meaning |
 | --- | --- |
+| omitted / `--scope all` | Workstream, every current Task in sorted order, cross-task, then code conformance; one deduplicated report |
 | `--scope workstream` | Workstream spec diagrams: parsing, cycles, intra-diagram structure, inter-level refinement |
 | `--scope task:<ID>` | one task: its own diagrams, its Workstream mapping, then its recorded implementation gate |
 | `--scope cross-task` | the plan's `Depends On` against Workstream reachability, then horizontal comparison across every task diagram |
-| `--json` | machine-readable report; exit code is unchanged |
-| `--no-self-test` | skip the AST mutation self-test; it runs by default because a verdict from an unsound verifier is not evidence |
+| `--json` | schema-versioned machine report with coverage, self-test evidence, metrics and findings; exit code is unchanged |
+| `--no-self-test` | skip the vendored Tree-sitter mutation self-test; coverage becomes incomplete and the run cannot be `conformant` |
 
 Task diagrams are read from each task's `plan.md` only.
 
@@ -45,7 +48,7 @@ Stages run top-down. A later stage never compensates for an earlier failure.
 ```
 0  parse            1  cycles (solid edges, by kind)   2  intra-diagram structure
 3  B1 L0 -> L5      4  B2 task vs Workstream          5  B3 Depends On and task vs task
-6  recorded implementation gate (AST)
+6  recorded implementation gate (Tree-sitter)         7  bounded diagram-code conformance
 ```
 
 ## 3. Stage 0: parsing
@@ -63,8 +66,9 @@ Annotations the verifier reads:
 | `%% kind: structure\|flow` | selects the cycle rule; omitted means structure and is reported once as not checked; any other value is blocking |
 | `%% refines: <id>[, <id>]` | declares the coarser diagram(s); an unknown id is blocking; without it the pairing is inferred and its findings are reported for review only |
 | `%% answers: <question>` | recorded in the report; several lines accumulate; missing is not checked |
-| `%% cycle: allowed owner=<task> reason=<why>` | exempts one structure cycle; missing owner or reason is itself blocking |
-| `%% module: <node> = <path>` | binds a node to a module for the implementation gate |
+| `%% cycle: allowed nodes=A|B owner=<task> reason="<why>"` | exempts exactly the named structure SCC; missing nodes, owner or reason, duplicate node sets, and declarations that match no SCC are blocking |
+| `%% module: <node> = <path>` | compatibility shorthand for one declaration/present artifact |
+| `%% artifact: <node> role=<role> path=<path> [symbol=<symbol>] [expect=present\|absent\|generated]` | repeatable node artifact; unknown node, role or expectation is reported |
 | `%% concept: <node> = <ConceptName>` | gives a node its cross-diagram identity; resolved before id and label |
 | `%% local-only: <node>` | exempts a task node from Workstream existence checks |
 | `%% note-node: <node>` | excludes a visible constraint node from isolation and graph checks; naming a node the diagram does not draw is blocking |
@@ -84,7 +88,7 @@ Two graphs are built from one diagram, and which one must be acyclic depends on 
 - In a structure diagram a solid self-loop or a solid cycle of any length is **blocking**, reported with its full path.
 - In a flow diagram a loop with an exit is accepted and counted once as not checked; a loop with no solid edge leaving it is **blocking** (`flow-loop-without-exit`) because the protocol cannot converge.
 - Dotted edges are never part of cycle detection. A request/response pair is `A --> B` plus `B -.-> A`; that is the control model, not a defect.
-- A genuinely required structure cycle must be declared. An undeclared one is blocking; a declared one with missing `owner` or `reason` is also blocking.
+- A genuinely required structure cycle must be declared as `%% cycle: allowed nodes=A|B owner=<task> reason="<why>"`. The sorted node set must exactly equal one detected SCC; one declaration never exempts another SCC. Missing fields, duplicate node sets and unmatched declarations are blocking.
 - Note nodes are excluded from both graphs.
 
 ## 5. Stage 2: intra-diagram structure
@@ -173,7 +177,7 @@ Only a task that passes every condition is code-checked, and then:
 | Check | Severity |
 | --- | --- |
 | `owns[].path` with `kind: module` does not exist | unverifiable |
-| `owns[]` with `kind: symbol`: the symbol is not exported | blocking |
+| `owns[]` with `kind: symbol`: a declaration fact matches | proven; an absent capture is unverifiable, never inferred missing |
 | `%% module:` binding points at a missing module | unverifiable |
 | A drawn solid edge whose source module never imports the target module | not checked; dependency inversion is the prescribed shape, so the edge is proven by the task's execution ledger (emit side, receive side, breaking test), not by an import |
 | `kind: structured_node` / `section` / `line_range` / `whole_file` | checked for path existence only |
@@ -187,7 +191,17 @@ Record contradictions are reported with `[record]` attribution and are blocking,
 
 A stale `status.yml` projection is **not** a defect. `progress.md` is authoritative; the mismatch is listed under stale projections and never changes the exit code.
 
-## 10. Node identity
+## 10. Bounded diagram-code conformance
+
+The default aggregate reads only the target Workstream and artifacts bound by `%% artifact:`, `%% module:`, Task `owns|reads`, or schema-v2 `## Architecture Evidence`. From those explicit seeds it builds a bounded dependency closure with vendored Tree-sitter grammars; it needs no target package, tsconfig, Python or product source, and never enumerates sibling or historical Workstreams.
+
+Architecture Evidence is the sole Task-local diagram-to-code fact source. Schema v2 gives every node artifact a Workstream-stable `id`; each edge endpoint is `{node, artifact}` and must resolve to the edge's source/target node and the required role (`emitter`, `receiver`, `declaration` contract or `assembly`). Endpoint-local paths or symbols are rejected so an unrelated file cannot prove an edge. Schema v1 remains readable only for migration and cannot establish completed conformance. Evidence validates exact diagram edge identity and supports `direct_import`, `injected_port`, `composition`, `event`, `callback` and canonical Proto `rpc` proofs. `owns` is write permission, not artifact existence or writer authority.
+
+Completed expectation, direct-runtime contradiction, prohibited runtime SCC, conflicting completed writer claims and computable completed boundary overlaps block. Unfinished expectations warn. Direct import and observable composition wiring may be proven structurally; injected-port, event, callback and RPC prerequisites that do not prove runtime delivery are `unverifiable`. Actual code edges absent from the current WS contract warn; type-only and external-package facts never become runtime writer/cycle blockers.
+
+Identity is shared by every stage: concept, exact id, then NFKC/lowercase Unicode letter-number label. Multiple candidates are ambiguity, never a guess. Depends On requires an artifact-owned upstream node to reach an artifact-owned downstream node through at least one solid edge.
+
+## 11. Node identity
 
 ```
 1. declared concept match (%% concept: on the fine node, against the coarse node's concept, id or label)
@@ -198,19 +212,23 @@ A stale `status.yml` projection is **not** a defect. `progress.md` is authoritat
 
 Level 1 lets one concept carry different ids and label suffixes across diagrams without being read as several authorities. Level 3 keeps a renamed node from being read as a newly invented authority. Level 4 refuses to guess.
 
-## 11. Report sections
+## 12. Report sections
 
 ```
 Tooling problem   tool defect; design verdict withheld; exit code 2
-Blocking          [diagram] or [record], with stage, file:line, rule and message
+Blocking          [diagram], [record] or [code] contradiction
+Warning           incomplete or diagram-undeclared implementation; exit remains 0
 Pending           postponed work with its reason
 Unverifiable      an undecidable relation; still blocks
 Not checked       skipped checks, exemptions, accepted descriptive labels
+Not applicable    exact opt-in marker is absent
 ```
 
 Rule of thumb when reading: a finding is repaired at the layer that owns it. A `[diagram]` finding in stage 3 or 4 is repaired in the coarser diagram, not in the task.
 
-## 12. Anti-patterns
+Verdicts are `conformant | incomplete | not_applicable | failed | tooling_error`. `conformant` additionally requires delivery coverage: `--scope all`, every required scope executed, and the default Skill-local self-test passed. Focused scopes and `--no-self-test` are diagnostic only. Warning, pending and not-checked produce `incomplete` but do not change the 0/1/2 exit code.
+
+## 13. Anti-patterns
 
 | Symptom | Correct response |
 | --- | --- |

@@ -5,6 +5,7 @@
 import fs from "node:fs"
 import path from "node:path"
 
+import { parseArchitectureEvidence } from "./evidence-model.mjs"
 import { extractMermaidBlocks, parseFlowchart } from "./mermaid-parse.mjs"
 import { parseYamlLite, readFrontmatterFile, YamlLiteError } from "./yaml-lite.mjs"
 
@@ -79,6 +80,21 @@ function readOwns(goals) {
         .filter((entry) => entry && entry.path.length > 0)
 }
 
+function readReads(goals) {
+    return asArray(goals.reads)
+        .map((entry) => {
+            if (typeof entry === "string") return { path: entry, kind: "module", selector: null }
+            if (!entry || typeof entry !== "object") return null
+            const boundary = entry.boundary ?? {}
+            return {
+                path: text(entry.path),
+                kind: text(boundary.kind) || "module",
+                selector: text(boundary.selector) || null,
+            }
+        })
+        .filter((entry) => entry && entry.path.length > 0)
+}
+
 function readRequiredVerification(goals) {
     const required = goals.required_verification
     if (!required || typeof required !== "object" || Array.isArray(required)) return new Map()
@@ -133,10 +149,13 @@ export function readTasks(workstreamDir) {
             verification: [],
             requiredVerification: new Map(),
             owns: [],
+            reads: [],
             acceptance: [],
             changedFiles: [],
             changedRegions: [],
             diagrams: [],
+            architectureEvidence: null,
+            evidenceProblems: [],
             nextAction: null,
         }
 
@@ -148,6 +167,7 @@ export function readTasks(workstreamDir) {
                 } else {
                     record.id = text(goals.id) || record.id
                     record.owns = readOwns(goals)
+                    record.reads = readReads(goals)
                     record.acceptance = asArray(goals.acceptance).map(text).filter(Boolean)
                     record.requiredVerification = readRequiredVerification(goals)
                 }
@@ -188,6 +208,9 @@ export function readTasks(workstreamDir) {
             record.diagrams = extractMermaidBlocks(content, relative).map((block) =>
                 parseFlowchart(block.lines, { file: block.file, firstLine: block.firstLine }),
             )
+            const evidence = parseArchitectureEvidence(content, relative)
+            record.architectureEvidence = evidence.evidence
+            record.evidenceProblems = evidence.problems
             record.planPath = relative
         } else {
             record.planPath = null

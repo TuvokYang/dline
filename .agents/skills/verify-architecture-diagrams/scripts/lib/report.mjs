@@ -1,15 +1,16 @@
-// Report rendering. Findings are grouped by their attribution so a reader can tell
-// a design defect from a record contradiction from a tool limitation.
+// Report rendering. Exit codes and verdicts are orthogonal: warnings can keep exit 0
+// while making the run explicitly incomplete.
 
-const SEVERITY_ORDER = { blocking: 0, unverifiable: 1, "not-checked": 2, pending: 3 }
-
-const ATTRIBUTION_TITLE = {
-    diagram: "Blocking",
-    record: "Blocking",
+const SEVERITY_ORDER = { tooling: 0, blocking: 1, unverifiable: 2, warning: 3, pending: 4, "not-checked": 5, "not-applicable": 6 }
+const GROUP_ORDER = ["tooling", "blocking", "warning", "pending", "unverifiable", "not-checked", "not-applicable"]
+const TITLES = {
     tooling: "Tooling problem",
+    blocking: "Blocking",
+    warning: "Warning",
+    pending: "Pending",
     unverifiable: "Unverifiable",
     "not-checked": "Not checked",
-    pending: "Pending",
+    "not-applicable": "Not applicable",
 }
 
 function label(finding) {
@@ -21,111 +22,63 @@ function label(finding) {
     return parts.join(" · ")
 }
 
+function bucketOf(finding) {
+    if (finding.attribution === "tooling" || finding.severity === "tooling") return "tooling"
+    if (GROUP_ORDER.includes(finding.severity)) return finding.severity
+    return "not-checked"
+}
+
 function group(findings) {
-    const groups = {
-        tooling: [],
-        blocking: [],
-        pending: [],
-        unverifiable: [],
-        "not-checked": [],
-    }
-    for (const finding of findings) {
-        if (finding.attribution === "tooling") groups.tooling.push(finding)
-        else if (finding.severity === "blocking") groups.blocking.push(finding)
-        else if (finding.severity === "pending") groups.pending.push(finding)
-        else if (finding.severity === "unverifiable") groups.unverifiable.push(finding)
-        else groups["not-checked"].push(finding)
-    }
-    for (const key of Object.keys(groups)) {
-        groups[key].sort((a, b) => {
-            const stageDelta = Number(a.stage ?? 99) - Number(b.stage ?? 99)
-            if (stageDelta !== 0) return stageDelta
-            return Number(a.line ?? 0) - Number(b.line ?? 0)
-        })
-    }
+    const groups = Object.fromEntries(GROUP_ORDER.map((key) => [key, []]))
+    for (const finding of findings) groups[bucketOf(finding)].push(finding)
+    for (const entries of Object.values(groups))
+        entries.sort((a, b) => Number(a.stage ?? 99) - Number(b.stage ?? 99) || Number(a.line ?? 0) - Number(b.line ?? 0))
     return groups
 }
 
 export function renderTextReport({ findings, summary }) {
     const groups = group(findings)
-    const lines = []
-
-    lines.push(`Workstream: ${summary.workstream}`)
-    lines.push(`Scope: ${summary.scope}`)
-    lines.push(`Diagrams: ${summary.diagramCount} (task diagrams: ${summary.taskDiagramCount})`)
-    lines.push(`Tasks: ${summary.taskCount} (AST-gated: ${summary.astGatedCount})`)
-    lines.push("")
-
-    const tooling = groups.tooling
-    lines.push("## Tooling problem")
-    if (tooling.length === 0) {
-        lines.push("None. This run's findings are design or record findings, not tool limitations.")
-    } else {
-        lines.push(`${tooling.length} problem(s). Design conclusions from this run are not trustworthy.`)
-        for (const item of tooling) {
-            lines.push(`- ${label(item)}`)
-            lines.push(`  ${item.message}`)
-            if (item.reproduce) lines.push(`  reproduce: ${item.reproduce}`)
-        }
+    const coverage = summary.coverage ?? {
+        mode: summary.scope === "all" ? "delivery" : "diagnostic",
+        complete: false,
+        missingScopes: [],
     }
-    lines.push("")
-
-    lines.push("## Blocking")
-    if (groups.blocking.length === 0) {
-        lines.push("None.")
-    } else {
-        for (const item of groups.blocking) {
-            lines.push(`- [${item.attribution}] ${label(item)}`)
-            lines.push(`  ${item.message}`)
-        }
-    }
-    lines.push("")
-
-    lines.push("## Pending")
-    if (groups.pending.length === 0) {
-        lines.push("None.")
-    } else {
-        for (const item of groups.pending) {
-            lines.push(`- ${label(item)}`)
-            lines.push(`  ${item.message}`)
-        }
-    }
-    lines.push("")
-
-    lines.push("## Unverifiable")
-    if (groups.unverifiable.length === 0) {
-        lines.push("None.")
-    } else {
-        lines.push("Counted as blocking: an undecidable relation is never treated as a pass.")
-        for (const item of groups.unverifiable) {
-            lines.push(`- ${label(item)}`)
-            lines.push(`  ${item.message}`)
-        }
-    }
-    lines.push("")
-
-    lines.push("## Not checked")
-    if (groups["not-checked"].length === 0) {
-        lines.push("None.")
-    } else {
-        for (const item of groups["not-checked"]) {
-            lines.push(`- ${label(item)}`)
-            lines.push(`  ${item.message}`)
-        }
-    }
-    lines.push("")
-
-    if (summary.staleProjections.length > 0) {
-        lines.push("## Stale status projections")
-        lines.push("progress.md is authoritative; these projections were ignored rather than treated as defects.")
-        for (const item of summary.staleProjections) {
-            lines.push(
-                `- ${item.task}: ${item.projection} says "${item.projected}", ${item.authoritativeFile} says "${item.authoritative}"`,
-            )
+    const selfTest = summary.evidence?.selfTest ?? { status: "not_run", message: null }
+    const lines = [
+        `Workstream: ${summary.workstream}`,
+        `Scope: ${summary.scope}`,
+        `Verdict: ${summary.verdict}`,
+        `Coverage: ${coverage.complete ? "complete delivery evidence" : `${coverage.mode} only; incomplete`}`,
+        `Self-test: ${selfTest.status}${selfTest.message ? ` (${selfTest.message})` : ""}`,
+        `Diagrams: ${summary.diagramCount} (task diagrams: ${summary.taskDiagramCount})`,
+        `Tasks: ${summary.taskCount} (AST-gated: ${summary.astGatedCount})`,
+        "",
+    ]
+    for (const key of GROUP_ORDER) {
+        lines.push(`## ${TITLES[key]}`)
+        const entries = groups[key]
+        if (entries.length === 0) lines.push("None.")
+        else {
+            if (key === "tooling")
+                lines.push(`${entries.length} problem(s). Design conclusions from this run are not trustworthy.`)
+            if (key === "unverifiable") lines.push("Counted as blocking: an undecidable relation is never treated as a pass.")
+            for (const item of entries) {
+                lines.push(`- ${key === "blocking" ? `[${item.attribution}] ` : ""}${label(item)}`)
+                lines.push(`  ${item.message}`)
+                if (item.reproduce) lines.push(`  reproduce: ${item.reproduce}`)
+            }
         }
         lines.push("")
     }
-
+    if (summary.staleProjections.length > 0) {
+        lines.push("## Stale status projections")
+        lines.push("progress.md is authoritative; these projections were ignored rather than treated as defects.")
+        for (const item of summary.staleProjections)
+            lines.push(
+                `- ${item.task}: ${item.projection} says "${item.projected}", ${item.authoritativeFile} says "${item.authoritative}"`,
+            )
+        lines.push("")
+    }
     lines.push(`Exit: ${summary.exitCode} (${describeExit(summary.exitCode)})`)
     return lines.join("\n")
 }
@@ -142,18 +95,55 @@ export function computeExitCode(findings) {
     return 0
 }
 
+export function computeVerdict(findings, { applicable = true, coverageComplete = true } = {}) {
+    const exitCode = computeExitCode(findings)
+    if (exitCode === 2) return "tooling_error"
+    if (exitCode === 1) return "failed"
+    if (!applicable) return "not_applicable"
+    if (!coverageComplete) return "incomplete"
+    if (findings.some((finding) => ["warning", "pending", "not-checked", "not-applicable"].includes(finding.severity)))
+        return "incomplete"
+    return "conformant"
+}
+
 export function renderJsonReport({ findings, summary }) {
+    const counts = Object.fromEntries(
+        GROUP_ORDER.map((key) => [key, findings.filter((finding) => bucketOf(finding) === key).length]),
+    )
+    const coverage = summary.coverage ?? {
+        mode: summary.scope === "all" ? "delivery" : "diagnostic",
+        complete: false,
+        requiredScopes: [],
+        executedScopes: [],
+        missingScopes: [],
+    }
+    const evidence = summary.evidence ?? { selfTest: { status: "not_run", message: null } }
     return JSON.stringify(
         {
+            schemaVersion: 1,
             workstream: summary.workstream,
             scope: summary.scope,
+            applicable: summary.applicable ?? true,
+            verdict: summary.verdict,
             exitCode: summary.exitCode,
+            coverage,
+            evidence: {
+                selfTest: evidence.selfTest,
+                metrics: {
+                    diagramCount: summary.diagramCount,
+                    taskDiagramCount: summary.taskDiagramCount,
+                    taskCount: summary.taskCount,
+                    astGatedCount: summary.astGatedCount,
+                },
+            },
             counts: {
-                tooling: findings.filter((finding) => finding.attribution === "tooling").length,
-                blocking: findings.filter((finding) => finding.severity === "blocking").length,
-                unverifiable: findings.filter((finding) => finding.severity === "unverifiable").length,
-                pending: findings.filter((finding) => finding.severity === "pending").length,
-                notChecked: findings.filter((finding) => finding.severity === "not-checked").length,
+                tooling: counts.tooling,
+                blocking: counts.blocking,
+                warning: counts.warning,
+                unverifiable: counts.unverifiable,
+                pending: counts.pending,
+                notChecked: counts["not-checked"],
+                notApplicable: counts["not-applicable"],
             },
             staleProjections: summary.staleProjections,
             findings: findings

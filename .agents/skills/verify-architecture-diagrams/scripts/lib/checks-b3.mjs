@@ -1,22 +1,11 @@
 // Stage 5 (B3): horizontal comparison across task diagrams.
-// Two tasks that disagree about one node mean the Workstream cut is wrong.
+// The merged graph is checked as one graph; pairwise reverse-edge checks cannot
+// detect cycles of length three or greater.
 
-function normalize(label) {
-    return (label ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "")
-}
+import { canonicalNodeKey, identityAmbiguities } from "./architecture-identity.mjs"
 
-// Only a command verb makes an edge a canonical write. Participles and nouns such as
-// "committed facts", "persisted record" or "writer" describe data or a role, not a write
-// into the target.
-const CANONICAL_WRITE = /\b(commit|commits|committing|write|writes|writing|persist|persists|persisting)\b/
-
-// Mermaid renders a node declared without brackets as a rectangle labelled with its id.
 function shapeOf(node) {
     return node.shape === "bare" ? "rect" : node.shape
-}
-
-function keyOf(diagram, id) {
-    return normalize(diagram.nodes.get(id)?.label) || normalize(id)
 }
 
 function finding(severity, diagram, subject, rule, message, task) {
@@ -33,106 +22,137 @@ function finding(severity, diagram, subject, rule, message, task) {
     }
 }
 
-// Identity key for cross-task comparison: normalized id or normalized label.
-function identityOf(diagram) {
-    const map = new Map()
-    for (const node of diagram.nodes.values()) {
-        const key = normalize(node.label) || normalize(node.id)
-        map.set(key, { node, id: node.id })
+function keyOf(diagram, nodeId) {
+    return canonicalNodeKey(diagram, nodeId)
+}
+
+function stronglyConnectedComponents(outgoing) {
+    let nextIndex = 0
+    const indices = new Map()
+    const lowLinks = new Map()
+    const stack = []
+    const onStack = new Set()
+    const components = []
+
+    const visit = (node) => {
+        indices.set(node, nextIndex)
+        lowLinks.set(node, nextIndex)
+        nextIndex += 1
+        stack.push(node)
+        onStack.add(node)
+
+        for (const target of outgoing.get(node) ?? []) {
+            if (!indices.has(target)) {
+                visit(target)
+                lowLinks.set(node, Math.min(lowLinks.get(node), lowLinks.get(target)))
+            } else if (onStack.has(target)) {
+                lowLinks.set(node, Math.min(lowLinks.get(node), indices.get(target)))
+            }
+        }
+
+        if (lowLinks.get(node) !== indices.get(node)) return
+        const component = []
+        for (;;) {
+            const member = stack.pop()
+            onStack.delete(member)
+            component.push(member)
+            if (member === node) break
+        }
+        components.push(component)
     }
-    return map
+
+    for (const node of outgoing.keys()) {
+        if (!indices.has(node)) visit(node)
+    }
+    return components
 }
 
 export function checkTaskHorizontally({ entries }) {
     const findings = []
     const owners = new Map()
     const directions = new Map()
-    const writers = new Map()
+    const outgoing = new Map()
+    const edgeRecords = []
 
     for (const entry of entries) {
         const { taskId, diagram } = entry
-        const identity = identityOf(diagram)
-        for (const [key, { node }] of identity) {
+        const excludedNodeIds = new Set([...diagram.localOnly, ...diagram.noteNodes])
+        for (const ambiguity of identityAmbiguities(diagram)) {
+            const sharedNodes = ambiguity.nodes.filter((node) => !excludedNodeIds.has(node.id))
+            if (sharedNodes.length <= 1) continue
+            findings.push(
+                finding(
+                    "blocking",
+                    diagram,
+                    ambiguity.nodes[0],
+                    "task-node-identity-ambiguous",
+                    `${taskId} has multiple nodes with canonical identity ${ambiguity.key}: ${sharedNodes.map((node) => node.id).join(", ")}`,
+                    taskId,
+                ),
+            )
+        }
+        for (const node of diagram.nodes.values()) {
+            if (excludedNodeIds.has(node.id)) continue
+            const key = keyOf(diagram, node.id)
             if (!owners.has(key)) owners.set(key, [])
             owners.get(key).push({ taskId, node, diagram })
+            if (!outgoing.has(key)) outgoing.set(key, new Set())
         }
-        // A solid command answered by a dotted fact in the opposite direction is the normal
-        // command/report pair, so only solid edges can contradict each other's direction.
         for (const edge of diagram.edges) {
             if (edge.style !== "solid") continue
+            if (excludedNodeIds.has(edge.from) || excludedNodeIds.has(edge.to)) continue
             const fromKey = keyOf(diagram, edge.from)
             const toKey = keyOf(diagram, edge.to)
             const key = `${fromKey}->${toKey}`
             if (!directions.has(key)) directions.set(key, [])
             directions.get(key).push({ taskId, edge, diagram })
-            const reverseKey = `${toKey}->${fromKey}`
-            if (directions.has(reverseKey)) {
-                const conflict = directions.get(reverseKey).find((candidate) => candidate.taskId !== taskId)
-                if (conflict) {
-                    findings.push(
-                        finding(
-                            "blocking",
-                            diagram,
-                            edge,
-                            "cross-task-edge-direction-conflict",
-                            `${taskId} draws ${edge.from} -> ${edge.to} while ${conflict.taskId} draws the reverse direction`,
-                            taskId,
-                        ),
-                    )
-                }
-            }
-        }
-
-        // A node that commits canonical state is a writer; two writers for one identity are a split authority.
-        for (const edge of diagram.edges) {
-            if (edge.style !== "solid") continue
-            const label = (edge.label ?? "").toLowerCase()
-            if (!CANONICAL_WRITE.test(label)) continue
-            const toKey = keyOf(diagram, edge.to)
-            if (!writers.has(toKey)) writers.set(toKey, [])
-            writers.get(toKey).push({ taskId, writer: edge.from, writerKey: keyOf(diagram, edge.from) })
+            if (!outgoing.has(fromKey)) outgoing.set(fromKey, new Set())
+            if (!outgoing.has(toKey)) outgoing.set(toKey, new Set())
+            outgoing.get(fromKey).add(toKey)
+            edgeRecords.push({ taskId, diagram, edge, fromKey, toKey })
         }
     }
 
-    for (const [key, claims] of writers) {
-        const taskSet = new Set(claims.map((claim) => claim.taskId))
-        if (taskSet.size <= 1) continue
-        // The same writer drawn by several tasks is still one authority.
-        const writerIdentities = new Set(claims.map((claim) => claim.writerKey))
-        if (writerIdentities.size <= 1) continue
-        const uniqueWriters = new Set(claims.map((claim) => `${claim.taskId}:${claim.writer}`))
-        findings.push(
-            finding(
-                "blocking",
-                null,
-                null,
-                "cross-task-split-authority",
-                `node "${key}" receives canonical writes from ${[...uniqueWriters].join(", ")}`,
-                [...taskSet].join(","),
-            ),
-        )
-    }
-
-    // Runtime cycles that appear only when task graphs are merged mean the cut is wrong.
-    for (const entry of entries) {
-        for (const edge of entry.diagram.edges) {
-            if (edge.style !== "solid") continue
-            const fromKey = normalize(entry.diagram.nodes.get(edge.from)?.label) || normalize(edge.from)
-            const toKey = normalize(entry.diagram.nodes.get(edge.to)?.label) || normalize(edge.to)
-            if (fromKey === toKey) continue
-            const reverse = findMergedReverse(entries, entry.taskId, toKey, fromKey)
-            if (!reverse) continue
+    for (const [key, claims] of directions) {
+        const separator = key.indexOf("->")
+        const fromKey = key.slice(0, separator)
+        const toKey = key.slice(separator + 2)
+        const reverse = directions.get(`${toKey}->${fromKey}`)
+        if (!reverse) continue
+        for (const claim of claims) {
+            const conflict = reverse.find((candidate) => candidate.taskId !== claim.taskId)
+            if (!conflict) continue
             findings.push(
                 finding(
                     "blocking",
-                    entry.diagram,
-                    edge,
-                    "cross-task-cycle",
-                    `merging task diagrams forms a cycle ${entry.diagram.nodes.get(edge.from)?.label ?? edge.from} -> ${entry.diagram.nodes.get(edge.to)?.label ?? edge.to} -> back via ${reverse.taskId}`,
-                    entry.taskId,
+                    claim.diagram,
+                    claim.edge,
+                    "cross-task-edge-direction-conflict",
+                    `${claim.taskId} draws ${claim.edge.from} -> ${claim.edge.to} while ${conflict.taskId} draws the reverse direction`,
+                    claim.taskId,
                 ),
             )
         }
+    }
+
+    for (const component of stronglyConnectedComponents(outgoing)) {
+        const members = new Set(component)
+        const internal = edgeRecords.filter((record) => members.has(record.fromKey) && members.has(record.toKey))
+        const hasCycle = component.length > 1 || internal.some((record) => record.fromKey === record.toKey)
+        if (!hasCycle) continue
+        const tasks = [...new Set(internal.map((record) => record.taskId))].sort()
+        if (tasks.length <= 1) continue
+        const first = internal[0]
+        findings.push(
+            finding(
+                "blocking",
+                first?.diagram ?? null,
+                first?.edge ?? null,
+                "cross-task-cycle",
+                `merging task diagrams forms a solid cycle across ${tasks.join(", ")}: ${component.slice().sort().join(" -> ")}`,
+                tasks.join(","),
+            ),
+        )
     }
 
     for (const [key, claims] of owners) {
@@ -153,19 +173,6 @@ export function checkTaskHorizontally({ entries }) {
     }
 
     return dedupe(findings)
-}
-
-function findMergedReverse(entries, taskId, fromKey, toKey) {
-    for (const entry of entries) {
-        if (entry.taskId === taskId) continue
-        for (const edge of entry.diagram.edges) {
-            if (edge.style !== "solid") continue
-            const edgeFrom = normalize(entry.diagram.nodes.get(edge.from)?.label) || normalize(edge.from)
-            const edgeTo = normalize(entry.diagram.nodes.get(edge.to)?.label) || normalize(edge.to)
-            if (edgeFrom === fromKey && edgeTo === toKey) return { taskId: entry.taskId, edge }
-        }
-    }
-    return null
 }
 
 function dedupe(findings) {

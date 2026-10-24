@@ -13,7 +13,7 @@ This workflow owns design, verification, confirmation and reporting. It does not
 
 ## Preconditions
 
-- The Workstream spec exists and has its diagram set under `.memory-bank/workstreams/<WS>/spec.md`.
+- The Workstream spec exists and its first non-empty body line after the H1 is exactly `Architecture-Mode: diagram-driven-v1`; otherwise this workflow is not applicable.
 - The task has `goals.yaml` (with `owns` and `required_verification`) and `progress.md`.
 - Read the real code the task owns before drawing. A diagram describes verified code or an approved design, never an assumption.
 - Stop if the task's `blockers` names a dependency the user has not resolved; a postponed implementation gate cannot be advanced by editing diagrams.
@@ -38,21 +38,24 @@ Load `designing-workstream-diagrams`. Add or update the task's `## Architecture 
 
 - `%% id:`, `%% layer:`, `%% kind:` and `%% refines: <workstream-diagram-id>` so the anchor is declared, not guessed;
 - `%% answers:` for the question it refines;
-- `%% module:` for every node that maps to a real module;
+- repeatable `%% artifact:` for each declaration, assembly, writer, reader, emitter, receiver or generated projection (`%% module:` is only compatibility shorthand);
 - `%% concept:` where the task uses a different id than the Workstream for the same thing;
 - `%% local-only:` for task-local detail;
-- `%% cycle: allowed owner=… reason=…` only for a genuine request/response pair in a structure diagram.
+- `%% cycle: allowed nodes=A|B owner=… reason="…"` only for a genuinely required solid structure SCC; the node set must exactly match that SCC. A solid command plus dotted response fact needs no exemption.
 
 Keep the diagram smaller than the Workstream diagram it refines. A task diagram that restates the whole Workstream proves nothing.
 
+Add one schema-v2 `## Architecture Evidence` YAML block. Give each node artifact a stable id and bind every edge endpoint through `{node, artifact}` to the exact source/target artifact and role; do not repeat path/symbol on endpoints. It is the sole machine fact source; schema v1 is migration-only and cannot complete a task, and no second free-text ledger is allowed.
+
 ## 4. Verify top-down
 
-Load `verify-architecture-diagrams` and run:
+Load `verify-architecture-diagrams` and run the complete contract:
 
 ```bash
-node .agents/skills/verify-architecture-diagrams/scripts/verify-diagrams.mjs \
-  --workstream .memory-bank/workstreams/<WS> --scope task:<TASK-ID>
+node .agents/skills/verify-architecture-diagrams/scripts/verify-diagrams.mjs --workstream .memory-bank/workstreams/<WS>
 ```
+
+Use `--scope task:<TASK-ID>` only to diagnose a finding; a focused scope is never completion evidence.
 
 The mutation self-test runs by default; do not pass `--no-self-test` in this workflow.
 
@@ -94,7 +97,7 @@ Report three lists, separately:
 - implemented but not wired, with the owning task;
 - not verified, with the reason and what would prove it.
 
-Then re-run the task-scope verification and report its exit code unchanged.
+Then re-run the aggregate command and report its verdict, coverage object, self-test status, warning count and exit code unchanged. Completion evidence requires `coverage.complete: true`; `incomplete`/exit 0 is not a clean pass.
 
 ## Stop conditions
 

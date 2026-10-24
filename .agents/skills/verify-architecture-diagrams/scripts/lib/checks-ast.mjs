@@ -1,17 +1,15 @@
-// Stage 6 (B2/AST): does the code behind a gated task diagram exist?
-// Only facts that a source scan can prove are checked. Everything else is
-// reported as not checked instead of being guessed.
+// Stage 6: does the code behind a gated task diagram exist?
+// This module uses only the Skill-local Tree-sitter runtime. It never loads a
+// target package, compiler configuration or product source module.
 
 import fs from "node:fs"
 import path from "node:path"
 
-const SOURCE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs"]
+import { buildDependencyClosure } from "./tree-sitter-dependencies.mjs"
+import { canonicalSourcePath, scanTreeSitterSource } from "./tree-sitter-facts.mjs"
+import { languageForPath, supportedExtensions } from "./tree-sitter-runtime.mjs"
 
-const EXPORT_PATTERNS = [
-    /^\s*export\s+(?:declare\s+)?(?:abstract\s+)?(?:async\s+)?(?:default\s+)?(?:class|interface|type|enum|const|let|var|function|namespace)\s+([A-Za-z_$][\w$]*)/gm,
-    /^\s*export\s*\{([^}]*)\}/gm,
-    /^\s*module\.exports\s*=\s*\{([^}]*)\}/gm,
-]
+const SOURCE_SUFFIXES = supportedExtensions()
 
 function finding(severity, attribution, subject, rule, message, task) {
     return {
@@ -27,105 +25,52 @@ function finding(severity, attribution, subject, rule, message, task) {
     }
 }
 
-function isSourceFile(name) {
-    return SOURCE_EXTENSIONS.includes(path.extname(name))
-}
-
-function resolveModuleTarget(absolute) {
-    if (fs.existsSync(absolute)) {
-        const stat = fs.statSync(absolute)
-        if (stat.isFile()) return absolute
-        if (stat.isDirectory()) {
-            for (const extension of SOURCE_EXTENSIONS) {
-                const index = path.join(absolute, `index${extension}`)
-                if (fs.existsSync(index)) return index
-            }
-            return absolute
-        }
-    }
-    for (const extension of SOURCE_EXTENSIONS) {
-        const candidate = `${absolute}${extension}`
-        if (fs.existsSync(candidate)) return candidate
-        const asIndex = path.join(absolute, `index${extension}`)
-        if (fs.existsSync(asIndex)) return asIndex
+function resolveDeclaredPath(repoRoot, declaredPath) {
+    const target = path.resolve(repoRoot, declaredPath)
+    if (fs.existsSync(target)) return target
+    for (const suffix of SOURCE_SUFFIXES) {
+        const file = `${target}${suffix}`
+        if (fs.existsSync(file) && fs.statSync(file).isFile()) return file
+        const index = path.join(target, `index${suffix}`)
+        if (fs.existsSync(index) && fs.statSync(index).isFile()) return index
     }
     return null
 }
 
-export function collectExports(filePath) {
-    const content = fs.readFileSync(filePath, "utf8")
-    const names = new Set()
-    for (const pattern of EXPORT_PATTERNS.slice(0, 1)) {
-        for (const match of content.matchAll(pattern)) names.add(match[1])
-    }
-    for (const match of content.matchAll(EXPORT_PATTERNS[1])) {
-        for (const entry of match[1].split(",")) {
-            const parts = entry.trim().split(/\s+as\s+/)
-            const exported = (parts[1] ?? parts[0] ?? "").trim()
-            if (exported && exported !== "default") names.add(exported)
-        }
-    }
-    return names
+function declarationNames(facts, sourcePath) {
+    return new Set(
+        facts
+            .filter(
+                (fact) =>
+                    fact.path === sourcePath &&
+                    fact.category === "declarations" &&
+                    (fact.capture === "name" || fact.capture.startsWith("name.")),
+            )
+            .map((fact) => fact.text),
+    )
 }
 
-function collectImportTargets(filePath) {
-    const content = fs.readFileSync(filePath, "utf8")
-    const targets = []
-    const specifiers = [
-        ...content.matchAll(/^\s*import\s[^'"]*from\s*["']([^"']+)["']/gm),
-        ...content.matchAll(/^\s*export\s[^'"]*from\s*["']([^"']+)["']/gm),
-        ...content.matchAll(/\brequire\(\s*["']([^"']+)["']\s*\)/g),
-        ...content.matchAll(/\bimport\(\s*["']([^"']+)["']\s*\)/g),
-    ]
-    for (const match of specifiers) {
-        const specifier = match[1]
-        if (!specifier.startsWith(".")) continue
-        const resolved = resolveModuleTarget(path.resolve(path.dirname(filePath), specifier))
-        if (resolved) targets.push(resolved)
-    }
-    return targets
+function syntaxFailed(diagnostics) {
+    return diagnostics.some((entry) => entry.rule === "syntax-error" || entry.rule === "missing-syntax")
 }
 
-function boundaryMatches(boundary, sourceFile, exportedNames) {
-    const selector = boundary.selector ?? ""
-    switch (boundary.kind) {
-        case "module":
-            return true
-        case "symbol": {
-            const symbols = selector
-                .split(/[,;]/)
-                .map((entry) => entry.trim())
-                .filter(Boolean)
-            if (symbols.length === 0) return true
-            return symbols.some((symbol) => exportedNames.has(symbol) || exportedNames.has(symbol.split(".")[0]))
-        }
-        case "whole_file":
-        case "section":
-        case "line_range":
-        case "structured_node":
-            return true
-        default:
-            return true
-    }
+function targetMatches(repoRoot, targetAbsolute, targetPath) {
+    const wanted = canonicalSourcePath(repoRoot, targetAbsolute)
+    if (fs.statSync(targetAbsolute).isFile()) return targetPath === wanted
+    const relative = path.posix.relative(wanted, targetPath)
+    return relative.length > 0 && !relative.startsWith("../") && relative !== ".."
 }
 
-export function checkAstForTask({ task, wsModules, repoRoot }) {
+export async function checkAstForTask({ task, wsModules, repoRoot }) {
+    void wsModules
     const findings = []
     const moduleNodes = []
-
     for (const diagram of task.diagrams) {
-        for (const [nodeId, modulePath] of diagram.modules) {
-            moduleNodes.push({ nodeId, modulePath, diagram })
-        }
-    }
-    for (const [name, entry] of wsModules ?? []) {
-        void name
-        void entry
+        for (const [nodeId, modulePath] of diagram.modules) moduleNodes.push({ nodeId, modulePath, diagram })
     }
 
     for (const boundary of task.owns) {
-        const absolute = path.resolve(repoRoot, boundary.path)
-        const resolved = resolveModuleTarget(absolute)
+        const resolved = resolveDeclaredPath(repoRoot, boundary.path)
         if (!resolved) {
             findings.push(
                 finding(
@@ -139,41 +84,72 @@ export function checkAstForTask({ task, wsModules, repoRoot }) {
             )
             continue
         }
-        if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) continue
         if (boundary.kind !== "symbol") continue
-        const exportedNames = collectExports(resolved)
-        if (!boundaryMatches(boundary, resolved, exportedNames)) {
-            findings.push(
-                finding(
-                    "blocking",
-                    "diagram",
-                    { file: boundary.path },
-                    "owned-symbol-missing",
-                    `${task.id} is completed and owns symbol "${boundary.selector}" in ${boundary.path}, but it is not exported`,
-                    task.id,
-                ),
-            )
-        }
-    }
-
-    // A diagram node bound with %% module: must point at a real module.
-    for (const entry of moduleNodes) {
-        const resolved = resolveModuleTarget(path.resolve(repoRoot, entry.modulePath))
-        if (!resolved || !fs.existsSync(resolved)) {
+        if (!fs.statSync(resolved).isFile() || !languageForPath(resolved)) {
             findings.push(
                 finding(
                     "unverifiable",
                     "diagram",
-                    { file: entry.diagram.file, line: entry.diagram.line },
-                    "diagram-module-missing",
-                    `${task.id} binds node ${entry.nodeId} to ${entry.modulePath}, which does not exist`,
+                    { file: boundary.path },
+                    "owned-symbol-unverifiable",
+                    `${task.id} owns symbol "${boundary.selector}" in ${boundary.path}, but the boundary is not one supported source file`,
+                    task.id,
+                ),
+            )
+            continue
+        }
+        const scan = await scanTreeSitterSource({
+            repoRoot,
+            filePath: resolved,
+            source: fs.readFileSync(resolved, "utf8"),
+            categories: ["declarations"],
+        })
+        if (syntaxFailed(scan.diagnostics)) {
+            findings.push(
+                finding(
+                    "unverifiable",
+                    "diagram",
+                    { file: boundary.path },
+                    "owned-symbol-unverifiable",
+                    `${task.id} owns symbol "${boundary.selector}" in ${boundary.path}, but syntax errors prevent declaration proof`,
+                    task.id,
+                ),
+            )
+            continue
+        }
+        const expected = String(boundary.selector ?? "")
+            .split(/[,;]/)
+            .map((entry) => entry.trim())
+            .filter(Boolean)
+        const names = declarationNames(scan.facts, scan.file.path)
+        if (expected.length > 0 && !expected.some((symbol) => names.has(symbol) || names.has(symbol.split(".")[0]))) {
+            findings.push(
+                finding(
+                    "unverifiable",
+                    "diagram",
+                    { file: boundary.path },
+                    "owned-symbol-unverifiable",
+                    `${task.id} owns symbol "${boundary.selector}" in ${boundary.path}, but available declaration facts do not capture it; absence is not inferred`,
                     task.id,
                 ),
             )
         }
     }
 
-    // An implemented solid edge must have a real import between the two bound modules.
+    for (const entry of moduleNodes) {
+        if (resolveDeclaredPath(repoRoot, entry.modulePath)) continue
+        findings.push(
+            finding(
+                "unverifiable",
+                "diagram",
+                { file: entry.diagram.file, line: entry.diagram.line },
+                "diagram-module-missing",
+                `${task.id} binds node ${entry.nodeId} to ${entry.modulePath}, which does not exist`,
+                task.id,
+            ),
+        )
+    }
+
     const edges = task.diagrams.flatMap((diagram) =>
         diagram.edges.filter((edge) => edge.style === "solid").map((edge) => ({ edge, diagram })),
     )
@@ -181,88 +157,88 @@ export function checkAstForTask({ task, wsModules, repoRoot }) {
         const fromPath = diagram.modules.get(edge.from)
         const toPath = diagram.modules.get(edge.to)
         if (!fromPath || !toPath) continue
-        const fromResolved = resolveModuleTarget(path.resolve(repoRoot, fromPath))
-        const toResolved = resolveModuleTarget(path.resolve(repoRoot, toPath))
+        const fromResolved = resolveDeclaredPath(repoRoot, fromPath)
+        const toResolved = resolveDeclaredPath(repoRoot, toPath)
         if (!fromResolved || !toResolved) continue
-        if (!fs.existsSync(fromResolved) || !fs.statSync(fromResolved).isFile()) continue
-        const targets = collectImportTargets(fromResolved)
-        const toIsDirectory = fs.statSync(toResolved).isDirectory()
-        const importsTarget = targets.some((target) => {
-            // A file target must resolve exactly. A directory target accepts any file inside it.
-            if (!toIsDirectory) return target === toResolved
-            const relative = path.relative(toResolved, target)
-            return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative)
-        })
+        if (!fs.statSync(fromResolved).isFile() || !languageForPath(fromResolved)) {
+            findings.push(
+                finding(
+                    "unverifiable",
+                    "diagram",
+                    { file: diagram.file, line: edge.line },
+                    "implemented-edge-unverifiable",
+                    `${task.id} draws ${edge.from} --> ${edge.to}, but ${fromPath} is not one supported source file`,
+                    task.id,
+                ),
+            )
+            continue
+        }
+        const closure = await buildDependencyClosure({ repoRoot, seeds: [fromResolved], maxFiles: 128, maxDepth: 16 })
+        if (syntaxFailed(closure.diagnostics)) {
+            findings.push(
+                finding(
+                    "unverifiable",
+                    "diagram",
+                    { file: diagram.file, line: edge.line },
+                    "implemented-edge-unverifiable",
+                    `${task.id} cannot prove ${edge.from} --> ${edge.to} because the source closure has syntax errors`,
+                    task.id,
+                ),
+            )
+            continue
+        }
+        const fromCanonical = canonicalSourcePath(repoRoot, fromResolved)
+        const importsTarget = closure.imports.some(
+            (dependency) =>
+                dependency.importer === fromCanonical &&
+                dependency.target.kind === "workspace" &&
+                ["runtime", "mixed"].includes(dependency.classification) &&
+                targetMatches(repoRoot, toResolved, dependency.target.path),
+        )
         if (!importsTarget) {
-            // Dependency inversion is the prescribed way to realize a command edge:
-            // the source talks to a port the composition root injects and never
-            // imports the target's concrete module. A missing import is therefore
-            // the expected shape of correct code, not evidence against it, and
-            // the proof lives in the task's execution ledger (emit side, receive
-            // side, and a test that breaks when either is removed).
             findings.push(
                 finding(
                     "not-checked",
                     "diagram",
                     { file: diagram.file, line: edge.line },
                     "implemented-edge-without-direct-import",
-                    `${task.id} draws ${edge.from} --> ${edge.to} between ${fromPath} and ${toPath}, but ${fromPath} does not import ${toPath}; the edge must be proven through the execution ledger (injected port or call site)`,
+                    `${task.id} draws ${edge.from} --> ${edge.to} between ${fromPath} and ${toPath}, but no direct runtime import proves it; use Architecture Evidence for injected, callback, event or RPC wiring`,
                     task.id,
                 ),
             )
         }
     }
-
     return findings
 }
 
-// Mutation self-test: a deliberately missing symbol must be reported.
-// A silent pass means the AST scanner is broken, which is a tooling problem.
-export function selfTestAst(repoRoot) {
-    const findings = []
-    const task = {
-        id: "SELF-TEST",
-        owns: [
-            {
-                path: "package.json",
-                kind: "symbol",
-                selector: "__dline_diagram_verifier_absent_symbol__",
-            },
-        ],
-        diagrams: [],
+// Mutation self-test: prove the vendored parser can distinguish a present
+// declaration from an absent one, capture an import, and reject malformed
+// syntax. It is intentionally independent from the target repository's files,
+// package manager and tsconfig.
+export async function selfTestAst() {
+    const failures = []
+    const valid = await scanTreeSitterSource({
+        repoRoot: process.cwd(),
+        filePath: "architecture-self-test.mjs",
+        source: 'import { dependency } from "./dependency.mjs"\nexport function presentSymbol(){ return dependency() }\n',
+    })
+    const names = declarationNames(valid.facts, valid.file.path)
+    if (!names.has("presentSymbol")) failures.push("present declaration was not captured")
+    if (names.has("__absent_symbol__")) failures.push("absent declaration was invented")
+    if (!valid.facts.some((fact) => fact.category === "imports" && fact.capture === "import.declaration")) {
+        failures.push("runtime import was not captured")
     }
-    const packagePath = path.resolve(repoRoot, "package.json")
-    if (!fs.existsSync(packagePath)) {
-        return {
-            ok: false,
-            message: "self-test could not run: package.json is missing at the repository root",
-        }
-    }
-    const probe = checkAstForTask({ task, wsModules: null, repoRoot })
-    if (probe.length === 0) {
-        findings.push("expected a blocking finding for an absent exported symbol, but the scanner reported none")
-    }
-    const realTask = {
-        id: "SELF-TEST",
-        owns: [],
-        diagrams: [
-            {
-                file: "<self-test>",
-                line: 0,
-                edges: [{ from: "A", to: "B", style: "solid", label: "commits", line: 0 }],
-                modules: new Map([
-                    ["A", "package.json"],
-                    ["B", "README.md"],
-                ]),
-            },
-        ],
-    }
-    const edgeProbe = checkAstForTask({ task: realTask, wsModules: null, repoRoot })
-    if (!edgeProbe.some((entry) => entry.rule === "implemented-edge-without-direct-import")) {
-        findings.push("expected a finding for an edge without a real import, but the scanner reported none")
-    }
+    const malformed = await scanTreeSitterSource({
+        repoRoot: process.cwd(),
+        filePath: "architecture-self-test.mjs",
+        source: "export function broken(",
+    })
+    if (!syntaxFailed(malformed.diagnostics)) failures.push("malformed syntax produced no diagnostic")
     return {
-        ok: findings.length === 0,
-        message: findings.length === 0 ? "mutation self-test detected both seeded defects" : findings.join("; "),
+        ok: failures.length === 0,
+        message:
+            failures.length === 0
+                ? "vendored Tree-sitter mutation self-test detected declaration, import and syntax mutations"
+                : failures.join("; "),
     }
 }

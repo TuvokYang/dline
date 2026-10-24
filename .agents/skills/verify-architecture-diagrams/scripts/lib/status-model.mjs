@@ -34,30 +34,6 @@ export function readWorkstreamStatus(workstreamDir) {
     return result
 }
 
-// Status may live in the workstream status.yml or in the memory-bank root projection.
-export function readRootStatus(memoryBankRoot) {
-    const statusPath = path.join(memoryBankRoot, "status.yml")
-    const result = { statuses: new Map(), file: null, problem: null }
-    if (!fs.existsSync(statusPath)) return result
-    result.file = path.relative(process.cwd(), statusPath) || statusPath
-    try {
-        const data = parseYamlLite(fs.readFileSync(statusPath, "utf8"))
-        const workstreams = data?.workstreams
-        if (!workstreams || typeof workstreams !== "object") return result
-        for (const entry of Object.values(workstreams)) {
-            const tasks = entry?.tasks
-            if (!tasks || typeof tasks !== "object") continue
-            for (const [taskId, status] of Object.entries(tasks)) {
-                result.statuses.set(taskId, text(status))
-            }
-        }
-    } catch (error) {
-        if (!(error instanceof YamlLiteError)) throw error
-        result.problem = `${result.file}: ${error.message}`
-    }
-    return result
-}
-
 export function findStaleProjections(tasks, ...projections) {
     const stale = []
     for (const projection of projections) {

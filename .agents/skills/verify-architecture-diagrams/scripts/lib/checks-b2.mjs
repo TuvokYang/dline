@@ -1,14 +1,12 @@
 // Stage 4 (B2): task diagram against the Workstream diagram.
 // Existence defects belong to the Workstream; coverage defects belong to the task.
 
+import { normalizeArchitectureIdentity } from "./architecture-identity.mjs"
 import { resolveNode } from "./checks-interlevel.mjs"
 import { effectiveKind } from "./checks-intra.mjs"
 
 const VOCABULARY_LAYERS = new Set(["L0", "L1"])
-
-function normalize(label) {
-    return (label ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "")
-}
+const normalize = normalizeArchitectureIdentity
 
 function finding(severity, attribution, diagram, subject, rule, message, taskId) {
     return {
@@ -43,9 +41,8 @@ export function pickWorkstreamReference(taskDiagram, wsDiagrams) {
     return best && best.overlap > 0 ? { diagram: best.diagram, declared: false } : null
 }
 
-export function checkTaskAgainstWorkstream({ taskId, taskDiagram, wsDiagrams, labelVocabulary, specText }) {
+function checkTaskAgainstReference({ taskId, taskDiagram, labelVocabulary, specText, reference, allowedLocalNodes = new Set() }) {
     const findings = []
-    const reference = pickWorkstreamReference(taskDiagram, wsDiagrams)
 
     if (!reference) {
         findings.push(
@@ -84,19 +81,23 @@ export function checkTaskAgainstWorkstream({ taskId, taskDiagram, wsDiagrams, la
     for (const taskNode of taskDiagram.nodes.values()) {
         if (taskDiagram.localOnly.has(taskNode.id)) continue
         if (taskDiagram.noteNodes.has(taskNode.id)) continue
+        if (allowedLocalNodes.has(taskNode.id)) continue
         const match = resolveNode(taskNode, wsDiagram, taskDiagram)
         if (match.node) {
             resolved.set(taskNode.id, match.node.id)
             continue
         }
+        const ambiguous = match.candidates?.length > 1
         findings.push(
             finding(
                 "blocking",
                 "diagram",
                 taskDiagram,
                 { line: taskNode.line },
-                "task-node-not-in-workstream",
-                `task node ${taskNode.id} ("${taskNode.label ?? ""}") is neither a Workstream node nor declared %% local-only`,
+                ambiguous ? "task-node-identity-ambiguous" : "task-node-not-in-workstream",
+                ambiguous
+                    ? `task node ${taskNode.id} resolves to multiple Workstream candidates: ${match.candidates.map((node) => node.id).join(", ")}`
+                    : `task node ${taskNode.id} ("${taskNode.label ?? ""}") is neither a Workstream node nor declared %% local-only`,
                 taskId,
             ),
         )
@@ -206,5 +207,58 @@ export function checkTaskAgainstWorkstream({ taskId, taskDiagram, wsDiagrams, la
 
     void wsNodeIds
     void wsLabels
+    return findings
+}
+
+export function checkTaskAgainstWorkstream({ taskId, taskDiagram, wsDiagrams, labelVocabulary, specText }) {
+    if ((taskDiagram.refines ?? []).length <= 1) {
+        return checkTaskAgainstReference({
+            taskId,
+            taskDiagram,
+            labelVocabulary,
+            specText,
+            reference: pickWorkstreamReference(taskDiagram, wsDiagrams),
+        })
+    }
+
+    const findings = []
+    const references = []
+    for (const wanted of taskDiagram.refines) {
+        const diagram = wsDiagrams.find((candidate) => candidate.id === wanted)
+        if (!diagram) {
+            findings.push(
+                finding(
+                    "blocking",
+                    "diagram",
+                    taskDiagram,
+                    null,
+                    "task-refines-unknown",
+                    `task diagram refines unknown Workstream diagram ${wanted}`,
+                    taskId,
+                ),
+            )
+            continue
+        }
+        references.push({ diagram, declared: true })
+    }
+    for (const reference of references) {
+        const allowedLocalNodes = new Set()
+        for (const node of taskDiagram.nodes.values()) {
+            if (resolveNode(node, reference.diagram, taskDiagram).node) continue
+            if (references.some((sibling) => sibling !== reference && resolveNode(node, sibling.diagram, taskDiagram).node)) {
+                allowedLocalNodes.add(node.id)
+            }
+        }
+        findings.push(
+            ...checkTaskAgainstReference({
+                taskId,
+                taskDiagram,
+                labelVocabulary,
+                specText,
+                reference,
+                allowedLocalNodes,
+            }),
+        )
+    }
     return findings
 }

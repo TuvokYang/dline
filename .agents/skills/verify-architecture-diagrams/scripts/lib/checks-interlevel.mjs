@@ -1,6 +1,8 @@
 // Stage 3 (B1): inter-level refinement from L0 down to L5.
 // A finer layer may refine a coarser one, never invent authority, scope or direction.
 
+import { normalizeArchitectureIdentity, resolveArchitectureNode } from "./architecture-identity.mjs"
+
 const LAYER_ORDER = ["L0", "L1", "L2", "L3", "L4", "L5"]
 
 function layerIndex(layer) {
@@ -22,37 +24,38 @@ function finding(severity, diagram, subject, rule, message, bind) {
     }
 }
 
-function normalize(label) {
-    return (label ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "")
+const normalize = normalizeArchitectureIdentity
+
+// Every stage delegates to one identity implementation so Unicode spelling,
+// priority and ambiguity have the same meaning throughout the verifier.
+export function resolveNode(fineNode, coarseDiagram, fineDiagram = null) {
+    return resolveArchitectureNode(fineNode, coarseDiagram, fineDiagram)
 }
 
-// Node identity: declared concept, then exact id, then normalized label,
-// otherwise unresolved. A concept is the author's statement that two differently
-// named nodes are one architectural thing; it is matched against the coarse
-// node's own concept, its id and its normalized label.
-export function resolveNode(fineNode, coarseDiagram, fineDiagram = null) {
-    const concept = fineDiagram?.concepts?.get(fineNode.id) ?? null
-    const exact = coarseDiagram.nodes.get(fineNode.id)
-    if (concept) {
-        const wanted = normalize(concept)
-        // Several coarse nodes may share one concept (a parent and a child journal are both Journal).
-        // The coarse node with the same id and the same concept is the one the author refines.
-        if (exact && normalize(coarseDiagram.concepts?.get(exact.id) ?? "") === wanted) return { node: exact, strategy: "id" }
-        for (const candidate of coarseDiagram.nodes.values()) {
-            const candidateConcept = coarseDiagram.concepts?.get(candidate.id) ?? null
-            if (candidateConcept && normalize(candidateConcept) === wanted) return { node: candidate, strategy: "concept" }
-            if (normalize(candidate.id) === wanted || normalize(candidate.label) === wanted)
-                return { node: candidate, strategy: "concept" }
-        }
+function hasRefinementPath(fine, sources, targets, style) {
+    const wanted = new Set(targets)
+    const noteNodes = fine.noteNodes
+    const outgoing = new Map()
+    for (const nodeId of fine.nodes.keys()) {
+        if (!noteNodes.has(nodeId)) outgoing.set(nodeId, [])
     }
-    if (exact) return { node: exact, strategy: "id" }
-    const label = normalize(fineNode.label)
-    if (label.length > 0) {
-        for (const candidate of coarseDiagram.nodes.values()) {
-            if (normalize(candidate.label) === label) return { node: candidate, strategy: "label" }
-        }
+    for (const edge of fine.edges) {
+        if (edge.style !== style || !outgoing.has(edge.from) || !outgoing.has(edge.to)) continue
+        outgoing.get(edge.from).push(edge.to)
     }
-    return { node: null, strategy: "unresolved" }
+    const queue = []
+    const seen = new Set()
+    for (const source of sources) {
+        for (const next of outgoing.get(source) ?? []) queue.push(next)
+    }
+    while (queue.length > 0) {
+        const current = queue.shift()
+        if (seen.has(current)) continue
+        seen.add(current)
+        if (wanted.has(current)) return true
+        for (const next of outgoing.get(current) ?? []) queue.push(next)
+    }
+    return false
 }
 
 // A pairing the author did not declare can only be a guess, and a guess must
@@ -119,13 +122,16 @@ function checkInterLevelDeclared(coarse, fine, context) {
             resolved.set(fineNode.id, match.node.id)
             continue
         }
+        const ambiguous = match.candidates?.length > 1
         findings.push({
             ...finding(
-                "unverifiable",
+                ambiguous ? "blocking" : "unverifiable",
                 fine,
                 { line: fineNode.line },
-                "node-unresolved",
-                `node ${fineNode.id} ("${fineNode.label ?? ""}") is neither an id, a normalized label in ${coarse.layer}, nor declared local-only`,
+                ambiguous ? "node-identity-ambiguous" : "node-unresolved",
+                ambiguous
+                    ? `node ${fineNode.id} resolves to multiple ${coarse.layer} candidates: ${match.candidates.map((node) => node.id).join(", ")}`
+                    : `node ${fineNode.id} ("${fineNode.label ?? ""}") is neither an id, a normalized label in ${coarse.layer}, nor declared local-only`,
                 undefined,
             ),
         })
@@ -202,6 +208,28 @@ function checkInterLevelDeclared(coarse, fine, context) {
         }
     }
 
+    const fineByCoarse = new Map()
+    for (const [fineId, coarseId] of resolved) {
+        if (!fineByCoarse.has(coarseId)) fineByCoarse.set(coarseId, [])
+        fineByCoarse.get(coarseId).push(fineId)
+    }
+    for (const coarseEdge of coarse.edges) {
+        if (coarse.noteNodes.has(coarseEdge.from) || coarse.noteNodes.has(coarseEdge.to)) continue
+        const sources = fineByCoarse.get(coarseEdge.from) ?? []
+        const targets = fineByCoarse.get(coarseEdge.to) ?? []
+        if (sources.length === 0 || targets.length === 0) continue
+        if (hasRefinementPath(fine, sources, targets, coarseEdge.style)) continue
+        findings.push(
+            finding(
+                "unverifiable",
+                fine,
+                null,
+                "coarse-edge-not-refined",
+                `${coarse.layer} ${coarseEdge.style} edge ${coarseEdge.from} -> ${coarseEdge.to} (${coarseEdge.label || "unlabelled"}) has no nonzero ${fine.layer} path of the same style; fine source nodes=${sources.join("|")} target nodes=${targets.join("|")}`,
+            ),
+        )
+    }
+
     // New lifetime scopes may not appear below L0.
     for (const subgraph of fine.subgraphs) {
         const known = coarse.subgraphs.some((candidate) => normalize(candidate.label) === normalize(subgraph.label))
@@ -236,7 +264,8 @@ function checkInterLevelDeclared(coarse, fine, context) {
     return findings
 }
 
-export function checkLayerSequence(diagrams) {
+export function checkLayerSequence(diagrams, { scope = "workstream" } = {}) {
+    if (scope === "task") return []
     const findings = []
     const ordered = diagrams
         .filter((diagram) => diagram.layer)

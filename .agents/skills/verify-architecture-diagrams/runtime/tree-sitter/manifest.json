@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "runtime": {
+    "name": "web-tree-sitter",
+    "version": "0.22.6",
+    "license": "MIT",
+    "files": ["tree-sitter.js", "tree-sitter.wasm"]
+  },
+  "queryCategories": ["declarations", "imports", "calls", "writes", "boundaries"],
+  "runtimeQuarantine": {
+    "swift": "web-tree-sitter 0.22.6 plus the vendored Swift grammar triggers a native Zone OOM on Node 24 process shutdown; kept vendored but not enabled"
+  },
+  "grammars": {
+    "source": "tree-sitter-wasms",
+    "version": "0.1.13",
+    "license": "Unlicense",
+    "languages": [
+      "c",
+      "c_sharp",
+      "cpp",
+      "go",
+      "java",
+      "javascript",
+      "kotlin",
+      "php",
+      "python",
+      "ruby",
+      "rust",
+      "swift",
+      "tsx",
+      "typescript"
+    ]
+  }
+}
