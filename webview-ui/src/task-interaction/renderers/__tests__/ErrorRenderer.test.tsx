@@ -1,22 +1,15 @@
 import type { UiMessage } from "@shared/ExtensionMessage"
-import { render, screen } from "@testing-library/react"
+import { render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ErrorRenderer } from "../PresentationRenderers"
 
-const auth = vi.hoisted(() => ({ clineUser: null as unknown, useClineAuth: vi.fn() }))
-const extension = vi.hoisted(() => ({ accountEnabled: { featureFlag: true, user: true } as unknown }))
+const auth = vi.hoisted(() => ({ useClineAuth: vi.fn() }))
+const accountClient = vi.hoisted(() => ({ getRedirectUrl: vi.fn() }))
 
-vi.mock("@/context/ExtensionStateContext", () => ({
-    useExtensionState: () => ({ accountEnabled: extension.accountEnabled }),
-}))
-
-vi.mock("@/context/ClineAuthContext", () => ({
-    useClineAuth: auth.useClineAuth,
-    useClineSignIn: () => ({ isLoginLoading: false, handleSignIn: vi.fn() }),
-}))
+vi.mock("@/context/ClineAuthContext", () => ({ useClineAuth: auth.useClineAuth }))
 
 vi.mock("@/services/grpc-client", () => ({
-    AccountServiceClient: { getRedirectUrl: vi.fn(async () => ({ value: "vscode://dline/callback" })) },
+    AccountServiceClient: accountClient,
     TaskServiceClient: { askResponse: vi.fn(async () => undefined) },
 }))
 
@@ -29,15 +22,14 @@ function failure(error: Record<string, unknown>): UiMessage {
     return { ts: 1, type: "ask", ask: "api_req_failed", text: JSON.stringify(error) }
 }
 
-// The interaction that offers Retry rendered only the raw error box, so an
-// account limit or a signed-out account read as an opaque failure there while
-// the same error in a chat row named what to do.
+// The interaction that offers Retry renders the same provider-specific failure
+// content as the corresponding chat row.
 describe("ErrorRenderer", () => {
     beforeEach(() => {
-        auth.clineUser = null
-        extension.accountEnabled = { featureFlag: true, user: true }
         auth.useClineAuth.mockReset()
-        auth.useClineAuth.mockImplementation(() => ({ clineUser: auth.clineUser }))
+        auth.useClineAuth.mockReturnValue({ activeOrganization: undefined })
+        accountClient.getRedirectUrl.mockReset()
+        accountClient.getRedirectUrl.mockResolvedValue({ value: "vscode://dline/callback" })
     })
 
     // The footer owns Retry for this interaction; the balance card's own legacy
@@ -58,6 +50,24 @@ describe("ErrorRenderer", () => {
         expect(await screen.findByText("Buy Credits")).toBeInTheDocument()
         expect(screen.queryByText("Retry Request")).toBeNull()
         expect(screen.queryByTestId("error-presentation-box")).toBeNull()
+        expect(auth.useClineAuth).not.toHaveBeenCalled()
+        expect(accountClient.getRedirectUrl).not.toHaveBeenCalled()
+    })
+
+    it("keeps a balance failure without a provider identity on the Dline Account path", async () => {
+        render(
+            <ErrorRenderer
+                message={failure({
+                    message: "Insufficient credits",
+                    code: "insufficient_credits",
+                    details: { current_balance: 0, message: "Your Dline Account balance is empty." },
+                })}
+            />,
+        )
+
+        expect(auth.useClineAuth).toHaveBeenCalledOnce()
+        await waitFor(() => expect(accountClient.getRedirectUrl).toHaveBeenCalledOnce())
+        expect(await screen.findByText("Buy Credits")).toBeInTheDocument()
     })
 
     it("names an organization spend limit", () => {
@@ -76,30 +86,12 @@ describe("ErrorRenderer", () => {
         expect(screen.queryByTestId("error-presentation-box")).toBeNull()
     })
 
-    it("offers sign-in when the Dline account behind the failure is signed out", () => {
-        render(<ErrorRenderer message={failure({ message: "Unauthorized", status: 401, providerId: "cline" })} />)
-
-        expect(screen.getByText(/looks like you're logged out/)).toBeInTheDocument()
-        expect(screen.getByRole("button", { name: "Sign in to Dline" })).toBeEnabled()
-        expect(screen.queryByTestId("error-presentation-box")).toBeNull()
-    })
-
-    it("shows the failure itself while the account feature is not rolled out to this user", () => {
-        extension.accountEnabled = { featureFlag: false, user: true }
-
+    it("shows a Cline Provider authentication failure without entering Dline Account", () => {
         render(<ErrorRenderer message={failure({ message: "Unauthorized", status: 401, providerId: "cline" })} />)
 
         expect(screen.getByTestId("error-presentation-box")).toHaveTextContent("Unauthorized")
         expect(screen.queryByRole("button", { name: "Sign in to Dline" })).toBeNull()
-    })
-
-    it("shows the failure itself when the Dline account is signed in", () => {
-        auth.clineUser = { uid: "user-1" }
-
-        render(<ErrorRenderer message={failure({ message: "Unauthorized", status: 401, providerId: "cline" })} />)
-
-        expect(screen.getByTestId("error-presentation-box")).toHaveTextContent("Unauthorized")
-        expect(screen.queryByRole("button", { name: "Sign in to Dline" })).toBeNull()
+        expect(auth.useClineAuth).not.toHaveBeenCalled()
     })
 
     it("renders any other failure in the error box without reading the account", () => {

@@ -1,5 +1,5 @@
 import { CLINE_PROVIDER_APP_URL } from "@shared/providers/cline-runtime"
-import React, { useEffect, useMemo, useState } from "react"
+import React, { useEffect, useState } from "react"
 import VSCodeButtonLink from "@/components/common/VSCodeButtonLink"
 import { useClineAuth } from "@/context/ClineAuthContext"
 import { AccountServiceClient } from "@/services/grpc-client"
@@ -23,94 +23,81 @@ const PROVIDER_RECHARGE_URLS: Record<string, string> = {
     openrouter: "https://openrouter.ai/credits",
 }
 
-const DEFAULT_BUY_CREDITS_URL = {
-    USER: `${CLINE_PROVIDER_APP_URL}/dashboard/account?tab=credits&redirect=true`,
-    ORG: `${CLINE_PROVIDER_APP_URL}/dashboard/organization?tab=credits&redirect=true`,
+const DLINE_ACCOUNT_APP_URL = "https://app.dline.cc"
+const DLINE_ACCOUNT_BUY_CREDITS_URL = {
+    USER: `${DLINE_ACCOUNT_APP_URL}/dashboard/account?tab=credits&redirect=true`,
+    ORG: `${DLINE_ACCOUNT_APP_URL}/dashboard/organization?tab=credits&redirect=true`,
 }
 
-/**
- * The account-limit card offers only what leaves the task: buying credits.
- * Retry and Start New Task answer the failure interaction, which the task
- * footer owns, so the card never repeats them.
- */
-const CreditLimitError: React.FC<CreditLimitErrorProps> = ({
+interface CreditLimitCardProps extends CreditLimitErrorProps {
+    resolvedBuyCreditsUrl?: string
+}
+
+/** Retry and Start New Task belong to the task footer, so this card only links out. */
+const CreditLimitCard: React.FC<CreditLimitCardProps> = ({
     message = "You have run out of credits.",
-    buyCreditsUrl,
     currentBalance,
-    providerId,
+    resolvedBuyCreditsUrl,
     totalPromotions,
     totalSpent,
-}) => {
-    const { activeOrganization } = useClineAuth()
-    const [fullBuyCreditsUrl, setFullBuyCreditsUrl] = useState<string>("")
-
-    /**
-     * Determine the recharge URL based on priority:
-     * 1. Explicit buyCreditsUrl from error details (backend-provided)
-     * 2. Provider-specific URL from PROVIDER_RECHARGE_URLS map
-     * 3. Default Cline URLs (ORG vs USER based on active organization)
-     */
-    const dashboardUrl = useMemo(() => {
-        if (buyCreditsUrl) {
-            return buyCreditsUrl
-        }
-        if (providerId && PROVIDER_RECHARGE_URLS[providerId]) {
-            return PROVIDER_RECHARGE_URLS[providerId]
-        }
-        // Fallback for cline provider or unknown providers
-        return activeOrganization?.organizationId ? DEFAULT_BUY_CREDITS_URL.ORG : DEFAULT_BUY_CREDITS_URL.USER
-    }, [buyCreditsUrl, providerId, activeOrganization?.organizationId])
-
-    /**
-     * Only fetch callback URL for cline.bot links (they support callback redirect).
-     * For third-party provider recharge pages, use the URL directly.
-     */
-    const isClineUrl = dashboardUrl.startsWith(CLINE_PROVIDER_APP_URL)
-
-    useEffect(() => {
-        if (isClineUrl) {
-            const fetchCallbackUrl = async () => {
-                try {
-                    const callbackUrl = (await AccountServiceClient.getRedirectUrl({})).value
-                    const url = new URL(dashboardUrl)
-                    url.searchParams.set("callback_url", callbackUrl)
-                    setFullBuyCreditsUrl(url.toString())
-                } catch (error) {
-                    console.error("Error fetching callback URL:", error)
-                    // Fallback to URL without callback if the API call fails
-                    setFullBuyCreditsUrl(dashboardUrl)
-                }
-            }
-            fetchCallbackUrl()
-        } else {
-            setFullBuyCreditsUrl(dashboardUrl)
-        }
-    }, [dashboardUrl, isClineUrl])
-
-    // We have to divide because the balance is stored in microcredits
-    return (
-        <div className="p-2 border-none rounded-md mb-2 bg-(--vscode-textBlockQuote-background)">
-            <div className="mb-3 font-azeret-mono">
-                <div className="text-error mb-2">{message}</div>
-                <div className="mb-3">
-                    {currentBalance ? (
-                        <div className="text-foreground">
-                            Current Balance: <span className="font-bold">{currentBalance.toFixed(2)}</span>
-                        </div>
-                    ) : null}
-                    {totalSpent ? <div className="text-foreground">Total Spent: {totalSpent.toFixed(2)}</div> : null}
-                    {totalPromotions ? (
-                        <div className="text-foreground">Total Promotions: {totalPromotions.toFixed(2)}</div>
-                    ) : null}
-                </div>
+}) => (
+    <div className="p-2 border-none rounded-md mb-2 bg-(--vscode-textBlockQuote-background)">
+        <div className="mb-3 font-azeret-mono">
+            <div className="text-error mb-2">{message}</div>
+            <div className="mb-3">
+                {currentBalance ? (
+                    <div className="text-foreground">
+                        Current Balance: <span className="font-bold">{currentBalance.toFixed(2)}</span>
+                    </div>
+                ) : null}
+                {totalSpent ? <div className="text-foreground">Total Spent: {totalSpent.toFixed(2)}</div> : null}
+                {totalPromotions ? <div className="text-foreground">Total Promotions: {totalPromotions.toFixed(2)}</div> : null}
             </div>
+        </div>
 
-            <VSCodeButtonLink className="w-full mb-2" href={fullBuyCreditsUrl}>
+        {resolvedBuyCreditsUrl ? (
+            <VSCodeButtonLink className="w-full mb-2" href={resolvedBuyCreditsUrl}>
                 <span className="codicon codicon-credit-card mr-[6px] text-[14px]" />
                 Buy Credits
             </VSCodeButtonLink>
-        </div>
-    )
+        ) : null}
+    </div>
+)
+
+/** Dline Account owns its organization-aware callback flow; providers never enter this path. */
+const DlineAccountCreditLimitError: React.FC<CreditLimitErrorProps> = (props) => {
+    const { activeOrganization } = useClineAuth()
+    const [buyCreditsUrl, setBuyCreditsUrl] = useState("")
+    const dashboardUrl = activeOrganization?.organizationId
+        ? DLINE_ACCOUNT_BUY_CREDITS_URL.ORG
+        : DLINE_ACCOUNT_BUY_CREDITS_URL.USER
+
+    useEffect(() => {
+        const fetchCallbackUrl = async () => {
+            try {
+                const callbackUrl = (await AccountServiceClient.getRedirectUrl({})).value
+                const url = new URL(dashboardUrl)
+                url.searchParams.set("callback_url", callbackUrl)
+                setBuyCreditsUrl(url.toString())
+            } catch (error) {
+                console.error("Error fetching callback URL:", error)
+                setBuyCreditsUrl(dashboardUrl)
+            }
+        }
+        void fetchCallbackUrl()
+    }, [dashboardUrl])
+
+    return <CreditLimitCard {...props} resolvedBuyCreditsUrl={buyCreditsUrl} />
+}
+
+const CreditLimitError: React.FC<CreditLimitErrorProps> = (props) => {
+    const providerUrl = props.buyCreditsUrl ?? (props.providerId ? PROVIDER_RECHARGE_URLS[props.providerId] : undefined)
+
+    if (!props.providerId && !props.buyCreditsUrl) {
+        return <DlineAccountCreditLimitError {...props} />
+    }
+
+    return <CreditLimitCard {...props} resolvedBuyCreditsUrl={providerUrl} />
 }
 
 export default CreditLimitError

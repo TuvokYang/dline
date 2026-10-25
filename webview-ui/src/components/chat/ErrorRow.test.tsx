@@ -3,23 +3,6 @@ import { render, screen } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 import ErrorRow from "./ErrorRow"
 
-const mocks = vi.hoisted(() => ({
-    extensionState: { accountEnabled: { featureFlag: true, user: true } } as Record<string, unknown>,
-}))
-
-vi.mock("@/context/ExtensionStateContext", () => ({ useExtensionState: () => mocks.extensionState }))
-
-// Mock the auth context
-vi.mock("@/context/ClineAuthContext", () => ({
-    useClineAuth: () => ({
-        clineUser: null,
-    }),
-    useClineSignIn: () => ({
-        isLoginLoading: false,
-    }),
-    handleSignOut: vi.fn(),
-}))
-
 // Mock CreditLimitError component
 vi.mock("@/components/chat/CreditLimitError", () => ({
     default: ({ message }: { message: string }) => <div data-testid="credit-limit-error">{message}</div>,
@@ -138,7 +121,7 @@ describe("ErrorRow", () => {
             expect(screen.getByText("Inference cap reached")).toBeInTheDocument()
         })
 
-        it("renders friendly logged-out message and sign in button when user is not signed in", async () => {
+        it("renders a Cline Provider authentication failure without a Dline Account sign-in prompt", async () => {
             const mockClineError = {
                 message: "Authentication failed",
                 isErrorType: vi.fn((type) => type === "auth"),
@@ -151,31 +134,9 @@ describe("ErrorRow", () => {
 
             render(<ErrorRow apiRequestFailedMessage="Authentication failed" errorType="error" message={mockMessage} />)
 
-            expect(screen.queryByText("Authentication failed")).not.toBeInTheDocument()
-            expect(screen.getByText(/Whoops looks like you're logged out/)).toBeInTheDocument()
-            expect(screen.getByText("Sign in to Dline")).toBeInTheDocument()
-        })
-
-        it("shows the plain failure instead of a sign-in prompt while the account feature is off", async () => {
-            const mockClineError = {
-                message: "Authentication failed",
-                isErrorType: vi.fn((type) => type === "auth"),
-                providerId: "cline",
-                _error: {},
-            }
-
-            const { ClineError } = await import("../../../../src/services/error/ClineError")
-            vi.mocked(ClineError.parse).mockReturnValue(mockClineError as any)
-            mocks.extensionState = { accountEnabled: { featureFlag: false, user: true } }
-
-            try {
-                render(<ErrorRow apiRequestFailedMessage="Authentication failed" errorType="error" message={mockMessage} />)
-
-                expect(screen.queryByText("Sign in to Dline")).not.toBeInTheDocument()
-                expect(screen.queryByText(/Whoops looks like you're logged out/)).not.toBeInTheDocument()
-            } finally {
-                mocks.extensionState = { accountEnabled: { featureFlag: true, user: true } }
-            }
+            expect(screen.getByTestId("api-error-box")).toHaveTextContent("Authentication failed")
+            expect(screen.queryByText("Sign in to Dline")).not.toBeInTheDocument()
+            expect(screen.queryByText(/Whoops looks like you're logged out/)).not.toBeInTheDocument()
         })
 
         it("renders a PowerShell API failure without adding unrelated legacy content", async () => {
