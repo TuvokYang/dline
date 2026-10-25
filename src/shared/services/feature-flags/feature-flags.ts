@@ -18,11 +18,14 @@ export enum ExperimentalFeatureFlag {
     WORKTREES = "worktree-exp",
     // Account sign-in and the account view; the account service is not ready for everyone
     ACCOUNT = "account",
+    // Checkpoint roots outside the open workspace; runtime wiring is intentionally deferred
+    EXTERNAL_FILE_CHECKPOINTS = "checkpoint-external-files",
 }
 
 export const ExperimentalFeatureFlagDefaultValue: Partial<Record<ExperimentalFeatureFlag, FeatureFlagPayload>> = {
     [ExperimentalFeatureFlag.WORKTREES]: false,
     [ExperimentalFeatureFlag.ACCOUNT]: false,
+    [ExperimentalFeatureFlag.EXTERNAL_FILE_CHECKPOINTS]: false,
 }
 
 /**
@@ -46,6 +49,7 @@ export const ExperimentalFeatureFlagDevelopmentDefault: Partial<Record<Experimen
 export const REMOTE_ROLLOUT_FEATURE_FLAGS: readonly ExperimentalFeatureFlag[] = [
     ExperimentalFeatureFlag.ACCOUNT,
     ExperimentalFeatureFlag.WORKTREES,
+    ExperimentalFeatureFlag.EXTERNAL_FILE_CHECKPOINTS,
 ]
 
 export const EXPERIMENTAL_FEATURE_FLAGS = Object.values(ExperimentalFeatureFlag)

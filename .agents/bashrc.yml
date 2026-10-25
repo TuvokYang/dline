@@ -1,0 +1,7 @@
+version: 1
+platforms:
+  win32:
+    profiles:
+      powershell:
+        preCommands:
+          - conda activate dline-architecture-verifier

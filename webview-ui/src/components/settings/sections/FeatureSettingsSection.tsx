@@ -192,6 +192,14 @@ const experimentalFeatures: FeatureToggle[] = [
         stateKey: "accountEnabled",
         settingKey: "accountEnabled",
     },
+    {
+        id: "external-file-checkpoints",
+        label: "External File Checkpoints",
+        description:
+            "Prepare checkpoint support for files outside the open workspace. This rollout setting is not connected to file restore yet.",
+        stateKey: "externalFileCheckpoints",
+        settingKey: "externalFileCheckpointsEnabled",
+    },
 ]
 
 const advancedFeatures: FeatureToggle[] = [
@@ -278,6 +286,7 @@ const FeatureSettingsSection = ({ renderSectionHeader }: FeatureSettingsSectionP
         searxngSearchUrl,
         worktreesEnabled,
         accountEnabled,
+        externalFileCheckpoints,
         focusChainSettings,
         remoteConfigSettings,
         nativeToolCallSetting,
@@ -331,6 +340,7 @@ const FeatureSettingsSection = ({ renderSectionHeader }: FeatureSettingsSectionP
         clineWebToolsEnabled,
         worktreesEnabled: worktreesEnabled?.user,
         accountEnabled: accountEnabled?.user,
+        externalFileCheckpoints: externalFileCheckpoints?.user,
         enableParallelToolCalling,
         backgroundEditEnabled,
         doubleCheckCompletionEnabled,
@@ -343,6 +353,7 @@ const FeatureSettingsSection = ({ renderSectionHeader }: FeatureSettingsSectionP
         worktreesEnabled: worktreesEnabled?.featureFlag,
         // Offered only while the rollout or a development build turns the feature on.
         accountEnabled: accountEnabled?.featureFlag === true,
+        externalFileCheckpoints: externalFileCheckpoints?.featureFlag === true,
         // How MCP tools reach the model only matters while MCP itself is on.
         mcpToolsOnDemandEnabled: mcpEnabled !== false,
     }

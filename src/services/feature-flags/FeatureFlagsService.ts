@@ -65,6 +65,10 @@ export class FeatureFlagsService {
         return this.getBooleanFlagEnabled(ExperimentalFeatureFlag.ACCOUNT)
     }
 
+    public getExternalFileCheckpointsEnabled(): boolean {
+        return this.getBooleanFlagEnabled(ExperimentalFeatureFlag.EXTERNAL_FILE_CHECKPOINTS)
+    }
+
     /**
      * Get the feature flags provider instance
      * @returns The current feature flags provider

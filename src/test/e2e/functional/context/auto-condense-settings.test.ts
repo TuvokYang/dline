@@ -152,7 +152,10 @@ e2e(
             await openFeatureSettings(page, sidebar)
 
             const autoCompactSwitch = sidebar.locator('[id="Auto Compact"]')
+            await expect(autoCompactSwitch).toHaveAttribute("aria-checked", "true")
+            await autoCompactSwitch.click()
             await expect(autoCompactSwitch).toHaveAttribute("aria-checked", "false")
+            await expect.poll(async () => await readSettings(dlineDir)).toMatchObject({ useAutoCondense: false })
             await autoCompactSwitch.click()
             await expect(autoCompactSwitch).toHaveAttribute("aria-checked", "true")
             await expect.poll(async () => await readSettings(dlineDir)).toMatchObject({ useAutoCondense: true })

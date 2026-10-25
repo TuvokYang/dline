@@ -293,6 +293,16 @@ describe("State Keys Type Safety", () => {
             expect(getDefaultValue("mcpEnabled")).to.equal(true)
         })
 
+        it("should keep external file checkpoints off by default", () => {
+            expect(SETTINGS_DEFAULTS.externalFileCheckpointsEnabled).to.equal(false)
+            expect(getDefaultValue("externalFileCheckpointsEnabled")).to.equal(false)
+        })
+
+        it("should enable automatic context compaction by default", () => {
+            expect(SETTINGS_DEFAULTS.useAutoCondense).to.equal(true)
+            expect(getDefaultValue("useAutoCondense")).to.equal(true)
+        })
+
         it("should send chat input with Enter by default", () => {
             expect(SETTINGS_DEFAULTS.chatInputSendShortcut).to.equal(DEFAULT_CHAT_INPUT_SEND_SHORTCUT)
             expect(getDefaultValue("chatInputSendShortcut")).to.equal(DEFAULT_CHAT_INPUT_SEND_SHORTCUT)

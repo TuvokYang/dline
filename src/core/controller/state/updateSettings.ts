@@ -287,6 +287,10 @@ export async function updateSettings(controller: Controller, request: UpdateSett
             controller.stateManager.setGlobalState("worktreesEnabled", request.worktreesEnabled)
         }
 
+        if (request.externalFileCheckpointsEnabled !== undefined) {
+            controller.stateManager.setGlobalState("externalFileCheckpointsEnabled", request.externalFileCheckpointsEnabled)
+        }
+
         if (request.accountEnabled !== undefined) {
             controller.stateManager.setGlobalState("accountEnabled", request.accountEnabled)
             accountFeatureGate.reevaluate()

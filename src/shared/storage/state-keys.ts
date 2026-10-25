@@ -207,7 +207,7 @@ const USER_SETTINGS_FIELDS = {
     hooksEnabled: { default: true as boolean },
     yoloModeToggled: { default: false as boolean },
     autoApproveAllToggled: { default: false as boolean },
-    useAutoCondense: { default: false as boolean },
+    useAutoCondense: { default: true as boolean },
     autoCondenseTriggerPercent: {
         default: DEFAULT_AUTO_CONDENSE_TRIGGER_PERCENT as number,
         transform: normalizeAutoCondenseTriggerPercent,
@@ -234,6 +234,9 @@ const USER_SETTINGS_FIELDS = {
     localWebSearchEngine: { default: DEFAULT_LOCAL_SEARCH_ENGINE as LocalSearchEngineId },
     searxngSearchUrl: { default: undefined as string | undefined },
     worktreesEnabled: { default: false as boolean },
+    // User opt-in for future checkpoint roots outside the open workspace.
+    // Runtime wiring is intentionally absent until the feature contract is implemented.
+    externalFileCheckpointsEnabled: { default: false as boolean },
     // The user's opt-in to the account feature; effective only while its rollout flag is on.
     accountEnabled: { default: false as boolean },
     preferredLanguage: { default: "English" as string },
