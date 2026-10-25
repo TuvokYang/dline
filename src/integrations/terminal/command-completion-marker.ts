@@ -1,7 +1,8 @@
 export const INTERNAL_COMMAND_EXIT_MARKER_PREFIX = "__DLINE_INTERNAL_COMMAND_EXIT__"
 
 const INTERNAL_COMMAND_EXIT_MARKER_PATTERN = /__DLINE_INTERNAL_COMMAND_EXIT__[A-Za-z0-9-]+:(-?\d+)/
-const INTERNAL_COMMAND_EXIT_MARKER_LINE_PATTERN = /^.*__DLINE_INTERNAL_COMMAND_EXIT__[A-Za-z0-9-]+:-?\d+.*(?:\r?\n|$)/gm
+/** Internal marker output or the shell command echo that produces it. */
+const INTERNAL_COMMAND_EXIT_MARKER_LINE_PATTERN = /^.*__DLINE_INTERNAL_COMMAND_EXIT__[A-Za-z0-9-]+.*(?:\r?\n|$)/gm
 
 export function parseInternalCommandExitMarker(line: string): number | undefined {
     const match = INTERNAL_COMMAND_EXIT_MARKER_PATTERN.exec(line.trim())

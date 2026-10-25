@@ -51,8 +51,8 @@ function terminalCommand(marker: string, exitCode: number): string {
     return `printf '${marker}\\n'; (exit ${exitCode})`
 }
 
-function parseTerminalEvents(output: string, operation: "acquire" | "warm"): TerminalPoolEvent[] {
-    const suffix = operation === "acquire" ? "policy=reusable" : "state=ready"
+function parseTerminalEvents(output: string, operation: "acquire" | "release" | "warm"): TerminalPoolEvent[] {
+    const suffix = operation === "acquire" ? "policy=reusable" : operation === "release" ? "disposition=reusable" : "state=ready"
     return [
         ...output.matchAll(
             new RegExp(`\\[TerminalPool\\] operation=${operation} partition=[a-f0-9]+ terminalId=(\\d+) ${suffix}`, "g"),
@@ -503,7 +503,19 @@ e2e(
             await expectWorkMessageVisible(sidebar, "WORK_VSCODE_TERMINAL_CAPTURE_OK", { timeout: 60_000 })
             await sendWorkMessage(sidebar, TERMINAL_REUSE_REQUEST)
             await expectWorkMessageVisible(sidebar, "WORK_VSCODE_TERMINAL_REUSE_OK", { timeout: 60_000 })
-            const terminalOutput = await E2ETestHelper.readDlineOutput(userDataDir)
+            let terminalOutput = ""
+            await expect
+                .poll(
+                    async () => {
+                        terminalOutput = await E2ETestHelper.readDlineOutput(userDataDir)
+                        return (
+                            parseTerminalEvents(terminalOutput, "acquire").length >= 2 &&
+                            parseTerminalEvents(terminalOutput, "release").length >= 2
+                        )
+                    },
+                    { timeout: 30_000 },
+                )
+                .toBe(true)
             const terminalAcquires = parseTerminalEvents(terminalOutput, "acquire").slice(-2)
             expect(terminalAcquires).toHaveLength(2)
             expect(new Set(terminalAcquires.map((event) => event.terminalId)).size).toBe(1)
