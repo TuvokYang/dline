@@ -1,10 +1,6 @@
-import { isFeatureSettingActive } from "@shared/DlineFeatureSettings"
-import { memo, type ReactElement } from "react"
+import { memo } from "react"
 import CreditLimitError from "@/components/chat/CreditLimitError"
 import SpendLimitError from "@/components/chat/SpendLimitError"
-import { Button } from "@/components/ui/button"
-import { useClineAuth, useClineSignIn } from "@/context/ClineAuthContext"
-import { useExtensionState } from "@/context/ExtensionStateContext"
 import { ClineError, ClineErrorType } from "../../../../src/services/error/ClineError"
 import { ApiErrorBox } from "./ApiErrorBox"
 
@@ -57,31 +53,5 @@ export const ApiFailureContent = memo(({ error, testId, title }: ApiFailureConte
         )
     }
 
-    if (clineError?.isErrorType(ClineErrorType.Auth) && providerId === "cline") return <ClineSignInPrompt fallback={box} />
-
     return box
 })
-
-/** Offer sign-in for a Dline provider failure while the account is signed out. */
-function ClineSignInPrompt({ fallback }: { readonly fallback: ReactElement }) {
-    const { clineUser } = useClineAuth()
-    const { isLoginLoading, handleSignIn } = useClineSignIn()
-    const { accountEnabled } = useExtensionState()
-    // Without the account feature there is nothing to sign in to; show the plain failure.
-    if (clineUser || !isFeatureSettingActive(accountEnabled)) return fallback
-    return (
-        <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-center rounded border border-neutral-500/30 bg-vscode-editor-background p-6 text-center text-vscode-foreground">
-                Whoops looks like you're logged out – click below to sign in
-            </div>
-            <Button className="w-full" disabled={isLoginLoading} onClick={handleSignIn}>
-                Sign in to Dline
-                {isLoginLoading && (
-                    <span className="ml-1 animate-spin">
-                        <span className="codicon codicon-refresh" />
-                    </span>
-                )}
-            </Button>
-        </div>
-    )
-}

@@ -2,16 +2,12 @@ import { type ModelInfo, openRouterDefaultModelId, openRouterDefaultModelInfo } 
 import { providerFetch } from "@shared/net"
 import { resolveProfileModelId, resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import { shouldSkipReasoningForModel } from "@utils/model-utils"
-import axios from "axios"
 import OpenAI from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
-import { ClineEnv } from "@/config"
-import { ClineAccountService } from "@/services/account/ClineAccountService"
-import { AuthService } from "@/services/auth/AuthService"
 import { buildClineExtraHeaders } from "@/services/EnvUtils"
-import { CLINE_ACCOUNT_AUTH_ERROR_MESSAGE } from "@/shared/ClineAccount"
 import type { ClineStorageMessage } from "@/shared/messages/content"
-import { fetch, getAxiosSettings } from "@/shared/net"
+import { fetch } from "@/shared/net"
+import { resolveClineProviderApiBaseUrl } from "@/shared/providers/cline-runtime"
 import { Logger } from "@/shared/services/Logger"
 import { ApiHandler, type ApiHandlerContext } from "../ApiHandler"
 import { withRetry } from "../retry"
@@ -29,19 +25,16 @@ function getCacheWriteTokens(usage: any): number {
 }
 
 export class ClineHandler extends ApiHandler {
-    private clineAccountService = ClineAccountService.getInstance()
-    private _authService: AuthService
     private client: OpenAI | undefined
     lastGenerationId?: string
     private lastRequestId?: string
 
     private get _baseUrl(): string {
-        return ClineEnv.config()?.apiBaseUrl ?? ""
+        return resolveClineProviderApiBaseUrl(this.ctx.profile.baseUrl)
     }
 
     constructor(private ctx: ApiHandlerContext) {
         super()
-        this._authService = AuthService.getInstance()
     }
 
     private get config() {
@@ -67,9 +60,9 @@ export class ClineHandler extends ApiHandler {
     }
 
     private async ensureClient(): Promise<OpenAI> {
-        const clineAccountAuthToken = this.apiKey || (await this._authService.getAuthToken())
-        if (!clineAccountAuthToken) {
-            throw new Error(CLINE_ACCOUNT_AUTH_ERROR_MESSAGE)
+        const credential = this.apiKey?.trim()
+        if (!credential) {
+            throw new Error("Cline Provider API key is required")
         }
         if (!this.client) {
             try {
@@ -82,7 +75,7 @@ export class ClineHandler extends ApiHandler {
 
                 this.client = new OpenAI({
                     baseURL: `${this._baseUrl}/api/v1`,
-                    apiKey: clineAccountAuthToken,
+                    apiKey: credential,
                     defaultHeaders,
                     // Capture real HTTP request ID from initial streaming response headers
                     fetch: async (...args: Parameters<typeof fetch>): Promise<Awaited<ReturnType<typeof fetch>>> => {
@@ -115,7 +108,7 @@ export class ClineHandler extends ApiHandler {
             }
         }
         // Ensure the client is always using the latest auth token
-        this.client.apiKey = clineAccountAuthToken
+        this.client.apiKey = credential
         return this.client
     }
 
@@ -252,23 +245,16 @@ export class ClineHandler extends ApiHandler {
     override async getApiStreamUsage(): Promise<ApiStreamUsageChunk | undefined> {
         if (this.lastGenerationId) {
             try {
-                const clineAccountAuthToken = await this._authService.getAuthToken()
-                if (!clineAccountAuthToken) {
-                    throw new Error(CLINE_ACCOUNT_AUTH_ERROR_MESSAGE)
-                }
-                const headers: Record<string, string> = {
-                    // Align with backend auth expectations
-                    Authorization: `Bearer ${clineAccountAuthToken}`,
-                }
+                const credential = this.apiKey?.trim()
+                if (!credential) return undefined
+                const headers: Record<string, string> = { Authorization: `Bearer ${credential}` }
                 Object.assign(headers, await buildClineExtraHeaders())
 
-                const response = await axios.get(`${this.clineAccountService.baseUrl}/generation?id=${this.lastGenerationId}`, {
-                    headers,
-                    timeout: 15_000, // this request hangs sometimes
-                    ...getAxiosSettings(),
-                })
-
-                const generation = response.data
+                const url = new URL("/generation", `${this._baseUrl}/`)
+                url.searchParams.set("id", this.lastGenerationId)
+                const response = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) })
+                if (!response.ok) return undefined
+                const generation = await response.json()
                 const totalCost = generation?.total_cost || 0
 
                 return {

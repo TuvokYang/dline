@@ -1,3 +1,4 @@
+import { CLINE_PROVIDER_APP_URL } from "@shared/providers/cline-runtime"
 import React, { useEffect, useMemo, useState } from "react"
 import VSCodeButtonLink from "@/components/common/VSCodeButtonLink"
 import { useClineAuth } from "@/context/ClineAuthContext"
@@ -17,14 +18,14 @@ interface CreditLimitErrorProps {
  * When adding a new provider, add its top-up URL here so users can buy credits directly.
  */
 const PROVIDER_RECHARGE_URLS: Record<string, string> = {
-    cline: "https://app.dline.cc/dashboard/account?tab=credits&redirect=true",
+    cline: `${CLINE_PROVIDER_APP_URL}/dashboard/account?tab=credits&redirect=true`,
     deepseek: "https://platform.deepseek.com/top_up",
     openrouter: "https://openrouter.ai/credits",
 }
 
 const DEFAULT_BUY_CREDITS_URL = {
-    USER: "https://app.dline.cc/dashboard/account?tab=credits&redirect=true",
-    ORG: "https://app.dline.cc/dashboard/organization?tab=credits&redirect=true",
+    USER: `${CLINE_PROVIDER_APP_URL}/dashboard/account?tab=credits&redirect=true`,
+    ORG: `${CLINE_PROVIDER_APP_URL}/dashboard/organization?tab=credits&redirect=true`,
 }
 
 /**
@@ -64,7 +65,7 @@ const CreditLimitError: React.FC<CreditLimitErrorProps> = ({
      * Only fetch callback URL for cline.bot links (they support callback redirect).
      * For third-party provider recharge pages, use the URL directly.
      */
-    const isClineUrl = dashboardUrl.includes("app.dline.cc")
+    const isClineUrl = dashboardUrl.startsWith(CLINE_PROVIDER_APP_URL)
 
     useEffect(() => {
         if (isClineUrl) {
