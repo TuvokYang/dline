@@ -118,7 +118,12 @@ describe("UsageDeliveryWorker", () => {
         })
     }
 
-    async function observeAttempt(id: string, admittedAt: number, durationMs: number): Promise<void> {
+    async function observeAttempt(
+        id: string,
+        admittedAt: number,
+        durationMs: number,
+        role: "task" | "subagent" | "compaction" = "task",
+    ): Promise<void> {
         await new UsageObservationSpool(layout, "host-observer").appendAttempt({
             id,
             revision: 1,
@@ -127,7 +132,7 @@ describe("UsageDeliveryWorker", () => {
                 attemptObservationId: id,
                 logicalRequestId: `logical-${id}`,
                 identity: {
-                    role: "task",
+                    role,
                     provider: "anthropic",
                     modelId: "catalog:claude-opus-4-1",
                     thinking: 2048,
@@ -177,6 +182,25 @@ describe("UsageDeliveryWorker", () => {
         expect(await sender.runCycle(7)).toMatchObject({ kind: "delivered", disposition: "accepted" })
         expect(transport.deliveries).toHaveLength(1)
         expect(transport.sentAttempt(0).schema_version).toBe(4)
+    })
+
+    it("preserves auxiliary roles in the final schema 4 delivery body", async () => {
+        const transport = new FakeTransport()
+        const sender = worker("window-a", new FakeTokens(), transport, ATTEMPT_VALIDATION)
+        await observeAttempt("attempt-subagent", start + 1_000, 30_000, "subagent")
+        await observeAttempt("attempt-compaction", start + 2_000, 31_000, "compaction")
+
+        expect(await sender.runCycle(7)).toEqual({ kind: "idle" })
+        now = start + MINUTE + SETTLE
+        expect(await sender.runCycle(7)).toMatchObject({ kind: "delivered", disposition: "accepted" })
+
+        expect(transport.deliveries).toHaveLength(1)
+        expect(
+            transport
+                .sentAttempt(0)
+                .buckets.flatMap((bucket) => bucket.facts.map((fact) => fact.role))
+                .sort(),
+        ).toEqual(["compaction", "subagent"])
     })
 
     it("uses the live grant for clean cut and stops sending after that grant expires", async () => {

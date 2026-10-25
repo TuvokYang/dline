@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { describe, expect, it } from "vitest"
 
@@ -23,6 +23,12 @@ const FORBIDDEN_OUTER_INJECTION_MARKERS = [
     "RemoteUsageCoordinator",
     "remoteUsageRuntime",
     "NestedUsageSettlement",
+] as const
+
+const RETIRED_SCHEMA3_USAGE_SENDERS = [
+    "src/core/task/telemetry/UsageSettlementRequestReporter.ts",
+    "src/services/telemetry/remote/usage/usageBatch.ts",
+    "src/services/telemetry/remote/usage/usageTally.ts",
 ] as const
 
 function source(file: string): string {
@@ -80,6 +86,14 @@ describe("WS-115 unified telemetry architecture gate", () => {
         }
 
         expect(handlers.length).toBeGreaterThan(0)
+    })
+
+    it("keeps the retired schema 3 sender authority absent", () => {
+        for (const file of RETIRED_SCHEMA3_USAGE_SENDERS) {
+            expect(existsSync(path.resolve(file)), `${file} must remain deleted`).toBe(false)
+        }
+        expect(source("src/services/telemetry/remote/usage/UsageDeliveryWorker.ts")).not.toContain("claim(this.options.ownerId)")
+        expect(source("src/services/telemetry/remote/usage/RemoteUsageCoordinator.ts")).not.toContain("record(settlement:")
     })
 
     it("installs durable Usage only at the process runtime and projects through TaskTurnTelemetry", () => {
