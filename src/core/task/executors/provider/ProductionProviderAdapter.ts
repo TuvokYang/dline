@@ -1,4 +1,4 @@
-import type { ProviderTurnPlan } from "../../kernel"
+import type { ProviderTurnPlan, ProviderTurnProseAuthorization } from "../../kernel"
 import type { TaskPayloadStore } from "../../stores"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
 import type {
@@ -52,6 +52,8 @@ export type ProductionProviderChunk =
           readonly ending?: ProviderFinalEnvelope["ending"]
           readonly mode: ProviderTurnPlan["mode"]
           readonly blocks: readonly ProviderBlockOutput[]
+          /** Trusted explicit-instruction authority exercised by parsed blocks in this turn. */
+          readonly proseAuthorization?: ProviderTurnProseAuthorization
           /** Chat rows of the calls the turn settled; see ProviderTextPresentationPort. */
           readonly toolRows?: readonly number[]
       }
@@ -128,7 +130,11 @@ export class ProductionProviderAdapter implements ProviderExecutionPort {
                     approval: block.approval,
                 })),
             )
-            const turnPlan: ProviderTurnPlan = { mode: chunk.mode, blocks }
+            const turnPlan: ProviderTurnPlan = {
+                mode: chunk.mode,
+                blocks,
+                ...(chunk.proseAuthorization === undefined ? {} : { proseAuthorization: chunk.proseAuthorization }),
+            }
             const finalPayload: ProviderFinalEnvelope = {
                 kind: "provider_final",
                 ...(chunk.text === undefined ? {} : { text: chunk.text }),

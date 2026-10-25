@@ -14,11 +14,14 @@ import type {
 import { projectInternalMessagesForProvider } from "@shared/messages/content"
 import { splitResumedHostedResults } from "@shared/messages/hosted-tool-deferral"
 import { Logger } from "@shared/services/Logger"
+import { DlineDefaultTool } from "@shared/tools"
 import { ClineError } from "@/services/error"
 import { isTurnEndingToolName, orderTurnEndingContentBlocks } from "../../../assistant-message-order"
 import { isRetryableProviderError, type ProviderIdentity, waitRetryDelayUnlessAborted } from "../../../auto-retry"
 import { getRetryDelay, MAX_AUTO_RETRY_ATTEMPTS } from "../../../auto-retry-schedule"
 import { ContextWindowReceivingTracker } from "../../../ContextWindowReceivingTracker"
+import { getExplicitInstructionPolicy } from "../../../explicit-instructions/policy"
+import type { ProviderTurnProseAuthorization } from "../../../kernel"
 import { type ApiRequestTiming, calculateApiRequestTiming } from "../../../performance/api-request-timing"
 import { ReasoningIndicator } from "../../../reasoning-indicator"
 import { StreamResponseHandler } from "../../../StreamResponseHandler"
@@ -83,6 +86,31 @@ interface PendingNativeTool {
     name: string
     arguments: unknown
     signature?: string
+}
+
+/**
+ * Authority for prose is earned by an explicit call that actually survived the
+ * final parse, never by model text or by an unrelated declaration on the turn.
+ */
+function proseAuthorizationOf(
+    request: PreparedProviderRequest,
+    tools: readonly ToolUse[],
+): ProviderTurnProseAuthorization | undefined {
+    const port = request.authority?.port
+    if (!port) return undefined
+    const grants = tools.flatMap((tool) => {
+        const authorization = port.getPendingToolAuthorization(tool.name as DlineDefaultTool)
+        if (!authorization || !getExplicitInstructionPolicy(authorization.type).allowPartialPresentation) return []
+        return [
+            {
+                instructionId: authorization.instructionId,
+                requestId: authorization.requestId,
+                attemptId: authorization.attemptId,
+                blockId: tool.dline_tid,
+            },
+        ]
+    })
+    return grants.length === 0 ? undefined : { kind: "explicit_instruction", grants }
 }
 
 /**
@@ -571,6 +599,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
         const blocks = await Promise.all(
             orderedTools.map((tool, index) => this.createBlock(request, tool, index, recorded(tool))),
         )
+        const proseAuthorization = proseAuthorizationOf(request, orderedTools)
         const ending = usage.ending()
         yield {
             kind: "final",
@@ -583,6 +612,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
             ...(ending === undefined ? {} : { ending }),
             mode: blocks.length > 1 ? request.mode : "serial",
             blocks,
+            ...(proseAuthorization === undefined ? {} : { proseAuthorization }),
             ...(presentedTools.length > 0 ? { toolRows: presentedTools.map((tool) => tool.ts) } : {}),
         }
     }

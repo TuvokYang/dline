@@ -208,6 +208,21 @@ describe("ProviderTextPresenter", () => {
         expect(committed).toEqual([expect.objectContaining({ text: "Complete answer", partial: false })])
     })
 
+    it("replaces invalid prose with a durable error row while preserving its streamed row identity", async () => {
+        const { presenter, committed, rows } = createPresenter()
+
+        presenter.showPartial({ transientId: "provider:turn-1", text: "ordinary prose" })
+        const streamedTs = [...rows.keys()][0]
+        await presenter.commit({
+            transientId: "provider:turn-1",
+            text: "ordinary prose",
+            proseDisposition: "plain_text_outside_tool",
+        })
+
+        expect(committed).toEqual([expect.objectContaining({ ts: streamedTs, type: "say", say: "error", partial: false })])
+        expect(committed[0].text).not.toBe("ordinary prose")
+    })
+
     it("withdraws the row when the turn produced no prose", async () => {
         // A tool-only turn has nothing to say; the blocks render themselves, and an
         // empty row would leave a blank message above them forever.

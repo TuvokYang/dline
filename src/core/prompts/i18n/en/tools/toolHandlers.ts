@@ -3,6 +3,8 @@
 const prompts: Record<string, string> = {
     toolDenied: "The user denied this operation.",
     toolError: "The tool execution failed with the following error:\n<error>\n@ERROR@\n</error>",
+    plainTextOutsideTool:
+        "[WARNING] The assistant returned plain text outside its tool calls. That text is not a valid user-facing response for this turn; Dline is continuing with the tool calls.",
     noToolsUsed: `[ERROR] You did not use a tool in your previous response! Please retry with a tool use.
 
 @TOOL_REMINDER@
