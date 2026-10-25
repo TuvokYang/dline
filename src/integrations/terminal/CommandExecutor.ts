@@ -301,7 +301,11 @@ export class CommandExecutor {
         } else {
             terminalInfo.terminal.show()
         }
-        const process = manager.runCommand(terminalInfo, executionCommand)
+        const process = manager.runCommand(
+            terminalInfo,
+            executionCommand,
+            completionMarkerToken ? { completionMarkerToken } : undefined,
+        )
         if (diagnosticsPath) {
             let diagnosticsLogged = false
             const logDiagnostics = () => {

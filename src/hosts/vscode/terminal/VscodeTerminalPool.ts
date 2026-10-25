@@ -62,6 +62,8 @@ type TerminalReuseRejectionReason =
     | "no_shell_integration"
     /** The process raised an error before it completed. */
     | "process_error"
+    /** The command ended without its authoritative completion marker or exit event. */
+    | "completion_unverified"
     /** The caller reported the terminal as unhealthy without a known reason. */
     | "unhealthy"
     /** The partition was draining, so nothing may return to standby. */
@@ -73,6 +75,7 @@ const KNOWN_REUSE_REJECTION_REASONS = new Set<TerminalReuseRejectionReason>([
     "terminal_disposed",
     "no_shell_integration",
     "process_error",
+    "completion_unverified",
 ])
 
 function classifyReuseRejection(
@@ -125,7 +128,9 @@ export interface VscodeTerminalPoolSnapshot {
 }
 
 interface TerminalProcessCompletionSink {
-    setCompletionDetails(details: TerminalCompletionDetails): void
+    acceptCompletionDetails(execution: unknown, details: TerminalCompletionDetails): boolean
+    observeShellExecution(execution: unknown): void
+    notifyTerminalClosed(): void
 }
 
 export interface VscodeTerminalPoolRuntime {
@@ -144,10 +149,10 @@ export interface VscodeTerminalPoolRuntime {
     isTerminalClosed(terminal: TerminalInfo): boolean
     onDidCloseTerminal(listener: (terminal: TerminalInfo["terminal"]) => void): { dispose(): void }
     onDidStartTerminalShellExecution?(
-        listener: (event: { execution?: { read?: () => unknown } }) => void,
+        listener: (event: { terminal: TerminalInfo["terminal"]; execution?: { read?: () => unknown } }) => void,
     ): { dispose(): void } | undefined
     onDidEndTerminalShellExecution?(
-        listener: (event: { terminal: TerminalInfo["terminal"]; exitCode: number | undefined }) => void,
+        listener: (event: { terminal: TerminalInfo["terminal"]; execution: unknown; exitCode: number | undefined }) => void,
     ): { dispose(): void } | undefined
     setShellIntegrationTimeout?(timeoutMs: number): void
 }
@@ -215,10 +220,14 @@ export class VscodeTerminalPool {
         this.hasExplicitAcquireWaitTimeout = options.acquireWaitTimeoutMs !== undefined
         this.acquireWaitTimeoutMs = options.acquireWaitTimeoutMs ?? 250
         this.disposables.push(runtime.onDidCloseTerminal((terminal) => this.handleTerminalClosed(terminal)))
-        const startDisposable = runtime.onDidStartTerminalShellExecution?.((event) => event.execution?.read?.())
+        const startDisposable = runtime.onDidStartTerminalShellExecution?.((event) => {
+            const process = this.processByTerminal.get(event.terminal)
+            if (process && event.execution) process.observeShellExecution(event.execution)
+            else event.execution?.read?.()
+        })
         if (startDisposable) this.disposables.push(startDisposable)
         const endDisposable = runtime.onDidEndTerminalShellExecution?.((event) => {
-            this.processByTerminal.get(event.terminal)?.setCompletionDetails({ exitCode: event.exitCode })
+            this.processByTerminal.get(event.terminal)?.acceptCompletionDetails(event.execution, { exitCode: event.exitCode })
         })
         if (endDisposable) this.disposables.push(endDisposable)
         this.cleanupTimer = setInterval(() => this.pruneIdlePartitions(), options.cleanupIntervalMs ?? 60_000)
@@ -238,6 +247,15 @@ export class VscodeTerminalPool {
 
     unregisterProcess(terminalInfo: TerminalInfo, process: TerminalProcessCompletionSink): void {
         if (this.processByTerminal.get(terminalInfo.terminal) === process) this.processByTerminal.delete(terminalInfo.terminal)
+    }
+
+    ownsTerminal(terminalInfo: TerminalInfo): boolean {
+        for (const partition of this.partitions.values()) {
+            for (const entry of partition.entries.values()) {
+                if (entry.terminalInfo === terminalInfo) return true
+            }
+        }
+        return [...this.leases.values()].some((entry) => entry.terminalInfo === terminalInfo)
     }
 
     getPartitionScopeKey(preparation: VscodeTerminalPoolPreparation): string {
@@ -513,6 +531,8 @@ export class VscodeTerminalPool {
     }
 
     private handleTerminalClosed(terminal: TerminalInfo["terminal"]): void {
+        this.processByTerminal.get(terminal)?.notifyTerminalClosed()
+        this.processByTerminal.delete(terminal)
         const activeEntry = [...this.partitions.values()]
             .flatMap((partition) => [...partition.entries.values()])
             .find((candidate) => candidate.terminalInfo.terminal === terminal)
@@ -520,7 +540,6 @@ export class VscodeTerminalPool {
             activeEntry ?? [...new Set(this.leases.values())].find((candidate) => candidate.terminalInfo.terminal === terminal)
         if (!entry) return
         const partition = entry.partition
-        this.processByTerminal.delete(entry.terminalInfo.terminal)
         this.disposeEntry(entry)
         if (!partition.draining) void this.ensureWarm(partition.preparation)
     }
@@ -580,6 +599,7 @@ export class VscodeTerminalPool {
         const ready = [...partition.entries.values()].filter(
             (entry) =>
                 entry.state === "ready" &&
+                !entry.terminalInfo.busy &&
                 (reusePolicy === "reusable" || entry.userCommandCount === 0) &&
                 !this.runtime.isTerminalClosed(entry.terminalInfo),
         )

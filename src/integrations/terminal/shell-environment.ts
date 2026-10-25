@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { realpathSync } from "node:fs"
 import { readFile, stat, unlink } from "node:fs/promises"
 import path from "node:path"
 import { load as parseYaml } from "js-yaml"
@@ -57,6 +58,7 @@ interface ShellEnvironmentConfigLoaderOptions {
     readonly workspaceRoots: readonly string[]
     readonly platform?: NodeJS.Platform
     readonly environment?: NodeJS.ProcessEnv
+    readonly canonicalizePath?: (value: string) => string
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -166,21 +168,42 @@ function resolveStartupScript(script: string, workspaceRoot: string, environment
     return path.isAbsolute(expanded) ? path.normalize(expanded) : path.resolve(workspaceRoot, expanded)
 }
 
+function canonicalizeExistingPath(value: string): string {
+    const absolute = path.resolve(value)
+    try {
+        return realpathSync.native(absolute)
+    } catch {
+        return absolute
+    }
+}
+
+interface WorkspaceRootMatch {
+    readonly original: string
+    readonly canonical: string
+}
+
 export class ShellEnvironmentConfigLoader {
-    private readonly workspaceRoots: string[]
+    private readonly workspaceRoots: WorkspaceRootMatch[]
     private readonly platform: NodeJS.Platform
     private readonly environment: NodeJS.ProcessEnv
+    private readonly canonicalizePath: (value: string) => string
     private readonly cache = new Map<string, ResolvedShellEnvironment>()
 
     constructor(options: ShellEnvironmentConfigLoaderOptions) {
-        this.workspaceRoots = [...options.workspaceRoots].map((root) => path.resolve(root)).sort((a, b) => b.length - a.length)
+        this.canonicalizePath = options.canonicalizePath ?? canonicalizeExistingPath
+        this.workspaceRoots = [...options.workspaceRoots]
+            .map((root) => {
+                const original = path.resolve(root)
+                return { original, canonical: this.canonicalizePath(original) }
+            })
+            .sort((a, b) => b.canonical.length - a.canonical.length)
         this.platform = options.platform ?? process.platform
         this.environment = options.environment ?? process.env
     }
 
     resolveWorkspaceRoot(workdirectory: string): string | undefined {
-        const absoluteWorkdirectory = path.resolve(workdirectory)
-        return this.workspaceRoots.find((root) => isPathWithin(root, absoluteWorkdirectory))
+        const canonicalWorkdirectory = this.canonicalizePath(workdirectory)
+        return this.workspaceRoots.find((root) => isPathWithin(root.canonical, canonicalWorkdirectory))?.original
     }
 
     async resolve(workdirectory: string, profile: string): Promise<ResolvedShellEnvironment | undefined> {

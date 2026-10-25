@@ -7,6 +7,7 @@ import {
     TerminalInfo as ITerminalInfo,
     ITerminalManager,
     TerminalProcessResultPromise as ITerminalProcessResultPromise,
+    TerminalCommandExecutionOptions,
     TerminalLaunchConfiguration,
     TerminalManagerConfiguration,
     TerminalManagerConfigurationResult,
@@ -115,12 +116,12 @@ declare module "vscode" {
     // https://github.com/microsoft/vscode/blob/f0417069c62e20f3667506f4b7e53ca0004b4e3e/src/vscode-dts/vscode.d.ts#L10794
     interface Window {
         onDidStartTerminalShellExecution?: (
-            listener: (e: any) => any,
+            listener: (e: { terminal: vscode.Terminal; execution?: { read?: () => unknown } }) => any,
             thisArgs?: any,
             disposables?: vscode.Disposable[],
         ) => vscode.Disposable
         onDidEndTerminalShellExecution?: (
-            listener: (e: { terminal: vscode.Terminal; exitCode: number | undefined }) => any,
+            listener: (e: { terminal: vscode.Terminal; execution: unknown; exitCode: number | undefined }) => any,
             thisArgs?: any,
             disposables?: vscode.Disposable[],
         ) => vscode.Disposable
@@ -130,6 +131,7 @@ declare module "vscode" {
 export class VscodeTerminalManager implements ITerminalManager {
     private terminalIds: Set<number> = new Set()
     private processes: Map<number, VscodeTerminalProcess> = new Map()
+    private processesByTerminal = new Map<vscode.Terminal, VscodeTerminalProcess>()
     private disposables: vscode.Disposable[] = []
     private shellIntegrationTimeout = 4000
     private terminalReuseEnabled = true
@@ -144,9 +146,10 @@ export class VscodeTerminalManager implements ITerminalManager {
         if (pool) return
         let disposable: vscode.Disposable | undefined
         try {
-            disposable = (vscode.window as vscode.Window).onDidStartTerminalShellExecution?.(async (e) => {
-                // Creating a read stream here results in a more consistent output. This is most obvious when running the `date` command.
-                e?.execution?.read()
+            disposable = (vscode.window as vscode.Window).onDidStartTerminalShellExecution?.((event) => {
+                const process = this.processesByTerminal.get(event.terminal)
+                if (process && event.execution) process.observeShellExecution(event.execution)
+                else event.execution?.read?.()
             })
         } catch (_error) {
             // Logger.error("Error setting up onDidEndTerminalShellExecution", error)
@@ -157,13 +160,22 @@ export class VscodeTerminalManager implements ITerminalManager {
 
         try {
             const completionDisposable = (vscode.window as vscode.Window).onDidEndTerminalShellExecution?.((event) => {
-                const terminalInfo = this.findTerminalInfoByTerminal(event.terminal)
-                if (!terminalInfo) return
-                this.processes.get(terminalInfo.id)?.setCompletionDetails({ exitCode: event.exitCode })
+                this.processesByTerminal
+                    .get(event.terminal)
+                    ?.acceptCompletionDetails(event.execution, { exitCode: event.exitCode })
             })
             if (completionDisposable) this.disposables.push(completionDisposable)
         } catch (error) {
             Logger.error("Error setting up onDidEndTerminalShellExecution", error)
+        }
+
+        try {
+            const closeDisposable = vscode.window.onDidCloseTerminal((terminal) => {
+                this.processesByTerminal.get(terminal)?.notifyTerminalClosed()
+            })
+            this.disposables.push(closeDisposable)
+        } catch (error) {
+            Logger.error("Error setting up onDidCloseTerminal", error)
         }
 
         // Add a listener for terminal state changes to detect CWD updates
@@ -208,7 +220,11 @@ export class VscodeTerminalManager implements ITerminalManager {
         return arePathsEqual(currentCwd, targetCwd)
     }
 
-    runCommand(terminalInfo: ITerminalInfo, command: string): ITerminalProcessResultPromise {
+    runCommand(
+        terminalInfo: ITerminalInfo,
+        command: string,
+        options: TerminalCommandExecutionOptions = {},
+    ): ITerminalProcessResultPromise {
         // Cast to VSCode-specific TerminalInfo for internal use
         // Using unknown as intermediate cast due to structural differences between ITerminal and vscode.Terminal
         const vscodeTerminalInfo = terminalInfo as unknown as TerminalInfo
@@ -227,13 +243,14 @@ export class VscodeTerminalManager implements ITerminalManager {
                     `[TerminalPerf] phase=process_start terminalId=${vscodeTerminalInfo.id} capability=${capability} waitMs=${Math.round(processStartedAt - requestedAt)}`,
                 )
             }
-            process.run(vscodeTerminalInfo.terminal, command)
+            process.run(vscodeTerminalInfo.terminal, command, options)
         }
 
         vscodeTerminalInfo.busy = true
         vscodeTerminalInfo.lastCommand = command
         const process = new VscodeTerminalProcess()
         this.processes.set(vscodeTerminalInfo.id, process)
+        this.processesByTerminal.set(vscodeTerminalInfo.terminal, process)
         this.pool?.registerProcess(vscodeTerminalInfo, process)
 
         process.once("completed", () => {
@@ -249,11 +266,20 @@ export class VscodeTerminalManager implements ITerminalManager {
                 )
             }
             vscodeTerminalInfo.busy = false
+            if (this.processesByTerminal.get(vscodeTerminalInfo.terminal) === process) {
+                this.processesByTerminal.delete(vscodeTerminalInfo.terminal)
+            }
             this.pool?.unregisterProcess(vscodeTerminalInfo, process)
+            const hasShellIntegration = vscodeTerminalInfo.terminal.shellIntegration?.executeCommand !== undefined
+            const completionVerified = process.isCompletionVerified()
             void this.releaseLease(
                 vscodeTerminalInfo.id,
-                vscodeTerminalInfo.terminal.shellIntegration?.executeCommand !== undefined && !process.wasTerminalDisposed(),
-                process.wasTerminalDisposed() ? "terminal_disposed" : undefined,
+                hasShellIntegration && !process.wasTerminalDisposed() && completionVerified,
+                process.wasTerminalDisposed()
+                    ? "terminal_disposed"
+                    : hasShellIntegration && !completionVerified
+                      ? "completion_unverified"
+                      : undefined,
             )
             this.disposeColdFallback(vscodeTerminalInfo)
         })
@@ -273,6 +299,9 @@ export class VscodeTerminalManager implements ITerminalManager {
             Logger.warn(
                 `[TerminalPerf] phase=capability_failure terminalId=${vscodeTerminalInfo.id} capability=no_shell_integration durationMs=${Math.round(performance.now() - requestedAt)}`,
             )
+            if (this.processesByTerminal.get(vscodeTerminalInfo.terminal) === process) {
+                this.processesByTerminal.delete(vscodeTerminalInfo.terminal)
+            }
             this.pool?.unregisterProcess(vscodeTerminalInfo, process)
             void this.releaseLease(vscodeTerminalInfo.id, false, "no_shell_integration")
             TerminalRegistry.removeTerminal(vscodeTerminalInfo.id)
@@ -286,6 +315,9 @@ export class VscodeTerminalManager implements ITerminalManager {
             })
             process.once("error", (error) => {
                 Logger.error(`Error in terminal ${vscodeTerminalInfo.id}:`, error)
+                if (this.processesByTerminal.get(vscodeTerminalInfo.terminal) === process) {
+                    this.processesByTerminal.delete(vscodeTerminalInfo.terminal)
+                }
                 this.pool?.unregisterProcess(vscodeTerminalInfo, process)
                 void this.releaseLease(vscodeTerminalInfo.id, false, "process_error")
                 reject(error)
@@ -369,7 +401,9 @@ export class VscodeTerminalManager implements ITerminalManager {
             }
         }
 
-        const terminals = forceColdCreate ? [] : TerminalRegistry.getAllTerminals()
+        const terminals = forceColdCreate
+            ? []
+            : TerminalRegistry.getAllTerminals().filter((terminal) => !this.pool?.ownsTerminal?.(terminal))
         const expectedShellPath = this.getConfiguredShellPath(this.defaultTerminalProfile)
         const expectedConfigurationId = launchConfiguration?.configurationId
 
@@ -510,6 +544,7 @@ export class VscodeTerminalManager implements ITerminalManager {
         // }
         this.terminalIds.clear()
         this.processes.clear()
+        this.processesByTerminal.clear()
         this.disposables.forEach((disposable) => disposable.dispose())
         this.disposables = []
     }
@@ -677,6 +712,7 @@ export class VscodeTerminalManager implements ITerminalManager {
                 this.terminalIds.delete(terminalInfo.id)
             }
             this.processes.delete(terminalInfo.id)
+            this.processesByTerminal.delete(terminalInfo.terminal)
 
             // Dispose the actual terminal
             terminalInfo.terminal.dispose()

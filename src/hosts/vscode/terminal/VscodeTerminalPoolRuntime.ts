@@ -107,13 +107,13 @@ export class DefaultVscodeTerminalPoolRuntime implements VscodeTerminalPoolRunti
     }
 
     onDidStartTerminalShellExecution(
-        listener: (event: { execution?: { read?: () => unknown } }) => void,
+        listener: (event: { terminal: TerminalInfo["terminal"]; execution?: { read?: () => unknown } }) => void,
     ): vscode.Disposable | undefined {
         return (vscode.window as vscode.Window).onDidStartTerminalShellExecution?.(listener)
     }
 
     onDidEndTerminalShellExecution(
-        listener: (event: { terminal: TerminalInfo["terminal"]; exitCode: number | undefined }) => void,
+        listener: (event: { terminal: TerminalInfo["terminal"]; execution: unknown; exitCode: number | undefined }) => void,
     ): vscode.Disposable | undefined {
         return (vscode.window as vscode.Window).onDidEndTerminalShellExecution?.(listener)
     }
