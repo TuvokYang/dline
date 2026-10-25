@@ -23,6 +23,11 @@ export interface TerminalCompletionDetails {
     signal?: NodeJS.Signals | null
 }
 
+export interface TerminalCommandExecutionOptions {
+    /** Token emitted by the wrapped command to identify its own completion marker. */
+    completionMarkerToken?: string
+}
+
 export type TerminalOutputStream = "stdout" | "stderr" | "combined"
 
 export interface TerminalOutputLine {
@@ -215,7 +220,11 @@ export interface ITerminalManager {
      * @param command The command to execute
      * @returns A promise-like object that emits events and resolves on completion
      */
-    runCommand(terminalInfo: TerminalInfo, command: string): TerminalProcessResultPromise
+    runCommand(
+        terminalInfo: TerminalInfo,
+        command: string,
+        options?: TerminalCommandExecutionOptions,
+    ): TerminalProcessResultPromise
 
     /**
      * Get or create a terminal for the specified working directory.

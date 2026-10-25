@@ -49,6 +49,25 @@ describe("VscodeTerminalManager Windows shell selection", () => {
         expect(drainAll).toHaveBeenCalledWith("profile_changed")
     })
 
+    it("does not reuse a pool-owned terminal through the registry without a lease", async () => {
+        const pooled = TerminalRegistry.createTerminal("C:\\workspace", "powershell")
+        Object.defineProperty(pooled.terminal, "shellIntegration", {
+            configurable: true,
+            value: { cwd: vscode.Uri.file("C:\\workspace"), executeCommand: vi.fn() },
+        })
+        const pool = {
+            configureShellIntegrationTimeout: vi.fn(),
+            ownsTerminal: vi.fn((terminal) => terminal === pooled),
+        } as unknown as VscodeTerminalPool
+        const manager = new VscodeTerminalManager(pool)
+
+        const acquired = await manager.getOrCreateTerminal("C:\\workspace")
+
+        expect(acquired).not.toBe(pooled)
+        expect(pool.ownsTerminal).toHaveBeenCalledWith(pooled)
+        manager.disposeAll()
+    })
+
     it("invalidates a pooled terminal whose shell integration lacks executeCommand", async () => {
         vi.useFakeTimers({ shouldAdvanceTime: true })
         const terminalInfo = TerminalRegistry.createTerminal("C:\\workspace", "powershell")
@@ -93,6 +112,55 @@ describe("VscodeTerminalManager Windows shell selection", () => {
             reason: "no_shell_integration",
         })
         vi.useRealTimers()
+    })
+
+    it("retires a pooled terminal when command completion is unverified", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true })
+        try {
+            const terminalInfo = TerminalRegistry.createTerminal("C:\\workspace", "powershell")
+            Object.defineProperty(terminalInfo.terminal, "shellIntegration", {
+                configurable: true,
+                value: {
+                    cwd: vscode.Uri.file("C:\\workspace"),
+                    executeCommand: vi.fn().mockReturnValue({
+                        read: async function* () {
+                            yield "visible output\n"
+                        },
+                    }),
+                },
+            })
+            const release = vi.fn(async () => undefined)
+            const pool = {
+                configureShellIntegrationTimeout: vi.fn(),
+                acquire: vi.fn(async () => ({
+                    leaseId: "lease-unverified",
+                    partitionKey: "partition-1",
+                    terminalInfo,
+                    reusePolicy: "reusable",
+                    acquiredAt: Date.now(),
+                })),
+                release,
+                registerProcess: vi.fn(),
+                unregisterProcess: vi.fn(),
+            } as unknown as VscodeTerminalPool
+            const manager = new VscodeTerminalManager(pool)
+            const acquired = await manager.getOrCreateTerminal("C:\\workspace", {
+                workspaceRoot: "C:\\workspace",
+                profileId: "powershell-legacy",
+                environmentFingerprint: "default",
+            })
+
+            const execution = manager.runCommand(acquired, "echo ready")
+            await vi.advanceTimersByTimeAsync(100)
+            await execution
+
+            expect(release).toHaveBeenCalledWith(expect.objectContaining({ leaseId: "lease-unverified" }), {
+                healthy: false,
+                reason: "completion_unverified",
+            })
+        } finally {
+            vi.useRealTimers()
+        }
     })
 
     it("waits for executable shell integration on a cold fallback", async () => {

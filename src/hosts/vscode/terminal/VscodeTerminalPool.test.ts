@@ -5,12 +5,16 @@ import { VscodeTerminalPool, type VscodeTerminalPoolPreparation, type VscodeTerm
 import type { TerminalInfo } from "./VscodeTerminalRegistry"
 
 type CloseListener = (terminal: TerminalInfo["terminal"]) => void
+type StartListener = (event: { terminal: TerminalInfo["terminal"]; execution: { read?: () => unknown } }) => void
+type EndListener = (event: { terminal: TerminalInfo["terminal"]; execution: unknown; exitCode: number | undefined }) => void
 
 class FakeTerminalPoolRuntime implements VscodeTerminalPoolRuntime {
     readonly created: TerminalInfo[] = []
     readonly disposed: number[] = []
     readonly preparedCwds: string[] = []
     private closeListeners = new Set<CloseListener>()
+    private startListeners = new Set<StartListener>()
+    private endListeners = new Set<EndListener>()
     private nextId = 1
     private readonly blockedPreparationResolvers = new Map<number, () => void>()
     readonly blockedPreparationIds = new Set<number>()
@@ -96,6 +100,24 @@ class FakeTerminalPoolRuntime implements VscodeTerminalPoolRuntime {
     onDidCloseTerminal(listener: CloseListener): { dispose(): void } {
         this.closeListeners.add(listener)
         return { dispose: () => this.closeListeners.delete(listener) }
+    }
+
+    onDidStartTerminalShellExecution(listener: StartListener): { dispose(): void } {
+        this.startListeners.add(listener)
+        return { dispose: () => this.startListeners.delete(listener) }
+    }
+
+    onDidEndTerminalShellExecution(listener: EndListener): { dispose(): void } {
+        this.endListeners.add(listener)
+        return { dispose: () => this.endListeners.delete(listener) }
+    }
+
+    emitTerminalStart(terminal: TerminalInfo["terminal"], execution: { read?: () => unknown }): void {
+        for (const listener of this.startListeners) listener({ terminal, execution })
+    }
+
+    emitTerminalEnd(terminal: TerminalInfo["terminal"], execution: unknown, exitCode: number | undefined): void {
+        for (const listener of this.endListeners) listener({ terminal, execution, exitCode })
     }
 }
 
@@ -326,6 +348,69 @@ describe("VscodeTerminalPool", () => {
         assert.equal(runtime.created.length, 1)
         assert.deepEqual(runtime.disposed, [])
         assert.equal(pool.getPartitionSnapshot(target).ready, 1)
+    })
+
+    it("does not lease a ready entry whose terminal is already busy", async () => {
+        const runtime = new FakeTerminalPoolRuntime()
+        const pool = new VscodeTerminalPool(runtime, { targetStandby: 1, acquireWaitTimeoutMs: 0, maxGlobalTerminals: 1 })
+        pools.push(pool)
+        const target = preparation()
+        await pool.ensureWarm(target)
+        runtime.created[0].busy = true
+
+        await assert.rejects(pool.acquire(target, target.cwd, "reusable"), /No ready terminal/)
+    })
+
+    it("reports whether a registry terminal is owned by the pool", async () => {
+        const runtime = new FakeTerminalPoolRuntime()
+        const pool = new VscodeTerminalPool(runtime)
+        pools.push(pool)
+        const target = preparation()
+        await pool.ensureWarm(target)
+
+        assert.equal(pool.ownsTerminal(runtime.created[0]), true)
+        assert.equal(pool.ownsTerminal({ ...runtime.created[0], id: 999 }), false)
+    })
+
+    it("forwards shell completion identity and terminal closure to the registered process", async () => {
+        const runtime = new FakeTerminalPoolRuntime()
+        const pool = new VscodeTerminalPool(runtime)
+        pools.push(pool)
+        const target = preparation()
+        await pool.ensureWarm(target)
+        const terminal = runtime.created[0]
+        const execution = {}
+        const processSink = {
+            acceptCompletionDetails: vi.fn(() => true),
+            observeShellExecution: vi.fn(),
+            notifyTerminalClosed: vi.fn(),
+        }
+        pool.registerProcess(terminal, processSink)
+
+        runtime.emitTerminalStart(terminal.terminal, execution)
+        runtime.emitTerminalEnd(terminal.terminal, execution, 7)
+        terminal.terminal.dispose()
+
+        assert.deepEqual(processSink.observeShellExecution.mock.calls, [[execution]])
+        assert.deepEqual(processSink.acceptCompletionDetails.mock.calls, [[execution, { exitCode: 7 }]])
+        assert.equal(processSink.notifyTerminalClosed.mock.calls.length, 1)
+    })
+
+    it("notifies a registered process when a non-pooled fallback terminal closes", () => {
+        const runtime = new FakeTerminalPoolRuntime()
+        const pool = new VscodeTerminalPool(runtime)
+        pools.push(pool)
+        const terminal = runtime.createTerminal("C:\\external", "powershell", undefined)
+        const processSink = {
+            acceptCompletionDetails: vi.fn(() => true),
+            observeShellExecution: vi.fn(),
+            notifyTerminalClosed: vi.fn(),
+        }
+        pool.registerProcess(terminal, processSink)
+
+        terminal.terminal.dispose()
+
+        assert.equal(processSink.notifyTerminalClosed.mock.calls.length, 1)
     })
 
     it("returns a healthy reusable lease to the ready pool", async () => {

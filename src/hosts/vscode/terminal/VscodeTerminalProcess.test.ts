@@ -251,7 +251,7 @@ describe("TerminalProcess (Integration Tests)", () => {
 
         expect(getLatestTerminalOutput).toHaveBeenCalledTimes(1)
         expect(lines).toEqual([
-            "The command's output could not be captured due to some technical issue, however it has been executed successfully. Here's the current terminal's content to help you get the command's output:",
+            "The command's output could not be captured through shell integration. Here's the current terminal content to help recover the output:",
             "",
             "prompt> command",
             "first",
@@ -297,10 +297,11 @@ describe("TerminalProcess (Integration Tests)", () => {
         it("should wait briefly for terminal-end completion details", async () => {
             const terminal = TerminalRegistry.createTerminal().terminal
             createdTerminals.push(terminal)
+            const shellExecution = {
+                read: () => createMockStream(["echo test", "test output"]),
+            }
             vi.spyOn(terminal, "shellIntegration", "get").mockReturnValue({
-                executeCommand: vi.fn().mockReturnValue({
-                    read: () => createMockStream(["echo test", "test output"]),
-                }),
+                executeCommand: vi.fn().mockReturnValue(shellExecution),
             })
 
             let completedDetails: unknown
@@ -309,11 +310,240 @@ describe("TerminalProcess (Integration Tests)", () => {
             })
 
             const runPromise = process.run(terminal, "echo test")
-            setTimeout(() => process.setCompletionDetails({ exitCode: 7 }), 25)
+            setTimeout(() => process.acceptCompletionDetails(shellExecution, { exitCode: 7 }), 25)
             await vi.advanceTimersByTimeAsync(25)
             await runPromise
 
             expect(completedDetails).toEqual({ exitCode: 7, signal: null })
+        })
+
+        it("should ignore a leading Ctrl+C artifact and wait for the current command marker", async () => {
+            const terminal = TerminalRegistry.createTerminal().terminal
+            createdTerminals.push(terminal)
+            const token = "current-command-token"
+            const marker = `__DLINE_INTERNAL_COMMAND_EXIT__${token}:0`
+            vi.spyOn(terminal, "shellIntegration", "get").mockReturnValue({
+                executeCommand: vi.fn().mockReturnValue({
+                    read: () => createMockStream(["user@host:~/repo$ ^C", "visible output", marker]),
+                }),
+            })
+            const lines: string[] = []
+            process.on("line", (line) => lines.push(line))
+
+            await process.run(terminal, "echo test", { completionMarkerToken: token })
+
+            expect(lines).toContain("visible output")
+            expect(lines.join("\n")).not.toContain("^C")
+            expect(lines.join("\n")).not.toContain("__DLINE_INTERNAL_COMMAND_EXIT__")
+            expect(process.getCompletionDetails()).toEqual({ exitCode: 0, signal: null })
+        })
+
+        it("should wait for the current marker in a terminal snapshot after the shell stream ends empty", async () => {
+            const terminal = TerminalRegistry.createTerminal().terminal
+            createdTerminals.push(terminal)
+            const token = "snapshot-command-token"
+            const marker = `__DLINE_INTERNAL_COMMAND_EXIT__${token}:0`
+            vi.spyOn(terminal, "shellIntegration", "get").mockReturnValue({
+                executeCommand: vi.fn().mockReturnValue({
+                    read: () => createMockStream([]),
+                }),
+            })
+            getLatestTerminalOutput
+                .mockResolvedValueOnce("runner$ ^C")
+                .mockResolvedValue(
+                    [`runner$ command containing __DLINE_INTERNAL_COMMAND_EXIT__${token}:%s`, "snapshot output", marker].join(
+                        "\n",
+                    ),
+                )
+            const lines: string[] = []
+            process.on("line", (line) => lines.push(line))
+
+            const runPromise = process.run(terminal, "echo test", { completionMarkerToken: token })
+            await vi.advanceTimersByTimeAsync(300)
+            await runPromise
+
+            expect(getLatestTerminalOutput).toHaveBeenCalledTimes(2)
+            expect(lines).toContain("snapshot output")
+            expect(lines.join("\n")).not.toContain("__DLINE_INTERNAL_COMMAND_EXIT__")
+            expect(process.getCompletionDetails()).toEqual({ exitCode: 0, signal: null })
+        })
+
+        it("should complete an unverified marker wait after the bounded snapshot fallback expires", async () => {
+            const terminal = TerminalRegistry.createTerminal().terminal
+            createdTerminals.push(terminal)
+            vi.spyOn(terminal, "shellIntegration", "get").mockReturnValue({
+                executeCommand: vi.fn().mockReturnValue({ read: () => createMockStream([]) }),
+            })
+            getLatestTerminalOutput.mockResolvedValue("")
+            let settled = false
+
+            const runPromise = process.run(terminal, "echo test", { completionMarkerToken: "missing-marker-token" }).then(() => {
+                settled = true
+            })
+            await vi.advanceTimersByTimeAsync(6_000)
+            const settledBeforeCleanup = settled
+            if (!settled) process.notifyTerminalClosed()
+            await runPromise
+
+            expect(settledBeforeCleanup).toBe(true)
+            expect(process.getCompletionDetails()).toEqual({ exitCode: undefined, signal: null })
+            expect(process.isCompletionVerified()).toBe(false)
+            expect(getLatestTerminalOutput.mock.calls.length).toBeLessThan(20)
+        })
+
+        it("should complete a marker wait when its terminal closes", async () => {
+            const terminal = TerminalRegistry.createTerminal().terminal
+            createdTerminals.push(terminal)
+            let resolvePendingRead: ((result: IteratorResult<string>) => void) | undefined
+            const streamIterator = {
+                next: vi.fn(
+                    () =>
+                        new Promise<IteratorResult<string>>((resolve) => {
+                            resolvePendingRead = resolve
+                        }),
+                ),
+                return: vi.fn(async () => {
+                    resolvePendingRead?.({ done: true, value: undefined })
+                    return { done: true as const, value: undefined }
+                }),
+            }
+            vi.spyOn(terminal, "shellIntegration", "get").mockReturnValue({
+                executeCommand: vi.fn().mockReturnValue({
+                    read: () => ({ [Symbol.asyncIterator]: () => streamIterator }),
+                }),
+            })
+
+            const runPromise = process.run(terminal, "echo test", { completionMarkerToken: "closing-command-token" })
+            await vi.waitFor(() => expect(streamIterator.next).toHaveBeenCalledTimes(1))
+            process.notifyTerminalClosed()
+            await runPromise
+
+            expect(streamIterator.return).toHaveBeenCalledTimes(1)
+            expect(getLatestTerminalOutput).not.toHaveBeenCalled()
+            expect(process.wasTerminalDisposed()).toBe(true)
+        })
+
+        it("should ignore completion details from an older shell execution", async () => {
+            const terminal = TerminalRegistry.createTerminal().terminal
+            createdTerminals.push(terminal)
+            let resolvePendingRead: ((result: IteratorResult<string>) => void) | undefined
+            const currentExecution = {
+                read: () => ({
+                    [Symbol.asyncIterator]: () => ({
+                        next: vi.fn(
+                            () =>
+                                new Promise<IteratorResult<string>>((resolve) => {
+                                    resolvePendingRead = resolve
+                                }),
+                        ),
+                        return: vi.fn(async () => {
+                            resolvePendingRead?.({ done: true, value: undefined })
+                            return { done: true as const, value: undefined }
+                        }),
+                    }),
+                }),
+            }
+            vi.spyOn(terminal, "shellIntegration", "get").mockReturnValue({
+                executeCommand: vi.fn().mockReturnValue(currentExecution),
+            })
+            const oldExecution = { read: createMockStream }
+
+            const runPromise = process.run(terminal, "echo test")
+            await vi.waitFor(() => expect(resolvePendingRead).toBeTypeOf("function"))
+
+            expect(process.acceptCompletionDetails(oldExecution, { exitCode: 9 })).toBe(false)
+            expect(process.acceptCompletionDetails(currentExecution, { exitCode: 0 })).toBe(true)
+            await runPromise
+
+            expect(process.getCompletionDetails()).toEqual({ exitCode: 0, signal: null })
+        })
+
+        it("should observe a later shell execution that carries this command's marker", async () => {
+            const terminal = TerminalRegistry.createTerminal().terminal
+            createdTerminals.push(terminal)
+            const token = "split-execution-token"
+            const marker = `__DLINE_INTERNAL_COMMAND_EXIT__${token}:0`
+            let resolvePrimaryRead: ((result: IteratorResult<string>) => void) | undefined
+            const primaryExecution = {
+                read: () => ({
+                    [Symbol.asyncIterator]: () => ({
+                        next: vi.fn(
+                            () =>
+                                new Promise<IteratorResult<string>>((resolve) => {
+                                    resolvePrimaryRead = resolve
+                                }),
+                        ),
+                        return: vi.fn(async () => {
+                            resolvePrimaryRead?.({ done: true, value: undefined })
+                            return { done: true as const, value: undefined }
+                        }),
+                    }),
+                }),
+            }
+            const markerExecution = {
+                read: () => createMockStream(["visible split output", marker]),
+            }
+            vi.spyOn(terminal, "shellIntegration", "get").mockReturnValue({
+                executeCommand: vi.fn().mockReturnValue(primaryExecution),
+            })
+            const lines: string[] = []
+            process.on("line", (line) => lines.push(line))
+
+            const runPromise = process.run(terminal, "echo test", { completionMarkerToken: token })
+            await vi.waitFor(() => expect(resolvePrimaryRead).toBeTypeOf("function"))
+            process.observeShellExecution(markerExecution)
+            await runPromise
+
+            expect(lines).toContain("visible split output")
+            expect(lines.join("\n")).not.toContain("__DLINE_INTERNAL_COMMAND_EXIT__")
+            expect(process.getCompletionDetails()).toEqual({ exitCode: 0, signal: null })
+        })
+
+        it("should not time out while a supplemental execution is still running", async () => {
+            const terminal = TerminalRegistry.createTerminal().terminal
+            createdTerminals.push(terminal)
+            const token = "long-split-execution-token"
+            const marker = `__DLINE_INTERNAL_COMMAND_EXIT__${token}:0`
+            const primaryExecution = { read: () => createMockStream([]) }
+            let resolveSupplementalRead: ((result: IteratorResult<string>) => void) | undefined
+            let supplementalReadCount = 0
+            const supplementalIterator = {
+                next: vi.fn(() => {
+                    supplementalReadCount++
+                    if (supplementalReadCount === 1) {
+                        return Promise.resolve({ done: false as const, value: "long command output\n" })
+                    }
+                    return new Promise<IteratorResult<string>>((resolve) => {
+                        resolveSupplementalRead = resolve
+                    })
+                }),
+                return: vi.fn(async () => {
+                    resolveSupplementalRead?.({ done: true, value: undefined })
+                    return { done: true as const, value: undefined }
+                }),
+            }
+            const supplementalExecution = {
+                read: () => ({ [Symbol.asyncIterator]: () => supplementalIterator }),
+            }
+            vi.spyOn(terminal, "shellIntegration", "get").mockReturnValue({
+                executeCommand: vi.fn().mockReturnValue(primaryExecution),
+            })
+            getLatestTerminalOutput.mockResolvedValue("")
+            let settled = false
+
+            const runPromise = process.run(terminal, "echo test", { completionMarkerToken: token }).then(() => {
+                settled = true
+            })
+            process.observeShellExecution(supplementalExecution)
+            await vi.waitFor(() => expect(supplementalIterator.next).toHaveBeenCalledTimes(2))
+            await vi.advanceTimersByTimeAsync(6_000)
+            const settledBeforeMarker = settled
+            resolveSupplementalRead?.({ done: false, value: `${marker}\n` })
+            await runPromise
+
+            expect(settledBeforeMarker).toBe(false)
+            expect(process.isCompletionVerified()).toBe(true)
+            expect(process.getCompletionDetails()).toEqual({ exitCode: 0, signal: null })
         })
 
         it("should complete on an internal marker without waiting for shell stream closure", async () => {
@@ -380,6 +610,49 @@ describe("TerminalProcess (Integration Tests)", () => {
             expect(lines.join("\n")).not.toContain("printf")
         })
 
+        it("should keep reading for an internal marker after terminal-end details omit the exit code", async () => {
+            const terminal = TerminalRegistry.createTerminal().terminal
+            createdTerminals.push(terminal)
+            const marker = "__DLINE_INTERNAL_COMMAND_EXIT__linux-token:0"
+            let resolvePendingRead: ((result: IteratorResult<string>) => void) | undefined
+            let readCount = 0
+            const streamIterator = {
+                next: vi.fn(() => {
+                    readCount++
+                    if (readCount === 1) return Promise.resolve({ done: false as const, value: "visible output\n" })
+                    return new Promise<IteratorResult<string>>((resolve) => {
+                        resolvePendingRead = resolve
+                    })
+                }),
+                return: vi.fn(async () => {
+                    resolvePendingRead?.({ done: true, value: undefined })
+                    return { done: true as const, value: undefined }
+                }),
+            }
+            const shellExecution = {
+                read: () => ({
+                    [Symbol.asyncIterator]: () => streamIterator,
+                }),
+            }
+            vi.spyOn(terminal, "shellIntegration", "get").mockReturnValue({
+                executeCommand: vi.fn().mockReturnValue(shellExecution),
+            })
+            let completedDetails: unknown
+            process.once("completed", (details) => {
+                completedDetails = details
+            })
+
+            const runPromise = process.run(terminal, "echo test")
+            await vi.waitFor(() => expect(streamIterator.next).toHaveBeenCalledTimes(2))
+            expect(process.acceptCompletionDetails(shellExecution, { exitCode: undefined })).toBe(false)
+            await Promise.resolve()
+            await Promise.resolve()
+            resolvePendingRead?.({ done: false, value: `${marker}\n` })
+            await expect(runPromise).resolves.toBeUndefined()
+
+            expect(completedDetails).toEqual({ exitCode: 0, signal: null })
+        })
+
         it("should complete when terminal-end details arrive before the shell stream closes", async () => {
             const terminal = TerminalRegistry.createTerminal().terminal
             createdTerminals.push(terminal)
@@ -398,12 +671,13 @@ describe("TerminalProcess (Integration Tests)", () => {
                     return { done: true as const, value: undefined }
                 }),
             }
-            vi.spyOn(terminal, "shellIntegration", "get").mockReturnValue({
-                executeCommand: vi.fn().mockReturnValue({
-                    read: () => ({
-                        [Symbol.asyncIterator]: () => streamIterator,
-                    }),
+            const shellExecution = {
+                read: () => ({
+                    [Symbol.asyncIterator]: () => streamIterator,
                 }),
+            }
+            vi.spyOn(terminal, "shellIntegration", "get").mockReturnValue({
+                executeCommand: vi.fn().mockReturnValue(shellExecution),
             })
             const lines: string[] = []
             let completedDetails: unknown
@@ -414,7 +688,7 @@ describe("TerminalProcess (Integration Tests)", () => {
 
             const runPromise = process.run(terminal, "echo test")
             await vi.waitFor(() => expect(streamIterator.next).toHaveBeenCalledTimes(2))
-            process.setCompletionDetails({ exitCode: 0 })
+            expect(process.acceptCompletionDetails(shellExecution, { exitCode: 0 })).toBe(true)
             await expect(runPromise).resolves.toBeUndefined()
 
             expect(streamIterator.return).toHaveBeenCalledTimes(1)

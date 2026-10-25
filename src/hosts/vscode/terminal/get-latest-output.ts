@@ -1,13 +1,34 @@
 import { readTextFromClipboard, writeTextToClipboard } from "@utils/env"
 import * as vscode from "vscode"
 
+export interface LatestTerminalOutputOptions {
+    /** Keep the final terminal line so callers can inspect a completion marker. */
+    preserveLastLine?: boolean
+    /** Refuse to capture another terminal after focus changes. */
+    terminal?: vscode.Terminal
+}
+
+let terminalCaptureTail: Promise<void> = Promise.resolve()
+
 /**
  * Gets the contents of the active terminal
  * @returns The terminal contents as a string
  */
-export async function getLatestTerminalOutput(): Promise<string> {
+export function getLatestTerminalOutput(options: LatestTerminalOutputOptions = {}): Promise<string> {
+    const capture = terminalCaptureTail.then(() => captureLatestTerminalOutput(options))
+    terminalCaptureTail = capture.then(
+        () => undefined,
+        () => undefined,
+    )
+    return capture
+}
+
+async function captureLatestTerminalOutput(options: LatestTerminalOutputOptions): Promise<string> {
+    if (options.terminal && vscode.window.activeTerminal !== options.terminal) return ""
+
     // Store original clipboard content to restore later
     const originalClipboard = await readTextFromClipboard()
+    let capturedClipboard: string | undefined
 
     try {
         // Select terminal content
@@ -20,7 +41,8 @@ export async function getLatestTerminalOutput(): Promise<string> {
         await vscode.commands.executeCommand("workbench.action.terminal.clearSelection")
 
         // Get terminal contents from clipboard
-        let terminalContents = (await readTextFromClipboard()).trim()
+        capturedClipboard = await readTextFromClipboard()
+        let terminalContents = capturedClipboard.trim()
 
         // Check if there's actually a terminal open
         if (terminalContents === originalClipboard) {
@@ -35,12 +57,17 @@ export async function getLatestTerminalOutput(): Promise<string> {
             while (i >= 0 && !lines[i].trim().startsWith(lastLine)) {
                 i--
             }
-            terminalContents = lines.slice(Math.max(i, 0)).join("\n")
+            const currentCommandLines = lines.slice(Math.max(i, 0))
+            terminalContents = options.preserveLastLine
+                ? [...currentCommandLines, lastLine].join("\n")
+                : currentCommandLines.join("\n")
         }
 
         return terminalContents
     } finally {
-        // Restore original clipboard content
-        await writeTextToClipboard(originalClipboard)
+        // Do not overwrite content the user copied while capture was in flight.
+        if (capturedClipboard !== undefined && (await readTextFromClipboard()) === capturedClipboard) {
+            await writeTextToClipboard(originalClipboard)
+        }
     }
 }

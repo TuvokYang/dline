@@ -31,6 +31,22 @@ afterEach(async () => {
 })
 
 describe("ShellEnvironmentConfigLoader", () => {
+    it("matches workspace aliases through their canonical path", () => {
+        const aliasRoot = path.resolve("aliased-workspace")
+        const canonicalRoot = path.resolve("canonical-workspace")
+        const loader = new ShellEnvironmentConfigLoader({
+            workspaceRoots: [aliasRoot],
+            canonicalizePath: (value) => {
+                const absolute = path.resolve(value)
+                return absolute === aliasRoot || absolute.startsWith(`${aliasRoot}${path.sep}`)
+                    ? path.join(canonicalRoot, path.relative(aliasRoot, absolute))
+                    : absolute
+            },
+        })
+
+        assert.equal(loader.resolveWorkspaceRoot(path.join(canonicalRoot, "nested")), aliasRoot)
+    })
+
     it("loads the owning workspace and resolves profile startup, pre, and post settings", async () => {
         const workspace = await createWorkspace(`
 version: 1
