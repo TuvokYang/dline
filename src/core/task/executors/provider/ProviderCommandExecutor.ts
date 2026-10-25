@@ -25,6 +25,9 @@ export interface ProviderReplyPresentationRows {
     readonly text: number
 }
 
+/** How the final prose row must settle after the complete turn is classified. */
+export type ProviderProseDisposition = "content" | "plain_text_outside_tool"
+
 export type ProviderExecutionChunk =
     | {
           readonly kind: "partial"
@@ -106,6 +109,7 @@ export interface ProviderTextPresentationPort {
         readonly text: string
         readonly reasoning?: string
         readonly toolRows?: readonly number[]
+        readonly proseDisposition?: ProviderProseDisposition
     }): Promise<void>
 }
 
@@ -176,6 +180,24 @@ function sealAbandonedAttempt(usage: UsageAccumulator): void {
 function consumedUsage(usage: UsageAccumulator): Readonly<Record<string, number>> | undefined {
     if (!usage.abandoned) return usage.value
     return usage.value ? sumAttemptUsage(usage.abandoned, usage.value) : usage.abandoned
+}
+
+/**
+ * Classify prose only from the settled plan and trusted authorization facts.
+ *
+ * Parsed explicit-instruction XML names a real block and the provider service
+ * binds its grant to that block. A stale or malformed grant therefore cannot
+ * exempt ordinary prose, and no model-controlled string is inspected here.
+ */
+function proseDispositionOf(chunk: Extract<ProviderExecutionChunk, { kind: "final" }>): ProviderProseDisposition | undefined {
+    const text = chunk.text ?? ""
+    if (!text.trim() || chunk.turnPlan.blocks.length === 0) return undefined
+    const blockIds = new Set(chunk.turnPlan.blocks.map((block) => block.blockId))
+    const authorized =
+        chunk.turnPlan.proseAuthorization?.grants.some(
+            (grant) => grant.requestId === chunk.turnId && blockIds.has(grant.blockId),
+        ) === true
+    return authorized ? undefined : "plain_text_outside_tool"
 }
 
 export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant {
@@ -514,11 +536,13 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
             // Settled only after the journal accepted the turn: a row shown as final
             // before its durable entry exists would survive a crash the turn did not.
             if (finalChunk.transientId) {
+                const proseDisposition = proseDispositionOf(finalChunk)
                 await this.presentation?.commit({
                     transientId: finalChunk.transientId,
                     text: finalChunk.text ?? "",
                     ...(finalChunk.reasoning === undefined ? {} : { reasoning: finalChunk.reasoning }),
                     ...(finalChunk.toolRows === undefined ? {} : { toolRows: finalChunk.toolRows }),
+                    ...(proseDisposition === undefined ? {} : { proseDisposition }),
                 })
             }
             return { chunk: finalChunk, journalWatermark: appended.watermark }

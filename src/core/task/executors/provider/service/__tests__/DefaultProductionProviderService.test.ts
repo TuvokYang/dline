@@ -1,7 +1,9 @@
 import type { ApiHandler } from "@core/api"
 import type { ApiStreamChunk } from "@core/api/transform/stream"
 import type { ClineStorageMessage } from "@shared/messages/content"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
+import { TaskTurnAuthority } from "../../../../explicit-instructions/TurnAuthority"
 import type { ApiRequestTiming } from "../../../../performance/api-request-timing"
 import { ProfileNotValidError } from "../../../../profile-admission"
 import type { ProviderDraftEnvelope } from "../../../../stores/payload/TaskPayloadEnvelopes"
@@ -182,6 +184,83 @@ describe("DefaultProductionProviderService", () => {
                 }),
             }),
         ])
+    })
+
+    it("binds prose authority to the explicit-instruction call that the final parse materialized", async () => {
+        const turnAuthority = new TaskTurnAuthority()
+        const authority = turnAuthority.grant("turn-1", [
+            {
+                type: "summarize_task",
+                source: "manual_compact_command",
+                targetTool: DlineDefaultTool.SUMMARIZE_TASK,
+            },
+        ])
+        if (!authority) throw new Error("expected explicit turn authority")
+        const request = {
+            api: streamingApi([text(`Authorized preface. ${MARKUP}`)]),
+            systemPrompt: "",
+            nativeTools: false,
+            mode: "serial",
+            profile: "standard",
+            messages: [],
+            turnId: "turn-1",
+            authority,
+            planTool: () => ({ attempt: "attempt-1", lanes: [], turnEnding: false, approval: { kind: "none" } }),
+        } as unknown as PreparedProviderRequest
+        const chunks: ProductionProviderChunk[] = []
+        for await (const chunk of new DefaultProductionProviderService({ requests: { prepare: async () => request } }).start({
+            draftRef: "draft-1",
+            draft: {} as ProviderDraftEnvelope,
+            signal: new AbortController().signal,
+        }))
+            chunks.push(chunk)
+
+        const final = chunks.find((chunk) => chunk.kind === "final")
+        if (final?.kind !== "final") throw new Error("missing final chunk")
+        expect(final.text).toBe("Authorized preface.")
+        expect(final.proseAuthorization).toEqual({
+            kind: "explicit_instruction",
+            grants: [
+                expect.objectContaining({
+                    requestId: "turn-1",
+                    attemptId: authority.port.identity.attemptId,
+                    blockId: final.blocks[0].blockId,
+                }),
+            ],
+        })
+    })
+
+    it("does not let an unrelated explicit declaration authorize prose beside an ordinary tool", async () => {
+        const turnAuthority = new TaskTurnAuthority()
+        const authority = turnAuthority.grant("turn-1", [
+            {
+                type: "summarize_task",
+                source: "manual_compact_command",
+                targetTool: DlineDefaultTool.SUMMARIZE_TASK,
+            },
+        ])
+        if (!authority) throw new Error("expected explicit turn authority")
+        const request = {
+            api: streamingApi([text("Ordinary preface. <read_file><path>a.ts</path></read_file>")]),
+            systemPrompt: "",
+            nativeTools: false,
+            mode: "serial",
+            profile: "standard",
+            messages: [],
+            turnId: "turn-1",
+            authority,
+            planTool: () => ({ attempt: "attempt-1", lanes: [], turnEnding: false, approval: { kind: "none" } }),
+        } as unknown as PreparedProviderRequest
+        const chunks: ProductionProviderChunk[] = []
+        for await (const chunk of new DefaultProductionProviderService({ requests: { prepare: async () => request } }).start({
+            draftRef: "draft-1",
+            draft: {} as ProviderDraftEnvelope,
+            signal: new AbortController().signal,
+        }))
+            chunks.push(chunk)
+
+        const final = chunks.find((chunk) => chunk.kind === "final")
+        expect(final?.kind === "final" ? final.proseAuthorization : undefined).toBeUndefined()
     })
 
     it("keeps plain prose of a native-tool reply intact", async () => {

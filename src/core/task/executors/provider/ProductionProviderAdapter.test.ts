@@ -49,6 +49,17 @@ describe("ProductionProviderAdapter", () => {
                         text: "hello",
                         modelInfo: { modelId: "source-model", providerId: "anthropic", mode: "act" as const },
                         mode: "serial" as const,
+                        proseAuthorization: {
+                            kind: "explicit_instruction" as const,
+                            grants: [
+                                {
+                                    instructionId: "instruction-1",
+                                    requestId: "turn-1",
+                                    attemptId: "provider-attempt-1",
+                                    blockId: "block-1",
+                                },
+                            ],
+                        },
                         blocks: [
                             {
                                 blockId: "block-1",
@@ -85,6 +96,20 @@ describe("ProductionProviderAdapter", () => {
         const storedFinal = decodeTaskPayload<ProviderFinalEnvelope>(await payloads.read(final.payloadRef))
         // The producer is durable with the reply, so a restart still knows the turn's model.
         expect(storedFinal.modelInfo).toEqual({ modelId: "source-model", providerId: "anthropic", mode: "act" })
+        expect(storedFinal.turnPlan.proseAuthorization).toEqual({
+            kind: "explicit_instruction",
+            grants: [
+                {
+                    instructionId: "instruction-1",
+                    requestId: "turn-1",
+                    attemptId: "provider-attempt-1",
+                    blockId: "block-1",
+                },
+            ],
+        })
+        await expect(adapter.recoverFinal(final.payloadRef)).resolves.toMatchObject({
+            turnPlan: { proseAuthorization: storedFinal.turnPlan.proseAuthorization },
+        })
         const invocationRef = storedFinal.turnPlan.blocks[0].invocationRef
         expect(decodeTaskPayload<ToolInvocationEnvelope>(await payloads.read(invocationRef))).toMatchObject({
             kind: "tool_invocation",

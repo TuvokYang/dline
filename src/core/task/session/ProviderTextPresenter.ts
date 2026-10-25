@@ -1,5 +1,10 @@
+import { formatResponse } from "@core/prompts/responses"
 import { Logger } from "@shared/services/Logger"
-import type { ProviderReplyPresentationRows, ProviderTextPresentationPort } from "../executors/provider/ProviderCommandExecutor"
+import type {
+    ProviderProseDisposition,
+    ProviderReplyPresentationRows,
+    ProviderTextPresentationPort,
+} from "../executors/provider/ProviderCommandExecutor"
 import { getPresentationCadenceMs, isRemoteWorkspaceEnvironment } from "../latency"
 import type { MessageStateHandler } from "../message-state"
 import type { PresentationPriority } from "../presentation-types"
@@ -117,12 +122,19 @@ export class ProviderTextPresenter implements ProviderTextPresentationPort {
         readonly text: string
         readonly reasoning?: string
         readonly toolRows?: readonly number[]
+        readonly proseDisposition?: ProviderProseDisposition
     }): Promise<void> {
         await this.drain()
         this.drawnTools.clear()
         await this.withdrawUnsettledTools(input.transientId, input.toolRows ?? [])
         await this.settle(input.transientId, "reasoning", input.reasoning ?? "")
-        await this.settle(input.transientId, "text", input.text)
+        const plainTextWarning = input.proseDisposition === "plain_text_outside_tool"
+        await this.settle(
+            input.transientId,
+            "text",
+            plainTextWarning ? formatResponse.plainTextOutsideTool() : input.text,
+            plainTextWarning ? "error" : "text",
+        )
     }
 
     /** Stop pacing; anything not yet drawn belongs to a session that is closing. */
@@ -252,7 +264,12 @@ export class ProviderTextPresenter implements ProviderTextPresentationPort {
         this.realtime?.publish(message)
     }
 
-    private async settle(transientId: string, row: ReplyRow, text: string): Promise<void> {
+    private async settle(
+        transientId: string,
+        row: ReplyRow,
+        text: string,
+        say: "reasoning" | "text" | "error" = row,
+    ): Promise<void> {
         const key = rowKey(transientId, row)
         const existing = this.rows.get(key)
         this.rows.delete(key)
@@ -266,7 +283,7 @@ export class ProviderTextPresenter implements ProviderTextPresentationPort {
         const committed = await this.messages.commitTransientClineMessage({
             ts: existing ?? this.nextPresentationId(),
             type: "say",
-            say: row,
+            say,
             text,
             partial: false,
         })

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import type { ProviderStartCommand, TaskEvent } from "../../kernel"
+import type { ProviderStartCommand, ProviderTurnBlockPlan, TaskEvent } from "../../kernel"
 import { InMemoryConversationJournal, InMemoryTaskViewPort } from "../../stores"
 import { ProviderCommandExecutor, type ProviderExecutionChunk } from "./ProviderCommandExecutor"
 
@@ -10,6 +10,16 @@ const command: ProviderStartCommand = {
     type: "provider.start",
     draftRef: "draft:1",
     turnId: "turn-request",
+}
+
+const toolBlock: ProviderTurnBlockPlan = {
+    blockId: "block-1",
+    attempt: "attempt-1",
+    index: 0,
+    lanes: [],
+    turnEnding: false,
+    invocationRef: "invocation:1",
+    approval: { kind: "none" },
 }
 
 function recorder() {
@@ -158,6 +168,128 @@ describe("ProviderCommandExecutor", () => {
         expect(recorded.events).toEqual([
             expect.objectContaining({ type: "provider.turn_ready", finalPayloadRef: "payload:final" }),
         ])
+    })
+
+    it("marks prose outside an ordinary tool call as invalid presentation", async () => {
+        const presentation = { showPartial: vi.fn(), commit: vi.fn(async () => undefined) }
+        const executor = new ProviderCommandExecutor(
+            "task-1",
+            {
+                start: () =>
+                    chunks([
+                        { kind: "partial", transientId: "stream-1", text: "ordinary prose" },
+                        {
+                            kind: "final",
+                            transientId: "stream-1",
+                            turnId: "turn-request",
+                            payloadRef: "payload:final",
+                            text: "ordinary prose",
+                            turnPlan: { mode: "serial", blocks: [toolBlock] },
+                        },
+                    ]),
+            },
+            new InMemoryConversationJournal(),
+            new InMemoryTaskViewPort(),
+            recorder().sink,
+            presentation,
+        )
+
+        await executor.execute(command)
+
+        expect(presentation.commit).toHaveBeenCalledWith({
+            transientId: "stream-1",
+            text: "ordinary prose",
+            proseDisposition: "plain_text_outside_tool",
+        })
+    })
+
+    it("preserves prose only when a parsed block exercised matching explicit-instruction authority", async () => {
+        const presentation = { showPartial: vi.fn(), commit: vi.fn(async () => undefined) }
+        const executor = new ProviderCommandExecutor(
+            "task-1",
+            {
+                start: () =>
+                    chunks([
+                        { kind: "partial", transientId: "stream-1", text: "authorized prose" },
+                        {
+                            kind: "final",
+                            transientId: "stream-1",
+                            turnId: "turn-request",
+                            payloadRef: "payload:final",
+                            text: "authorized prose",
+                            turnPlan: {
+                                mode: "serial",
+                                blocks: [toolBlock],
+                                proseAuthorization: {
+                                    kind: "explicit_instruction",
+                                    grants: [
+                                        {
+                                            instructionId: "instruction-1",
+                                            requestId: "turn-request",
+                                            attemptId: "provider-attempt-1",
+                                            blockId: toolBlock.blockId,
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                    ]),
+            },
+            new InMemoryConversationJournal(),
+            new InMemoryTaskViewPort(),
+            recorder().sink,
+            presentation,
+        )
+
+        await executor.execute(command)
+
+        expect(presentation.commit).toHaveBeenCalledWith({ transientId: "stream-1", text: "authorized prose" })
+    })
+
+    it("rejects a stale explicit-instruction grant that names no block in the settled turn", async () => {
+        const presentation = { showPartial: vi.fn(), commit: vi.fn(async () => undefined) }
+        const executor = new ProviderCommandExecutor(
+            "task-1",
+            {
+                start: () =>
+                    chunks([
+                        {
+                            kind: "final",
+                            transientId: "stream-1",
+                            turnId: "turn-request",
+                            payloadRef: "payload:final",
+                            text: "ordinary prose",
+                            turnPlan: {
+                                mode: "serial",
+                                blocks: [toolBlock],
+                                proseAuthorization: {
+                                    kind: "explicit_instruction",
+                                    grants: [
+                                        {
+                                            instructionId: "instruction-1",
+                                            requestId: "other-turn",
+                                            attemptId: "other-attempt",
+                                            blockId: toolBlock.blockId,
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                    ]),
+            },
+            new InMemoryConversationJournal(),
+            new InMemoryTaskViewPort(),
+            recorder().sink,
+            presentation,
+        )
+
+        await executor.execute(command)
+
+        expect(presentation.commit).toHaveBeenCalledWith({
+            transientId: "stream-1",
+            text: "ordinary prose",
+            proseDisposition: "plain_text_outside_tool",
+        })
     })
 
     it("replays an existing durable final without requesting the provider again", async () => {

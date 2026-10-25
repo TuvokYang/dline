@@ -41,9 +41,28 @@ export interface ProviderTurnBlockPlan {
     readonly approval: ProviderTurnApproval
 }
 
+/**
+ * Trusted authority for prose that accompanied an explicit-instruction call.
+ *
+ * Each grant names the parsed block that exercised the authority, so a turn
+ * cannot exempt unrelated prose merely because its input happened to carry an
+ * explicit instruction. Request identity blocks cross-turn reuse; attempt
+ * identity preserves the exact provider-request provenance across recovery.
+ */
+export interface ProviderTurnProseAuthorization {
+    readonly kind: "explicit_instruction"
+    readonly grants: readonly {
+        readonly instructionId: string
+        readonly requestId: string
+        readonly attemptId: string
+        readonly blockId: BlockId
+    }[]
+}
+
 export interface ProviderTurnPlan {
     readonly mode: "serial" | "parallel"
     readonly blocks: readonly ProviderTurnBlockPlan[]
+    readonly proseAuthorization?: ProviderTurnProseAuthorization
 }
 
 export type FlowPhase = "idle" | "initializing" | "running" | "waiting" | "paused" | "completed" | "error" | "terminated"
