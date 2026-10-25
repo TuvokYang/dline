@@ -401,7 +401,7 @@ export const ExtensionStateContextProvider: React.FC<{
         strictPlanModeEnabled: false,
         yoloModeToggled: false,
         customPrompt: undefined,
-        useAutoCondense: false,
+        useAutoCondense: true,
         autoCondenseTriggerPercent: DEFAULT_AUTO_CONDENSE_TRIGGER_PERCENT,
         autoCondenseMinReserveTokens: DEFAULT_AUTO_CONDENSE_MIN_RESERVE_TOKENS,
         autoCondenseMaxReserveTokens: DEFAULT_AUTO_CONDENSE_MAX_RESERVE_TOKENS,

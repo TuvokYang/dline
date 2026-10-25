@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
         mcpEnabled: true,
         remoteConfigSettings: {},
         worktreesEnabled: { featureFlag: true, user: true },
+        externalFileCheckpoints: { featureFlag: false, user: false },
     },
     updateSetting: vi.fn(),
 }))
@@ -54,10 +55,11 @@ vi.mock("../Section", () => ({ default: ({ children }: { children: ReactNode }) 
 vi.mock("../SettingsSlider", () => ({ default: () => null }))
 vi.mock("./WebToolsSettings", () => ({ default: () => null }))
 
-describe("FeatureSettingsSection MCP feature", () => {
+describe("FeatureSettingsSection feature gates", () => {
     beforeEach(() => {
         vi.clearAllMocks()
         mocks.extensionState.mcpEnabled = true
+        mocks.extensionState.externalFileCheckpoints = { featureFlag: false, user: false }
     })
 
     it("shows MCP as enabled by default and persists disabling it", () => {
@@ -67,5 +69,21 @@ describe("FeatureSettingsSection MCP feature", () => {
         expect(toggle).toHaveAttribute("aria-checked", "true")
         fireEvent.click(toggle as HTMLButtonElement)
         expect(mocks.updateSetting).toHaveBeenCalledWith("mcpEnabled", false)
+    })
+
+    it("hides external file checkpoints until the rollout flag offers it", () => {
+        const { container } = render(<FeatureSettingsSection renderSectionHeader={() => null} />)
+
+        expect(container.querySelector('[id="External File Checkpoints"]')).toBeNull()
+    })
+
+    it("shows the rollout setting and persists the user opt-in separately", () => {
+        mocks.extensionState.externalFileCheckpoints = { featureFlag: true, user: false }
+        const { container } = render(<FeatureSettingsSection renderSectionHeader={() => null} />)
+        const toggle = container.querySelector<HTMLButtonElement>('[id="External File Checkpoints"]')
+
+        expect(toggle).toHaveAttribute("aria-checked", "false")
+        fireEvent.click(toggle as HTMLButtonElement)
+        expect(mocks.updateSetting).toHaveBeenCalledWith("externalFileCheckpointsEnabled", true)
     })
 })

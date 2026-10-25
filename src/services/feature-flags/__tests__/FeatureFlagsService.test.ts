@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import { ExperimentalFeatureFlag } from "@/shared/services/feature-flags/feature-flags"
+import { ExperimentalFeatureFlag, REMOTE_ROLLOUT_FEATURE_FLAGS } from "@/shared/services/feature-flags/feature-flags"
 import { FeatureFlagsService } from "../FeatureFlagsService"
 import type { FeatureFlagPayload, IFeatureFlagsProvider } from "../providers/IFeatureFlagsProvider"
 import { LayeredFeatureFlagsProvider } from "../providers/LayeredFeatureFlagsProvider"
@@ -29,6 +29,14 @@ describe("FeatureFlagsService", () => {
 
         expect(service.getBooleanFlagEnabled(ExperimentalFeatureFlag.WORKTREES)).toBe(false)
         expect(service.getFlagPayload(ExperimentalFeatureFlag.WORKTREES)).toBe(false)
+        expect(service.getExternalFileCheckpointsEnabled()).toBe(false)
+    })
+
+    it("allows the rollout provider to offer external file checkpoints", () => {
+        expect(REMOTE_ROLLOUT_FEATURE_FLAGS).toContain(ExperimentalFeatureFlag.EXTERNAL_FILE_CHECKPOINTS)
+        const service = new FeatureFlagsService(providerReturning({ "checkpoint-external-files": true }))
+
+        expect(service.getExternalFileCheckpointsEnabled()).toBe(true)
     })
 
     it("falls back to defaults instead of propagating a provider failure", () => {

@@ -72,6 +72,7 @@ describe("resolveExperimentalFlag", () => {
         // Switches without one keep their static default, so development bundles
         // and the E2E runs built from them do not change behavior.
         expect(resolveExperimentalFlag(WORKTREES, {}, true)).toBe(false)
+        expect(resolveExperimentalFlag(ExperimentalFeatureFlag.EXTERNAL_FILE_CHECKPOINTS, {}, true)).toBe(false)
     })
 
     it("lets the variable turn a development default off", () => {
@@ -100,6 +101,7 @@ describe("resolveExperimentalFlags", () => {
         expect(resolveExperimentalFlags({})).toEqual({
             [ExperimentalFeatureFlag.WORKTREES]: false,
             [ExperimentalFeatureFlag.ACCOUNT]: false,
+            [ExperimentalFeatureFlag.EXTERNAL_FILE_CHECKPOINTS]: false,
         })
     })
 
@@ -107,6 +109,7 @@ describe("resolveExperimentalFlags", () => {
         expect(resolveExperimentalFlags({ IS_DEV: "true" })).toEqual({
             [ExperimentalFeatureFlag.WORKTREES]: true,
             [ExperimentalFeatureFlag.ACCOUNT]: true,
+            [ExperimentalFeatureFlag.EXTERNAL_FILE_CHECKPOINTS]: true,
         })
     })
 })

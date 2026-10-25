@@ -17,12 +17,20 @@ function createController() {
     return { controller, setGlobalState }
 }
 
-describe("updateSettings MCP feature", () => {
+describe("updateSettings feature toggles", () => {
     it("persists the MCP feature gate", async () => {
         const { controller, setGlobalState } = createController()
 
         await updateSettings(controller, UpdateSettingsRequest.create({ mcpEnabled: false }))
 
         expect(setGlobalState).toHaveBeenCalledWith("mcpEnabled", false)
+    })
+
+    it("persists the external file checkpoints user opt-in without enabling runtime behavior", async () => {
+        const { controller, setGlobalState } = createController()
+
+        await updateSettings(controller, UpdateSettingsRequest.create({ externalFileCheckpointsEnabled: true }))
+
+        expect(setGlobalState).toHaveBeenCalledWith("externalFileCheckpointsEnabled", true)
     })
 })

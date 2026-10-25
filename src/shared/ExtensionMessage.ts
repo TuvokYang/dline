@@ -162,6 +162,8 @@ export interface ExtensionState {
     localWebSearchEngine?: LocalSearchEngineId
     searxngSearchUrl?: string
     worktreesEnabled?: DlineFeatureSettings
+    /** Future checkpoint roots outside the workspace; setting only, runtime wiring is intentionally deferred. */
+    externalFileCheckpoints?: DlineFeatureSettings
     /** Account sign-in and views: the rollout offers the setting, the user's setting turns the views on. */
     accountEnabled?: DlineFeatureSettings
     focusChainSettings: FocusChainSettings

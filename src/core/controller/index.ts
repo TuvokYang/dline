@@ -3246,6 +3246,10 @@ export class Controller {
                 user: this.stateManager.getGlobalSettingsKey("worktreesEnabled"),
                 featureFlag: featureFlagsService.getWorktreesEnabled(),
             },
+            externalFileCheckpoints: {
+                user: this.stateManager.getGlobalSettingsKey("externalFileCheckpointsEnabled"),
+                featureFlag: featureFlagsService.getExternalFileCheckpointsEnabled(),
+            },
             accountEnabled: readAccountFeatureSetting(this.stateManager),
             hooksEnabled: getHooksEnabledSafe(this.stateManager.getGlobalSettingsKey("hooksEnabled")),
             remoteConfigSettings: this.stateManager.getRemoteConfigSettings(),
