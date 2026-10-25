@@ -1,7 +1,7 @@
 import { resolveProvider } from "@core/api"
 import type { ToolUse } from "@core/assistant-message"
 import { getPrompt } from "@core/prompts/i18n"
-import { RipgrepSearchTimeoutError, regexSearchFiles } from "@services/ripgrep"
+import { isExpectedRipgrepFailure, RipgrepSearchTimeoutError, regexSearchFiles } from "@services/ripgrep"
 import { taskRipgrepScope } from "@services/ripgrep/cpu-budget"
 import { arePathsEqual, getReadablePath, isLocatedInWorkspace } from "@utils/path"
 import * as path from "path"
@@ -215,8 +215,11 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
                 success: true,
             }
         } catch (error) {
-            // If search fails in one workspace, return error info
-            Logger.error(`Search failed in ${absolutePath}:`, withDiagnosticSite(error, "ripgrep.search"))
+            // Invalid patterns, inaccessible paths and bounded timeouts are normal
+            // tool outcomes. Keep unexpected spawn/process failures at error level.
+            const tagged = withDiagnosticSite(error, "ripgrep.search")
+            if (isExpectedRipgrepFailure(error)) Logger.warn(`Search could not run in ${absolutePath}:`, tagged)
+            else Logger.error(`Search failed in ${absolutePath}:`, tagged)
             return {
                 workspaceName,
                 workspaceResults: "",

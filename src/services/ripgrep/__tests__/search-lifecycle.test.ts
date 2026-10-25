@@ -4,7 +4,13 @@ import { Readable } from "node:stream"
 import type { IgnoreController } from "@core/ignore/IgnoreController"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { activeRipgrepProcesses, resetRipgrepSlotsForTesting } from "../cpu-budget"
-import { RIPGREP_SEARCH_TIMEOUT_MS, RipgrepSearchTimeoutError, regexSearchFiles } from "../index"
+import {
+    isExpectedRipgrepFailure,
+    RIPGREP_SEARCH_TIMEOUT_MS,
+    RipgrepProcessError,
+    RipgrepSearchTimeoutError,
+    regexSearchFiles,
+} from "../index"
 
 const spawnMock = vi.hoisted(() => vi.fn())
 
@@ -122,6 +128,15 @@ describe("ripgrep search lifecycle", () => {
         await expect(regexSearchFiles("/workspace", "/workspace", "needle", "*.ts", scanController())).resolves.toBe(
             "Found 0 results.",
         )
+    })
+
+    it("distinguishes expected search outcomes from ripgrep runtime failures", () => {
+        expect(isExpectedRipgrepFailure(new RipgrepSearchTimeoutError())).toBe(true)
+        expect(isExpectedRipgrepFailure(new RipgrepProcessError("rg_regex_parse", "rejected"))).toBe(true)
+        expect(isExpectedRipgrepFailure(new RipgrepProcessError("rg_path_not_found", "missing"))).toBe(true)
+        expect(isExpectedRipgrepFailure(new RipgrepProcessError("rg_permission_denied", "denied"))).toBe(true)
+        expect(isExpectedRipgrepFailure(new RipgrepProcessError("rg_spawn_failed", "spawn"))).toBe(false)
+        expect(isExpectedRipgrepFailure(new RipgrepProcessError("rg_process_failed", "process"))).toBe(false)
     })
 
     it.each([

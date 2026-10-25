@@ -182,7 +182,10 @@ export class TaskPerformanceOwner {
     private auxiliaryAdmission(input: ProviderAttemptScopeInput): ReturnType<TaskProviderRequestRoundOwner["admit"]> {
         const key = input.logicalRequestId ? `${input.role}:${input.logicalRequestId}` : undefined
         const existing = key ? this.auxiliaryAdmissions.get(key) : undefined
-        if (existing) return existing
+        // Attempt zero starts a semantic request. Only a positive retry index may
+        // reuse its admission; otherwise a later subagent run with the same local
+        // request label would revive stale operation state from an earlier run.
+        if (existing && input.taskAttempt > 0) return existing
         const admission = this.rounds.admit({ source: input.role })
         if (key) this.auxiliaryAdmissions.set(key, admission)
         return admission

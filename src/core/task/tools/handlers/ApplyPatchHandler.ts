@@ -3,6 +3,7 @@ import * as path from "node:path"
 import { resolve as resolvePath } from "node:path"
 import type { ToolUse } from "@core/assistant-message"
 import { getPrompt } from "@core/prompts/i18n"
+import { formatResponse } from "@core/prompts/responses"
 import { resolveWorkspacePath } from "@core/workspace"
 import type { UiSayTool } from "@shared/ExtensionMessage"
 import { fileExistsAtPath } from "@utils/fs"
@@ -12,8 +13,8 @@ import { telemetryService } from "@/services/telemetry"
 import { BASH_WRAPPERS, DiffError, PATCH_MARKERS, type Patch, PatchActionType, type PatchChunk } from "@/shared/Patch"
 import { preserveEscaping } from "@/shared/string"
 import { DlineDefaultTool } from "@/shared/tools"
+import type { ToolHandlerResult } from "../ToolExecutionResult"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
-import type { ToolResponse } from "../ToolResponse"
 import type { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
@@ -121,7 +122,7 @@ export class ApplyPatchHandler implements IFullyManagedTool {
         await uiHelpers.say("tool", JSON.stringify(message), undefined, undefined, true, block.ts)
     }
 
-    async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
+    async execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
         config = withConfiguredEditProvider(config)
         const provider = config.services.diffViewProvider
         const rawInput = block.params.input
@@ -340,6 +341,13 @@ export class ApplyPatchHandler implements IFullyManagedTool {
             return responseLines.join("\n")
         } catch (error) {
             await provider.revertChanges()
+            if (error instanceof DiffError) {
+                config.taskState.consecutiveMistakeCount++
+                return {
+                    response: formatResponse.toolError(error.message),
+                    failure: { stage: "validation", code: "invalid_patch" },
+                }
+            }
             throw error
         } finally {
             await provider.reset()

@@ -6,6 +6,7 @@ import {
     type ObservabilityAttributes,
     recordDurationHistogram,
     runWithSignalSpan,
+    type SignalLevel,
     type SignalSpanHandle,
     startSignalSpan,
 } from "@/services/telemetry/service/pipeline-port"
@@ -64,7 +65,12 @@ export class McpCallObservation {
             if (error !== undefined) this.span.recordException(error)
             for (const [key, value] of Object.entries(attributes)) this.span.setAttribute(key, value)
             this.span.addEvent?.(`mcp.tools.call.${outcome}`, attributes)
-            this.event(`mcp.tools.call.${outcome}`, attributes, error)
+            this.event(
+                `mcp.tools.call.${outcome}`,
+                attributes,
+                error,
+                outcome === "failed" && error === undefined && code === "remote_tool_error" ? "info" : undefined,
+            )
             if (isSignalRecordingEnabled()) {
                 recordDurationHistogram(durationMs, {
                     operation: "mcp.tools.call",
@@ -86,13 +92,13 @@ export class McpCallObservation {
         }
     }
 
-    private event(name: string, attributes: ObservabilityAttributes, error?: unknown): void {
+    private event(name: string, attributes: ObservabilityAttributes, error?: unknown, level?: SignalLevel): void {
         if (!isSignalRecordingEnabled()) return
         this.safely(() =>
             runWithSignalSpan(this.span, () =>
                 emitSignal({
                     name,
-                    level: name.endsWith(".failed") ? "error" : "info",
+                    level: level ?? (name.endsWith(".failed") ? "error" : "info"),
                     attributes,
                     ...(error === undefined ? {} : { error }),
                     context: { taskId: this.options.taskId },

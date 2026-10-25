@@ -78,6 +78,44 @@ describe("TaskPerformanceOwner", () => {
         expect(observedGenerations).toEqual([7, 8, undefined])
     })
 
+    it("starts a new auxiliary admission for attempt zero instead of reviving a stale semantic request", async () => {
+        stubPersistence()
+        const admissions = [
+            {
+                createAttemptObserver: vi.fn(() => ({ beginAttempt: () => undefined, finishAttempt: () => undefined })),
+                attachExactUsage: vi.fn(),
+                completeProviderOnly: vi.fn(),
+                completeTools: vi.fn(),
+                completeTurnEndAwaitingUser: vi.fn(),
+            },
+            {
+                createAttemptObserver: vi.fn(() => ({ beginAttempt: () => undefined, finishAttempt: () => undefined })),
+                attachExactUsage: vi.fn(),
+                completeProviderOnly: vi.fn(),
+                completeTools: vi.fn(),
+                completeTurnEndAwaitingUser: vi.fn(),
+            },
+        ] satisfies ProviderRequestRoundAdmission[]
+        const admit = vi
+            .spyOn(TaskProviderRequestRoundOwner.prototype, "admit")
+            .mockReturnValueOnce(admissions[0])
+            .mockReturnValueOnce(admissions[1])
+        const owner = await TaskPerformanceOwner.open({
+            taskId: "task-1",
+            readState: () => committedIn("idle"),
+            legacyMessages: () => [],
+        })
+
+        owner.providerAttemptObserver({ role: "subagent", logicalRequestId: "subagent:1", taskAttempt: 0 })
+        owner.providerAttemptObserver({ role: "subagent", logicalRequestId: "subagent:1", taskAttempt: 1 })
+        owner.providerAttemptObserver({ role: "subagent", logicalRequestId: "subagent:1", taskAttempt: 0 })
+        await owner.release()
+
+        expect(admit).toHaveBeenCalledTimes(2)
+        expect(admissions[0].createAttemptObserver).toHaveBeenCalledTimes(2)
+        expect(admissions[1].createAttemptObserver).toHaveBeenCalledTimes(1)
+    })
+
     it("derives logical execution and awaiting-user tool terminals from committed kernel state", async () => {
         stubPersistence()
         const admission: ProviderRequestRoundAdmission = {
