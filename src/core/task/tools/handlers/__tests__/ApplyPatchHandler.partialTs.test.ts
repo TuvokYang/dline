@@ -1,5 +1,6 @@
 import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
+import { normalizeToolExecutionResult } from "../../ToolExecutionResult"
 import { ToolValidator } from "../../ToolValidator"
 import type { TaskConfig } from "../../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../../types/UIHelpers"
@@ -49,7 +50,10 @@ function createConfig(options?: {
             },
             diffViewProvider: options?.provider ?? {
                 editType: undefined,
+                isEditing: false,
                 originalContent: "",
+                reset: vi.fn().mockResolvedValue(undefined),
+                revertChanges: vi.fn().mockResolvedValue(undefined),
             },
             taskFileTracker: { trackModification: vi.fn() },
             fileContextTracker: { markFileAsEditedByCline: vi.fn(), trackFileContext: vi.fn() },
@@ -96,6 +100,25 @@ describe("ApplyPatchHandler result rendering", () => {
                 { path: "second.txt", status: "added", result: { wroteLines: 3, savedLines: 3 } },
             ]),
         ).toEqual(["first.txt: [added] (wrote 2 lines, saved 2 lines)", "second.txt: [added] (wrote 3 lines, saved 3 lines)"])
+    })
+})
+
+describe("ApplyPatchHandler execution failures", () => {
+    it("returns an invalid patch as a structured validation failure", async () => {
+        const { config } = createConfig()
+        const handler = new ApplyPatchHandler(createValidator())
+
+        const result = normalizeToolExecutionResult(
+            await handler.execute(config, {
+                type: "tool_use",
+                name: DlineDefaultTool.APPLY_PATCH,
+                partial: false,
+                params: { input: "*** Begin Patch\n*** Update File: missing.ts\n*** End Patch" },
+            } as never),
+        )
+
+        expect(result.failure).toEqual({ stage: "validation", code: "invalid_patch" })
+        expect(result.response).toEqual(expect.stringContaining("File not found"))
     })
 })
 

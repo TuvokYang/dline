@@ -297,8 +297,8 @@ function statusFrom(
     summary: ApiResponseExecutionToolSummary,
 ): ApiResponseExecutionStatus {
     if (providerStatus !== "completed") return providerStatus
-    if (summary.cancelledToolCount > 0) return "cancelled"
     if (summary.failedToolCount > 0) return "failed"
+    if (summary.cancelledToolCount === summary.toolCount) return "cancelled"
     return "completed"
 }
 

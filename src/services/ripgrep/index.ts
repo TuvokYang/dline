@@ -131,6 +131,15 @@ function ripgrepExitError(exitCode: number | null, signal: NodeJS.Signals | null
     return new RipgrepProcessError(code, RIPGREP_PROCESS_MESSAGES[code], { exitCode, signal })
 }
 
+/** Whether a search failure is a bounded input/environment result rather than a ripgrep runtime defect. */
+export function isExpectedRipgrepFailure(error: unknown): boolean {
+    return (
+        error instanceof RipgrepSearchTimeoutError ||
+        (error instanceof RipgrepProcessError &&
+            (error.code === "rg_regex_parse" || error.code === "rg_path_not_found" || error.code === "rg_permission_denied"))
+    )
+}
+
 function normalizeRipgrepFailure(error: unknown): RipgrepProcessError {
     if (error instanceof RipgrepProcessError) return error
     const nativeCode = error !== null && typeof error === "object" ? (error as NodeJS.ErrnoException).code : undefined

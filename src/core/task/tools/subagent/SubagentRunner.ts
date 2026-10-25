@@ -62,6 +62,7 @@ import { canonicalizeAttemptCompletionParams } from "../attempt-completion-param
 import { partitionDeferredHostedCalls } from "../deferred-hosted-rows"
 import { type DeferredServerToolCall, ServerToolLifecycle } from "../ServerToolLifecycle"
 import { DefaultToolHandlerState, type ToolHandlerState } from "../state/ToolHandlerState"
+import { normalizeObservedToolExecutionResult } from "../ToolExecutionResult"
 import { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
 import { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
@@ -569,7 +570,7 @@ export class SubagentRunner {
      * the interruption signal releases the runner's wait while retaining the
      * abandoned work for resource and capacity accounting.
      */
-    private async executeToolWithInterruption(execute: () => Promise<unknown>): Promise<unknown> {
+    private async executeToolWithInterruption<T>(execute: () => Promise<T>): Promise<T> {
         const signal = this.interruptionController?.signal
         const toolExecution = execute()
         if (!signal) return toolExecution
@@ -1570,7 +1571,7 @@ export class SubagentRunner {
                                     },
                                     inheritsApproval: true,
                                 },
-                                () => handler.execute(subagentConfig, toolCallBlock),
+                                () => handler.execute(subagentConfig, toolCallBlock).then(normalizeObservedToolExecutionResult),
                             )
                             if (admission.outcome === "admitted" && admission.confirm) admission = await admission.confirm()
                             if (admission.outcome === "rejected") {
@@ -1582,7 +1583,9 @@ export class SubagentRunner {
                                 )
                             }
                             const run = admission.run
-                            toolResult = await this.executeToolWithInterruption(run)
+                            const observedResult = await this.executeToolWithInterruption(run)
+                            toolResult = observedResult.response
+                            if (observedResult.failure) toolError = serializeToolResult(observedResult.response)
                         } catch (error) {
                             // An interrupted wait is not a tool failure: fall through to the
                             // abort check below so the run reports `cancelled`.
@@ -1599,10 +1602,7 @@ export class SubagentRunner {
                     stats.toolCalls += 1
                     onProgress({ stats: { ...stats } })
 
-                    if (toolError) {
-                    } else {
-                        turnFailures.reset()
-                    }
+                    if (!toolError) turnFailures.reset()
                     const serializedToolResult = serializeToolResult(toolResult)
                     const boundedToolResult = boundToolText(
                         { body: serializedToolResult },

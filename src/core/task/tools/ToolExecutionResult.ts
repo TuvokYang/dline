@@ -31,6 +31,7 @@ export interface ToolExecutionResult {
 }
 
 export type ToolHandlerResult = ToolResponse | ToolExecutionResult
+export type ObservedToolExecutionResult = ToolExecutionResult & { readonly failed?: true }
 
 /** Return whether a handler value carries an explicit post-commit envelope. */
 export function isToolExecutionResult(result: ToolHandlerResult): result is ToolExecutionResult {
@@ -40,6 +41,12 @@ export function isToolExecutionResult(result: ToolHandlerResult): result is Tool
 /** Normalize legacy handler responses into one execution envelope. */
 export function normalizeToolExecutionResult(result: ToolHandlerResult): ToolExecutionResult {
     return isToolExecutionResult(result) ? result : { response: result }
+}
+
+/** Mark a structured handler failure before an observation reads the result. */
+export function normalizeObservedToolExecutionResult(result: ToolHandlerResult): ObservedToolExecutionResult {
+    const normalized = normalizeToolExecutionResult(result)
+    return normalized.failure ? { ...normalized, failed: true } : normalized
 }
 
 /** Pair a response with the documents that follow it, keeping a bare response when there are none. */

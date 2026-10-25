@@ -170,6 +170,66 @@ describe("ApiResponseExecutionLifecycle", () => {
         })
     })
 
+    it("keeps a successful logical request completed when some tools settle and others are skipped", async () => {
+        const repository = new MemoryExecutionRepository()
+        let wall = 1_000
+        let monotonic = 100
+        const lifecycle = new ApiResponseExecutionLifecycle({
+            taskId: "task-a",
+            repository,
+            wallClock: () => wall,
+            monotonicClock: () => monotonic,
+        })
+        const roundHandle = handle()
+        lifecycle.begin(roundHandle)
+        wall = 3_000
+        monotonic = 2_100
+        lifecycle.providerTerminal(roundHandle, providerTerminal(roundHandle))
+        wall = 5_000
+        monotonic = 4_100
+        lifecycle.completeTools(roundHandle, {
+            toolCount: 3,
+            completedToolCount: 1,
+            failedToolCount: 0,
+            cancelledToolCount: 2,
+        })
+        await lifecycle.waitForPersistence()
+
+        expect(repository.records.at(-1)).toMatchObject({
+            status: "completed",
+            completedToolCount: 1,
+            cancelledToolCount: 2,
+        })
+    })
+
+    it("marks a successful Provider request cancelled only when every tool was cancelled", async () => {
+        const repository = new MemoryExecutionRepository()
+        let wall = 1_000
+        let monotonic = 100
+        const lifecycle = new ApiResponseExecutionLifecycle({
+            taskId: "task-a",
+            repository,
+            wallClock: () => wall,
+            monotonicClock: () => monotonic,
+        })
+        const roundHandle = handle()
+        lifecycle.begin(roundHandle)
+        wall = 3_000
+        monotonic = 2_100
+        lifecycle.providerTerminal(roundHandle, providerTerminal(roundHandle))
+        wall = 5_000
+        monotonic = 4_100
+        lifecycle.completeTools(roundHandle, {
+            toolCount: 2,
+            completedToolCount: 0,
+            failedToolCount: 0,
+            cancelledToolCount: 2,
+        })
+        await lifecycle.waitForPersistence()
+
+        expect(repository.records.at(-1)?.status).toBe("cancelled")
+    })
+
     it("automatically terminals failed Provider sends without waiting for tool coordination", async () => {
         const repository = new MemoryExecutionRepository()
         let monotonic = 100

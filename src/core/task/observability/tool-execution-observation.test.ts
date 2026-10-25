@@ -5,10 +5,13 @@ import { OpenTelemetryTraceProvider } from "@/services/telemetry/providers/opent
 import {
     configureSignalRecording,
     installObservabilityPipeline,
+    installSignalPipeline,
     resetSignalRecording,
+    type TelemetrySignal,
 } from "@/services/telemetry/service/pipeline-port"
 import { InteractionCancellationError } from "../interaction/InteractionCancellationError"
 import { createRunningTaskState } from "../kernel/__fixtures__/task-state"
+import { normalizeObservedToolExecutionResult } from "../tools/ToolExecutionResult"
 import { TaskTurnTelemetry } from "./task-turn-telemetry"
 import { ToolExecutionObservation } from "./tool-execution-observation"
 
@@ -17,6 +20,7 @@ const cleanup: Array<() => void | Promise<void>> = []
 afterEach(async () => {
     for (const action of cleanup.splice(0).reverse()) await action()
     installObservabilityPipeline(undefined)
+    installSignalPipeline(undefined)
     resetSignalRecording()
 })
 
@@ -36,6 +40,19 @@ function setupTraceExporter(): { exporter: InMemorySpanExporter; provider: OpenT
 }
 
 describe("ToolExecutionObservation", () => {
+    it("marks structured handler failures before an observer reads the result", () => {
+        expect(
+            normalizeObservedToolExecutionResult({
+                response: "invalid patch",
+                failure: { stage: "validation", code: "invalid_patch" },
+            }),
+        ).toEqual({
+            response: "invalid patch",
+            failure: { stage: "validation", code: "invalid_patch" },
+            failed: true,
+        })
+    })
+
     it("nests tool and MCP spans under the production task turn and records bounded resources", async () => {
         const { exporter, provider } = setupTraceExporter()
         const state = createRunningTaskState({ taskId: "task-1", turnId: "turn-1", revision: 1 })
@@ -89,6 +106,35 @@ describe("ToolExecutionObservation", () => {
             mcp_stage: "transport",
             failure_code: "remote_tool_error",
         })
+    })
+
+    it("keeps expected validation and remote-result failures below the remote error floor", async () => {
+        setupTraceExporter()
+        const signals: TelemetrySignal[] = []
+        installSignalPipeline({ accept: (signal) => signals.push(signal) })
+
+        const validation = new ToolExecutionObservation({
+            taskId: "task-validation",
+            toolName: "apply_patch",
+            turnId: "turn-validation",
+            native: true,
+        })
+        await validation.run(async () => ({
+            failed: true,
+            failure: { stage: "validation" as const, code: "invalid_patch" },
+        }))
+        const mcp = new McpCallObservation({ taskId: "task-validation", argumentCount: 1 })
+        mcp.setStage("remote")
+        await mcp.run(async () => ({ content: [], isError: true }))
+
+        expect(
+            signals
+                .filter((signal) => signal.name === "tool.execution.failed" || signal.name === "mcp.tools.call.failed")
+                .map((signal) => [signal.name, signal.level]),
+        ).toEqual([
+            ["tool.execution.failed", "info"],
+            ["mcp.tools.call.failed", "info"],
+        ])
     })
 
     it("records a withdrawn interaction as cancelled without a failed event", async () => {

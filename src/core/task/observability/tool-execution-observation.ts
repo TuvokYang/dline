@@ -6,6 +6,7 @@ import {
     type ObservabilityAttributes,
     recordDurationHistogram,
     runWithSignalSpan,
+    type SignalLevel,
     type SignalSpanHandle,
     startSignalSpan,
 } from "@/services/telemetry/service/pipeline-port"
@@ -115,7 +116,7 @@ export class ToolExecutionObservation {
             if (error !== undefined) this.span.recordException(error)
             for (const [key, value] of Object.entries(attributes)) this.span.setAttribute(key, value)
             this.span.addEvent?.(`tool.execution.${outcome}`, attributes)
-            this.event(`tool.execution.${outcome}`, attributes, error)
+            this.event(`tool.execution.${outcome}`, attributes, error, failureLevel(outcome, failure, error))
             if (isSignalRecordingEnabled())
                 recordDurationHistogram(attributes.duration_ms, {
                     operation: "tool.execution",
@@ -128,13 +129,13 @@ export class ToolExecutionObservation {
         })
     }
 
-    private event(name: string, attributes: ObservabilityAttributes, error?: unknown): void {
+    private event(name: string, attributes: ObservabilityAttributes, error?: unknown, level?: SignalLevel): void {
         this.safely(() => {
             if (!isSignalRecordingEnabled()) return
             runWithSignalSpan(this.span, () =>
                 emitSignal({
                     name,
-                    level: name.endsWith(".failed") ? "error" : "info",
+                    level: level ?? (name.endsWith(".failed") ? "error" : "info"),
                     attributes,
                     ...(error === undefined ? {} : { error }),
                     context: { taskId: this.options.taskId },
@@ -160,6 +161,15 @@ export class ToolExecutionObservation {
             /* Observability must never affect tool execution. */
         }
     }
+}
+
+function failureLevel(
+    outcome: ToolExecutionOutcome,
+    failure: ToolFailureObservation | undefined,
+    error: unknown,
+): SignalLevel | undefined {
+    if (outcome !== "failed" || error !== undefined || !failure) return undefined
+    return failure.stage === "validation" || failure.stage === "authorization" || failure.stage === "routing" ? "info" : undefined
 }
 
 function observedToolResult(value: unknown): ObservedToolResult {
