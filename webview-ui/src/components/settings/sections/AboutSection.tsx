@@ -106,12 +106,11 @@ function ReportingConsent() {
             />
 
             <p className="text-sm mt-[5px] text-description">
-                Usage reporting is on by default and can be turned off here. It sends anonymous product analytics and, at most
-                once a minute, aggregated request, token, cache and cost counts per purpose (task, subagent, compaction) and
-                request and token counts per provider and model, used for rankings, to Dline's telemetry service at otel.dline.cc.
-                Error reporting is off until you turn it on. Error reporting sends crash and exception reports and lets Dline
-                record the runtime events a diagnostic bundle is built from. No code, prompts, file contents, or personal
-                information are ever sent. See our{" "}
+                Usage reporting and error reporting are both on by default and can be turned off independently here. Usage
+                reporting sends bounded aggregate request, token, cache, cost, provider, and model statistics to Dline's telemetry
+                service at otel.dline.cc. Error reporting sends allowlisted failure and runtime-health records. Ordinary reporting
+                excludes prompts, model responses, source code, file contents, paths, commands, terminal output, credentials, and
+                account identity. See our{" "}
                 <VSCodeLink
                     className="text-inherit"
                     href="https://docs.dline.cc/troubleshooting/telemetry/"
@@ -121,7 +120,7 @@ function ReportingConsent() {
                 and{" "}
                 <VSCodeLink
                     className="text-inherit"
-                    href="https://docs.dline.cc/troubleshooting/telemetry/#privacy-filtering"
+                    href="https://docs.dline.cc/privacy/"
                     style={{ fontSize: "inherit", textDecoration: "underline" }}>
                     privacy policy
                 </VSCodeLink>{" "}

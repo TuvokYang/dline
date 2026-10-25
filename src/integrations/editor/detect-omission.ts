@@ -52,9 +52,7 @@ export function showOmissionWarning(originalFileContent: string, newFileContent:
             })
             .then((response: any) => {
                 if (response.selectedOption === "Follow this guide to fix the issue") {
-                    openExternal(
-                        "https://github.com/cline/cline/wiki/Troubleshooting-%E2%80%90-Cline-Deleting-Code-with-%22Rest-of-Code-Here%22-Comments",
-                    )
+                    openExternal("https://docs.dline.cc/core-workflows/working-with-files/")
                 }
             })
     }

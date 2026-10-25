@@ -59,8 +59,8 @@ export class VercelAIGatewayHandler extends ApiHandler {
                     baseURL: this.baseUrl || "https://ai-gateway.vercel.sh/v1",
                     apiKey: this.apiKey,
                     defaultHeaders: {
-                        "http-referer": "https://cline.bot",
-                        "x-title": "Cline",
+                        "http-referer": "https://dline.cc",
+                        "x-title": "Dline",
                     },
                 })
             } catch (error: any) {

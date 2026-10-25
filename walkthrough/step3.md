@@ -1,7 +1,7 @@
-# Always Use the Best Models
+# Keep Side Effects Reviewable
 
-**Connect your keys for Anthropic (Claude), Google (Gemini), OpenAI (GPT), and other leading LLMs.**
+Dline classifies tool requests by action type and the current approval settings. Workspace reads and safe commands can run automatically by default; edits and higher-impact actions normally request review unless you enable matching automation.
 
-Cline puts you at the forefront of AI. Bring your own API keys for leading models like Anthropic (Claude), Google (Gemini), and OpenAI (GPT). Always leverage the most powerful State-of-the-Art (SOTA) capabilities, ensuring you control both cost and cutting-edge performance.
+Approval never overrides workspace boundaries, `.agentignore`, host restrictions, or tool-specific safety checks. Command and subagent runs are retained in **Activities** with output and terminal state; other tool results remain in the task conversation.
 
-![Cline Models Demo](https://storage.googleapis.com/cline_public_images/docs/assets/clines-models-hifi-3_compress.webp)
+[Review Dline Settings](command:dline.settingsButtonClicked) · [Read the auto-approval guide](https://docs.dline.cc/features/auto-approve/)

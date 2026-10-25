@@ -114,7 +114,12 @@ export const sidebar = [
             {
                 label: "Settings & Troubleshooting",
                 translations: { "zh-CN": "设置与排错" },
-                items: ["getting-started/config", "troubleshooting/networking-and-proxies", "troubleshooting/telemetry"],
+                items: [
+                    "getting-started/config",
+                    "privacy",
+                    "troubleshooting/networking-and-proxies",
+                    "troubleshooting/telemetry",
+                ],
             },
         ],
     },

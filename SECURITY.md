@@ -2,24 +2,23 @@
 
 ## Supported Versions
 
-We actively patch only the most recent minor release of Dline. Older versions receive fixes at our discretion.
+Dline actively patches the most recent minor release. Older versions receive fixes at the maintainers' discretion.
 
-## Reporting a Vulnerability
+## Report a Vulnerability Privately
 
-We appreciate your efforts to responsibly disclose your findings and will make every effort to acknowledge your contributions.
+Do not open a public issue for a suspected vulnerability.
 
-To report a security issue, please submit your report through our [Bugcrowd Vulnerability Disclosure Program](https://bugcrowd.com/engagements/clinebot-vdp-ess). Bugcrowd will manage communication and triage on our behalf.
+Use one of these Dline-owned channels:
 
-When reporting, please include:
+1. Submit a [private GitHub security advisory](https://github.com/TuvokYang/Dline/security/advisories/new).
+2. If GitHub private reporting is unavailable, email `security@dline.cc`.
 
-- A short summary of the issue
-- Steps to reproduce or a proof of concept
-- Any logs, stack traces, or screenshots that might help us understand the problem
+Include the affected version, impact, reproduction steps or proof of concept, and any relevant logs or screenshots. Remove API keys, access tokens, private source code, prompts, and user data unless they are essential to the report and you have agreed on a secure transfer method with the maintainers.
 
-Please keep the details private until a resolution has been reached.
+Dline is an independent project. Its vulnerabilities are not handled by Cline Bot Inc. or the Cline vulnerability disclosure program.
 
-## Escalation
+## Disclosure and Response
 
-If you are unable to submit through Bugcrowd, you may send an email to security@dline.bot.
+Please keep vulnerability details private until the maintainers have investigated and coordinated a fix. The maintainers will acknowledge the report, assess severity and affected versions, and communicate remediation or disclosure steps through the private reporting channel.
 
-Thank you for helping us keep Dline users safe.
+Thank you for helping protect Dline users.

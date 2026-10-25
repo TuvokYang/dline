@@ -74,8 +74,8 @@ export class ClineHandler extends ApiHandler {
         if (!this.client) {
             try {
                 const defaultHeaders: Record<string, string> = {
-                    "HTTP-Referer": "https://cline.bot",
-                    "X-Title": "Cline",
+                    "HTTP-Referer": "https://dline.cc",
+                    "X-Title": "Dline",
                     "X-Task-ID": this.ctx.ulid || "",
                 }
                 Object.assign(defaultHeaders, await buildClineExtraHeaders())

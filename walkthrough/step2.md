@@ -1,7 +1,11 @@
-# Deep Codebase Intelligence
+# Choose Plan or Act for Each Task
 
-**Cline starts with broad context and explores deeply where needed.**
+Dline keeps investigation and implementation explicit:
 
-Cline is designed with inherent codebase intelligence. It doesn't operate in a vacuum, but starts with a structural understanding of your project. Before making changes, it performs targeted agentic exploration to gain any additional specific context required, ensuring its actions are always well-informed and aligned with your architecture.
+- **Plan** is for reading the project, resolving uncertainty, and agreeing on an approach.
+- **Act** is for implementing, validating, and completing the task.
+- Both modes use the current tool-approval policy; changing mode does not bypass approval or access boundaries.
 
-![Cline Deep Codebase Intelligence Demo](https://storage.googleapis.com/cline_public_images/docs/assets/cline-reading-codebase-hifi-2_compress.webp)
+Each task stores its own mode and Profile selection. Plan and Act can use separate Profile bindings when model separation is enabled.
+
+[Start a new Dline task](command:dline.plusButtonClicked) · [Read about Plan and Act](https://docs.dline.cc/core-workflows/plan-and-act/)

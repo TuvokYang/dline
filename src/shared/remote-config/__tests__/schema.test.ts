@@ -756,7 +756,7 @@ describe("Remote Config Schema", () => {
                             { id: "claude-3-5-sonnet-20241022" },
                             { id: "claude-3-5-sonnet-20241024", thinkingBudgetTokens: 1600 },
                         ],
-                        baseUrl: "https://example.dline.bot",
+                        baseUrl: "https://example.dline.cc",
                     },
                 },
                 enterpriseTelemetry: {
@@ -816,7 +816,7 @@ describe("Remote Config Schema", () => {
             expect(result.providerSettings?.Anthropic?.models?.[0].thinkingBudgetTokens).to.be.undefined
             expect(result.providerSettings?.Anthropic?.models?.[1].id).to.equal("claude-3-5-sonnet-20241024")
             expect(result.providerSettings?.Anthropic?.models?.[1].thinkingBudgetTokens).to.equal(1600)
-            expect(result.providerSettings?.Anthropic?.baseUrl).to.equal("https://example.dline.bot")
+            expect(result.providerSettings?.Anthropic?.baseUrl).to.equal("https://example.dline.cc")
 
             // Verify OpenTelemetry settings
             expect(result.openTelemetryEnabled).to.equal(true)

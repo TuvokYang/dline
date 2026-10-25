@@ -7,8 +7,8 @@ vi.mock("@/config", () => ({
         init: () => {},
         config: {
             environment: "production",
-            appBaseUrl: "https://app.dline.bot",
-            apiBaseUrl: "https://api.dline.bot",
+            appBaseUrl: "https://app.dline.cc",
+            apiBaseUrl: "https://api.dline.cc",
             mcpBaseUrl: "https://mcp.cline.bot",
         },
     },

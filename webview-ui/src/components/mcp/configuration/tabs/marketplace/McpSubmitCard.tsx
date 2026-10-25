@@ -34,8 +34,8 @@ const McpSubmitCard = () => {
                     Submit MCP Server
                 </h3>
                 <p style={{ fontSize: "13px", margin: 0, color: "var(--vscode-descriptionForeground)" }}>
-                    Help others discover great MCP servers by submitting an issue to{" "}
-                    <a href="https://github.com/cline/mcp-marketplace">github.com/cline/mcp-marketplace</a>
+                    Suggest an MCP server through the{" "}
+                    <a href="https://github.com/TuvokYang/Dline/issues/new">Dline issue tracker</a>
                 </p>
             </div>
         </div>
