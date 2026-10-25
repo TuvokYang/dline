@@ -2,8 +2,6 @@ import "should"
 import { openRouterDefaultModelInfo } from "@shared/api"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { ClineAccountService } from "@/services/account/ClineAccountService"
-import { AuthService } from "@/services/auth/AuthService"
 import { ClineHandler } from "../cline"
 
 describe("ClineHandler", () => {
@@ -17,11 +15,29 @@ describe("ClineHandler", () => {
         },
     })
 
-    const createHandler = (options: ConstructorParameters<typeof ClineHandler>[0]) => {
-        vi.spyOn(ClineAccountService, "getInstance").mockReturnValue({} as any)
-        vi.spyOn(AuthService, "getInstance").mockReturnValue({} as any)
-        return new ClineHandler(options)
-    }
+    const createHandler = (options: ConstructorParameters<typeof ClineHandler>[0]) => new ClineHandler(options)
+
+    it("requires a Profile-scoped API key", async () => {
+        const handler = createHandler({ profile: ApiProfile.create({ provider: "cline" }), mode: "act" })
+
+        await expect((handler as any).ensureClient()).rejects.toThrow("Cline Provider API key is required")
+    })
+
+    it("builds the client from the Profile endpoint and credential", async () => {
+        const handler = createHandler({
+            profile: ApiProfile.create({
+                provider: "cline",
+                apiKey: "  profile-secret  ",
+                baseUrl: "https://cline-proxy.example.test/root///",
+            }),
+            mode: "act",
+        })
+
+        const client = await (handler as any).ensureClient()
+
+        expect(client.baseURL).toBe("https://cline-proxy.example.test/root/api/v1")
+        expect(client.apiKey).toBe("profile-secret")
+    })
 
     it("does not lend the default model's declaration to an unknown selected alias", () => {
         const handler = createHandler({

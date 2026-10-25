@@ -6,7 +6,6 @@ import OpenAI from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
 import { buildClineExtraHeaders } from "@/services/EnvUtils"
 import type { ClineStorageMessage } from "@/shared/messages/content"
-import { fetch } from "@/shared/net"
 import { resolveClineProviderApiBaseUrl } from "@/shared/providers/cline-runtime"
 import { Logger } from "@/shared/services/Logger"
 import { ApiHandler, type ApiHandlerContext } from "../ApiHandler"
@@ -78,7 +77,9 @@ export class ClineHandler extends ApiHandler {
                     apiKey: credential,
                     defaultHeaders,
                     // Capture real HTTP request ID from initial streaming response headers
-                    fetch: async (...args: Parameters<typeof fetch>): Promise<Awaited<ReturnType<typeof fetch>>> => {
+                    fetch: async (
+                        ...args: Parameters<typeof providerFetch>
+                    ): Promise<Awaited<ReturnType<typeof providerFetch>>> => {
                         const [input, init] = args
                         const resp = await providerFetch(input, init)
                         try {
@@ -252,7 +253,7 @@ export class ClineHandler extends ApiHandler {
 
                 const url = new URL("/generation", `${this._baseUrl}/`)
                 url.searchParams.set("id", this.lastGenerationId)
-                const response = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) })
+                const response = await providerFetch(url, { headers, signal: AbortSignal.timeout(15_000) })
                 if (!response.ok) return undefined
                 const generation = await response.json()
                 const totalCost = generation?.total_cost || 0

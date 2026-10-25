@@ -14,12 +14,11 @@ interface ApiFailureContentProps {
 /**
  * One API failure, in the form the user can act on.
  *
- * An account limit names what to top up or wait out, and a signed-out Dline
- * account offers sign-in; anything else is the structured error box. The chat's
- * error rows and the interaction that offers Retry both render through it, so
- * a failure reads the same wherever it surfaces. Only the views that depend on
- * the Dline account (balance and sign-in) read the auth context. Retry and
- * Start New Task belong to the task footer; the content only links out.
+ * Provider balance and spend limits name what to top up or wait out; any other
+ * failure remains the structured provider error. The chat's error rows and the
+ * interaction that offers Retry both render through this boundary, so a failure
+ * reads the same wherever it surfaces. Retry and Start New Task belong to the
+ * task footer; this content only links out.
  */
 export const ApiFailureContent = memo(({ error, testId, title }: ApiFailureContentProps) => {
     const clineError = error ? ClineError.parse(error) : undefined
