@@ -166,7 +166,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         setActivityFilters(nextFilters)
         setFocusedActivityId(undefined)
     }, [])
-    const isProdHostedApp = userInfo?.apiBaseUrl === "https://app.dline.bot"
+    const isProdHostedApp = userInfo?.apiBaseUrl === "https://app.dline.cc"
     const shouldShowQuickWins = isProdHostedApp && (!taskHistory || taskHistory.length < QUICK_WINS_HISTORY_THRESHOLD)
 
     // task is no longer at index 0 — it's sent separately via taskMessage and displayed in fixed header

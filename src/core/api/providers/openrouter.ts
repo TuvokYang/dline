@@ -58,8 +58,8 @@ export class OpenRouterHandler extends ApiHandler {
                     baseURL: this.baseUrl || "https://openrouter.ai/api/v1",
                     apiKey: this.apiKey,
                     defaultHeaders: {
-                        "HTTP-Referer": "https://cline.bot", // Optional, for including your app on openrouter.ai rankings.
-                        "X-Title": "Cline", // Optional. Shows in rankings on openrouter.ai.
+                        "HTTP-Referer": "https://dline.cc", // Optional, for including Dline on openrouter.ai rankings.
+                        "X-Title": "Dline", // Optional. Shows in rankings on openrouter.ai.
                     },
                 })
             } catch (error: any) {

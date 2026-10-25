@@ -16,6 +16,29 @@ import { pinRepositoryLinks } from "../../scripts/marketplace-readme.mjs"
 
 const PROJECT_ROOT = process.cwd()
 const REPOSITORY_URL = "https://github.com/TuvokYang/Dline"
+const ABSOLUTE_OR_FRAGMENT = /^(?:[a-z][a-z\d+.-]*:|#|\/\/)/i
+
+function collectRepositoryTargets(content: string): string[] {
+    let inFence = false
+    const targets: string[] = []
+
+    for (const line of content.split("\n")) {
+        if (/^\s*(?:```|~~~)/.test(line)) {
+            inFence = !inFence
+            continue
+        }
+        if (inFence) continue
+
+        for (const match of line.matchAll(/!?\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)) {
+            targets.push(match[1])
+        }
+        for (const match of line.matchAll(/<(?:a|img|source|video)\b[^>]*?\s(?:href|src|poster)=["']([^"']+)["']/gi)) {
+            targets.push(match[1])
+        }
+    }
+
+    return targets.filter((target) => target !== "" && !ABSOLUTE_OR_FRAGMENT.test(target))
+}
 
 describe("marketplace README repository links", () => {
     it("pins page links to blob and images to raw at the packaged ref", () => {
@@ -66,13 +89,16 @@ describe("marketplace README repository links", () => {
         expect(readme).toContain("English · [中文](README_zh.md)")
         expect(readme).not.toMatch(/\/(?:blob|raw|tree)\/main\//)
 
+        const repositoryTargets = collectRepositoryTargets(readme)
+        expect(repositoryTargets.length).toBeGreaterThan(0)
+
         const pinned = pinRepositoryLinks(readme, repositoryUrl, "dev-v9.9.9")
         const escaped = repositoryUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
         const targets = [...pinned.matchAll(new RegExp(`${escaped}/(?:blob|raw)/dev-v9\\.9\\.9/([^)"'#?\\s]+)`, "g"))].map(
             (match) => match[1],
         )
 
-        expect(targets.length).toBeGreaterThan(10)
+        expect(targets).toHaveLength(repositoryTargets.length)
         for (const target of targets) {
             await expect(
                 fs.access(path.join(PROJECT_ROOT, target)),

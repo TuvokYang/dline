@@ -126,8 +126,8 @@ export const WithLinks: Story = {
         markdown: `Check out these resources:
 
 - Official documentation: https://github.com/cline/cline
-- API reference: https://api.dline.bot/docs
-- Support forum: https://community.dline.bot
+- API reference: https://api.dline.cc/docs
+- Support forum: https://community.dline.cc
 
 You can also visit our website at https://cline.bot for more information.`,
         compact: false,

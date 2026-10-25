@@ -290,7 +290,7 @@ export class GitOperations {
         await git.addConfig("core.worktree", cwd)
         await git.addConfig("commit.gpgSign", "false")
         await git.addConfig("user.name", "Dline Checkpoint")
-        await git.addConfig("user.email", "checkpoint@dline.bot")
+        await git.addConfig("user.email", "checkpoint@dline.cc")
 
         // Set up LFS patterns
         const lfsPatterns = await getLfsPatterns(cwd)
@@ -389,9 +389,9 @@ export class GitOperations {
             await git.addConfig("user.name", "Dline Checkpoint")
         }
         const userEmail = await git.getConfig("user.email")
-        if (userEmail.value !== "checkpoint@dline.bot") {
-            Logger.warn(`Shadow git user.email is "${userEmail.value}" — resetting to checkpoint@dline.bot`)
-            await git.addConfig("user.email", "checkpoint@dline.bot")
+        if (userEmail.value !== "checkpoint@dline.cc") {
+            Logger.warn(`Shadow git user.email is "${userEmail.value}" — resetting to checkpoint@dline.cc`)
+            await git.addConfig("user.email", "checkpoint@dline.cc")
         }
     }
 

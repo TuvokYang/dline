@@ -98,8 +98,8 @@ describe("ClineEndpoint configuration", () => {
             const config = ClineEndpoint.config!
             config.environment.should.not.equal(Environment.selfHosted)
             // Should use production defaults
-            config.appBaseUrl.should.equal("https://app.dline.bot")
-            config.apiBaseUrl.should.equal("https://api.dline.bot")
+            config.appBaseUrl.should.equal("https://app.dline.cc")
+            config.apiBaseUrl.should.equal("https://api.dline.cc")
         })
 
         it("should accept URLs with ports", async () => {
@@ -667,8 +667,8 @@ describe("ClineEndpoint configuration", () => {
             // Should use production defaults
             const config = ClineEndpoint.config!
             config.environment.should.not.equal(Environment.selfHosted)
-            config.appBaseUrl.should.equal("https://app.dline.bot")
-            config.apiBaseUrl.should.equal("https://api.dline.bot")
+            config.appBaseUrl.should.equal("https://app.dline.cc")
+            config.apiBaseUrl.should.equal("https://api.dline.cc")
         })
 
         it("should throw ClineConfigurationError for invalid bundled file", async () => {

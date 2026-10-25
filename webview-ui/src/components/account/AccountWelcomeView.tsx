@@ -27,7 +27,7 @@ export const AccountWelcomeView = () => {
 
             <p className="text-(--vscode-descriptionForeground) text-xs text-center m-0">
                 By continuing, you agree to the <VSCodeLink href="https://dline.cc/terms">Terms of Service</VSCodeLink> and{" "}
-                <VSCodeLink href="https://dline.cc/privacy">Privacy Policy.</VSCodeLink>
+                <VSCodeLink href="https://docs.dline.cc/privacy/">Privacy Policy.</VSCodeLink>
             </p>
         </div>
     )

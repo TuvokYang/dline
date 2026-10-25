@@ -290,7 +290,7 @@ export function RemoteConfigSection({ renderSectionHeader }: RemoteConfigSection
                 <div className="flex flex-col justify-center gap-4">
                     <h3>
                         You haven't configured remote config yet. Do so through our{" "}
-                        <VSCodeLink href="https://app.dline.bot/dashboard/organization?tab=settings">dashboard</VSCodeLink>.
+                        <VSCodeLink href="https://app.dline.cc/dashboard/organization?tab=settings">dashboard</VSCodeLink>.
                     </h3>
 
                     <RefreshButton />

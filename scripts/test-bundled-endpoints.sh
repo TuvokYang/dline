@@ -11,9 +11,9 @@ echo ""
 # Configuration
 STAGING_CONFIG=$(cat <<'EOF'
 {
-  "appBaseUrl": "https://staging-app.dline.bot",
-  "apiBaseUrl": "https://core-api.staging.int.dline.bot",
-  "mcpBaseUrl": "https://core-api.staging.int.dline.bot/v1/mcp"
+  "appBaseUrl": "https://staging-app.dline.cc",
+  "apiBaseUrl": "https://core-api.staging.int.dline.cc",
+  "mcpBaseUrl": "https://core-api.staging.int.dline.cc/v1/mcp"
 }
 EOF
 )

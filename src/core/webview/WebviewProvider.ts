@@ -193,13 +193,13 @@ export abstract class WebviewProvider {
 				<meta name="theme-color" content="#000000">
 				<link rel="stylesheet" type="text/css" href="${stylesUrl}">
 				<meta http-equiv="Content-Security-Policy" content="default-src 'none';
-					connect-src https://*.posthog.com https://*.dline.bot; 
-					font-src ${this.getCspSource()} data:; 
-					style-src ${this.getCspSource()} 'unsafe-inline'; 
+					connect-src https://*.posthog.com https://*.dline.cc;
+					font-src ${this.getCspSource()} data:;
+					style-src ${this.getCspSource()} 'unsafe-inline';
 					img-src ${this.getCspSource()} https: data: blob:;
 					media-src ${this.getCspSource()} https: data: blob:;
 					script-src 'nonce-${nonce}' 'unsafe-eval';">
-				<title>Cline</title>
+				<title>Dline</title>
 			</head>
 			<body>
 				<noscript>You need to enable JavaScript to run this app.</noscript>

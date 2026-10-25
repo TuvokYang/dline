@@ -1,0 +1,211 @@
+---
+title: Dline Privacy Policy
+description: How Dline stores local data, sends approved content to configured services, handles optional reporting, and supports privacy requests.
+---
+
+**Effective date:** October 25, 2026
+
+**Last updated:** October 25, 2026
+
+This Privacy Policy explains how the Dline maintainers process information through the Dline VS Code extension and Dline-operated services that the extension contacts. Dline is independently maintained community software. It is not an official Cline release and is not affiliated with or endorsed by Cline Bot Inc.
+
+## 1. Who is responsible
+
+The Dline maintainers, publishing under the Marketplace publisher identity `tuvokyang`, are responsible for the Dline-specific processing described in this policy.
+
+For privacy or security requests, contact `security@dline.cc`. Do not include API keys, access tokens, source code, private prompts, or other secrets in an ordinary email or public issue.
+
+Third-party model providers, MCP servers, websites, image services, identity providers, and other integrations are responsible for the information they receive under their own terms and privacy policies.
+
+## 2. Scope
+
+This policy covers:
+
+- the Dline VS Code extension;
+- Dline-operated account, API, documentation, support, and telemetry services under `dline.cc`;
+- diagnostic or support information you explicitly choose to provide to Dline.
+
+This policy does not replace the terms of a model provider, MCP server, browser target, repository host, image provider, or other third-party service that you choose to use through Dline.
+
+## 3. Summary of Dline's approach
+
+- Dline stores its settings, credentials, task history, messages, activities, checkpoints, and recovery state locally by default.
+- Dline sends task content to a model provider only when a task makes a provider request using a Profile you configured.
+- External tools receive the request data needed for an operation only after you approve that operation or enable a matching auto-approval rule.
+- Usage reporting and error reporting are separate controls. Both are enabled by default in the current build, honor VS Code's telemetry setting, and can be disabled independently.
+- Dline does not sell personal information or use task content for advertising.
+- Dline does not intentionally include prompts, source code, file contents, commands, terminal output, or account identity in ordinary remote usage or error-reporting payloads.
+
+## 4. Information stored on your device
+
+Dline may store the following information locally:
+
+- API Profiles, provider endpoints, model selections, and feature settings;
+- API keys, OAuth tokens, provider credentials, and MCP secrets in dedicated credential stores;
+- task messages, selected attachments, tool results, activities, usage records, and recovery snapshots;
+- workspace-scoped settings, capability toggles, rules, skills, workflows, hooks, and MCP descriptors;
+- command logs, diagnostic records, browser resources, image previews, and temporary input resources;
+- Git-based checkpoint metadata and task-history indexes;
+- pseudonymous installation or device identifiers used by enabled reporting channels.
+
+Local information remains on your device unless a feature described below sends it to a configured service or you export and share it yourself. Local data remains until you delete the corresponding task, credential, setting, cache, diagnostic data, or Dline storage directory, subject to bounded cleanup performed by the extension.
+
+Uninstalling the extension may not remove data stored outside VS Code's extension installation directory. Use Dline's deletion controls or remove the Dline data, home, and documents roots after backing up anything you need.
+
+## 5. Model provider requests
+
+When you send a task or Dline continues an approved task, Dline sends the information needed to produce a response to the model provider selected by that task's API Profile. Depending on the task and your choices, this can include:
+
+- your prompt and later feedback;
+- system instructions, enabled rules, skills, workflows, and tool definitions;
+- selected source code, files, images, documents, diagnostics, or workspace context;
+- previous conversation messages and model responses;
+- approved tool results, command output, browser results, MCP results, and generated summaries;
+- provider and model configuration required to route the request.
+
+The provider determines how it processes, retains, and uses this information. Review the provider's privacy policy and data-use settings before adding credentials. Dline cannot delete information already received by a third-party provider.
+
+## 6. External tools and services
+
+Dline can call external services only through capabilities available to the task and subject to the applicable approval policy.
+
+### MCP servers
+
+An MCP server can receive tool arguments, resource identifiers, prompts, and authentication data required by that server. Workspace or global MCP configuration may be created by you or another project contributor. Review each server's operator, source, permissions, and privacy terms before enabling it.
+
+### Web search, web fetch, and browser automation
+
+Search providers and fetched websites receive normal network information such as the requested query or URL, IP address, user agent, cookies already present in the selected browser context, and any form data or actions you approve. Browser automation can expose information displayed in or entered into the controlled page.
+
+### Commands, files, and source control
+
+Commands execute on your machine and can contact any service named by the command. File tools can read or modify only within their admitted scope. Checkpoints use local Git repositories and may record file paths, hashes, and file contents in local checkpoint objects. Dline does not push checkpoint data to a remote repository unless you separately authorize a command or workflow that performs that remote write.
+
+### Images and documents
+
+Image generation providers receive the prompt and any reference image or mask you approve. Model providers can receive images, PDFs, documents, or extracted text that you attach or that an approved tool returns.
+
+## 7. Dline account and hosted services
+
+Some builds can expose optional Dline account, organization, model access, billing, or remote-configuration features. When you use such a feature, Dline-operated services may process:
+
+- account identifiers and authentication records;
+- profile information you provide;
+- organization membership and role information;
+- subscription, credit, billing, and transaction records;
+- service configuration, feature eligibility, abuse-prevention, and security records;
+- the request metadata needed to provide the hosted service.
+
+Dline does not store full payment-card numbers in the extension. Payment processors may process billing information under their own policies. Account features display applicable terms before sign-in or purchase.
+
+## 8. Usage reporting
+
+**Allow usage reporting** is enabled by default in the current build. You can turn it off in **Settings → About**. VS Code's `telemetry.telemetryLevel` and organization policy can further restrict delivery and cannot turn reporting on after you turn it off.
+
+When enabled, Dline can send bounded operational counts and dimensions to `otel.dline.cc`, such as:
+
+- Dline version, release channel, operating-system and editor family;
+- provider, model, API format, and task purpose categories;
+- request outcomes, durations, retries, throughput, and token/cache/cost counts;
+- aggregate tool, MCP, task, subagent, and feature-use counts;
+- local drop counts and protocol health information.
+
+Ordinary usage payloads are designed not to contain prompts, model responses, source code, file contents, file paths, commands, terminal output, task or workspace identity, account identity, API keys, or access tokens. Model and provider identifiers can still reveal information if you put confidential data into a custom identifier. Do not use account numbers, customer names, repository names, secrets, or other sensitive values as custom model or provider IDs.
+
+Turning usage reporting off stops new collection for the remote usage channel, aborts delivery attempts, and deletes unsent usage records and the local usage access token as implemented by the current client. It does not delete records already accepted by the service.
+
+See [Telemetry, Privacy, and Issue Diagnostics](/troubleshooting/telemetry/) for the current wire fields, limits, local queues, retries, and deletion behavior.
+
+## 9. Error and runtime reporting
+
+**Allow error reporting** is enabled by default in the current build and can be turned off independently in **Settings → About**. Host and organization telemetry settings can further restrict delivery.
+
+When enabled, Dline can send allowlisted failure and runtime-health records to `otel.dline.cc`, including event type, severity, safe error code or fingerprint, provider/model classification, phase, retryability, duration, and bounded performance measurements.
+
+Ordinary remote error-reporting payloads are designed not to contain free-form error messages, stack traces, prompts, model responses, source code, file contents, paths, URLs, commands, terminal output, task or workspace identity, account identity, API keys, or access tokens.
+
+Turning error reporting off stops new remote diagnostics, aborts delivery, and deletes unsent diagnostic records and the local diagnostics access token as implemented by the current client. It does not delete records already accepted by the service.
+
+## 10. Diagnostic bundles and support reports
+
+Dline can create a diagnostic bundle only when you request an export. The bundle is written to your machine and is not uploaded automatically. Review it before sharing it.
+
+A bug-report workflow can open a prefilled issue or authorization page after showing an approval preview. Information is not submitted to a public issue until you review and submit the destination form. Temporary higher-detail diagnostics, when available, require a separate issue-specific authorization and are not granted by ordinary usage or error-reporting consent.
+
+Information you send in a support request is retained as part of that request and may be visible to repository maintainers or, for a public issue, to the public. Remove secrets and confidential project information before submitting.
+
+## 11. Purposes and legal bases
+
+Dline processes information to:
+
+- provide the extension, configured integrations, account features, and requested support;
+- authenticate users and protect credentials;
+- preserve task state and recover interrupted work;
+- enforce permissions, prevent abuse, and protect service security;
+- diagnose failures and improve compatibility, reliability, and feature design;
+- measure aggregate service use when reporting is enabled;
+- comply with legal obligations and respond to valid legal requests.
+
+Depending on the applicable law and feature, processing is based on your request to provide the service, your consent or settings choice, Dline's legitimate interest in security and reliability, or a legal obligation. You can withdraw optional reporting consent at any time through Dline settings.
+
+## 12. Sharing and disclosure
+
+Dline may disclose information to:
+
+- model providers and integration operators you configure;
+- infrastructure, hosting, authentication, payment, email, logging, and security providers used to operate Dline services;
+- maintainers or support personnel who need access to resolve a request or protect the service;
+- authorities or other parties when required by law or necessary to protect users, Dline, or the public;
+- a successor if responsibility for a Dline service is transferred, subject to applicable notice and law.
+
+Dline does not sell personal information. Dline does not share task content with data brokers or use it for third-party advertising.
+
+## 13. Retention
+
+Dline follows data minimization and keeps information only for the period needed for the stated purpose:
+
+- local task, configuration, credential, and cache data remains until you remove it or a documented local cleanup limit applies;
+- unsent usage and diagnostics data is bounded by the client and is deleted when the corresponding reporting control is turned off;
+- accepted remote usage and diagnostic records are retained only for service operation, security, aggregate analysis, and troubleshooting, then deleted or irreversibly aggregated under the service retention schedule;
+- account and billing records are retained while the account is active and as required for security, dispute resolution, accounting, tax, or other legal obligations;
+- support and security reports are retained while active and for a reasonable period afterward to prevent regressions and document the resolution.
+
+Before a production Marketplace release, Dline must publish and enforce the concrete server-side retention schedule for each Dline-operated remote service. If the public service documentation does not state a maximum period for a category, contact `security@dline.cc` before enabling that optional category.
+
+## 14. Security
+
+Dline uses scoped storage owners, owner-only credential files where supported, atomic local writes, bounded queues, encrypted transport for Dline-operated remote services, cancellation, and privacy allowlists. No system can guarantee absolute security.
+
+Protect your device, VS Code profile, provider accounts, repositories, MCP configuration, and API credentials. Report a suspected vulnerability privately according to the [Dline Security Policy](https://github.com/TuvokYang/Dline/security/policy).
+
+## 15. Your choices and rights
+
+You can:
+
+- disable usage reporting and error reporting independently;
+- reduce or disable VS Code telemetry;
+- remove provider credentials, Profiles, MCP servers, tasks, attachments, and local Dline data;
+- decline a tool request or remove an auto-approval rule;
+- choose a local model or local integration where available;
+- review a diagnostic bundle or issue form before sharing it;
+- request access, correction, deletion, restriction, objection, portability, or withdrawal of consent where applicable law provides that right.
+
+Send privacy requests to `security@dline.cc`. Dline may need to verify your identity and scope before acting on a request. Dline cannot fulfill requests for data controlled only by a third-party provider; contact that provider directly.
+
+## 16. International processing
+
+Dline maintainers and service providers may process information in countries other than yours. Where required, Dline will use an applicable transfer mechanism and contractual or technical safeguards. Your chosen model provider or integration can use different locations and safeguards under its own policy.
+
+## 17. Children
+
+Dline is a developer tool and is not directed to children. Do not use Dline account or hosted services if you are below the minimum age required by applicable law or the relevant service terms.
+
+## 18. Changes to this policy
+
+Material changes will update the date at the top of this page and will be described in Dline release notes or another appropriate notice. A change to this policy does not silently enable a reporting control you disabled.
+
+## 19. Contact
+
+Privacy and security: `security@dline.cc`
+
+Repository and non-sensitive product issues: [TuvokYang/Dline](https://github.com/TuvokYang/Dline/issues)

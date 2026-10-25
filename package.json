@@ -1,7 +1,7 @@
 {
     "name": "dline",
     "displayName": "Dline",
-    "description": "Autonomous coding agent right in your IDE, capable of creating/editing files, running commands, using the browser, and more with your permission every step of the way.",
+    "description": "Independent coding agent for VS Code with separate task panels, per-task model Profiles, persistent state, MCP, subagents, and configurable tool approvals.",
     "version": "0.11.1",
     "icon": "assets/icons/icon.png",
     "engines": {
@@ -17,6 +17,9 @@
         "url": "https://github.com/TuvokYang/Dline"
     },
     "homepage": "https://dline.cc",
+    "bugs": {
+        "url": "https://github.com/TuvokYang/Dline/issues"
+    },
     "categories": [
         "AI",
         "Chat",
@@ -70,45 +73,45 @@
         "walkthroughs": [
             {
                 "id": "DlineWalkthrough",
-                "title": "Meet Dline, your new coding partner",
-                "description": "Dline codes like a developer because it thinks like one. Here are 5 ways to put it to work:",
+                "title": "Configure Dline for task-scoped, recoverable coding work",
+                "description": "Create model Profiles, choose Plan or Act, open separate task panels, and control which tool actions can run automatically.",
                 "steps": [
                     {
                         "id": "welcome",
-                        "title": "Start with a Goal, Not Just a Prompt",
-                        "description": "Tell Dline what you want to achieve. It plans, asks, and then codes, like a true partner.",
+                        "title": "Connect a Model Provider",
+                        "description": "Create a Profile with a provider, model, and local credentials, then mark whether it is available for Plan, Act, or subagents.",
                         "media": {
                             "markdown": "walkthrough/step1.md"
                         }
                     },
                     {
                         "id": "learn",
-                        "title": "Let Dline Learn Your Codebase",
-                        "description": "Point Dline to your project. It builds understanding to make smart, context-aware changes.",
+                        "title": "Choose Plan or Act for Each Task",
+                        "description": "Use Plan to investigate and agree on an approach, then switch to Act to implement it. Each task keeps its own mode and Profile selection.",
                         "media": {
                             "markdown": "walkthrough/step2.md"
                         }
                     },
                     {
                         "id": "advanced-features",
-                        "title": "Always Use the Best AI Models",
-                        "description": "Dline empowers you with State-of-the-Art AI, connecting to top models (Anthropic, Gemini, OpenAI & more).",
+                        "title": "Keep Side Effects Reviewable",
+                        "description": "Choose which action types require review and which can run automatically. Workspace, host, and .agentignore boundaries still apply.",
                         "media": {
                             "markdown": "walkthrough/step3.md"
                         }
                     },
                     {
                         "id": "mcp",
-                        "title": "Extend with Powerful Tools (MCP)",
-                        "description": "Connect to databases, APIs, or discover new capabilities in the MCP Marketplace.",
+                        "title": "Run Concurrent Tasks in Separate Panels",
+                        "description": "Each panel keeps its own task state and can run concurrently, while workspace files remain shared by default.",
                         "media": {
                             "markdown": "walkthrough/step4.md"
                         }
                     },
                     {
                         "id": "getting-started",
-                        "title": "You're Always in Control",
-                        "description": "Review Dline's plans and diffs. Approve changes before they happen. No surprises.",
+                        "title": "Add Only the Capabilities You Need",
+                        "description": "Control rules, workflows, skills, subagents, and MCP servers at global, workspace, or task scope; other tools keep their own controls.",
                         "media": {
                             "markdown": "walkthrough/step5.md"
                         },
