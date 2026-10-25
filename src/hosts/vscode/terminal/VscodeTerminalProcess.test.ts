@@ -350,6 +350,36 @@ describe("TerminalProcess (Integration Tests)", () => {
             expect(process.getUnretrievedOutput()).not.toContain(marker)
         })
 
+        it("should remove internal completion commands and markers from the terminal snapshot fallback", async () => {
+            const terminal = TerminalRegistry.createTerminal().terminal
+            createdTerminals.push(terminal)
+            const token = "fdaa9665-cc3c-48f7-a39f-146197198acb"
+            vi.spyOn(terminal, "shellIntegration", "get").mockReturnValue({
+                executeCommand: vi.fn().mockReturnValue({
+                    read: () => createMockStream([]),
+                }),
+            })
+            getLatestTerminalOutput.mockResolvedValue(
+                [
+                    `runner$ node command; printf '__DLINE_INTERNAL_COMMAND_EXIT__${token}:%s\\n' "$__dline_exit"`,
+                    "WORK_DAILY_COMMAND_START",
+                    "WORK_DAILY_COMMAND_END",
+                    `__DLINE_INTERNAL_COMMAND_EXIT__${token}:0`,
+                ].join("\n"),
+            )
+            const lines: string[] = []
+            process.on("line", (line) => lines.push(line))
+
+            const runPromise = process.run(terminal, "node command")
+            await vi.advanceTimersByTimeAsync(100)
+            await runPromise
+
+            expect(lines).toContain("WORK_DAILY_COMMAND_START")
+            expect(lines).toContain("WORK_DAILY_COMMAND_END")
+            expect(lines.join("\n")).not.toContain("__DLINE_INTERNAL_COMMAND_EXIT__")
+            expect(lines.join("\n")).not.toContain("printf")
+        })
+
         it("should complete when terminal-end details arrive before the shell stream closes", async () => {
             const terminal = TerminalRegistry.createTerminal().terminal
             createdTerminals.push(terminal)

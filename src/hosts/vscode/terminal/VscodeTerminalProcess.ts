@@ -82,13 +82,15 @@ export class VscodeTerminalProcess extends EventEmitter<TerminalProcessEvents> i
         const returnCurrentTerminalContents = async (): Promise<string | undefined> => {
             try {
                 const terminalSnapshot = await getLatestTerminalOutput()
-                if (terminalSnapshot?.trim()) {
-                    const fallbackMessage = `The command's output could not be captured due to some technical issue, however it has been executed successfully. Here's the current terminal's content to help you get the command's output:\n\n${terminalSnapshot}`
+                const sanitizedSnapshot =
+                    terminalSnapshot === undefined ? undefined : removeInternalCommandExitMarkers(terminalSnapshot)
+                if (sanitizedSnapshot?.trim()) {
+                    const fallbackMessage = `The command's output could not be captured due to some technical issue, however it has been executed successfully. Here's the current terminal's content to help you get the command's output:\n\n${sanitizedSnapshot}`
                     for (const line of fallbackMessage.split(/\r?\n/)) {
                         this.emit("line", line, "combined")
                     }
                 }
-                return terminalSnapshot
+                return sanitizedSnapshot
             } catch (error) {
                 Logger.error("Error capturing terminal output:", error)
                 return undefined
