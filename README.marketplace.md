@@ -10,7 +10,7 @@ English · [中文](README_zh.md)
 
 Bring your own model provider, preserve each task's state across reloads, and configure tool approvals by action type.
 
-[Documentation](https://docs.dline.cc/) · [Privacy](https://docs.dline.cc/privacy/) · [Security](SECURITY.md) · [Changelog](docs/changelog/CHANGELOG_en.md)
+[Documentation](https://docs.dline.cc/) · [Privacy](https://docs.dline.cc/privacy/) · [Security](https://docs.dline.cc/security/) · [Changelog](docs/changelog/CHANGELOG_en.md)
 
 </div>
 
@@ -85,7 +85,7 @@ Dline stores settings, credentials, task history, messages, activities, checkpoi
 
 When you submit a task, the prompt, selected context, and tool results needed for that request are sent to the model provider configured in the task's Profile. MCP servers, web services, image providers, browser targets, and other tools receive requests according to the current approval and auto-approval policy.
 
-Dline also has separate **usage reporting** and **error reporting** controls. Both are enabled by default in the current build, honor VS Code's telemetry setting, and can be turned off independently in **Settings → About**. The public [Privacy Policy](https://docs.dline.cc/privacy/) describes the data categories, purposes, destinations, retention boundaries, controls, and request process. The [telemetry reference](https://docs.dline.cc/troubleshooting/telemetry/) documents the current reporting schema and local diagnostic behavior.
+Dline also has separate **usage reporting** and **error reporting** controls. Both are enabled by default in the current build, honor VS Code's telemetry setting, and can be turned off independently in **Settings → About**. The public [Privacy Policy](https://docs.dline.cc/privacy/) describes the data categories, purposes, destinations, retention boundaries, controls, and current privacy-request limitation. The [telemetry reference](https://docs.dline.cc/troubleshooting/telemetry/) documents the current reporting schema and local diagnostic behavior.
 
 ## Configuration Locations
 
@@ -103,13 +103,13 @@ Dline can also read selected compatibility formats such as `AGENTS.md`, `.cliner
 
 ## Migration from Cline
 
-Some Dline versions can copy selected Cline settings, MCP configuration, rules, and workflows into Dline-owned storage. The source data is not modified or deleted. Cline task history is not imported because Dline's current task runtime and persistence format are not compatible with those records.
+Dline does not automatically read, copy, modify, or delete Cline data. To reuse selected settings, MCP configuration, rules, or workflows, follow the [manual migration guide](https://docs.dline.cc/getting-started/migration-cline-to-dline/). Cline task history is not compatible with Dline and cannot be imported.
 
 ## Support, Security, and Privacy
 
 - Product questions and bug reports: [Dline issues](https://github.com/TuvokYang/Dline/issues)
-- Security reports: [Dline Security Policy](SECURITY.md)
-- Privacy terms and requests: [Dline Privacy Policy](https://docs.dline.cc/privacy/)
+- Security reports: [Report a Security Vulnerability](https://docs.dline.cc/security/)
+- Privacy terms and request limitations: [Dline Privacy Policy](https://docs.dline.cc/privacy/)
 - Documentation: [docs.dline.cc](https://docs.dline.cc/)
 
 ## Open-source Origin

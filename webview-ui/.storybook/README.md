@@ -10,7 +10,7 @@ Storybook is a frontend workshop for building UI components and pages in isolati
 - **Catch UI bugs** through visual testing
 - **Share components** with team members and stakeholders
 
-In Cline's webview, Storybook helps us develop and test React components that make up the chat interface, settings panels, and other UI elements in isolation from the VSCode extension environment.
+In Dline's webview, Storybook helps us develop and test React components that make up the chat interface, settings panels, and other UI elements in isolation from the VS Code extension environment.
 
 ## Getting Started
 

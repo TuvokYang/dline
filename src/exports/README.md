@@ -1,48 +1,30 @@
-# Cline API
+# Dline Extension API
 
-The Cline extension exposes an API that can be used by other extensions. To use this API in your extension:
+Dline exports a small API for other VS Code extensions. The TypeScript interface keeps its existing name for source compatibility; the extension identity and runtime are Dline-owned.
 
-1. Copy `src/extension-api/cline.d.ts` to your extension's source directory.
-2. Include `cline.d.ts` in your extension's compilation.
-3. Get access to the API with the following code:
+1. Copy `src/exports/cline.d.ts` into the consuming extension, or provide an equivalent local declaration.
+2. Add `tuvokyang.dline` to `extensionDependencies` when Dline must be activated first.
+3. Resolve the Dline extension and call the exported compatibility interface:
 
-    ```ts
-    const clineExtension = vscode.extensions.getExtension<ClineAPI>("saoudrizwan.claude-dev")
+```ts
+import type { ClineAPI } from "./cline"
+import * as vscode from "vscode"
 
-    if (!clineExtension?.isActive) {
-    	throw new Error("Cline extension is not activated")
-    }
+const dlineExtension = vscode.extensions.getExtension<ClineAPI>("tuvokyang.dline")
+if (!dlineExtension) {
+    throw new Error("Dline is not installed")
+}
 
-    const cline = clineExtension.exports
+const dline = dlineExtension.isActive ? dlineExtension.exports : await dlineExtension.activate()
+await dline.startNewTask("Inspect the current workspace")
+await dline.sendMessage("Summarize the findings")
+```
 
-    if (cline) {
-    	// Now you can use the API
+The exported methods are declared in `src/exports/cline.d.ts`:
 
-    	// Start a new task with an initial message
-    	await cline.startNewTask("Hello, Cline! Let's make a new project...")
+- `startNewTask(task?, images?)`;
+- `sendMessage(message?, images?)`;
+- `pressPrimaryButton()`;
+- `pressSecondaryButton()`.
 
-    	// Start a new task with an initial message and images
-    	await cline.startNewTask("Use this design language", ["data:image/webp;base64,..."])
-
-    	// Send a message to the current task
-    	await cline.sendMessage("Can you fix the @problems?")
-
-    	// Simulate pressing the primary button in the chat interface (e.g. 'Save' or 'Proceed While Running')
-    	await cline.pressPrimaryButton()
-
-    	// Simulate pressing the secondary button in the chat interface (e.g. 'Reject')
-    	await cline.pressSecondaryButton()
-    } else {
-    	console.error("Cline API is not available")
-    }
-    ```
-
-    **Note:** To ensure that the `saoudrizwan.claude-dev` extension is activated before your extension, add it to the `extensionDependencies` in your `package.json`:
-
-    ```json
-    "extensionDependencies": [
-        "saoudrizwan.claude-dev"
-    ]
-    ```
-
-For detailed information on the available methods and their usage, refer to the `cline.d.ts` file.
+Always resolve `tuvokyang.dline`; the compatibility interface name does not determine extension identity.

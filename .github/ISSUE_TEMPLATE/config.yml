@@ -1,8 +1,11 @@
 blank_issues_enabled: false
 contact_links:
-    - name: âœ?Feature Request
-      url: https://github.com/TuvokYang/cline/discussions/categories/feature-requests?discussions_q=is%3Aopen+category%3A%22Feature+Requests%22+sort%3Atop
-      about: Share and vote on feature requests for Cline
-    - name: ðŸ‘‹ Cline Discord
-      url: https://discord.gg/cline
-      about: Join our Discord community for discussions and support
+    - name: Security vulnerability
+      url: https://github.com/TuvokYang/dline/security/advisories/new
+      about: Report a suspected vulnerability privately. Do not open a public issue.
+    - name: Feature request
+      url: https://github.com/TuvokYang/dline/discussions/categories/feature-requests
+      about: Propose and discuss Dline feature requests.
+    - name: Privacy and data handling
+      url: https://docs.dline.cc/privacy/
+      about: Review Dline privacy controls and the current privacy-request limitation.

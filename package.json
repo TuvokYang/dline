@@ -493,8 +493,7 @@
         "docs:check": "cd docs && npm run check",
         "docs:verify": "cd docs && npm run verify",
         "report-issue": "node scripts/report-issue.js",
-        "storybook": "cd webview-ui && npm run storybook",
-        "eval:smoke:run": "npx tsx evals/smoke-tests/run-smoke-tests.ts"
+        "storybook": "cd webview-ui && npm run storybook"
     },
     "lint-staged": {
         "src/shared/storage/state-keys.ts": [
@@ -535,7 +534,6 @@
         "chai": "^4.3.10",
         "chalk": "5.6.2",
         "cross-env": "^10.1.0",
-        "dotenv": "^17.2.3",
         "esbuild": "^0.25.0",
         "husky": "^9.1.7",
         "jsdom": "^30.0.1",

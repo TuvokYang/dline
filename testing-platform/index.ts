@@ -2,12 +2,10 @@
 
 import fs from "fs"
 import path from "path"
-import "tsconfig-paths/register"
-
-import { GrpcAdapter } from "@adapters/grpcAdapter"
-import { NON_DETERMINISTIC_FIELDS } from "@harness/config"
-import { SpecFile } from "@harness/types"
-import { compareResponse, loadJson, retry } from "@harness/utils"
+import { GrpcAdapter } from "./adapters/grpcAdapter"
+import { NON_DETERMINISTIC_FIELDS } from "./harness/config"
+import { SpecFile } from "./harness/types"
+import { compareResponse, loadJson, retry } from "./harness/utils"
 
 const STANDALONE_GRPC_SERVER_PORT = process.env.STANDALONE_GRPC_SERVER_PORT || "26040"
 const FIX_MODE = process.argv.includes("--fix")

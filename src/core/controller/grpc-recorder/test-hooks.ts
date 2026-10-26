@@ -18,7 +18,7 @@ export function testHooks(controller: Controller): GrpcPostRecordHook[] {
             // Record synthetic "getLatestState" request
             GrpcRecorderBuilder.getRecorder(controller).recordRequest(
                 {
-                    service: "cline.StateService",
+                    service: "dline.StateService",
                     method: "getLatestState",
                     message: {},
                     request_id: requestId,

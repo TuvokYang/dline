@@ -70,13 +70,13 @@ const SapAiCoreModelPicker: React.FC<SapAiCoreModelPickerProps> = ({
     const categorizedModels = useMemo(() => {
         const allSupportedModels = Object.keys(sapAiCoreModels)
 
-        // Models that are both deployed AND supported in Cline
+        // Models that are both deployed and supported in Dline
         const deployedModelNames = sapAiCoreModelDeployments.map((d) => d.modelName)
         const deployedAndSupported = deployedModelNames.filter((deployedModel: string) =>
             allSupportedModels.includes(deployedModel),
         )
 
-        // Models that are supported in Cline but NOT deployed
+        // Models that are supported in Dline but not deployed
         const supportedButNotDeployed = allSupportedModels.filter(
             (supportedModel: string) => !deployedModelNames.includes(supportedModel),
         )

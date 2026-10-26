@@ -216,7 +216,7 @@ const WorktreesView = ({ onDone }: WorktreesViewProps) => {
         }
     }, [mergeWorktree, getMainBranch, deleteAfterMerge, loadWorktrees])
 
-    // Ask Cline to resolve conflicts
+    // Ask Dline to resolve conflicts
     const handleAskClineToResolve = useCallback(async () => {
         if (!mergeResult?.hasConflicts) return
 

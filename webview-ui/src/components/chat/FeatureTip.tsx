@@ -54,7 +54,7 @@ const FADE_DURATION_MS = 300
 
 /**
  * Shows rotating feature tips below the "Thinking..." indicator.
- * Appears after a brief delay and cycles through tips while Cline is thinking.
+ * Appears after a brief delay and cycles through tips while Dline is thinking.
  */
 export const FeatureTip = memo(() => {
     const [isVisible, setIsVisible] = useState(false)

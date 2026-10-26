@@ -46,7 +46,7 @@ npm run vsix
 
 **环境要求**：VS Code 1.134.0 或更高版本。
 
-**从 Cline 迁移**：首次启动时，已有的 Cline 数据（设置、MCP 配置、规则与工作流）会被复制到 Dline 目录；原数据不会被修改或删除，两个扩展可以共存。任务历史不再迁移：Dline 的任务索引与单任务运行时状态已与 Cline 不兼容，导入的记录无法打开或继续，因此原样保留在 Cline 目录中。
+**从 Cline 迁移**：Dline 不会自动读取、复制、修改或删除 Cline 数据。如需复用部分设置、MCP 配置、规则或工作流，请按[手动迁移指南](https://docs.dline.cc/zh-cn/getting-started/migration-cline-to-dline/)操作。Cline 任务历史与 Dline 不兼容，无法导入。
 
 ## 快速开始
 

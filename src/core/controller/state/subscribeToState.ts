@@ -369,7 +369,7 @@ async function sendPayloadToSubscribers(
 }
 
 function recordStateSizeTelemetry(sizeBytes: number): void {
-    telemetryService.captureGrpcResponseSize(sizeBytes, "cline.StateService", "subscribeToState")
+    telemetryService.captureGrpcResponseSize(sizeBytes, "dline.StateService", "subscribeToState")
 }
 
 /**

@@ -163,10 +163,12 @@ await actButton.click() // Switch to Plan mode
 
 #### File Operations
 ```typescript
+import { addSelectedCodeToDline, openTab } from "./utils/common"
+
 // Open file explorer and select code
 await openTab(page, "Explorer ")
 await page.getByRole("treeitem", { name: "index.html" }).locator("a").click()
-await addSelectedCodeToClineWebview(page)
+await addSelectedCodeToDline(page)
 ```
 
 #### Settings Navigation
@@ -240,11 +242,9 @@ The test environment includes:
    await expect(sidebar.getByText("Complete")).toBeVisible()
    ```
 
-3. **Clean up state:**
-   ```typescript
-   // Use helper functions for common cleanup
-   await cleanChatView(page)
-   ```
+3. **Keep tests isolated:**
+   - Use the run-scoped user-data directory and workspace fixtures.
+   - Do not depend on state left by an earlier test.
 
 4. **Handle async operations:**
    ```typescript

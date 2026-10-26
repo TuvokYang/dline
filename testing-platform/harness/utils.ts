@@ -1,6 +1,6 @@
+import { isDeepStrictEqual } from "node:util"
 import fs from "fs"
 import { diff } from "jest-diff"
-import _ from "lodash"
 import path from "path"
 
 export function loadJson(filePath: string): any {
@@ -90,16 +90,26 @@ function normalize(obj: any, ignoreFields: string[] = [], parentPath = ""): any 
  *   c: [{ val: "x" }, undefined]
  * }
  */
-function pickDeep(actual: any, filter: any): any {
-    if (_.isArray(filter)) {
-        if (!_.isArray(actual)) return actual
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return false
+    const prototype = Object.getPrototypeOf(value)
+    return prototype === Object.prototype || prototype === null
+}
 
-        // Compare arrays element by element, picking only keys from filter
-        return filter.map((f, i) => pickDeep(actual[i], f))
+function pickDeep(actual: any, filter: any): any {
+    if (Array.isArray(filter)) {
+        if (!Array.isArray(actual)) return actual
+
+        // Compare arrays element by element, picking only keys from filter.
+        return filter.map((value, index) => pickDeep(actual[index], value))
     }
 
-    if (_.isPlainObject(filter)) {
-        return _.mapValues(filter, (v, k) => (actual && k in actual ? pickDeep(actual[k], v) : undefined))
+    if (isPlainObject(filter)) {
+        const selected: Record<string, unknown> = {}
+        for (const [key, value] of Object.entries(filter)) {
+            selected[key] = actual && key in actual ? pickDeep(actual[key], value) : undefined
+        }
+        return selected
     }
 
     return actual
@@ -133,7 +143,7 @@ export function compareResponse(
     if (expectedSubset) {
         // Extract only the subset we care about
         const actualSubset = pickDeep(actualToCompare, expectedSubset)
-        const success = _.isEqual(actualSubset, expectedSubset)
+        const success = isDeepStrictEqual(actualSubset, expectedSubset)
         if (!success) {
             const difference = diff(expectedSubset, actualSubset, { expand: false })
             return { success: false, diffs: [difference || "Objects differ"] }
@@ -142,7 +152,7 @@ export function compareResponse(
     }
 
     // Fallback: full comparison
-    const success = _.isEqual(actualToCompare, expectedToCompare)
+    const success = isDeepStrictEqual(actualToCompare, expectedToCompare)
     if (!success) {
         const difference = diff(expectedToCompare, actualToCompare, { expand: false })
         return { success: false, diffs: [difference || "Objects differ"] }
