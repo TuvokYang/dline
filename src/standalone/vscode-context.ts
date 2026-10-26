@@ -9,14 +9,14 @@ import { ExtensionRegistryInfo } from "@/registry"
 import { log } from "./utils"
 import { EnvironmentVariableCollection, MementoStore, readJson, SecretStore } from "./vscode-context-utils"
 
-log("Running standalone cline", ExtensionRegistryInfo.version)
+log("Running standalone Dline", ExtensionRegistryInfo.version)
 log(`DLINE_ENVIRONMENT: ${process.env.DLINE_ENVIRONMENT}`)
 
 // WE WILL HAVE TO MIGRATE THIS FROM DATA TO v1 LATER
 const SETTINGS_SUBFOLDER = "data"
 
-export function initializeContext(clineDir?: string) {
-    const resolvedDlineDir = clineDir || process.env.DLINE_DIR || `${os.homedir()}/.dline`
+export function initializeContext(dlineDir?: string) {
+    const resolvedDlineDir = dlineDir || process.env.DLINE_DIR || `${os.homedir()}/.dline`
     const DATA_DIR = path.join(resolvedDlineDir, SETTINGS_SUBFOLDER)
     const INSTALL_DIR = process.env.INSTALL_DIR || __dirname
     const WORKSPACE_STORAGE_DIR = process.env.WORKSPACE_STORAGE_DIR || path.join(DATA_DIR, "workspace")
@@ -49,16 +49,16 @@ export function initializeContext(clineDir?: string) {
 
         // Set up URIs.
         storageUri: URI.file(WORKSPACE_STORAGE_DIR),
-        storagePath: WORKSPACE_STORAGE_DIR, // Deprecated, not used in cline.
+        storagePath: WORKSPACE_STORAGE_DIR, // Deprecated, not used in Dline.
         globalStorageUri: URI.file(DATA_DIR),
-        globalStoragePath: DATA_DIR, // Deprecated, not used in cline.
+        globalStoragePath: DATA_DIR, // Deprecated, not used in Dline.
 
         // Logs are global per extension, not per workspace.
         logUri: URI.file(DATA_DIR),
-        logPath: DATA_DIR, // Deprecated, not used in cline.
+        logPath: DATA_DIR, // Deprecated, not used in Dline.
 
         extensionUri: URI.file(EXTENSION_DIR),
-        extensionPath: EXTENSION_DIR, // Deprecated, not used in cline.
+        extensionPath: EXTENSION_DIR, // Deprecated, not used in Dline.
         asAbsolutePath: (relPath: string) => path.join(EXTENSION_DIR, relPath),
 
         subscriptions: [], // These need to be destroyed when the extension is deactivated.

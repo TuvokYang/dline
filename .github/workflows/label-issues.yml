@@ -32,7 +32,7 @@ jobs:
             }
 
             // Check if beta version checkbox is checked
-            if (body.includes('- [X] I am using a beta version of Cline') || body.includes('- [x] I am using a beta version of Cline')) {
+            if (body.includes('- [X] I am using a beta version of Dline') || body.includes('- [x] I am using a beta version of Dline')) {
               if (!labels.includes('beta')) {
                 await github.rest.issues.addLabels({
                   owner: context.repo.owner,

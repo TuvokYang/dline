@@ -1,4 +1,6 @@
-import { ServiceClients } from "@adapters/grpcAdapter"
+import type { ServiceClients } from "../adapters/grpcAdapter"
+
+export type ServiceName = Extract<keyof ServiceClients, string>
 
 export interface Meta {
     synthetic: boolean
@@ -12,7 +14,7 @@ export interface Meta {
 
 export interface Entry {
     requestId: string
-    service: keyof ServiceClients
+    service: ServiceName
     method: string
     request: any
     response?: any

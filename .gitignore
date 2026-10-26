@@ -48,8 +48,6 @@ test-results
 
 *.tsbuildinfo
 
-# Smoke test results (generated)
-evals/smoke-tests/results/
 
 .tui-test
 secrets.json

@@ -112,7 +112,7 @@ export class JsonKeyValueStore<T> {
     }
 }
 
-/** This is not used in cline, none of the methods are implemented. */
+/** The standalone runtime does not use this collection, so its mutation methods are intentionally unavailable. */
 export class EnvironmentVariableCollection implements EnvironmentVariableCollection {
     persistent = false
     description: string | undefined = undefined

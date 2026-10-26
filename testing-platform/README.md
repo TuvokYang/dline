@@ -1,14 +1,14 @@
-# Cline Testing Platform
+# Dline Testing Platform
 
-A CLI testing framework for the Cline Core extension, providing gRPC-based integration clients and utilities for automated scenarios.
+A CLI testing framework for Dline's retained standalone integration surface, providing gRPC clients and utilities for automated scenarios.
 
 ## Overview
 
-The platform enables end-to-end validation of Cline's core functionality through:
+The platform enables integration validation of Dline's standalone contracts through:
 
-- **gRPC Adapters** – clients for Cline’s gRPC services  
-- **Test Harness** – runner, utilities, and type definitions  
-- **Spec Files** – JSON instructions for automated test cases  
+- **gRPC Adapters** – clients for Dline's generated gRPC services
+- **Test Harness** – runner, utilities, and type definitions
+- **Spec Files** – JSON instructions for automated test cases
 
 ## Structure
 
@@ -16,18 +16,19 @@ The platform enables end-to-end validation of Cline's core functionality through
 testing-platform/
 ├── adapters/           # gRPC communication adapters
 │   ├── grpcAdapter.ts     # Main gRPC adapter implementation
-├── harness/            # Test execution framework
-│   ├── runner.ts          # Main test runner
-│   ├── types.ts           # Type definitions
-│   └── utils.ts           # Utility functions
+├── harness/            # Test execution support
+│   ├── config.ts          # Non-deterministic response fields
+│   ├── types.ts           # Spec type definitions
+│   └── utils.ts           # Loading, comparison, and retry utilities
+└── index.ts            # CLI entry point and spec runner
 ```
 
 ## Prerequisites
 
-- **Node.js** ≥ 18 and **npm** ≥ 8  
-- **Protocol Buffers** (used for gRPC)  
+- **Node.js** ≥ 18 and **npm** ≥ 8
+- **Protocol Buffers** (used for gRPC)
 
-Generate proto files in the **root Cline project**:
+Generate proto files in the Dline repository root:
 
 ```bash
 npm run protos
@@ -35,7 +36,7 @@ npm run protos
 
 ## Setup
 
-From the root of the Cline project:
+From the Dline repository root:
 
 ```bash
 npm run install:all
@@ -52,14 +53,14 @@ npm run build
 
 ## Running Spec File Tests
 
-Before running specs, make sure the standalone Cline Core gRPC server (that runs mocks and host gRPC as well) is running:
+Before running specs, start Dline's retained standalone core API test server:
 
 ```bash
 npm run test:sca-server
 ```
 
-Then finally you can run the cli as:
+Run a spec file or directory with:
 
 ```bash
 npm run start:dev <spec-file-or-folder>
-```bash
+```

@@ -16,7 +16,7 @@ describe("grpc-handler", () => {
     let mockStreamingHandler: any /* sinon.SinonStub → vitest */
     let mockStreamingFailingHandler: any /* sinon.SinonStub → vitest */
 
-    const serviceName = "cline.TestService"
+    const serviceName = "dline.TestService"
     const mockResponse = { result: "result-1234" }
 
     beforeEach(() => {
@@ -131,7 +131,7 @@ describe("grpc-handler", () => {
                 expect(mockPostMessageToWebview.mock.calls.length === 1).to.be.true
                 const sentMessage = mockPostMessageToWebview.mock.calls[0][0]
                 expect(sentMessage.type).to.equal("grpc_response")
-                expect(sentMessage.grpc_response?.error).to.include("Unknown rpc: cline.TestService.unknownMethod")
+                expect(sentMessage.grpc_response?.error).to.include("Unknown rpc: dline.TestService.unknownMethod")
                 expect(sentMessage.grpc_response?.request_id).to.equal("test-999")
             })
         })

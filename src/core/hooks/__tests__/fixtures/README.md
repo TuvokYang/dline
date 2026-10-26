@@ -1,22 +1,20 @@
 # Hook Test Fixtures
 
-This directory contains pre-written hook scripts for testing the Cline hooks system.
+This directory contains pre-written hook scripts for testing the Dline hooks system.
 
 ## Directory Structure
 
 ```
 fixtures/
 ├── hooks/
-│   ├── pretooluse/       # PreToolUse hook fixtures
-│   │   ├── success/      # Returns success immediately
-│   │   ├── blocking/     # Blocks tool execution
-│   │   ├── context-injection/  # Adds context with type prefix
-│   │   └── error/        # Exits with error code
-│   ├── posttooluse/      # PostToolUse hook fixtures
-│   │   ├── success/      # Returns success immediately
-│   │   └── error/        # Exits with error code
-│   └── template/         # Template for new hooks
-└── inputs/               # Sample input data (future)
+│   ├── pretooluse/
+│   ├── posttooluse/
+│   ├── userpromptsubmit/
+│   ├── taskstart/
+│   ├── taskresume/
+│   ├── taskcomplete/
+│   └── taskcancel/
+└── template/             # Template for new hooks
 ```
 
 ## Using Fixtures in Tests

@@ -1,31 +1,31 @@
-import { AccountServiceClient } from "@cline-grpc/account"
-import { BrowserServiceClient } from "@cline-grpc/browser"
-import { CheckpointsServiceClient } from "@cline-grpc/checkpoints"
-import { CommandsServiceClient } from "@cline-grpc/commands"
-import { FileServiceClient } from "@cline-grpc/file"
-import { McpServiceClient } from "@cline-grpc/mcp"
-import { ModelsServiceClient } from "@cline-grpc/models"
-import { SlashServiceClient } from "@cline-grpc/slash"
-import { StateServiceClient } from "@cline-grpc/state"
-import { TaskServiceClient } from "@cline-grpc/task"
-import { UiServiceClient } from "@cline-grpc/ui"
-import { WebServiceClient } from "@cline-grpc/web"
 import { credentials } from "@grpc/grpc-js"
 import { promisify } from "util"
+import { AccountServiceClient } from "../../src/generated/grpc-js/dline/account"
+import { BrowserServiceClient } from "../../src/generated/grpc-js/dline/browser"
+import { CheckpointsServiceClient } from "../../src/generated/grpc-js/dline/checkpoints"
+import { CommandsServiceClient } from "../../src/generated/grpc-js/dline/commands"
+import { FileServiceClient } from "../../src/generated/grpc-js/dline/file"
+import { McpServiceClient } from "../../src/generated/grpc-js/dline/mcp"
+import { ModelsServiceClient } from "../../src/generated/grpc-js/dline/models"
+import { SlashServiceClient } from "../../src/generated/grpc-js/dline/slash"
+import { StateServiceClient } from "../../src/generated/grpc-js/dline/state"
+import { TaskServiceClient } from "../../src/generated/grpc-js/dline/task"
+import { UiServiceClient } from "../../src/generated/grpc-js/dline/ui"
+import { WebServiceClient } from "../../src/generated/grpc-js/dline/web"
 
 const serviceRegistry = {
-    "cline.AccountService": AccountServiceClient,
-    "cline.BrowserService": BrowserServiceClient,
-    "cline.CheckpointsService": CheckpointsServiceClient,
-    "cline.CommandsService": CommandsServiceClient,
-    "cline.FileService": FileServiceClient,
-    "cline.McpService": McpServiceClient,
-    "cline.ModelsService": ModelsServiceClient,
-    "cline.SlashService": SlashServiceClient,
-    "cline.StateService": StateServiceClient,
-    "cline.TaskService": TaskServiceClient,
-    "cline.UiService": UiServiceClient,
-    "cline.WebService": WebServiceClient,
+    "dline.AccountService": AccountServiceClient,
+    "dline.BrowserService": BrowserServiceClient,
+    "dline.CheckpointsService": CheckpointsServiceClient,
+    "dline.CommandsService": CommandsServiceClient,
+    "dline.FileService": FileServiceClient,
+    "dline.McpService": McpServiceClient,
+    "dline.ModelsService": ModelsServiceClient,
+    "dline.SlashService": SlashServiceClient,
+    "dline.StateService": StateServiceClient,
+    "dline.TaskService": TaskServiceClient,
+    "dline.UiService": UiServiceClient,
+    "dline.WebService": WebServiceClient,
 } as const
 
 export type ServiceClients = {

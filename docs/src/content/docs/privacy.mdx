@@ -1,19 +1,19 @@
 ---
 title: Dline Privacy Policy
-description: How Dline stores local data, sends approved content to configured services, handles optional reporting, and supports privacy requests.
+description: How Dline stores local data, sends approved content to configured services, handles optional reporting, and documents current privacy-request limits.
 ---
 
 **Effective date:** October 25, 2026
 
-**Last updated:** October 25, 2026
+**Last updated:** October 26, 2026
 
-This Privacy Policy explains how the Dline maintainers process information through the Dline VS Code extension and Dline-operated services that the extension contacts. Dline is independently maintained community software. It is not an official Cline release and is not affiliated with or endorsed by Cline Bot Inc.
+This Privacy Policy explains how the Dline maintainers process information through the Dline VS Code extension and Dline-operated services that the extension contacts. Dline is independently maintained community software.
 
 ## 1. Who is responsible
 
 The Dline maintainers, publishing under the Marketplace publisher identity `tuvokyang`, are responsible for the Dline-specific processing described in this policy.
 
-For privacy or security requests, contact `security@dline.cc`. Do not include API keys, access tokens, source code, private prompts, or other secrets in an ordinary email or public issue.
+Dline does not currently publish a dedicated private channel for privacy requests. Do not place personal data, API keys, access tokens, source code, or private prompts in a public Issue or in the vulnerability-reporting form. Suspected vulnerabilities must follow [Report a Security Vulnerability](/security/).
 
 Third-party model providers, MCP servers, websites, image services, identity providers, and other integrations are responsible for the information they receive under their own terms and privacy policies.
 
@@ -101,7 +101,7 @@ Ordinary usage payloads are designed not to contain prompts, model responses, so
 
 Turning usage reporting off stops new collection for the remote usage channel, aborts delivery attempts, and deletes unsent usage records and the local usage access token as implemented by the current client. It does not delete records already accepted by the service.
 
-See [Telemetry, Privacy, and Issue Diagnostics](/troubleshooting/telemetry/) for the current wire fields, limits, local queues, retries, and deletion behavior.
+See [Telemetry and Issue Diagnostics](/troubleshooting/telemetry/) for the current wire fields, limits, local queues, retries, and deletion behavior.
 
 ## 8. Error and runtime reporting
 
@@ -141,6 +141,7 @@ Dline may disclose information to:
 
 - model providers and integration operators you configure;
 - infrastructure, hosting, authentication, payment, email, logging, and security providers used to operate Dline services;
+- GitHub, which processes repository activity and private vulnerability reports under its own terms and privacy statement;
 - maintainers or support personnel who need access to resolve a request or protect the service;
 - authorities or other parties when required by law or necessary to protect users, Dline, or the public;
 - a successor if responsibility for a Dline service is transferred, subject to applicable notice and law.
@@ -153,16 +154,17 @@ Dline follows data minimization and keeps information only for the period needed
 
 - local task, configuration, credential, and cache data remains until you remove it or a documented local cleanup limit applies;
 - unsent usage and diagnostics data is bounded by the client and is deleted when the corresponding reporting control is turned off;
-- accepted remote usage and diagnostic records are retained only for service operation, security, aggregate analysis, and troubleshooting, then deleted or irreversibly aggregated under the service retention schedule;
-- support and security reports are retained while active and for a reasonable period afterward to prevent regressions and document the resolution.
+- accepted remote usage and diagnostic records are retained only for service operation, security, aggregate analysis, and troubleshooting, then deleted or irreversibly aggregated under the applicable service retention schedule when it is published;
+- support records follow the retention controls of the service through which you submit them;
+- private vulnerability reports are stored by GitHub and remain subject to GitHub's retention and deletion capabilities as well as maintainer handling.
 
-Before a production Marketplace release, Dline must publish and enforce the concrete server-side retention schedule for each Dline-operated remote service. If the public service documentation does not state a maximum period for a category, contact `security@dline.cc` before enabling that optional category.
+Each Dline-operated remote service is expected to publish its concrete server-side retention schedule. As of the last-updated date above, the public service documentation does not state a maximum retention period for accepted usage or error-reporting records. Because both reporting settings are enabled by default in the current build, turn off the corresponding setting in **Settings → About** if you do not accept an unspecified server-side retention period.
 
 ## 13. Security
 
 Dline uses scoped storage owners, owner-only credential files where supported, atomic local writes, bounded queues, encrypted transport for Dline-operated remote services, cancellation, and privacy allowlists. No system can guarantee absolute security.
 
-Protect your device, VS Code profile, provider accounts, repositories, MCP configuration, and API credentials. Report a suspected vulnerability privately according to the [Dline Security Policy](https://github.com/TuvokYang/Dline/security/policy).
+Protect your device, VS Code profile, provider accounts, repositories, MCP configuration, and API credentials. Report a suspected vulnerability privately as described in [Report a Security Vulnerability](/security/).
 
 ## 14. Your choices and rights
 
@@ -176,7 +178,7 @@ You can:
 - review a diagnostic bundle or issue form before sharing it;
 - request access, correction, deletion, restriction, objection, portability, or withdrawal of consent where applicable law provides that right.
 
-Send privacy requests to `security@dline.cc`. Dline may need to verify your identity and scope before acting on a request. Dline cannot fulfill requests for data controlled only by a third-party provider; contact that provider directly.
+Dline does not currently publish a dedicated private intake channel for privacy requests. Do not send personal data through a public Issue or the vulnerability-reporting form. Until a private channel is published, use the controls above to stop optional reporting and remove local Dline data. Dline cannot fulfill requests for data controlled only by a third-party provider; contact that provider directly.
 
 ## 15. International processing
 
@@ -192,6 +194,8 @@ Material changes will update the date at the top of this page and will be descri
 
 ## 18. Contact
 
-Privacy and security: `security@dline.cc`
+Privacy requests: no dedicated private channel is currently published; do not submit personal data through a public Issue or the vulnerability-reporting form
 
-Repository and non-sensitive product issues: [TuvokYang/Dline](https://github.com/TuvokYang/Dline/issues)
+Security vulnerabilities: [Report a Security Vulnerability](/security/)
+
+Repository and non-sensitive product issues: [TuvokYang/dline](https://github.com/TuvokYang/dline/issues)

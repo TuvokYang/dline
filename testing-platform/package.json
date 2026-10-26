@@ -1,11 +1,10 @@
 {
     "name": "testing-infra",
     "version": "0.1.0",
-    "main": "dist/runner.js",
     "scripts": {
-        "build": "tsc",
+        "build": "tsc --noEmit",
         "start:dev": "ts-node index.ts",
-        "start": "npm run build && node dist/runner.js"
+        "start": "npm run build && ts-node index.ts"
     },
     "dependencies": {
         "jest-diff": "^30.1.2"

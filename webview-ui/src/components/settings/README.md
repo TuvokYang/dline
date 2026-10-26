@@ -1,6 +1,6 @@
 # API Options Component Architecture
 
-This directory contains the refactored API Options components for the Cline extension. The refactoring aims to improve maintainability, code organization, and reduce complexity by separating provider-specific code into modular components.
+This directory contains Dline's API Profile settings components. Provider-specific UI stays in focused modules so profile selection, credentials, model metadata, and validation remain maintainable.
 
 ## Directory Structure
 
