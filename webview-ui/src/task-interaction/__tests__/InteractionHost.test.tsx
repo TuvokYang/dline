@@ -7,8 +7,10 @@ import {
 } from "@shared/report-bug"
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { ReportBugRow } from "@/components/chat/ReportBugRow"
 import { TaskServiceClient } from "@/services/grpc-client"
 import { InteractionHost } from "../InteractionHost"
+import { InteractionSelectionProvider, useInteractionSelection } from "../interaction-selection"
 
 vi.mock("@/services/grpc-client", () => ({
     TaskServiceClient: {
@@ -118,6 +120,15 @@ function reportBugInteraction(): { view: TaskViewState; message: UiMessage; draf
         draft,
         message: { ...ASK, ask: "report_bug", text: serializeReportBugDraft(draft) },
     }
+}
+
+/**
+ * Type into a toolkit text area as its own handler does: set the host's value, then
+ * announce the input. The host's value accessor is inherited, so fireEvent cannot set it.
+ */
+function typeInto(box: HTMLElement, value: string) {
+    ;(box as HTMLTextAreaElement).value = value
+    fireEvent.input(box)
 }
 
 function configureInteraction(
@@ -254,12 +265,12 @@ describe("InteractionHost", () => {
         expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ selection: { values: ["1"] } }))
     })
 
-    it("dispatches the edited ReportBug draft and explicit consent only on Confirm", async () => {
+    it("dispatches the card's supplement and explicit consent only on Confirm", async () => {
         const dispatch = vi.fn(async () => ({ accepted: true, result: "accepted" }))
         const report = reportBugInteraction()
         render(<InteractionHost dispatch={dispatch} messages={[report.message]} view={report.view} />)
 
-        fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Edited provider failure" } })
+        typeInto(screen.getByLabelText("Additional details"), "  Happens after restart.  ")
         fireEvent.click(screen.getByText("Temporarily share high-density diagnostics for this issue"))
         expect(dispatch).not.toHaveBeenCalled()
 
@@ -268,9 +279,73 @@ describe("InteractionHost", () => {
         await waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
         const selection = dispatch.mock.calls[0][0].selection?.values
         const confirmed = reportBugDraftFromSelection(selection)
-        expect(confirmed?.content.title).toBe("Edited provider failure")
+        expect(confirmed?.content).toEqual({
+            ...report.draft.content,
+            additionalContext: "Review before opening.\n\nUser supplement:\nHappens after restart.",
+        })
         expect(confirmed?.temporaryTelemetryConsent).toBe(true)
         expect(confirmed?.environment).toEqual(report.draft.environment)
+    })
+
+    it("submits the prepared draft unchanged when the supplement is left blank", async () => {
+        const dispatch = vi.fn(async () => ({ accepted: true, result: "accepted" }))
+        const report = reportBugInteraction()
+        render(<InteractionHost dispatch={dispatch} messages={[report.message]} view={report.view} />)
+
+        typeInto(screen.getByLabelText("Additional details"), "draft")
+        typeInto(screen.getByLabelText("Additional details"), "   ")
+        fireEvent.click(screen.getByRole("button", { name: "Open GitHub Issue" }))
+
+        await waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
+        expect(reportBugDraftFromSelection(dispatch.mock.calls[0][0].selection?.values)).toEqual(report.draft)
+    })
+
+    it("submits from the footer the supplement typed into the chat's ReportBug row", async () => {
+        const dispatch = vi.fn(async () => ({ accepted: true, result: "accepted" }))
+        const report = reportBugInteraction()
+        function ChatWithFooter() {
+            const selection = useInteractionSelection(report.view, report.message)
+            return (
+                <InteractionSelectionProvider value={selection}>
+                    <ReportBugRow message={report.message} />
+                    <InteractionHost
+                        dispatch={dispatch}
+                        messages={[SAY, report.message]}
+                        selection={selection}
+                        showTimeline={false}
+                        view={report.view}
+                    />
+                </InteractionSelectionProvider>
+            )
+        }
+        render(<ChatWithFooter />)
+
+        // The chat row is the only editing surface; the footer draws just its actions.
+        expect(screen.queryByTestId("presentation-report_bug")).toBeNull()
+        const card = screen.getByTestId("report-bug-card")
+        typeInto(within(card).getByLabelText("Additional details"), "Seen twice today.")
+        fireEvent.click(screen.getByRole("button", { name: "Open GitHub Issue" }))
+
+        await waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
+        expect(reportBugDraftFromSelection(dispatch.mock.calls[0][0].selection?.values)?.content.additionalContext).toBe(
+            "Review before opening.\n\nUser supplement:\nSeen twice today.",
+        )
+    })
+
+    it("draws a ReportBug row that is not the pending anchor read-only", () => {
+        const report = reportBugInteraction()
+        function AnsweredRow() {
+            const selection = useInteractionSelection(report.view, { ...report.message, ts: 99 })
+            return (
+                <InteractionSelectionProvider value={selection}>
+                    <ReportBugRow message={report.message} />
+                </InteractionSelectionProvider>
+            )
+        }
+        render(<AnsweredRow />)
+
+        expect(within(screen.getByTestId("report-bug-card")).getByText("Provider request failed")).toBeVisible()
+        expect(screen.queryByLabelText("Additional details")).toBeNull()
     })
 
     it("cancels ReportBug without carrying a draft selection", async () => {
@@ -278,7 +353,7 @@ describe("InteractionHost", () => {
         const report = reportBugInteraction()
         render(<InteractionHost dispatch={dispatch} messages={[report.message]} view={report.view} />)
 
-        fireEvent.input(screen.getByLabelText("Additional context"), { target: { value: "unsent edit" } })
+        typeInto(screen.getByLabelText("Additional details"), "unsent edit")
         fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
 
         await waitFor(() => expect(dispatch).toHaveBeenCalledOnce())

@@ -8,7 +8,7 @@ import {
     FocusChainRenderer,
     NewTaskRenderer,
     type PresentationProps,
-    ReportRenderer,
+    ReportBugRenderer,
     ResumeRenderer,
 } from "./renderers/PresentationRenderers"
 
@@ -53,7 +53,7 @@ function presentationContainerClassName(kind: PresentationKind): string | undefi
     if (APPROVAL_PRESENTATION_KINDS.has(kind)) {
         return "max-h-[30vh] overflow-y-auto overscroll-x-contain"
     }
-    if (kind === "make_plan") {
+    if (kind === "make_plan" || kind === "report_bug") {
         return "max-h-[80vh] overflow-y-auto overscroll-x-contain"
     }
     return undefined
@@ -68,12 +68,12 @@ const RENDERERS = {
     spawn_task_approval: ApprovalRenderer,
     focus_chain_change: FocusChainRenderer,
     new_task: NewTaskRenderer,
-    report_bug: ReportRenderer,
+    report_bug: ReportBugRenderer,
     condense: ConversationRenderer,
     followup: ConversationRenderer,
     make_plan: ConversationRenderer,
     qna_response: ConversationRenderer,
-    generate_report: ReportRenderer,
+    generate_report: ConversationRenderer,
     status_acknowledgment: ConversationRenderer,
     error_retry: ErrorRenderer,
     mistake_limit: ErrorRenderer,

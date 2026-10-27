@@ -20,6 +20,7 @@ import { useInputSemanticCatalog } from "@/services/input-semantics/useInputSema
 import { getTaskViewKey } from "@/services/task-messages"
 import { createInteractionDispatchGate } from "@/task-interaction/dispatch-gate"
 import { InteractionHost } from "@/task-interaction/InteractionHost"
+import { InteractionSelectionProvider, useInteractionSelection } from "@/task-interaction/interaction-selection"
 import { isPresentationKind } from "@/task-interaction/renderer-registry"
 import { composerResumesTask, dispatchTaskAction, enabledCancelAction } from "@/task-interaction/task-actions"
 import {
@@ -29,6 +30,7 @@ import {
     canRestoreRejectedInteractionDraft,
     captureInteractionDraft,
     createAcceptedInteractionSettlement,
+    findActiveInteractionAnchor,
     type InteractionDraft,
     isActiveInteractionSynchronized,
 } from "@/task-interaction/types"
@@ -488,6 +490,13 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         return withoutFooterOwnedApproval(filterVisibleMessages(modifiedMessages), modifiedMessages, taskViewState)
     }, [modifiedMessages, taskViewState])
 
+    // The pending row edits the selection in the chat; the footer submits the same state.
+    const interactionAnchor = useMemo(
+        () => (taskViewState ? findActiveInteractionAnchor(modifiedMessages, taskViewState) : undefined),
+        [modifiedMessages, taskViewState],
+    )
+    const interactionSelection = useInteractionSelection(taskViewState, interactionAnchor)
+
     const renderPendingApprovalCard = useCallback(
         (message: UiMessage) => (
             <PendingApprovalCard chatState={chatState} lastModifiedMessage={modifiedMessages.at(-1)} message={message} />
@@ -801,15 +810,17 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                         <TaskActivityTabs activeCount={activeCount} onChange={handleContentTabChange} value={contentTab} />
                         {contentTab === "chat" ? (
                             <TaskActivityNavigationProvider onNavigate={navigateToActivity}>
-                                <MessagesArea
-                                    chatState={chatState}
-                                    groupedMessages={groupedMessages}
-                                    messageHandlers={messageHandlers}
-                                    modifiedMessages={modifiedMessages}
-                                    onFollowupOptionSelect={submitFollowupOption}
-                                    scrollBehavior={scrollBehavior}
-                                    task={visibleTask}
-                                />
+                                <InteractionSelectionProvider value={interactionSelection}>
+                                    <MessagesArea
+                                        chatState={chatState}
+                                        groupedMessages={groupedMessages}
+                                        messageHandlers={messageHandlers}
+                                        modifiedMessages={modifiedMessages}
+                                        onFollowupOptionSelect={submitFollowupOption}
+                                        scrollBehavior={scrollBehavior}
+                                        task={visibleTask}
+                                    />
+                                </InteractionSelectionProvider>
                             </TaskActivityNavigationProvider>
                         ) : taskId ? (
                             <TaskActivityPanel
@@ -833,6 +844,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                         onDraftRejected={(settlement) => restoreRejectedDraft(settlement, sessionEpoch)}
                         onSuccessorAccepted={retainSuccessorDraft}
                         renderApprovalCard={renderPendingApprovalCard}
+                        selection={interactionSelection}
                         showTimeline={false}
                         view={taskViewState}
                     />

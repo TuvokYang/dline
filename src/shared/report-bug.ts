@@ -1,5 +1,6 @@
 export const REPORT_BUG_DRAFT_SCHEMA_VERSION = 1 as const
 export const REPORT_BUG_DRAFT_SELECTION_PREFIX = "report_bug_draft:"
+const REPORT_BUG_SUPPLEMENT_HEADING = "User supplement:"
 
 export interface ReportBugContent {
     readonly title: string
@@ -126,4 +127,25 @@ export function reportBugDraftSelection(draft: ReportBugDraft): string[] {
 export function reportBugDraftFromSelection(values: readonly string[] | undefined): ReportBugDraft | undefined {
     const encoded = values?.find((value) => value.startsWith(REPORT_BUG_DRAFT_SELECTION_PREFIX))
     return encoded ? parseReportBugDraft(encoded.slice(REPORT_BUG_DRAFT_SELECTION_PREFIX.length)) : undefined
+}
+
+/** The text that precedes a user supplement in `additionalContext`; shared by append and read-back. */
+function supplementPrefix(content: ReportBugContent): string {
+    const context = content.additionalContext.trim()
+    return context ? `${context}\n\n${REPORT_BUG_SUPPLEMENT_HEADING}\n` : `${REPORT_BUG_SUPPLEMENT_HEADING}\n`
+}
+
+/** Add user-authored text without replacing the report the AI already prepared. */
+export function appendReportBugSupplement(content: ReportBugContent, supplement: string): ReportBugContent {
+    const text = supplement.trim()
+    return text ? { ...content, additionalContext: `${supplementPrefix(content)}${text}` } : content
+}
+
+/**
+ * The supplement `appendReportBugSupplement` added to `base` to produce `current`,
+ * or an empty string when `current` carries none.
+ */
+export function reportBugSupplement(base: ReportBugContent, current: ReportBugContent): string {
+    const prefix = supplementPrefix(base)
+    return current.additionalContext.startsWith(prefix) ? current.additionalContext.slice(prefix.length) : ""
 }

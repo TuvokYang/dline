@@ -214,7 +214,20 @@ e2e(
         await expect(reportButton).toBeVisible({ timeout: 60_000 })
         expect(server.getExternalUrlVisits()).toEqual([])
 
-        await input.fill(supplement)
+        // The chat row is the editing surface; the footer draws only its actions, no second copy.
+        const card = sidebar.getByTestId("report-bug-card")
+        await expect(card).toBeVisible()
+        await expect(sidebar.getByTestId("report-bug-preview")).toHaveCount(1)
+        await expect(sidebar.getByTestId("presentation-report_bug")).toHaveCount(0)
+        const cardBounds = await card.evaluate((element) => ({
+            maxHeight: Number.parseFloat(getComputedStyle(element).maxHeight),
+            overflowY: getComputedStyle(element).overflowY,
+            viewportHeight: window.innerHeight,
+        }))
+        expect(cardBounds.overflowY).toBe("auto")
+        expect(cardBounds.maxHeight).toBeCloseTo(cardBounds.viewportHeight * 0.8, 0)
+
+        await card.getByRole("textbox", { name: "Additional details" }).fill(supplement)
         await reportButton.click()
 
         const visit = await waitForSingleExternalVisit(server)

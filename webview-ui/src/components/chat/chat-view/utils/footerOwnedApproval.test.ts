@@ -37,6 +37,13 @@ describe("withoutFooterOwnedApproval", () => {
         expect(withoutFooterOwnedApproval(messages, messages, awaiting(pending, kind))).toEqual([request])
     })
 
+    it("keeps a pending ReportBug draft in the chat, which edits it in place", () => {
+        const report = ask(2, "report_bug", JSON.stringify({ title: "Bug", what_happened: "It failed" }))
+        const messages = [request, report]
+
+        expect(withoutFooterOwnedApproval(messages, messages, awaiting(report, "report_bug"))).toBe(messages)
+    })
+
     it("lets the chat draw the call once the approval is answered", () => {
         const answered = hostedApprovals[0][1]
         const messages = [request, answered]

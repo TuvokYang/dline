@@ -77,7 +77,7 @@ import NewTaskPreview from "./NewTaskPreview"
 import PlanCompletionOutputRow from "./PlanCompletionOutputRow"
 import QnaOutputRow from "./QnaOutputRow"
 import QuoteButton from "./QuoteButton"
-import ReportBugPreview from "./ReportBugPreview"
+import { ReportBugRow } from "./ReportBugRow"
 import { RequestStartRow } from "./RequestStartRow"
 import SearchResultsDisplay from "./SearchResultsDisplay"
 import SubagentStatusRow from "./SubagentStatusRow"
@@ -1550,15 +1550,7 @@ export const ChatRowContent = memo(
                             </div>
                         )
                     case "report_bug":
-                        return (
-                            <div>
-                                <div className={HEADER_CLASSNAMES}>
-                                    <FilePlus2Icon className="size-2" />
-                                    <span className="text-foreground font-bold">Dline wants to create a Github issue:</span>
-                                </div>
-                                <ReportBugPreview data={message.text || ""} />
-                            </div>
-                        )
+                        return <ReportBugRow message={message} />
                     case "make_plan": {
                         let response = message.text || ""
                         try {

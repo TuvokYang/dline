@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { appendReportBugSupplement, openReportBugIssue, type ReportBugEnvironment, recentReportBugError } from "./ReportBugIssue"
+import { openReportBugIssue, type ReportBugEnvironment, recentReportBugError } from "./ReportBugIssue"
 
 type OpenIssueArgs = [string, string, string | null, Map<string, string>, { baseUrl?: string }?]
 
@@ -26,12 +26,6 @@ const environment: ReportBugEnvironment = {
 
 describe("ReportBugIssue", () => {
     beforeEach(() => vi.clearAllMocks())
-
-    it("appends user text without replacing AI-authored context", () => {
-        expect(appendReportBugSupplement(content, "user details").additionalContext).toBe(
-            "AI context\n\nUser supplement:\nuser details",
-        )
-    })
 
     it("redacts and bounds a recent error before attaching it", () => {
         const safe = recentReportBugError(`token=ghp_1234567890123456 ${"x".repeat(5_000)}`)
