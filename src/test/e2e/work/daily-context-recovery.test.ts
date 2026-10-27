@@ -103,8 +103,8 @@ e2e(
             {
                 type: "message",
                 text: `${STREAM_PARTIAL}\n${"streaming detail ".repeat(40)}`,
-                // Plain assistant prose is not a chat row, so the streamed row the
-                // reader browses away from is the visible reasoning of the same turn.
+                // The reader browses away from the visible reasoning of this streamed
+                // turn, which renders from the first frame and keeps its row identity.
                 reasoning: `${STREAM_PARTIAL} ${"streaming detail ".repeat(40)}`,
                 beforeUsageDelayMs: 8_000,
                 usage: COLD_USAGE,

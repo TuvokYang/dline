@@ -94,16 +94,23 @@ async function onlyTaskId(dlineDocsDir: string): Promise<string> {
 /**
  * The chat as the user sees it, in document order: the condense card, standalone
  * checkpoint rows, and folded exploration runs with the checkpoints drawn inside them.
+ * With `proseMarker`, the assistant prose row that contains it appears as `prose`.
  */
-async function visibleCheckpointLayout(sidebar: Frame): Promise<string[]> {
-    return await sidebar.evaluate(() => {
+async function visibleCheckpointLayout(sidebar: Frame, proseMarker?: string): Promise<string[]> {
+    return await sidebar.evaluate((marker) => {
         const tokens: string[] = []
         const isCheckpointLabel = (element: Element) =>
             element.childElementCount === 0 && element.textContent?.trim() === "Checkpoint"
+        const isProseLeaf = (element: Element) =>
+            marker !== undefined && element.childElementCount === 0 && Boolean(element.textContent?.includes(marker))
         const visit = (element: Element) => {
             const testId = element.getAttribute("data-testid")
             if (testId === "compaction-pass") {
                 tokens.push("card")
+                return
+            }
+            if (isProseLeaf(element)) {
+                tokens.push("prose")
                 return
             }
             if (testId === "exploration-run") {
@@ -119,7 +126,7 @@ async function visibleCheckpointLayout(sidebar: Frame): Promise<string[]> {
         }
         visit(document.body)
         return tokens
-    })
+    }, proseMarker)
 }
 
 /** The chat in document order as checkpoints and the given leaf texts, such as the paths of edit rows. */
@@ -377,7 +384,7 @@ e2e(
 )
 
 e2e(
-    "Checkpoint - a reply without tools after automatic compaction leaves a single checkpoint before the next round",
+    "Checkpoint - a reply without tools after automatic compaction is drawn between single round checkpoints",
     async ({ dlineDir, dlineDocsDir, helper, openVSCode, server, userDataDir, workspaceDir }, testInfo) => {
         e2e.setTimeout(240_000)
         await configureAutoCompactionWithCheckpoints(dlineDir)
@@ -401,7 +408,7 @@ e2e(
                 expectedRequestIncludes: ["The current conversation is rapidly running out of context"],
             },
             // The first request after the landed summary answers in prose only, as a model
-            // recapping its plan does. Nothing of that round is drawn in the chat.
+            // recapping its plan does. The prose is drawn as that round's only row.
             {
                 type: "message",
                 text: TOOLLESS_REPLY_TEXT,
@@ -447,12 +454,13 @@ e2e(
             await expect(sidebar.getByText(COMPLETION_MARKER, { exact: false }).last()).toBeVisible({ timeout: 90_000 })
             await expect(sidebar.getByTestId("compaction-pass").first()).toBeVisible()
 
-            // The prose-only round adds no row of its own, so whatever checkpoint it
-            // leaves would sit directly beside the next round's checkpoint.
+            // The prose row separates the two rounds, so each keeps exactly one checkpoint:
+            // the prose round's before its reply, the next round's at the head of its run.
             const stored = await readTaskUiMessages(dlineDocsDir, taskId)
-            const liveLayout = await visibleCheckpointLayout(sidebar)
+            const liveLayout = await visibleCheckpointLayout(sidebar, TOOLLESS_REPLY_TEXT)
             await attachLayout(testInfo, "toolless-live", liveLayout, stored)
-            expect(checkpointsShownAfterCard(liveLayout), `live layout: ${liveLayout.join(", ")}`).toBe(1)
+            const afterCard = liveLayout.slice(liveLayout.lastIndexOf("card") + 1)
+            expect(afterCard.slice(0, 3), `live layout: ${liveLayout.join(", ")}`).toEqual(["checkpoint", "prose", "run:1"])
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
         } finally {
             await app.close()

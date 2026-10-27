@@ -82,7 +82,7 @@ describe("response visibility across streaming frames", () => {
         expect(rows([createRequestMessage(1, { cost: 0.01 }), final, thought])).toEqual([thought, final])
     })
 
-    it("never renders assistant prose before, during, or after tool execution", () => {
+    it("keeps assistant prose at the same row before, during, and after tool execution", () => {
         const prose = { ...createTextMessage(2, "I will inspect the files"), partial: true }
         const tool = createToolMessage(3, "readFile")
         const visibleIdentities = (messages: UiMessage[]) =>
@@ -90,9 +90,10 @@ describe("response visibility across streaming frames", () => {
                 .flatMap((row) => (Array.isArray(row) ? row : [row]))
                 .map((row) => row.ts)
 
-        expect(visibleIdentities([createRequestMessage(1, {}), prose])).toEqual([])
-        expect(visibleIdentities([createRequestMessage(1, {}), prose, tool])).toEqual([3])
-        expect(visibleIdentities([createRequestMessage(1, { cost: 0.01 }), { ...prose, partial: false }, tool])).toEqual([3])
+        // Prose is a chat row in every frame, so it never flashes in or out as the round streams.
+        expect(visibleIdentities([createRequestMessage(1, {}), prose])).toEqual([2])
+        expect(visibleIdentities([createRequestMessage(1, {}), prose, tool])).toEqual([2, 3])
+        expect(visibleIdentities([createRequestMessage(1, { cost: 0.01 }), { ...prose, partial: false }, tool])).toEqual([2, 3])
     })
 
     it.each([
