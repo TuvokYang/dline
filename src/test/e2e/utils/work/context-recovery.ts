@@ -185,8 +185,8 @@ export async function seedLockedLongHistoryTask(
             return {
                 ts: baseTimestamp + index,
                 type: "say",
-                // Plain assistant prose (`say: "text"`) is not rendered on the chat
-                // surface, so the browsable history uses rows the chat always shows.
+                // User feedback rows render unconditionally, so the browsable history
+                // does not depend on how assistant prose is presented.
                 say: "user_feedback",
                 text: workHistoryBody(index),
             }
