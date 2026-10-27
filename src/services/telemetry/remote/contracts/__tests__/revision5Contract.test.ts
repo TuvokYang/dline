@@ -12,6 +12,7 @@ import path from "node:path"
 import { describe, expect, it } from "vitest"
 import { canonicalJson, compareUtf16 } from "../canonicalJson"
 import { isUsageModelId, projectUsageModelId } from "../modelIdentity"
+import { DLINE_CONTRACT } from "../otlpProduction"
 import {
     buildReportAuthorizeRequest,
     parseIssuedReportAuthorization,
@@ -131,6 +132,15 @@ function mutatedRequest(fixtureCase: FixtureCase): { headers: Record<string, str
 function validate(request: { headers: Record<string, string>; body: unknown }, limits: UsageBodyLimits = grantLimits) {
     return validateUsageBodySchema(request.body, { limits, clientVersion: userAgentVersion(request.headers) })
 }
+
+/** Invalid cases that corrupt a header rather than the body the client validates. */
+function isHeaderCase(fixtureCase: FixtureCase): boolean {
+    return (fixtureCase.mutations ?? []).some((mutation) => mutation.path.startsWith("/headers/"))
+}
+
+const invalidCases = usageFixture.invalid_cases as FixtureCase[]
+const bodyInvalidCases = invalidCases.filter((fixtureCase) => !isHeaderCase(fixtureCase))
+const headerInvalidCases = invalidCases.filter(isHeaderCase)
 
 /**
  * Fixture invariants are prose; this table states which client rule each one is.
@@ -273,7 +283,7 @@ describe("schema 5 request body", () => {
         expect(validate(mutatedRequest(fixtureCase))).toEqual([])
     })
 
-    it.each(usageFixture.invalid_cases as FixtureCase[])("rejects invalid case $name", (fixtureCase) => {
+    it.each(bodyInvalidCases)("rejects invalid case $name", (fixtureCase) => {
         const violations = validate(mutatedRequest(fixtureCase))
         const { code, path: contractPath, invariant } = fixtureCase.expected
         if (contractPath !== undefined) {
@@ -284,6 +294,14 @@ describe("schema 5 request body", () => {
             expect(rule, `fixture invariant "${invariant}" has no client rule`).toBeDefined()
             expect(violations).toContainEqual(expect.objectContaining({ code, rule }))
         }
+    })
+
+    // The transport sets every header itself, so the client never validates a
+    // request missing one; what it must hold is that the header the service
+    // checks carries the value the transport sends.
+    it.each(headerInvalidCases)("always sends the header of case $name", (fixtureCase) => {
+        expect(fixtureCase.mutations?.map((mutation) => mutation.path)).toEqual(["/headers/x-dline-contract"])
+        expect(baseRequest.headers["x-dline-contract"]).toBe(DLINE_CONTRACT)
     })
 
     it.each(usageFixture.boundary_cases as BoundaryCase[])("boundary $name", (boundary) => {

@@ -63,9 +63,9 @@ class FakeTransport implements UsageTransport {
     }
 }
 
-/** A `UsageAck` (usage-contract §15): flat body, and `next_eligible_at` is mandatory. */
+/** A `UsageAck` (usage-contract §15): the `ok:true` envelope, and `next_eligible_at` is mandatory. */
 function accepted(disposition = "accepted", nextEligibleAt = 0): WireResponse {
-    return { status: 200, json: { disposition, next_eligible_at: nextEligibleAt }, retryAfter: null }
+    return { status: 200, json: { ok: true, disposition, next_eligible_at: nextEligibleAt }, retryAfter: null }
 }
 
 describe("UsageDeliveryWorker", () => {
@@ -252,7 +252,7 @@ describe("UsageDeliveryWorker", () => {
         const transport = new FakeTransport()
         transport.replies.push({
             status: 422,
-            json: { disposition: "rejected", code: "invalid_usage_body", path: "buckets[0].facts[0].errors" },
+            json: { ok: false, error: { code: "invalid_usage_body", path: "buckets[0].facts[0].errors" } },
             retryAfter: null,
         })
         const sender = worker("window-a", new FakeTokens(), transport, ATTEMPT_VALIDATION)
@@ -322,7 +322,7 @@ describe("UsageDeliveryWorker", () => {
         const nextEligibleAt = start + SEALED_SHARD_SETTLE_MS + 120_000
         transport.replies.push({
             status: 429,
-            json: { disposition: "rejected", code: "quota_limited", next_eligible_at: nextEligibleAt },
+            json: { ok: false, error: { code: "quota_limited" }, next_eligible_at: nextEligibleAt },
             // The body names the gate; the header disagrees and must lose.
             retryAfter: "5",
         })
@@ -370,7 +370,7 @@ describe("UsageDeliveryWorker", () => {
     it("replays a 200 that is not a UsageAck and confirms ignored_version without a business write", async () => {
         const transport = new FakeTransport()
         // A confirmation without its gate is not a UsageAck: the outcome stays unknown.
-        transport.replies.push({ status: 200, json: { disposition: "accepted" }, retryAfter: null })
+        transport.replies.push({ status: 200, json: { ok: true, disposition: "accepted" }, retryAfter: null })
         transport.replies.push(accepted("ignored_version", start))
         const sender = worker("window-a", new FakeTokens(), transport, ATTEMPT_VALIDATION)
         const outbox = new UsageOutboxRepository(layout, { clock: () => now })
@@ -391,7 +391,7 @@ describe("UsageDeliveryWorker", () => {
         const transport = new FakeTransport()
         transport.replies.push({
             status: 409,
-            json: { disposition: "rejected", code: "request_id_conflict", path: "request_id" },
+            json: { ok: false, error: { code: "request_id_conflict", path: "request_id" } },
             retryAfter: null,
         })
         const sender = worker("window-a", new FakeTokens(), transport, ATTEMPT_VALIDATION)

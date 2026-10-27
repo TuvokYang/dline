@@ -1,11 +1,4 @@
-import {
-    type DeliveryDisposition,
-    parseAcknowledgement,
-    parseRetryAfterMs,
-    parseServiceError,
-    parseUsageResponseBody,
-    type UsageResponseBody,
-} from "./wire"
+import { type DeliveryDisposition, parseAcknowledgement, parseServiceError, serviceWaitMs } from "./wire"
 
 /**
  * What the delivery layer needs from an HTTP response.
@@ -52,54 +45,26 @@ export type DeliveryOutcome =
     | { readonly kind: "stop"; readonly scope: StopScope; readonly code: string }
 
 /**
- * Classify a `/usage` or `/logs` response (otel contract v2.1 §1.5).
- *
- * A replay under the same request ID with identical bytes is answered as a
- * duplicate (§1.7), so it is always safe; rebuilding a batch is only safe when
- * nothing can have been stored. A 5xx or an unconfirmed 200 may follow a
- * commit, so it replays rather than rebuilds, which would count the same usage twice.
- */
-export function classifyDeliveryResponse(response: WireResponse): DeliveryOutcome {
-    const { status } = response
-    if (status === 200) {
-        const acknowledgement = parseAcknowledgement(response.json)
-        if (!acknowledgement) return { kind: "replay" }
-        return {
-            kind: "acknowledged",
-            disposition: acknowledgement.disposition,
-            ...(acknowledgement.nextEligibleAt === undefined ? {} : { nextEligibleAt: acknowledgement.nextEligibleAt }),
-        }
-    }
-    const error = parseServiceError(response.json, response.retryAfter)
-    const delay = error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }
-    if (status === 401) return { kind: "refresh_token" }
-    if (status === 403) return stopFor(response, error.code)
-    if (status === 429) return { kind: "wait", code: error.code ?? EDGE_RATE_LIMITED, ...delay }
-    if (status === 413) return { kind: "too_large" }
-    if (status === 404 || status === 405) return { kind: "stop", scope: "profile", code: error.code ?? "endpoint_unavailable" }
-    if (status === 408 || status >= 500) return { kind: "replay", ...delay }
-    if (status >= 400) return { kind: "discard", code: error.code ?? `http_${status}` }
-    return { kind: "replay", ...delay }
-}
-
-/**
  * Classify a `/usage` response (usage-contract §15).
  *
- * Only a `UsageAck` confirms the request: a 200 whose disposition is accepted,
- * duplicate or ignored_version and that names `next_eligible_at`. Any other 200
- * is an unknown result and replays the same bytes. 409 `request_id_conflict`
- * and every 422 contract error are permanent and dead-letter the request
- * without rebuilding it; 413 means capacity guarding failed and is permanent too.
+ * Only a `UsageAck` confirms the request: `ok:true` with an accepted,
+ * duplicate or ignored_version disposition and its `next_eligible_at`. Any
+ * other 200 is an unknown result and replays the same bytes, since a commit may
+ * have happened and rebuilding would count the same usage twice. 409
+ * `request_id_conflict` and every 422 contract error are permanent and
+ * dead-letter the request without rebuilding it; 413 means capacity guarding
+ * failed and is permanent too.
  */
 export function classifyUsageResponse(response: WireResponse, now = Date.now()): DeliveryOutcome {
     const { status } = response
-    const body = parseUsageResponseBody(response.json)
     if (status === 200) {
-        if (!body || body.disposition === "rejected" || body.nextEligibleAt === undefined) return { kind: "replay" }
-        return { kind: "acknowledged", disposition: body.disposition, nextEligibleAt: body.nextEligibleAt }
+        const acknowledgement = parseAcknowledgement(response.json)
+        return acknowledgement ? { kind: "acknowledged", ...acknowledgement } : { kind: "replay" }
     }
-    const code = body?.code
-    const delay = usageRetryDelay(body, response.retryAfter, now)
+    const error = parseServiceError(response.json, response.retryAfter, now)
+    const { code } = error
+    const waitMs = serviceWaitMs(error, now)
+    const delay = waitMs === undefined ? {} : { retryAfterMs: waitMs }
     if (status === 401) return { kind: "refresh_token" }
     if (status === 403) return stopFor(response, code)
     if (status === 429) return { kind: "wait", code: code ?? EDGE_RATE_LIMITED, ...delay }
@@ -108,17 +73,6 @@ export function classifyUsageResponse(response: WireResponse, now = Date.now()):
     if (status === 408 || status >= 500) return { kind: "replay", ...delay }
     if (status >= 400) return { kind: "discard", code: code ?? `http_${status}` }
     return { kind: "replay", ...delay }
-}
-
-/** The body's `next_eligible_at` wins over `Retry-After`; both become a delay from the local clock. */
-function usageRetryDelay(
-    body: UsageResponseBody | undefined,
-    retryAfter: string | null,
-    now: number,
-): { readonly retryAfterMs?: number } {
-    const retryAfterMs =
-        body?.nextEligibleAt === undefined ? parseRetryAfterMs(retryAfter, now) : Math.max(0, body.nextEligibleAt - now)
-    return retryAfterMs === undefined ? {} : { retryAfterMs }
 }
 
 /** A JSON 403 from the service refuses one profile; an IP ban or an edge block refuses the machine. */

@@ -8,8 +8,8 @@ import {
     type OtlpSpanInput,
 } from "../contracts/otlpProduction"
 
-/** The channels whose local drops `dline.telemetry.dropped.records` counts (TADR §7.2). */
-export type DroppedChannel = "logs" | "metrics" | "traces"
+/** The signals whose local drops `dline.telemetry.dropped.records` counts under `dline.signal` (TADR §7.2). */
+export type DroppedSignal = "logs" | "metrics" | "traces"
 
 /** One frozen delta window: what the metrics outbox queues and what one request carries (TADR §7.2). */
 export interface MetricsWindow {
@@ -44,7 +44,7 @@ export class ProductionMetricsWindow {
     private eventLoopDelayMs: number | undefined
     private cpuUtilizationRatio: number | undefined
     private heapGrowthBytes: number | undefined
-    private readonly dropped = new Map<DroppedChannel, number>()
+    private readonly dropped = new Map<DroppedSignal, number>()
     private readonly operations = new Map<string, MutableHistogram>()
 
     constructor(private startMs: number) {}
@@ -69,9 +69,9 @@ export class ProductionMetricsWindow {
         }
     }
 
-    recordDropped(channel: DroppedChannel, count: number): void {
+    recordDropped(signal: DroppedSignal, count: number): void {
         if (!Number.isSafeInteger(count) || count <= 0) return
-        this.dropped.set(channel, (this.dropped.get(channel) ?? 0) + count)
+        this.dropped.set(signal, (this.dropped.get(signal) ?? 0) + count)
     }
 
     /** One finished Provider send becomes one `gen_ai.client.operation.duration` observation. */
@@ -113,8 +113,8 @@ export class ProductionMetricsWindow {
             points.push({ name: "dline.runtime.cpu.utilization", attributes: {}, value: this.cpuUtilizationRatio })
         if (this.heapGrowthBytes !== undefined)
             points.push({ name: "dline.runtime.heap.growth", attributes: {}, value: this.heapGrowthBytes })
-        for (const [channel, count] of this.dropped)
-            points.push({ name: "dline.telemetry.dropped.records", attributes: { "dline.channel": channel }, value: count })
+        for (const [signal, count] of this.dropped)
+            points.push({ name: "dline.telemetry.dropped.records", attributes: { "dline.signal": signal }, value: count })
         for (const histogram of this.operations.values()) {
             const value: OtlpHistogramValue = {
                 count: histogram.count,

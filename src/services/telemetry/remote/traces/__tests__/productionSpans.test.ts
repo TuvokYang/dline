@@ -121,6 +121,21 @@ describe("ProductionSpanRecorder (TADR §5.3)", () => {
         ])
     })
 
+    it("names the error type of a failed task and of no other task outcome", () => {
+        const { published, spans } = recorder()
+        const failed = spans.start({ name: "task.turn" })
+        failed.recordException(new RangeError("context window exceeded"))
+        failed.end("failure")
+        const cancelled = spans.start({ name: "subagent.run" })
+        cancelled.recordException(new Error("aborted"))
+        cancelled.end("cancelled")
+
+        expect(published.map(({ name, outcome, attributes }) => ({ name, outcome, attributes }))).toEqual([
+            { name: "dline.task", outcome: "failure", attributes: { "dline.role": "task", "error.type": "RangeError" } },
+            { name: "dline.task", outcome: "cancelled", attributes: { "dline.role": "subagent" } },
+        ])
+    })
+
     it("publishes nothing for a span outside the catalog or while reporting is not allowed", () => {
         let allowed = false
         const { published, spans } = recorder(() => allowed)
