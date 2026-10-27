@@ -225,12 +225,18 @@ export function NewTaskRenderer(props: PresentationProps) {
     return <NewTaskPreview context={newTask.context ? [newTask.context] : undefined} task={newTask.task} />
 }
 
-/** Render the report draft owned by this interaction, including its consent choice. */
-export function ReportRenderer(props: PresentationProps) {
+/**
+ * Render the pending GitHub issue draft with the user's supplement and consent choice.
+ *
+ * The preview is keyed by its anchor row so a later report starts from its own draft
+ * instead of the supplement typed into the previous one.
+ */
+export function ReportBugRenderer(props: PresentationProps) {
     return (
         <ReportBugPreview
             data={props.message.text ?? ""}
             editable
+            key={props.message.ts}
             onSelectionChange={props.onSelectionChange}
             selection={props.selection}
         />

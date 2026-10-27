@@ -30,16 +30,6 @@ export async function collectReportBugEnvironment(providerAndModel: string): Pro
     }
 }
 
-/** Add user-authored text without replacing the report the AI already prepared. */
-export function appendReportBugSupplement(content: ReportBugContent, supplement: string | undefined): ReportBugContent {
-    const text = supplement?.trim()
-    if (!text) return content
-    return {
-        ...content,
-        additionalContext: [content.additionalContext.trim(), `User supplement:\n${text}`].filter(Boolean).join("\n\n"),
-    }
-}
-
 /** A bounded, credential-redacted error suitable for an editable issue draft. */
 export function recentReportBugError(error: string | undefined): string | undefined {
     const redacted = error ? redactDiagnosticString(error).trim() : ""

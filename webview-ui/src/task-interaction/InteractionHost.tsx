@@ -1,8 +1,8 @@
 import type { TaskViewAction, TaskViewState, UiMessage } from "@shared/ExtensionMessage"
-import { parseReportBugDraft, reportBugDraftSelection } from "@shared/report-bug"
-import { type ReactNode, useState } from "react"
+import type { ReactNode } from "react"
 import { isCardHostedApproval } from "./approval-card"
 import { FooterActions } from "./FooterActions"
+import { type InteractionSelection, useInteractionSelection } from "./interaction-selection"
 import {
     APPROVAL_PRESENTATION_KINDS,
     isPresentationKind,
@@ -54,6 +54,12 @@ export interface InteractionHostProps {
      * the approval is answered. Without it the footer draws its compact summary.
      */
     renderApprovalCard?: (message: UiMessage) => ReactNode
+    /**
+     * The active interaction's selection when its owner sits above the host, so the
+     * chat row that edits it and the footer that submits it share one state. Without
+     * it the host keeps the selection itself.
+     */
+    selection?: InteractionSelection
 }
 
 const EMPTY_DRAFT: InteractionDraft = { text: "", images: [], files: [], activeQuote: null }
@@ -69,18 +75,13 @@ export function InteractionHost({
     onDraftRejected,
     onSuccessorAccepted,
     renderApprovalCard,
+    selection: sharedSelection,
 }: InteractionHostProps) {
     const interaction = view.activeInteraction
     const anchor = findActiveInteractionAnchor(messages, view)
     const presentationKind = interaction?.presentationKind
-    const initialSelection = (() => {
-        if (presentationKind !== "report_bug") return []
-        const report = parseReportBugDraft(anchor?.text ?? interaction?.presentationText)
-        return report ? reportBugDraftSelection(report) : []
-    })()
-    const [selectionState, setSelectionState] = useState<{ interactionId?: string; values: string[] }>({ values: [] })
-    const selection = selectionState.interactionId === interaction?.interactionId ? selectionState.values : initialSelection
-    const setSelection = (values: string[]) => setSelectionState({ interactionId: interaction?.interactionId, values })
+    const ownSelection = useInteractionSelection(view, anchor)
+    const { values: selection, onChange: setSelection } = sharedSelection ?? ownSelection
     const supported = presentationKind ? isPresentationKind(presentationKind) : false
     const renderAnchorPresentation = (kind: PresentationKind, message: UiMessage) =>
         renderApprovalCard && isCardHostedApproval(kind) ? (
