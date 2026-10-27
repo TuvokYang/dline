@@ -7,36 +7,44 @@ interface PendingReportBug {
     readonly payloadRef: string
 }
 
-/** Whether one durable conversation entry records an actual report_bug invocation. */
-function containsReportBugCall(entry: ConversationViewEntry): boolean {
+/** Calls after which a report intent is finished: the report itself, or the end of the work. */
+const INTENT_CLOSING_TOOLS: ReadonlySet<string> = new Set([DlineDefaultTool.REPORT_BUG, DlineDefaultTool.ATTEMPT])
+
+/** Whether one durable conversation entry records a call that finishes the report intent. */
+function closesReportIntent(entry: ConversationViewEntry): boolean {
     return entry.messages.some(
         (message) =>
             message.role === "assistant" &&
             Array.isArray(message.content) &&
-            message.content.some((block) => block.type === "tool_use" && block.name === DlineDefaultTool.REPORT_BUG),
+            message.content.some((block) => block.type === "tool_use" && INTENT_CLOSING_TOOLS.has(block.name)),
     )
 }
 
 /**
- * Derive the current turn's one-shot authority from an unfinished durable report intent.
+ * The latest admitted /reportbug intent that nothing has finished yet.
  *
  * The source must be a declaration persisted by semantic admission; rendered prompt text
- * is never trusted. An actual report_bug tool call closes the latest intent, while ordinary
- * assistant questions and user answers leave it pending for the next Provider turn.
+ * is never trusted. A report_bug call closes the intent, and so does a completion: work
+ * that ended without a report abandoned it, and keeping it open would keep telling every
+ * later turn that a report is pending. Questions and the user's answers leave it open.
  */
-export function deriveReportBugContinuationFromEntries(
-    entries: readonly ConversationViewEntry[],
-): ExplicitInstructionDeclaration | undefined {
+function pendingReportIntent(entries: readonly ConversationViewEntry[]): PendingReportBug | undefined {
     let pending: PendingReportBug | undefined
-
     for (const entry of entries) {
         for (const declaration of entry.explicitInstructions ?? []) {
             if (declaration.type !== "report_bug" || declaration.targetTool !== DlineDefaultTool.REPORT_BUG) continue
             pending = { declaration, payloadRef: entry.entry.payloadRef }
         }
-        if (containsReportBugCall(entry)) pending = undefined
+        if (closesReportIntent(entry)) pending = undefined
     }
+    return pending
+}
 
+/** Derive the current turn's one-shot report_bug authority from an unfinished durable report intent. */
+export function deriveReportBugContinuationFromEntries(
+    entries: readonly ConversationViewEntry[],
+): ExplicitInstructionDeclaration | undefined {
+    const pending = pendingReportIntent(entries)
     if (!pending) return undefined
     return {
         type: "report_bug",

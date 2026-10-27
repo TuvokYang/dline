@@ -40,6 +40,18 @@ async function submit(sidebar: Frame, text: string): Promise<void> {
     await input.press("Enter")
 }
 
+/** The preview's confirm action; nothing leaves the editor before it is clicked. */
+function openIssueButton(sidebar: Frame) {
+    return sidebar.locator('vscode-button[aria-label="Open GitHub Issue"]')
+}
+
+async function confirmReport(sidebar: Frame, server: ClineApiServerMock): Promise<void> {
+    const confirm = openIssueButton(sidebar)
+    await expect(confirm).toBeVisible({ timeout: 60_000 })
+    expect(server.getExternalUrlVisits()).toEqual([])
+    await confirm.click()
+}
+
 e2e(
     "Report bug - no Profile opens the local editable issue without a Provider request",
     async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
@@ -54,6 +66,7 @@ e2e(
             await expect(sidebar.getByRole("button", { name: "Select model" })).toContainText("Create profile")
 
             await submit(sidebar, `/cmd:reportbug ${details}`)
+            await confirmReport(sidebar, server)
 
             const visit = await waitForSingleExternalVisit(server)
             expect(visit.path).toBe("/.test/external-url")
@@ -95,11 +108,48 @@ e2e(
         expect(server.getRequestCount("openai-compatible-chat")).toBe(1)
 
         await submit(sidebar, `/cmd:reportbug ${details}`)
+        await confirmReport(sidebar, server)
 
         const visit = await waitForSingleExternalVisit(server)
         expect(visit.query["what-happened"]).toBe(details)
         expect(visit.query.logs).toContain(failureMarker)
         expect(server.getRequestCount("openai-compatible-chat")).toBe(1)
+        // The ordinary failure asked for no issue: the only report is the one /reportbug opened.
+        await expect(sidebar.getByTestId("report-bug-preview")).toHaveCount(1)
+        await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [new RegExp(failureMarker), /invalid_api_key/])
+    },
+)
+
+e2e(
+    "Report bug - a /reportbug that fails to send shows the error and opens an issue only when asked again",
+    async ({ helper, server, sidebar, userDataDir }) => {
+        e2e.setTimeout(180_000)
+        // The details must not contain the marker, or the echoed command would satisfy the wait for the failure.
+        const failureMarker = "E2E_PROVIDER_REJECTED_REPORT_SEND"
+        const details = "E2E_REPORT_BUG_DETAILS_AFTER_SEND"
+        server.resetOpenAiMock()
+        server.enqueueOpenAiResponses({
+            type: "error",
+            status: 401,
+            code: "invalid_api_key",
+            message: failureMarker,
+        })
+        await helper.signin(sidebar)
+
+        await submit(sidebar, `/cmd:reportbug ${details}`)
+        await expect(sidebar.getByText(failureMarker, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+        expect(server.getRequestCount("openai-compatible-chat")).toBe(1)
+
+        // Asking again while the failure stands opens the local report without another request.
+        await submit(sidebar, `/cmd:reportbug ${details}`)
+        await confirmReport(sidebar, server)
+
+        const visit = await waitForSingleExternalVisit(server)
+        expect(visit.query).toMatchObject({ template: "bug_report.yml", title: "Dline bug report", "what-happened": details })
+        expect(visit.query.logs).toContain(failureMarker)
+        expect(server.getRequestCount("openai-compatible-chat")).toBe(1)
+        // The failed send itself asked for no issue: the only report is the one asked for again.
+        await expect(sidebar.getByTestId("report-bug-preview")).toHaveCount(1)
         await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [new RegExp(failureMarker), /invalid_api_key/])
     },
 )
@@ -160,7 +210,7 @@ e2e(
         await expect(followupOption).toBeEnabled()
         await followupOption.click()
 
-        const reportButton = sidebar.locator('vscode-button[aria-label="Approve"]')
+        const reportButton = openIssueButton(sidebar)
         await expect(reportButton).toBeVisible({ timeout: 60_000 })
         expect(server.getExternalUrlVisits()).toEqual([])
 

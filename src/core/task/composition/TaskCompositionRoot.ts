@@ -35,7 +35,6 @@ import {
 } from "../executors/policy/ProductionApprovalPolicyAdapter"
 import { ProductionProviderAdapter, type ProductionProviderService } from "../executors/provider/ProductionProviderAdapter"
 import type {
-    ProviderFailureReportPort,
     ProviderRequestLifecyclePort,
     ProviderRoundCheckpointPort,
     ProviderTextPresentationPort,
@@ -110,8 +109,6 @@ export interface TaskCompositionOptions {
     readonly providerCheckpoint?: ProviderRoundCheckpointPort
     /** Starts non-request-critical work after provider transport begins. */
     readonly providerLifecycle?: ProviderRequestLifecyclePort
-    /** Opens the canonical ReportBug preview after a terminal provider failure. */
-    readonly providerFailureReport?: ProviderFailureReportPort
     /** Writes the round's restore point before a compaction rewrites history; see CompactionCheckpointPort. */
     readonly compactionCheckpoint?: CompactionCheckpointPort
     /** Reads the task's model-mistake counter and live user-configured ceiling. */
@@ -205,7 +202,6 @@ export async function composeTask(options: TaskCompositionOptions): Promise<Task
                     report: options.providerRequestReport,
                     checkpoint: options.providerCheckpoint,
                     lifecycle: options.providerLifecycle,
-                    failureReport: options.providerFailureReport,
                 },
                 compose: bindToolSequence(
                     new ProductionComposeAdapter({
