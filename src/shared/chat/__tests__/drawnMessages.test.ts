@@ -20,10 +20,11 @@ const readTool = (ts: number): UiMessage => ({
 })
 
 describe("drawsNothingBetween", () => {
-    it("ignores a finished request and a reply without tools between two rows", () => {
+    it("treats assistant prose as a drawn row between two checkpoints", () => {
         const messages = [checkpoint(1), request(2), prose(3), checkpoint(4)]
 
-        expect(drawsNothingBetween(messages, 1, 4)).toBe(true)
+        expect(drawsNothingBetween(messages, 1, 4)).toBe(false)
+        expect(filterDrawnMessages(messages)).toContainEqual(prose(3))
     })
 
     it("treats a failed request as drawn until a later attempt supersedes it", () => {

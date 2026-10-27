@@ -1502,7 +1502,7 @@ describe("SubagentRunner", () => {
         assert.equal(user.role, "user")
         const feedback = user.content.map((block) => block.text ?? "").join("\n")
         assert.match(feedback, /contained only internal reasoning/)
-        assert.match(feedback, /Consecutive failed responses: 1 of 5/)
+        assert.doesNotMatch(feedback, /Consecutive failed responses/)
         assert.match(feedback, /Do not restart or repeat earlier analysis/)
         assert.doesNotMatch(JSON.stringify(nextRoundConversation), /I did not provide a response/)
     })
@@ -1842,7 +1842,7 @@ describe("SubagentRunner", () => {
             assert.equal(rejection.role, "user")
             const rejectionText = JSON.stringify(rejection.content)
             assert.match(rejectionText, /called list_files after you were told to finish/)
-            assert.match(rejectionText, /Consecutive failed responses: 1 of 5/)
+            assert.doesNotMatch(rejectionText, /Consecutive failed responses/)
             assert.match(rejectionText, /Call attempt_completion now/)
             yield {
                 type: "tool_calls",
@@ -2053,7 +2053,7 @@ describe("SubagentRunner", () => {
             const reminder = conversation.at(-1) as { role: string; content: Array<{ type: string; text?: string }> }
             assert.equal(reminder.role, "user")
             assert.match(reminder.content[0]?.text || "", /contained text but no tool call/)
-            assert.match(reminder.content[0]?.text || "", /Consecutive failed responses: 1 of 5/)
+            assert.doesNotMatch(reminder.content[0]?.text || "", /Consecutive failed responses/)
             assert.match(reminder.content[0]?.text || "", /Plain assistant text cannot complete a subagent run/)
             yield {
                 type: "tool_calls",
@@ -2169,8 +2169,8 @@ describe("SubagentRunner", () => {
         const result = await new SubagentRunner(createTaskConfig(false)).run("Review files", () => {})
 
         assert.equal(result.status, "failed")
-        assert.match(result.error || "", /Subagent stopped after 5 consecutive responses/)
-        assert.match(result.error || "", /5\. attempt_completion was called without a non-empty result/)
+        assert.match(result.error || "", /Subagent stopped after repeated responses/)
+        assert.match(result.error || "", /- attempt_completion was called without a non-empty result/)
         assert.equal(createMessage.mock.calls.length, 5)
     })
 
@@ -2187,17 +2187,18 @@ describe("SubagentRunner", () => {
         const result = await new SubagentRunner(createTaskConfig(false)).run("Review files", () => {})
 
         assert.equal(result.status, "failed")
-        assert.equal(createMessage.mock.calls.length, 5)
-        assert.match(result.error || "", /Subagent stopped after 5 consecutive responses/)
-        assert.match(result.error || "", /1\. The previous response contained text but no tool call/)
+        assert.equal(createMessage.mock.calls.length, 25)
+        assert.match(result.error || "", /Subagent stopped after repeated responses/)
+        assert.match(result.error || "", /- The previous response contained text but no tool call/)
         // The run's own reasoning is handed back rather than discarded.
         assert.match(result.error || "", /Partial findings recovered from the run[\s\S]*I am finished\./)
     })
 
-    it("resets the consecutive failure count after a tool executes successfully", async () => {
+    it("resets warning remainder and promoted mistakes after a tool executes successfully", async () => {
         const createMessage = vi.fn()
-        // Four plain responses, one successful tool, four more: never five in a row.
-        for (let round = 0; round < 4; round += 1) {
+        // Twenty-four warnings produce four mistakes plus a remainder of four.
+        // A successful tool must clear both before the second sequence starts.
+        for (let round = 0; round < 24; round += 1) {
             createMessage.mockImplementationOnce(async function* () {
                 yield { type: "text", text: "thinking out loud" }
             })
@@ -2211,14 +2212,14 @@ describe("SubagentRunner", () => {
                 },
             }
         })
-        for (let round = 0; round < 4; round += 1) {
+        for (let round = 0; round < 24; round += 1) {
             createMessage.mockImplementationOnce(async function* () {
                 yield { type: "text", text: "still thinking" }
             })
         }
         createMessage.mockImplementationOnce(async function* (_s: string, c: unknown[]) {
             const last = c.at(-1) as TestConversationMessage
-            assert.match(JSON.stringify(last.content), /Consecutive failed responses: 4 of 5/)
+            assert.doesNotMatch(JSON.stringify(last.content), /Consecutive failed responses/)
             yield {
                 type: "tool_calls",
                 function_id: "toolu_subagent_reset_complete",
@@ -2235,7 +2236,7 @@ describe("SubagentRunner", () => {
 
         assert.equal(result.status, "completed", result.error)
         assert.equal(result.result, "done")
-        assert.equal(createMessage.mock.calls.length, 10)
+        assert.equal(createMessage.mock.calls.length, 50)
     })
 
     it("diagnoses an empty turn as user feedback before failing", async () => {
@@ -2250,7 +2251,7 @@ describe("SubagentRunner", () => {
             assert.equal(lu.role, "user")
             const feedback = lu.content.map((block) => block.text ?? "").join("\n")
             assert.match(feedback, /The previous response was empty/)
-            assert.match(feedback, /Consecutive failed responses: 1 of 5/)
+            assert.doesNotMatch(feedback, /Consecutive failed responses/)
             yield {
                 type: "tool_calls",
                 function_id: "toolu_subagent_complete_3",

@@ -101,10 +101,6 @@ export function filterDrawnMessages(messages: readonly UiMessage[]): UiMessage[]
                 }
                 return false
             }
-            case "text":
-                // Assistant prose stays in the conversation, not in the tool-owned chat surface.
-                // Apply the same rule to partial and final frames so a Respond row never flashes then disappears.
-                return Boolean(message.images?.length || message.files?.length)
             case "mcp_server_request_started":
                 return false
             case "mcp_server_response":

@@ -73,6 +73,19 @@ export interface ProductionProviderAdapterOptions {
     readonly service: ProductionProviderService
 }
 
+function plainTextWarningOf(
+    text: string | undefined,
+    blocks: ProviderTurnPlan["blocks"],
+    authorization: ProviderTurnPlan["proseAuthorization"],
+    turnId: string,
+): ProviderTurnPlan["plainTextWarning"] {
+    if (!text?.trim()) return undefined
+    if (blocks.length === 0) return "text_only"
+    const blockIds = new Set(blocks.map((block) => block.blockId))
+    const authorized = authorization?.grants.some((grant) => grant.requestId === turnId && blockIds.has(grant.blockId)) === true
+    return authorized ? undefined : "plain_text_outside_tool"
+}
+
 /** Translates provider values to immutable payload refs consumed by the kernel. */
 export class ProductionProviderAdapter implements ProviderExecutionPort {
     constructor(private readonly options: ProductionProviderAdapterOptions) {}
@@ -80,7 +93,10 @@ export class ProductionProviderAdapter implements ProviderExecutionPort {
     async recoverFinal(payloadRef: string) {
         const payload = decodeTaskPayload<ProviderFinalEnvelope>(await this.options.payloads.read(payloadRef))
         if (payload.kind !== "provider_final") throw new Error("InvalidProviderFinalPayload")
-        return { turnPlan: payload.turnPlan }
+        return {
+            turnPlan: payload.turnPlan,
+            ...(payload.modelInfo === undefined ? {} : { modelInfo: payload.modelInfo }),
+        }
     }
 
     async *start(input: ProviderExecutionInput): AsyncIterable<ProviderExecutionChunk> {
@@ -130,10 +146,12 @@ export class ProductionProviderAdapter implements ProviderExecutionPort {
                     approval: block.approval,
                 })),
             )
+            const plainTextWarning = plainTextWarningOf(chunk.text, blocks, chunk.proseAuthorization, chunk.turnId)
             const turnPlan: ProviderTurnPlan = {
                 mode: chunk.mode,
                 blocks,
                 ...(chunk.proseAuthorization === undefined ? {} : { proseAuthorization: chunk.proseAuthorization }),
+                ...(plainTextWarning === undefined ? {} : { plainTextWarning }),
             }
             const finalPayload: ProviderFinalEnvelope = {
                 kind: "provider_final",
@@ -151,6 +169,7 @@ export class ProductionProviderAdapter implements ProviderExecutionPort {
                 ...(chunk.text === undefined ? {} : { text: chunk.text }),
                 ...(chunk.reasoning === undefined ? {} : { reasoning: chunk.reasoning }),
                 ...(chunk.toolRows === undefined ? {} : { toolRows: chunk.toolRows }),
+                ...(chunk.modelInfo === undefined ? {} : { modelInfo: chunk.modelInfo }),
                 turnPlan,
             }
         }

@@ -181,7 +181,8 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
 
         const entry = this.pending.get(event.commandId)
         if (!entry) return
-        if (event.kind === "tool.block_result") await this.submitTerminal(entry, "tool.completed")
+        if (event.kind === "tool.block_result")
+            await this.submitTerminal(entry, "tool.completed", undefined, event.failed !== true)
         else if (event.kind === "tool.block_failed")
             await this.submitTerminal(entry, "tool.failed", executorFailure("tool", event.cause ?? new Error(event.message)))
         else await this.submitTerminal(entry, "tool.cancelled")
@@ -192,6 +193,7 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
         entry: PendingBlock,
         type: "tool.completed" | "tool.failed" | "tool.cancelled",
         message?: string,
+        successful?: boolean,
     ): Promise<unknown> {
         const mistakes = this.readMistakeLimit?.()
         return this.events.submit({
@@ -201,6 +203,7 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
             turnId: entry.command.turnId,
             blockId: entry.block.blockId,
             message,
+            ...(successful === undefined ? {} : { successful }),
             ...(mistakes === undefined ? {} : { mistakeCount: mistakes.count, mistakeLimit: mistakes.limit }),
         })
     }

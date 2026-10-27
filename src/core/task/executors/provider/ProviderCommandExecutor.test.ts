@@ -1,4 +1,6 @@
-import { describe, expect, it, vi } from "vitest"
+import { Logger } from "@shared/services/Logger"
+import { afterEach, describe, expect, it, vi } from "vitest"
+import { telemetryService } from "@/services/telemetry"
 import type { ProviderStartCommand, ProviderTurnBlockPlan, TaskEvent } from "../../kernel"
 import { InMemoryConversationJournal, InMemoryTaskViewPort } from "../../stores"
 import { ProviderCommandExecutor, type ProviderExecutionChunk } from "./ProviderCommandExecutor"
@@ -38,6 +40,8 @@ function recorder() {
 async function* chunks(values: readonly ProviderExecutionChunk[]): AsyncIterable<ProviderExecutionChunk> {
     for (const value of values) yield value
 }
+
+afterEach(() => vi.restoreAllMocks())
 
 describe("ProviderCommandExecutor", () => {
     it("projects partial data transiently and finalizes one durable journal entry", async () => {
@@ -170,7 +174,10 @@ describe("ProviderCommandExecutor", () => {
         ])
     })
 
-    it("marks prose outside an ordinary tool call as invalid presentation", async () => {
+    it("presents prose outside an ordinary tool call and reports one content-free warning", async () => {
+        const captureRuntimeEvent = vi.mocked(telemetryService.captureRuntimeEvent)
+        captureRuntimeEvent.mockClear()
+        const warn = vi.spyOn(Logger, "warn").mockImplementation(() => undefined)
         const presentation = { showPartial: vi.fn(), commit: vi.fn(async () => undefined) }
         const executor = new ProviderCommandExecutor(
             "task-1",
@@ -184,7 +191,12 @@ describe("ProviderCommandExecutor", () => {
                             turnId: "turn-request",
                             payloadRef: "payload:final",
                             text: "ordinary prose",
-                            turnPlan: { mode: "serial", blocks: [toolBlock] },
+                            modelInfo: { providerId: "anthropic", modelId: "model-1", mode: "act" },
+                            turnPlan: {
+                                mode: "serial",
+                                blocks: [toolBlock],
+                                plainTextWarning: "plain_text_outside_tool",
+                            },
                         },
                     ]),
             },
@@ -196,14 +208,24 @@ describe("ProviderCommandExecutor", () => {
 
         await executor.execute(command)
 
-        expect(presentation.commit).toHaveBeenCalledWith({
-            transientId: "stream-1",
-            text: "ordinary prose",
-            proseDisposition: "plain_text_outside_tool",
-        })
+        expect(presentation.commit).toHaveBeenCalledWith({ transientId: "stream-1", text: "ordinary prose" })
+        expect(warn).toHaveBeenCalledOnce()
+        expect(captureRuntimeEvent).toHaveBeenCalledOnce()
+        expect(captureRuntimeEvent).toHaveBeenCalledWith(
+            "provider.plain_text_warning",
+            {
+                warning_kind: "plain_text_outside_tool",
+                tool_count: 1,
+                provider_id: "anthropic",
+                model_id: "model-1",
+                mode: "act",
+            },
+            "warn",
+        )
+        expect(JSON.stringify(captureRuntimeEvent.mock.calls)).not.toContain("ordinary prose")
     })
 
-    it("preserves prose only when a parsed block exercised matching explicit-instruction authority", async () => {
+    it("preserves prose when a parsed block exercised matching explicit-instruction authority", async () => {
         const presentation = { showPartial: vi.fn(), commit: vi.fn(async () => undefined) }
         const executor = new ProviderCommandExecutor(
             "task-1",
@@ -246,7 +268,7 @@ describe("ProviderCommandExecutor", () => {
         expect(presentation.commit).toHaveBeenCalledWith({ transientId: "stream-1", text: "authorized prose" })
     })
 
-    it("rejects a stale explicit-instruction grant that names no block in the settled turn", async () => {
+    it("still presents prose when a stale explicit-instruction grant does not authorize it", async () => {
         const presentation = { showPartial: vi.fn(), commit: vi.fn(async () => undefined) }
         const executor = new ProviderCommandExecutor(
             "task-1",
@@ -285,11 +307,7 @@ describe("ProviderCommandExecutor", () => {
 
         await executor.execute(command)
 
-        expect(presentation.commit).toHaveBeenCalledWith({
-            transientId: "stream-1",
-            text: "ordinary prose",
-            proseDisposition: "plain_text_outside_tool",
-        })
+        expect(presentation.commit).toHaveBeenCalledWith({ transientId: "stream-1", text: "ordinary prose" })
     })
 
     it("replays an existing durable final without requesting the provider again", async () => {

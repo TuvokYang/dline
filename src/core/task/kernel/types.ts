@@ -59,10 +59,14 @@ export interface ProviderTurnProseAuthorization {
     }[]
 }
 
+export type ProviderPlainTextWarningKind = "text_only" | "plain_text_outside_tool"
+
 export interface ProviderTurnPlan {
     readonly mode: "serial" | "parallel"
     readonly blocks: readonly ProviderTurnBlockPlan[]
     readonly proseAuthorization?: ProviderTurnProseAuthorization
+    /** Durable classification shared by presentation, runtime budgeting and telemetry. */
+    readonly plainTextWarning?: ProviderPlainTextWarningKind
 }
 
 export type FlowPhase = "idle" | "initializing" | "running" | "waiting" | "paused" | "completed" | "error" | "terminated"
@@ -149,7 +153,13 @@ export interface FlowState {
      * task back to the user instead of looping forever.
      */
     readonly textOnlyTurnStreak?: number
-    /** Consecutive model/tool mistakes reported by the task's execution handlers. */
+    /** Plain-text warnings since the last successful tool completion. */
+    readonly plainTextWarningCount?: number
+    /** Mistakes promoted from each complete group of five plain-text warnings. */
+    readonly plainTextWarningMistakes?: number
+    /** Current tool-handler contribution to the effective mistake count. */
+    readonly toolMistakeCount?: number
+    /** Effective consecutive mistake count projected from provider and tool contributions. */
     readonly consecutiveMistakeCount?: number
     /** Live user-configured ceiling captured with the latest reported tool outcome. */
     readonly maxConsecutiveMistakes?: number
@@ -448,6 +458,8 @@ export type ToolEvent =
           readonly turnId: TurnId
           readonly blockId: BlockId
           readonly message?: string
+          /** Whether a completed tool produced a successful model-facing result. */
+          readonly successful?: boolean
           readonly mistakeCount?: number
           readonly mistakeLimit?: number
       })

@@ -797,17 +797,17 @@ e2e(
         e2e.setTimeout(180_000)
         await helper.signin(sidebar)
         server.resetOpenAiMock()
-        server.enqueueOpenAiResponses(
-            { type: "message", text: "E2E_UNSENT_MISTAKE_LIMIT_NO_TOOL_1" },
-            { type: "message", text: "E2E_UNSENT_MISTAKE_LIMIT_NO_TOOL_2", delayMs: 5_000 },
-            { type: "message", text: "E2E_UNSENT_MISTAKE_LIMIT_NO_TOOL_3", delayMs: 5_000 },
-            {
-                type: "error",
-                status: 500,
-                code: "unexpected_unsent_mistake_limit_request",
-                message: "An unsent draft triggered an extra request at the mistake limit",
-            },
-        )
+        const warningResponses = Array.from({ length: 15 }, (_, index) => ({
+            type: "message" as const,
+            text: `E2E_UNSENT_MISTAKE_LIMIT_NO_TOOL_${index + 1}`,
+            ...(index === 1 ? { delayMs: 5_000 } : {}),
+        }))
+        server.enqueueOpenAiResponses(...warningResponses, {
+            type: "error",
+            status: 500,
+            code: "unexpected_unsent_mistake_limit_request",
+            message: "An unsent draft triggered an extra request at the mistake limit",
+        })
 
         await sendTask(sidebar, "E2E_UNSENT_MISTAKE_LIMIT_TASK")
         await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(2)
@@ -829,7 +829,7 @@ e2e(
         await expectComposerText(input, unsentDraft)
         const submittedFeedback = sidebar.getByTestId(/^(?:direct|queued)-user-input$/).filter({ hasText: unsentDraft })
         await expect(submittedFeedback).toHaveCount(0)
-        expect(server.openAiRequestCount).toBe(3)
+        expect(server.openAiRequestCount).toBe(15)
         expect(JSON.stringify(server.getOpenAiRequestBodies())).not.toContain(unsentDraft)
         await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
     },
@@ -842,9 +842,10 @@ e2e(
         await helper.signin(sidebar)
         server.resetOpenAiMock()
         server.enqueueOpenAiResponses(
-            { type: "message", text: "E2E_LIVE_MISTAKE_LIMIT_NO_TOOL_1" },
-            { type: "message", text: "E2E_LIVE_MISTAKE_LIMIT_NO_TOOL_2" },
-            { type: "message", text: "E2E_LIVE_MISTAKE_LIMIT_NO_TOOL_3" },
+            ...Array.from({ length: 15 }, (_, index) => ({
+                type: "message" as const,
+                text: `E2E_LIVE_MISTAKE_LIMIT_NO_TOOL_${index + 1}`,
+            })),
             {
                 type: "message",
                 text: "E2E_LIVE_MISTAKE_LIMIT_AFTER_RESET",
@@ -877,7 +878,7 @@ e2e(
         await expect(sidebar.getByText("E2E_LIVE_MISTAKE_LIMIT_RESET_OK", { exact: false }).last()).toBeVisible({
             timeout: 60_000,
         })
-        await expect.poll(() => server.openAiRequestCount).toBe(5)
+        await expect.poll(() => server.openAiRequestCount).toBe(17)
         expect(server.getMockConsumptions("openai-compatible-chat").every((entry) => entry.contractError === undefined)).toBe(
             true,
         )
@@ -892,9 +893,10 @@ e2e(
         await helper.signin(sidebar)
         server.resetOpenAiMock()
         server.enqueueOpenAiResponses(
-            { type: "message", text: "E2E_MISTAKE_LIMIT_NO_TOOL_1" },
-            { type: "message", text: "E2E_MISTAKE_LIMIT_NO_TOOL_2" },
-            { type: "message", text: "E2E_MISTAKE_LIMIT_NO_TOOL_3" },
+            ...Array.from({ length: 15 }, (_, index) => ({
+                type: "message" as const,
+                text: `E2E_MISTAKE_LIMIT_NO_TOOL_${index + 1}`,
+            })),
             {
                 type: "message",
                 text: "E2E_MISTAKE_LIMIT_AFTER_RESET",
@@ -940,7 +942,7 @@ e2e(
         await expect(sidebar.getByText("E2E_MISTAKE_LIMIT_RESET_OK", { exact: false }).last()).toBeVisible({
             timeout: 60_000,
         })
-        await expect.poll(() => server.openAiRequestCount).toBe(5)
+        await expect.poll(() => server.openAiRequestCount).toBe(17)
         expect(server.getMockConsumptions("openai-compatible-chat").every((entry) => entry.contractError === undefined)).toBe(
             true,
         )

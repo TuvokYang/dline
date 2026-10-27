@@ -27,8 +27,13 @@ export interface HaltOrder {
     readonly reason: "cancel" | "terminate" | "detach"
 }
 
+/** Semantic outcome of a block whose result was durably produced. */
+export interface ToolDomainRunResult {
+    readonly failed?: boolean
+}
+
 export type ToolDomainEvent =
-    | { kind: "tool.block_result"; commandId: string; turnId?: string; dlineTid: string }
+    | { kind: "tool.block_result"; commandId: string; turnId?: string; dlineTid: string; failed?: boolean }
     | {
           kind: "tool.block_failed"
           commandId: string
@@ -47,7 +52,7 @@ export interface ToolDomainEventSink {
 
 /** The side-effecting work the domain owns; injected so the domain stays testable. */
 export interface ToolDomainRunner {
-    runBlock(command: ToolRunCommand): Promise<void>
+    runBlock(command: ToolRunCommand): Promise<ToolDomainRunResult | void>
     /** Request cancellation before the domain waits for in-flight work to settle. */
     requestStop?(order: HaltOrder): Promise<void>
     /** Release remaining owned resources exactly once after the drain. */
@@ -121,7 +126,7 @@ export class ToolExecutionDomain {
         const generationAtStart = this.haltGeneration
         const work = this.runner
             .runBlock(command)
-            .then(() => {
+            .then((result) => {
                 // A result produced before a stop must not resurrect the turn.
                 if (this.haltGeneration !== generationAtStart) {
                     return
@@ -131,6 +136,7 @@ export class ToolExecutionDomain {
                     commandId: command.commandId,
                     turnId: command.turnId,
                     dlineTid: command.dlineTid,
+                    ...(result && result.failed === true ? { failed: true } : {}),
                 })
             })
             .catch((error: unknown) => {

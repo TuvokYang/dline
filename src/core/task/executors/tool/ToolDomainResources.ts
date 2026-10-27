@@ -1,4 +1,4 @@
-import type { HaltOrder, ToolDomainRunner, ToolRunCommand } from "./ToolExecutionDomain"
+import type { HaltOrder, ToolDomainRunner, ToolDomainRunResult, ToolRunCommand } from "./ToolExecutionDomain"
 
 /**
  * The workspace resources the tool domain owns.
@@ -17,7 +17,7 @@ export interface OwnedToolResources {
 export interface ToolDomainResourceOptions {
     readonly resources: OwnedToolResources
     /** Execute one admitted block; supplied by the assembling Task. */
-    readonly execute: (command: ToolRunCommand) => Promise<void>
+    readonly execute: (command: ToolRunCommand) => Promise<ToolDomainRunResult | void>
     readonly onReleaseError?: (error: unknown, order: HaltOrder) => void
 }
 

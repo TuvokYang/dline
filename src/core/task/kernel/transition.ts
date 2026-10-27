@@ -490,7 +490,11 @@ export function mistakeLimit(state: TaskState): number {
 
 /** Whether a turn that planned no tool may open the next round on its own. */
 function continuesWithoutTools(state: TaskState): boolean {
-    return canOpenNextRound(state) && (state.flow.textOnlyTurnStreak ?? 0) < mistakeLimit(state)
+    return (
+        canOpenNextRound(state) &&
+        (state.flow.textOnlyTurnStreak ?? 0) < mistakeLimit(state) &&
+        (state.flow.consecutiveMistakeCount ?? 0) < mistakeLimit(state)
+    )
 }
 
 function applyCommandOwnership(state: TaskState, commands: readonly Command[]): TaskState {
@@ -832,12 +836,17 @@ function installMistakeLimit(state: TaskState, event: TaskEvent, nextRevision: n
     const textOnlyLimitReached =
         event.type === "provider.turn_ready" &&
         event.turnPlan.blocks.length === 0 &&
+        event.turnPlan.plainTextWarning === undefined &&
         (state.flow.textOnlyTurnStreak ?? 0) >= mistakeLimit(state)
+    const plainTextLimitReached =
+        event.type === "provider.turn_ready" &&
+        event.turnPlan.plainTextWarning !== undefined &&
+        (state.flow.consecutiveMistakeCount ?? 0) >= mistakeLimit(state)
     const toolLimitReached =
         (event.type === "tool.completed" || event.type === "tool.failed" || event.type === "tool.cancelled") &&
         allBlocksTerminal(state) &&
         (state.flow.consecutiveMistakeCount ?? 0) >= mistakeLimit(state)
-    if (!textOnlyLimitReached && !toolLimitReached) return state
+    if (!textOnlyLimitReached && !plainTextLimitReached && !toolLimitReached) return state
     if (!canOpenNextRound(state) || pendingIntakeEntryIds(state.intake).length > 0) return state
     const interactionId = `mistake-limit:${state.taskId}:${nextRevision}`
     return {

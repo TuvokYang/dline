@@ -5,7 +5,7 @@ import { DurableCommandOutbox } from "../../../runtime/DurableCommandOutbox"
 import type { CommandPublicationStore } from "../../../stores/contracts"
 import { ToolCommandExecutor } from "../ToolCommandExecutor"
 import { createDeniedSurface } from "../ToolDomainSurface"
-import type { ToolRunCommand as DomainToolRunCommand, ToolDomainRunner } from "../ToolExecutionDomain"
+import type { ToolRunCommand as DomainToolRunCommand, ToolDomainRunner, ToolDomainRunResult } from "../ToolExecutionDomain"
 import { TurnToolScheduler } from "../TurnToolScheduler"
 
 function command(): ToolRunCommand {
@@ -24,11 +24,13 @@ function command(): ToolRunCommand {
 }
 
 function harness(limit = 32) {
-    const settlers = new Map<string, { resolve(): void; reject(error: Error): void }>()
+    const settlers = new Map<string, { resolve(result?: ToolDomainRunResult): void; reject(error: Error): void }>()
     const runner: ToolDomainRunner = {
         runBlock: vi.fn(
             (input: DomainToolRunCommand) =>
-                new Promise<void>((resolve, reject) => settlers.set(input.dlineTid, { resolve, reject })),
+                new Promise<ToolDomainRunResult | undefined>((resolve, reject) =>
+                    settlers.set(input.dlineTid, { resolve, reject }),
+                ),
         ),
         release: vi.fn(async () => undefined),
     }
@@ -84,6 +86,17 @@ describe("ToolCommandExecutor", () => {
         expect(runner.runBlock).toHaveBeenCalledWith(
             expect.objectContaining({ dlineTid: "b1", invocationRef: "invocation:b1", mode: "parallel" }),
         )
+    })
+
+    it("projects a model-facing failed result as completed but not successful", async () => {
+        const { executor, runner, settlers, events } = harness()
+        const execution = executor.execute({ ...command(), blocks: [command().blocks[0]] })
+        await vi.waitFor(() => expect(runner.runBlock).toHaveBeenCalledOnce())
+
+        settlers.get("b1")?.resolve({ failed: true })
+        await execution
+
+        expect(events).toContainEqual(expect.objectContaining({ type: "tool.completed", blockId: "b1", successful: false }))
     })
 
     it("retires only the named turn and releases its terminal scheduling state", async () => {

@@ -5,9 +5,9 @@ import type { ApiStopReason } from "@core/api/transform/stream"
  *
  * A bare "you did not use a tool" tells the model nothing about what went wrong,
  * so it tends to repeat the same failure, or restart its analysis from scratch.
- * Naming the actual failure, the remaining budget of failed responses, and the
- * concrete next step gives it what it needs to recover. Runtime prompt text is
- * English, like every other runtime response.
+ * Naming the actual failure and concrete next step gives it what it needs to
+ * recover without exposing internal retry state. Runtime prompt text is English,
+ * like every other runtime response.
  */
 
 /** What a response contained when it produced no executable tool call. */
@@ -43,11 +43,6 @@ export interface TurnFailure {
 export interface TurnDiagnosisContext {
     /** Whether tools were offered as provider-native definitions rather than XML. */
     readonly usesNativeToolCalls: boolean
-    /** Failed responses in a row, including this one. Omitted when the caller does not bound them. */
-    readonly consecutiveFailures?: number
-    readonly maxConsecutiveFailures?: number
-    /** What happens when the limit is reached; defaults to the run stopping with a failure. */
-    readonly limitOutcome?: string
 }
 
 export interface TurnFeedbackContext extends TurnDiagnosisContext {
@@ -61,7 +56,6 @@ export interface TurnFeedbackContext extends TurnDiagnosisContext {
 const PSEUDO_TOOL_TAGS = new Set(["tool_call", "tool_use", "tool", "function_calls", "function_call", "invoke"])
 const TAG_PATTERN = /<\/?([a-z][a-z0-9_:-]*)\b[^>]*>/gi
 const COMPLETION_TOOL = "attempt_completion"
-const DEFAULT_LIMIT_OUTCOME = "the run stops and reports failure"
 const NO_RESTART_GUIDANCE = "Do not restart or repeat earlier analysis; everything found so far is still in this conversation."
 
 /**
@@ -114,7 +108,7 @@ export function describeTurnFailure(failure: TurnFailure, usesNativeToolCalls: b
 }
 
 /**
- * The failure and how many failures remain, without a next step.
+ * Describe the failure without exposing retry counters or prescribing a next step.
  *
  * For callers whose next steps are their own contract, such as the main task,
  * which may hand control back to the user rather than only call a tool.
@@ -136,13 +130,7 @@ export function buildTurnFailureFeedback(failure: TurnFailure, context: TurnFeed
 }
 
 function diagnosisLines(failure: TurnFailure, context: TurnDiagnosisContext): string[] {
-    const lines = [`[ERROR] ${describeTurnFailure(failure, context.usesNativeToolCalls)}`]
-    if (context.consecutiveFailures !== undefined && context.maxConsecutiveFailures !== undefined) {
-        lines.push(
-            `Consecutive failed responses: ${context.consecutiveFailures} of ${context.maxConsecutiveFailures}. At ${context.maxConsecutiveFailures} ${context.limitOutcome ?? DEFAULT_LIMIT_OUTCOME}.`,
-        )
-    }
-    return lines
+    return [`[ERROR] ${describeTurnFailure(failure, context.usesNativeToolCalls)}`]
 }
 
 function describeNextAction(failure: TurnFailure, context: TurnFeedbackContext): string {
@@ -186,31 +174,52 @@ function normalizeTokens(value: number | undefined): number | undefined {
     return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined
 }
 
+/** Plain-text warnings required to contribute one effective mistake. */
+const PLAIN_TEXT_WARNINGS_PER_MISTAKE = 5
+
 /**
- * Failed responses in a row, cleared by any successfully executed tool.
+ * Effective failed-turn mistakes, cleared by any successfully executed tool.
  *
- * Counting all failure kinds together bounds a run that alternates between
- * them; separate counters let such a run spin forever without reaching any limit.
+ * Plain text is a warning rather than an immediate mistake: each fifth warning
+ * contributes one. Other unusable responses still contribute immediately, and
+ * all contributions share one limit so alternating failure kinds cannot spin
+ * forever without reaching it.
  */
 export class ConsecutiveTurnFailures {
     private failures: TurnFailure[] = []
+    private plainTextWarningCount = 0
+    private mistakeCount = 0
 
     constructor(readonly limit: number) {}
 
     record(failure: TurnFailure): void {
         this.failures.push(failure)
+        if (failure.kind !== "text_only") {
+            this.mistakeCount += 1
+            return
+        }
+        this.plainTextWarningCount += 1
+        if (this.plainTextWarningCount < PLAIN_TEXT_WARNINGS_PER_MISTAKE) return
+        this.plainTextWarningCount = 0
+        this.mistakeCount += 1
     }
 
     reset(): void {
         this.failures = []
+        this.plainTextWarningCount = 0
+        this.mistakeCount = 0
     }
 
     get count(): number {
-        return this.failures.length
+        return this.mistakeCount
+    }
+
+    get warningCount(): number {
+        return this.plainTextWarningCount
     }
 
     get exhausted(): boolean {
-        return this.failures.length >= this.limit
+        return this.mistakeCount >= this.limit
     }
 
     list(): readonly TurnFailure[] {

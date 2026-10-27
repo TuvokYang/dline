@@ -147,7 +147,7 @@ describe("createProductionToolAdapter", () => {
 
         await expect(
             options.runner.runBlock({ commandId: "command-failed", turnId: "turn-1", dlineTid: "block-1", invocationRef }),
-        ).resolves.toBeUndefined()
+        ).resolves.toEqual({ failed: true })
 
         const entry = await journal.findByOperation("tool.result:command-failed")
         if (!entry?.payloadRef) throw new Error("missing failed result")

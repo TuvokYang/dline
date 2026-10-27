@@ -9,7 +9,6 @@ import type {
 } from "../executors/compose/ProductionComposeAdapter"
 
 const KNOWN_TOOL_NAMES: readonly string[] = Object.values(DlineDefaultTool)
-const LIMIT_OUTCOME = "the task pauses and asks the user for guidance"
 
 export interface TurnContinuationRendererOptions {
     /**
@@ -42,9 +41,6 @@ export class TurnContinuationRenderer implements ComposeContinuationPort {
         if (!observation) return reminder
         const diagnosis = buildTurnDiagnosis(classifyToollessTurn(observation, KNOWN_TOOL_NAMES), {
             usesNativeToolCalls,
-            consecutiveFailures: input.toollessStreak,
-            maxConsecutiveFailures: input.toollessLimit,
-            limitOutcome: LIMIT_OUTCOME,
         })
         return `${diagnosis}\n\n${reminder}`
     }
