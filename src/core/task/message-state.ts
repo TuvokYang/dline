@@ -1,6 +1,8 @@
 import CheckpointTracker from "@integrations/checkpoints/CheckpointTracker"
 import { EventEmitter } from "events"
 import getFolderSize from "get-folder-size"
+import { startPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
+import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
 import { findLastIndex } from "@/shared/array"
 import type { ContextWindowIndicatorSnapshot } from "@/shared/context-window-indicator"
 import { UiMessage } from "@/shared/ExtensionMessage"
@@ -17,6 +19,13 @@ import { UIMessage } from "../storage/UIMessage"
 import type { ConversationHistoryReader } from "./conversation/ConversationHistoryReader"
 import { readHistoryContextWindowIndicator } from "./HistoryContextWindow"
 import { MessageUsageProjection } from "./performance/MessageUsageProjection"
+
+/** What a history update derives from the in-memory message sequence. */
+interface HistoryProjection {
+    readonly apiMetrics: ApiMetrics
+    readonly taskText: string
+    readonly lastRelevantMessage: UiMessage
+}
 
 // Event types for clineMessages changes
 export type ClineMessageChangeType = "add" | "update" | "delete" | "set"
@@ -309,22 +318,9 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
      */
     private async updateTaskHistoryOnly(): Promise<void> {
         try {
-            const allMessages = this.clineMessages
-            const persisted = allMessages.filter((m) => !m.partial)
-            if (persisted.length === 0) return
-            const apiMetrics = this.readAggregatedMetrics(allMessages)
-            // Read the task header from the in-memory message list instead of
-            // re-reading the stored chat history on every history-only update.
-            // History entries are list labels: the panel title, the history row,
-            // and search all use short text, while the authoritative task text
-            // stays in the task's messages.db. Storing it verbatim here made the one
-            // global taskHistory key grow without bound.
-            const taskText = summarizeHistoryTaskText(this.clineMessages.find((m) => m.say === "task")?.text ?? "")
-            const lastRelevantIndex = findLastIndex(
-                persisted,
-                (message) => !(message.ask === "resume_task" || message.ask === "resume_completed_task"),
-            )
-            const lastRelevantMessage = lastRelevantIndex >= 0 ? persisted[lastRelevantIndex] : persisted[persisted.length - 1]
+            const projection = this.measureHistoryProjection()
+            if (!projection) return
+            const { apiMetrics, taskText, lastRelevantMessage } = projection
             const apiHistory = await this.readConversationHistory()
             const lastModelInfo = [...apiHistory].reverse().find((msg) => msg.modelInfo !== undefined)
             const taskDir = await ensureTaskDirectoryExists(this.taskId)
@@ -358,6 +354,44 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
         } catch (error) {
             Logger.error("Failed to update task history:", withDiagnosticSite(error, "task_history.update"))
         }
+    }
+
+    /**
+     * Times the synchronous part of a history update. It walks the whole message
+     * sequence on the event loop, unlike the awaited reads that follow it, so its
+     * duration is what a stalled loop can be attributed to. `recomputed` separates
+     * a metrics aggregation from a revision-cache hit.
+     */
+    private measureHistoryProjection(): HistoryProjection | undefined {
+        const span = startPerfPhase(PerfDomain.TurnPrepare, "history_update", {
+            taskId: this.taskId,
+            recomputed: this.historyMetricsCache?.revision !== this.messageRevision,
+        })
+        try {
+            return this.projectHistory()
+        } finally {
+            span.stop()
+        }
+    }
+
+    private projectHistory(): HistoryProjection | undefined {
+        const allMessages = this.clineMessages
+        const persisted = allMessages.filter((m) => !m.partial)
+        if (persisted.length === 0) return undefined
+        const apiMetrics = this.readAggregatedMetrics(allMessages)
+        // Read the task header from the in-memory message list instead of
+        // re-reading the stored chat history on every history-only update.
+        // History entries are list labels: the panel title, the history row,
+        // and search all use short text, while the authoritative task text
+        // stays in the task's messages.db. Storing it verbatim here made the one
+        // global taskHistory key grow without bound.
+        const taskText = summarizeHistoryTaskText(this.clineMessages.find((m) => m.say === "task")?.text ?? "")
+        const lastRelevantIndex = findLastIndex(
+            persisted,
+            (message) => !(message.ask === "resume_task" || message.ask === "resume_completed_task"),
+        )
+        const lastRelevantMessage = lastRelevantIndex >= 0 ? persisted[lastRelevantIndex] : persisted[persisted.length - 1]
+        return { apiMetrics, taskText, lastRelevantMessage }
     }
 
     /**

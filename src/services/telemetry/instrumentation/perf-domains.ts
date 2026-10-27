@@ -32,6 +32,7 @@ export enum PerfDomain {
     BufferedStore = "buffered_store",
     Tool = "tool",
     Activation = "activation",
+    TurnPrepare = "turn_prepare",
 }
 
 /**
@@ -120,6 +121,23 @@ export const PERF_PHASES = {
     // `stage` dimension, plus one total per entry point. The per-step form
     // mirrors `task_init` so both startup paths aggregate the same way.
     [PerfDomain.Activation]: ["stage", "extension_activate", "common_initialize"],
+    // Synchronous work between a tool settling and the next provider request,
+    // plus the per-mutation and per-publication projections a long task repeats.
+    // Each phase isolates one owner so an event-loop stall can be attributed to
+    // it; dimensions stay boolean or enumerated because every non-identity
+    // dimension becomes a metric label. `partial_tool_parse` is one sample per
+    // streamed response that sums the per-chunk preview parsing.
+    [PerfDomain.TurnPrepare]: [
+        "context_guard",
+        "context_measure",
+        "context_admission",
+        "request_prepare",
+        "api_rebuild",
+        "frame_build",
+        "history_update",
+        "state_build",
+        "partial_tool_parse",
+    ],
 } as const satisfies Record<PerfDomain, readonly string[]>
 
 /** Phase names valid for `D`. */

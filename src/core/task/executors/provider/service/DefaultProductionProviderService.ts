@@ -37,6 +37,7 @@ import {
     materializeNativeToolCall,
     materializePartialNativeToolCall,
 } from "./NativeToolCallMaterialization"
+import { PartialParseTimer } from "./PartialParseTimer"
 import { repairProviderPairing } from "./ProviderPairingRepair"
 import type { PreparedProviderRequest, ProviderRequestFactory, ProviderServerToolRequestContext } from "./ProviderRequest"
 import type { ProviderAttemptTiming } from "./ProviderRequestReport"
@@ -351,6 +352,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
         let receivingTokens = 0
         let authoritativeContextTokens = 0
         const replyRows = { reasoning: this.nextPresentationId(), text: this.nextPresentationId() }
+        const partialParse = new PartialParseTimer()
 
         try {
             serverTools = this.options.serverTools?.begin(turn.request.serverToolContext)
@@ -377,7 +379,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
                                 break
                             case "text": {
                                 text += chunk.text
-                                const frame = xmlPreview.read(text)
+                                const frame = partialParse.time("xml", () => xmlPreview.read(text))
                                 prose = frame.prose
                                 // The prose first, so its row is opened above the cards of the calls it introduces.
                                 yield { kind: "partial", transientId, text: prose, replyRows }
@@ -427,8 +429,10 @@ export class DefaultProductionProviderService implements ProductionProviderServi
                                 break
                             case "tool_calls":
                                 // Reply rows were reserved before any native or XML call could claim a row.
-                                this.consumeNativeTool(nativeTools, chunk)
-                                const partialBlock = this.previewNativeTool(nativeTools.get(chunk.dline_tid))
+                                const partialBlock = partialParse.time("native", () => {
+                                    this.consumeNativeTool(nativeTools, chunk)
+                                    return this.previewNativeTool(nativeTools.get(chunk.dline_tid))
+                                })
                                 // The completed chunk may omit the name, so it is read from the call
                                 // the earlier deltas accumulated.
                                 if (chunk.phase === "completed" && isTurnEndingToolName(nativeTools.get(chunk.dline_tid)?.name))
@@ -526,6 +530,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
             input.signal.removeEventListener("abort", abort)
             // However the stream ends, no countdown remains for the chat to show.
             this.retry.settled?.()
+            partialParse.flush()
         }
         if (input.signal.aborted) {
             const reasoningContent: ClineAssistantContent[] = [...reasoning.getRedactedThinking()]

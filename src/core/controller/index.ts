@@ -3290,6 +3290,12 @@ export class Controller {
         }
 
         const durationMs = Math.round(performance.now() - startTime)
+        // Wall time including awaited reads; a state push follows every message
+        // mutation, so its distribution shows whether publication tracks the stalls.
+        recordPerfPhase(PerfDomain.TurnPrepare, "state_build", durationMs, {
+            taskId: surfaceTaskId ?? "none",
+            hasTask: surfaceTaskId !== undefined,
+        })
         const logEveryStateBuild = process.env.E2E_TEST === "true" && process.env.DLINE_E2E_STATE_BUILD_TIMING === "true"
         if (durationMs >= 100 || logEveryStateBuild) {
             let activeTasks = 1
