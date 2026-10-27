@@ -73,6 +73,18 @@ const LEGACY_PHASES: Record<PerfDomain, readonly string[]> = {
     [PerfDomain.FileLock]: ["acquire"],
     // Activation timings previously logged without a [*Perf] prefix
     [PerfDomain.Activation]: ["stage", "extension_activate", "common_initialize"],
+    // Turn preparation hot-spot attribution for long tasks
+    [PerfDomain.TurnPrepare]: [
+        "context_guard",
+        "context_measure",
+        "context_admission",
+        "request_prepare",
+        "api_rebuild",
+        "frame_build",
+        "history_update",
+        "state_build",
+        "partial_tool_parse",
+    ],
 }
 
 describe("perf domain catalogue", () => {

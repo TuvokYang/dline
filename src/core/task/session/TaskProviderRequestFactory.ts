@@ -6,6 +6,8 @@ import { resolveFrozenPromptRuntime } from "@core/prompts/system-prompt-cache/Fr
 import type { StateManager } from "@core/storage/StateManager"
 import { DEFAULT_API_PROVIDER } from "@shared/api"
 import { ServerTool } from "@shared/proto/dline/models/metadata"
+import { startPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
+import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
 import type { JournalConversationView } from "../executors/provider/service/JournalConversationView"
 import type { ProviderJournalMessageMaterializer } from "../executors/provider/service/ProviderJournalMessageMaterializer"
 import type {
@@ -62,11 +64,23 @@ export class TaskProviderRequestFactory implements ProviderRequestFactory, Provi
     constructor(private readonly options: TaskProviderRequestFactoryOptions) {}
 
     async prepare(draft: ProviderDraftEnvelope, signal: AbortSignal): Promise<PreparedProviderRequest> {
+        // Spans split the round's preparation so a stalled event loop between the
+        // guard and the request can be attributed to the rebuild, the frame, or the
+        // conversation read rather than to the provider stream.
+        const span = startPerfPhase(PerfDomain.TurnPrepare, "request_prepare", { taskId: this.options.taskId })
+        try {
+            return await this.prepareRequest(draft, signal)
+        } finally {
+            span.stop()
+        }
+    }
+
+    private async prepareRequest(draft: ProviderDraftEnvelope, signal: AbortSignal): Promise<PreparedProviderRequest> {
         // A request serves the Profile as it is persisted now: the Catalog, its
         // secret, or the model's window may have changed since the handler was built.
         if (signal.aborted) throw signal.reason
-        await this.options.api.rebuild({ validateCredentials: true })
-        const frame = this.takeFrameCandidate() ?? (await this.buildFrame(signal, false))
+        await this.rebuildApi()
+        const frame = await this.requestFrame(signal)
         const [messages, entries] = await Promise.all([this.conversationOf(draft), this.conversationEntriesOf(draft)])
         const turnId = draft.turnId ?? randomUUID()
         // Authority is derived from durable admitted input and trusted continuation
@@ -96,6 +110,33 @@ export class TaskProviderRequestFactory implements ProviderRequestFactory, Provi
             isCurrent: () => this.options.api.current() === frame.api,
             planTool: async (tool: ToolUse) =>
                 planProductionTool(this.options.tools.coordinator, tool, this.options.readAdmissionSnapshot(tool)),
+        }
+    }
+
+    private async rebuildApi(): Promise<void> {
+        const span = startPerfPhase(PerfDomain.TurnPrepare, "api_rebuild", { taskId: this.options.taskId })
+        try {
+            await this.options.api.rebuild({ validateCredentials: true })
+        } finally {
+            span.stop()
+        }
+    }
+
+    /**
+     * The frame this request is sent with: the guard's preview when its inputs
+     * still hold, otherwise a fresh build. `reused` records which one happened,
+     * because a discarded preview means the prompt was built twice this round.
+     */
+    private async requestFrame(signal: AbortSignal): Promise<ProviderRequestFrame> {
+        const candidate = this.takeFrameCandidate()
+        const span = startPerfPhase(PerfDomain.TurnPrepare, "frame_build", {
+            taskId: this.options.taskId,
+            reused: candidate !== undefined,
+        })
+        try {
+            return candidate ?? (await this.buildFrame(signal, false))
+        } finally {
+            span.stop()
         }
     }
 

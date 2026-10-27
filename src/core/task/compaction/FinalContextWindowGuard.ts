@@ -8,6 +8,8 @@ import {
 import { resolveTokenPerByte } from "@core/context/context-management/token-estimation"
 import type { ClineStorageMessage } from "@shared/messages/content"
 import { Logger } from "@shared/services/Logger"
+import { startPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
+import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
 import { NO_COMPLETE_LOGICAL_TURN } from "../ContextCompactionSession"
 import {
     type ContextWindowRequestOpening,
@@ -94,6 +96,23 @@ export class FinalContextWindowGuard implements ComposeContextWindowGuardPort {
     }
 
     async admit(input: { readonly signal: AbortSignal; readonly environment?: string }): Promise<ContextWindowAdmission> {
+        // Wall time of the whole admission, frame build and any compaction
+        // included; `outcome` separates rounds that compacted or refused.
+        const span = startPerfPhase(PerfDomain.TurnPrepare, "context_guard", { taskId: this.options.taskId })
+        let outcome = "error"
+        try {
+            const admission = await this.admitMeasured(input)
+            outcome = admission.kind
+            return admission
+        } finally {
+            span.stop({ outcome })
+        }
+    }
+
+    private async admitMeasured(input: {
+        readonly signal: AbortSignal
+        readonly environment?: string
+    }): Promise<ContextWindowAdmission> {
         let environment = input.environment
         const frame = await this.options.frames.frame(input.signal)
         let measured = await this.measure(frame, environment)
@@ -124,6 +143,15 @@ export class FinalContextWindowGuard implements ComposeContextWindowGuardPort {
     }
 
     private async measure(frame: ProviderRequestFrame, environment: string | undefined): Promise<Measurement> {
+        const span = startPerfPhase(PerfDomain.TurnPrepare, "context_measure", { taskId: this.options.taskId })
+        try {
+            return await this.measureCandidate(frame, environment)
+        } finally {
+            span.stop()
+        }
+    }
+
+    private async measureCandidate(frame: ProviderRequestFrame, environment: string | undefined): Promise<Measurement> {
         const history = await this.options.conversation.messages()
         const messages: ClineStorageMessage[] =
             environment === undefined ? history : [...history, { role: "user", content: [{ type: "text", text: environment }] }]
@@ -162,6 +190,15 @@ export class FinalContextWindowGuard implements ComposeContextWindowGuardPort {
      * happens once per round rather than on every measurement admission takes.
      */
     private admission(measured: Measurement): ContextWindowRequestOpening {
+        const span = startPerfPhase(PerfDomain.TurnPrepare, "context_admission", { taskId: this.options.taskId })
+        try {
+            return this.openAdmittedRequest(measured)
+        } finally {
+            span.stop()
+        }
+    }
+
+    private openAdmittedRequest(measured: Measurement): ContextWindowRequestOpening {
         const { estimate, projection } = measured
         const durableComposition = estimateDurableComposition({
             providerInput: estimate.input,
