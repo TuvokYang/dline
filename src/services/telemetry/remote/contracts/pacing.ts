@@ -1,17 +1,25 @@
 /**
- * Delivery pacing shared by the usage and logs channels (otel contract v2.1 §1.5–§1.8).
+ * Delivery pacing shared by the usage channel and the production OTLP Logs,
+ * Metrics and Traces channels (otel contract v2.1 §1.5–§1.8, TADR §2.4).
  *
  * Every function here is pure: the owning outbox persists the state, so a pause
  * or a server interval survives a restart and is shared by every window of the
  * machine. Each channel keeps its own state, so a wait on one never holds the other.
  */
 
-export type DeliveryChannel = "usage" | "logs"
+export type DeliveryChannel = "usage" | "logs" | "metrics" | "traces"
 
-/** Cadence used until the service names one, including the first batch after a restart. */
+/**
+ * Cadence used until the service names one, including the first batch after a
+ * restart. Metrics export one delta window every 60 s (TADR §7.2); Traces
+ * follow the same cadence so a span reaches the service about as soon as its
+ * window's metrics do.
+ */
 export const DEFAULT_INTERVAL_MS: Readonly<Record<DeliveryChannel, number>> = {
     usage: 10 * 60_000,
     logs: 5 * 60_000,
+    metrics: 60_000,
+    traces: 60_000,
 }
 /** No single wait lasts longer, so a misconfigured pause cannot stop a device for good. */
 export const MAX_WAIT_MS = 7 * 24 * 60 * 60_000
@@ -109,7 +117,29 @@ export function replayDelayMs(attempts: number, retryAfterMs: number | undefined
     return Math.min(REPLAY_BACKOFF_CAP_MS, Math.max(retryAfterMs ?? 0, backoff))
 }
 
-/** Whether a batch has used up its replays: twelve attempts or a day since it was built. */
-export function replayBudgetExhausted(attempts: number, createdAt: number, now: number): boolean {
-    return attempts >= MAX_REPLAY_ATTEMPTS || now - createdAt >= MAX_REPLAY_AGE_MS
+export interface ReplayBudget {
+    readonly maxAttempts: number
+    readonly maxAgeMs: number
+}
+
+/** The logs channel's budget: twelve attempts or a day since the batch was built. */
+export const DEFAULT_REPLAY_BUDGET: ReplayBudget = { maxAttempts: MAX_REPLAY_ATTEMPTS, maxAgeMs: MAX_REPLAY_AGE_MS }
+
+/**
+ * The Usage budget: the grant's `max_request_replay_age_ms` alone bounds it
+ * (usage-contract §14), because the service keeps the request journal that
+ * long and an attempt cap would dead-letter a request it could still accept.
+ */
+export function usageReplayBudget(maxRequestReplayAgeMs: number): ReplayBudget {
+    return { maxAttempts: Number.POSITIVE_INFINITY, maxAgeMs: maxRequestReplayAgeMs }
+}
+
+/** Whether a batch has used up its replays. */
+export function replayBudgetExhausted(
+    attempts: number,
+    createdAt: number,
+    now: number,
+    budget: ReplayBudget = DEFAULT_REPLAY_BUDGET,
+): boolean {
+    return attempts >= budget.maxAttempts || now - createdAt >= budget.maxAgeMs
 }

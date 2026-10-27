@@ -4,11 +4,14 @@ import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { type OtelStorageLayout, resolveOtelStorageLayout } from "@/core/storage/telemetry-remote/OtelStorageLayout"
 import { type LocalUsagePolicyInputs, RemotePolicyRepository } from "@/core/storage/telemetry-remote/RemotePolicyRepository"
+import { UsageAttemptFinalizationStore } from "@/core/storage/telemetry-remote/UsageAttemptFinalizationStore"
 import { type PendingUsageAttemptObservation, UsageObservationSpool } from "@/core/storage/telemetry-remote/UsageObservationSpool"
 import { UsageOutboxRepository } from "@/core/storage/telemetry-remote/UsageOutboxRepository"
 import { API_REQUEST_ROUND_SCHEMA_VERSION } from "@/core/task/performance/api-request-round-types"
-import type { FinalizedProviderAttempt } from "@/core/task/performance/provider-request-round-port"
+import type { ApiResponseExecutionRecord } from "@/core/task/performance/api-response-execution-types"
+import type { ProviderAttemptRevision } from "@/core/task/performance/provider-request-round-port"
 import { SERVER_STOP_RETRY_INTERVAL_MS } from "../../policy/usagePolicy"
+import { TOKEN_FINALIZATION_RECOVERY_GRACE_MS, type UsageAttemptFinalizationClock } from "../AttemptFinalizer"
 import { RemoteUsageCoordinator, type UsageScheduler } from "../RemoteUsageCoordinator"
 import type { UsageCycleResult } from "../UsageDeliveryWorker"
 import type { RemoteUsageLogLevel } from "../usageCycleLog"
@@ -19,36 +22,56 @@ const ALLOWED: LocalUsagePolicyInputs = {
     hostTelemetryLevel: "all",
 }
 
-function finalizedLogicalAttempt(): FinalizedProviderAttempt {
-    const attempt = finalizedAttempt()
+const SESSION_ID = "coordinator-session"
+
+/** A terminal followed by the explicit final, as the ApiHandler wrapper delivers it at stream close. */
+function finalize(usage: RemoteUsageCoordinator, attempt: ProviderAttemptRevision = finalizedAttempt()): void {
+    usage.recordAttemptEvent({ kind: "terminal", ...attempt })
+    usage.recordAttemptEvent({ kind: "tokens_final", roundId: attempt.handle.roundId })
+}
+
+function providerOnlyExecution(attempt: ProviderAttemptRevision): ApiResponseExecutionRecord {
     return {
-        ...attempt,
-        logicalExecution: {
-            schemaVersion: 1,
-            taskId: "task-1",
-            executionId: attempt.handle.roundId,
-            revision: 0,
-            roundId: attempt.handle.roundId,
-            logicalRequestId: attempt.handle.logicalRequestId,
-            apiIndex: attempt.handle.apiIndex,
-            taskAttempt: attempt.handle.taskAttempt,
-            providerAttempt: attempt.handle.providerAttempt,
-            startedAtMs: attempt.handle.startedAtMs,
-            providerCompletedAtMs: attempt.record.completedAtMs,
-            completedAtMs: attempt.record.completedAtMs,
-            providerDurationMs: attempt.record.providerDurationMs ?? 1,
-            executionDurationMs: attempt.record.providerDurationMs ?? 1,
-            status: "completed",
-            terminalKind: "provider_only",
-            toolCount: 0,
-            completedToolCount: 0,
-            failedToolCount: 0,
-            cancelledToolCount: 0,
-        },
+        schemaVersion: 1,
+        taskId: "task-1",
+        executionId: attempt.handle.roundId,
+        revision: 0,
+        roundId: attempt.handle.roundId,
+        logicalRequestId: attempt.handle.logicalRequestId,
+        apiIndex: attempt.handle.apiIndex,
+        taskAttempt: attempt.handle.taskAttempt,
+        providerAttempt: attempt.handle.providerAttempt,
+        startedAtMs: attempt.handle.startedAtMs,
+        providerCompletedAtMs: attempt.record.completedAtMs,
+        completedAtMs: attempt.record.completedAtMs,
+        providerDurationMs: attempt.record.providerDurationMs ?? 1,
+        executionDurationMs: attempt.record.providerDurationMs ?? 1,
+        status: "completed",
+        terminalKind: "provider_only",
+        toolCount: 0,
+        completedToolCount: 0,
+        failedToolCount: 0,
+        cancelledToolCount: 0,
     }
 }
 
-function finalizedAttempt(): FinalizedProviderAttempt {
+class ManualFinalizationClock implements UsageAttemptFinalizationClock {
+    readonly deadlines = new Map<string, { deadline: number; finalize: () => void }>()
+
+    schedule(observationId: string, deadline: number, finalize: () => void): void {
+        this.deadlines.set(observationId, { deadline, finalize })
+    }
+
+    cancel(observationId: string): void {
+        this.deadlines.delete(observationId)
+    }
+
+    fireAll(): void {
+        for (const { finalize } of [...this.deadlines.values()]) finalize()
+    }
+}
+
+function finalizedAttempt(): ProviderAttemptRevision {
     const roundId = "task-1:request-1:provider:0"
     return {
         handle: {
@@ -60,7 +83,7 @@ function finalizedAttempt(): FinalizedProviderAttempt {
             role: "task",
             provider: "openai",
             modelId: "gpt-5-private-wire-id",
-            thinking: "state:disabled",
+            thinking: "state:off",
             policyGeneration: 7,
             startedAtMs: 1_899_999_999_000,
             startedMonotonicMs: 100,
@@ -110,14 +133,9 @@ class ManualScheduler implements UsageScheduler {
 class FakeWorker {
     readonly epochs: number[] = []
     readonly signals: AbortSignal[] = []
-    attemptAuthorityActive = false
     releases = 0
     next: UsageCycleResult = { kind: "idle" }
     hold: Promise<void> | undefined
-
-    async refreshAttemptAuthority(): Promise<boolean> {
-        return this.attemptAuthorityActive
-    }
 
     async runCycle(policyEpoch: number, signal?: AbortSignal): Promise<UsageCycleResult> {
         this.epochs.push(policyEpoch)
@@ -142,6 +160,7 @@ describe("RemoteUsageCoordinator", () => {
     let policy: RemotePolicyRepository
     let now: number
     let reportingChanges: boolean[]
+    let finalizationClock: ManualFinalizationClock
 
     beforeEach(async () => {
         root = await fs.mkdtemp(path.join(os.tmpdir(), "dline-otel-coordinator-"))
@@ -154,6 +173,7 @@ describe("RemoteUsageCoordinator", () => {
         now = 1_900_000_000_000
         policy = new RemotePolicyRepository(layout, { clock: () => now })
         reportingChanges = []
+        finalizationClock = new ManualFinalizationClock()
     })
 
     afterEach(async () => {
@@ -171,6 +191,9 @@ describe("RemoteUsageCoordinator", () => {
             },
             outbox: new UsageOutboxRepository(layout, { clock: () => now }),
             spool: new UsageObservationSpool(layout, "host-test"),
+            finalization: new UsageAttemptFinalizationStore(layout, "host-test", { clock: () => now }),
+            finalizationClock,
+            localSessionId: SESSION_ID,
             worker,
             readPolicyInputs: async () => {
                 if (inputs instanceof Error) throw inputs
@@ -189,7 +212,22 @@ describe("RemoteUsageCoordinator", () => {
         for (const name of names.filter((name) => name.endsWith(".attempts.jsonl"))) {
             lines.push(...(await fs.readFile(path.join(layout.usageObservationsDir, name), "utf8")).split("\n"))
         }
-        return lines.filter((line) => line.trim()).map((line) => JSON.parse(line) as PendingUsageAttemptObservation)
+        return lines
+            .filter((line) => line.trim())
+            .map((line) => JSON.parse(line) as PendingUsageAttemptObservation & { kind: string })
+            .filter((line) => line.kind === "attempt")
+    }
+
+    async function spooledClaims(): Promise<Record<string, unknown>[]> {
+        const names = await fs.readdir(layout.usageObservationsDir).catch(() => [] as string[])
+        const lines: string[] = []
+        for (const name of names.filter((name) => name.endsWith(".attempts.jsonl"))) {
+            lines.push(...(await fs.readFile(path.join(layout.usageObservationsDir, name), "utf8")).split("\n"))
+        }
+        return lines
+            .filter((line) => line.trim())
+            .map((line) => JSON.parse(line) as Record<string, unknown>)
+            .filter((line) => line.kind === "logical")
     }
 
     /** Wait for background appends or the cycle chain, which run on real file I/O. */
@@ -205,7 +243,7 @@ describe("RemoteUsageCoordinator", () => {
         const usage = coordinator()
         await usage.start()
 
-        usage.recordFinalizedAttempt(finalizedAttempt())
+        finalize(usage)
         await usage.dispose()
 
         const attempts = await spooledAttempts()
@@ -214,6 +252,7 @@ describe("RemoteUsageCoordinator", () => {
                 id: "task-1:request-1:provider:0",
                 revision: 1,
                 receivedAt: now,
+                localSessionId: SESSION_ID,
                 observation: expect.objectContaining({
                     attemptObservationId: "task-1:request-1:provider:0",
                     logicalRequestId: "request-1",
@@ -221,7 +260,7 @@ describe("RemoteUsageCoordinator", () => {
                         role: "task",
                         provider: "openai",
                         modelId: "state:unknown",
-                        thinking: "state:disabled",
+                        thinking: "state:off",
                     },
                     policyGeneration: 7,
                     durationMs: 400,
@@ -238,7 +277,7 @@ describe("RemoteUsageCoordinator", () => {
         const usage = coordinator()
         await usage.start()
 
-        usage.recordFinalizedAttempt(finalizedAttempt())
+        finalize(usage)
         await usage.dispose()
 
         expect(await spooledAttempts()).toEqual([])
@@ -250,29 +289,109 @@ describe("RemoteUsageCoordinator", () => {
         await usage.start()
         const attempt = finalizedAttempt()
 
-        usage.recordFinalizedAttempt({ ...attempt, handle: { ...attempt.handle, modelId: undefined } })
+        finalize(usage, { ...attempt, handle: { ...attempt.handle, modelId: undefined } })
         await usage.dispose()
 
         expect(await spooledAttempts()).toEqual([])
         expect(logs).toContainEqual({
             level: "warn",
-            message: expect.stringContaining("finalized usage attempt was rejected before storage"),
+            message: expect.stringContaining("usage attempt was rejected before storage"),
         })
     })
 
-    it("attaches each session start to the next schema 4 logical execution", async () => {
+    it("spools the Provider fact at its final and a logical execution settled later as a separate claim", async () => {
         const usage = coordinator()
         await usage.start()
+        const attempt = finalizedAttempt()
 
-        usage.recordSessionStarted()
-        usage.recordFinalizedAttempt(finalizedLogicalAttempt())
+        finalize(usage, attempt)
+        await waitFor(async () => (await spooledAttempts()).length === 1)
+        usage.recordAttemptEvent({ kind: "logical_execution", handle: attempt.handle, execution: providerOnlyExecution(attempt) })
+        await usage.dispose()
+
+        expect((await spooledAttempts())[0]?.observation.logicalExecution).toBeUndefined()
+        expect(await spooledClaims()).toEqual([
+            expect.objectContaining({
+                kind: "logical",
+                logicalRequestId: "request-1",
+                attemptObservationId: attempt.handle.roundId,
+                execution: expect.objectContaining({ logicalRequests: { completed: 1, failed: 0, cancelled: 0, aborted: 0 } }),
+            }),
+        ])
+    })
+
+    it("finalizes at the deadline without another callback and ignores a revision that arrives after it", async () => {
+        const usage = coordinator()
+        await usage.start()
+        const attempt = finalizedAttempt()
+        const terminal = { ...attempt, record: { ...attempt.record, revision: 0, usageQuality: "none" as const } }
+
+        usage.recordAttemptEvent({ kind: "terminal", ...terminal })
+        expect(finalizationClock.deadlines.get(attempt.handle.roundId)?.deadline).toBe(now + 10_000)
+        finalizationClock.fireAll()
+        usage.recordAttemptEvent({ kind: "tokens", ...attempt })
+        await usage.dispose()
+
+        expect(await spooledAttempts()).toEqual([
+            expect.objectContaining({ revision: 0, observation: expect.objectContaining({ tokenUsageReported: false }) }),
+        ])
+    })
+
+    it("keeps only strictly higher token revisions inside the finalization window", async () => {
+        const usage = coordinator()
+        await usage.start()
+        const attempt = finalizedAttempt()
+        const higher = { ...attempt, record: { ...attempt.record, revision: 2, inputTokens: 25 } }
+
+        usage.recordAttemptEvent({ kind: "terminal", ...attempt })
+        usage.recordAttemptEvent({ kind: "tokens", ...higher })
+        usage.recordAttemptEvent({ kind: "tokens", ...attempt })
+        usage.recordAttemptEvent({ kind: "tokens_final", roundId: attempt.handle.roundId })
         await usage.dispose()
 
         expect(await spooledAttempts()).toEqual([
             expect.objectContaining({
-                observation: expect.objectContaining({ sessionsStarted: 1, logicalExecution: expect.any(Object) }),
+                revision: 2,
+                observation: expect.objectContaining({ tokens: expect.objectContaining({ input: 25 }) }),
             }),
         ])
+    })
+
+    it("recovers an attempt another window left past its persisted deadline exactly once", async () => {
+        const attempt = finalizedAttempt()
+        const crashed = new UsageAttemptFinalizationStore(layout, "host-crashed")
+        const observation = {
+            attemptObservationId: attempt.handle.roundId,
+            logicalRequestId: attempt.handle.logicalRequestId,
+            identity: { role: "task" as const, provider: "openai", modelId: "state:unknown", thinking: "state:off" },
+            policyGeneration: 7,
+            admittedAt: attempt.handle.startedAtMs,
+            outcome: "completed" as const,
+            durationMs: 400,
+            tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
+            tokenUsageReported: false,
+        }
+        await crashed.save([
+            {
+                observationId: attempt.handle.roundId,
+                deadline: now - TOKEN_FINALIZATION_RECOVERY_GRACE_MS - 1,
+                revision: 0,
+                localSessionId: "crashed-session",
+                observation,
+            },
+        ])
+
+        const usage = coordinator()
+        await usage.start()
+        await usage.dispose()
+        const again = coordinator()
+        await again.start()
+        await again.dispose()
+
+        expect(await spooledAttempts()).toEqual([
+            expect.objectContaining({ id: attempt.handle.roundId, localSessionId: "crashed-session", observation }),
+        ])
+        expect(await fs.readdir(layout.usageFinalizationDir).catch(() => [])).toEqual([])
     })
 
     it("reports whether usage may be reported, which services riding on the consent follow", async () => {
@@ -330,7 +449,7 @@ describe("RemoteUsageCoordinator", () => {
     it("purges unsent usage but keeps the device tokens when the host or organization turns reporting off", async () => {
         const usage = coordinator()
         await usage.start()
-        usage.recordFinalizedAttempt(finalizedAttempt())
+        finalize(usage)
         await waitFor(async () => (await spooledAttempts()).length === 1)
 
         inputs = { ...ALLOWED, hostTelemetryLevel: "error" }
@@ -348,7 +467,7 @@ describe("RemoteUsageCoordinator", () => {
 
         scheduler.fire()
         await waitFor(() => scheduler.pending.length === 1)
-        usage.recordFinalizedAttempt(finalizedAttempt())
+        finalize(usage)
         scheduler.fire()
         await waitFor(() => scheduler.pending.length === 1)
 
@@ -420,12 +539,12 @@ describe("RemoteUsageCoordinator", () => {
     it("closes intake without deleting anything when the policy inputs cannot be read", async () => {
         const usage = coordinator()
         await usage.start()
-        usage.recordFinalizedAttempt(finalizedAttempt())
+        finalize(usage)
         await waitFor(async () => (await spooledAttempts()).length === 1)
 
         inputs = new Error("state not ready")
         await usage.refresh()
-        usage.recordFinalizedAttempt(finalizedAttempt())
+        finalize(usage)
         await usage.dispose()
 
         expect(await spooledAttempts()).toHaveLength(1)
@@ -441,10 +560,10 @@ describe("RemoteUsageCoordinator", () => {
         })
         scheduler.fire()
         await waitFor(() => worker.epochs.length === 1)
-        usage.recordFinalizedAttempt(finalizedAttempt())
+        finalize(usage)
 
         const disposed = usage.dispose()
-        usage.recordFinalizedAttempt(finalizedAttempt())
+        finalize(usage)
         releaseCycle()
         await disposed
 

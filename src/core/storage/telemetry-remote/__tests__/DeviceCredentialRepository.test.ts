@@ -9,9 +9,10 @@ import { MAX_QUARANTINED_DOCUMENTS } from "../quarantine"
 
 const TOKEN_A = "A".repeat(43)
 const TOKEN_B = "B".repeat(43)
+const DEVICE_ID = "dev_0123456789abcdef0123456789abcdef"
 
 function token(accessToken: string): StoredDeviceToken {
-    return { accessToken, deviceId: "device-1", expiresAt: 2_000_000_000_000, obtainedAt: 1_900_000_000_000 }
+    return { accessToken, deviceId: DEVICE_ID, expiresAt: 2_000_000_000_000, obtainedAt: 1_900_000_000_000 }
 }
 
 async function readRaw(layout: OtelStorageLayout): Promise<Record<string, unknown>> {
@@ -37,37 +38,44 @@ describe("DeviceCredentialRepository", () => {
 
     it("publishes and reads one complete schema 4 device grant atomically", async () => {
         const repository = new DeviceCredentialRepository(layout, { clock: () => 1_900_000_000_000 })
-        await repository.ensure()
+        const ensured = await repository.ensure()
+        if (ensured.status !== "valid") throw new Error("device identity was not created")
         const grant: AtomicDeviceGrant = {
             accessToken: TOKEN_A,
-            deviceId: "device-1",
+            deviceId: DEVICE_ID,
             profile: "usage",
             scopes: ["usage"],
             expiresAt: 2_000_000_000_000,
             usageContract: {
-                schemaVersion: 4,
-                contractVersion: 4,
+                schemaVersion: 5,
+                contractVersion: 1,
                 maxBodyBytes: 65_536,
                 maxBuckets: 8,
                 maxFacts: 32,
                 maxToolRows: 384,
                 maxWriteRows: 486,
                 eventWindowMs: 600_000,
+                durationBucketThresholdMs: 60_000,
                 defaultIntervalMs: 600_000,
                 newBatchJitterMaxMs: 300_000,
+                maxRequestReplayAgeMs: 604_800_000,
             },
         }
 
-        await repository.publishDeviceGrantAtomically(grant)
+        // A grant requested for a device identity that was reset meanwhile is not published.
+        expect(await repository.publishDeviceGrantAtomically(grant, "x".repeat(43))).toBe(false)
+        expect(await repository.readActiveDeviceGrant(1_999_999_999_999, "usage")).toBeNull()
+        expect(await repository.publishDeviceGrantAtomically(grant, ensured.document.deviceSecret)).toBe(true)
 
-        expect(await repository.readActiveDeviceGrant(1_999_999_999_999)).toEqual(grant)
-        expect(await repository.readActiveDeviceGrant(grant.expiresAt)).toBeNull()
+        expect(await repository.readActiveDeviceGrant(1_999_999_999_999, "usage")).toEqual(grant)
+        expect(await repository.readActiveDeviceGrant(grant.expiresAt, "usage")).toBeNull()
+        expect(await repository.readActiveDeviceGrant(1_999_999_999_999, "production")).toBeNull()
         const raw = await readRaw(layout)
         expect(raw.generation).toBe(2)
         expect(raw.grants).toMatchObject({ usage: { access_token: TOKEN_A, scopes: ["usage"], expires_at: grant.expiresAt } })
 
         await repository.clearTokens(["usage"])
-        expect(await repository.readActiveDeviceGrant(1_999_999_999_999)).toBeNull()
+        expect(await repository.readActiveDeviceGrant(1_999_999_999_999, "usage")).toBeNull()
         expect(await readRaw(layout)).toMatchObject({ generation: 3, tokens: {}, grants: {} })
     })
 
@@ -169,7 +177,9 @@ describe("DeviceCredentialRepository", () => {
         const repository = new DeviceCredentialRepository(layout)
 
         expect(await repository.ensure()).toEqual({ status: "unsupported" })
-        expect(await repository.mutate(() => ({ next: { tokens: {} }, value: undefined }))).toEqual({ status: "unsupported" })
+        expect(await repository.mutate(() => ({ next: { tokens: {}, grants: {} }, value: undefined }))).toEqual({
+            status: "unsupported",
+        })
         await expect(repository.resetIdentity()).rejects.toThrow()
         expect(await fs.readFile(layout.deviceCredentialPath, "utf8")).toBe(future)
     })
@@ -184,6 +194,7 @@ describe("DeviceCredentialRepository", () => {
                 created_at: 1,
                 generation: 3,
                 tokens: { usage: { access_token: "short", device_id: "device-1", expires_at: 5, obtained_at: 1 } },
+                grants: {},
                 future_field: { kept: true },
             }),
         )
@@ -195,6 +206,32 @@ describe("DeviceCredentialRepository", () => {
         const raw = await readRaw(layout)
         expect(raw.future_field).toEqual({ kept: true })
         expect(raw.device_secret).toBe(TOKEN_A)
+    })
+
+    it("drops the bearer tokens of a document written before contract 5 and removes them on the next write", async () => {
+        await fs.mkdir(layout.secretsDir, { recursive: true })
+        const earlierToken = { access_token: TOKEN_B, device_id: DEVICE_ID, expires_at: 2_000_000_000_000, obtained_at: 1 }
+        await fs.writeFile(
+            layout.deviceCredentialPath,
+            JSON.stringify({
+                schema_version: 1,
+                device_secret: TOKEN_A,
+                created_at: 1,
+                generation: 3,
+                tokens: { usage: earlierToken },
+            }),
+        )
+        const repository = new DeviceCredentialRepository(layout)
+
+        expect(await repository.read()).toMatchObject({ status: "valid", document: { deviceSecret: TOKEN_A, tokens: {} } })
+        await repository.mutate((current) => ({
+            next: { ...current, enrollment: { notBefore: 10, consecutiveFailures: 1 } },
+            value: undefined,
+        }))
+
+        const raw = await readRaw(layout)
+        expect(raw.device_secret).toBe(TOKEN_A)
+        expect(raw.tokens).toEqual({})
     })
 
     it("refuses to store a token the service could not have issued", async () => {
@@ -215,6 +252,7 @@ describe("DeviceCredentialRepository", () => {
         await repository.mutate(() => ({
             next: {
                 tokens: { usage: token(TOKEN_B) },
+                grants: {},
                 enrollment: { notBefore: 10, consecutiveFailures: 1 },
                 refreshClaim: { ownerId: "owner", profile: "usage", expiresAt: 20 },
             },

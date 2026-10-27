@@ -5,21 +5,22 @@ import { describe, expect, it } from "vitest"
 import { ApiHandler, type ApiRequestOptions } from "@/core/api/ApiHandler"
 import { instrumentApiHandler } from "@/core/api/observability/instrument-api-handler"
 import type { ApiStream } from "@/core/api/transform/stream"
+import type { PendingUsageAttemptObservation } from "@/core/storage/telemetry-remote/UsageObservationSpool"
 import { createRunningTaskState } from "@/core/task/kernel/__fixtures__/task-state"
 import { TaskTurnTelemetry } from "@/core/task/observability/task-turn-telemetry"
 import { installTaskUsageAccountingSink } from "@/core/task/observability/task-usage-accounting"
-import type { FinalizedProviderAttempt } from "@/core/task/performance/provider-request-round-port"
 import { TaskPerformanceOwner } from "@/core/task/performance/TaskPerformanceOwner"
 import { ModelInfo } from "@/shared/proto/dline/models"
 import { ApiProfile } from "@/shared/proto/dline/profile"
-import { buildUsageAttemptBody } from "../contracts/usageBody"
+import { buildUsageBody } from "../contracts/usageBody"
+import { USAGE_HARD_LIMITS, validateUsageBodySchema } from "../contracts/usageBodySchema"
+import { AttemptFinalizer } from "../usage/AttemptFinalizer"
 import {
     type AttemptBucketState,
     appendAttemptToBuckets,
     emptyAttemptBucketState,
     sealOpenAttemptBucket,
 } from "../usage/attemptBucket"
-import { projectFinalizedAttempt } from "../usage/attemptProjection"
 
 const TASK_ID = "usage-role-task"
 const POLICY_GENERATION = 7
@@ -27,11 +28,26 @@ const POLICY_GENERATION = 7
 describe("schema 4 runtime role pipeline", () => {
     it("preserves subagent and compaction roles from instrumented Provider sends to the request body", async () => {
         const root = await fs.mkdtemp(path.join(os.tmpdir(), "dline-usage-role-"))
-        const finalized: FinalizedProviderAttempt[] = []
+        const finalized: PendingUsageAttemptObservation[] = []
+        const finalizer = new AttemptFinalizer({
+            store: {
+                save: async () => undefined,
+                readOverdue: async () => [],
+                removeRecovered: async () => undefined,
+                purge: async () => undefined,
+            },
+            sink: {
+                appendObservation: async (observation) => {
+                    finalized.push(observation)
+                },
+                appendLogicalClaim: async () => undefined,
+            },
+            localSessionId: "role-pipeline-session",
+            persistDelayMs: 60_000,
+        })
         const releaseAccounting = installTaskUsageAccountingSink({
             currentPolicyGeneration: () => POLICY_GENERATION,
-            projectModelId: () => "catalog:test-model",
-            recordFinalizedAttempt: (attempt) => finalized.push(attempt),
+            recordAttemptEvent: (event) => finalizer.record(event),
         })
         const state = createRunningTaskState({ taskId: TASK_ID, turnId: "turn-a", revision: 1 })
         let performance: TaskPerformanceOwner | undefined
@@ -50,38 +66,51 @@ describe("schema 4 runtime role pipeline", () => {
                 taskId: TASK_ID,
                 readState: () => state,
                 legacyMessages: () => [],
-                finalizedAttempts: telemetry,
+                attemptUsage: telemetry,
                 readUsagePolicyGeneration: () => telemetry.usagePolicyGeneration(),
-                projectUsageModelId: (provider, wireModelId) => telemetry.projectUsageModelId(provider, wireModelId),
                 location: path.join(root, "metrics.db"),
             })
             const api = instrumentedProviderApi()
 
             await drain(api.createMessage("", [], undefined, roleOptions("subagent", "subagent:request-1")))
             await drain(api.createMessage("", [], undefined, roleOptions("compaction", "compaction:request-1")))
+            const rateLimited = Object.assign(new Error("upstream refused"), { status: 429 })
+            await expect(
+                drain(
+                    instrumentedProviderApi(rateLimited).createMessage(
+                        "",
+                        [],
+                        undefined,
+                        roleOptions("subagent", "subagent:request-2"),
+                    ),
+                ),
+            ).rejects.toThrow("upstream refused")
+            // A failed send carries no usage; closing the window finalizes it like a host shutdown would.
+            await finalizer.dispose()
 
             let buckets: AttemptBucketState = emptyAttemptBucketState()
-            for (const attempt of finalized) {
-                buckets = appendAttemptToBuckets(
-                    buckets,
-                    projectFinalizedAttempt(attempt.handle, attempt.record, attempt.logicalExecution, attempt.logicalToolCalls),
-                    {
-                        newBucketId: () => "role-bucket",
-                        sealedAt: () => Date.now(),
-                    },
-                )
+            for (const pending of finalized) {
+                buckets = appendAttemptToBuckets(buckets, pending.observation, {
+                    newBucketId: () => "role-bucket",
+                    sealedAt: () => Date.now(),
+                })
             }
             const sealed = sealOpenAttemptBucket(buckets, Date.now())
-            const body = buildUsageAttemptBody(sealed.sealed, { version: "0.11.1" })
+            const client = { version: "0.11.1" }
+            const body = buildUsageBody(sealed.sealed, client)
 
-            expect(body.buckets.flatMap((bucket) => bucket.facts.map((fact) => fact.role)).sort()).toEqual([
-                "compaction",
-                "subagent",
-            ])
+            expect(validateUsageBodySchema(body, { limits: USAGE_HARD_LIMITS, clientVersion: client.version })).toEqual([])
+            const facts = body.buckets.flatMap((bucket) => bucket.facts)
+            expect(facts.map((fact) => fact.role)).toEqual(["compaction", "subagent"])
+            const subagent = facts.find((fact) => fact.role === "subagent")
+            expect(subagent?.requests).toEqual({ completed: 1, failed: 1, cancelled: 0, aborted: 0 })
+            // The HTTP status of the thrown error reaches the wire only as its failure class.
+            expect(subagent?.errors).toEqual({ rate_limited: 1 })
         } finally {
             await performance?.release()
             telemetry.dispose()
             releaseAccounting()
+            await finalizer.purge()
             await fs.rm(root, { recursive: true, force: true })
         }
     })
@@ -97,13 +126,14 @@ function roleOptions(role: "subagent" | "compaction", requestId: string): ApiReq
     }
 }
 
-function instrumentedProviderApi(): ApiHandler {
+function instrumentedProviderApi(failure?: Error): ApiHandler {
     const raw = {
         createMessage: async function* (): ApiStream {
             const providerStream = await ApiHandler.observeProviderStream(
-                { provider: "openai", modelId: "test-model", thinking: "state:disabled" },
+                { provider: "openai", modelId: "test-model", thinking: "state:off" },
                 async () =>
                     (async function* () {
+                        if (failure) throw failure
                         yield {
                             type: "usage" as const,
                             inputTokens: 10,

@@ -8,6 +8,7 @@ import { IssueGrantRepository } from "@/core/storage/telemetry-remote/IssueGrant
 import { resolveOtelStorageLayout } from "@/core/storage/telemetry-remote/OtelStorageLayout"
 import type { JournalTelemetrySignal } from "../../../providers/capabilities"
 import type { AtomicIssueGrant } from "../../contracts/issueGrant"
+import { deriveSupportCode } from "../../contracts/supportCode"
 import { DlineOtelTransportError } from "../../transport/DlineOtelHttpClient"
 import { IssueDiagnosticsOverlay } from "../IssueDiagnosticsOverlay"
 
@@ -23,7 +24,7 @@ function grant(revision = 2): AtomicIssueGrant {
         authorizationRevision: revision,
         expiresAt: NOW + 60_000,
         captureExpiresAt: NOW + 60_000,
-        rateLimits: { maxRequestBytes: 128 * 1024, maxRequests: 120, maxRecords: 20_000 },
+        rateLimits: { maxBytes: 8 * 1024 * 1024, maxRequests: 120, maxRecords: 20_000 },
     }
 }
 
@@ -62,14 +63,17 @@ describe("IssueDiagnosticsOverlay", () => {
 
     async function authorized() {
         const layout = resolveOtelStorageLayout(path.join(root, "data"))
-        await new IssueCredentialRepository(layout, { clock: () => NOW }).publish({
-            authorizationId: "authorization-1",
-            publicCode: "SUP-ABCD-1234",
-            resumeCredential: "private-resume",
+        const authorizationCode = "c".repeat(43)
+        await new IssueCredentialRepository(layout, { clock: () => NOW }).replace({
+            authorizationCode,
+            publicCode: deriveSupportCode(authorizationCode),
             state: "approved",
             revision: 2,
             authorizationExpiresAt: NOW + 60_000,
             captureExpiresAt: NOW + 60_000,
+            ticketExpiresAt: NOW + 600_000,
+            issueState: "open",
+            resolution: { state: "investigating" },
             pollAfterMs: 1_000,
         })
         await new IssueGrantRepository(layout, { clock: () => NOW }).publish(grant())

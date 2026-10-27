@@ -15,7 +15,6 @@ export type {
     TelemetrySettings,
 } from "./providers/ITelemetryProvider"
 export { adaptLegacyTelemetryProvider } from "./providers/LegacyTelemetryProviderAdapter"
-export { PostHogTelemetryProvider } from "./providers/posthog/PostHogTelemetryProvider"
 export {
     type TelemetryProviderConfig,
     TelemetryProviderFactory,

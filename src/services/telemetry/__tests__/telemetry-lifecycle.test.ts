@@ -22,9 +22,10 @@ type TelemetryModule = typeof import("../index")
 
 let telemetryModule: TelemetryModule
 
+// A cold load transforms the real provider graph, which can take longer than the default hook timeout.
 beforeAll(async () => {
     telemetryModule = await vi.importActual<TelemetryModule>("../index")
-})
+}, 60_000)
 
 class SpyProvider implements ITelemetryProvider {
     readonly name = "SpyProvider"

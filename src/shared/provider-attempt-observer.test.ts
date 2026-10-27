@@ -6,6 +6,7 @@ import {
     observeProviderCall,
     observeProviderResponse,
     observeProviderStream,
+    PROVIDER_USER_CANCEL_REASON,
     type ProviderAttemptIdentity,
     type ProviderAttemptObserver,
     type ProviderAttemptTerminalStatus,
@@ -30,7 +31,7 @@ function createObserver() {
 }
 
 describe("provider attempt observer", () => {
-    it("projects typed thinking from final SDK request objects without Profile inference", () => {
+    it("maps thinking of final SDK request objects with the revision 5 table", () => {
         expect(
             providerAttemptIdentityFromEncodedRequest("gemini", {
                 model: "gemini-2.5-pro",
@@ -42,13 +43,46 @@ describe("provider attempt observer", () => {
                 model: "gemini-3-pro",
                 config: { thinkingConfig: { thinkingLevel: "HIGH", includeThoughts: true } },
             }),
-        ).toEqual({ provider: "gemini", modelId: "gemini-3-pro", thinking: "level:HIGH" })
+        ).toEqual({ provider: "gemini", modelId: "gemini-3-pro", thinking: "level:high" })
+        // A request without any thinking parameter is the provider default, never "disabled".
         expect(providerAttemptIdentityFromEncodedRequest("ollama", { model: "qwen", options: {} })).toEqual({
             provider: "ollama",
             modelId: "qwen",
-            thinking: "state:disabled",
+            thinking: "state:default",
+        })
+        expect(providerAttemptIdentityFromEncodedRequest("ollama", { model: "qwen", think: false })).toEqual({
+            provider: "ollama",
+            modelId: "qwen",
+            thinking: "state:off",
         })
         expect(providerAttemptIdentityFromEncodedRequest("gemini", { config: {} })).toBeUndefined()
+    })
+
+    it("counts an SDK send once when its transport is the observed provider fetch", async () => {
+        const { observer, statuses } = createObserver()
+        const transport = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+            new Response(JSON.stringify({ id: "x", object: "chat.completion", created: 0, model: "m", choices: [] }), {
+                status: 200,
+                headers: { "content-type": "application/json" },
+            }),
+        )
+        await mockFetchForTesting(transport, async () => {
+            const source = (async function* () {
+                const client = new OpenAI({
+                    apiKey: "test-api-key",
+                    baseURL: "https://openai.example/v1",
+                    fetch: providerFetch,
+                    maxRetries: 0,
+                })
+                yield await observeProviderCall(() => client.chat.completions.create({ model: "m", messages: [] }))
+            })()
+            for await (const _value of bindProviderAttemptScope(source, observer, { provider: "openai" })) {
+                // Drain the scoped lifecycle.
+            }
+        })
+        expect(transport).toHaveBeenCalledTimes(1)
+        expect(observer.beginAttempt).toHaveBeenCalledTimes(1)
+        expect(statuses).toEqual(["completed"])
     })
 
     it("freezes the encoder-bound provider model and typed thinking for each real send", async () => {
@@ -283,5 +317,28 @@ describe("provider attempt observer", () => {
             // Drain the scoped lifecycle.
         }
         expect(statuses).toEqual(["failed", "cancelled", "aborted"])
+    })
+
+    it("separates a user cancellation from an owner abort by the abort reason", async () => {
+        const { observer, statuses } = createObserver()
+        const abortedSend = (reason: string) => {
+            const controller = new AbortController()
+            controller.abort(reason)
+            return observeProviderStream(
+                async () => {
+                    throw new DOMException("aborted", "AbortError")
+                },
+                { signal: controller.signal },
+            ).catch(() => undefined)
+        }
+        const source = (async function* () {
+            await abortedSend(PROVIDER_USER_CANCEL_REASON)
+            await abortedSend("provider_close")
+            yield* []
+        })()
+        for await (const _value of bindProviderAttemptScope(source, observer)) {
+            // Drain the scoped lifecycle.
+        }
+        expect(statuses).toEqual(["cancelled", "aborted"])
     })
 })

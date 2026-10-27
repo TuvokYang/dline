@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest"
+import type { PendingUsageLogicalClaim, SettledUsageAttemptShard } from "@/core/storage/telemetry-remote/UsageObservationSpool"
 import { USAGE_GRANT_HARD_LIMITS, type UsageGrantContract } from "../../contracts/deviceGrant"
-import {
-    estimateUsageWriteRowsV4,
-    type UsageAttemptBodyValidation,
-    type UsageAttemptBodyWire,
-    validateUsageAttemptBody,
-} from "../../contracts/usageBody"
+import { DEFAULT_REPLAY_BUDGET, usageReplayBudget } from "../../contracts/pacing"
+import type { UsageBodyGrant, UsageBodyWire } from "../../contracts/usageBody"
+import { estimateUsageWriteRows, validateUsageBodySchema } from "../../contracts/usageBodySchema"
+import { sealOpenAttemptBucket } from "../attemptBucket"
 import type { UsageAttemptObservation } from "../attemptProjection"
 import {
     attemptBacklogStorageBytes,
@@ -19,12 +18,13 @@ import {
 } from "../usageOutbox"
 
 const CLIENT = { version: "0.12.0" }
+const REPLAY_BUDGET = usageReplayBudget(USAGE_GRANT_HARD_LIMITS.maxRequestReplayAgeMs)
 const T0 = 1_792_456_800_000
 const REQUEST_A = "11111111-1111-4111-8111-111111111111"
 const REQUEST_B = "22222222-2222-4222-8222-222222222222"
 const ATTEMPT_CONTRACT: UsageGrantContract = {
-    schemaVersion: 4,
-    contractVersion: 4,
+    schemaVersion: 5,
+    contractVersion: 1,
     ...USAGE_GRANT_HARD_LIMITS,
     defaultIntervalMs: 600_000,
     newBatchJitterMaxMs: 300_000,
@@ -37,12 +37,13 @@ function attemptObservation(
     revision = 1,
     modelId = "catalog:claude-opus-4-1",
     logicalExecution?: UsageAttemptObservation["logicalExecution"],
-    sessionsStarted = 0,
+    localSessionId = "session-default",
 ) {
     return {
         id,
         revision,
         receivedAt: admittedAt + durationMs,
+        localSessionId,
         observation: {
             attemptObservationId: id,
             logicalRequestId: `logical-${id}`,
@@ -53,24 +54,40 @@ function attemptObservation(
             durationMs,
             tokens: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, reasoning: 1 },
             tokenUsageReported: true,
-            ...(sessionsStarted > 0 ? { sessionsStarted } : {}),
             ...(logicalExecution ? { logicalExecution } : {}),
         },
     }
 }
 
+const ONE_COMPLETED_EXECUTION: NonNullable<UsageAttemptObservation["logicalExecution"]> = {
+    logicalRequests: { completed: 1, failed: 0, cancelled: 0, aborted: 0 },
+    turnDurationMs: { count: 1, sum: 5_000, min: 5_000, max: 5_000 },
+    taskAttempts: { count: 1, sum: 1, min: 1, max: 1 },
+}
+
+function lateClaim(attemptId: string, logicalRequestId = `logical-${attemptId}`): PendingUsageLogicalClaim {
+    return { logicalRequestId, attemptObservationId: attemptId, receivedAt: T0 + 50_000, execution: ONE_COMPLETED_EXECUTION }
+}
+
+type TestShard = Omit<SettledUsageAttemptShard, "claims"> & { readonly claims?: SettledUsageAttemptShard["claims"] }
+
 function foldAttempts(
     state: UsageAttemptOutboxState,
-    shards: Parameters<typeof foldUsageAttemptShards>[1],
+    shards: readonly TestShard[],
     onRejected?: Parameters<typeof foldUsageAttemptShards>[2]["onRejected"],
+    firstBucket = 0,
 ) {
-    let nextBucket = 0
-    return foldUsageAttemptShards(state, shards, {
-        currentPolicyGeneration: 7,
-        newBucketId: () => `bucket-${++nextBucket}`,
-        sealedAt: T0 + 100_000,
-        onRejected,
-    })
+    let nextBucket = firstBucket
+    return foldUsageAttemptShards(
+        state,
+        shards.map((shard) => ({ claims: [], ...shard })),
+        {
+            currentPolicyGeneration: 7,
+            newBucketId: () => `bucket-${++nextBucket}`,
+            sealedAt: T0 + 100_000,
+            onRejected,
+        },
+    )
 }
 
 describe("foldUsageAttemptShards", () => {
@@ -116,23 +133,112 @@ describe("foldUsageAttemptShards", () => {
         expect(retried.observationRevisions).toEqual({ a: { revision: 1, bucketId: "bucket-1" } })
         expect(rejected).toEqual([["revision_after_checkpoint"]])
     })
+
+    it("counts each local session once, in the bucket of its first observation, across folds and replays", () => {
+        const first = foldAttempts(emptyUsageAttemptOutbox(7), [
+            {
+                name: "one.attempts.sealed.jsonl",
+                observations: [attemptObservation("a", T0, 100, 1, undefined, undefined, "session-one")],
+            },
+        ])
+        const second = foldAttempts(first, [
+            {
+                name: "two.attempts.sealed.jsonl",
+                observations: [
+                    attemptObservation("b", T0 + 10, 100, 1, undefined, undefined, "session-one"),
+                    attemptObservation("c", T0 + 20, 100, 1, undefined, undefined, "session-two"),
+                ],
+            },
+        ])
+        const replayed = foldAttempts(second, [
+            {
+                name: "two.attempts.sealed.jsonl",
+                observations: [attemptObservation("c", T0 + 20, 100, 1, undefined, undefined, "session-two")],
+            },
+        ])
+
+        expect(second.buckets.open?.sessionsStarted).toBe(2)
+        expect(second.sessionClaims).toEqual([
+            { sessionId: "session-one", bucketId: "bucket-1" },
+            { sessionId: "session-two", bucketId: "bucket-1" },
+        ])
+        expect(replayed).toEqual(second)
+    })
+
+    it("attaches a late logical claim to its open fact exactly once and reports it at seal", () => {
+        const open = foldAttempts(emptyUsageAttemptOutbox(7), [
+            { name: "attempt.attempts.sealed.jsonl", observations: [attemptObservation("a", T0, 100)] },
+        ])
+        expect(open.buckets.open?.logicalCandidates).toEqual({ "logical-a": { attemptObservationId: "a", factIndex: 0 } })
+
+        const claimed = foldAttempts(open, [{ name: "claim.attempts.sealed.jsonl", observations: [], claims: [lateClaim("a")] }])
+        const duplicate = foldAttempts(claimed, [
+            { name: "again.attempts.sealed.jsonl", observations: [], claims: [lateClaim("a")] },
+        ])
+        const sealed = sealOpenAttemptBucket(duplicate.buckets, T0 + 100_000).sealed[0]
+
+        expect(claimed.logicalClaims).toEqual({ "logical-a": "bucket-1" })
+        expect(duplicate.buckets).toEqual(claimed.buckets)
+        expect(sealed.facts[0].logicalExecution?.logicalRequests.completed).toBe(1)
+        expect(sealed.facts[0].logicalExecutionCoverage).toEqual({ reported: 1, unreported: 0 })
+        expect(sealed.logicalCandidates).toBeUndefined()
+    })
+
+    it("leaves a request unreported when its bucket sealed before the late claim arrived", () => {
+        const open = foldAttempts(emptyUsageAttemptOutbox(7), [
+            { name: "attempt.attempts.sealed.jsonl", observations: [attemptObservation("a", T0, 100)] },
+        ])
+        const sealedFirst = { ...open, buckets: sealOpenAttemptBucket(open.buckets, T0 + 1_000) }
+
+        const late = foldAttempts(sealedFirst, [
+            { name: "claim.attempts.sealed.jsonl", observations: [], claims: [lateClaim("a")] },
+        ])
+
+        expect(late.buckets.sealed[0].facts[0].logicalExecution).toBeUndefined()
+        expect(late.buckets.sealed[0].facts[0].logicalExecutionCoverage).toEqual({ reported: 0, unreported: 1 })
+        // Recorded anyway, so the request can never claim coverage twice.
+        expect(late.logicalClaims).toEqual({ "logical-a": "bucket-1" })
+    })
+
+    it("lets a retry supersede its early attempt in the same bucket, so the early attempt counts in neither coverage", () => {
+        const early = attemptObservation("early", T0, 100)
+        const retry = attemptObservation("retry", T0 + 10, 100)
+        const sameRequest = {
+            ...retry,
+            observation: { ...retry.observation, logicalRequestId: early.observation.logicalRequestId },
+        }
+
+        const folded = foldAttempts(emptyUsageAttemptOutbox(7), [
+            { name: "retry.attempts.sealed.jsonl", observations: [early, sameRequest] },
+        ])
+        const staleClaim = foldAttempts(folded, [
+            { name: "stale.attempts.sealed.jsonl", observations: [], claims: [lateClaim("early", "logical-early")] },
+        ])
+        const sealed = sealOpenAttemptBucket(staleClaim.buckets, T0 + 100_000).sealed[0]
+
+        expect(sealed.facts[0].requests.completed).toBe(2)
+        // A claim naming the superseded attempt is not the result-producing identity: it attaches and blocks nothing.
+        expect(staleClaim.logicalClaims).toEqual({})
+        expect(sealed.facts[0].logicalExecutionCoverage).toEqual({ reported: 0, unreported: 1 })
+    })
 })
 
 describe("takeUsageAttemptBatch", () => {
-    function validation(
-        contract: Partial<UsageGrantContract> = {},
-        estimateWriteRows: UsageAttemptBodyValidation["estimateWriteRows"] = estimateUsageWriteRowsV4,
-    ): UsageAttemptBodyValidation {
-        return { contract: { ...ATTEMPT_CONTRACT, ...contract }, estimateWriteRows }
+    function validation(contract: Partial<UsageGrantContract> = {}): UsageBodyGrant {
+        return { contract: { ...ATTEMPT_CONTRACT, ...contract } }
+    }
+
+    function schemaViolations(body: UsageBodyWire, contract: Partial<UsageGrantContract> = {}) {
+        return validateUsageBodySchema(body, { limits: { ...ATTEMPT_CONTRACT, ...contract }, clientVersion: CLIENT.version })
     }
 
     function takeAttempts(
         state: UsageAttemptOutboxState,
-        bodyValidation: UsageAttemptBodyValidation = validation(),
+        grant: UsageBodyGrant = validation(),
         requestId = REQUEST_A,
         random: () => number = () => 0,
     ) {
-        return takeUsageAttemptBatch(state, { now: T0 + 200_000, requestId, client: CLIENT, random, ...bodyValidation })
+        return takeUsageAttemptBatch(state, { now: T0 + 200_000, requestId, client: CLIENT, random, ...grant })
     }
 
     it("takes only the first eight complete buckets and persists the grant interval plus jitter", () => {
@@ -168,7 +274,7 @@ describe("takeUsageAttemptBatch", () => {
         expect(new Set(decision.body.buckets[0].facts.map((fact) => fact.model_id)).size).toBe(32)
     })
 
-    it("uses exact UTF-8 bytes and the shared write-row estimator to stop before an illegal second bucket", () => {
+    it("uses canonical UTF-8 bytes and the shared write-row formula to stop before an illegal second bucket", () => {
         const state = foldAttempts(emptyUsageAttemptOutbox(7), [
             {
                 name: "bounds.attempts.sealed.jsonl",
@@ -183,11 +289,8 @@ describe("takeUsageAttemptBatch", () => {
         expect(byBytes.body.buckets).toHaveLength(1)
         expect(byBytes.bytes.byteLength).toBe(first.bytes.byteLength)
 
-        const byRows = takeAttempts(
-            state,
-            validation({ maxWriteRows: 10 }, (body) => body.buckets.length * 10),
-            "33333333-3333-4333-8333-333333333333",
-        )
+        // One fact per bucket: 6 + 2 rows fit, 6 + 2 × 2 do not.
+        const byRows = takeAttempts(state, validation({ maxWriteRows: 9 }), "33333333-3333-4333-8333-333333333333")
         if (byRows.kind !== "batch") throw new Error(`expected row-bounded batch, got ${byRows.kind}`)
         expect(byRows.body.buckets).toHaveLength(1)
     })
@@ -211,7 +314,7 @@ describe("takeUsageAttemptBatch", () => {
         const state = foldAttempts(emptyUsageAttemptOutbox(7), [
             {
                 name: "logical.attempts.sealed.jsonl",
-                observations: [attemptObservation("final", T0, 60_000, 1, "catalog:claude-opus-4-1", logicalExecution, 1)],
+                observations: [attemptObservation("final", T0, 60_000, 1, "catalog:claude-opus-4-1", logicalExecution)],
             },
         ])
         const decision = takeAttempts(state)
@@ -225,11 +328,11 @@ describe("takeUsageAttemptBatch", () => {
             task_attempts: logicalExecution.taskAttempts,
         })
         // Six fixed rows + fact + facet + execution + two named tools.
-        expect(estimateUsageWriteRowsV4(decision.body)).toBe(11)
-        expect(validateUsageAttemptBody(decision.body, validation())).toEqual([])
-        expect(validateUsageAttemptBody(decision.body, validation({ maxToolRows: 1 }))).toContain("tool_rows")
+        expect(estimateUsageWriteRows(decision.body)).toBe(11)
+        expect(schemaViolations(decision.body)).toEqual([])
+        expect(schemaViolations(decision.body, { maxToolRows: 1 }).map((violation) => violation.rule)).toContain("capacity")
 
-        const invalid: UsageAttemptBodyWire = {
+        const invalid: UsageBodyWire = {
             ...decision.body,
             buckets: decision.body.buckets.map((bucket, bucketIndex) =>
                 bucketIndex === 0
@@ -250,7 +353,7 @@ describe("takeUsageAttemptBatch", () => {
                     : bucket,
             ),
         }
-        expect(validateUsageAttemptBody(invalid, validation())).toContain("logical_execution")
+        expect(schemaViolations(invalid).map((violation) => violation.rule)).toContain("task_attempts_count")
     })
 
     it("bounds the retained FIFO prefix by bucket count and checkpoint bytes with explicit loss", () => {
@@ -321,6 +424,7 @@ describe("takeUsageAttemptBatch", () => {
             decision.inflight.requestId,
             { kind: "wait", code: "rate_limited", retryAfterMs: 5_000 },
             T0 + 201_000,
+            REPLAY_BUDGET,
             () => 0,
         )
         expect(dueUsageAttemptReplay(waiting, waiting.pacing.waitUntil - 1)).toBeUndefined()
@@ -330,6 +434,7 @@ describe("takeUsageAttemptBatch", () => {
             decision.inflight.requestId,
             { kind: "replay" },
             waiting.pacing.waitUntil,
+            REPLAY_BUDGET,
         )
         expect(replaying.inflight).toMatchObject({ requestId: decision.inflight.requestId, attempts: 1 })
         expect(replaying.buckets.sealed).toHaveLength(1)
@@ -338,9 +443,53 @@ describe("takeUsageAttemptBatch", () => {
             decision.inflight.requestId,
             { kind: "acknowledged", disposition: "duplicate", nextEligibleAt: 0 },
             replaying.inflight?.notBefore ?? 0,
+            REPLAY_BUDGET,
         )
         expect(acknowledged.inflight).toBeUndefined()
         expect(acknowledged.buckets.sealed).toEqual([])
         expect(acknowledged.observationRevisions).toEqual({})
+    })
+
+    it("replays an unknown outcome past a day and past twelve attempts until the grant's replay age ends", () => {
+        const DAY_MS = 24 * 60 * 60_000
+        const state = foldAttempts(emptyUsageAttemptOutbox(7), [
+            { name: "horizon.attempts.sealed.jsonl", observations: [attemptObservation("a", T0, 60_000)] },
+        ])
+        const decision = takeAttempts(state)
+        if (decision.kind !== "batch") throw new Error(`expected batch, got ${decision.kind}`)
+        const { requestId, createdAt } = decision.inflight
+        const grantBudget = usageReplayBudget(3 * DAY_MS)
+
+        // The logs budget would already have dropped it: a day has passed.
+        const underLogsBudget = settleUsageAttemptInflight(
+            decision.state,
+            requestId,
+            { kind: "replay" },
+            createdAt + DAY_MS,
+            DEFAULT_REPLAY_BUDGET,
+        )
+        let replaying = decision.state
+        for (let replay = 1; replay <= 13; replay++) {
+            replaying = settleUsageAttemptInflight(
+                replaying,
+                requestId,
+                { kind: "replay" },
+                createdAt + DAY_MS + replay,
+                grantBudget,
+            )
+        }
+        const atHorizon = settleUsageAttemptInflight(
+            replaying,
+            requestId,
+            { kind: "replay" },
+            createdAt + 3 * DAY_MS,
+            grantBudget,
+        )
+
+        expect(underLogsBudget.inflight).toBeUndefined()
+        expect(replaying.inflight).toMatchObject({ requestId, attempts: 13 })
+        expect(replaying.buckets.sealed).toHaveLength(1)
+        expect(atHorizon.inflight).toBeUndefined()
+        expect(atHorizon.buckets.sealed).toEqual([])
     })
 })

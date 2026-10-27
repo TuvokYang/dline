@@ -1,48 +1,49 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import { writeJsonAtomic } from "@shared/storage/atomic-file"
+import {
+    parseReportResolution,
+    REPORT_AUTHORIZATION_STATES,
+    REPORT_ISSUE_STATES,
+    type ReportAuthorizationState,
+    type ReportIssueState,
+    type ReportResolution,
+    serializeReportResolution,
+} from "@/services/telemetry/remote/contracts/reportAuthorization"
+import { deriveSupportCode, isAuthorizationCode } from "@/services/telemetry/remote/contracts/supportCode"
 import { FileLock } from "../backend/jsonl/FileLock"
 import type { OtelStorageLayout } from "./OtelStorageLayout"
 import { OWNER_ONLY_DIRECTORY_MODE, type QuarantineObserver, quarantineDocument } from "./quarantine"
 
-const SCHEMA_VERSION = 1
+/** Version 1 held the retired pairing and control-plane record; it is quarantined, never migrated. */
+const SCHEMA_VERSION = 2
 const FILE_MODE = 0o600
 const LOCK_ACQUIRE_ATTEMPTS = 50
 
-export type SupportAuthorizationState = "awaiting_issue" | "pending_approval" | "approved" | "revoked" | "expired" | "deleted"
+export type SupportAuthorizationState = ReportAuthorizationState
 
-export interface SupportIssueReference {
-    readonly owner: string
-    readonly repo: string
-    readonly number: number
-}
-
-/** Owner-only authority. Only safe projections may leave this repository. */
+/**
+ * The one Report Authorization ticket of this machine (telemetry-exchange-flow §5).
+ *
+ * Owner-only: the authorization code never leaves this repository except to
+ * the status query and `/auth/exchange`. It holds no Issue identity, because
+ * OTel never returns one.
+ */
 export interface IssueCredentialRecord {
-    readonly authorizationId: string
+    readonly authorizationCode: string
     readonly publicCode: string
-    readonly resumeCredential: string
-    readonly state: SupportAuthorizationState
+    readonly state: ReportAuthorizationState
     readonly revision: number
     readonly authorizationExpiresAt: number
-    readonly pollAfterMs: number
-    readonly issue?: SupportIssueReference
     readonly captureExpiresAt?: number
-    readonly exchangeTicket?: string
-    readonly exchangeTicketExpiresAt?: number
-}
-
-export interface IssueRevokeTombstone {
-    readonly authorizationId: string
-    readonly resumeCredential: string
-    readonly expectedRevision: number
-    readonly naturalExpiresAt: number
-    readonly createdAt: number
+    readonly ticketExpiresAt: number
+    readonly issueState: ReportIssueState
+    readonly resolution: ReportResolution
+    readonly pollAfterMs: number
 }
 
 interface IssueCredentialDocument {
     readonly record?: IssueCredentialRecord
-    readonly revokeTombstone?: IssueRevokeTombstone
 }
 
 export interface IssueCredentialRepositoryOptions {
@@ -50,7 +51,7 @@ export interface IssueCredentialRepositoryOptions {
     readonly onQuarantine?: QuarantineObserver
 }
 
-/** Single-writer owner-only support authorization and revoke state. */
+/** Single-writer owner-only Report Authorization ticket store. */
 export class IssueCredentialRepository {
     private readonly lock = new FileLock({ maxAcquireAttempts: LOCK_ACQUIRE_ATTEMPTS })
     private readonly clock: () => number
@@ -75,46 +76,40 @@ export class IssueCredentialRepository {
         }
     }
 
-    async publish(record: IssueCredentialRecord): Promise<void> {
+    /** Install a newly issued ticket, replacing whatever ticket this machine held before. */
+    async replace(record: IssueCredentialRecord): Promise<void> {
         const validated = validateRecord(record)
-        await this.withLock(async () => {
-            const current = await this.readForWrite()
-            if (
-                current.revokeTombstone &&
-                current.revokeTombstone.authorizationId === validated.authorizationId &&
-                current.revokeTombstone.expectedRevision >= validated.revision
-            ) {
-                throw new Error("Refusing to reactivate a revoked support authorization revision")
-            }
-            await this.write({ record: validated })
-        })
+        await this.withLock(() => this.write({ record: validated }))
     }
 
-    async writeRevokeTombstone(): Promise<IssueRevokeTombstone | undefined> {
+    /**
+     * Apply a status result to the ticket it was queried for.
+     *
+     * Returns the stored record, or `undefined` when the ticket was replaced or
+     * deleted meanwhile, so a late answer for an old code never overwrites the
+     * current one.
+     */
+    async update(
+        authorizationCode: string,
+        mutate: (current: IssueCredentialRecord) => IssueCredentialRecord,
+    ): Promise<IssueCredentialRecord | undefined> {
         return this.withLock(async () => {
-            const current = await this.readForWrite()
-            if (current.revokeTombstone) return current.revokeTombstone
-            if (!current.record) return undefined
-            const tombstone: IssueRevokeTombstone = {
-                authorizationId: current.record.authorizationId,
-                resumeCredential: current.record.resumeCredential,
-                expectedRevision: current.record.revision,
-                naturalExpiresAt: current.record.captureExpiresAt ?? current.record.authorizationExpiresAt,
-                createdAt: this.clock(),
-            }
-            await this.write({ revokeTombstone: tombstone })
-            return tombstone
+            const current = (await this.readForWrite()).record
+            if (current?.authorizationCode !== authorizationCode) return undefined
+            const next = validateRecord(mutate(current))
+            if (next.authorizationCode !== authorizationCode) throw new Error("A status update cannot change the ticket")
+            await this.write({ record: next })
+            return next
         })
     }
 
-    async clearAfterConfirmedRevoke(): Promise<void> {
-        await this.withLock(() => fs.rm(this.layout.issueCredentialPath, { force: true }))
-    }
-
-    async pruneNaturalExpiry(now: number): Promise<void> {
+    /** Delete the ticket; with a code, only when it is still the stored one. */
+    async clear(authorizationCode?: string): Promise<void> {
         await this.withLock(async () => {
-            const current = await this.readForWrite()
-            if (!current.revokeTombstone || current.revokeTombstone.naturalExpiresAt > now) return
+            if (authorizationCode !== undefined) {
+                const current = (await this.readForWrite()).record
+                if (current?.authorizationCode !== authorizationCode) return
+            }
             await fs.rm(this.layout.issueCredentialPath, { force: true })
         })
     }
@@ -148,103 +143,74 @@ export class IssueCredentialRepository {
 }
 
 function validateRecord(record: IssueCredentialRecord): IssueCredentialRecord {
-    if (
-        !record.authorizationId ||
-        !record.publicCode ||
-        !record.resumeCredential ||
-        !Number.isSafeInteger(record.revision) ||
-        record.revision <= 0 ||
-        !Number.isSafeInteger(record.authorizationExpiresAt) ||
-        !Number.isSafeInteger(record.pollAfterMs) ||
-        record.pollAfterMs < 0
-    ) {
-        throw new Error("Invalid support authorization credential")
-    }
-    return { ...record, ...(record.issue ? { issue: { ...record.issue } } : {}) }
+    const valid =
+        isAuthorizationCode(record.authorizationCode) &&
+        record.publicCode === deriveSupportCode(record.authorizationCode) &&
+        (REPORT_AUTHORIZATION_STATES as readonly string[]).includes(record.state) &&
+        (REPORT_ISSUE_STATES as readonly string[]).includes(record.issueState) &&
+        isNonNegativeInteger(record.revision) &&
+        isNonNegativeInteger(record.pollAfterMs) &&
+        isTimestamp(record.authorizationExpiresAt) &&
+        isTimestamp(record.ticketExpiresAt) &&
+        record.ticketExpiresAt >= record.authorizationExpiresAt &&
+        (record.captureExpiresAt === undefined || isTimestamp(record.captureExpiresAt)) &&
+        parseReportResolution(serializeReportResolution(record.resolution)) !== undefined
+    if (!valid) throw new Error("Invalid report authorization ticket")
+    return { ...record, resolution: { ...record.resolution } }
 }
 
 function parseDocument(value: unknown): IssueCredentialDocument {
     if (!isRecord(value) || value.schema_version !== SCHEMA_VERSION) throw new Error("Invalid issue credential document")
-    const record = value.record === undefined ? undefined : parseRecord(value.record)
-    const revokeTombstone = value.revoke_tombstone === undefined ? undefined : parseTombstone(value.revoke_tombstone)
-    return { ...(record ? { record } : {}), ...(revokeTombstone ? { revokeTombstone } : {}) }
+    return value.ticket === undefined ? {} : { record: parseRecord(value.ticket) }
 }
 
 function parseRecord(value: unknown): IssueCredentialRecord {
-    if (!isRecord(value)) throw new Error("Invalid support authorization record")
-    const issue = isRecord(value.issue)
-        ? { owner: String(value.issue.owner), repo: String(value.issue.repo), number: Number(value.issue.number) }
-        : undefined
+    if (!isRecord(value)) throw new Error("Invalid report authorization ticket")
+    const resolution = parseReportResolution(value.resolution)
+    if (!resolution) throw new Error("Invalid report authorization ticket")
     return validateRecord({
-        authorizationId: String(value.authorization_id ?? ""),
-        publicCode: String(value.public_code ?? ""),
-        resumeCredential: String(value.resume_credential ?? ""),
-        state: String(value.state ?? "") as SupportAuthorizationState,
-        revision: Number(value.revision),
-        authorizationExpiresAt: Number(value.authorization_expires_at),
-        pollAfterMs: Number(value.poll_after_ms),
-        ...(issue ? { issue } : {}),
-        ...(value.capture_expires_at === undefined ? {} : { captureExpiresAt: Number(value.capture_expires_at) }),
-        ...(value.exchange_ticket === undefined ? {} : { exchangeTicket: String(value.exchange_ticket) }),
-        ...(value.exchange_ticket_expires_at === undefined
-            ? {}
-            : { exchangeTicketExpiresAt: Number(value.exchange_ticket_expires_at) }),
+        authorizationCode: value.authorization_code as string,
+        publicCode: value.public_code as string,
+        state: value.state as ReportAuthorizationState,
+        revision: value.authorization_revision as number,
+        authorizationExpiresAt: value.authorization_expires_at as number,
+        ...(value.capture_expires_at === undefined ? {} : { captureExpiresAt: value.capture_expires_at as number }),
+        ticketExpiresAt: value.ticket_expires_at as number,
+        issueState: value.issue_state as ReportIssueState,
+        resolution,
+        pollAfterMs: value.poll_after_ms as number,
     })
 }
 
-function parseTombstone(value: unknown): IssueRevokeTombstone {
-    if (!isRecord(value)) throw new Error("Invalid support revoke tombstone")
-    const tombstone = {
-        authorizationId: String(value.authorization_id ?? ""),
-        resumeCredential: String(value.resume_credential ?? ""),
-        expectedRevision: Number(value.expected_revision),
-        naturalExpiresAt: Number(value.natural_expires_at),
-        createdAt: Number(value.created_at),
-    }
-    if (!tombstone.authorizationId || !tombstone.resumeCredential || !Number.isSafeInteger(tombstone.expectedRevision)) {
-        throw new Error("Invalid support revoke tombstone")
-    }
-    return tombstone
-}
-
 function serializeDocument(document: IssueCredentialDocument): Record<string, unknown> {
+    const record = document.record
     return {
         schema_version: SCHEMA_VERSION,
-        ...(document.record
+        ...(record
             ? {
-                  record: {
-                      authorization_id: document.record.authorizationId,
-                      public_code: document.record.publicCode,
-                      resume_credential: document.record.resumeCredential,
-                      state: document.record.state,
-                      revision: document.record.revision,
-                      authorization_expires_at: document.record.authorizationExpiresAt,
-                      poll_after_ms: document.record.pollAfterMs,
-                      ...(document.record.issue ? { issue: document.record.issue } : {}),
-                      ...(document.record.captureExpiresAt === undefined
-                          ? {}
-                          : { capture_expires_at: document.record.captureExpiresAt }),
-                      ...(document.record.exchangeTicket === undefined
-                          ? {}
-                          : { exchange_ticket: document.record.exchangeTicket }),
-                      ...(document.record.exchangeTicketExpiresAt === undefined
-                          ? {}
-                          : { exchange_ticket_expires_at: document.record.exchangeTicketExpiresAt }),
-                  },
-              }
-            : {}),
-        ...(document.revokeTombstone
-            ? {
-                  revoke_tombstone: {
-                      authorization_id: document.revokeTombstone.authorizationId,
-                      resume_credential: document.revokeTombstone.resumeCredential,
-                      expected_revision: document.revokeTombstone.expectedRevision,
-                      natural_expires_at: document.revokeTombstone.naturalExpiresAt,
-                      created_at: document.revokeTombstone.createdAt,
+                  ticket: {
+                      authorization_code: record.authorizationCode,
+                      public_code: record.publicCode,
+                      state: record.state,
+                      authorization_revision: record.revision,
+                      authorization_expires_at: record.authorizationExpiresAt,
+                      ...(record.captureExpiresAt === undefined ? {} : { capture_expires_at: record.captureExpiresAt }),
+                      ticket_expires_at: record.ticketExpiresAt,
+                      issue_state: record.issueState,
+                      resolution: serializeReportResolution(record.resolution),
+                      poll_after_ms: record.pollAfterMs,
                   },
               }
             : {}),
     }
+}
+
+function isTimestamp(value: unknown): value is number {
+    return typeof value === "number" && Number.isSafeInteger(value) && value > 0
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+    return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

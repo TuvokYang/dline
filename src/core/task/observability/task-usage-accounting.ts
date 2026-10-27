@@ -1,10 +1,9 @@
-import type { FinalizedProviderAttempt } from "../performance/provider-request-round-port"
+import type { ProviderAttemptUsageEvent } from "../performance/provider-request-round-port"
 
 /** Process-wide durable projection of canonical Task telemetry facts. */
 export interface TaskUsageAccountingSink {
     currentPolicyGeneration(): number | undefined
-    projectModelId(provider: string, wireModelId: string): string
-    recordFinalizedAttempt(attempt: FinalizedProviderAttempt): void
+    recordAttemptEvent(event: ProviderAttemptUsageEvent): void
 }
 
 let activeSink: TaskUsageAccountingSink | undefined
@@ -26,16 +25,9 @@ export const taskUsageAccounting: TaskUsageAccountingSink = {
             return undefined
         }
     },
-    projectModelId: (provider, wireModelId) => {
+    recordAttemptEvent: (event) => {
         try {
-            return activeSink?.projectModelId(provider, wireModelId) ?? "state:unknown"
-        } catch {
-            return "state:unknown"
-        }
-    },
-    recordFinalizedAttempt: (attempt) => {
-        try {
-            activeSink?.recordFinalizedAttempt(attempt)
+            activeSink?.recordAttemptEvent(event)
         } catch {
             // Durable accounting must never replace the Task result.
         }

@@ -2,8 +2,9 @@ import { USAGE_ERROR_CLASSES } from "@/core/task/telemetry/UsageSettlement"
 import { DlineDefaultTool } from "@/shared/tools"
 import { isRemoteDiagnosticEvent } from "../../events/event-routes"
 import type { JournalTelemetrySignal } from "../../providers/capabilities"
-import type { UsageHostEditor, UsageReleaseChannel } from "../contracts/usageBody"
-import { diagnosticModelIdentity, diagnosticProviderId } from "./diagnosticModelIdentity"
+import { isUsageModelId, projectUsageModelId } from "../contracts/modelIdentity"
+import { buildOtlpResource, encodeOtlpLogs, isSpanId, isTraceId } from "../contracts/otlpProduction"
+import { USAGE_ROLES, type UsageHostEditor, type UsageReleaseChannel } from "../contracts/usageBodySchema"
 
 export type DiagnosticChannel = "error" | "runtime"
 export type DiagnosticSeverity = "warn" | "error" | "fatal"
@@ -25,16 +26,24 @@ export interface DiagnosticRecord {
     readonly lastSeenMs: number
     readonly occurrences: number
     readonly attributes: Readonly<Record<string, DiagnosticAttributeValue>>
+    /** Trace context of the first occurrence, lowercase hex, when the event happened inside a span. */
+    readonly traceId?: string
+    readonly spanId?: string
 }
 
 /** The event name shape of §3.1. */
 const EVENT_NAME = /^[A-Za-z0-9_.:/-]{1,160}$/
 /**
  * A string value leaves only as a short token: an error code, a provider, a
- * model, a status. Whitespace, slashes, colons and `@` are excluded, so free
- * text, paths, URLs and e-mail addresses never qualify.
+ * status. Whitespace, slashes, colons and `@` are excluded, so free text,
+ * paths, URLs and e-mail addresses never qualify. The model is the exception:
+ * it travels as the Usage projection (usage-contract §3.1), which already
+ * withholds paths, URLs and addresses.
  */
 const TOKEN_VALUE = /^[A-Za-z0-9_.+-]{1,64}$/
+/** A client-generated correlation id (`attemptObservationId`, `logicalRequestId`), never user text. */
+const CORRELATION_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/
+const MAX_PROVIDER_LENGTH = 32
 const FINGERPRINT = /^[0-9a-f]{16}$/
 const PHASES = ["connect", "stream", "parse", "tool", "other"] as const
 /** v2.1 §3.5: an `area.operation` call site of at most 64 characters. */
@@ -44,7 +53,16 @@ const FAILURE_STAGES = ["validation", "authorization", "routing", "execution", "
 const BUILT_IN_TOOLS: readonly string[] = Object.values(DlineDefaultTool).filter((id) => /^[a-z0-9_]{1,64}$/.test(id))
 const FINGERPRINT_VERSIONS: readonly number[] = [2, 3]
 
-type AttributeKind = "token" | "int" | "attempt" | "bool" | "apiFormat" | "fingerprintVersion" | readonly string[] | RegExp
+type AttributeKind =
+    | "token"
+    | "int"
+    | "attempt"
+    | "bool"
+    | "apiFormat"
+    | "fingerprintVersion"
+    | "modelId"
+    | readonly string[]
+    | RegExp
 
 /**
  * `ApiFormat` enum names, which the request observation carries, in the
@@ -106,13 +124,17 @@ const CATALOG: readonly { readonly key: string; readonly kind: AttributeKind; re
         sources: ["http.status", "http.response.status_code", "dline.exception.status", "error_status"],
     },
     { key: "provider", kind: "token", sources: ["provider"] },
-    { key: "model", kind: "token", sources: ["model"] },
+    { key: "model", kind: "modelId", sources: ["model"] },
     { key: "model.custom", kind: "bool", sources: ["model.custom"] },
     { key: "api.format", kind: "apiFormat", sources: ["api.format", "api_format"] },
     { key: "phase", kind: PHASES, sources: ["phase"] },
     { key: "retry.attempt", kind: "attempt", sources: ["retry.attempt"] },
     { key: "retryable", kind: "bool", sources: ["retryable"] },
     { key: "duration_ms", kind: "int", sources: ["duration_ms"] },
+    // The usage-telemetry-contract §4 correlation keys, under their wire names (TADR §6.3).
+    { key: "dline.role", kind: USAGE_ROLES, sources: ["dline.role"] },
+    { key: "dline.attempt_observation_id", kind: CORRELATION_ID, sources: ["dline.attempt_observation_id"] },
+    { key: "dline.logical_request_id", kind: CORRELATION_ID, sources: ["dline.logical_request_id"] },
 ]
 
 /**
@@ -127,10 +149,24 @@ const PERF_METRIC_SCALE: Readonly<Record<string, number>> = {
 const PERF_KINDS = ["fixed_budget", "dynamic_baseline"] as const
 const PERF_KEYS = ["perf.metric", "perf.kind", "perf.value", "perf.limit"] as const
 
+/**
+ * Value rules the production spans share with Logs (TADR §5.3: the span
+ * allowlist is the log allowlist plus a `gen_ai.*` subset).
+ */
+export const diagnosticValue = {
+    token: (value: unknown): value is string => typeof value === "string" && TOKEN_VALUE.test(value),
+    correlationId: (value: unknown): value is string => typeof value === "string" && CORRELATION_ID.test(value),
+    builtInTool: (value: unknown): value is string => typeof value === "string" && BUILT_IN_TOOLS.includes(value),
+    failureStage: (value: unknown): value is string =>
+        typeof value === "string" && (FAILURE_STAGES as readonly string[]).includes(value),
+    role: (value: unknown): value is string => typeof value === "string" && (USAGE_ROLES as readonly string[]).includes(value),
+} as const
+
 /** Every attribute key a record may carry on the wire. */
 export const DIAGNOSTIC_ATTRIBUTE_KEYS: readonly string[] = [
     "dline.channel",
     "dline.occurrences",
+    "dline.first_seen_ms",
     "dline.last_seen_ms",
     ...CATALOG.map((entry) => entry.key),
     ...PERF_KEYS,
@@ -163,7 +199,18 @@ export function toDiagnosticRecord(signal: JournalTelemetrySignal, now: number):
         lastSeenMs: now,
         occurrences: 1,
         attributes: { ...catalogAttributes(withNormalizedModel(signal.properties)), ...perfAttributes(signal.properties) },
+        ...traceContext(signal.properties),
     }
+}
+
+/**
+ * The span the event happened in, as the pipeline captured it when the event was
+ * logged (`captureSpanLogProperties`); an event outside any span has none.
+ */
+function traceContext(properties: Readonly<Record<string, unknown>> | undefined): { traceId?: string; spanId?: string } {
+    const traceId = properties?.runtime_trace_id
+    const spanId = properties?.runtime_span_id
+    return isTraceId(traceId) && isSpanId(spanId) ? { traceId, spanId } : {}
 }
 
 /** The breached metric, its budget kind and the scaled value and limit, only for a catalog metric. */
@@ -188,26 +235,33 @@ function scaledNonNegative(value: unknown, scale: number): number | undefined {
 }
 
 /**
- * Report a provider event's provider and model the way usage does: the raw ID
- * may hold `/` or `:`, which the value filter would drop. A custom model keeps
- * its normalized ID, and only a model marked custom is reported as one. Catalog
- * events name the model `modelId`.
+ * Report a provider event's provider and model the way usage does: the model is
+ * the usage-contract §3.1 projection of the wire ID, so a Logs record, a Usage
+ * fact and a span of the same send name it identically. Only a model marked
+ * custom lands in the `custom:` namespace, which already says what
+ * `model.custom` would, so that key travels only when the event set it. A value
+ * that already is a projection passes through unchanged. Catalog events name
+ * the model `modelId`.
  */
 function withNormalizedModel(
     properties: Readonly<Record<string, unknown>> | undefined,
 ): Readonly<Record<string, unknown>> | undefined {
     if (!properties) return properties
-    const provider = typeof properties.provider === "string" && properties.provider.length > 0 ? properties.provider : undefined
+    const provider = firstNonEmptyString(properties.provider)
+    const normalized = provider ? { ...properties, provider: diagnosticProviderId(provider) } : properties
     const model = firstNonEmptyString(properties.model, properties.modelId)
-    if (model) {
-        const custom = properties["model.custom"] === true
-        return {
-            ...properties,
-            ...diagnosticModelIdentity({ provider: provider ?? "", model, custom }),
-            "model.custom": custom,
-        }
-    }
-    return provider ? { ...properties, provider: diagnosticProviderId(provider) } : properties
+    if (!model) return normalized
+    const customModel = properties["model.custom"] === true
+    return { ...normalized, model: isUsageModelId(model) ? model : projectUsageModelId(model, { customModel }) }
+}
+
+/** A provider ID in the wire vocabulary: lowercase, `[a-z0-9_-]`, at most 32 characters. */
+export function diagnosticProviderId(provider: string): string {
+    return provider
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, "_")
+        .slice(0, MAX_PROVIDER_LENGTH)
 }
 
 function firstNonEmptyString(...values: readonly unknown[]): string | undefined {
@@ -242,6 +296,7 @@ function acceptValue(kind: AttributeKind, value: unknown): DiagnosticAttributeVa
     }
     if (typeof value !== "string") return undefined
     if (kind === "token") return TOKEN_VALUE.test(value) ? value : undefined
+    if (kind === "modelId") return isUsageModelId(value) ? value : undefined
     if (kind === "apiFormat")
         return API_FORMATS[value] ?? (API_FORMAT_VALUE.test(value) && value !== "unknown" ? value : undefined)
     if (kind instanceof RegExp) return kind.test(value) ? value : undefined
@@ -297,7 +352,10 @@ export function aggregateDiagnostics(
 /** What the resource of every request says about this client; nothing that identifies a device or a user. */
 export interface DiagnosticResource {
     readonly clientVersion: string
+    /** `process.platform`; projected to the semconv `os.type`. */
     readonly platform: string
+    /** `process.arch`; projected to the semconv `host.arch`. */
+    readonly arch?: string
     /** Never under `dline.channel`, which separates error from runtime events. */
     readonly releaseChannel?: UsageReleaseChannel
     readonly hostEditor?: UsageHostEditor
@@ -305,63 +363,47 @@ export interface DiagnosticResource {
     readonly isDev?: boolean
 }
 
-const SEVERITY_NUMBER: Record<DiagnosticSeverity, number> = { warn: 13, error: 17, fatal: 21 }
-
 /**
- * Encode records as one OTLP/HTTP JSON logs request. `droppedRecords` counts
- * records discarded locally since the previous request, by the device limits
- * or the backlog bound.
+ * Encode records as one production OTLP/JSON logs request (TADR §2.4, §6).
+ * `droppedRecords` counts records discarded locally since the previous request,
+ * by the device limits or the backlog bound.
  */
 export function encodeDiagnosticLogs(
     records: readonly DiagnosticRecord[],
     resource: DiagnosticResource,
     droppedRecords: number,
+    exportedAtMs: number = Date.now(),
 ): string {
-    return JSON.stringify({
-        resourceLogs: [
-            {
-                resource: {
-                    attributes: [
-                        stringAttribute("service.name", "dline"),
-                        stringAttribute("service.version", resource.clientVersion),
-                        stringAttribute("os.type", resource.platform),
-                        ...(resource.releaseChannel ? [stringAttribute("dline.release_channel", resource.releaseChannel)] : []),
-                        ...(resource.hostEditor ? [stringAttribute("dline.host_editor", resource.hostEditor)] : []),
-                        ...(resource.isDev ? [{ key: "dline.is_dev", value: { boolValue: true } }] : []),
-                        intAttribute("dline.dropped_records", droppedRecords),
-                    ],
-                },
-                scopeLogs: [
-                    {
-                        scope: { name: "dline.diagnostics" },
-                        logRecords: records.map((record) => ({
-                            timeUnixNano: `${Math.trunc(record.firstSeenMs)}000000`,
-                            severityNumber: SEVERITY_NUMBER[record.severity],
-                            body: { stringValue: record.name },
-                            attributes: [
-                                stringAttribute("dline.channel", record.channel),
-                                intAttribute("dline.occurrences", record.occurrences),
-                                intAttribute("dline.last_seen_ms", record.lastSeenMs),
-                                ...Object.entries(record.attributes).map(([key, value]) => anyAttribute(key, value)),
-                            ],
-                        })),
-                    },
-                ],
-            },
-        ],
+    const body = encodeOtlpLogs(
+        diagnosticOtlpResource(resource, droppedRecords),
+        records.map((record) => ({
+            eventName: record.name,
+            severity: record.severity,
+            channel: record.channel,
+            occurrences: record.occurrences,
+            firstSeenMs: record.firstSeenMs,
+            lastSeenMs: record.lastSeenMs,
+            ...(record.traceId && record.spanId ? { traceId: record.traceId, spanId: record.spanId } : {}),
+            attributes: record.attributes,
+        })),
+        exportedAtMs,
+    )
+    return JSON.stringify(body)
+}
+
+/** The allowlisted Resource of every production OTLP request of this client (TADR §3.1). */
+export function diagnosticOtlpResource(
+    resource: DiagnosticResource,
+    droppedRecords: number,
+): ReturnType<typeof buildOtlpResource> {
+    return buildOtlpResource({
+        clientVersion: resource.clientVersion,
+        platform: resource.platform,
+        arch: resource.arch ?? "",
+        environment: resource.isDev ? "development" : "production",
+        ...(resource.releaseChannel ? { releaseChannel: resource.releaseChannel } : {}),
+        ...(resource.hostEditor ? { hostEditor: resource.hostEditor } : {}),
+        isDev: resource.isDev === true,
+        droppedRecords,
     })
-}
-
-function stringAttribute(key: string, value: string) {
-    return { key, value: { stringValue: value } }
-}
-
-function intAttribute(key: string, value: number) {
-    return { key, value: { intValue: String(Math.trunc(value)) } }
-}
-
-function anyAttribute(key: string, value: DiagnosticAttributeValue) {
-    if (typeof value === "boolean") return { key, value: { boolValue: value } }
-    if (typeof value === "number") return intAttribute(key, value)
-    return stringAttribute(key, value)
 }

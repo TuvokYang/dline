@@ -390,8 +390,6 @@ describe("Telemetry system is abstracted and can easily switch between providers
             telemetryService.captureTaskCreated("task-switch-2", "openai")
             console.log("Captured event with No-Op provider")
 
-            // Verify different behaviors
-            // PostHog provider may be enabled depending on configuration
             // NoOp provider should always be disabled
             assert.strictEqual(noOpProvider.isEnabled(), false, "NoOp provider should always be disabled")
 

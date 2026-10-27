@@ -6,8 +6,9 @@ export const EXCHANGE_OPERATION_SCHEMA_VERSION = 1
 export const EXCHANGE_OPERATION_TTL_MS = 24 * 60 * 60_000
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const CLIENT_FIELD_MAX_LENGTH = 64
 const HASH_PATTERN = /^sha256:[0-9a-f]{64}$/
-const OPERATIONS = ["device.grant", "issue.exchange"] as const
+const OPERATIONS = ["device.grant", "report.authorize", "issue.exchange"] as const
 
 export type ExchangeOperation = (typeof OPERATIONS)[number]
 
@@ -25,16 +26,11 @@ export interface RecoverableExchangeTransport {
     ): Promise<WireResponse>
 }
 
-export interface IssueExchangeReference {
-    readonly owner: string
-    readonly repo: string
-    readonly number: number
-}
-
+/** `/auth/exchange` body (telemetry-exchange-flow §5.5); the revision is the approved one the status query reported. */
 export interface IssueExchangeRequest extends ExchangeOperationRequest {
     readonly operation: "issue.exchange"
-    readonly issue: IssueExchangeReference
-    readonly pairing_secret: string
+    readonly authorization_code: string
+    readonly authorization_revision: number
     readonly client_version: string
     readonly platform: string
 }
@@ -121,6 +117,13 @@ export function validateExchangeIntent(intent: ExchangeOperationIntent): Exchang
 
 export function validateExchangeRequestId(requestId: string): void {
     if (!UUID_PATTERN.test(requestId)) throw new Error("Exchange request ID must be a UUID")
+}
+
+/** `client_version` and `platform` as every exchange body carries them: trimmed, bounded and never empty. */
+export function boundExchangeClientField(value: string): string {
+    const trimmed = value.trim().slice(0, CLIENT_FIELD_MAX_LENGTH)
+    if (trimmed.length === 0) throw new Error("Exchange client fields must not be empty")
+    return trimmed
 }
 
 export function isExchangeOperation(value: unknown): value is ExchangeOperation {

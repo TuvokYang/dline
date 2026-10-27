@@ -206,16 +206,9 @@ if (production) {
     buildEnvVars["process.env.IS_DEV"] = JSON.stringify("true")
     buildEnvVars["process.env.DLINE_LOG_LEVEL"] = JSON.stringify(process.env.DLINE_LOG_LEVEL || "debug")
 }
-// Set the environment and telemetry env vars. The API key env vars need to be populated in the GitHub
-// workflows from the secrets.
+// Set the build environment.
 if (process.env.DLINE_ENVIRONMENT) {
     buildEnvVars["process.env.DLINE_ENVIRONMENT"] = JSON.stringify(process.env.DLINE_ENVIRONMENT)
-}
-if (process.env.TELEMETRY_SERVICE_API_KEY) {
-    buildEnvVars["process.env.TELEMETRY_SERVICE_API_KEY"] = JSON.stringify(process.env.TELEMETRY_SERVICE_API_KEY)
-}
-if (process.env.ERROR_SERVICE_API_KEY) {
-    buildEnvVars["process.env.ERROR_SERVICE_API_KEY"] = JSON.stringify(process.env.ERROR_SERVICE_API_KEY)
 }
 
 // OpenTelemetry configuration (injected at build time from GitHub secrets)

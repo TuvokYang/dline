@@ -1,10 +1,12 @@
+import { randomUUID } from "node:crypto"
 import type { DeviceCredentialRepository } from "@/core/storage/telemetry-remote/DeviceCredentialRepository"
 import type { LocalUsagePolicyInputs, RemotePolicyRepository } from "@/core/storage/telemetry-remote/RemotePolicyRepository"
+import type { UsageAttemptFinalizationStore } from "@/core/storage/telemetry-remote/UsageAttemptFinalizationStore"
 import type { UsageObservationSpool } from "@/core/storage/telemetry-remote/UsageObservationSpool"
 import type { UsageOutboxRepository } from "@/core/storage/telemetry-remote/UsageOutboxRepository"
-import type { FinalizedProviderAttempt, FinalizedProviderAttemptPort } from "@/core/task/performance/provider-request-round-port"
+import type { ProviderAttemptUsageEvent, ProviderAttemptUsagePort } from "@/core/task/performance/provider-request-round-port"
 import { describeUsagePolicyDecision, type UsagePolicyRecord } from "../policy/usagePolicy"
-import { projectFinalizedAttempt } from "./attemptProjection"
+import { AttemptFinalizer, type UsageAttemptFinalizationClock } from "./AttemptFinalizer"
 import type { UsageCycleResult, UsageDeliveryWorker } from "./UsageDeliveryWorker"
 import { describeUsageCycle, type RemoteUsageLog, type RemoteUsageLogLevel } from "./usageCycleLog"
 
@@ -22,8 +24,14 @@ export interface RemoteUsageCoordinatorOptions {
     readonly policy: Pick<RemotePolicyRepository, "resolveUsage" | "recordServerStop">
     readonly credentials: Pick<DeviceCredentialRepository, "clearTokens">
     readonly outbox: Pick<UsageOutboxRepository, "resetAttempts">
-    readonly spool: Pick<UsageObservationSpool, "appendAttempt" | "purge">
-    readonly worker: Pick<UsageDeliveryWorker, "refreshAttemptAuthority" | "runCycle" | "release">
+    readonly spool: Pick<UsageObservationSpool, "appendAttempt" | "appendLogicalClaim" | "purge">
+    /** Durable token finalization deadlines of this host's open attempts. */
+    readonly finalization: Pick<UsageAttemptFinalizationStore, "save" | "readOverdue" | "removeRecovered" | "purge">
+    readonly finalizationClock?: UsageAttemptFinalizationClock
+    readonly tokenFinalizationDeadlineMs?: number
+    /** This process's Usage session; defaults to a fresh random ID per coordinator. */
+    readonly localSessionId?: string
+    readonly worker: Pick<UsageDeliveryWorker, "runCycle" | "release">
     /** Current consent, organization, host and build inputs; read again before every decision. */
     readonly readPolicyInputs: () => Promise<LocalUsagePolicyInputs>
     readonly clock?: () => number
@@ -48,8 +56,9 @@ export interface RemoteUsageCoordinatorOptions {
  * allowed. Remote failures stay here: they never reach the Task or the local
  * telemetry pipeline.
  */
-export class RemoteUsageCoordinator implements FinalizedProviderAttemptPort {
+export class RemoteUsageCoordinator implements ProviderAttemptUsagePort {
     private readonly clock: () => number
+    private readonly finalizer: AttemptFinalizer
     private readonly scheduler: UsageScheduler
     private readonly cycleIntervalMs: number
     private current: UsagePolicyRecord | undefined
@@ -60,8 +69,6 @@ export class RemoteUsageCoordinator implements FinalizedProviderAttemptPort {
     private cycleAbort: AbortController | undefined
     private refreshing: Promise<void> | undefined
     private readonly appends = new Set<Promise<void>>()
-    /** Activation deltas wait for the next final result-producing attempt in schema 4. */
-    private pendingSessionStarts = 0
     /** Last steady cycle state printed, so a state that holds for hours is logged once. */
     private loggedSteadyState: string | undefined
     private ownedByNewerBuild = false
@@ -72,6 +79,20 @@ export class RemoteUsageCoordinator implements FinalizedProviderAttemptPort {
         this.clock = options.clock ?? Date.now
         this.scheduler = options.scheduler ?? nodeScheduler
         this.cycleIntervalMs = options.cycleIntervalMs ?? USAGE_CYCLE_INTERVAL_MS
+        this.finalizer = new AttemptFinalizer({
+            store: options.finalization,
+            sink: {
+                appendObservation: (observation) => this.track(options.spool.appendAttempt(observation)),
+                appendLogicalClaim: (claim) => this.track(options.spool.appendLogicalClaim(claim)),
+            },
+            localSessionId: options.localSessionId ?? randomUUID(),
+            now: this.clock,
+            ...(options.finalizationClock ? { clock: options.finalizationClock } : {}),
+            ...(options.tokenFinalizationDeadlineMs === undefined
+                ? {}
+                : { tokenFinalizationDeadlineMs: options.tokenFinalizationDeadlineMs }),
+            log: (level, message) => this.log(level, message),
+        })
     }
 
     /** Whether the current policy lets this device report usage; services that ride on that consent follow it. */
@@ -87,56 +108,19 @@ export class RemoteUsageCoordinator implements FinalizedProviderAttemptPort {
     /** Resolve the policy, open intake, and schedule the first cycle. */
     async start(): Promise<void> {
         await this.refresh()
-        try {
-            await this.options.worker.refreshAttemptAuthority()
-        } catch (error) {
-            this.log("warn", `usage authority could not be read before intake: ${describe(error)}`)
-        }
         if (this.disposed) return
         this.accepting = true
+        await this.recoverFinalizations()
         this.scheduleCycle(this.cycleIntervalMs)
     }
 
-    /** Project and reduce one exact-handle terminal revision; malformed or incomplete identity fails closed. */
-    recordFinalizedAttempt(attempt: FinalizedProviderAttempt): void {
-        const current = this.current
-        if (!this.accepting || !current?.decision.allowed) return
-        const sessionsStarted = attempt.logicalExecution ? this.pendingSessionStarts : 0
-        if (sessionsStarted > 0) this.pendingSessionStarts = 0
-        let observation
-        try {
-            observation = projectFinalizedAttempt(
-                attempt.handle,
-                attempt.record,
-                attempt.logicalExecution,
-                attempt.logicalToolCalls,
-                sessionsStarted,
-            )
-        } catch (error) {
-            this.pendingSessionStarts = addSessionStarts(this.pendingSessionStarts, sessionsStarted)
-            this.log("warn", `finalized usage attempt was rejected before storage: ${describe(error)}`)
-            return
-        }
-        const append = this.options.spool
-            .appendAttempt({
-                id: observation.attemptObservationId,
-                revision: attempt.record.revision,
-                receivedAt: this.clock(),
-                observation,
-            })
-            .catch((error: unknown) => {
-                this.pendingSessionStarts = addSessionStarts(this.pendingSessionStarts, sessionsStarted)
-                this.log("warn", `finalized usage attempt was not stored: ${describe(error)}`)
-            })
-            .finally(() => this.appends.delete(append))
-        this.appends.add(append)
-    }
-
-    /** Count this activation on the next final logical execution; schema 3 session batches no longer exist. */
-    recordSessionStarted(): void {
-        const current = this.current
-        if (!this.accepting || !current?.decision.allowed) return
-        this.pendingSessionStarts = addSessionStarts(this.pendingSessionStarts, 1)
+    /**
+     * Admit one ordered Provider attempt fact while reporting is allowed. The
+     * finalizer decides when tokens are final; malformed identity fails closed.
+     */
+    recordAttemptEvent(event: ProviderAttemptUsageEvent): void {
+        if (!this.accepting || !this.current?.decision.allowed) return
+        this.finalizer.record(event)
     }
 
     /**
@@ -162,6 +146,8 @@ export class RemoteUsageCoordinator implements FinalizedProviderAttemptPort {
         this.cancelTimer = undefined
         this.cycleAbort?.abort()
         await withinBound(this.running)
+        // A closing host receives no further revision: open windows become final now.
+        await withinBound(this.finalizer.dispose())
         await withinBound(Promise.allSettled([...this.appends]))
         await withinBound(this.options.worker.release().catch(() => undefined))
     }
@@ -201,7 +187,7 @@ export class RemoteUsageCoordinator implements FinalizedProviderAttemptPort {
         // A newer Dline owns the policy document: it also owns the data, so nothing is touched.
         if (!next || next.decision.allowed || previous?.epoch === next.epoch) return
         this.cycleAbort?.abort()
-        this.pendingSessionStarts = 0
+        await this.finalizer.purge()
         await this.options.outbox.resetAttempts(next.epoch)
         await this.options.spool.purge()
         // Only the usage token: error diagnostics follow their own consent and keep theirs.
@@ -238,6 +224,7 @@ export class RemoteUsageCoordinator implements FinalizedProviderAttemptPort {
             await this.refresh()
             const current = this.current
             if (this.disposed || !current?.decision.allowed) return
+            await this.recoverFinalizations()
             const abort = new AbortController()
             this.cycleAbort = abort
             const result = await this.options.worker.runCycle(current.epoch, abort.signal)
@@ -262,6 +249,23 @@ export class RemoteUsageCoordinator implements FinalizedProviderAttemptPort {
             this.loggedSteadyState = line.steadyState
         }
         this.log(line.level, line.message)
+    }
+
+    /** Finish windows another host left open past their deadline; never rejects. */
+    private async recoverFinalizations(): Promise<void> {
+        if (!this.accepting || !this.current?.decision.allowed) return
+        try {
+            const recovered = await this.finalizer.recoverOverdue()
+            if (recovered > 0) this.log("info", `recovered ${recovered} usage attempt(s) another window left unfinalized`)
+        } catch (error) {
+            this.log("warn", `unfinalized usage attempts could not be recovered: ${describe(error)}`)
+        }
+    }
+
+    private track(append: Promise<void>): Promise<void> {
+        const tracked = append.finally(() => this.appends.delete(tracked))
+        this.appends.add(tracked)
+        return tracked
     }
 
     private log(level: RemoteUsageLogLevel, message: string): void {
@@ -295,12 +299,6 @@ async function withinBound(work: Promise<unknown> | undefined): Promise<void> {
 }
 
 /** Error class and code only: messages may carry paths or server text. */
-function addSessionStarts(left: number, right: number): number {
-    const total = left + right
-    if (!Number.isSafeInteger(total) || total < 0) throw new Error("Usage session start count overflow")
-    return total
-}
-
 function describe(error: unknown): string {
     if (!(error instanceof Error)) return typeof error
     const code = (error as NodeJS.ErrnoException).code

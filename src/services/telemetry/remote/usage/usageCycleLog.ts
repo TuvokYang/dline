@@ -54,7 +54,7 @@ export function describeUsageCycle(result: UsageCycleResult): UsageCycleLogLine 
         case "paused":
             return {
                 level: "info",
-                message: `the service asked to wait (${result.code}); usage is held until ${new Date(result.until).toISOString()} and batch ${batchName(result.requestId)} is rebuilt then`,
+                message: `the service asked to wait (${result.code}); usage is held until ${new Date(result.until).toISOString()} and batch ${batchName(result.requestId)} is replayed unchanged then`,
             }
         case "discarded":
             return { level: "warn", message: `batch ${batchName(result.requestId)} discarded (${result.code})` }
@@ -68,6 +68,7 @@ export function describeUsageCycle(result: UsageCycleResult): UsageCycleLogLine 
 const DISPOSITION_TEXT: Record<DeliveryDisposition, string> = {
     accepted: "delivered",
     duplicate: "had already been accepted (duplicate)",
+    ignored_version: "was confirmed without being stored (ignored_version)",
 }
 
 function batchName(requestId: string): string {

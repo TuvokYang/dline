@@ -86,8 +86,6 @@ jobs:
       source_ref: ${{ needs.validate.outputs.tag }}
       artifact_key: ${{ needs.validate.outputs.commit_sha }}
     secrets:
-      TELEMETRY_SERVICE_API_KEY: ${{ secrets.TELEMETRY_SERVICE_API_KEY }}
-      ERROR_SERVICE_API_KEY: ${{ secrets.ERROR_SERVICE_API_KEY }}
       OTEL_TELEMETRY_ENABLED: ${{ secrets.OTEL_TELEMETRY_ENABLED }}
       OTEL_EXPORTER_OTLP_PROTOCOL: ${{ secrets.OTEL_EXPORTER_OTLP_PROTOCOL }}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT }}

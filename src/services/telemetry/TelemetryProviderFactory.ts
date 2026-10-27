@@ -15,19 +15,16 @@ import { adaptLegacyTelemetryProvider } from "./providers/LegacyTelemetryProvide
 import { OpenTelemetryClientProvider } from "./providers/opentelemetry/OpenTelemetryClientProvider"
 import { OpenTelemetryTelemetryProvider } from "./providers/opentelemetry/OpenTelemetryTelemetryProvider"
 import { OpenTelemetryTraceProvider } from "./providers/opentelemetry/OpenTelemetryTraceProvider"
-import { PostHogClientProvider } from "./providers/posthog/PostHogClientProvider"
-import { PostHogTelemetryProvider } from "./providers/posthog/PostHogTelemetryProvider"
 
 /**
  * Supported telemetry provider types
  */
-export type TelemetryProviderType = "posthog" | "no-op" | "opentelemetry"
+export type TelemetryProviderType = "no-op" | "opentelemetry"
 
 /**
  * Configuration for telemetry providers
  */
 export type TelemetryProviderConfig =
-    | { type: "posthog"; apiKey?: string; host?: string }
     | {
           type: "opentelemetry"
           config: OpenTelemetryClientValidConfig
@@ -84,14 +81,6 @@ export class TelemetryProviderFactory {
      */
     private static async createProvider(config: TelemetryProviderConfig): Promise<TelemetryProviderRegistration | null> {
         switch (config.type) {
-            case "posthog": {
-                const sharedClient = PostHogClientProvider.getClient()
-                if (!sharedClient) return null
-                const provider = await new PostHogTelemetryProvider(sharedClient).initialize()
-                return adaptLegacyTelemetryProvider(provider, {
-                    sink: { kind: "remote", origin: "user", channels: ["usage"] },
-                })
-            }
             case "opentelemetry": {
                 const client = new OpenTelemetryClientProvider(config.config)
                 if (!client.meterProvider && !client.loggerProvider) {

@@ -6,7 +6,6 @@ import { SupportTelemetryStatus } from "./SupportTelemetryStatus"
 const mocks = vi.hoisted(() => ({
     getStatus: vi.fn(),
     checkNow: vi.fn(),
-    openIssue: vi.fn(),
     deleteAndRevoke: vi.fn(),
 }))
 
@@ -31,15 +30,17 @@ const absent = {
     publicCode: "",
     state: "",
     authorizationExpiresAt: 0,
+    issueState: "",
 }
 
 const active = {
     present: true,
-    publicCode: "SUP-ABCD-1234",
+    publicCode: "DLN-BNKP-5RJG-NE6R-Y290",
     state: "approved",
     authorizationExpiresAt: 1_700_007_200_000,
     captureExpiresAt: 1_700_000_125_000,
-    issue: { owner: "TuvokYang", repo: "Dline", number: 115 },
+    issueState: "open",
+    resolution: { state: "investigating" },
 }
 
 describe("SupportTelemetryStatus", () => {
@@ -48,7 +49,6 @@ describe("SupportTelemetryStatus", () => {
         vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000)
         mocks.getStatus.mockReset().mockResolvedValue(absent)
         mocks.checkNow.mockReset()
-        mocks.openIssue.mockReset().mockResolvedValue({})
         mocks.deleteAndRevoke.mockReset().mockResolvedValue({})
     })
 
@@ -63,31 +63,41 @@ describe("SupportTelemetryStatus", () => {
         expect(screen.queryByTestId("support-telemetry-status")).toBeNull()
     })
 
-    it("projects only the public support identity, state, issue, and countdowns", async () => {
+    it("projects the public code, server-reported issue state and resolution, and countdowns", async () => {
         mocks.getStatus.mockResolvedValue(active)
 
         render(<SupportTelemetryStatus />)
 
-        expect(await screen.findByTestId("support-public-code")).toHaveTextContent("SUP-ABCD-1234")
+        expect(await screen.findByTestId("support-public-code")).toHaveTextContent("DLN-BNKP-5RJG-NE6R-Y290")
         expect(screen.getByTestId("support-state")).toHaveTextContent("Approved and capturing temporary diagnostics")
-        expect(screen.getByTestId("support-issue")).toHaveTextContent("TuvokYang/Dline#115")
+        expect(screen.getByTestId("support-issue")).toHaveTextContent("Open")
+        expect(screen.getByTestId("support-resolution")).toHaveTextContent("Investigating")
+        expect(screen.queryByTestId("support-resolution-summary")).toBeNull()
         expect(screen.getByTestId("support-authorization-countdown")).toHaveTextContent("2h 0m 0s")
         expect(screen.getByTestId("support-capture-countdown")).toHaveTextContent("2m 5s")
+        // OTel never returns the Issue identity, so there is nothing to open.
+        expect(screen.queryByRole("button", { name: "Open issue" })).toBeNull()
     })
 
-    it("refreshes the safe projection and opens only the linked issue", async () => {
+    it("refreshes the projection with the resolution the server reports", async () => {
         mocks.getStatus.mockResolvedValue(active)
-        mocks.checkNow.mockResolvedValue({ ...active, state: "pending_approval", captureExpiresAt: undefined })
+        mocks.checkNow.mockResolvedValue({
+            ...active,
+            state: "revoked",
+            captureExpiresAt: undefined,
+            issueState: "closed",
+            resolution: { state: "fixed", fixedInVersion: "0.12.1", summary: "Retry now keeps the provider identity." },
+        })
 
         render(<SupportTelemetryStatus />)
         await screen.findByTestId("support-public-code")
 
         fireEvent.click(screen.getByRole("button", { name: "Check now" }))
         await waitFor(() => expect(mocks.checkNow).toHaveBeenCalledTimes(1))
-        expect(screen.getByTestId("support-state")).toHaveTextContent("Waiting for support approval")
-
-        fireEvent.click(screen.getByRole("button", { name: "Open issue" }))
-        await waitFor(() => expect(mocks.openIssue).toHaveBeenCalledTimes(1))
+        expect(screen.getByTestId("support-state")).toHaveTextContent("Revoked")
+        expect(screen.getByTestId("support-issue")).toHaveTextContent("Closed")
+        expect(screen.getByTestId("support-resolution")).toHaveTextContent("Fixed in 0.12.1")
+        expect(screen.getByTestId("support-resolution-summary")).toHaveTextContent("Retry now keeps the provider identity.")
     })
 
     it("requires explicit confirmation before local delete and revoke", async () => {

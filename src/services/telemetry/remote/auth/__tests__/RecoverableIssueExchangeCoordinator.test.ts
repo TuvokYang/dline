@@ -19,12 +19,11 @@ import { RecoverableIssueExchangeCoordinator } from "../RecoverableIssueExchange
 const DEVICE_ID = `dev_${"d".repeat(32)}`
 const DEVICE_TOKEN_1 = "a".repeat(43)
 const DEVICE_TOKEN_2 = "b".repeat(43)
-const PAIRING_1 = "c".repeat(43)
-const PAIRING_2 = "e".repeat(43)
+const CODE_1 = "c".repeat(43)
+const CODE_2 = "e".repeat(43)
 const ISSUE_TOKEN = "i".repeat(43)
 const REQUEST_ID_1 = "11111111-1111-4111-8111-111111111111"
 const REQUEST_ID_2 = "22222222-2222-4222-8222-222222222222"
-const ISSUE = { owner: "TuvokYang", repo: "dline", number: 123 } as const
 
 function granted(requestId: string, expiresAt: number, revision = 2): WireResponse {
     return {
@@ -41,7 +40,7 @@ function granted(requestId: string, expiresAt: number, revision = 2): WireRespon
             expires_at: expiresAt,
             capture_expires_at: expiresAt,
             rate_limits: {
-                byte_capacity: 8 * 1024 * 1024,
+                authorization_bytes: 8 * 1024 * 1024,
                 authorization_requests: 120,
                 authorization_records: 20_000,
             },
@@ -111,11 +110,10 @@ describe("RecoverableIssueExchangeCoordinator", () => {
         })
     }
 
-    const input = (token = DEVICE_TOKEN_1, pairingSecret = PAIRING_1, revision = 2) => ({
+    const input = (token = DEVICE_TOKEN_1, authorizationCode = CODE_1, revision = 2) => ({
         deviceId: DEVICE_ID,
         deviceAccessToken: token,
-        issue: ISSUE,
-        pairingSecret,
+        authorizationCode,
         authorizationRevision: revision,
     })
 
@@ -131,8 +129,8 @@ describe("RecoverableIssueExchangeCoordinator", () => {
         expect(first.calls[0]?.request).toEqual({
             operation: "issue.exchange",
             request_id: REQUEST_ID_1,
-            issue: ISSUE,
-            pairing_secret: PAIRING_1,
+            authorization_code: CODE_1,
+            authorization_revision: 2,
             client_version: "0.12.0",
             platform: "win32",
         })
@@ -145,13 +143,13 @@ describe("RecoverableIssueExchangeCoordinator", () => {
         const request: IssueExchangeRequest = {
             operation: "issue.exchange",
             request_id: REQUEST_ID_1,
-            issue: ISSUE,
-            pairing_secret: PAIRING_1,
+            authorization_code: CODE_1,
+            authorization_revision: 2,
             client_version: "0.12.0",
             platform: "win32",
         }
-        const prepared = await repository.prepare({ principal: DEVICE_ID, receiptSecret: PAIRING_1, request })
-        await repository.storeReceipt(prepared.intent, PAIRING_1, granted(REQUEST_ID_1, now + 60_000))
+        const prepared = await repository.prepare({ principal: DEVICE_ID, receiptSecret: CODE_1, request })
+        await repository.storeReceipt(prepared.intent, CODE_1, granted(REQUEST_ID_1, now + 60_000))
         const transport: IssueExchangeTransport = {
             requestRecoverableIssueExchange: vi.fn(() => Promise.reject(new Error("must not send"))),
         }
@@ -164,7 +162,7 @@ describe("RecoverableIssueExchangeCoordinator", () => {
         const raw = await fs
             .readFile(path.join(root, "data", "secrets", "otel", "exchange-operations.json"), "utf8")
             .catch(() => "")
-        expect(raw).not.toContain(PAIRING_1)
+        expect(raw).not.toContain(CODE_1)
         expect(raw).not.toContain(ISSUE_TOKEN)
     })
 
@@ -204,7 +202,7 @@ describe("RecoverableIssueExchangeCoordinator", () => {
         const second = running.exchange(input())
         while (!release) await new Promise((resolve) => setTimeout(resolve, 1))
 
-        await expect(running.exchange(input(DEVICE_TOKEN_1, PAIRING_2, 3))).rejects.toBeInstanceOf(ExchangeOperationConflictError)
+        await expect(running.exchange(input(DEVICE_TOKEN_1, CODE_2, 3))).rejects.toBeInstanceOf(ExchangeOperationConflictError)
         release(granted(REQUEST_ID_1, now + 60_000))
         await expect(Promise.all([first, second])).resolves.toHaveLength(2)
         expect(transport.requestRecoverableIssueExchange).toHaveBeenCalledTimes(1)
@@ -225,14 +223,29 @@ describe("RecoverableIssueExchangeCoordinator", () => {
         expect(port.clears).toEqual([])
     })
 
-    it("rejects a changed pairing secret or revision while the original operation is pending", async () => {
+    it("rejects a changed authorization code or revision while the original operation is pending", async () => {
         const transport = new ScriptedIssueTransport()
         transport.replies.push(new Error("unknown outcome"))
         await coordinator(transport).exchange(input())
 
         await expect(
-            coordinator(new ScriptedIssueTransport(), REQUEST_ID_2).exchange(input(DEVICE_TOKEN_1, PAIRING_2, 3)),
+            coordinator(new ScriptedIssueTransport(), REQUEST_ID_2).exchange(input(DEVICE_TOKEN_1, CODE_2, 3)),
         ).rejects.toBeInstanceOf(ExchangeOperationConflictError)
+    })
+
+    it("stops on an unknown authorization code instead of treating the 404 as pending", async () => {
+        const transport = new ScriptedIssueTransport()
+        transport.replies.push({
+            status: 404,
+            retryAfter: null,
+            json: { ok: false, error: { code: "report_authorization_not_found" } },
+        })
+
+        await expect(coordinator(transport).exchange(input())).resolves.toEqual({
+            status: "stopped",
+            code: "report_authorization_not_found",
+        })
+        expect(port.clears).toEqual(["deleted"])
     })
 
     it("maps the server replay expiry and permits a later operation to use a new ID", async () => {

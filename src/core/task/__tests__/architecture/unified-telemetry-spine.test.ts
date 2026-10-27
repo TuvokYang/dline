@@ -98,11 +98,10 @@ describe("WS-115 unified telemetry architecture gate", () => {
 
     it("installs durable Usage only at the process runtime and projects through TaskTurnTelemetry", () => {
         const runtime = source("src/services/telemetry/remote/remoteUsageRuntime.ts")
-        const telemetry = source("src/core/task/observability/task-turn-telemetry.ts")
         const accounting = source("src/core/task/observability/task-usage-accounting.ts")
 
+        // The TaskTurnTelemetry → accounting → sink projection is proven behaviorally by usageRolePipeline.test.ts.
         expect(runtime.match(/installTaskUsageAccountingSink\(/gu)).toHaveLength(1)
-        expect(telemetry).toContain("taskUsageAccounting.recordFinalizedAttempt(attempt)")
         expect(accounting).toContain("let activeSink: TaskUsageAccountingSink | undefined")
         for (const file of OUTER_PROVIDER_CALLERS) {
             expect(source(file), `${file} must not install the durable Usage sink`).not.toContain(

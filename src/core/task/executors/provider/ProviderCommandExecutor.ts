@@ -1,4 +1,5 @@
 import type { ClineMessageModelInfo } from "@shared/messages/metrics"
+import { PROVIDER_USER_CANCEL_REASON } from "@shared/provider-attempt-observer"
 import { telemetryService } from "@/services/telemetry"
 import { PLAIN_TEXT_WARNING_EVENT } from "@/services/telemetry/events/event-routes"
 import type { Command, ProviderStartCommand, ProviderTurnPlan } from "../../kernel"
@@ -214,7 +215,8 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
     }
 
     stop(order: HaltOrder): void {
-        this.cancelAll(`provider_${order.reason}`)
+        // Only a user stop is a cancelled send for Usage; terminate and close are owner aborts.
+        this.cancelAll(order.reason === "cancel" ? PROVIDER_USER_CANCEL_REASON : `provider_${order.reason}`)
     }
 
     async drain(_order: HaltOrder): Promise<void> {

@@ -1,86 +1,23 @@
 /**
- * Wire contract of the Dline OTEL service (`otel.dline.cc`): device exchange,
- * acknowledgements and error bodies. The usage body lives in `usageBody.ts`.
+ * Wire contract of the Dline OTEL service (`otel.dline.cc`): acknowledgements
+ * and error bodies. The device grant lives in `deviceGrant.ts` and the usage
+ * body in `usageBody.ts`.
  *
  * Parsers validate only the fields the client acts on and ignore everything
  * else, so a server that adds fields does not break delivery.
  */
 
-const BASE64URL_43_PATTERN = /^[A-Za-z0-9_-]{43}$/
-const CLIENT_FIELD_MAX_LENGTH = 64
-const UNKNOWN_CLIENT_FIELD = "unknown"
-
 export type RemoteProfile = "usage" | "production" | "development"
-const REMOTE_PROFILES: readonly RemoteProfile[] = ["usage", "production", "development"]
-
-export interface DeviceExchangeRequest {
-    readonly device_secret: string
-    readonly requested_profile: RemoteProfile
-    readonly client_version: string
-    readonly platform: string
-}
-
-/** Build an exchange body the server accepts. A malformed secret is a local bug, not a request to send. */
-export function buildDeviceExchangeRequest(input: {
-    readonly deviceSecret: string
-    readonly profile: RemoteProfile
-    readonly clientVersion: string
-    readonly platform: string
-}): DeviceExchangeRequest {
-    if (!BASE64URL_43_PATTERN.test(input.deviceSecret)) {
-        throw new Error("Device secret must be 32 random bytes encoded as base64url")
-    }
-    return {
-        device_secret: input.deviceSecret,
-        requested_profile: input.profile,
-        client_version: boundClientField(input.clientVersion),
-        platform: boundClientField(input.platform),
-    }
-}
-
-function boundClientField(value: string): string {
-    const trimmed = value.trim().slice(0, CLIENT_FIELD_MAX_LENGTH)
-    return trimmed.length > 0 ? trimmed : UNKNOWN_CLIENT_FIELD
-}
-
-/** The part of a device exchange response the client acts on. */
-export interface DeviceGrant {
-    readonly accessToken: string
-    readonly deviceId: string
-    readonly profile: RemoteProfile
-    /** Server epoch milliseconds. */
-    readonly expiresAt: number
-    /** The server's preferred usage cadence, when it sent one. */
-    readonly metricExportIntervalMs?: number
-}
-
-export function parseDeviceGrant(body: unknown): DeviceGrant | undefined {
-    if (!isRecord(body) || body.ok !== true) return undefined
-    const { access_token: accessToken, device_id: deviceId, profile, expires_at: expiresAt } = body
-    if (typeof accessToken !== "string" || !BASE64URL_43_PATTERN.test(accessToken)) return undefined
-    if (typeof deviceId !== "string" || deviceId.length === 0) return undefined
-    if (!REMOTE_PROFILES.includes(profile as RemoteProfile)) return undefined
-    if (!isSafeNonNegativeInteger(expiresAt)) return undefined
-    const interval = isRecord(body.capture_policy) ? body.capture_policy.metric_export_interval_ms : undefined
-    return {
-        accessToken,
-        deviceId,
-        profile: profile as RemoteProfile,
-        expiresAt,
-        ...(isSafeNonNegativeInteger(interval) && interval > 0 ? { metricExportIntervalMs: interval } : {}),
-    }
-}
 
 /**
- * How the service settled a batch it actually stored.
+ * How the service settled a request it confirmed.
  *
- * This is the complete confirmation set: `accepted` stored the batch and
- * `duplicate` recognised the same request ID and bytes as an earlier attempt.
- * Any other disposition — including a version the service chose to ignore — is
- * *not* a confirmation, so the batch is treated as unknown and replayed under
- * the same request ID instead of being dropped as if it had been stored.
+ * `accepted` stored the batch and `duplicate` recognised the same request ID
+ * and bytes as an earlier attempt. `ignored_version` confirms a Usage request
+ * without a business write (usage-contract §15); the logs channel does not
+ * treat it as a confirmation, so there a batch is replayed instead of dropped.
  */
-export type DeliveryDisposition = "accepted" | "duplicate"
+export type DeliveryDisposition = "accepted" | "duplicate" | "ignored_version"
 const DELIVERY_DISPOSITIONS: readonly DeliveryDisposition[] = ["accepted", "duplicate"]
 
 /** A confirmed batch and the earliest time, server epoch milliseconds, the next new batch may follow. */
@@ -97,6 +34,30 @@ export function parseAcknowledgement(body: unknown): DeliveryAcknowledgement | u
     const next = body.next_eligible_at
     return {
         disposition: disposition as DeliveryDisposition,
+        ...(isSafeNonNegativeInteger(next) ? { nextEligibleAt: next } : {}),
+    }
+}
+
+const USAGE_DISPOSITIONS = ["accepted", "duplicate", "ignored_version", "rejected"] as const
+const USAGE_RESPONSE_CODE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/u
+
+/** A `/usage` response body (usage-contract §15): flat, without the `ok` envelope of the other endpoints. */
+export interface UsageResponseBody {
+    readonly disposition: (typeof USAGE_DISPOSITIONS)[number]
+    readonly code?: string
+    /** Server epoch milliseconds. */
+    readonly nextEligibleAt?: number
+}
+
+/** The fields of a `/usage` response the client acts on; an unknown disposition is not a response body. */
+export function parseUsageResponseBody(body: unknown): UsageResponseBody | undefined {
+    if (!isRecord(body)) return undefined
+    const disposition = USAGE_DISPOSITIONS.find((value) => value === body.disposition)
+    if (!disposition) return undefined
+    const { code, next_eligible_at: next } = body
+    return {
+        disposition,
+        ...(typeof code === "string" && USAGE_RESPONSE_CODE_PATTERN.test(code) ? { code } : {}),
         ...(isSafeNonNegativeInteger(next) ? { nextEligibleAt: next } : {}),
     }
 }

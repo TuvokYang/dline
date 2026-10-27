@@ -1,19 +1,17 @@
-import { isPostHogConfigValid, PostHogClientConfig, posthogConfig } from "@/shared/services/config/posthog-config"
 import { ClineError } from "./ClineError"
 import { IErrorProvider } from "./providers/IErrorProvider"
-import { PostHogErrorProvider } from "./providers/PostHogErrorProvider"
 
 /**
- * Supported error provider types
+ * Supported error provider types. Remote error sinks are registered through
+ * TelemetryService; this factory only supplies the local compatibility provider.
  */
-export type ErrorProviderType = "posthog" | "no-op"
+export type ErrorProviderType = "no-op"
 
 /**
  * Configuration for error providers
  */
 export interface ErrorProviderConfig {
     type: ErrorProviderType
-    config: PostHogClientConfig
 }
 
 /**
@@ -26,26 +24,8 @@ export class ErrorProviderFactory {
      * @param config Configuration for the error provider
      * @returns IErrorProvider instance
      */
-    public static async createProvider(config: ErrorProviderConfig): Promise<IErrorProvider> {
-        switch (config.type) {
-            case "posthog": {
-                const { errorTrackingApiKey, host, uiHost, enableErrorAutocapture } = config.config
-                // A destination is as necessary as a key: with no configured
-                // host there is nowhere to report to.
-                if (!isPostHogConfigValid(config.config) || !errorTrackingApiKey || !host) {
-                    return new NoOpErrorProvider()
-                }
-                return await new PostHogErrorProvider({
-                    apiKey: errorTrackingApiKey,
-                    errorTrackingApiKey,
-                    host,
-                    uiHost,
-                    enableExceptionAutocapture: !!enableErrorAutocapture,
-                }).initialize()
-            }
-            default:
-                return new NoOpErrorProvider()
-        }
+    public static async createProvider(_config: ErrorProviderConfig): Promise<IErrorProvider> {
+        return new NoOpErrorProvider()
     }
 
     /**
@@ -53,10 +33,7 @@ export class ErrorProviderFactory {
      * Remote error sinks must be registered explicitly through TelemetryService.
      */
     public static getDefaultConfig(): ErrorProviderConfig {
-        return {
-            type: "no-op",
-            config: posthogConfig,
-        }
+        return { type: "no-op" }
     }
 }
 

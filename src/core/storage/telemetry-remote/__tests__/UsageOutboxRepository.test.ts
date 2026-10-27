@@ -15,6 +15,7 @@ function attemptObservation(id: string, admittedAt: number, durationMs: number, 
         id,
         revision,
         receivedAt: admittedAt + durationMs,
+        localSessionId: "outbox-session",
         observation: {
             attemptObservationId: id,
             logicalRequestId: `logical-${id}`,
@@ -48,15 +49,25 @@ describe("UsageOutboxRepository", () => {
         return new UsageOutboxRepository(layout, { clock: () => now })
     }
 
-    describe("schema 4 attempt authority", () => {
-        it("destructively replaces a legacy outbox and durably folds a settled shard exactly once", async () => {
+    describe("contract 5 attempt authority", () => {
+        it("replaces an earlier contract's outbox with loss evidence and durably folds a settled shard exactly once", async () => {
             const outbox = repository()
             await fs.mkdir(layout.usageInflightDir, { recursive: true })
-            await fs.writeFile(layout.usageOutboxPath, JSON.stringify({ schema_version: 3, generation: 4, state: {} }))
-            await fs.writeFile(path.join(layout.usageInflightDir, `${REQUEST_ID}.bin`), "legacy body")
+            await fs.writeFile(layout.usageOutboxPath, JSON.stringify({ schema_version: 4, generation: 4, state: {} }))
+            await fs.writeFile(path.join(layout.usageInflightDir, `${REQUEST_ID}.bin`), "earlier body")
 
             expect(await outbox.activateAttempts(7)).toBe("activated")
             expect(await fs.readdir(layout.usageInflightDir)).toEqual([])
+            const [evidenceName, ...others] = await fs.readdir(layout.remoteQuarantineDir)
+            expect(others).toEqual([])
+            expect(JSON.parse(await fs.readFile(path.join(layout.remoteQuarantineDir, evidenceName), "utf8"))).toEqual({
+                schema_version: 1,
+                kind: "telemetry_state_discarded",
+                document: "usage-outbox",
+                reason: "older_schema",
+                found_schema_version: 4,
+                recorded_at: now,
+            })
 
             const grant = await outbox.claimAttempts("window-a")
             if (!grant) throw new Error("expected schema 4 lease")
@@ -64,6 +75,7 @@ describe("UsageOutboxRepository", () => {
                 {
                     name: "host-a.1.attempts.sealed.jsonl",
                     observations: [attemptObservation("a", now, 58_400), attemptObservation("b", now + 1, 18_500)],
+                    claims: [],
                 },
             ]
             let nextBucket = 0

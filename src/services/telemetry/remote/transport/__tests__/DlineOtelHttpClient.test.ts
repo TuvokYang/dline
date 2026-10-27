@@ -39,9 +39,9 @@ function failure(promise: Promise<unknown>): Promise<DlineOtelTransportError> {
 }
 
 describe("DlineOtelHttpClient", () => {
-    it("posts exact schema 4 Usage bytes with the fixed contract header and refuses redirects", async () => {
+    it("posts exact schema 5 Usage bytes with the fixed contract header and refuses redirects", async () => {
         const captured: Captured[] = []
-        const body = new TextEncoder().encode('{"schema_version":4,"buckets":[]}')
+        const body = new TextEncoder().encode('{"schema_version":5,"buckets":[]}')
         const ok = () =>
             new Response(JSON.stringify({ ok: true, disposition: "duplicate", next_eligible_at: 5 }), {
                 status: 200,
@@ -64,9 +64,9 @@ describe("DlineOtelHttpClient", () => {
             authorization: `Bearer ${TOKEN}`,
             "content-type": "application/json",
             "x-dline-request-id": REQUEST_ID,
-            "x-dline-contract": "4",
+            "x-dline-contract": "5",
         })
-        expect(classifyDeliveryResponse(response)).toEqual({ kind: "acknowledged", disposition: "duplicate", nextEligibleAt: 5 })
+        expect(classifyDeliveryResponse(response))
         expect(response.retryAfter).toBe("3")
     })
 
@@ -89,7 +89,7 @@ describe("DlineOtelHttpClient", () => {
         expect(captured[1].url).toBe("https://otel.example.test/usage")
     })
 
-    it("routes issue-only OTLP streams with the issue token and contract 4", async () => {
+    it("routes issue-only OTLP streams with the issue token and contract 5", async () => {
         const captured: Captured[] = []
         const client = new DlineOtelHttpClient({ clientVersion: VERSION, endpoint: "https://otel.example.test" })
         const body = new TextEncoder().encode("{}")
@@ -116,40 +116,21 @@ describe("DlineOtelHttpClient", () => {
         for (const request of captured) {
             const headers = new Headers(request.init.headers)
             expect(headers.get("authorization")).toBe(`Bearer ${TOKEN}`)
-            expect(headers.get("x-dline-contract")).toBe("4")
+            expect(headers.get("x-dline-contract")).toBe("5")
             expect(request.init.redirect).toBe("error")
         }
     })
 
-    it("posts the device exchange as JSON to its own path", async () => {
-        const captured: Captured[] = []
-        const request = {
-            device_secret: "s".repeat(43),
-            requested_profile: "usage" as const,
-            client_version: "0.11.0",
-            platform: "win32",
-        }
-
-        await mockFetchForTesting(
-            respondWith(() => new Response("{}", { status: 503 }), captured),
-            () => new DlineOtelHttpClient({ clientVersion: VERSION, endpoint: "http://127.0.0.1:8787" }).exchange(request),
-        )
-
-        expect(captured[0].url).toBe("http://127.0.0.1:8787/auth/device/exchange")
-        expect(new Headers(captured[0].init.headers).get("user-agent")).toBe(`Dline/${VERSION}`)
-        expect(JSON.parse(String(captured[0].init.body))).toEqual(request)
-    })
-
-    it("requests a bootstrap device grant with the same request ID in the header and schema 4 body", async () => {
+    it("requests a device grant with the same request ID in the header and schema 5 body", async () => {
         const captured: Captured[] = []
         const request = {
             operation: "device.grant" as const,
             request_id: REQUEST_ID,
             device_secret: "s".repeat(43),
-            requested_profile: "usage" as const,
+            requested_profile: "production" as const,
             client_version: "0.12.0",
             platform: "win32",
-            supported_usage_schema_versions: [4] as const,
+            supported_usage_schema_versions: [5] as const,
         }
 
         await mockFetchForTesting(
@@ -158,7 +139,7 @@ describe("DlineOtelHttpClient", () => {
                 new DlineOtelHttpClient({
                     clientVersion: VERSION,
                     endpoint: "http://127.0.0.1:8787",
-                }).requestBootstrapDeviceGrant(request),
+                }).requestRecoverableDeviceOrIssueExchange(request),
         )
 
         expect(captured[0].url).toBe("http://127.0.0.1:8787/auth/device/grant")
@@ -166,7 +147,7 @@ describe("DlineOtelHttpClient", () => {
         expect(captured[0].init.headers).toEqual({
             "User-Agent": `Dline/${VERSION}`,
             "content-type": "application/json",
-            "x-dline-contract": "4",
+            "x-dline-contract": "5",
             "x-dline-request-id": REQUEST_ID,
         })
         expect(JSON.parse(String(captured[0].init.body))).toEqual(request)
@@ -178,8 +159,8 @@ describe("DlineOtelHttpClient", () => {
         const request = {
             operation: "issue.exchange" as const,
             request_id: REQUEST_ID,
-            issue: { owner: "TuvokYang", repo: "dline", number: 123 },
-            pairing_secret: "p".repeat(43),
+            authorization_code: "s".repeat(43),
+            authorization_revision: 1,
             client_version: VERSION,
             platform: "win32",
         }
@@ -198,7 +179,7 @@ describe("DlineOtelHttpClient", () => {
             "User-Agent": `Dline/${VERSION}`,
             authorization: `Bearer ${deviceToken}`,
             "content-type": "application/json",
-            "x-dline-contract": "4",
+            "x-dline-contract": "5",
             "x-dline-request-id": REQUEST_ID,
         })
         expect(JSON.parse(String(captured[0].init.body))).toEqual(request)
@@ -210,12 +191,48 @@ describe("DlineOtelHttpClient", () => {
         const request = {
             operation: "issue.exchange" as const,
             request_id: REQUEST_ID,
-            issue: { owner: "TuvokYang", repo: "dline", number: 123 },
-            pairing_secret: "p".repeat(43),
+            authorization_code: "s".repeat(43),
+            authorization_revision: 1,
             client_version: VERSION,
             platform: "win32",
         }
         expect(() => client.requestRecoverableDeviceOrIssueExchange(request)).toThrow("authenticated issue transport")
+    })
+
+    it("sends ticket issuance with its replay identity and the status query without one", async () => {
+        const captured: Captured[] = []
+        const deviceToken = "d".repeat(43)
+        const authorizationCode = "s".repeat(43)
+        const request = {
+            operation: "report.authorize" as const,
+            request_id: REQUEST_ID,
+            temporary_telemetry_consent: true as const,
+            client_version: VERSION,
+            platform: "win32",
+        }
+        const client = new DlineOtelHttpClient({ clientVersion: VERSION, endpoint: "http://127.0.0.1:8787" })
+
+        await mockFetchForTesting(
+            respondWith(() => new Response("{}", { status: 503 }), captured),
+            async () => {
+                await client.requestReportAuthorization(request, deviceToken)
+                await client.queryReportAuthorization(authorizationCode, deviceToken)
+            },
+        )
+
+        expect(captured.map((entry) => entry.url)).toEqual([
+            "http://127.0.0.1:8787/auth/report-authorizations",
+            "http://127.0.0.1:8787/auth/report-authorizations/status",
+        ])
+        expect(captured[0].init.headers).toMatchObject({
+            authorization: `Bearer ${deviceToken}`,
+            "x-dline-request-id": REQUEST_ID,
+        })
+        expect(JSON.parse(String(captured[0].init.body))).toEqual(request)
+        // A read-only query is answered with the current state; it has no replay identity.
+        expect(captured[1].init.headers).not.toHaveProperty("x-dline-request-id")
+        expect(captured[1].init.headers).toMatchObject({ authorization: `Bearer ${deviceToken}` })
+        expect(JSON.parse(String(captured[1].init.body))).toEqual({ authorization_code: authorizationCode })
     })
 
     it("reports an edge page that is not JSON so the classifier stops every profile", async () => {

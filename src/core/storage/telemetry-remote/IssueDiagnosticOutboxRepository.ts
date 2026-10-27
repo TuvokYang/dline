@@ -10,9 +10,11 @@ import {
     type IssueDiagnosticStream,
 } from "@/services/telemetry/remote/diagnostics/issueDiagnosticRecord"
 import { FileLock } from "../backend/jsonl/FileLock"
+import { MAX_DIAGNOSTICS_REQUEST_BYTES } from "./DiagnosticOutboxRepository"
 import type { OtelStorageLayout } from "./OtelStorageLayout"
 
-const SCHEMA_VERSION = 1
+// Version 2 fences the byte budget as a revision total; a version 1 partition is unreadable and starts empty.
+const SCHEMA_VERSION = 2
 const CLAIM_TTL_MS = 60_000
 const RETRY_MS = 30_000
 const MAX_REPLAYS = 12
@@ -37,7 +39,7 @@ interface StoredGrant {
     readonly authorization_revision: number
     readonly expires_at: number
     readonly capture_expires_at: number
-    readonly max_request_bytes: number
+    readonly max_bytes: number
     readonly max_requests: number
     readonly max_records: number
 }
@@ -57,6 +59,7 @@ interface Document {
     readonly items: readonly IssueDiagnosticItem[]
     readonly acknowledged_requests: number
     readonly acknowledged_records: number
+    readonly acknowledged_bytes: number
     readonly inflight?: Inflight
     readonly claim?: { readonly owner: string; readonly until: number }
 }
@@ -66,6 +69,7 @@ const EMPTY: Document = {
     items: [],
     acknowledged_requests: 0,
     acknowledged_records: 0,
+    acknowledged_bytes: 0,
 }
 
 /** Durable issue-only partition. Production diagnostics and Usage never share this file or its fences. */
@@ -82,6 +86,7 @@ export class IssueDiagnosticOutboxRepository {
         await this.mutate((stored) => {
             const current = sameGrant(stored.grant, grant) ? stored : fresh(grant)
             if (grant.expiresAt <= now || grant.captureExpiresAt <= now) return EMPTY
+            if (current.acknowledged_bytes >= grant.rateLimits.maxBytes) return current
             const room = Math.max(
                 0,
                 Math.min(MAX_PENDING, grant.rateLimits.maxRecords - current.acknowledged_records) -
@@ -105,8 +110,10 @@ export class IssueDiagnosticOutboxRepository {
                 if (inflight.not_before > now) return current
             } else {
                 if (items.length === 0) return current
-                inflight = this.buildInflight(items, grant.rateLimits.maxRequestBytes, now)
-                items = removeSelected(items, inflight.items)
+                const next = this.nextWithinBudget(items, grant.rateLimits.maxBytes - current.acknowledged_bytes, now)
+                items = next.items
+                inflight = next.inflight
+                if (!inflight) return { ...current, items }
             }
             claimed = { requestId: inflight.request_id, stream: inflight.stream, body: inflight.body }
             return { ...current, items, inflight, claim: { owner, until: now + CLAIM_TTL_MS } }
@@ -126,6 +133,7 @@ export class IssueDiagnosticOutboxRepository {
                         ...base,
                         acknowledged_requests: base.acknowledged_requests + 1,
                         acknowledged_records: base.acknowledged_records + inflight.items.length,
+                        acknowledged_bytes: base.acknowledged_bytes + Buffer.byteLength(inflight.body, "utf8"),
                     }
                 case "replay": {
                     const attempts = inflight.attempts + 1
@@ -163,6 +171,26 @@ export class IssueDiagnosticOutboxRepository {
     async read(): Promise<Document> {
         const result = await readJsonWithBackup(this.layout.issueDiagnosticsOutboxPath, parseDocument)
         return result.status === "primary" || result.status === "backup" ? result.value : EMPTY
+    }
+
+    /**
+     * Picks the next batch within both the per-request body limit and what is left of the revision's byte
+     * budget. A record larger than the remaining budget can never be accepted under this revision: the
+     * permit would refuse it and seal the capture, so it is dropped instead of sent.
+     */
+    private nextWithinBudget(
+        items: readonly IssueDiagnosticItem[],
+        remainingBytes: number,
+        now: number,
+    ): { readonly inflight?: Inflight; readonly items: readonly IssueDiagnosticItem[] } {
+        if (remainingBytes <= 0) return { items: [] }
+        let queue = items
+        while (queue.length > 0) {
+            const inflight = this.buildInflight(queue, Math.min(MAX_DIAGNOSTICS_REQUEST_BYTES, remainingBytes), now)
+            queue = removeSelected(queue, inflight.items)
+            if (Buffer.byteLength(inflight.body, "utf8") <= remainingBytes) return { inflight, items: queue }
+        }
+        return { items: queue }
     }
 
     private buildInflight(items: readonly IssueDiagnosticItem[], maxBytes: number, now: number): Inflight {
@@ -209,7 +237,7 @@ function storedGrant(grant: AtomicIssueGrant): StoredGrant {
         authorization_revision: grant.authorizationRevision,
         expires_at: grant.expiresAt,
         capture_expires_at: grant.captureExpiresAt,
-        max_request_bytes: grant.rateLimits.maxRequestBytes,
+        max_bytes: grant.rateLimits.maxBytes,
         max_requests: grant.rateLimits.maxRequests,
         max_records: grant.rateLimits.maxRecords,
     }
@@ -222,7 +250,7 @@ function sameGrant(stored: StoredGrant | undefined, grant: AtomicIssueGrant): bo
             stored.authorization_revision === grant.authorizationRevision &&
             stored.expires_at === grant.expiresAt &&
             stored.capture_expires_at === grant.captureExpiresAt &&
-            stored.max_request_bytes === grant.rateLimits.maxRequestBytes &&
+            stored.max_bytes === grant.rateLimits.maxBytes &&
             stored.max_requests === grant.rateLimits.maxRequests &&
             stored.max_records === grant.rateLimits.maxRecords,
     )
@@ -264,6 +292,7 @@ function parseDocument(value: unknown): Document {
         items: value.items.map(parseItem),
         acknowledged_requests: nonNegative(value.acknowledged_requests),
         acknowledged_records: nonNegative(value.acknowledged_records),
+        acknowledged_bytes: nonNegative(value.acknowledged_bytes),
         ...(inflight ? { inflight } : {}),
         ...(claim ? { claim } : {}),
     }
@@ -276,7 +305,7 @@ function parseGrant(value: unknown): StoredGrant {
         authorization_revision: positive(value.authorization_revision),
         expires_at: nonNegative(value.expires_at),
         capture_expires_at: nonNegative(value.capture_expires_at),
-        max_request_bytes: positive(value.max_request_bytes),
+        max_bytes: positive(value.max_bytes),
         max_requests: nonNegative(value.max_requests),
         max_records: nonNegative(value.max_records),
     }

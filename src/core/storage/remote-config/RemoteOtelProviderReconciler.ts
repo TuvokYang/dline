@@ -206,7 +206,8 @@ async function replayLocalJournal(config: OpenTelemetryClientValidConfig, signal
     const cursorRead = await readJsonWithBackup(cursorPath, parseReplayCursor).catch(() => ({ status: "missing" }) as const)
     const cursor: Record<string, number> =
         cursorRead.status === "primary" || cursorRead.status === "backup" ? { ...cursorRead.value } : {}
-    const pending: Array<{ cursorKey: string; next: number; endpoint: string; payload: string }> = []
+    // A line of another channel is passed over, never sent: its cursor still advances.
+    const pending: Array<{ cursorKey: string; next: number; endpoint: string; payload: string | undefined }> = []
     for (const file of files) {
         const kind = file.startsWith("metrics-") ? "metrics" : file.startsWith("traces-") ? "traces" : "usage"
         const endpoint = signalEndpoint(config, kind)
@@ -215,22 +216,60 @@ async function replayLocalJournal(config: OpenTelemetryClientValidConfig, signal
         const lines = (await readFile(join(directory, file), "utf8")).split("\n").filter(Boolean)
         const start = Math.min(cursor[cursorKey] ?? 0, lines.length)
         for (let index = start; index < lines.length && pending.length < MAX_REPLAY_RECORDS; index++) {
-            pending.push({ cursorKey, next: index + 1, endpoint, payload: lines[index] })
+            const payload = organizationMayReceive(lines[index]) ? lines[index] : undefined
+            pending.push({ cursorKey, next: index + 1, endpoint, payload })
         }
         if (pending.length >= MAX_REPLAY_RECORDS) break
     }
     for (const record of pending) {
-        const response = await fetch(record.endpoint, {
-            method: "POST",
-            headers: { "content-type": "application/json", ...(config.otlpHeaders ?? {}) },
-            body: record.payload,
-            signal,
-        })
-        await response.body?.cancel().catch(() => undefined)
-        if (!response.ok) throw new Error(`Collector replay failed with HTTP ${response.status}`)
+        if (record.payload !== undefined) {
+            const response = await fetch(record.endpoint, {
+                method: "POST",
+                headers: { "content-type": "application/json", ...(config.otlpHeaders ?? {}) },
+                body: record.payload,
+                signal,
+            })
+            await response.body?.cancel().catch(() => undefined)
+            if (!response.ok) throw new Error(`Collector replay failed with HTTP ${response.status}`)
+        }
         cursor[record.cursorKey] = record.next
     }
     if (pending.length > 0) await writeJsonAtomic(cursorPath, cursor)
+}
+
+/**
+ * The organization collector is registered for the usage channel only, yet the
+ * journal's usage file also holds error and runtime records, and its metrics
+ * and traces files hold runtime signals. A journal line is replayed only when
+ * every record in it names a channel the registration covers.
+ */
+const ORGANIZATION_REPLAY_CHANNELS: ReadonlySet<string> = new Set(["usage"])
+
+export function organizationMayReceive(payload: string): boolean {
+    let parsed: unknown
+    try {
+        parsed = JSON.parse(payload)
+    } catch {
+        return false
+    }
+    const channels = new Set<string>()
+    collectChannels(parsed, channels)
+    return channels.size > 0 && [...channels].every((channel) => ORGANIZATION_REPLAY_CHANNELS.has(channel))
+}
+
+function collectChannels(value: unknown, into: Set<string>): void {
+    if (Array.isArray(value)) {
+        for (const entry of value) collectChannels(entry, into)
+        return
+    }
+    if (!value || typeof value !== "object") return
+    const record = value as Record<string, unknown>
+    if (record.key === "dline.channel") {
+        const channel = (record.value as { stringValue?: unknown } | undefined)?.stringValue
+        // A channel attribute that is not a string cannot be checked, so the line is not replayed.
+        into.add(typeof channel === "string" ? channel : "")
+    }
+    for (const entry of Object.values(record)) collectChannels(entry, into)
 }
 
 function parseReplayCursor(value: unknown): Record<string, number> {

@@ -45,7 +45,7 @@ The registry carries `usage`, `account`, `error`, `runtime`, and `raw-artifact` 
 
 The default loopback registration declares `account` support. `OpenTelemetryTelemetryProvider.identifyUser()` emits one `account.identified` log for each account transition with `account_id`, `telemetry_channel=account`, and no `distinct_id`, display name, email, organization, or membership. Ordinary OTel events continue to receive device `distinct_id`.
 
-PostHog account identification no longer mutates or aliases the device ID. The current PostHog usage registration and organization-configured OTLP registration do not opt into `account`, so they do not receive the account record.
+Account identification never mutates or aliases the device ID. The organization-configured OTLP registration does not opt into `account`, so it does not receive the account record. Dline has no PostHog registration.
 
 ## Current compatibility gaps
 
@@ -65,13 +65,13 @@ Starting error diagnostics currently ensures an owner-only legacy pairing creden
 
 ## Current remote usage delivery
 
-`otel.dline.cc` currently receives the `usage` profile through `/usage`, and the error and runtime diagnostics of the `production` profile through `/logs`. The usage path is owned as follows:
+`otel.dline.cc` receives the `usage` profile through `/usage`, and the error and runtime diagnostics of the `production` profile through OTLP/JSON `/v1/logs`, `/v1/metrics`, and `/v1/traces`; every request carries `X-Dline-Contract: 5`. Startup deletes state earlier contracts left (`LegacyTelemetryState`) and keeps only metadata loss evidence in the remote quarantine directory. The usage path is owned as follows:
 
 | Layer | Owner | Responsibility |
 |---|---|---|
 | Settlement port | `src/core/task/telemetry/UsageSettlement.ts` | One typed record per settled provider request: purpose, outcome, fresh and cached tokens, duration, stream timing, retries, failure class, and the provider and model that served it, including whether the model is custom |
 | Policy | `remote/policy/usagePolicy.ts`, `RemotePolicyRepository` | Resolves the usage setting (on by default), organization, host level, and server stop into a machine-wide policy epoch, and logs each change of decision |
-| Body | `remote/usage/usageTally.ts`, `usageBatch.ts`, `remote/contracts/usageBody.ts` | Per-request tallies summed per minute and folded into one `schema_version: 2` body with at most eight models and eight providers, the rest summed under `_other`; validated locally before it is stored |
+| Body | `remote/usage/attemptBucket.ts`, `remote/contracts/usageBody.ts`, `remote/contracts/usageBodySchema.ts` | Settled attempts folded into buckets and built into one schema 5 body that is validated against the contract before it is stored |
 | Spool and outbox | `UsageObservationSpool`, `UsageOutboxRepository` | Per-process observation shards; sender lease, delivery gate, pending minutes, and exact-bytes inflight changed under one lock |
 | Delivery | `UsageDeliveryWorker`, `RemoteUsageCoordinator` | Windowing, batching, replay, defer, and stop handling; deletes unsent data when the policy leaves the allowed state |
 | Credentials and transport | `DeviceCredentialRepository`, `DeviceTokenBroker`, `DlineOtelHttpClient` | Owner-only device secret, single-flight token exchange, fixed origin over `@shared/net` |

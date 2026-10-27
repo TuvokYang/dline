@@ -45,8 +45,16 @@ describe("ExchangeOperationRepository", () => {
     }
 
     it("persists one request identity before transport and resumes it across repository instances", async () => {
-        const first = await repository().prepare({ principal: PRINCIPAL, request: request(REQUEST_ID_1) })
-        const resumed = await repository().prepare({ principal: PRINCIPAL, request: request(REQUEST_ID_2) })
+        const first = await repository().prepare({
+            principal: PRINCIPAL,
+            receiptSecret: PRINCIPAL,
+            request: request(REQUEST_ID_1),
+        })
+        const resumed = await repository().prepare({
+            principal: PRINCIPAL,
+            receiptSecret: PRINCIPAL,
+            request: request(REQUEST_ID_2),
+        })
 
         expect(first.intent.requestId).toBe(REQUEST_ID_1)
         expect(resumed).toEqual(first)
@@ -55,26 +63,30 @@ describe("ExchangeOperationRepository", () => {
 
     it("rejects a changed canonical body under the pending operation", async () => {
         const operations = repository()
-        await operations.prepare({ principal: PRINCIPAL, request: request(REQUEST_ID_1) })
+        await operations.prepare({ principal: PRINCIPAL, receiptSecret: PRINCIPAL, request: request(REQUEST_ID_1) })
 
         await expect(
-            operations.prepare({ principal: PRINCIPAL, request: request(REQUEST_ID_2, "0.11.2") }),
+            operations.prepare({ principal: PRINCIPAL, receiptSecret: PRINCIPAL, request: request(REQUEST_ID_2, "0.11.2") }),
         ).rejects.toBeInstanceOf(ExchangeOperationConflictError)
     })
 
     it("fails an expired identity explicitly instead of minting another request", async () => {
         const operations = repository()
-        await operations.prepare({ principal: PRINCIPAL, request: request(REQUEST_ID_1) })
+        await operations.prepare({ principal: PRINCIPAL, receiptSecret: PRINCIPAL, request: request(REQUEST_ID_1) })
         now += EXCHANGE_OPERATION_TTL_MS
 
-        await expect(operations.prepare({ principal: PRINCIPAL, request: request(REQUEST_ID_2) })).rejects.toBeInstanceOf(
-            ExchangeOperationExpiredError,
-        )
+        await expect(
+            operations.prepare({ principal: PRINCIPAL, receiptSecret: PRINCIPAL, request: request(REQUEST_ID_2) }),
+        ).rejects.toBeInstanceOf(ExchangeOperationExpiredError)
     })
 
     it("stores only an authenticated-encrypted receipt and recovers the exact response", async () => {
         const operations = repository()
-        const prepared = await operations.prepare({ principal: PRINCIPAL, request: request(REQUEST_ID_1) })
+        const prepared = await operations.prepare({
+            principal: PRINCIPAL,
+            receiptSecret: PRINCIPAL,
+            request: request(REQUEST_ID_1),
+        })
         const response = {
             status: 200,
             json: { ok: true, request_id: REQUEST_ID_1, access_token: TOKEN },
@@ -82,7 +94,11 @@ describe("ExchangeOperationRepository", () => {
         }
 
         await operations.storeReceipt(prepared.intent, PRINCIPAL, response)
-        const replay = await repository().prepare({ principal: PRINCIPAL, request: request(REQUEST_ID_2) })
+        const replay = await repository().prepare({
+            principal: PRINCIPAL,
+            receiptSecret: PRINCIPAL,
+            request: request(REQUEST_ID_2),
+        })
         const filePath = path.join(root, "data", "secrets", "otel", "exchange-operations.json")
         const raw = await fs.readFile(filePath, "utf8")
 
@@ -95,11 +111,15 @@ describe("ExchangeOperationRepository", () => {
 
     it("removes a completed operation only after publication", async () => {
         const operations = repository()
-        const prepared = await operations.prepare({ principal: PRINCIPAL, request: request(REQUEST_ID_1) })
+        const prepared = await operations.prepare({
+            principal: PRINCIPAL,
+            receiptSecret: PRINCIPAL,
+            request: request(REQUEST_ID_1),
+        })
         await operations.storeReceipt(prepared.intent, PRINCIPAL, { status: 200, json: { ok: true }, retryAfter: null })
 
         await operations.complete(PRINCIPAL, "device.grant", prepared.intent.requestId)
-        const next = await operations.prepare({ principal: PRINCIPAL, request: request(REQUEST_ID_2) })
+        const next = await operations.prepare({ principal: PRINCIPAL, receiptSecret: PRINCIPAL, request: request(REQUEST_ID_2) })
 
         expect(next.intent.requestId).toBe(REQUEST_ID_2)
         expect(next.response).toBeUndefined()

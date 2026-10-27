@@ -1,9 +1,5 @@
 import path from "node:path"
 import type { TelemetrySetting } from "@shared/TelemetrySetting"
-import {
-    type RuntimeTelemetryAuthorizationStatus,
-    TelemetryAuthorizationStore,
-} from "@/core/storage/secrets/TelemetryAuthorizationStore"
 import { isTelemetryDevelopmentMode } from "../development-mode"
 import { RuntimeEventRecorder } from "../events/runtime"
 import { recordRuntimeGauge } from "../service/pipeline-port"
@@ -119,7 +115,6 @@ export class RuntimeTelemetryLifecycle {
 
     private readonly options: RuntimeTelemetryLifecycleOptions
     private readonly bus: RuntimeEventBus
-    private readonly authorization: TelemetryAuthorizationStore
 
     private readonly policy: ThresholdPolicy
 
@@ -139,7 +134,6 @@ export class RuntimeTelemetryLifecycle {
     constructor(options: RuntimeTelemetryLifecycleOptions) {
         this.options = options
         this.bus = options.bus ?? new RuntimeEventBus({ sessionId: options.sessionId, capacity: options.capacity })
-        this.authorization = new TelemetryAuthorizationStore({ dataDir: options.dataDir })
         this.diagnostics = new DevRuntimeDiagnostics(this.bus, {
             enabled: () => this.enabled && isTelemetryDevelopmentMode(),
             activeTaskIds: options.activeTaskIds,
@@ -201,22 +195,7 @@ export class RuntimeTelemetryLifecycle {
             }
             return
         }
-        await this.stop({ revokePairingCode: setting === "disabled" })
-    }
-
-    /** Public projection of the pairing credential; never contains the code. */
-    getStatus(): RuntimeTelemetryAuthorizationStatus {
-        return this.authorization.getStatus()
-    }
-
-    /**
-     * Hand the pairing code to a future remote transport exactly once.
-     *
-     * The local OTLP transport never calls this: a loopback collector needs no
-     * credential, and sending one would leak it into local capture files.
-     */
-    consumePairingCodeForRemoteExchange(): string | undefined {
-        return this.authorization.consumePairingCode()
+        await this.stop()
     }
 
     /**
@@ -271,7 +250,7 @@ export class RuntimeTelemetryLifecycle {
         this.disposed = true
         try {
             await this.consentTransition.catch(() => undefined)
-            await this.stop({ revokePairingCode: false })
+            await this.stop()
         } finally {
             this.bus.dispose()
         }
@@ -280,7 +259,6 @@ export class RuntimeTelemetryLifecycle {
     private async start(): Promise<void> {
         if (this.enabled) return
 
-        this.authorization.ensurePairingCode()
         const sessionsDirectory = path.join(this.options.dataDir, "telemetry", "sessions")
 
         // Bound the directory before opening a new journal. The session id is
@@ -431,11 +409,8 @@ export class RuntimeTelemetryLifecycle {
         }
     }
 
-    private async stop(options: { revokePairingCode: boolean }): Promise<void> {
-        if (!this.enabled) {
-            if (options.revokePairingCode) this.authorization.revokePairingCode()
-            return
-        }
+    private async stop(): Promise<void> {
+        if (!this.enabled) return
 
         this.diagnostics.phase("telemetry.stopping", "started")
         // Stop sampling first so no new verdict lands after the final flush.
@@ -470,7 +445,6 @@ export class RuntimeTelemetryLifecycle {
             this.transport = undefined
             this.session.length = 0
             await Promise.allSettled([journal?.dispose(), transport?.dispose()])
-            if (options.revokePairingCode) this.authorization.revokePairingCode()
         }
     }
 }

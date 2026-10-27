@@ -1,6 +1,4 @@
 import { fetch } from "@shared/net"
-import type { BootstrapDeviceGrantRequest, DeviceGrantTransport } from "../auth/DeviceGrantPort"
-import type { DeviceExchangeTransport } from "../auth/DeviceTokenBroker"
 import type { WireResponse } from "../contracts/classification"
 import type {
     ExchangeOperationRequest,
@@ -8,17 +6,21 @@ import type {
     IssueExchangeTransport,
     RecoverableExchangeTransport,
 } from "../contracts/exchangeOperation"
-import type { DeviceExchangeRequest } from "../contracts/wire"
+import { DLINE_CONTRACT, type OtlpSignal } from "../contracts/otlpProduction"
+import type { ReportAuthorizationTransport, ReportAuthorizeRequest } from "../contracts/reportAuthorization"
 
 export const DLINE_OTEL_ENDPOINT = "https://otel.dline.cc"
 /** Bound for one request, connection to last byte; the sender lease outlives it several times over. */
 export const DLINE_OTEL_REQUEST_TIMEOUT_MS = 15_000
 /** Responses of the service are a few hundred bytes; anything larger is not the service and is not parsed. */
 const MAX_RESPONSE_BYTES = 16 * 1024
-const DEVICE_EXCHANGE_PATH = "/auth/device/exchange"
-const BOOTSTRAP_DEVICE_GRANT_PATH = "/auth/device/grant"
+/** The only device-credential issuer (telemetry-exchange-flow §4). */
+const DEVICE_GRANT_PATH = "/auth/device/grant"
 const ISSUE_EXCHANGE_PATH = "/auth/exchange"
-const BOOTSTRAP_DEVICE_GRANT_CONTRACT = "4"
+/** Report Authorization ticket issuance and its read-only status query (telemetry-exchange-flow §5.2, §5.4). */
+const REPORT_AUTHORIZATION_PATH = "/auth/report-authorizations"
+const REPORT_AUTHORIZATION_STATUS_PATH = "/auth/report-authorizations/status"
+const DEVICE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/
 /** Dline's own protocol paths carry no `/v1`: that segment belongs to OTLP alone. */
 const USAGE_PATH = "/usage"
 /**
@@ -29,23 +31,18 @@ const USAGE_PATH = "/usage"
  * not implement the unprefixed spelling, while Dline's own `/usage` and
  * `/auth/*` take no prefix at all.
  */
-const LOGS_PATH = "/v1/logs"
-const ISSUE_DIAGNOSTIC_PATHS = {
-    logs: LOGS_PATH,
+const OTLP_PATHS: Readonly<Record<OtlpSignal, string>> = {
+    logs: "/v1/logs",
     metrics: "/v1/metrics",
     traces: "/v1/traces",
-} as const
+}
 /**
- * The telemetry contract version every telemetry request names in
- * `X-Dline-Contract`.
- *
- * There is one value for the whole client surface. A per-endpoint version would
- * mean two contracts shipped as one, and a reader could no longer answer "which
- * contract did this device speak" from a single header.
+ * Every request names one `X-Dline-Contract` (TADR §2.4, exchange flow §8): `/usage`,
+ * `/auth/*` and OTLP alike. It derives from the Usage schema, so the header and
+ * `schema_version` never disagree; the service ignores a retired value on `/usage`
+ * and OTLP and refuses it with 400 on `/auth/*`.
  */
-const DLINE_DIAGNOSTIC_CONTRACT = "3"
-const DLINE_USAGE_CONTRACT = "4"
-const DLINE_ISSUE_DIAGNOSTIC_CONTRACT = "4"
+const CONTRACT = DLINE_CONTRACT
 
 export type DlineOtelTransportFailure = "timeout" | "aborted" | "network"
 
@@ -81,8 +78,13 @@ export interface DiagnosticLogsTransport {
     sendLogs(delivery: DiagnosticDelivery, signal?: AbortSignal): Promise<WireResponse>
 }
 
+/** Sends one production OTLP/HTTP JSON request of one signal with the production token (TADR §2.4). */
+export interface OtlpTransport {
+    sendOtlp(stream: OtlpSignal, delivery: DiagnosticDelivery, signal?: AbortSignal): Promise<WireResponse>
+}
+
 export interface IssueDiagnosticDelivery extends DiagnosticDelivery {
-    readonly stream: keyof typeof ISSUE_DIAGNOSTIC_PATHS
+    readonly stream: OtlpSignal
 }
 
 export interface IssueDiagnosticTransport {
@@ -112,12 +114,12 @@ export interface DlineOtelHttpClientOptions {
  */
 export class DlineOtelHttpClient
     implements
-        DeviceExchangeTransport,
-        DeviceGrantTransport,
         RecoverableExchangeTransport,
         IssueExchangeTransport,
+        ReportAuthorizationTransport,
         UsageTransport,
         DiagnosticLogsTransport,
+        OtlpTransport,
         IssueDiagnosticTransport
 {
     private readonly endpoint: URL
@@ -135,14 +137,6 @@ export class DlineOtelHttpClient
         return this.endpoint.origin
     }
 
-    exchange(request: DeviceExchangeRequest, signal?: AbortSignal): Promise<WireResponse> {
-        return this.post(DEVICE_EXCHANGE_PATH, { "content-type": "application/json" }, JSON.stringify(request), signal)
-    }
-
-    requestBootstrapDeviceGrant(request: BootstrapDeviceGrantRequest, signal?: AbortSignal): Promise<WireResponse> {
-        return this.requestRecoverableDeviceOrIssueExchange(request, signal)
-    }
-
     requestRecoverableDeviceOrIssueExchange(
         request: ExchangeOperationRequest & object,
         signal?: AbortSignal,
@@ -151,10 +145,10 @@ export class DlineOtelHttpClient
             throw new Error("Issue exchange requires the authenticated issue transport")
         }
         return this.post(
-            BOOTSTRAP_DEVICE_GRANT_PATH,
+            DEVICE_GRANT_PATH,
             {
                 "content-type": "application/json",
-                "x-dline-contract": BOOTSTRAP_DEVICE_GRANT_CONTRACT,
+                "x-dline-contract": CONTRACT,
                 "x-dline-request-id": request.request_id,
             },
             JSON.stringify(request),
@@ -167,35 +161,51 @@ export class DlineOtelHttpClient
         deviceAccessToken: string,
         signal?: AbortSignal,
     ): Promise<WireResponse> {
-        if (!/^[A-Za-z0-9_-]{43}$/.test(deviceAccessToken)) throw new Error("Issue exchange requires a valid device token")
         return this.post(
             ISSUE_EXCHANGE_PATH,
-            {
-                authorization: `Bearer ${deviceAccessToken}`,
-                "content-type": "application/json",
-                "x-dline-contract": BOOTSTRAP_DEVICE_GRANT_CONTRACT,
-                "x-dline-request-id": request.request_id,
-            },
+            { ...authenticatedExchangeHeaders(deviceAccessToken), "x-dline-request-id": request.request_id },
             JSON.stringify(request),
             signal,
         )
     }
 
+    requestReportAuthorization(
+        request: ReportAuthorizeRequest,
+        deviceAccessToken: string,
+        signal?: AbortSignal,
+    ): Promise<WireResponse> {
+        return this.post(
+            REPORT_AUTHORIZATION_PATH,
+            { ...authenticatedExchangeHeaders(deviceAccessToken), "x-dline-request-id": request.request_id },
+            JSON.stringify(request),
+            signal,
+        )
+    }
+
+    /** Read-only, so it carries no request ID: repeating it returns the current state. */
+    queryReportAuthorization(authorizationCode: string, deviceAccessToken: string, signal?: AbortSignal): Promise<WireResponse> {
+        return this.post(
+            REPORT_AUTHORIZATION_STATUS_PATH,
+            authenticatedExchangeHeaders(deviceAccessToken),
+            JSON.stringify({ authorization_code: authorizationCode }),
+            signal,
+        )
+    }
+
     sendUsage(delivery: UsageDelivery, signal?: AbortSignal): Promise<WireResponse> {
-        return this.post(USAGE_PATH, deliveryHeaders(delivery, DLINE_USAGE_CONTRACT), delivery.body, signal)
+        return this.post(USAGE_PATH, deliveryHeaders(delivery, CONTRACT), delivery.body, signal)
     }
 
     sendLogs(delivery: DiagnosticDelivery, signal?: AbortSignal): Promise<WireResponse> {
-        return this.post(LOGS_PATH, deliveryHeaders(delivery, DLINE_DIAGNOSTIC_CONTRACT), delivery.body, signal)
+        return this.sendOtlp("logs", delivery, signal)
+    }
+
+    sendOtlp(stream: OtlpSignal, delivery: DiagnosticDelivery, signal?: AbortSignal): Promise<WireResponse> {
+        return this.post(OTLP_PATHS[stream], deliveryHeaders(delivery, CONTRACT), delivery.body, signal)
     }
 
     sendIssueDiagnostics(delivery: IssueDiagnosticDelivery, signal?: AbortSignal): Promise<WireResponse> {
-        return this.post(
-            ISSUE_DIAGNOSTIC_PATHS[delivery.stream],
-            deliveryHeaders(delivery, DLINE_ISSUE_DIAGNOSTIC_CONTRACT),
-            delivery.body,
-            signal,
-        )
+        return this.post(OTLP_PATHS[delivery.stream], deliveryHeaders(delivery, CONTRACT), delivery.body, signal)
     }
 
     private async post(
@@ -232,6 +242,16 @@ export class DlineOtelHttpClient
             clearTimeout(timer)
             signal?.removeEventListener("abort", forwardAbort)
         }
+    }
+}
+
+/** Headers of the `/auth/*` requests that a production device token authenticates. */
+function authenticatedExchangeHeaders(deviceAccessToken: string): Record<string, string> {
+    if (!DEVICE_TOKEN_PATTERN.test(deviceAccessToken)) throw new Error("Report authorization requires a valid device token")
+    return {
+        authorization: `Bearer ${deviceAccessToken}`,
+        "content-type": "application/json",
+        "x-dline-contract": CONTRACT,
     }
 }
 

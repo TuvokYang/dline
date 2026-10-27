@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto"
 import type { JournalTelemetrySignal, TelemetrySpanHandle, TelemetrySpanStartOptions } from "../../providers/capabilities"
+import { nanos, OTLP_SCHEMA_URL, OTLP_SCOPE_VERSION } from "../contracts/otlpProduction"
 import type { DiagnosticResource } from "./diagnosticRecord"
-import { toDiagnosticRecord } from "./diagnosticRecord"
+import { diagnosticOtlpResource, toDiagnosticRecord } from "./diagnosticRecord"
 
 export type IssueDiagnosticStream = "logs" | "metrics" | "traces"
 export type IssueDiagnosticAttributeValue = string | number | boolean
@@ -48,6 +49,8 @@ const MAX_EVENTS = 32
 const TRACE_ID = /^[0-9a-f]{32}$/
 const SPAN_ID = /^[0-9a-f]{16}$/
 const SEVERITY_NUMBER = { debug: 5, info: 9 } as const
+/** The issue overlay's own scope; ids, times, status and the Resource follow the production encoding (TADR §2.4). */
+const ISSUE_SCOPE = { name: "dline.issue-overlay", version: OTLP_SCOPE_VERSION }
 
 /**
  * Build one issue-only item from the canonical journal.
@@ -150,13 +153,8 @@ export function encodeIssueDiagnosticBatch(items: readonly IssueDiagnosticItem[]
     if (items.some((item) => item.stream !== stream)) throw new Error("Issue diagnostic batch mixes OTLP streams")
     const resourceValue = {
         attributes: [
-            stringAttribute("service.name", "dline"),
-            stringAttribute("service.version", resource.clientVersion),
-            stringAttribute("os.type", resource.platform),
+            ...diagnosticOtlpResource(resource, 0).attributes.filter((attribute) => attribute.key !== "dline.dropped_records"),
             stringAttribute("dline.capture_scope", "issue"),
-            ...(resource.releaseChannel ? [stringAttribute("dline.release_channel", resource.releaseChannel)] : []),
-            ...(resource.hostEditor ? [stringAttribute("dline.host_editor", resource.hostEditor)] : []),
-            ...(resource.isDev ? [{ key: "dline.is_dev", value: { boolValue: true } }] : []),
         ],
     }
     if (stream === "logs") {
@@ -167,15 +165,18 @@ export function encodeIssueDiagnosticBatch(items: readonly IssueDiagnosticItem[]
                     resource: resourceValue,
                     scopeLogs: [
                         {
-                            scope: { name: "dline.issue-overlay" },
+                            scope: ISSUE_SCOPE,
                             logRecords: logs.map((item) => ({
                                 timeUnixNano: nanos(item.observedAt),
                                 severityNumber: SEVERITY_NUMBER[item.severity],
+                                eventName: item.name,
                                 body: { stringValue: item.name },
                                 attributes: Object.entries(item.attributes).map(([key, value]) => anyAttribute(key, value)),
                             })),
+                            schemaUrl: OTLP_SCHEMA_URL,
                         },
                     ],
+                    schemaUrl: OTLP_SCHEMA_URL,
                 },
             ],
         })
@@ -188,10 +189,12 @@ export function encodeIssueDiagnosticBatch(items: readonly IssueDiagnosticItem[]
                     resource: resourceValue,
                     scopeMetrics: [
                         {
-                            scope: { name: "dline.issue-overlay" },
+                            scope: ISSUE_SCOPE,
                             metrics: metrics.map((item) => metricOf(item)),
+                            schemaUrl: OTLP_SCHEMA_URL,
                         },
                     ],
+                    schemaUrl: OTLP_SCHEMA_URL,
                 },
             ],
         })
@@ -203,13 +206,12 @@ export function encodeIssueDiagnosticBatch(items: readonly IssueDiagnosticItem[]
                 resource: resourceValue,
                 scopeSpans: [
                     {
-                        scope: { name: "dline.issue-overlay" },
+                        scope: ISSUE_SCOPE,
+                        // OTLP/JSON carries trace and span ids as lowercase hex, as the production traces do.
                         spans: traces.map((item) => ({
-                            traceId: bytesValue(item.traceId),
-                            spanId: bytesValue(item.spanId),
-                            ...(item.parentSpanId && SPAN_ID.test(item.parentSpanId)
-                                ? { parentSpanId: bytesValue(item.parentSpanId) }
-                                : {}),
+                            traceId: item.traceId,
+                            spanId: item.spanId,
+                            ...(item.parentSpanId && SPAN_ID.test(item.parentSpanId) ? { parentSpanId: item.parentSpanId } : {}),
                             name: item.name,
                             kind: 1,
                             startTimeUnixNano: nanos(item.startAt),
@@ -220,10 +222,13 @@ export function encodeIssueDiagnosticBatch(items: readonly IssueDiagnosticItem[]
                                 name: event.name,
                                 attributes: Object.entries(event.attributes).map(([key, value]) => anyAttribute(key, value)),
                             })),
-                            status: { code: item.outcome === "success" ? 1 : 2 },
+                            // Success and cancellation stay UNSET; only a failure is ERROR (TADR §5.2).
+                            status: { code: item.outcome === "failure" ? 2 : 0 },
                         })),
+                        schemaUrl: OTLP_SCHEMA_URL,
                     },
                 ],
+                schemaUrl: OTLP_SCHEMA_URL,
             },
         ],
     })
@@ -275,14 +280,6 @@ function isIdentityKey(key: string): boolean {
 
 function spanContextOf(handle: TelemetrySpanHandle | undefined) {
     return handle?.spanContext
-}
-
-function nanos(milliseconds: number): string {
-    return `${Math.max(0, Math.trunc(milliseconds))}000000`
-}
-
-function bytesValue(hex: string): string {
-    return Buffer.from(hex, "hex").toString("base64")
 }
 
 function stringAttribute(key: string, value: string) {

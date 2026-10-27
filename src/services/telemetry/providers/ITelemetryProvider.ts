@@ -1,6 +1,6 @@
 /**
  * Interface for telemetry providers
- * Allows switching between different analytics providers (PostHog, etc.)
+ * Allows switching between different analytics providers
  */
 
 import type { ClineAccountUserInfo } from "../../auth/AuthService"

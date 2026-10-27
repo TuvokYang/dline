@@ -403,8 +403,9 @@ export class VsCodeLmHandler extends ApiHandler implements SingleCompletionHandl
             // Note: Tool support is currently provided by the VSCode Language Model API directly
             // Extensions can register tools using vscode.lm.registerTool()
 
+            // The Language Model API sends no thinking parameter; the chat model ID is the sent model.
             const { stream } = await ApiHandler.observeProviderStreamResponse(
-                undefined,
+                ApiHandler.identifyProviderAttempt("vscode-lm", { model: client.id }),
                 () => client.sendRequest(vsCodeLmMessages, requestOptions, requestCancellation.token),
                 (response) => response.stream,
             )
@@ -580,7 +581,7 @@ export class VsCodeLmHandler extends ApiHandler implements SingleCompletionHandl
             const client = await this.getClient()
             const requestCancellation = new vscode.CancellationTokenSource()
             const { stream } = await ApiHandler.observeProviderStreamResponse(
-                undefined,
+                ApiHandler.identifyProviderAttempt("vscode-lm", { model: client.id }),
                 () => client.sendRequest([vscode.LanguageModelChatMessage.User(prompt)], {}, requestCancellation.token),
                 (response) => response.stream,
             )

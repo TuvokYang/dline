@@ -1,4 +1,12 @@
-import { USAGE_HISTOGRAM_BOUNDS_MS } from "../contracts/usageBody"
+import { isUsageModelId } from "../contracts/modelIdentity"
+import { isUsageThinking } from "../contracts/thinking"
+import {
+    histogramBucket,
+    USAGE_DURATION_BUCKET_THRESHOLD_MS,
+    USAGE_EVENT_WINDOW_MS,
+    USAGE_HARD_LIMITS,
+    USAGE_HISTOGRAM_BUCKETS,
+} from "../contracts/usageBodySchema"
 import {
     type ExecutionSummary,
     foldToolsToBound,
@@ -14,9 +22,11 @@ import type {
     UsageLogicalExecutionObservation,
 } from "./attemptProjection"
 
-export const ATTEMPT_BUCKET_DURATION_THRESHOLD_MS = 60_000
-export const ATTEMPT_BUCKET_MAX_FACTS = 32
-export const ATTEMPT_EVENT_WINDOW_MS = 600_000
+export const ATTEMPT_BUCKET_DURATION_THRESHOLD_MS = USAGE_DURATION_BUCKET_THRESHOLD_MS
+export const ATTEMPT_BUCKET_MAX_FACTS = USAGE_HARD_LIMITS.maxFacts
+export const ATTEMPT_EVENT_WINDOW_MS = USAGE_EVENT_WINDOW_MS
+/** Failure-class catalog token: built-in classes and versioned extensions share it (usage-contract §5). */
+const FAILURE_CLASS_PATTERN = /^[a-z][a-z0-9_.-]{0,31}$/u
 /** A low-frequency bucket is durably sealed even when no later attempt arrives. */
 export const ATTEMPT_BUCKET_MAX_OPEN_AGE_MS = ATTEMPT_EVENT_WINDOW_MS
 
@@ -45,10 +55,34 @@ export interface AttemptFactAggregate {
     readonly requests: AttemptOutcomeCounts
     readonly tokens: UsageAttemptTokens
     readonly tokenCoverage: AttemptCoverage
+    /** Attempts that carried a generation pair; the timing and output below cover exactly them. */
+    readonly generationCoverage: AttemptCoverage
     readonly generationOutputTokens: number
     readonly duration: AttemptDistribution
+    readonly ttft?: AttemptDistribution
+    readonly generation?: AttemptDistribution
+    /** One count per failed attempt, by failure class; it sums to `requests.failed`. */
     readonly errors: Readonly<Record<string, number>>
     readonly logicalExecution?: UsageLogicalExecutionObservation
+    /**
+     * Result-producing logical requests of this fact: `reported` carry their
+     * execution in `logicalExecution`, `unreported` had not settled when the
+     * bucket sealed (usage-client-lifecycle §9).
+     */
+    readonly logicalExecutionCoverage: AttemptCoverage
+}
+
+/** The latest attempt of a logical request inside an open bucket, waiting for its execution claim. */
+export interface LogicalCandidate {
+    readonly attemptObservationId: string
+    readonly factIndex: number
+}
+
+/** A logical execution that settled after its result-producing attempt was already final. */
+export interface LogicalExecutionClaim {
+    readonly logicalRequestId: string
+    readonly attemptObservationId: string
+    readonly execution: UsageLogicalExecutionObservation
 }
 
 export interface AttemptBucket {
@@ -62,6 +96,8 @@ export interface AttemptBucket {
     readonly durationMs: number
     readonly sessionsStarted: number
     readonly facts: readonly AttemptFactAggregate[]
+    /** Open buckets only: unclaimed logical requests by ID; sealing counts them as unreported. */
+    readonly logicalCandidates?: Readonly<Record<string, LogicalCandidate>>
 }
 
 export interface AttemptBucketState {
@@ -75,6 +111,16 @@ export interface AppendAttemptOptions {
     readonly durationThresholdMs?: number
     readonly maxFacts?: number
     readonly eventWindowMs?: number
+    /** This observation is its local session's first: the receiving bucket counts that session once. */
+    readonly startsSession?: boolean
+    /** The logical request already claimed coverage: this attempt neither claims nor waits for a claim. */
+    readonly logicalClaimed?: boolean
+    /**
+     * Whether a bucket, once sealed, still fits one request under the effective
+     * grant. An append that would break it seals the open bucket first, so no
+     * sealed bucket is unsendable for capacity (usage-client-interface §9).
+     */
+    readonly fits?: (sealed: AttemptBucket) => boolean
 }
 
 export function emptyAttemptBucketState(): AttemptBucketState {
@@ -124,8 +170,11 @@ export function appendAttemptToBucketsWithTarget(
         open = undefined
     }
 
-    const current = open ?? createBucket(options.newBucketId(), observation, eventWindowMs)
-    const appended = appendToBucket(current, observation)
+    let appended = appendToBucket(open ?? createBucket(options.newBucketId(), observation, eventWindowMs), observation, options)
+    if (open && options.fits && !options.fits(seal(appended, Math.max(options.sealedAt(), appended.lastAttemptAt)))) {
+        sealed.push(seal(open, options.sealedAt()))
+        appended = appendToBucket(createBucket(options.newBucketId(), observation, eventWindowMs), observation, options)
+    }
     if (appended.durationMs >= threshold) {
         sealed.push(seal(appended, options.sealedAt()))
         return { state: { sealed }, bucketId: appended.bucketId }
@@ -169,20 +218,86 @@ function createBucket(bucketId: string, observation: UsageAttemptObservation, ev
     }
 }
 
-function appendToBucket(bucket: AttemptBucket, observation: UsageAttemptObservation): AttemptBucket {
+export interface ClaimedLogicalExecution {
+    readonly state: AttemptBucketState
+    /** The open bucket that received the execution; absent when the request stays unreported. */
+    readonly bucketId?: string
+}
+
+/**
+ * Attach a logical execution that settled after its attempt was final. Only the
+ * open bucket still waiting for that exact attempt accepts it; a sealed bucket
+ * already counted the request as unreported, so a late claim changes nothing.
+ */
+export function claimLogicalExecution(state: AttemptBucketState, claim: LogicalExecutionClaim): ClaimedLogicalExecution {
+    validateLogicalExecutionClaim(claim)
+    const open = state.open
+    const candidate = open?.logicalCandidates?.[claim.logicalRequestId]
+    if (!open || !candidate || candidate.attemptObservationId !== claim.attemptObservationId) return { state }
+    const facts = [...open.facts]
+    const fact = facts[candidate.factIndex]
+    facts[candidate.factIndex] = {
+        ...fact,
+        logicalExecution: mergeLogicalExecution(fact.logicalExecution, claim.execution),
+        logicalExecutionCoverage: {
+            ...fact.logicalExecutionCoverage,
+            reported: checkedAdd(fact.logicalExecutionCoverage.reported, 1, "logical coverage"),
+        },
+    }
+    const { [claim.logicalRequestId]: _claimed, ...waiting } = open.logicalCandidates ?? {}
+    return { state: { ...state, open: withCandidates({ ...open, facts }, waiting) }, bucketId: open.bucketId }
+}
+
+function appendToBucket(
+    bucket: AttemptBucket,
+    observation: UsageAttemptObservation,
+    options: AppendAttemptOptions,
+): AttemptBucket {
     const key = identityKey(observation.identity)
     const index = bucket.facts.findIndex((fact) => identityKey(fact.identity) === key)
+    const claimsNow = observation.logicalExecution !== undefined && options.logicalClaimed !== true
+    const attempt = claimsNow ? observation : withoutLogicalExecution(observation)
     const facts = [...bucket.facts]
-    if (index < 0) facts.push(createFact(observation))
-    else facts[index] = appendToFact(facts[index], observation)
-    return {
-        ...bucket,
-        firstAttemptAt: Math.min(bucket.firstAttemptAt, observation.admittedAt),
-        lastAttemptAt: Math.max(bucket.lastAttemptAt, observation.admittedAt),
-        durationMs: checkedAdd(bucket.durationMs, observation.durationMs, "bucket duration"),
-        sessionsStarted: checkedAdd(bucket.sessionsStarted, observation.sessionsStarted ?? 0, "sessions started"),
-        facts,
-    }
+    const factIndex = index < 0 ? facts.length : index
+    if (index < 0) facts.push(createFact(attempt))
+    else facts[index] = appendToFact(facts[index], attempt)
+    // A later attempt of the same logical request supersedes an earlier one: early retries never count.
+    const { [observation.logicalRequestId]: _superseded, ...waiting } = bucket.logicalCandidates ?? {}
+    const candidates =
+        claimsNow || options.logicalClaimed === true
+            ? waiting
+            : {
+                  ...waiting,
+                  [observation.logicalRequestId]: { attemptObservationId: observation.attemptObservationId, factIndex },
+              }
+    return withCandidates(
+        {
+            ...bucket,
+            firstAttemptAt: Math.min(bucket.firstAttemptAt, observation.admittedAt),
+            lastAttemptAt: Math.max(bucket.lastAttemptAt, observation.admittedAt),
+            durationMs: checkedAdd(bucket.durationMs, observation.durationMs, "bucket duration"),
+            sessionsStarted: checkedAdd(bucket.sessionsStarted, options.startsSession === true ? 1 : 0, "sessions started"),
+            facts,
+        },
+        candidates,
+    )
+}
+
+function withCandidates(bucket: AttemptBucket, candidates: Readonly<Record<string, LogicalCandidate>>): AttemptBucket {
+    const { logicalCandidates: _previous, ...rest } = bucket
+    return Object.keys(candidates).length > 0 ? { ...rest, logicalCandidates: candidates } : rest
+}
+
+function withoutLogicalExecution(observation: UsageAttemptObservation): UsageAttemptObservation {
+    const { logicalExecution: _execution, ...rest } = observation
+    return rest
+}
+
+const NO_SAMPLES: Pick<AttemptFactAggregate, "tokenCoverage" | "generationCoverage" | "generationOutputTokens" | "errors"> = {
+    tokenCoverage: { reported: 0, unreported: 0 },
+    generationCoverage: { reported: 0, unreported: 0 },
+    generationOutputTokens: 0,
+    errors: {},
 }
 
 function createFact(observation: UsageAttemptObservation): AttemptFactAggregate {
@@ -190,31 +305,71 @@ function createFact(observation: UsageAttemptObservation): AttemptFactAggregate 
         identity: observation.identity,
         requests: incrementOutcome(emptyOutcomes(), observation.outcome),
         tokens: observation.tokenUsageReported ? observation.tokens : emptyTokens(),
-        tokenCoverage: observation.tokenUsageReported ? { reported: 1, unreported: 0 } : { reported: 0, unreported: 1 },
-        generationOutputTokens: observation.generationOutputTokens ?? 0,
+        ...observeAttemptSamples(NO_SAMPLES, observation),
         duration: observeDistribution(undefined, observation.durationMs),
-        errors: {},
+        ...(observation.ttftMs !== undefined ? { ttft: observeDistribution(undefined, observation.ttftMs) } : {}),
+        ...(observation.generationMs !== undefined
+            ? { generation: observeDistribution(undefined, observation.generationMs) }
+            : {}),
         ...(observation.logicalExecution ? { logicalExecution: observation.logicalExecution } : {}),
+        logicalExecutionCoverage: { reported: observation.logicalExecution ? 1 : 0, unreported: 0 },
     }
 }
 
 function appendToFact(fact: AttemptFactAggregate, observation: UsageAttemptObservation): AttemptFactAggregate {
+    const logicalExecution = mergeLogicalExecution(fact.logicalExecution, observation.logicalExecution)
+    const ttft = observeOptionalDistribution(fact.ttft, observation.ttftMs)
+    const generation = observeOptionalDistribution(fact.generation, observation.generationMs)
     return {
         ...fact,
         requests: incrementOutcome(fact.requests, observation.outcome),
         tokens: observation.tokenUsageReported ? addTokens(fact.tokens, observation.tokens) : fact.tokens,
-        tokenCoverage: {
-            reported: fact.tokenCoverage.reported + (observation.tokenUsageReported ? 1 : 0),
-            unreported: fact.tokenCoverage.unreported + (observation.tokenUsageReported ? 0 : 1),
+        ...observeAttemptSamples(fact, observation),
+        duration: observeDistribution(fact.duration, observation.durationMs),
+        ...(ttft ? { ttft } : {}),
+        ...(generation ? { generation } : {}),
+        ...(logicalExecution ? { logicalExecution } : {}),
+        logicalExecutionCoverage: {
+            ...fact.logicalExecutionCoverage,
+            reported: checkedAdd(
+                fact.logicalExecutionCoverage.reported,
+                observation.logicalExecution ? 1 : 0,
+                "logical coverage",
+            ),
         },
+    }
+}
+
+/**
+ * Coverage, generation output and error counters of one more attempt. A
+ * validated observation carries its generation pair only with reported tokens,
+ * and a failure class exactly when it failed.
+ */
+function observeAttemptSamples(
+    fact: Pick<AttemptFactAggregate, "tokenCoverage" | "generationCoverage" | "generationOutputTokens" | "errors">,
+    observation: UsageAttemptObservation,
+): Pick<AttemptFactAggregate, "tokenCoverage" | "generationCoverage" | "generationOutputTokens" | "errors"> {
+    const generated = observation.generationMs !== undefined
+    const failureClass = observation.failureClass
+    return {
+        tokenCoverage: observeCoverage(fact.tokenCoverage, observation.tokenUsageReported, "token coverage"),
+        generationCoverage: observeCoverage(fact.generationCoverage, generated, "generation coverage"),
         generationOutputTokens: checkedAdd(
             fact.generationOutputTokens,
-            observation.generationOutputTokens ?? 0,
+            generated ? (observation.generationOutputTokens ?? 0) : 0,
             "generation output tokens",
         ),
-        duration: observeDistribution(fact.duration, observation.durationMs),
-        logicalExecution: mergeLogicalExecution(fact.logicalExecution, observation.logicalExecution),
+        errors:
+            failureClass === undefined
+                ? fact.errors
+                : { ...fact.errors, [failureClass]: checkedAdd(fact.errors[failureClass] ?? 0, 1, `error ${failureClass}`) },
     }
+}
+
+function observeCoverage(coverage: AttemptCoverage, reported: boolean, label: string): AttemptCoverage {
+    return reported
+        ? { ...coverage, reported: checkedAdd(coverage.reported, 1, label) }
+        : { ...coverage, unreported: checkedAdd(coverage.unreported, 1, label) }
 }
 
 function mergeLogicalExecution(
@@ -285,9 +440,22 @@ function toolOutcomeTotal(counts: ToolOutcomeCounts): number {
     return checkedAdd(checkedAdd(counts.completed, counts.failed, "tool outcome total"), counts.cancelled, "tool outcome total")
 }
 
+/** Sealing ends the wait: every logical request still unclaimed becomes unreported for its fact. */
 function seal(bucket: AttemptBucket, sealedAt: number): AttemptBucket {
     if (!Number.isSafeInteger(sealedAt) || sealedAt < 0) throw new Error("Attempt bucket sealedAt is invalid")
-    return { ...bucket, sealedAt }
+    const { logicalCandidates, ...rest } = bucket
+    const facts = [...rest.facts]
+    for (const candidate of Object.values(logicalCandidates ?? {})) {
+        const fact = facts[candidate.factIndex]
+        facts[candidate.factIndex] = {
+            ...fact,
+            logicalExecutionCoverage: {
+                ...fact.logicalExecutionCoverage,
+                unreported: checkedAdd(fact.logicalExecutionCoverage.unreported, 1, "logical coverage"),
+            },
+        }
+    }
+    return { ...rest, facts, sealedAt }
 }
 
 function identityKey(identity: UsageAttemptIdentity): string {
@@ -316,10 +484,16 @@ function addTokens(left: UsageAttemptTokens, right: UsageAttemptTokens): UsageAt
     }
 }
 
+function observeOptionalDistribution(
+    current: AttemptDistribution | undefined,
+    sample: number | undefined,
+): AttemptDistribution | undefined {
+    return sample === undefined ? current : observeDistribution(current, sample)
+}
+
 function observeDistribution(current: AttemptDistribution | undefined, sample: number): AttemptDistribution {
-    const buckets = current ? [...current.buckets] : Array.from({ length: USAGE_HISTOGRAM_BOUNDS_MS.length + 1 }, () => 0)
-    const bucket = USAGE_HISTOGRAM_BOUNDS_MS.findIndex((bound) => sample <= bound)
-    const index = bucket < 0 ? buckets.length - 1 : bucket
+    const buckets = current ? [...current.buckets] : Array.from({ length: USAGE_HISTOGRAM_BUCKETS }, () => 0)
+    const index = histogramBucket(sample)
     buckets[index] = checkedAdd(buckets[index], 1, "duration bucket")
     if (!current) return { count: 1, sum: sample, min: sample, max: sample, buckets }
     return {
@@ -329,6 +503,15 @@ function observeDistribution(current: AttemptDistribution | undefined, sample: n
         max: Math.max(current.max, sample),
         buckets,
     }
+}
+
+export function validateLogicalExecutionClaim(claim: LogicalExecutionClaim): void {
+    if (typeof claim.logicalRequestId !== "string" || !claim.logicalRequestId)
+        throw new Error("Logical claim identity is required")
+    if (typeof claim.attemptObservationId !== "string" || !claim.attemptObservationId) {
+        throw new Error("Logical claim attempt identity is required")
+    }
+    if (validateLogicalExecution(claim.execution) !== 1) throw new Error("Logical claim must carry exactly one logical request")
 }
 
 export function validateUsageAttemptObservation(observation: UsageAttemptObservation): void {
@@ -347,13 +530,38 @@ export function validateUsageAttemptObservation(observation: UsageAttemptObserva
             throw new Error(`Attempt ${label} tokens must be a non-negative safe integer`)
     }
     if (observation.tokens.reasoning > observation.tokens.output) throw new Error("Attempt reasoning tokens exceed output tokens")
-    requireCount(observation.sessionsStarted ?? 0, "sessions started")
-    if ((observation.sessionsStarted ?? 0) > 0 && !observation.logicalExecution) {
-        throw new Error("Session starts require a final logical execution")
-    }
+    if (observation.durationMs < 1) throw new Error("Attempt duration must be at least one millisecond")
+    validateFailureClass(observation)
+    validateGenerationPair(observation)
     if (observation.logicalExecution && validateLogicalExecution(observation.logicalExecution) !== 1) {
         throw new Error("Attempt observation must carry exactly one logical request")
     }
+}
+
+/** A failed attempt names exactly one catalog class; any other outcome names none (usage-contract §5). */
+function validateFailureClass(observation: UsageAttemptObservation): void {
+    const { failureClass } = observation
+    if (observation.outcome !== "failed") {
+        if (failureClass !== undefined) throw new Error("Only a failed attempt carries a failure class")
+        return
+    }
+    if (typeof failureClass !== "string" || !FAILURE_CLASS_PATTERN.test(failureClass)) {
+        throw new Error("A failed attempt requires a catalog failure class")
+    }
+}
+
+/** Generation timing and output exist only together, on reported tokens, within the reported output. */
+function validateGenerationPair(observation: UsageAttemptObservation): void {
+    if (observation.ttftMs !== undefined) requireCount(observation.ttftMs, "time to first token")
+    const { generationMs, generationOutputTokens } = observation
+    if (generationMs === undefined && generationOutputTokens === undefined) return
+    if (generationMs === undefined || generationOutputTokens === undefined) {
+        throw new Error("Attempt generation timing and output must be reported together")
+    }
+    requireCount(generationMs, "generation duration")
+    requireCount(generationOutputTokens, "generation output tokens")
+    if (!observation.tokenUsageReported) throw new Error("Attempt generation requires reported token usage")
+    if (generationOutputTokens > observation.tokens.output) throw new Error("Attempt generation output exceeds output tokens")
 }
 
 /** Validate a durable open or sealed bucket before it becomes repository authority. */
@@ -379,14 +587,16 @@ export function validateAttemptBucket(bucket: AttemptBucket): void {
         throw new Error("Attempt bucket event range is invalid")
     }
     if (bucket.sealedAt !== undefined) requireCount(bucket.sealedAt, "bucket sealed time")
-    if (!Array.isArray(bucket.facts) || bucket.facts.length > ATTEMPT_BUCKET_MAX_FACTS) {
+    // A session is counted only by the bucket that receives its first attempt, so every bucket has a fact.
+    if (!Array.isArray(bucket.facts) || bucket.facts.length === 0 || bucket.facts.length > ATTEMPT_BUCKET_MAX_FACTS) {
         throw new Error("Attempt bucket facts are invalid")
     }
-    if (bucket.facts.length === 0 && bucket.sessionsStarted === 0) throw new Error("Attempt bucket has no activity")
+    const waitingByFact = validateLogicalCandidates(bucket)
 
     const identities = new Set<string>()
     let durationSum = 0
-    for (const fact of bucket.facts) {
+    let attemptTotal = 0
+    for (const [factIndex, fact] of bucket.facts.entries()) {
         validateAttemptIdentity(fact.identity)
         const key = identityKey(fact.identity)
         if (identities.has(key)) throw new Error("Attempt bucket contains duplicate identity")
@@ -397,7 +607,7 @@ export function validateAttemptBucket(bucket: AttemptBucket): void {
             fact.requests.cancelled,
             fact.requests.aborted,
         ]
-        requests.forEach((value) => requireCount(value, "request count"))
+        for (const value of requests) requireCount(value, "request count")
         const requestTotal = requests.reduce((sum, value) => checkedAdd(sum, value, "request total"), 0)
         const tokens: readonly (readonly [string, number])[] = [
             ["input", fact.tokens.input],
@@ -408,24 +618,90 @@ export function validateAttemptBucket(bucket: AttemptBucket): void {
         ]
         for (const [label, value] of tokens) requireCount(value, `${label} tokens`)
         if (fact.tokens.reasoning > fact.tokens.output) throw new Error("Attempt reasoning tokens exceed output tokens")
-        requireCount(fact.tokenCoverage.reported, "reported coverage")
-        requireCount(fact.tokenCoverage.unreported, "unreported coverage")
-        if (checkedAdd(fact.tokenCoverage.reported, fact.tokenCoverage.unreported, "coverage") !== requestTotal) {
+        if (coverageTotal(fact.tokenCoverage, "token coverage") !== requestTotal) {
             throw new Error("Attempt token coverage does not match requests")
         }
-        requireCount(fact.generationOutputTokens, "generation output tokens")
+        validateFactGeneration(fact, requestTotal)
         validateDistribution(fact.duration)
         if (fact.duration.count !== requestTotal) throw new Error("Attempt duration count does not match requests")
+        if (fact.duration.min < 1) throw new Error("Attempt duration must be at least one millisecond")
+        if (fact.ttft !== undefined) {
+            validateDistribution(fact.ttft)
+            if (fact.ttft.count > requestTotal) throw new Error("Attempt time-to-first-token count exceeds requests")
+        }
         durationSum = checkedAdd(durationSum, fact.duration.sum, "bucket duration")
-        if (fact.logicalExecution && validateLogicalExecution(fact.logicalExecution) > requestTotal) {
-            throw new Error("Logical request count exceeds Provider attempt count")
+        attemptTotal = checkedAdd(attemptTotal, requestTotal, "bucket attempts")
+        const reportedLogical = fact.logicalExecution ? validateLogicalExecution(fact.logicalExecution) : 0
+        const coverage = fact.logicalExecutionCoverage
+        if (requireCount(coverage?.reported, "reported logical coverage") !== reportedLogical) {
+            throw new Error("Logical coverage does not match the attached executions")
         }
-        for (const [name, value] of Object.entries(fact.errors) as [string, number][]) {
-            if (!/^[a-z][a-z0-9_]{0,31}$/u.test(name)) throw new Error("Attempt error class is invalid")
-            requireCount(value, "error count")
-        }
+        const logicalTotal = checkedAdd(
+            checkedAdd(reportedLogical, requireCount(coverage.unreported, "unreported logical coverage"), "logical coverage"),
+            waitingByFact[factIndex] ?? 0,
+            "logical coverage",
+        )
+        if (logicalTotal > requestTotal) throw new Error("Logical request count exceeds Provider attempt count")
+        validateFactErrors(fact)
     }
     if (durationSum !== bucket.durationMs) throw new Error("Attempt bucket duration does not match fact sums")
+    if (bucket.sessionsStarted > attemptTotal) throw new Error("Attempt bucket counts more sessions than attempts")
+}
+
+function coverageTotal(coverage: AttemptCoverage, label: string): number {
+    return checkedAdd(
+        requireCount(coverage?.reported, `reported ${label}`),
+        requireCount(coverage?.unreported, `unreported ${label}`),
+        label,
+    )
+}
+
+/** The generation subset is covered, timed and counted as one (usage-contract §7). */
+function validateFactGeneration(fact: AttemptFactAggregate, requestTotal: number): void {
+    if (coverageTotal(fact.generationCoverage, "generation coverage") !== requestTotal) {
+        throw new Error("Attempt generation coverage does not match requests")
+    }
+    const reported = fact.generationCoverage.reported
+    requireCount(fact.generationOutputTokens, "generation output tokens")
+    if (fact.generation !== undefined) validateDistribution(fact.generation)
+    if ((fact.generation?.count ?? 0) !== reported) throw new Error("Attempt generation timing does not match its coverage")
+    if (reported === 0 && fact.generationOutputTokens > 0) throw new Error("Unreported generation cannot carry output")
+    if (reported > fact.tokenCoverage.reported) throw new Error("Attempt generation requires reported token usage")
+    if (fact.generationOutputTokens > fact.tokens.output) throw new Error("Attempt generation output exceeds output tokens")
+}
+
+/** Every failed attempt adds exactly one error of its class, and nothing else does. */
+function validateFactErrors(fact: AttemptFactAggregate): void {
+    let total = 0
+    for (const [name, value] of Object.entries(fact.errors) as [string, number][]) {
+        if (!FAILURE_CLASS_PATTERN.test(name)) throw new Error("Attempt error class is invalid")
+        if (requireCount(value, "error count") < 1) throw new Error("Attempt error class without failures must be omitted")
+        total = checkedAdd(total, value, "error total")
+    }
+    if (total !== fact.requests.failed) throw new Error("Attempt errors do not match failed requests")
+}
+
+/** Candidates exist only while a bucket is open and each points at one of its facts. */
+function validateLogicalCandidates(bucket: AttemptBucket): Record<number, number> {
+    const waitingByFact: Record<number, number> = {}
+    const candidates = bucket.logicalCandidates
+    if (candidates === undefined) return waitingByFact
+    if (bucket.sealedAt !== undefined) throw new Error("A sealed attempt bucket cannot wait for logical claims")
+    if (typeof candidates !== "object" || candidates === null) throw new Error("Attempt bucket logical candidates are invalid")
+    for (const [logicalRequestId, candidate] of Object.entries(candidates)) {
+        if (
+            !logicalRequestId ||
+            typeof candidate?.attemptObservationId !== "string" ||
+            !candidate.attemptObservationId ||
+            !Number.isSafeInteger(candidate.factIndex) ||
+            candidate.factIndex < 0 ||
+            candidate.factIndex >= bucket.facts.length
+        ) {
+            throw new Error("Attempt bucket logical candidate is invalid")
+        }
+        waitingByFact[candidate.factIndex] = checkedAdd(waitingByFact[candidate.factIndex] ?? 0, 1, "logical candidates")
+    }
+    return waitingByFact
 }
 
 function validateLogicalExecution(execution: UsageLogicalExecutionObservation): number {
@@ -465,21 +741,9 @@ function validateAttemptIdentity(identity: UsageAttemptIdentity): void {
         throw new Error("Attempt role is invalid")
     }
     if (!/^[a-z0-9_-]{1,32}$/u.test(provider)) throw new Error("Attempt provider is invalid")
-    if (!/^(?:catalog:[a-z0-9][a-z0-9_.:/-]{0,95}|state:(?:private|unknown))$/u.test(modelId)) {
-        throw new Error("Attempt model identity is invalid")
-    }
-    if (
-        !(
-            (typeof thinking === "number" &&
-                Number.isSafeInteger(thinking) &&
-                !Object.is(thinking, -0) &&
-                (thinking === -1 || thinking >= 0)) ||
-            (typeof thinking === "string" &&
-                /^(?:level:[a-z0-9_.-]{1,32}|state:(?:enabled|disabled|off|dynamic|default|unknown))$/u.test(thinking))
-        )
-    ) {
-        throw new Error("Attempt thinking identity is invalid")
-    }
+    // One vocabulary with the projector (usage-contract §3.1, §3.2), so a projected identity is always storable.
+    if (!isUsageModelId(modelId)) throw new Error("Attempt model identity is invalid")
+    if (!isUsageThinking(thinking)) throw new Error("Attempt thinking identity is invalid")
 }
 
 function validateDistribution(distribution: AttemptDistribution): void {
@@ -490,7 +754,7 @@ function validateDistribution(distribution: AttemptDistribution): void {
     if (distribution.count < 1 || distribution.min > distribution.max) throw new Error("Attempt duration distribution is invalid")
     const average = distribution.sum / distribution.count
     if (average < distribution.min || average > distribution.max) throw new Error("Attempt duration summary is inconsistent")
-    if (!Array.isArray(distribution.buckets) || distribution.buckets.length !== USAGE_HISTOGRAM_BOUNDS_MS.length + 1) {
+    if (!Array.isArray(distribution.buckets) || distribution.buckets.length !== USAGE_HISTOGRAM_BUCKETS) {
         throw new Error("Attempt duration buckets are invalid")
     }
     const count = distribution.buckets.reduce(
@@ -498,6 +762,12 @@ function validateDistribution(distribution: AttemptDistribution): void {
         0,
     )
     if (count !== distribution.count) throw new Error("Attempt duration buckets do not match count")
+    // The populated histogram range must agree with min and max, as the service checks.
+    const first = distribution.buckets.findIndex((value) => value > 0)
+    const last = distribution.buckets.length - 1 - [...distribution.buckets].reverse().findIndex((value) => value > 0)
+    if (histogramBucket(distribution.min) !== first || histogramBucket(distribution.max) !== last) {
+        throw new Error("Attempt duration buckets do not match min and max")
+    }
 }
 
 function requireCount(value: number, label: string): number {

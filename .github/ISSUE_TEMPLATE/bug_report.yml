@@ -64,3 +64,17 @@ body:
         RAM: 32GB DDR4
     validations:
       required: false
+  - type: checkboxes
+    id: telemetry-consent
+    attributes:
+      label: Diagnostic telemetry consent
+      description: Only for a report that Dline opened with temporary diagnostic telemetry. Leave it unchecked otherwise.
+      options:
+        - label: I consent to temporary high-density telemetry
+  - type: input
+    id: telemetry-support-code
+    attributes:
+      label: Dline telemetry support code
+      description: Filled in by Dline for temporary diagnostic telemetry. It is not a secret and only links this issue to that authorization.
+    validations:
+      required: false

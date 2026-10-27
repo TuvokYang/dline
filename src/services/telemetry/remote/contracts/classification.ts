@@ -1,4 +1,11 @@
-import { type DeliveryDisposition, type DeviceGrant, parseAcknowledgement, parseDeviceGrant, parseServiceError } from "./wire"
+import {
+    type DeliveryDisposition,
+    parseAcknowledgement,
+    parseRetryAfterMs,
+    parseServiceError,
+    parseUsageResponseBody,
+    type UsageResponseBody,
+} from "./wire"
 
 /**
  * What the delivery layer needs from an HTTP response.
@@ -75,32 +82,43 @@ export function classifyDeliveryResponse(response: WireResponse): DeliveryOutcom
     return { kind: "replay", ...delay }
 }
 
-export type ExchangeOutcome =
-    | { readonly kind: "granted"; readonly grant: DeviceGrant }
-    /** Try again later; every instance shares this delay so the enrollment budget is not spent in a loop. */
-    | { readonly kind: "backoff"; readonly code: string; readonly retryAfterMs?: number }
-    /** The server revoked this device credential: forget it and wait for an explicit identity reset. */
-    | { readonly kind: "reset_credential"; readonly code: string }
-    | { readonly kind: "stop"; readonly scope: StopScope; readonly code: string }
-
-const REVOKED_CREDENTIAL_CODES = new Set(["device_revoked", "device_credential_revoked"])
-
-/** Classify an `/auth/device/exchange` response. */
-export function classifyExchangeResponse(response: WireResponse): ExchangeOutcome {
+/**
+ * Classify a `/usage` response (usage-contract §15).
+ *
+ * Only a `UsageAck` confirms the request: a 200 whose disposition is accepted,
+ * duplicate or ignored_version and that names `next_eligible_at`. Any other 200
+ * is an unknown result and replays the same bytes. 409 `request_id_conflict`
+ * and every 422 contract error are permanent and dead-letter the request
+ * without rebuilding it; 413 means capacity guarding failed and is permanent too.
+ */
+export function classifyUsageResponse(response: WireResponse, now = Date.now()): DeliveryOutcome {
     const { status } = response
+    const body = parseUsageResponseBody(response.json)
     if (status === 200) {
-        const grant = parseDeviceGrant(response.json)
-        return grant ? { kind: "granted", grant } : { kind: "backoff", code: "malformed_grant" }
+        if (!body || body.disposition === "rejected" || body.nextEligibleAt === undefined) return { kind: "replay" }
+        return { kind: "acknowledged", disposition: body.disposition, nextEligibleAt: body.nextEligibleAt }
     }
-    const error = parseServiceError(response.json, response.retryAfter)
-    const delay = error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }
-    if (status === 403 && error.code && REVOKED_CREDENTIAL_CODES.has(error.code)) {
-        return { kind: "reset_credential", code: error.code }
-    }
-    if (status === 403) return stopFor(response, error.code)
-    if (status === 408 || status === 429 || status >= 500)
-        return { kind: "backoff", code: error.code ?? `http_${status}`, ...delay }
-    return { kind: "stop", scope: "profile", code: error.code ?? `http_${status}` }
+    const code = body?.code
+    const delay = usageRetryDelay(body, response.retryAfter, now)
+    if (status === 401) return { kind: "refresh_token" }
+    if (status === 403) return stopFor(response, code)
+    if (status === 429) return { kind: "wait", code: code ?? EDGE_RATE_LIMITED, ...delay }
+    if (status === 413) return { kind: "too_large" }
+    if (status === 404 || status === 405) return { kind: "stop", scope: "profile", code: code ?? "endpoint_unavailable" }
+    if (status === 408 || status >= 500) return { kind: "replay", ...delay }
+    if (status >= 400) return { kind: "discard", code: code ?? `http_${status}` }
+    return { kind: "replay", ...delay }
+}
+
+/** The body's `next_eligible_at` wins over `Retry-After`; both become a delay from the local clock. */
+function usageRetryDelay(
+    body: UsageResponseBody | undefined,
+    retryAfter: string | null,
+    now: number,
+): { readonly retryAfterMs?: number } {
+    const retryAfterMs =
+        body?.nextEligibleAt === undefined ? parseRetryAfterMs(retryAfter, now) : Math.max(0, body.nextEligibleAt - now)
+    return retryAfterMs === undefined ? {} : { retryAfterMs }
 }
 
 /** A JSON 403 from the service refuses one profile; an IP ban or an edge block refuses the machine. */

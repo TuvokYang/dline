@@ -1,320 +1,286 @@
-import { randomUUID } from "node:crypto"
 import { openReportBugIssue } from "@core/reporting/ReportBugIssue"
-import { fetch } from "@shared/net"
-import { parseReportBugDraft, type ReportBugDraft } from "@shared/report-bug"
-import { DeviceCredentialRepository } from "@/core/storage/telemetry-remote/DeviceCredentialRepository"
-import {
-    type IssueCredentialRecord,
-    IssueCredentialRepository,
-    type SupportAuthorizationState,
-} from "@/core/storage/telemetry-remote/IssueCredentialRepository"
-import { IssueGrantRepository } from "@/core/storage/telemetry-remote/IssueGrantRepository"
+import type { ReportBugDraft } from "@shared/report-bug"
+import { DeviceCredentialRepository, type StoredDeviceToken } from "@/core/storage/telemetry-remote/DeviceCredentialRepository"
+import { type IssueCredentialRecord, IssueCredentialRepository } from "@/core/storage/telemetry-remote/IssueCredentialRepository"
 import { resolveOtelStorageLayout } from "@/core/storage/telemetry-remote/OtelStorageLayout"
+import type { DeviceTokenBroker } from "@/services/telemetry/remote/auth/DeviceTokenBroker"
 import {
-    type SupportOperationIntent,
-    SupportOperationRepository,
-} from "@/core/storage/telemetry-remote/SupportOperationRepository"
-import { DeviceTokenBroker } from "@/services/telemetry/remote/auth/DeviceTokenBroker"
-import { createRecoverableIssueExchangeRuntime } from "@/services/telemetry/remote/auth/exchangeRuntime"
+    createDeviceTokenBroker,
+    createReportAuthorizationRuntime,
+    type ReportAuthorizationRuntime,
+} from "@/services/telemetry/remote/auth/exchangeRuntime"
+import { ISSUE_EXCHANGE_DELETE_CODES } from "@/services/telemetry/remote/auth/RecoverableIssueExchangeCoordinator"
+import type { PublishedReportTicket } from "@/services/telemetry/remote/auth/ReportAuthorizationCoordinator"
+import {
+    parseReportAuthorizationStatus,
+    type ReportAuthorizationState,
+    type ReportAuthorizationStatus,
+    type ReportIssueState,
+    type ReportResolution,
+} from "@/services/telemetry/remote/contracts/reportAuthorization"
+import { parseServiceError } from "@/services/telemetry/remote/contracts/wire"
 import {
     purgeIssueDiagnosticsOverlay,
     refreshIssueDiagnosticsOverlay,
 } from "@/services/telemetry/remote/remoteDiagnosticsRuntime"
-import { DlineOtelHttpClient, loopbackEndpointOverride } from "@/services/telemetry/remote/transport/DlineOtelHttpClient"
-import { openExternal } from "@/utils/env"
+import { DlineOtelHttpClient } from "@/services/telemetry/remote/transport/DlineOtelHttpClient"
 
-const DEFAULT_SUPPORT_ENDPOINT = "https://dev.dline.cc"
-const REQUEST_TIMEOUT_MS = 15_000
-const MAX_RESPONSE_BYTES = 16 * 1024
-const REQUESTED_CAPTURE_MS = 8 * 60 * 60_000
-const MAX_AUTOMATIC_POLLS = 3
+/** Floor of automatic status polling, whatever interval the service asks for. */
+const MIN_POLL_INTERVAL_MS = 30_000
+/** States in which the temporary telemetry authorization can still change on its own. */
+const LIVE_STATES: ReadonlySet<ReportAuthorizationState> = new Set(["awaiting_issue", "pending_approval", "approved"])
+/** Status refusals after which the ticket is unusable (telemetry-exchange-flow §5.4). */
+const STATUS_DELETE_CODES: ReadonlySet<string> = new Set(["report_authorization_not_found", "device_revoked"])
+
+type CaptureSealReason = "revoked" | "expired" | "deleted"
 
 export interface SupportTelemetryServiceOptions {
     readonly dataDir: string
     readonly clientVersion: string
     readonly platform: string
-    readonly supportEndpoint?: string
+    /** Loopback override of the OTel origin for the local contract smoke. */
     readonly otelEndpoint?: string
     readonly clock?: () => number
 }
 
+/** Safe Settings projection. It carries neither the authorization code nor any Issue identity. */
 export interface SupportStatusProjection {
     readonly publicCode: string
-    readonly state: SupportAuthorizationState
+    readonly state: ReportAuthorizationState
     readonly authorizationExpiresAt: number
     readonly captureExpiresAt?: number
-    readonly issue?: { readonly owner: string; readonly repo: string; readonly number: number }
+    readonly issueState: ReportIssueState
+    readonly resolution: ReportResolution
 }
 
-/** Client-only control-plane owner. Private credentials never leave this service/repository boundary. */
+/** A ReportBug with temporary telemetry could not obtain its authorization; no Issue was opened. */
+export class SupportAuthorizationError extends Error {
+    constructor(readonly code: string) {
+        super(`Temporary support telemetry could not be authorized (${code})`)
+        this.name = "SupportAuthorizationError"
+    }
+}
+
+/**
+ * Client owner of Report Authorization (telemetry-exchange-flow §5, §7).
+ *
+ * OTel issues the ticket and links the GitHub Issue to it; this service only
+ * puts the derived public code into the Issue Form, reads the ticket state and
+ * exchanges an approved revision for the issue-only token. Every seal is
+ * local: nothing here asks OTel or GitHub to revoke. Private credentials never
+ * leave the repositories behind this service.
+ */
 export class SupportTelemetryService {
     private readonly clock: () => number
     private readonly credentials: IssueCredentialRepository
-    private readonly grants: IssueGrantRepository
-    private readonly devices: DeviceCredentialRepository
-    private readonly operations: SupportOperationRepository
     private readonly deviceTokens: DeviceTokenBroker
-    private readonly exchange: ReturnType<typeof createRecoverableIssueExchangeRuntime>["coordinator"]
-    private readonly control: SupportControlClient
+    private readonly transport: DlineOtelHttpClient
+    private readonly runtime: ReportAuthorizationRuntime
     private polling: AbortController | undefined
-    private operationTail: Promise<void> = Promise.resolve()
+    private operationTail: Promise<unknown> = Promise.resolve()
 
-    constructor(private readonly options: SupportTelemetryServiceOptions) {
+    constructor(options: SupportTelemetryServiceOptions) {
         this.clock = options.clock ?? Date.now
         const layout = resolveOtelStorageLayout(options.dataDir)
-        this.credentials = new IssueCredentialRepository(layout)
-        this.grants = new IssueGrantRepository(layout)
-        this.devices = new DeviceCredentialRepository(layout)
-        this.operations = new SupportOperationRepository(layout, { clock: this.clock })
-        const otel = new DlineOtelHttpClient({ clientVersion: options.clientVersion, endpoint: options.otelEndpoint })
-        this.deviceTokens = new DeviceTokenBroker({
-            repository: this.devices,
-            transport: otel,
+        this.credentials = new IssueCredentialRepository(layout, { clock: this.clock })
+        this.transport = new DlineOtelHttpClient({ clientVersion: options.clientVersion, endpoint: options.otelEndpoint })
+        this.deviceTokens = createDeviceTokenBroker({
+            layout,
+            credentials: new DeviceCredentialRepository(layout),
+            transport: this.transport,
             clientVersion: options.clientVersion,
             platform: options.platform,
+            clock: options.clock,
         })
-        this.exchange = createRecoverableIssueExchangeRuntime({
-            dataDir: options.dataDir,
+        this.runtime = createReportAuthorizationRuntime({
+            layout,
+            transport: this.transport,
+            tickets: { publish: (ticket) => this.installTicket(ticket) },
             clientVersion: options.clientVersion,
             platform: options.platform,
-            endpoint: options.otelEndpoint,
-        }).coordinator
-        this.control = new SupportControlClient(options.supportEndpoint ?? DEFAULT_SUPPORT_ENDPOINT, options.clientVersion)
+            clock: options.clock,
+        })
     }
 
+    /** Issue a ticket, then open the Issue Form carrying its public code; nothing opens when issuance fails. */
     async createAuthorizationAndOpenIssue(draft: ReportBugDraft): Promise<SupportStatusProjection> {
-        if (!draft.temporaryTelemetryConsent) {
-            await openReportBugIssue(draft.content, draft.environment)
-            throw new Error("SupportAuthorizationNotRequested")
-        }
-        return this.runOperation(async () => {
-            const pending = await this.operations.read()
-            if (pending?.kind === "create") return this.completeCreate(pending)
-            if (pending) await this.resumePendingOperationInternal()
-
-            const intent = await this.operations.prepare({
-                kind: "create",
-                requestId: randomUUID(),
-                pathname: "/support/authorizations",
-                body: {
-                    report_draft_id: randomUUID(),
-                    client_version: this.options.clientVersion,
-                    platform: this.options.platform,
-                    requested_capture_ms: REQUESTED_CAPTURE_MS,
-                    requested_signals: ["logs", "metrics", "traces"],
-                    consent: { temporary_telemetry: true, confirmed_at: this.clock() },
-                },
-                context: { draft },
-            })
-            return this.completeCreate(intent)
-        })
+        if (!draft.temporaryTelemetryConsent) throw new Error("Temporary telemetry was not consented to")
+        const record = await this.runOperation(() => this.issueTicket())
+        await openReportBugIssue(draft.content, draft.environment, { supportCode: record.publicCode })
+        this.startPolling()
+        return project(record)
     }
 
+    /** The stored projection; no network. */
     async status(): Promise<SupportStatusProjection | undefined> {
         return this.runOperation(async () => {
-            await this.resumePendingOperationInternal(true)
-            const record = (await this.credentials.read()).record
+            const record = await this.currentTicket()
             return record ? project(record) : undefined
         })
     }
 
     async checkNow(signal?: AbortSignal): Promise<SupportStatusProjection | undefined> {
-        return this.runOperation(async () => {
-            const pending = await this.operations.read()
-            if (pending?.kind === "status") return this.completeStatus(pending, signal)
-            if (pending) await this.resumePendingOperationInternal(false, signal)
-
-            const current = (await this.credentials.read()).record
-            if (!current) return undefined
-            const intent = await this.operations.prepare({
-                kind: "status",
-                requestId: randomUUID(),
-                pathname: "/support/authorizations/status",
-                body: { authorization_id: current.authorizationId, resume_credential: current.resumeCredential },
-            })
-            return this.completeStatus(intent, signal)
-        })
+        return this.runOperation(() => this.refreshStatus(signal))
     }
 
-    async openIssue(): Promise<void> {
-        const issue = (await this.credentials.read()).record?.issue
-        if (!issue) return
-        await openExternal(`https://github.com/${issue.owner}/${issue.repo}/issues/${issue.number}`)
-    }
-
+    /** Local full delete (§7): capture seal, then the ticket and its pending operations. */
     async deleteAndRevoke(): Promise<void> {
-        return this.runOperation(async () => {
-            this.polling?.abort("support_deleted")
-            this.polling = undefined
-            await purgeIssueDiagnosticsOverlay("deleted")
-            await this.grants.clear("deleted")
+        // Abort first so an in-flight status query does not hold the queue.
+        this.stopPolling("support_deleted")
+        await this.runOperation(() => this.deleteTicket())
+    }
 
-            const pending = await this.operations.read()
-            if (pending?.kind === "status") await this.operations.complete(pending.requestId)
-            const tombstone = await this.credentials.writeRevokeTombstone()
-            if (!tombstone) return
-            await this.prepareAndCompleteRevoke(tombstone, true)
+    /** Startup: refresh the ticket once and keep polling while its authorization is live. */
+    async resume(): Promise<void> {
+        await this.checkNow().catch(() => undefined)
+        const record = (await this.credentials.read()).record
+        if (record && this.isLive(record)) this.startPolling()
+    }
+
+    dispose(): void {
+        this.stopPolling("support_disposed")
+    }
+
+    private async issueTicket(): Promise<IssueCredentialRecord> {
+        let token = await this.productionToken()
+        let result = await this.runtime.authorizations.authorize({
+            deviceId: token.deviceId,
+            deviceAccessToken: token.accessToken,
         })
-    }
-
-    /** Resume an exact pending control-plane operation without exposing its private request body. */
-    async resumePendingRevoke(): Promise<void> {
-        await this.runOperation(async () => this.resumePendingOperationInternal(true))
-    }
-
-    private async resumePendingOperationInternal(suppressNetworkErrors = false, signal?: AbortSignal): Promise<void> {
-        await this.credentials.pruneNaturalExpiry(this.clock())
-        const pending = await this.operations.read()
-        try {
-            if (pending?.kind === "create") {
-                await this.completeCreate(pending, signal)
-                return
-            }
-            if (pending?.kind === "status") {
-                await this.completeStatus(pending, signal)
-                return
-            }
-            if (pending?.kind === "revoke") {
-                const tombstone = (await this.credentials.read()).revokeTombstone
-                if (!tombstone) {
-                    await this.operations.complete(pending.requestId)
-                    return
-                }
-                await this.completeRevoke(pending, signal)
-                return
-            }
-
-            const tombstone = (await this.credentials.read()).revokeTombstone
-            if (tombstone) await this.prepareAndCompleteRevoke(tombstone, suppressNetworkErrors, signal)
-        } catch (error) {
-            if (!suppressNetworkErrors) throw error
+        if (result.status === "refresh_device") {
+            token = await this.productionToken(token.accessToken)
+            result = await this.runtime.authorizations.authorize({
+                deviceId: token.deviceId,
+                deviceAccessToken: token.accessToken,
+            })
         }
+        if (result.status !== "issued") throw new SupportAuthorizationError(result.code)
+        return ticketRecord(result.ticket)
     }
 
-    private async completeCreate(intent: SupportOperationIntent, signal?: AbortSignal): Promise<SupportStatusProjection> {
-        const draft = parseReportBugDraft(isRecord(intent.context) ? intent.context.draft : undefined)
-        if (!draft?.temporaryTelemetryConsent) throw new Error("Invalid pending support authorization draft")
-        const response = await this.sendPreparedOperation(intent, signal)
-        const record = parseAuthorization(response, intent.requestId)
-        await this.credentials.publish(record)
-        await openReportBugIssue(
-            {
-                ...draft.content,
-                additionalContext: [
-                    draft.content.additionalContext.trim(),
-                    "Temporary telemetry consent: [x] I consent to temporary high-density telemetry",
-                    `Public support code: ${record.publicCode}`,
-                ]
-                    .filter(Boolean)
-                    .join("\n\n"),
-            },
-            draft.environment,
+    /** Ticket publication of the recoverable issuance: a new report ends the previous ticket's capture locally. */
+    private async installTicket(ticket: PublishedReportTicket): Promise<void> {
+        await this.sealCapture("deleted")
+        await this.credentials.replace(ticketRecord(ticket))
+    }
+
+    private async refreshStatus(signal?: AbortSignal): Promise<SupportStatusProjection | undefined> {
+        const current = await this.currentTicket()
+        if (!current) return undefined
+        let token = await this.productionToken(undefined, signal)
+        let response = await this.transport.queryReportAuthorization(current.authorizationCode, token.accessToken, signal)
+        if (response.status === 401) {
+            token = await this.productionToken(token.accessToken, signal)
+            response = await this.transport.queryReportAuthorization(current.authorizationCode, token.accessToken, signal)
+        }
+        if (response.status !== 200) {
+            const code = parseServiceError(response.json, response.retryAfter, this.clock()).code ?? `http_${response.status}`
+            if (STATUS_DELETE_CODES.has(code)) {
+                await this.deleteTicket(current.authorizationCode)
+                return undefined
+            }
+            throw new Error(`Report authorization status is unavailable (${code})`)
+        }
+        const status = parseReportAuthorizationStatus(response.json)
+        if (!status) throw new Error("Report authorization status response is malformed")
+        const updated = await this.credentials.update(current.authorizationCode, (record) => withStatus(record, status))
+        // The ticket was replaced or deleted meanwhile; the answer belongs to no stored ticket.
+        if (!updated) return this.projectStored()
+        if (updated.state === "approved") await this.exchangeApproved(updated, token, signal)
+        else if (updated.state === "revoked" || updated.state === "expired") await this.sealCapture(updated.state)
+        return this.projectStored()
+    }
+
+    private async exchangeApproved(record: IssueCredentialRecord, token: StoredDeviceToken, signal?: AbortSignal): Promise<void> {
+        const input = { authorizationCode: record.authorizationCode, authorizationRevision: record.revision }
+        let result = await this.runtime.exchange.exchange(
+            { ...input, deviceId: token.deviceId, deviceAccessToken: token.accessToken },
+            signal,
         )
-        await this.operations.complete(intent.requestId)
-        this.startBoundedPolling(record.pollAfterMs)
-        return project(record)
+        if (result.status === "refresh_device") {
+            const refreshed = await this.productionToken(token.accessToken, signal)
+            result = await this.runtime.exchange.exchange(
+                { ...input, deviceId: refreshed.deviceId, deviceAccessToken: refreshed.accessToken },
+                signal,
+            )
+        }
+        if (result.status === "ready") {
+            await refreshIssueDiagnosticsOverlay()
+            return
+        }
+        if (result.status !== "stopped") return // pending or unknown: the next status query tries again
+        if (ISSUE_EXCHANGE_DELETE_CODES.has(result.code)) await this.deleteTicket(record.authorizationCode)
+        else if (result.code === "authorization_revoked") await this.sealCapture("revoked")
+        else if (result.code === "authorization_expired") await this.sealCapture("expired")
     }
 
-    private async completeStatus(
-        intent: SupportOperationIntent,
-        signal?: AbortSignal,
-    ): Promise<SupportStatusProjection | undefined> {
-        const current = (await this.credentials.read()).record
-        if (!current) {
-            await this.operations.complete(intent.requestId)
-            return undefined
-        }
-        const response = await this.sendPreparedOperation(intent, signal)
-        const updated = parseStatus(response, intent.requestId, current)
-        await this.credentials.publish(updated)
-        if (updated.state === "approved" && updated.exchangeTicket && updated.exchangeTicketExpiresAt! > this.clock()) {
-            await this.exchangeApproved(updated, signal)
-        } else if (["revoked", "expired", "deleted"].includes(updated.state)) {
-            await purgeIssueDiagnosticsOverlay(updated.state === "expired" ? "expired" : "revoked")
-        }
-        await this.operations.complete(intent.requestId)
-        return project(updated)
+    /** Capture seal (§7): stop intake, abort in-flight issue-only work, purge its queue and token; keep the ticket. */
+    private async sealCapture(reason: CaptureSealReason): Promise<void> {
+        await purgeIssueDiagnosticsOverlay(reason)
+        // The overlay runs only while remote diagnostics do; the token goes regardless.
+        await this.runtime.grants.clear(reason)
     }
 
-    private async prepareAndCompleteRevoke(
-        tombstone: { readonly authorizationId: string; readonly resumeCredential: string; readonly expectedRevision: number },
-        suppressNetworkErrors: boolean,
-        signal?: AbortSignal,
-    ): Promise<void> {
-        const intent = await this.operations.prepare({
-            kind: "revoke",
-            requestId: randomUUID(),
-            pathname: "/support/authorizations/revoke",
-            body: {
-                authorization_id: tombstone.authorizationId,
-                resume_credential: tombstone.resumeCredential,
-                expected_revision: tombstone.expectedRevision,
-            },
-        })
-        try {
-            await this.completeRevoke(intent, signal)
-        } catch (error) {
-            if (!suppressNetworkErrors) throw error
-        }
+    /** Full delete (§7). With a code, only that ticket is deleted, so a late refusal never removes a newer one. */
+    private async deleteTicket(authorizationCode?: string): Promise<void> {
+        this.stopPolling("support_deleted")
+        await this.sealCapture("deleted")
+        await this.credentials.clear(authorizationCode)
+        await this.runtime.operations.completeAll("report.authorize")
+        await this.runtime.operations.completeAll("issue.exchange")
     }
 
-    private async completeRevoke(intent: SupportOperationIntent, signal?: AbortSignal): Promise<void> {
-        const response = await this.sendPreparedOperation(intent, signal)
-        if (response.status !== 200 || !isRecord(response.json) || response.json.request_id !== intent.requestId) {
-            throw new Error("Invalid support revoke response")
-        }
-        await this.credentials.clearAfterConfirmedRevoke()
-        await this.operations.complete(intent.requestId)
+    /** The stored ticket, deleted once OTel no longer answers for it. */
+    private async currentTicket(): Promise<IssueCredentialRecord | undefined> {
+        const record = (await this.credentials.read()).record
+        if (!record || record.ticketExpiresAt > this.clock()) return record
+        await this.deleteTicket(record.authorizationCode)
+        return undefined
     }
 
-    private async sendPreparedOperation(intent: SupportOperationIntent, signal?: AbortSignal): Promise<SupportWireResponse> {
-        if (intent.response) return intent.response
-        const response = await this.control.post(intent.pathname, intent.requestId, intent.body, signal)
-        const stored = await this.operations.storeResponse(intent.requestId, response)
-        if (!stored.response) throw new Error("Support operation response was not persisted")
-        return stored.response
+    private async projectStored(): Promise<SupportStatusProjection | undefined> {
+        const record = (await this.credentials.read()).record
+        return record ? project(record) : undefined
+    }
+
+    private async productionToken(rejectedAccessToken?: string, signal?: AbortSignal): Promise<StoredDeviceToken> {
+        const acquisition = await this.deviceTokens.acquire("production", { rejectedAccessToken, signal })
+        if (acquisition.status !== "ready") throw new SupportAuthorizationError(`production_token_${acquisition.status}`)
+        return acquisition.token
+    }
+
+    private isLive(record: IssueCredentialRecord): boolean {
+        return LIVE_STATES.has(record.state) && record.authorizationExpiresAt > this.clock()
+    }
+
+    /** Poll at the service's interval while the authorization is live (§5.4); after that only on demand. */
+    private startPolling(): void {
+        this.stopPolling("support_poll_replaced")
+        const controller = new AbortController()
+        this.polling = controller
+        void (async () => {
+            while (!controller.signal.aborted) {
+                const record = (await this.credentials.read()).record
+                if (!record || !this.isLive(record)) return
+                await wait(Math.max(MIN_POLL_INTERVAL_MS, record.pollAfterMs), controller.signal)
+                await this.checkNow(controller.signal).catch(() => undefined)
+            }
+        })()
+            .catch(() => undefined)
+            .finally(() => {
+                if (this.polling === controller) this.polling = undefined
+            })
+    }
+
+    private stopPolling(reason: string): void {
+        this.polling?.abort(reason)
+        this.polling = undefined
     }
 
     private runOperation<T>(operation: () => Promise<T>): Promise<T> {
         const result = this.operationTail.then(operation, operation)
-        this.operationTail = result.then(
-            () => undefined,
-            () => undefined,
-        )
+        this.operationTail = result.catch(() => undefined)
         return result
-    }
-
-    private async exchangeApproved(record: IssueCredentialRecord, signal?: AbortSignal): Promise<void> {
-        const token = await this.deviceTokens.acquire("production", { signal })
-        if (token.status !== "ready" || !record.exchangeTicket || !record.issue) return
-        await this.exchange.exchange(
-            {
-                deviceId: token.token.deviceId,
-                deviceAccessToken: token.token.accessToken,
-                issue: record.issue,
-                pairingSecret: record.exchangeTicket,
-                authorizationRevision: record.revision,
-            },
-            signal,
-        )
-        await refreshIssueDiagnosticsOverlay()
-    }
-
-    private startBoundedPolling(delayMs: number): void {
-        this.polling?.abort("support_poll_replaced")
-        const controller = new AbortController()
-        this.polling = controller
-        void (async () => {
-            let delay = Math.max(1_000, delayMs)
-            for (let attempt = 0; attempt < MAX_AUTOMATIC_POLLS && !controller.signal.aborted; attempt += 1) {
-                await wait(delay, controller.signal)
-                if (controller.signal.aborted) return
-                const state = await this.checkNow(controller.signal)
-                if (!state || ["approved", "revoked", "expired", "deleted"].includes(state.state)) return
-                const current = (await this.credentials.read()).record
-                delay = Math.max(1_000, current?.pollAfterMs ?? delay)
-            }
-        })().catch(() => undefined)
     }
 }
 
@@ -322,7 +288,7 @@ let configured: SupportTelemetryService | undefined
 
 export function configureSupportTelemetryService(options: SupportTelemetryServiceOptions): SupportTelemetryService {
     configured ??= new SupportTelemetryService(options)
-    void configured.resumePendingRevoke().catch(() => undefined)
+    void configured.resume().catch(() => undefined)
     return configured
 }
 
@@ -330,92 +296,32 @@ export function getSupportTelemetryService(): SupportTelemetryService | undefine
     return configured
 }
 
-class SupportControlClient {
-    private readonly endpoint: URL
-    private readonly userAgent: string
-
-    constructor(endpoint: string, clientVersion: string) {
-        this.endpoint = parseSupportEndpoint(endpoint)
-        this.userAgent = `Dline/${clientVersion}`
-    }
-
-    async post(pathname: string, requestId: string, body: object, signal?: AbortSignal): Promise<SupportWireResponse> {
-        const deadline = new AbortController()
-        const timer = setTimeout(() => deadline.abort(), REQUEST_TIMEOUT_MS)
-        const forwardAbort = () => deadline.abort(signal?.reason)
-        signal?.addEventListener("abort", forwardAbort, { once: true })
-        try {
-            const response = await fetch(new URL(pathname, this.endpoint), {
-                method: "POST",
-                headers: {
-                    "content-type": "application/json",
-                    "User-Agent": this.userAgent,
-                    "x-dline-request-id": requestId,
-                },
-                body: JSON.stringify(body),
-                redirect: "error",
-                signal: deadline.signal,
-            })
-            return { status: response.status, json: parseJson(await readBounded(response)) }
-        } finally {
-            clearTimeout(timer)
-            signal?.removeEventListener("abort", forwardAbort)
-        }
-    }
-}
-
-interface SupportWireResponse {
-    readonly status: number
-    readonly json?: unknown
-}
-
-function parseAuthorization(response: SupportWireResponse, requestId: string): IssueCredentialRecord {
-    if (response.status !== 201 || !isRecord(response.json) || response.json.request_id !== requestId) {
-        throw new Error("Support authorization creation failed")
-    }
-    return parseRecord(response.json)
-}
-
-function parseStatus(response: SupportWireResponse, requestId: string, current: IssueCredentialRecord): IssueCredentialRecord {
-    if (response.status !== 200 || !isRecord(response.json) || response.json.request_id !== requestId) {
-        throw new Error("Support authorization status check failed")
-    }
-    return parseRecord({ ...currentToWire(current), ...response.json, resume_credential: current.resumeCredential })
-}
-
-function parseRecord(value: Record<string, unknown>): IssueCredentialRecord {
-    const issue = isRecord(value.issue)
-        ? { owner: String(value.issue.owner), repo: String(value.issue.repo), number: Number(value.issue.number) }
-        : undefined
-    const record: IssueCredentialRecord = {
-        authorizationId: String(value.authorization_id ?? ""),
-        publicCode: String(value.public_code ?? ""),
-        resumeCredential: String(value.resume_credential ?? ""),
-        state: String(value.state ?? "") as SupportAuthorizationState,
-        revision: Number(value.revision),
-        authorizationExpiresAt: Number(value.authorization_expires_at),
-        pollAfterMs: Number(value.poll_after_ms ?? 0),
-        ...(issue ? { issue } : {}),
-        ...(value.capture_expires_at === undefined ? {} : { captureExpiresAt: Number(value.capture_expires_at) }),
-        ...(value.exchange_ticket === undefined ? {} : { exchangeTicket: String(value.exchange_ticket) }),
-        ...(value.exchange_ticket_expires_at === undefined
-            ? {}
-            : { exchangeTicketExpiresAt: Number(value.exchange_ticket_expires_at) }),
-    }
-    if (!record.authorizationId || !record.publicCode || !record.resumeCredential) {
-        throw new Error("Support authorization response is malformed")
-    }
-    return record
-}
-
-function currentToWire(record: IssueCredentialRecord): Record<string, unknown> {
+function ticketRecord(ticket: PublishedReportTicket): IssueCredentialRecord {
     return {
-        authorization_id: record.authorizationId,
-        public_code: record.publicCode,
-        state: record.state,
-        revision: record.revision,
-        authorization_expires_at: record.authorizationExpiresAt,
-        poll_after_ms: record.pollAfterMs,
+        authorizationCode: ticket.authorizationCode,
+        publicCode: ticket.publicCode,
+        state: ticket.state,
+        revision: 0,
+        authorizationExpiresAt: ticket.authorizationExpiresAt,
+        ticketExpiresAt: ticket.ticketExpiresAt,
+        issueState: "unlinked",
+        resolution: { state: "none" },
+        pollAfterMs: ticket.pollAfterMs,
+    }
+}
+
+function withStatus(record: IssueCredentialRecord, status: ReportAuthorizationStatus): IssueCredentialRecord {
+    return {
+        authorizationCode: record.authorizationCode,
+        publicCode: record.publicCode,
+        state: status.state,
+        revision: status.revision,
+        authorizationExpiresAt: status.authorizationExpiresAt,
+        ...(status.captureExpiresAt === undefined ? {} : { captureExpiresAt: status.captureExpiresAt }),
+        ticketExpiresAt: status.ticketExpiresAt,
+        issueState: status.issueState,
+        resolution: status.resolution,
+        pollAfterMs: status.pollAfterMs,
     }
 }
 
@@ -425,53 +331,9 @@ function project(record: IssueCredentialRecord): SupportStatusProjection {
         state: record.state,
         authorizationExpiresAt: record.authorizationExpiresAt,
         ...(record.captureExpiresAt === undefined ? {} : { captureExpiresAt: record.captureExpiresAt }),
-        ...(record.issue ? { issue: { ...record.issue } } : {}),
+        issueState: record.issueState,
+        resolution: { ...record.resolution },
     }
-}
-
-async function readBounded(response: Response): Promise<string | undefined> {
-    const reader = response.body?.getReader()
-    if (!reader) return undefined
-    const chunks: Uint8Array[] = []
-    let total = 0
-    try {
-        for (;;) {
-            const { done, value } = await reader.read()
-            if (done) break
-            total += value.byteLength
-            if (total > MAX_RESPONSE_BYTES) {
-                await reader.cancel().catch(() => undefined)
-                return undefined
-            }
-            chunks.push(value)
-        }
-    } finally {
-        reader.releaseLock()
-    }
-    const bytes = new Uint8Array(total)
-    let offset = 0
-    for (const chunk of chunks) {
-        bytes.set(chunk, offset)
-        offset += chunk.byteLength
-    }
-    return new TextDecoder().decode(bytes)
-}
-
-function parseJson(text: string | undefined): unknown {
-    if (!text) return undefined
-    try {
-        return JSON.parse(text) as unknown
-    } catch {
-        return undefined
-    }
-}
-
-function parseSupportEndpoint(value: string): URL {
-    const override = loopbackEndpointOverride(value)
-    if (override) return new URL(override)
-    const url = new URL(value)
-    if (url.origin !== DEFAULT_SUPPORT_ENDPOINT) throw new Error("Support endpoint must use the canonical HTTPS origin")
-    return url
 }
 
 function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
@@ -487,8 +349,4 @@ function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
             { once: true },
         )
     })
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value)
 }
