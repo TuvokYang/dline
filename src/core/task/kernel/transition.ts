@@ -1,5 +1,5 @@
 import { reduceDialog, withoutAbandonedReview } from "./machines/dialog"
-import { composeRoundCommand, expireAbandonedCompaction, reduceFlow } from "./machines/flow"
+import { composeRoundCommand, expireAbandonedCompaction, isPlainTextWarningTurn, reduceFlow } from "./machines/flow"
 import { ALL_HALT_PARTICIPANTS, reduceHalt, validateHaltEvent } from "./machines/halt"
 import {
     intakeHasCapacity,
@@ -13,6 +13,7 @@ import {
 import { settleTerminatedTurn } from "./machines/terminate"
 import { reduceTransitionDraft, validateTransitionDraftEvent } from "./machines/transition-draft"
 import { reduceTurn, toolTerminalManifestPayload } from "./machines/turn"
+import { mistakeLimitPresentation } from "./mistake-limit-presentation"
 import {
     allBlocksTerminal,
     canOpenNextRound,
@@ -26,6 +27,7 @@ import type {
     Diagnostic,
     DialogInteraction,
     JournalWatermark,
+    MistakeLimitReason,
     RejectReason,
     TaskEvent,
     TaskState,
@@ -471,12 +473,6 @@ const MAX_TEXT_ONLY_TURNS = 3
 /** Dialog kind the surface renders as "Task Needs Attention" with Process Anyway. */
 const MISTAKE_LIMIT_DIALOG_KIND = "mistake_limit"
 
-/** Guidance shown when the text-only limit hands the task back to the user. */
-const MISTAKE_LIMIT_PRESENTATION =
-    "Dline answered several times without using a tool. This may indicate a failure in its thought process or an " +
-    'inability to use a tool properly, which can be mitigated with some user guidance (e.g. "Try breaking down the ' +
-    'task into smaller steps").'
-
 /**
  * Consecutive responses without a tool call at which the kernel stops opening
  * rounds on its own and hands the task back to the user.
@@ -664,6 +660,12 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
             ]
         }
     }
+    // Whichever edge settled the turn, a recovery it opened replaces the round
+    // that would otherwise report the turn's outcomes; Process Anyway composes it.
+    const mistakeLimitDialog = openedMistakeLimit(previous, next, event)
+    if (mistakeLimitDialog) {
+        return [{ ...commandBase(next, 0), type: "dialog.prepare", ...dialogCommandInput(mistakeLimitDialog) }]
+    }
     if (refusalContinuesTurn(previous, next, event) && next.turn.turnId) {
         return settledTurnCommands(next, next.turn.turnId)
     }
@@ -709,9 +711,6 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
         allBlocksTerminal(next) &&
         !hasActiveRound(previous)
     ) {
-        if (!previous.dialog.primary && next.dialog.primary?.kind === MISTAKE_LIMIT_DIALOG_KIND) {
-            return [{ ...commandBase(next, 0), type: "dialog.prepare", ...dialogCommandInput(next.dialog.primary) }]
-        }
         const completedTurnId = next.turn.turnId
         return completedTurnId ? settledTurnCommands(next, completedTurnId) : []
     }
@@ -824,29 +823,51 @@ function installArrivalWakeup(state: TaskState, event: TaskEvent, nextRevision: 
     }
 }
 
+/** Refusals and tool outcomes are the edges after which a turn has nothing left to run. */
+function settlesTurn(previous: TaskState, next: TaskState, event: TaskEvent): boolean {
+    const settlingEvent =
+        event.type === "tool.completed" ||
+        event.type === "tool.failed" ||
+        event.type === "tool.cancelled" ||
+        ((event.type === "approval.evaluated" || event.type === "approval.responded") && event.approved === false)
+    return settlingEvent && !allBlocksTerminal(previous) && allBlocksTerminal(next)
+}
+
 /**
- * Hand the task back to the user once the model keeps answering without a tool.
+ * The budget this event exhausted, if any.
+ *
+ * A turn with calls never hands the task back when it is planned: its calls are
+ * valid requests, so the budget is judged once every block is terminal. Opening
+ * a recovery while blocks were pending left a dialog nobody prepared, which
+ * then blocked every later continuation.
+ */
+function exhaustedMistakeBudget(previous: TaskState, next: TaskState, event: TaskEvent): MistakeLimitReason | undefined {
+    const limit = mistakeLimit(next)
+    if (event.type === "provider.turn_ready") {
+        if (event.turnPlan.blocks.length > 0) return undefined
+        if (isPlainTextWarningTurn(event.turnPlan)) {
+            return (next.flow.consecutiveMistakeCount ?? 0) >= limit ? "rule_violations" : undefined
+        }
+        return (next.flow.textOnlyTurnStreak ?? 0) >= limit ? "no_tool_turns" : undefined
+    }
+    if (!settlesTurn(previous, next, event) || (next.flow.consecutiveMistakeCount ?? 0) < limit) return undefined
+    return (next.flow.plainTextWarningMistakes ?? 0) > 0 ? "rule_violations" : "tool_mistakes"
+}
+
+/**
+ * Hand the task back to the user once the model keeps failing the tool protocol.
  *
  * Stopping silently left the task looking finished with nothing to answer, so
  * the limit opens the same recovery the previous runtime offered: the user can
  * add guidance and process anyway, or start over. An entry waiting in intake is
- * the user already speaking, so it is carried into a round instead.
+ * the user already speaking, and an interaction the turn already handed to the
+ * user is their turn to answer, so neither is replaced by the recovery.
  */
-function installMistakeLimit(state: TaskState, event: TaskEvent, nextRevision: number): TaskState {
-    const textOnlyLimitReached =
-        event.type === "provider.turn_ready" &&
-        event.turnPlan.blocks.length === 0 &&
-        event.turnPlan.plainTextWarning === undefined &&
-        (state.flow.textOnlyTurnStreak ?? 0) >= mistakeLimit(state)
-    const plainTextLimitReached =
-        event.type === "provider.turn_ready" &&
-        event.turnPlan.plainTextWarning !== undefined &&
-        (state.flow.consecutiveMistakeCount ?? 0) >= mistakeLimit(state)
-    const toolLimitReached =
-        (event.type === "tool.completed" || event.type === "tool.failed" || event.type === "tool.cancelled") &&
-        allBlocksTerminal(state) &&
-        (state.flow.consecutiveMistakeCount ?? 0) >= mistakeLimit(state)
-    if (!textOnlyLimitReached && !plainTextLimitReached && !toolLimitReached) return state
+function installMistakeLimit(previous: TaskState, state: TaskState, event: TaskEvent, nextRevision: number): TaskState {
+    const reason = exhaustedMistakeBudget(previous, state, event)
+    // Every exhausting edge is a turn event; the recovery belongs to that turn.
+    const turnId = ("turnId" in event ? event.turnId : undefined) ?? state.turn.turnId
+    if (reason === undefined || turnId === undefined) return state
     if (!canOpenNextRound(state) || pendingIntakeEntryIds(state.intake).length > 0) return state
     const interactionId = `mistake-limit:${state.taskId}:${nextRevision}`
     return {
@@ -856,11 +877,11 @@ function installMistakeLimit(state: TaskState, event: TaskEvent, nextRevision: n
             ...state.dialog,
             primary: {
                 interactionId,
-                turnId: event.turnId,
+                turnId,
                 kind: MISTAKE_LIMIT_DIALOG_KIND,
                 status: "planned",
                 createdRevision: nextRevision,
-                presentationRef: MISTAKE_LIMIT_PRESENTATION,
+                presentationRef: mistakeLimitPresentation(reason),
                 actionRules: [
                     { actionId: "process_anyway", payloadPolicy: "draft" },
                     { actionId: "start_new_task", payloadPolicy: "draft" },
@@ -869,6 +890,12 @@ function installMistakeLimit(state: TaskState, event: TaskEvent, nextRevision: n
             },
         },
     }
+}
+
+/** The mistake-limit recovery this settling event opened, which must be prepared before anything else. */
+function openedMistakeLimit(previous: TaskState, next: TaskState, event: TaskEvent): DialogInteraction | undefined {
+    if (!settlesTurn(previous, next, event) || previous.dialog.primary) return undefined
+    return next.dialog.primary?.kind === MISTAKE_LIMIT_DIALOG_KIND ? next.dialog.primary : undefined
 }
 
 /** A durable compaction commit wins a halt race only for the exact active run. */
@@ -920,7 +947,7 @@ export function transition(state: TaskState, event: TaskEvent): TransitionResult
                     : state.journalWatermark,
     }
     next = installArrivalWakeup(next, event, nextRevision)
-    next = installMistakeLimit(next, event, nextRevision)
+    next = installMistakeLimit(state, next, event, nextRevision)
     if (halt.state.status === "stopping" && halt.state.pending.length === 0) {
         next = {
             ...next,

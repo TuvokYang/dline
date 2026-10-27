@@ -77,17 +77,6 @@ describe("ProductionProviderAdapter", () => {
                         text: "hello",
                         modelInfo: { modelId: "source-model", providerId: "anthropic", mode: "act" as const },
                         mode: "serial" as const,
-                        proseAuthorization: {
-                            kind: "explicit_instruction" as const,
-                            grants: [
-                                {
-                                    instructionId: "instruction-1",
-                                    requestId: "turn-1",
-                                    attemptId: "provider-attempt-1",
-                                    blockId: "block-1",
-                                },
-                            ],
-                        },
                         blocks: [
                             {
                                 blockId: "block-1",
@@ -125,17 +114,6 @@ describe("ProductionProviderAdapter", () => {
         // The producer is durable with the reply, so a restart still knows the turn's model.
         expect(storedFinal.modelInfo).toEqual({ modelId: "source-model", providerId: "anthropic", mode: "act" })
         expect(storedFinal.turnPlan.plainTextWarning).toBeUndefined()
-        expect(storedFinal.turnPlan.proseAuthorization).toEqual({
-            kind: "explicit_instruction",
-            grants: [
-                {
-                    instructionId: "instruction-1",
-                    requestId: "turn-1",
-                    attemptId: "provider-attempt-1",
-                    blockId: "block-1",
-                },
-            ],
-        })
         await expect(adapter.recoverFinal(final.payloadRef)).resolves.toEqual({
             modelInfo: { modelId: "source-model", providerId: "anthropic", mode: "act" },
             turnPlan: storedFinal.turnPlan,
@@ -147,7 +125,7 @@ describe("ProductionProviderAdapter", () => {
         })
     })
 
-    it("classifies pure and mixed plain text durably and restores the warning with model identity", async () => {
+    it("warns durably only for plain text without a call and restores it with model identity", async () => {
         const pure = await runFinal({
             kind: "final",
             turnId: "turn-pure",
@@ -168,6 +146,7 @@ describe("ProductionProviderAdapter", () => {
             turnId: "turn-mixed",
             text: "prose before a tool",
             modelInfo: { modelId: "model-mixed", providerId: "anthropic", mode: "plan" },
+            modelCustom: true,
             mode: "serial",
             blocks: [
                 {
@@ -189,8 +168,12 @@ describe("ProductionProviderAdapter", () => {
                 },
             ],
         })
-        expect(mixed.final.turnPlan.plainTextWarning).toBe("plain_text_outside_tool")
-        expect(mixed.storedFinal.turnPlan.plainTextWarning).toBe("plain_text_outside_tool")
+        // Prose beside a call is an allowed reply shape, not a warning.
+        expect(mixed.final.turnPlan.plainTextWarning).toBeUndefined()
+        expect(mixed.storedFinal.turnPlan.plainTextWarning).toBeUndefined()
+        // Whether the model is custom only feeds live telemetry; it is not durable turn state.
+        expect(mixed.final.modelCustom).toBe(true)
+        expect(mixed.storedFinal).not.toHaveProperty("modelCustom")
         await expect(mixed.adapter.recoverFinal(mixed.final.payloadRef)).resolves.toEqual({
             turnPlan: mixed.storedFinal.turnPlan,
             modelInfo: { modelId: "model-mixed", providerId: "anthropic", mode: "plan" },

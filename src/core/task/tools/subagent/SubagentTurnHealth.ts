@@ -1,4 +1,5 @@
 import { telemetryService } from "@/services/telemetry"
+import { PLAIN_TEXT_WARNING_EVENT } from "@/services/telemetry/events/event-routes"
 import { ToolExecutionObservation } from "../../observability/tool-execution-observation"
 import {
     normalizeObservedToolExecutionResult,
@@ -13,16 +14,10 @@ interface SubagentToolCallIdentity {
 }
 
 /** Report one content-free provider warning for backend model-health analysis. */
-export function reportSubagentPlainTextWarning(providerId: string, modelId: string, mode: "act" | "plan"): void {
+export function reportSubagentPlainTextWarning(providerId: string, modelId: string, customModel: boolean): void {
     telemetryService.captureRuntimeEvent(
-        "provider.plain_text_warning",
-        {
-            warning_kind: "text_only",
-            tool_count: 0,
-            provider_id: providerId,
-            model_id: modelId,
-            mode,
-        },
+        PLAIN_TEXT_WARNING_EVENT,
+        { provider: providerId, model: modelId, "model.custom": customModel },
         "warn",
     )
 }

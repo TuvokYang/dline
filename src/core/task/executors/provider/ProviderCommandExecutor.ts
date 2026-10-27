@@ -1,7 +1,6 @@
-import { formatResponse } from "@core/prompts/responses"
 import type { ClineMessageModelInfo } from "@shared/messages/metrics"
-import { Logger } from "@shared/services/Logger"
 import { telemetryService } from "@/services/telemetry"
+import { PLAIN_TEXT_WARNING_EVENT } from "@/services/telemetry/events/event-routes"
 import type { Command, ProviderStartCommand, ProviderTurnPlan } from "../../kernel"
 import type { CommandExecutor } from "../../runtime"
 import type { ConversationJournal, TaskViewPort } from "../../stores"
@@ -72,6 +71,8 @@ export type ProviderExecutionChunk =
           /** Chat rows of the calls the turn settled; see ProviderTextPresentationPort. */
           readonly toolRows?: readonly number[]
           readonly modelInfo?: ClineMessageModelInfo
+          /** Whether the Profile marks the model custom; live-only, for content-free diagnostics. */
+          readonly modelCustom?: boolean
           readonly turnPlan: ProviderTurnPlan
       }
 
@@ -534,17 +535,14 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
                     ...(finalChunk.toolRows === undefined ? {} : { toolRows: finalChunk.toolRows }),
                 })
             }
-            const plainTextWarning = finalChunk.turnPlan.plainTextWarning
-            if (plainTextWarning) {
-                if (plainTextWarning === "plain_text_outside_tool") Logger.warn(formatResponse.plainTextOutsideTool())
+            // Live finals only: a recovered final was reported when it was first journaled.
+            if (finalChunk.turnPlan.plainTextWarning === "text_only") {
                 telemetryService.captureRuntimeEvent(
-                    "provider.plain_text_warning",
+                    PLAIN_TEXT_WARNING_EVENT,
                     {
-                        warning_kind: plainTextWarning,
-                        tool_count: finalChunk.turnPlan.blocks.length,
-                        provider_id: finalChunk.modelInfo?.providerId ?? "unknown",
-                        model_id: finalChunk.modelInfo?.modelId ?? "unknown",
-                        mode: finalChunk.modelInfo?.mode ?? "unknown",
+                        provider: finalChunk.modelInfo?.providerId ?? "unknown",
+                        model: finalChunk.modelInfo?.modelId ?? "unknown",
+                        "model.custom": finalChunk.modelCustom === true,
                     },
                     "warn",
                 )

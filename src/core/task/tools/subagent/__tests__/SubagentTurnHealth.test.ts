@@ -15,25 +15,18 @@ afterEach(() => {
 })
 
 describe("SubagentTurnHealth", () => {
-    it("reports one content-free plain-text warning with provider and model identity", () => {
+    it("reports one plain-text warning under the catalog keys the main task uses", () => {
         const captureRuntimeEvent = vi.mocked(telemetryService.captureRuntimeEvent)
         captureRuntimeEvent.mockClear()
 
-        reportSubagentPlainTextWarning("anthropic", "claude-sonnet", "act")
+        reportSubagentPlainTextWarning("anthropic", "claude-sonnet", true)
 
         expect(captureRuntimeEvent).toHaveBeenCalledOnce()
         expect(captureRuntimeEvent).toHaveBeenCalledWith(
             "provider.plain_text_warning",
-            {
-                warning_kind: "text_only",
-                tool_count: 0,
-                provider_id: "anthropic",
-                model_id: "claude-sonnet",
-                mode: "act",
-            },
+            { provider: "anthropic", model: "claude-sonnet", "model.custom": true },
             "warn",
         )
-        expect(JSON.stringify(captureRuntimeEvent.mock.calls)).not.toContain("private prose")
     })
 
     it("emits exactly one canonical failure event for a structured subagent tool error", async () => {

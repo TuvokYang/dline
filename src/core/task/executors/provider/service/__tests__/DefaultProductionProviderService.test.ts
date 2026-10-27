@@ -186,7 +186,7 @@ describe("DefaultProductionProviderService", () => {
         ])
     })
 
-    it("binds prose authority to the explicit-instruction call that the final parse materialized", async () => {
+    it("keeps prose beside the explicit-instruction call the final parse materialized", async () => {
         const turnAuthority = new TaskTurnAuthority()
         const authority = turnAuthority.grant("turn-1", [
             {
@@ -218,19 +218,11 @@ describe("DefaultProductionProviderService", () => {
         const final = chunks.find((chunk) => chunk.kind === "final")
         if (final?.kind !== "final") throw new Error("missing final chunk")
         expect(final.text).toBe("Authorized preface.")
-        expect(final.proseAuthorization).toEqual({
-            kind: "explicit_instruction",
-            grants: [
-                expect.objectContaining({
-                    requestId: "turn-1",
-                    attemptId: authority.port.identity.attemptId,
-                    blockId: final.blocks[0].blockId,
-                }),
-            ],
-        })
+        expect(final.blocks.map((block) => block.invocation.toolName)).toEqual([DlineDefaultTool.SUMMARIZE_TASK])
+        expect(final.modelCustom).toBe(false)
     })
 
-    it("does not let an unrelated explicit declaration authorize prose beside an ordinary tool", async () => {
+    it("keeps prose beside an ordinary call and reports a custom model for live telemetry", async () => {
         const turnAuthority = new TaskTurnAuthority()
         const authority = turnAuthority.grant("turn-1", [
             {
@@ -241,7 +233,10 @@ describe("DefaultProductionProviderService", () => {
         ])
         if (!authority) throw new Error("expected explicit turn authority")
         const request = {
-            api: streamingApi([text("Ordinary preface. <read_file><path>a.ts</path></read_file>")]),
+            api: {
+                ...streamingApi([text("Ordinary preface. <read_file><path>a.ts</path></read_file>")]),
+                isCustomModel: () => true,
+            },
             systemPrompt: "",
             nativeTools: false,
             mode: "serial",
@@ -260,7 +255,10 @@ describe("DefaultProductionProviderService", () => {
             chunks.push(chunk)
 
         const final = chunks.find((chunk) => chunk.kind === "final")
-        expect(final?.kind === "final" ? final.proseAuthorization : undefined).toBeUndefined()
+        if (final?.kind !== "final") throw new Error("missing final chunk")
+        expect(final.text).toBe("Ordinary preface.")
+        expect(final.blocks.map((block) => block.invocation.toolName)).toEqual([DlineDefaultTool.FILE_READ])
+        expect(final.modelCustom).toBe(true)
     })
 
     it("keeps plain prose of a native-tool reply intact", async () => {

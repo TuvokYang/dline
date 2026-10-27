@@ -33,6 +33,9 @@ export function routeOfEvent(event: string): TelemetryEventRoute {
     return severity ? { channel: "error", severity } : USAGE_ROUTE
 }
 
+/** A reply without any tool call; carries only the provider, the model and the Profile's custom flag. */
+export const PLAIN_TEXT_WARNING_EVENT = "provider.plain_text_warning"
+
 /**
  * Runtime-bus events that may leave the device, with the channel each travels on.
  *
@@ -52,7 +55,7 @@ const REMOTE_RUNTIME_EVENT_CHANNELS: ReadonlyMap<string, "error" | "runtime"> = 
     ["runtime.heap_growth_bytes.breach", "runtime"],
     ["runtime.previous_session_reconciled", "runtime"],
     ["task.tool.interrupted_inferred", "runtime"],
-    ["provider.plain_text_warning", "runtime"],
+    [PLAIN_TEXT_WARNING_EVENT, "runtime"],
 ])
 
 /** Channel of one runtime-bus event: the error channel for a listed failure, runtime otherwise. */

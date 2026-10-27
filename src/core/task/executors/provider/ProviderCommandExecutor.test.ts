@@ -1,4 +1,3 @@
-import { Logger } from "@shared/services/Logger"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { telemetryService } from "@/services/telemetry"
 import type { ProviderStartCommand, ProviderTurnBlockPlan, TaskEvent } from "../../kernel"
@@ -174,10 +173,9 @@ describe("ProviderCommandExecutor", () => {
         ])
     })
 
-    it("presents prose outside an ordinary tool call and reports one content-free warning", async () => {
+    it("presents prose beside a tool call without reporting a warning", async () => {
         const captureRuntimeEvent = vi.mocked(telemetryService.captureRuntimeEvent)
         captureRuntimeEvent.mockClear()
-        const warn = vi.spyOn(Logger, "warn").mockImplementation(() => undefined)
         const presentation = { showPartial: vi.fn(), commit: vi.fn(async () => undefined) }
         const executor = new ProviderCommandExecutor(
             "task-1",
@@ -192,11 +190,7 @@ describe("ProviderCommandExecutor", () => {
                             payloadRef: "payload:final",
                             text: "ordinary prose",
                             modelInfo: { providerId: "anthropic", modelId: "model-1", mode: "act" },
-                            turnPlan: {
-                                mode: "serial",
-                                blocks: [toolBlock],
-                                plainTextWarning: "plain_text_outside_tool",
-                            },
+                            turnPlan: { mode: "serial", blocks: [toolBlock] },
                         },
                     ]),
             },
@@ -209,105 +203,47 @@ describe("ProviderCommandExecutor", () => {
         await executor.execute(command)
 
         expect(presentation.commit).toHaveBeenCalledWith({ transientId: "stream-1", text: "ordinary prose" })
-        expect(warn).toHaveBeenCalledOnce()
+        expect(captureRuntimeEvent).not.toHaveBeenCalledWith("provider.plain_text_warning", expect.anything(), "warn")
+    })
+
+    it("reports plain text without any call as one content-free warning under catalog keys", async () => {
+        const captureRuntimeEvent = vi.mocked(telemetryService.captureRuntimeEvent)
+        captureRuntimeEvent.mockClear()
+        const presentation = { showPartial: vi.fn(), commit: vi.fn(async () => undefined) }
+        const executor = new ProviderCommandExecutor(
+            "task-1",
+            {
+                start: () =>
+                    chunks([
+                        {
+                            kind: "final",
+                            transientId: "stream-1",
+                            turnId: "turn-request",
+                            payloadRef: "payload:final",
+                            text: "plain answer",
+                            modelInfo: { providerId: "anthropic", modelId: "model-1", mode: "act" },
+                            modelCustom: true,
+                            turnPlan: { mode: "serial", blocks: [], plainTextWarning: "text_only" },
+                        },
+                    ]),
+            },
+            new InMemoryConversationJournal(),
+            new InMemoryTaskViewPort(),
+            recorder().sink,
+            presentation,
+        )
+
+        await executor.execute(command)
+
+        expect(presentation.commit).toHaveBeenCalledWith({ transientId: "stream-1", text: "plain answer" })
         expect(captureRuntimeEvent).toHaveBeenCalledOnce()
+        // The remote diagnostics catalog keeps only these keys, so any other spelling is dropped before upload.
         expect(captureRuntimeEvent).toHaveBeenCalledWith(
             "provider.plain_text_warning",
-            {
-                warning_kind: "plain_text_outside_tool",
-                tool_count: 1,
-                provider_id: "anthropic",
-                model_id: "model-1",
-                mode: "act",
-            },
+            { provider: "anthropic", model: "model-1", "model.custom": true },
             "warn",
         )
-        expect(JSON.stringify(captureRuntimeEvent.mock.calls)).not.toContain("ordinary prose")
-    })
-
-    it("preserves prose when a parsed block exercised matching explicit-instruction authority", async () => {
-        const presentation = { showPartial: vi.fn(), commit: vi.fn(async () => undefined) }
-        const executor = new ProviderCommandExecutor(
-            "task-1",
-            {
-                start: () =>
-                    chunks([
-                        { kind: "partial", transientId: "stream-1", text: "authorized prose" },
-                        {
-                            kind: "final",
-                            transientId: "stream-1",
-                            turnId: "turn-request",
-                            payloadRef: "payload:final",
-                            text: "authorized prose",
-                            turnPlan: {
-                                mode: "serial",
-                                blocks: [toolBlock],
-                                proseAuthorization: {
-                                    kind: "explicit_instruction",
-                                    grants: [
-                                        {
-                                            instructionId: "instruction-1",
-                                            requestId: "turn-request",
-                                            attemptId: "provider-attempt-1",
-                                            blockId: toolBlock.blockId,
-                                        },
-                                    ],
-                                },
-                            },
-                        },
-                    ]),
-            },
-            new InMemoryConversationJournal(),
-            new InMemoryTaskViewPort(),
-            recorder().sink,
-            presentation,
-        )
-
-        await executor.execute(command)
-
-        expect(presentation.commit).toHaveBeenCalledWith({ transientId: "stream-1", text: "authorized prose" })
-    })
-
-    it("still presents prose when a stale explicit-instruction grant does not authorize it", async () => {
-        const presentation = { showPartial: vi.fn(), commit: vi.fn(async () => undefined) }
-        const executor = new ProviderCommandExecutor(
-            "task-1",
-            {
-                start: () =>
-                    chunks([
-                        {
-                            kind: "final",
-                            transientId: "stream-1",
-                            turnId: "turn-request",
-                            payloadRef: "payload:final",
-                            text: "ordinary prose",
-                            turnPlan: {
-                                mode: "serial",
-                                blocks: [toolBlock],
-                                proseAuthorization: {
-                                    kind: "explicit_instruction",
-                                    grants: [
-                                        {
-                                            instructionId: "instruction-1",
-                                            requestId: "other-turn",
-                                            attemptId: "other-attempt",
-                                            blockId: toolBlock.blockId,
-                                        },
-                                    ],
-                                },
-                            },
-                        },
-                    ]),
-            },
-            new InMemoryConversationJournal(),
-            new InMemoryTaskViewPort(),
-            recorder().sink,
-            presentation,
-        )
-
-        await executor.execute(command)
-
-        expect(presentation.commit).toHaveBeenCalledWith({ transientId: "stream-1", text: "ordinary prose" })
+        expect(JSON.stringify(captureRuntimeEvent.mock.calls)).not.toContain("plain answer")
     })
 
     it("replays an existing durable final without requesting the provider again", async () => {
