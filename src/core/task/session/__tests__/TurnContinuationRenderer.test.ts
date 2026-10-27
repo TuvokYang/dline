@@ -29,7 +29,7 @@ describe("TurnContinuationRenderer", () => {
         expect(render({ kind: "unobserved" })).toBe(formatResponse.noToolsUsed(true))
     })
 
-    it("names a reasoning-only response, its output tokens and the remaining budget before the reminder", () => {
+    it("names a reasoning-only response and its output tokens without exposing the retry budget", () => {
         const text = render(
             journaled(
                 { content: [{ type: "thinking", thinking: "planning the next step", signature: "sig" }] },
@@ -38,7 +38,7 @@ describe("TurnContinuationRenderer", () => {
         )
 
         expect(text).toMatch(/^\[ERROR\] The previous response contained only internal reasoning \(~812 output tokens\)/)
-        expect(text).toContain("Consecutive failed responses: 2 of 3. At 3 the task pauses and asks the user for guidance.")
+        expect(text).not.toContain("Consecutive failed responses")
         expect(text).toContain("Do not restart or repeat earlier analysis")
         expect(text?.endsWith(formatResponse.noToolsUsed(true))).toBe(true)
     })

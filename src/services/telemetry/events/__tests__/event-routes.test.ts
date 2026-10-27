@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { channelOfRuntimeEvent } from "../event-routes"
+import { channelOfRuntimeEvent, isRemoteDiagnosticEvent } from "../event-routes"
 
 describe("channelOfRuntimeEvent (WS-109 SC-1)", () => {
     it("puts a reported failure on the error channel and everything else on the runtime channel", () => {
@@ -11,6 +11,7 @@ describe("channelOfRuntimeEvent (WS-109 SC-1)", () => {
                 "mcp.tools.call.failed",
                 "extension.error",
                 "runtime.heap_growth_bytes.breach",
+                "provider.plain_text_warning",
                 "task.error",
                 "extension.warning",
                 "api.request.cancelled",
@@ -24,9 +25,11 @@ describe("channelOfRuntimeEvent (WS-109 SC-1)", () => {
             "mcp.tools.call.failed": "error",
             "extension.error": "error",
             "runtime.heap_growth_bytes.breach": "runtime",
+            "provider.plain_text_warning": "runtime",
             "task.error": "runtime",
             "extension.warning": "runtime",
             "api.request.cancelled": "runtime",
         })
+        expect(isRemoteDiagnosticEvent("provider.plain_text_warning")).toBe(true)
     })
 })

@@ -38,20 +38,18 @@ describe("classifyToollessTurn", () => {
 })
 
 describe("buildTurnFailureFeedback", () => {
-    it("states the failure, the remaining budget and the next step", () => {
+    it("states the failure and next step without exposing internal retry state", () => {
         const feedback = buildTurnFailureFeedback(
             { kind: "reasoning_only", outputTokens: 1_200 },
             {
                 usesNativeToolCalls: true,
                 availableTools: TOOLS,
                 finishing: false,
-                consecutiveFailures: 2,
-                maxConsecutiveFailures: 5,
             },
         )
 
         expect(feedback).toContain(`only internal reasoning (~${(1_200).toLocaleString()} output tokens)`)
-        expect(feedback).toContain("Consecutive failed responses: 2 of 5.")
+        expect(feedback).not.toContain("Consecutive failed responses")
         expect(feedback).toContain("Do not restart or repeat earlier analysis")
         expect(feedback).toContain("Available tools: read_file, attempt_completion.")
         expect(feedback).toContain("native tool-calling interface")
@@ -76,16 +74,42 @@ describe("buildTurnFailureFeedback", () => {
 })
 
 describe("ConsecutiveTurnFailures", () => {
-    it("is exhausted at the limit and cleared by reset", () => {
+    it("promotes each fifth plain-text warning while other failures count immediately", () => {
         const failures = new ConsecutiveTurnFailures(2)
-        failures.record({ kind: "text_only" })
+        for (let warning = 1; warning <= 4; warning += 1) failures.record({ kind: "text_only" })
+        expect(failures.count).toBe(0)
+        expect(failures.warningCount).toBe(4)
         expect(failures.exhausted).toBe(false)
+
+        failures.record({ kind: "text_only" })
+        expect(failures.count).toBe(1)
+        expect(failures.warningCount).toBe(0)
+        expect(failures.exhausted).toBe(false)
+
         failures.record({ kind: "empty_response" })
+        expect(failures.count).toBe(2)
         expect(failures.exhausted).toBe(true)
-        expect(failures.list().map((failure) => failure.kind)).toEqual(["text_only", "empty_response"])
+        expect(failures.list().map((failure) => failure.kind)).toEqual([
+            "text_only",
+            "text_only",
+            "text_only",
+            "text_only",
+            "text_only",
+            "empty_response",
+        ])
+    })
+
+    it("clears warning remainder and promoted mistakes together", () => {
+        const failures = new ConsecutiveTurnFailures(2)
+        for (let warning = 1; warning <= 9; warning += 1) failures.record({ kind: "text_only" })
+        expect(failures.count).toBe(1)
+        expect(failures.warningCount).toBe(4)
 
         failures.reset()
+
         expect(failures.count).toBe(0)
+        expect(failures.warningCount).toBe(0)
         expect(failures.exhausted).toBe(false)
+        expect(failures.list()).toEqual([])
     })
 })

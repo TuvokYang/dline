@@ -208,19 +208,28 @@ describe("ProviderTextPresenter", () => {
         expect(committed).toEqual([expect.objectContaining({ text: "Complete answer", partial: false })])
     })
 
-    it("replaces invalid prose with a durable error row while preserving its streamed row identity", async () => {
+    it("commits streamed prose as ordinary user-visible text", async () => {
         const { presenter, committed, rows } = createPresenter()
 
         presenter.showPartial({ transientId: "provider:turn-1", text: "ordinary prose" })
         const streamedTs = [...rows.keys()][0]
-        await presenter.commit({
-            transientId: "provider:turn-1",
-            text: "ordinary prose",
-            proseDisposition: "plain_text_outside_tool",
-        })
+        await presenter.commit({ transientId: "provider:turn-1", text: "ordinary prose" })
 
-        expect(committed).toEqual([expect.objectContaining({ ts: streamedTs, type: "say", say: "error", partial: false })])
-        expect(committed[0].text).not.toBe("ordinary prose")
+        expect(committed).toEqual([
+            expect.objectContaining({ ts: streamedTs, type: "say", say: "text", text: "ordinary prose", partial: false }),
+        ])
+    })
+
+    it("keeps each turn's original prose in its own text row", async () => {
+        const { presenter, committed } = createPresenter()
+
+        await presenter.commit({ transientId: "provider:turn-1", text: "first response" })
+        await presenter.commit({ transientId: "provider:turn-2", text: "second response" })
+
+        expect(committed).toEqual([
+            expect.objectContaining({ type: "say", say: "text", text: "first response", partial: false }),
+            expect.objectContaining({ type: "say", say: "text", text: "second response", partial: false }),
+        ])
     })
 
     it("withdraws the row when the turn produced no prose", async () => {

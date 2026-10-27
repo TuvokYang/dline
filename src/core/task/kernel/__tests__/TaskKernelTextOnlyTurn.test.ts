@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest"
 import { transition } from "../transition"
-import type { Command, ProviderTurnBlockPlan, TaskState, TransitionResult } from "../types"
+import type {
+    Command,
+    ProviderPlainTextWarningKind,
+    ProviderTurnBlockPlan,
+    TaskEvent,
+    TaskState,
+    TransitionResult,
+} from "../types"
 import { createInitialTaskState } from "../types"
 
 function accepted(result: TransitionResult): Extract<TransitionResult, { kind: "accepted" }> {
@@ -48,6 +55,72 @@ function turnReady(blocks: readonly ProviderTurnBlockPlan[]) {
     }
 }
 
+function providerReady(
+    state: TaskState,
+    blocks: readonly ProviderTurnBlockPlan[],
+    plainTextWarning?: ProviderPlainTextWarningKind,
+): Extract<TaskEvent, { type: "provider.turn_ready" }> {
+    const provider = state.flow.provider
+    if (!provider) throw new Error("expected live provider")
+    return {
+        type: "provider.turn_ready",
+        generation: state.generation,
+        commandId: provider.commandId,
+        originRevision: provider.originRevision,
+        turnId: provider.turnId ?? "turn-1",
+        finalPayloadRef: `final:${state.revision}`,
+        journalWatermark: { seq: state.revision + 1 },
+        turnPlan: {
+            mode: "serial",
+            blocks,
+            ...(plainTextWarning === undefined ? {} : { plainTextWarning }),
+        },
+    }
+}
+
+function awaitingNextProvider(state: TaskState): TaskState {
+    return {
+        ...state,
+        flow: {
+            ...state.flow,
+            phase: "running",
+            compose: undefined,
+            provider: {
+                commandId: `provider:${state.revision}`,
+                originRevision: state.revision,
+                status: "running",
+                turnId: `turn:${state.revision}`,
+            },
+        },
+    }
+}
+
+function withWarningBudget(state: TaskState, count: number, mistakes: number): TaskState {
+    return {
+        ...state,
+        flow: {
+            ...state.flow,
+            plainTextWarningCount: count,
+            plainTextWarningMistakes: mistakes,
+            toolMistakeCount: 0,
+            consecutiveMistakeCount: mistakes,
+        },
+    }
+}
+
+function executingTool(state: TaskState): TaskState {
+    const planned = accepted(transition(state, providerReady(state, [toolBlock("b1")]))).state
+    return accepted(
+        transition(planned, {
+            type: "tool.started",
+            generation: planned.generation,
+            turnId: planned.turn.turnId ?? "turn-1",
+            blockId: "b1",
+            attempt: "attempt-b1",
+        }),
+    ).state
+}
+
 function composeRounds(commands: readonly Command[]) {
     return commands.filter((command) => command.type === "compose.round")
 }
@@ -67,6 +140,75 @@ describe("kernel continuation after a turn that used no tool", () => {
         expect(composeRounds(result.commands)).toEqual([])
         expect(result.commands).toEqual([expect.objectContaining({ type: "tool.run", turnId: "turn-1" })])
         expect(result.state.flow.textOnlyTurnStreak).toBe(0)
+    })
+
+    it("promotes each fifth plain-text warning without growing the strict no-tool streak", () => {
+        let state = awaitingProvider()
+        for (let warning = 1; warning <= 10; warning += 1) {
+            const result = accepted(transition(state, providerReady(state, [], "text_only")))
+            expect(result.state.flow.plainTextWarningCount).toBe(warning % 5)
+            expect(result.state.flow.plainTextWarningMistakes).toBe(Math.floor(warning / 5))
+            expect(result.state.flow.toolMistakeCount).toBe(0)
+            expect(result.state.flow.consecutiveMistakeCount).toBe(Math.floor(warning / 5))
+            expect(result.state.flow.textOnlyTurnStreak).toBe(0)
+            state = awaitingNextProvider(result.state)
+        }
+    })
+
+    it("opens mistake-limit recovery only when a warning promotion reaches the configured limit", () => {
+        const state = withWarningBudget(awaitingProvider(), 4, 2)
+        const result = accepted(transition(state, providerReady(state, [], "text_only")))
+
+        expect(result.state.flow.plainTextWarningCount).toBe(0)
+        expect(result.state.flow.plainTextWarningMistakes).toBe(3)
+        expect(result.state.flow.consecutiveMistakeCount).toBe(3)
+        expect(result.state.flow.textOnlyTurnStreak).toBe(0)
+        expect(result.state.flow.phase).toBe("waiting")
+        expect(result.state.dialog.primary?.kind).toBe("mistake_limit")
+        expect(composeRounds(result.commands)).toEqual([])
+    })
+
+    it("clears warning count and promoted mistakes after a successful tool result", () => {
+        const running = executingTool(withWarningBudget(awaitingProvider(), 4, 2))
+        const result = accepted(
+            transition(running, {
+                type: "tool.completed",
+                generation: running.generation,
+                turnId: running.turn.turnId ?? "turn-1",
+                blockId: "b1",
+                attempt: "attempt-b1",
+                successful: true,
+                mistakeCount: 0,
+            }),
+        )
+
+        expect(result.state.flow.plainTextWarningCount).toBe(0)
+        expect(result.state.flow.plainTextWarningMistakes).toBe(0)
+        expect(result.state.flow.toolMistakeCount).toBe(0)
+        expect(result.state.flow.consecutiveMistakeCount).toBe(0)
+    })
+
+    it.each([
+        ["completed failed result", "tool.completed", false],
+        ["failed execution", "tool.failed", undefined],
+        ["cancelled execution", "tool.cancelled", undefined],
+    ] as const)("does not clear warning promotion after a %s", (_label, type, successful) => {
+        const running = executingTool(withWarningBudget(awaitingProvider(), 3, 2))
+        const result = accepted(
+            transition(running, {
+                type,
+                generation: running.generation,
+                turnId: running.turn.turnId ?? "turn-1",
+                blockId: "b1",
+                attempt: "attempt-b1",
+                ...(successful === undefined ? {} : { successful }),
+                mistakeCount: 0,
+            }),
+        )
+
+        expect(result.state.flow.plainTextWarningCount).toBe(3)
+        expect(result.state.flow.plainTextWarningMistakes).toBe(2)
+        expect(result.state.flow.consecutiveMistakeCount).toBe(2)
     })
 
     it("hands the task back once the streak reaches its bound, instead of looping forever", () => {
@@ -131,6 +273,10 @@ describe("kernel continuation after a turn that used no tool", () => {
             transition(limited.state, { type: "user.submit", generation: 0, entryId: "entry-1", payloadRef: "input:1" }),
         )
         expect(submitted.state.flow.textOnlyTurnStreak).toBe(0)
+        expect(submitted.state.flow.plainTextWarningCount).toBe(0)
+        expect(submitted.state.flow.plainTextWarningMistakes).toBe(0)
+        expect(submitted.state.flow.toolMistakeCount).toBe(0)
+        expect(submitted.state.flow.consecutiveMistakeCount).toBe(0)
         expect(composeRounds(submitted.commands)).toEqual([
             expect.objectContaining({ type: "compose.round", admittedEntryIds: ["entry-1"] }),
         ])

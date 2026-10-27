@@ -50,23 +50,43 @@ export function reduceFlow(state: FlowState, event: TaskEvent): FlowReduction {
                               ...state,
                               phase: "initializing",
                               textOnlyTurnStreak: 0,
+                              plainTextWarningCount: 0,
+                              plainTextWarningMistakes: 0,
+                              toolMistakeCount: 0,
                               consecutiveMistakeCount: 0,
                               replyAdmission: undefined,
                           }
-                        : { ...state, textOnlyTurnStreak: 0, consecutiveMistakeCount: 0, replyAdmission: undefined },
+                        : {
+                              ...state,
+                              textOnlyTurnStreak: 0,
+                              plainTextWarningCount: 0,
+                              plainTextWarningMistakes: 0,
+                              toolMistakeCount: 0,
+                              consecutiveMistakeCount: 0,
+                              replyAdmission: undefined,
+                          },
                 commands: [],
             }
-        case "provider.turn_ready":
+        case "provider.turn_ready": {
+            const warning = event.turnPlan.plainTextWarning
+            const warningCount = warning ? (state.plainTextWarningCount ?? 0) + 1 : (state.plainTextWarningCount ?? 0)
+            const promoted = warningCount >= 5
+            const warningMistakes = (state.plainTextWarningMistakes ?? 0) + (promoted ? 1 : 0)
+            const toolMistakes = state.toolMistakeCount ?? 0
             return {
                 state: {
                     ...state,
                     phase: "running",
                     error: undefined,
                     replyAdmission: undefined,
-                    // A turn that planned no block ends with nothing that could
-                    // report completion, so the streak is what later decides
-                    // whether the round is continued or handed back to the user.
-                    textOnlyTurnStreak: event.turnPlan.blocks.length === 0 ? (state.textOnlyTurnStreak ?? 0) + 1 : 0,
+                    // Ordinary plain text consumes the weighted warning budget.
+                    // Other no-tool outcomes retain the strict raw-turn guard.
+                    textOnlyTurnStreak:
+                        event.turnPlan.blocks.length === 0 && warning === undefined ? (state.textOnlyTurnStreak ?? 0) + 1 : 0,
+                    plainTextWarningCount: warning ? (promoted ? 0 : warningCount) : state.plainTextWarningCount,
+                    plainTextWarningMistakes: warningMistakes,
+                    toolMistakeCount: toolMistakes,
+                    consecutiveMistakeCount: toolMistakes + warningMistakes,
                     provider: state.provider && {
                         ...state.provider,
                         status: "completed",
@@ -77,6 +97,7 @@ export function reduceFlow(state: FlowState, event: TaskEvent): FlowReduction {
                 },
                 commands: [],
             }
+        }
         case "tool.completion_presented":
             // A completion is terminal as soon as its result has been staged for
             // presentation. Keeping the flow `running` made history recovery and the
@@ -88,15 +109,25 @@ export function reduceFlow(state: FlowState, event: TaskEvent): FlowReduction {
             }
         case "tool.completed":
         case "tool.failed":
-        case "tool.cancelled":
+        case "tool.cancelled": {
+            const toolMistakes = event.mistakeCount ?? state.toolMistakeCount ?? 0
+            // A persisted tool result can be terminal yet failed. The executor
+            // supplies that semantic fact; absent stays success-compatible for
+            // restored events written before the field existed.
+            const successful = event.type === "tool.completed" && event.successful !== false
+            const warningMistakes = successful ? 0 : (state.plainTextWarningMistakes ?? 0)
             return {
                 state: {
                     ...state,
-                    ...(event.mistakeCount === undefined ? {} : { consecutiveMistakeCount: event.mistakeCount }),
+                    toolMistakeCount: toolMistakes,
+                    plainTextWarningCount: successful ? 0 : state.plainTextWarningCount,
+                    plainTextWarningMistakes: warningMistakes,
+                    consecutiveMistakeCount: toolMistakes + warningMistakes,
                     ...(event.mistakeLimit === undefined ? {} : { maxConsecutiveMistakes: event.mistakeLimit }),
                 },
                 commands: [],
             }
+        }
         case "provider.failed":
             return {
                 state: {

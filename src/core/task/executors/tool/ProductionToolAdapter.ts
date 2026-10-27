@@ -116,8 +116,11 @@ async function settleWithPostCommit(
     directive: ToolPostCommitDirective,
     settle: () => Promise<void>,
     refusedContent: () => string,
-): Promise<void> {
-    if (!options.publishPostCommit) return settle()
+): Promise<boolean> {
+    if (!options.publishPostCommit) {
+        await settle()
+        return false
+    }
     // The publisher must not throw from `beforeStart`: the source is already
     // consumed, so the successor starts either way and the failure surfaces here.
     let settleFailure: { readonly error: unknown } | undefined
@@ -130,10 +133,14 @@ async function settleWithPostCommit(
             }),
     })
     if (settleFailure) throw settleFailure.error
-    if (outcome === "handed_off") return
-    if (outcome === "not_a_handoff") return settle()
+    if (outcome === "handed_off") return false
+    if (outcome === "not_a_handoff") {
+        await settle()
+        return false
+    }
     await persistResult(options, command, { content: refusedContent(), failed: true })
     await persistApprovalFeedback(options, command)
+    return true
 }
 
 /** Builds the canonical tool-domain options around one host execution service. */
@@ -174,11 +181,14 @@ export function createProductionToolAdapter(options: ProductionToolAdapterOption
                         })
                         await persistApprovalFeedback(options, command)
                     }
-                    if (!result.postCommit) await settle()
-                    else
-                        await settleWithPostCommit(options, command, result.postCommit, settle, () =>
-                            errorContent(formatResponse.postCommitRefused()),
-                        )
+                    if (!result.postCommit) {
+                        await settle()
+                        return result.failed === true ? { failed: true } : undefined
+                    }
+                    const postCommitFailed = await settleWithPostCommit(options, command, result.postCommit, settle, () =>
+                        errorContent(formatResponse.postCommitRefused()),
+                    )
+                    return result.failed === true || postCommitFailed ? { failed: true } : undefined
                 } catch (error) {
                     await persistResult(options, command, { content: failureContent(error), failed: true })
                     // A failed tool still consumed the approval, so the instruction the

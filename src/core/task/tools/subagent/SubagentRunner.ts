@@ -62,7 +62,6 @@ import { canonicalizeAttemptCompletionParams } from "../attempt-completion-param
 import { partitionDeferredHostedCalls } from "../deferred-hosted-rows"
 import { type DeferredServerToolCall, ServerToolLifecycle } from "../ServerToolLifecycle"
 import { DefaultToolHandlerState, type ToolHandlerState } from "../state/ToolHandlerState"
-import { normalizeObservedToolExecutionResult } from "../ToolExecutionResult"
 import { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
 import { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
@@ -79,14 +78,11 @@ import {
 } from "./SubagentOutputBudget"
 import { SubagentProseStream } from "./SubagentProseStream"
 import { type FrozenSubagentRoundContext, SubagentRoundContextProjection } from "./SubagentRoundContextProjection"
+import { observeSubagentToolExecution, reportSubagentPlainTextWarning } from "./SubagentTurnHealth"
 
 /**
- * Failed responses in a row after which a run stops with an error.
- *
- * Empty, reasoning-only, text-only and malformed responses, empty completions
- * and ignored finish orders all count against this one limit, and any tool that
- * executes successfully clears it. Separate per-kind limits let a run spin
- * indefinitely by alternating between failure kinds.
+ * Effective mistakes after which a run stops. Plain text is weighted 5:1;
+ * other unusable responses count immediately, and a successful tool clears all.
  */
 const MAX_CONSECUTIVE_TURN_FAILURES = 5
 /**
@@ -133,8 +129,8 @@ function buildConsecutiveFailureError(
     partialFindings: string,
 ): string {
     const lines = [
-        `Subagent stopped after ${failures.length} consecutive responses without a usable tool call:`,
-        ...failures.map((failure, index) => `${index + 1}. ${describeTurnFailure(failure, usesNativeToolCalls)}`),
+        "Subagent stopped after repeated responses without a usable tool call:",
+        ...failures.map((failure) => `- ${describeTurnFailure(failure, usesNativeToolCalls)}`),
     ]
     const findings = partialFindings.trim()
     if (findings) lines.push("", "Partial findings recovered from the run (incomplete and unverified):", findings)
@@ -861,8 +857,6 @@ export class SubagentRunner {
                     usesNativeToolCalls: useNativeToolCalls,
                     availableTools: this.completionOnly ? [DlineDefaultTool.ATTEMPT] : this.allowedTools,
                     finishing: this.completionOnly,
-                    consecutiveFailures: turnFailures.count,
-                    maxConsecutiveFailures: turnFailures.limit,
                 })
                 // A subagent that answered in prose believes it is done; restate how a run ends.
                 const completionMisunderstood = failure.kind === "text_only" || failure.kind === "missing_completion_result"
@@ -1420,6 +1414,8 @@ export class SubagentRunner {
                         this.allowedTools,
                     )
                     turnFailures.record(failure)
+                    if (failure.kind === "text_only")
+                        reportSubagentPlainTextWarning(providerInfo.providerId, providerInfo.model.id, providerInfo.mode)
                     // Shape only, never content: enough to tell a truncated, reasoning-only,
                     // or malformed response apart when a run misbehaves in the field.
                     Logger.warn(
@@ -1571,7 +1567,10 @@ export class SubagentRunner {
                                     },
                                     inheritsApproval: true,
                                 },
-                                () => handler.execute(subagentConfig, toolCallBlock).then(normalizeObservedToolExecutionResult),
+                                () =>
+                                    observeSubagentToolExecution({ taskId: subagentConfig.taskId, requestId, call }, () =>
+                                        handler.execute(subagentConfig, toolCallBlock),
+                                    ),
                             )
                             if (admission.outcome === "admitted" && admission.confirm) admission = await admission.confirm()
                             if (admission.outcome === "rejected") {

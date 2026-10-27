@@ -4,19 +4,20 @@ import {
     type HaltOrder,
     type ToolDomainEvent,
     type ToolDomainRunner,
+    type ToolDomainRunResult,
     ToolExecutionDomain,
     type ToolRunCommand,
 } from "../ToolExecutionDomain"
 
 /** A runner whose every block can be settled by the test at will. */
 function createControllableRunner() {
-    const gates = new Map<string, { resolve: () => void; reject: (error: Error) => void }>()
+    const gates = new Map<string, { resolve: (result?: ToolDomainRunResult) => void; reject: (error: Error) => void }>()
     const released: HaltOrder[] = []
     let releaseCount = 0
 
     const runner: ToolDomainRunner = {
         runBlock: (command) =>
-            new Promise<void>((resolve, reject) => {
+            new Promise<ToolDomainRunResult | undefined>((resolve, reject) => {
                 gates.set(command.dlineTid, { resolve, reject })
             }),
         release: async (order) => {
@@ -31,8 +32,8 @@ function createControllableRunner() {
         get releaseCount() {
             return releaseCount
         },
-        settle(dlineTid: string) {
-            gates.get(dlineTid)?.resolve()
+        settle(dlineTid: string, result?: ToolDomainRunResult) {
+            gates.get(dlineTid)?.resolve(result)
         },
         fail(dlineTid: string, message: string) {
             gates.get(dlineTid)?.reject(new Error(message))
@@ -97,6 +98,20 @@ describe("ToolExecutionDomain command contract", () => {
 
         expect(events).toEqual([{ kind: "tool.block_result", commandId: "cmd-tid-a", turnId: "turn-1", dlineTid: "tid-a" }])
         expect(domain.inFlightCount).toBe(0)
+    })
+
+    it("keeps a durably produced failed result distinct from a successful result", async () => {
+        const controllable = createControllableRunner()
+        const { events, sink } = createSink()
+        const domain = new ToolExecutionDomain({ runner: controllable.runner, sink, surface: userFacingSurface() })
+
+        domain.handle(command("tid-a"))
+        controllable.settle("tid-a", { failed: true })
+        await flush()
+
+        expect(events).toEqual([
+            { kind: "tool.block_result", commandId: "cmd-tid-a", turnId: "turn-1", dlineTid: "tid-a", failed: true },
+        ])
     })
 
     it("reports a thrown block as a failure event rather than letting it escape", async () => {

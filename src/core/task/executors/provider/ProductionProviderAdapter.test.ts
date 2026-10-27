@@ -6,7 +6,7 @@ import type {
     ProviderFinalEnvelope,
     ToolInvocationEnvelope,
 } from "../../stores/payload/TaskPayloadEnvelopes"
-import { ProductionProviderAdapter } from "./ProductionProviderAdapter"
+import { ProductionProviderAdapter, type ProductionProviderChunk } from "./ProductionProviderAdapter"
 
 class MemoryPayloads implements TaskPayloadStore {
     private sequence = 0
@@ -25,6 +25,34 @@ class MemoryPayloads implements TaskPayloadStore {
         const value = this.values.get(ref)
         if (!value) throw new Error(`MissingPayload:${ref}`)
         return value
+    }
+}
+
+async function runFinal(chunk: Extract<ProductionProviderChunk, { kind: "final" }>) {
+    const payloads = new MemoryPayloads()
+    const draftRef = await payloads.put(
+        encodeTaskPayload<ProviderDraftEnvelope>({
+            kind: "provider_draft",
+            admittedEntryIds: ["entry-1"],
+            inputPayloadRefs: ["input:1"],
+        }),
+    )
+    const adapter = new ProductionProviderAdapter({
+        payloads,
+        service: {
+            async *start() {
+                yield chunk
+            },
+        },
+    })
+    const output = []
+    for await (const value of adapter.start({ draftRef, signal: new AbortController().signal })) output.push(value)
+    const final = output[0]
+    if (final?.kind !== "final") throw new Error("expected final")
+    return {
+        adapter,
+        final,
+        storedFinal: decodeTaskPayload<ProviderFinalEnvelope>(await payloads.read(final.payloadRef)),
     }
 }
 
@@ -96,6 +124,7 @@ describe("ProductionProviderAdapter", () => {
         const storedFinal = decodeTaskPayload<ProviderFinalEnvelope>(await payloads.read(final.payloadRef))
         // The producer is durable with the reply, so a restart still knows the turn's model.
         expect(storedFinal.modelInfo).toEqual({ modelId: "source-model", providerId: "anthropic", mode: "act" })
+        expect(storedFinal.turnPlan.plainTextWarning).toBeUndefined()
         expect(storedFinal.turnPlan.proseAuthorization).toEqual({
             kind: "explicit_instruction",
             grants: [
@@ -107,13 +136,64 @@ describe("ProductionProviderAdapter", () => {
                 },
             ],
         })
-        await expect(adapter.recoverFinal(final.payloadRef)).resolves.toMatchObject({
-            turnPlan: { proseAuthorization: storedFinal.turnPlan.proseAuthorization },
+        await expect(adapter.recoverFinal(final.payloadRef)).resolves.toEqual({
+            modelInfo: { modelId: "source-model", providerId: "anthropic", mode: "act" },
+            turnPlan: storedFinal.turnPlan,
         })
         const invocationRef = storedFinal.turnPlan.blocks[0].invocationRef
         expect(decodeTaskPayload<ToolInvocationEnvelope>(await payloads.read(invocationRef))).toMatchObject({
             kind: "tool_invocation",
             toolName: "read_file",
+        })
+    })
+
+    it("classifies pure and mixed plain text durably and restores the warning with model identity", async () => {
+        const pure = await runFinal({
+            kind: "final",
+            turnId: "turn-pure",
+            text: "plain answer",
+            modelInfo: { modelId: "model-pure", providerId: "openai", mode: "act" },
+            mode: "serial",
+            blocks: [],
+        })
+        expect(pure.final.turnPlan.plainTextWarning).toBe("text_only")
+        expect(pure.storedFinal.turnPlan.plainTextWarning).toBe("text_only")
+        await expect(pure.adapter.recoverFinal(pure.final.payloadRef)).resolves.toEqual({
+            turnPlan: pure.storedFinal.turnPlan,
+            modelInfo: { modelId: "model-pure", providerId: "openai", mode: "act" },
+        })
+
+        const mixed = await runFinal({
+            kind: "final",
+            turnId: "turn-mixed",
+            text: "prose before a tool",
+            modelInfo: { modelId: "model-mixed", providerId: "anthropic", mode: "plan" },
+            mode: "serial",
+            blocks: [
+                {
+                    blockId: "block-mixed",
+                    attempt: "attempt-mixed",
+                    index: 0,
+                    lanes: [],
+                    turnEnding: false,
+                    invocation: {
+                        kind: "tool_invocation",
+                        toolName: "read_file",
+                        input: { path: "a.ts" },
+                        functionId: "function-mixed",
+                        dlineTid: "block-mixed",
+                        presentationId: 2,
+                        isNativeToolCall: false,
+                    },
+                    approval: { kind: "none" },
+                },
+            ],
+        })
+        expect(mixed.final.turnPlan.plainTextWarning).toBe("plain_text_outside_tool")
+        expect(mixed.storedFinal.turnPlan.plainTextWarning).toBe("plain_text_outside_tool")
+        await expect(mixed.adapter.recoverFinal(mixed.final.payloadRef)).resolves.toEqual({
+            turnPlan: mixed.storedFinal.turnPlan,
+            modelInfo: { modelId: "model-mixed", providerId: "anthropic", mode: "plan" },
         })
     })
 })

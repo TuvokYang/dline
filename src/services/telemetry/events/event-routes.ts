@@ -52,6 +52,7 @@ const REMOTE_RUNTIME_EVENT_CHANNELS: ReadonlyMap<string, "error" | "runtime"> = 
     ["runtime.heap_growth_bytes.breach", "runtime"],
     ["runtime.previous_session_reconciled", "runtime"],
     ["task.tool.interrupted_inferred", "runtime"],
+    ["provider.plain_text_warning", "runtime"],
 ])
 
 /** Channel of one runtime-bus event: the error channel for a listed failure, runtime otherwise. */
