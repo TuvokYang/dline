@@ -6,13 +6,16 @@ import { type AttemptBucket, validateAttemptBucket } from "@/services/telemetry/
 import {
     emptyUsageAttemptOutbox,
     sha256Hex,
+    USAGE_SESSION_CLAIMS_MAX,
     type UsageAttemptInflight,
     type UsageAttemptObservationCheckpoint,
     type UsageAttemptOutboxState,
+    type UsageSessionClaim,
 } from "@/services/telemetry/remote/usage/usageOutbox"
 import { FileLock } from "../backend/jsonl/FileLock"
 import type { OtelStorageLayout } from "./OtelStorageLayout"
-import { type QuarantineObserver, quarantineDocument } from "./quarantine"
+import { type QuarantineObserver, quarantineDocument, recordDiscard } from "./quarantine"
+import { LOCAL_SESSION_ID_PATTERN } from "./UsageObservationSpool"
 import {
     decideSenderClaim,
     type SenderClaimMemory,
@@ -25,12 +28,14 @@ import {
 
 export type { UsageSenderGrant, UsageSenderTurnEvent } from "./usageSenderTurn"
 
-export const USAGE_ATTEMPT_OUTBOX_SCHEMA_VERSION = 4
+/** 5: contract 5 logical coverage, logical claims and session claims; a schema 4 document is discarded, not migrated. */
+export const USAGE_ATTEMPT_OUTBOX_SCHEMA_VERSION = 5
 /** How long a sender owns delivery without renewing; longer than one HTTP attempt, short enough to take over a dead window. */
 export const USAGE_SENDER_LEASE_MS = 90_000
 const LOCK_ACQUIRE_ATTEMPTS = 50
 const BODY_SUFFIX = ".bin"
 const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f-]{27,55}$/i
+const BUCKET_ID_PATTERN = /^[A-Za-z0-9:_-]{1,128}$/u
 
 interface AttemptOutboxDocument extends SenderTurns {
     readonly state: UsageAttemptOutboxState
@@ -45,7 +50,9 @@ interface ClaimOutcome {
 
 type LatestAttemptOutbox =
     | { readonly status: "valid"; readonly document: AttemptOutboxDocument }
-    | { readonly status: "missing" | "legacy" | "malformed" | "unsupported" }
+    /** Written under an earlier contract; discarded with loss evidence, never migrated. */
+    | { readonly status: "legacy"; readonly schemaVersion: number }
+    | { readonly status: "missing" | "malformed" | "unsupported" }
 
 export type UsageAttemptActivation = "activated" | "active" | "unsupported"
 
@@ -100,8 +107,9 @@ export class UsageOutboxRepository {
     }
 
     /**
-     * Destructively switch the machine authority to schema 4 after capability admission.
-     * Legacy pending facts are intentionally not migrated or read by the new authority.
+     * Create the machine's contract 5 outbox after capability admission. Pending
+     * facts of an earlier contract are not migrated or read: the document is
+     * replaced and its loss recorded.
      */
     async activateAttempts(policyGeneration: number): Promise<UsageAttemptActivation> {
         if (!isCount(policyGeneration)) throw new Error("Usage attempt policy generation is invalid")
@@ -115,13 +123,20 @@ export class UsageOutboxRepository {
                     this.onQuarantine?.(path.basename(this.layout.usageOutboxPath))
                 }
             }
+            if (latest.status === "legacy") {
+                await recordDiscard(
+                    this.layout.remoteQuarantineDir,
+                    { document: "usage-outbox", reason: "older_schema", schemaVersion: latest.schemaVersion },
+                    this.clock(),
+                )
+            }
             const document: AttemptOutboxDocument = {
                 generation: 0,
                 waiting: {},
                 state: emptyUsageAttemptOutbox(policyGeneration),
             }
             await writeJsonAtomic(this.layout.usageOutboxPath, serializeAttemptDocument(document), { fsync: true })
-            // The schema 4 document no longer names any schema 3 body. Removing them while holding the same lock
+            // The new document names no earlier body. Removing them while holding the same lock
             // prevents an old sender from publishing a manifest between cutover and cleanup.
             await this.removeBodies()
             return "activated"
@@ -362,6 +377,8 @@ function serializeAttemptDocument(document: AttemptOutboxDocument): Record<strin
                     { revision: checkpoint.revision, bucket_id: checkpoint.bucketId },
                 ]),
             ),
+            logical_claims: state.logicalClaims,
+            session_claims: state.sessionClaims.map((claim) => ({ session_id: claim.sessionId, bucket_id: claim.bucketId })),
             ...(state.inflight
                 ? {
                       inflight: {
@@ -383,7 +400,7 @@ function parseAttemptDocument(value: unknown): LatestAttemptOutbox {
     const schemaVersion = value.schema_version
     if (!isCount(schemaVersion)) return { status: "malformed" }
     if (schemaVersion > USAGE_ATTEMPT_OUTBOX_SCHEMA_VERSION) return { status: "unsupported" }
-    if (schemaVersion < USAGE_ATTEMPT_OUTBOX_SCHEMA_VERSION) return { status: "legacy" }
+    if (schemaVersion < USAGE_ATTEMPT_OUTBOX_SCHEMA_VERSION) return { status: "legacy", schemaVersion }
     if (!isCount(value.generation)) return { status: "malformed" }
     let lease: SenderLease | undefined
     if (value.lease !== undefined) {
@@ -417,6 +434,10 @@ function parseAttemptState(value: unknown): UsageAttemptOutboxState | undefined 
     }
     const retainedBucketIds = new Set([...sealed.map((bucket) => bucket.bucketId), ...(open ? [open.bucketId] : [])])
     if (Object.values(revisions).some((checkpoint) => !retainedBucketIds.has(checkpoint.bucketId))) return undefined
+    const logicalClaims = parseLogicalClaims(value.logical_claims)
+    if (!logicalClaims || Object.values(logicalClaims).some((bucketId) => !retainedBucketIds.has(bucketId))) return undefined
+    const sessionClaims = parseSessionClaims(value.session_claims)
+    if (!sessionClaims) return undefined
     let inflight: UsageAttemptInflight | undefined
     if (value.inflight !== undefined) {
         inflight = parseAttemptInflight(value.inflight)
@@ -428,8 +449,36 @@ function parseAttemptState(value: unknown): UsageAttemptOutboxState | undefined 
         buckets: { ...(open ? { open } : {}), sealed },
         foldedShards,
         observationRevisions: revisions,
+        logicalClaims,
+        sessionClaims,
         ...(inflight ? { inflight } : {}),
     }
+}
+
+function parseLogicalClaims(value: unknown): Record<string, string> | undefined {
+    if (!isRecord(value)) return undefined
+    const claims: Record<string, string> = {}
+    for (const [logicalRequestId, bucketId] of Object.entries(value)) {
+        if (logicalRequestId.length < 1 || logicalRequestId.length > 512 || typeof bucketId !== "string") return undefined
+        if (!BUCKET_ID_PATTERN.test(bucketId)) return undefined
+        claims[logicalRequestId] = bucketId
+    }
+    return claims
+}
+
+function parseSessionClaims(value: unknown): UsageSessionClaim[] | undefined {
+    if (!Array.isArray(value) || value.length > USAGE_SESSION_CLAIMS_MAX) return undefined
+    const claims: UsageSessionClaim[] = []
+    const seen = new Set<string>()
+    for (const entry of value) {
+        if (!isRecord(entry)) return undefined
+        const { session_id: sessionId, bucket_id: bucketId } = entry
+        if (typeof sessionId !== "string" || !LOCAL_SESSION_ID_PATTERN.test(sessionId) || seen.has(sessionId)) return undefined
+        if (typeof bucketId !== "string" || !BUCKET_ID_PATTERN.test(bucketId)) return undefined
+        seen.add(sessionId)
+        claims.push({ sessionId, bucketId })
+    }
+    return claims
 }
 
 function parseAttemptInflight(value: unknown): UsageAttemptInflight | undefined {
@@ -465,7 +514,7 @@ function parseAttemptRevisions(value: unknown): Record<string, UsageAttemptObser
     for (const [id, checkpoint] of Object.entries(value)) {
         if (id.length < 1 || id.length > 512 || !isRecord(checkpoint)) return undefined
         if (!isCount(checkpoint.revision) || typeof checkpoint.bucket_id !== "string") return undefined
-        if (!/^[A-Za-z0-9:_-]{1,128}$/u.test(checkpoint.bucket_id)) return undefined
+        if (!BUCKET_ID_PATTERN.test(checkpoint.bucket_id)) return undefined
         revisions[id] = { revision: checkpoint.revision, bucketId: checkpoint.bucket_id }
     }
     return revisions

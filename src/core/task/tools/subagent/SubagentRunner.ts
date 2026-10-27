@@ -1869,7 +1869,7 @@ export class SubagentRunner {
         onProgress: (update: SubagentProgressUpdate) => void,
     ) {
         let cumulativeRetryDelayMs = 0
-        const telemetryRequestId = `${this.providerRequestSource}:${this.apiLogRequestIndex + 1}`
+        const telemetryRequestId = `${this.providerRequestSource}:${crypto.randomUUID()}`
         for (let attempt = 1; attempt <= MAX_INITIAL_STREAM_ATTEMPTS; attempt += 1) {
             // Only a pre-finish abort is expected; a later attempt is the finish turn and reports its real failure.
             const startedBeforeFinish = this.finishRequested === undefined

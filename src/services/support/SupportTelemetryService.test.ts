@@ -1,20 +1,29 @@
+import { readFileSync } from "node:fs"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { mockFetchForTesting } from "@shared/net"
 import { createReportBugDraft } from "@shared/report-bug"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { IssueGrantRepository } from "@/core/storage/telemetry-remote/IssueGrantRepository"
 import { resolveOtelStorageLayout } from "@/core/storage/telemetry-remote/OtelStorageLayout"
-import { SupportOperationRepository } from "@/core/storage/telemetry-remote/SupportOperationRepository"
-import { SupportTelemetryService } from "./SupportTelemetryService"
+import { SupportAuthorizationError, SupportTelemetryService } from "./SupportTelemetryService"
 
-const issue = vi.hoisted(() => ({ open: vi.fn(async () => undefined) }))
+const issue = vi.hoisted(() => ({ open: vi.fn(async (..._args: unknown[]) => undefined) }))
 vi.mock("@core/reporting/ReportBugIssue", async () => {
     const actual = await vi.importActual<typeof import("@core/reporting/ReportBugIssue")>("@core/reporting/ReportBugIssue")
     return { ...actual, openReportBugIssue: issue.open }
 })
 
+const FIXTURES = path.join(__dirname, "..", "telemetry", "remote", "contracts", "__tests__", "fixtures")
+const USAGE_FIXTURE = JSON.parse(readFileSync(path.join(FIXTURES, "usage-schema4-reference.json"), "utf8"))
 const NOW = 1_900_000_000_000
+const DEVICE_ID = "dev_0123456789abcdef0123456789abcdef"
+const DEVICE_TOKEN = "t".repeat(43)
+const AUTHORIZATION_CODE = "s".repeat(43)
+// The fixture vector of telemetry-exchange-flow §5.1 for this authorization code.
+const PUBLIC_CODE = "DLN-BNKP-5RJG-NE6R-Y290"
+
 const draft = (consent = true) =>
     createReportBugDraft(
         {
@@ -28,256 +37,264 @@ const draft = (consent = true) =>
         consent,
     )
 
-function authorization(requestId: string, state = "pending_approval") {
+function json(status: number, body: unknown): Response {
+    return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })
+}
+
+function status(fields: Record<string, unknown> = {}): Record<string, unknown> {
     return {
-        request_id: requestId,
-        authorization_id: "authorization-1",
-        public_code: "SUP-ABCD-1234",
-        resume_credential: "private-resume-credential",
-        state,
-        revision: 2,
-        authorization_expires_at: NOW + 60_000,
-        poll_after_ms: 60_000,
-        issue: { owner: "TuvokYang", repo: "Dline", number: 115 },
+        ok: true,
+        state: "approved",
+        authorization_revision: 1,
+        authorization_expires_at: NOW + 86_400_000,
+        capture_expires_at: NOW + 60_000,
+        ticket_expires_at: NOW + 90 * 86_400_000,
+        issue_state: "open",
+        resolution: { state: "investigating" },
+        poll_after_ms: 300_000,
+        ...fields,
     }
 }
 
-function requestId(init?: RequestInit): string {
-    return new Headers(init?.headers).get("x-dline-request-id") ?? ""
+interface Call {
+    readonly path: string
+    readonly body: Record<string, unknown>
+    readonly headers: Headers
+}
+
+/** In-memory OTel answering the four routes the client uses; each route's answer is replaceable per test. */
+class FakeOtel {
+    readonly calls: Call[] = []
+    authorize: (body: Record<string, unknown>) => Response | Promise<Response> = (body) =>
+        json(200, {
+            ok: true,
+            request_id: body.request_id,
+            authorization_code: AUTHORIZATION_CODE,
+            state: "awaiting_issue",
+            authorization_expires_at: NOW + 86_400_000,
+            ticket_expires_at: NOW + 90 * 86_400_000,
+            poll_after_ms: 60_000,
+        })
+    status: () => Response = () =>
+        json(200, status({ state: "awaiting_issue", authorization_revision: 0, capture_expires_at: undefined }))
+    exchange: (body: Record<string, unknown>) => Response = (body) =>
+        json(200, {
+            ok: true,
+            request_id: body.request_id,
+            access_token: "i".repeat(43),
+            profile: "issue_diagnostic",
+            scopes: ["error", "runtime", "debug", "high_density_metrics", "high_density_traces"],
+            authorization_id: "grant-1",
+            authorization_revision: body.authorization_revision,
+            expires_at: NOW + 60_000,
+            capture_expires_at: NOW + 60_000,
+            rate_limits: { authorization_requests: 120, authorization_bytes: 8_388_608, authorization_records: 20_000 },
+        })
+
+    readonly fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const url = new URL(String(input))
+        const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {}
+        this.calls.push({ path: url.pathname, body, headers: new Headers(init?.headers) })
+        if (url.pathname === "/auth/device/grant") {
+            return json(200, {
+                ok: true,
+                request_id: body.request_id,
+                access_token: DEVICE_TOKEN,
+                device_id: DEVICE_ID,
+                profile: body.requested_profile,
+                scopes: [body.requested_profile],
+                expires_at: NOW + 3_600_000,
+                usage_contract: USAGE_FIXTURE.device_grant.response.usage_contract,
+            })
+        }
+        if (url.pathname === "/auth/report-authorizations") return this.authorize(body)
+        if (url.pathname === "/auth/report-authorizations/status") return this.status()
+        if (url.pathname === "/auth/exchange") return this.exchange(body)
+        return json(404, {})
+    }
+
+    paths(): string[] {
+        return this.calls.map((call) => call.path)
+    }
 }
 
 describe("SupportTelemetryService", () => {
     let root: string
+    let otel: FakeOtel
+    const services: SupportTelemetryService[] = []
 
     beforeEach(async () => {
         root = await fs.mkdtemp(path.join(os.tmpdir(), "dline-support-service-"))
-        issue.open.mockClear()
+        otel = new FakeOtel()
+        issue.open.mockReset().mockResolvedValue(undefined)
     })
 
     afterEach(async () => {
+        for (const service of services.splice(0)) service.dispose()
         await fs.rm(root, { recursive: true, force: true })
     })
 
-    function service(clock: () => number = () => NOW) {
-        return new SupportTelemetryService({
+    function service(): SupportTelemetryService {
+        const created = new SupportTelemetryService({
             dataDir: path.join(root, "data"),
             clientVersion: "1.2.3",
             platform: "test",
-            clock,
+            otelEndpoint: "http://127.0.0.1:8787",
+            clock: () => NOW,
         })
+        services.push(created)
+        return created
     }
 
-    it("creates authorization before opening the public-code issue and projects no private material", async () => {
-        const order: string[] = []
-        issue.open.mockImplementationOnce(async () => {
-            order.push("issue")
-        })
-        const transport = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-            order.push("authorization")
-            expect(new URL(String(input)).pathname).toBe("/support/authorizations")
-            return new Response(JSON.stringify(authorization(requestId(init))), { status: 201 })
-        })
+    const layout = () => resolveOtelStorageLayout(path.join(root, "data"))
+    const run = <T>(operation: () => Promise<T>) => mockFetchForTesting(otel.fetch, operation)
+
+    it("issues the ticket before opening the Issue with only the derived public code", async () => {
         const support = service()
+        const projected = await run(() => support.createAuthorizationAndOpenIssue(draft()))
 
-        const projected = await mockFetchForTesting(transport, () => support.createAuthorizationAndOpenIssue(draft()))
-
-        expect(order).toEqual(["authorization", "issue"])
+        expect(otel.paths()).toEqual(["/auth/device/grant", "/auth/report-authorizations"])
+        const issuance = otel.calls[1]
+        expect(issuance.headers.get("authorization")).toBe(`Bearer ${DEVICE_TOKEN}`)
+        expect(issuance.headers.get("x-dline-request-id")).toBe(issuance.body.request_id)
+        expect(issuance.body).toEqual({
+            operation: "report.authorize",
+            request_id: issuance.body.request_id,
+            temporary_telemetry_consent: true,
+            client_version: "1.2.3",
+            platform: "test",
+        })
+        expect(issue.open).toHaveBeenCalledOnce()
+        expect(issue.open.mock.calls[0][2]).toEqual({ supportCode: PUBLIC_CODE })
         expect(projected).toEqual({
-            publicCode: "SUP-ABCD-1234",
-            state: "pending_approval",
-            authorizationExpiresAt: NOW + 60_000,
-            issue: { owner: "TuvokYang", repo: "Dline", number: 115 },
+            publicCode: PUBLIC_CODE,
+            state: "awaiting_issue",
+            authorizationExpiresAt: NOW + 86_400_000,
+            issueState: "unlinked",
+            resolution: { state: "none" },
         })
-        expect(JSON.stringify(projected)).not.toContain("private-resume-credential")
-        expect(issue.open).toHaveBeenCalledWith(
-            expect.objectContaining({ additionalContext: expect.stringContaining("Public support code: SUP-ABCD-1234") }),
-            draft().environment,
-        )
-        await mockFetchForTesting(
-            async (_input, init) => new Response(JSON.stringify({ request_id: requestId(init) }), { status: 200 }),
-            () => support.deleteAndRevoke(),
-        )
+        expect(JSON.stringify(projected)).not.toContain(AUTHORIZATION_CODE)
     })
 
-    it("checks status with owner-only resume material but returns only the safe projection", async () => {
+    it("opens no Issue when OTel refuses to issue a ticket", async () => {
+        otel.authorize = () => json(429, { ok: false, error: { code: "report_authorization_rate_limited" } })
         const support = service()
-        await mockFetchForTesting(
-            async (_input, init) => new Response(JSON.stringify(authorization(requestId(init))), { status: 201 }),
-            () => support.createAuthorizationAndOpenIssue(draft()),
-        )
-        const captured: Array<Record<string, unknown>> = []
-        const projected = await mockFetchForTesting(
-            async (_input, init) => {
-                captured.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
-                return new Response(
-                    JSON.stringify({ ...authorization(requestId(init)), state: "pending_approval", revision: 3 }),
-                    { status: 200 },
-                )
-            },
-            () => support.checkNow(),
-        )
 
-        expect(captured[0]).toMatchObject({
-            authorization_id: "authorization-1",
-            resume_credential: "private-resume-credential",
+        await expect(run(() => support.createAuthorizationAndOpenIssue(draft()))).rejects.toMatchObject({
+            code: "report_authorization_rate_limited",
         })
-        expect(JSON.stringify(projected)).not.toContain("private-resume-credential")
-        await mockFetchForTesting(
-            async (_input, init) => new Response(JSON.stringify({ request_id: requestId(init) }), { status: 200 }),
-            () => support.deleteAndRevoke(),
-        )
+        expect(issue.open).not.toHaveBeenCalled()
+        await expect(support.status()).resolves.toBeUndefined()
     })
 
-    it("keeps the owner-only revoke tombstone when offline", async () => {
+    it("replays the same issuance identity after the response was lost", async () => {
+        otel.authorize = () => Promise.reject(new Error("connection reset"))
         const support = service()
-        await mockFetchForTesting(
-            async (_input, init) => new Response(JSON.stringify(authorization(requestId(init))), { status: 201 }),
-            () => support.createAuthorizationAndOpenIssue(draft()),
+        await expect(run(() => support.createAuthorizationAndOpenIssue(draft()))).rejects.toBeInstanceOf(
+            SupportAuthorizationError,
         )
+        const lost = otel.calls.find((call) => call.path === "/auth/report-authorizations")
 
-        await mockFetchForTesting(
-            async () => Promise.reject(new Error("offline")),
-            () => support.deleteAndRevoke(),
-        )
+        otel.authorize = new FakeOtel().authorize
+        await run(() => support.createAuthorizationAndOpenIssue(draft()))
 
-        const layout = resolveOtelStorageLayout(path.join(root, "data"))
-        const raw = await fs.readFile(layout.issueCredentialPath, "utf8")
-        expect(raw).toContain('"revoke_tombstone"')
-        expect(raw).toContain("private-resume-credential")
-        expect(raw).not.toContain('"record"')
-        await expect(
-            mockFetchForTesting(
-                async () => Promise.reject(new Error("still offline")),
-                () => support.status(),
-            ),
-        ).resolves.toBeUndefined()
-        await mockFetchForTesting(
-            async (_input, init) => new Response(JSON.stringify({ request_id: requestId(init) }), { status: 200 }),
-            () => support.resumePendingRevoke(),
-        )
-        await expect(fs.access(layout.issueCredentialPath)).rejects.toMatchObject({ code: "ENOENT" })
-        await expect(fs.access(layout.supportOperationPath)).rejects.toMatchObject({ code: "ENOENT" })
+        const issuances = otel.calls.filter((call) => call.path === "/auth/report-authorizations")
+        expect(issuances).toHaveLength(2)
+        expect(issuances[1].body.request_id).toBe(lost?.body.request_id)
+        expect(issue.open).toHaveBeenCalledOnce()
     })
 
-    it("clears an offline revoke operation at natural expiry without another request", async () => {
-        let now = NOW
-        const support = service(() => now)
-        await mockFetchForTesting(
-            async (_input, init) => new Response(JSON.stringify(authorization(requestId(init))), { status: 201 }),
-            () => support.createAuthorizationAndOpenIssue(draft()),
-        )
-        await mockFetchForTesting(
-            async () => Promise.reject(new Error("offline")),
-            () => support.deleteAndRevoke(),
-        )
-        now = NOW + 60_000
-        const transport = vi.fn(async () => Promise.reject(new Error("expired revoke must not use network")))
-
-        await mockFetchForTesting(transport, () => service(() => now).resumePendingRevoke())
-
-        expect(transport).not.toHaveBeenCalled()
-        const layout = resolveOtelStorageLayout(path.join(root, "data"))
-        await expect(fs.access(layout.issueCredentialPath)).rejects.toMatchObject({ code: "ENOENT" })
-        await expect(fs.access(layout.supportOperationPath)).rejects.toMatchObject({ code: "ENOENT" })
-    })
-
-    it("replays an unknown create outcome with the exact request id and body", async () => {
-        const attempts: Array<{ requestId: string; body: string }> = []
-        const capture = (init?: RequestInit) => {
-            attempts.push({ requestId: requestId(init), body: String(init?.body) })
-        }
-
-        await expect(
-            mockFetchForTesting(
-                async (_input, init) => {
-                    capture(init)
-                    throw new Error("response lost")
-                },
-                () => service().createAuthorizationAndOpenIssue(draft()),
-            ),
-        ).rejects.toThrow("response lost")
-
-        const recovered = await mockFetchForTesting(
-            async (_input, init) => {
-                capture(init)
-                return new Response(JSON.stringify(authorization(requestId(init))), { status: 201 })
-            },
-            () => service().createAuthorizationAndOpenIssue(draft()),
-        )
-
-        expect(attempts).toHaveLength(2)
-        expect(attempts[1]).toEqual(attempts[0])
-        expect(recovered.publicCode).toBe("SUP-ABCD-1234")
-        expect(issue.open).toHaveBeenCalledTimes(1)
-    })
-
-    it("finishes a stored create response without issuing another network request", async () => {
+    it("exchanges the approved revision once and keeps the ticket", async () => {
         const support = service()
-        await expect(
-            mockFetchForTesting(
-                async () => Promise.reject(new Error("response lost")),
-                () => support.createAuthorizationAndOpenIssue(draft()),
-            ),
-        ).rejects.toThrow("response lost")
+        await run(() => support.createAuthorizationAndOpenIssue(draft()))
+        otel.status = () => json(200, status())
 
-        const layout = resolveOtelStorageLayout(path.join(root, "data"))
-        const operations = new SupportOperationRepository(layout)
-        const pending = await operations.read()
-        expect(pending?.kind).toBe("create")
-        await operations.storeResponse(pending!.requestId, {
-            status: 201,
-            json: authorization(pending!.requestId),
+        const approved = await run(() => support.checkNow())
+        await run(() => support.checkNow())
+
+        const exchanges = otel.calls.filter((call) => call.path === "/auth/exchange")
+        expect(exchanges).toHaveLength(1)
+        expect(exchanges[0].body).toMatchObject({ authorization_code: AUTHORIZATION_CODE, authorization_revision: 1 })
+        expect(approved).toMatchObject({ state: "approved", issueState: "open", captureExpiresAt: NOW + 60_000 })
+        await expect(new IssueGrantRepository(layout(), { clock: () => NOW }).readActive(NOW, 1)).resolves.not.toBeNull()
+    })
+
+    it("seals capture on a revoked status but keeps the ticket for its resolution", async () => {
+        const support = service()
+        await run(() => support.createAuthorizationAndOpenIssue(draft()))
+        otel.status = () => json(200, status())
+        await run(() => support.checkNow())
+        otel.status = () =>
+            json(
+                200,
+                status({
+                    state: "revoked",
+                    authorization_revision: 2,
+                    capture_expires_at: undefined,
+                    issue_state: "closed",
+                    resolution: { state: "fixed", fixed_in_version: "0.12.1" },
+                }),
+            )
+
+        await run(() => support.checkNow())
+
+        await expect(new IssueGrantRepository(layout(), { clock: () => NOW }).readActive(NOW, 1)).resolves.toBeNull()
+        await expect(support.status()).resolves.toMatchObject({
+            state: "revoked",
+            issueState: "closed",
+            resolution: { state: "fixed", fixedInVersion: "0.12.1" },
         })
-        const transport = vi.fn(async () => Promise.reject(new Error("network must not be used")))
-
-        const recovered = await mockFetchForTesting(transport, () => service().createAuthorizationAndOpenIssue(draft()))
-
-        expect(recovered.publicCode).toBe("SUP-ABCD-1234")
-        expect(transport).not.toHaveBeenCalled()
-        await expect(operations.read()).resolves.toBeUndefined()
     })
 
-    it("replays unknown status and revoke outcomes with their original request identities", async () => {
+    it("deletes the ticket locally when OTel no longer knows the authorization code", async () => {
         const support = service()
-        await mockFetchForTesting(
-            async (_input, init) => new Response(JSON.stringify(authorization(requestId(init))), { status: 201 }),
-            () => support.createAuthorizationAndOpenIssue(draft()),
-        )
+        await run(() => support.createAuthorizationAndOpenIssue(draft()))
+        otel.status = () => json(404, { ok: false, error: { code: "report_authorization_not_found" } })
 
-        const statusAttempts: Array<{ requestId: string; body: string }> = []
-        await expect(
-            mockFetchForTesting(
-                async (_input, init) => {
-                    statusAttempts.push({ requestId: requestId(init), body: String(init?.body) })
-                    throw new Error("status response lost")
-                },
-                () => support.checkNow(),
-            ),
-        ).rejects.toThrow("status response lost")
-        await mockFetchForTesting(
-            async (_input, init) => {
-                statusAttempts.push({ requestId: requestId(init), body: String(init?.body) })
-                return new Response(JSON.stringify({ ...authorization(requestId(init)), revision: 3 }), { status: 200 })
-            },
-            () => service().checkNow(),
-        )
-        expect(statusAttempts[1]).toEqual(statusAttempts[0])
+        await expect(run(() => support.checkNow())).resolves.toBeUndefined()
+        await expect(fs.access(layout().issueCredentialPath)).rejects.toMatchObject({ code: "ENOENT" })
+    })
 
-        const revokeAttempts: Array<{ requestId: string; body: string }> = []
-        await mockFetchForTesting(
-            async (_input, init) => {
-                revokeAttempts.push({ requestId: requestId(init), body: String(init?.body) })
-                throw new Error("revoke response lost")
-            },
-            () => support.deleteAndRevoke(),
+    it("keeps the ticket on a 404 that does not carry the contract code", async () => {
+        const support = service()
+        await run(() => support.createAuthorizationAndOpenIssue(draft()))
+        otel.status = () => json(404, {})
+
+        await expect(run(() => support.checkNow())).rejects.toThrow("unavailable")
+        await expect(support.status()).resolves.toMatchObject({ publicCode: PUBLIC_CODE })
+    })
+
+    it("never projects an Issue identity even when the response carries one", async () => {
+        const support = service()
+        await run(() => support.createAuthorizationAndOpenIssue(draft()))
+        otel.status = () => json(200, status({ issue: { owner: "TuvokYang", repo: "dline", number: 123 }, issue_url: "x" }))
+
+        const projected = await run(() => support.checkNow())
+
+        expect(Object.keys(projected ?? {}).sort()).toEqual(
+            ["authorizationExpiresAt", "captureExpiresAt", "issueState", "publicCode", "resolution", "state"].sort(),
         )
-        await mockFetchForTesting(
-            async (_input, init) => {
-                revokeAttempts.push({ requestId: requestId(init), body: String(init?.body) })
-                return new Response(JSON.stringify({ request_id: requestId(init) }), { status: 200 })
-            },
-            () => service().resumePendingRevoke(),
-        )
-        expect(revokeAttempts[1]).toEqual(revokeAttempts[0])
+    })
+
+    it("deletes and revokes locally without any request leaving the machine", async () => {
+        const support = service()
+        await run(() => support.createAuthorizationAndOpenIssue(draft()))
+        otel.status = () => json(200, status())
+        await run(() => support.checkNow())
+        const before = otel.calls.length
+
+        await run(() => support.deleteAndRevoke())
+
+        expect(otel.calls).toHaveLength(before)
+        await expect(support.status()).resolves.toBeUndefined()
+        await expect(new IssueGrantRepository(layout(), { clock: () => NOW }).readActive(NOW, 1)).resolves.toBeNull()
+    })
+
+    it("refuses a draft without temporary telemetry consent before any request", async () => {
+        const support = service()
+
+        await expect(run(() => support.createAuthorizationAndOpenIssue(draft(false)))).rejects.toThrow("not consented")
+        expect(otel.calls).toEqual([])
+        expect(issue.open).not.toHaveBeenCalled()
     })
 })

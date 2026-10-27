@@ -1,0 +1,403 @@
+{
+    "fixture_version": 3,
+    "contract": "dline.report-authorization.v3",
+    "architecture_revision": "WS115-A2-OTEL-INTEGRATED",
+    "public_origin": "https://otel.dline.cc",
+    "data_origin": "https://otel.dline.cc",
+    "routes": {
+        "report_authorization": "POST /auth/report-authorizations",
+        "report_authorization_status": "POST /auth/report-authorizations/status",
+        "issue_exchange": "POST /auth/exchange",
+        "github_webhook": "POST /webhooks/github",
+        "logs": "POST /v1/logs",
+        "metrics": "POST /v1/metrics",
+        "traces": "POST /v1/traces"
+    },
+    "security": {
+        "public_code_is_credential": false,
+        "authorization_code_issuer": "otel",
+        "authorization_code_storage": "owner-only secret store",
+        "server_authorization_code_storage": "domain-separated HMAC only",
+        "public_code_derivation": "client and server derive it from the authorization code; the issuance response does not carry it",
+        "issue_association_owner": "otel webhook",
+        "issue_identity_returned_to_client": false,
+        "ticket_bound_to_issuing_device": true,
+        "client_remote_revoke": false,
+        "github_signature": "HMAC-SHA256 over exact request bytes using X-Hub-Signature-256",
+        "delivery_id_header": "X-GitHub-Delivery",
+        "replay_identity": [
+            "principal",
+            "operation",
+            "request_id"
+        ],
+        "replay_ttl_ms": 86400000,
+        "authority": "otel",
+        "token_and_data_plane": "otel",
+        "fail_closed": true
+    },
+    "client_decisions": [
+        {
+            "name": "report-without-temporary-telemetry",
+            "input": {
+                "report_confirmed": true,
+                "temporary_telemetry_consent": false
+            },
+            "expected": {
+                "open_issue": true,
+                "report_authorization_requests": 0,
+                "issue_exchange_requests": 0,
+                "issue_only_otlp_requests": 0
+            }
+        },
+        {
+            "name": "cancel-preview",
+            "input": {
+                "report_confirmed": false,
+                "temporary_telemetry_consent": true
+            },
+            "expected": {
+                "open_issue": false,
+                "report_authorization_requests": 0,
+                "external_writes": 0
+            }
+        },
+        {
+            "name": "report-with-temporary-telemetry",
+            "input": {
+                "report_confirmed": true,
+                "temporary_telemetry_consent": true
+            },
+            "expected": {
+                "report_authorization_requests": 1,
+                "open_issue": true,
+                "open_issue_after": "authorization ticket publication",
+                "issue_form": {
+                    "template": "bug_report.yml",
+                    "prefill": {
+                        "telemetry-support-code": "DLN-BNKP-5RJG-NE6R-Y290"
+                    },
+                    "consent_prefilled": false
+                }
+            }
+        }
+    ],
+    "report_authorization": {
+        "support_code_vector": {
+            "authorization_code": "sssssssssssssssssssssssssssssssssssssssssss",
+            "public_code": "DLN-BNKP-5RJG-NE6R-Y290",
+            "rule": "DLN- followed by the big-endian Crockford Base32 of the first 10 bytes of SHA-256(UTF-8(\"dline-otel-support-code-v1:\" + authorization_code)), grouped by 4"
+        },
+        "create": {
+            "request": {
+                "headers": {
+                    "authorization": "Bearer fixture-production-device-token-not-a-secret",
+                    "content-type": "application/json",
+                    "user-agent": "Dline/0.12.0",
+                    "x-dline-contract": "5",
+                    "x-dline-request-id": "66666666-6666-4666-8666-666666666666"
+                },
+                "body": {
+                    "operation": "report.authorize",
+                    "request_id": "66666666-6666-4666-8666-666666666666",
+                    "temporary_telemetry_consent": true,
+                    "client_version": "0.12.0",
+                    "platform": "win32"
+                }
+            },
+            "response": {
+                "status": 200,
+                "body": {
+                    "ok": true,
+                    "request_id": "66666666-6666-4666-8666-666666666666",
+                    "authorization_code": "sssssssssssssssssssssssssssssssssssssssssss",
+                    "state": "awaiting_issue",
+                    "authorization_expires_at": 1792886400000,
+                    "ticket_expires_at": 1800576000000,
+                    "poll_after_ms": 60000
+                }
+            },
+            "server_stores": [
+                "HMAC(authorization_code)",
+                "public_code",
+                "issuing device_id",
+                "state",
+                "revision",
+                "expiries"
+            ],
+            "recovery": {
+                "same_request_id_same_body": "same encrypted response replayed for 24 hours",
+                "same_request_id_changed_body": "409 request_id_conflict",
+                "ticket_publication": "completed before the operation is confirmed and before the Issue is opened"
+            }
+        },
+        "status": {
+            "request": {
+                "headers": {
+                    "authorization": "Bearer fixture-production-device-token-not-a-secret",
+                    "content-type": "application/json",
+                    "user-agent": "Dline/0.12.0",
+                    "x-dline-contract": "5"
+                },
+                "body": {
+                    "authorization_code": "sssssssssssssssssssssssssssssssssssssssssss"
+                }
+            },
+            "response": {
+                "status": 200,
+                "body": {
+                    "ok": true,
+                    "state": "approved",
+                    "authorization_revision": 1,
+                    "authorization_expires_at": 1792886400000,
+                    "capture_expires_at": 1792808200000,
+                    "ticket_expires_at": 1800576000000,
+                    "issue_state": "open",
+                    "resolution": {
+                        "state": "investigating"
+                    },
+                    "poll_after_ms": 300000
+                }
+            },
+            "forbidden_response_fields": [
+                "issue",
+                "issue_number",
+                "issue_url",
+                "repository",
+                "owner",
+                "repo",
+                "title",
+                "authorization_code",
+                "public_code"
+            ]
+        }
+    },
+    "github_webhook": {
+        "headers": {
+            "x-github-event": "issues",
+            "x-github-delivery": "55555555-5555-4555-8555-555555555555",
+            "x-hub-signature-256": "sha256=<computed-over-exact-fixture-bytes>"
+        },
+        "payload": {
+            "action": "labeled",
+            "repository": {
+                "id": 1001,
+                "owner": {
+                    "login": "TuvokYang"
+                },
+                "name": "dline"
+            },
+            "issue": {
+                "id": 2001,
+                "number": 123,
+                "state": "open",
+                "title": "[Report Bug] Provider request fails after retry",
+                "body": "### Diagnostic telemetry consent\n\n- [x] I consent to temporary high-density telemetry\n\n### Dline telemetry support code\n\nDLN-BNKP-5RJG-NE6R-Y290",
+                "labels": [
+                    {
+                        "name": "telemetry-approved"
+                    }
+                ],
+                "user": {
+                    "login": "reporter-fixture"
+                }
+            },
+            "sender": {
+                "login": "allowlisted-maintainer"
+            }
+        },
+        "expected": {
+            "ticket_state": "approved",
+            "claim_state": "approved",
+            "grant_status": "approved",
+            "authorization_revision": 1,
+            "association_rule": "the public code in the Issue body equals the stored public code of an unexpired awaiting_issue ticket; one public code links one Issue",
+            "server_only_association": {
+                "repository": "TuvokYang/dline",
+                "issue_number": 123
+            }
+        }
+    },
+    "issue_token_exchange": {
+        "request": {
+            "headers": {
+                "authorization": "Bearer fixture-production-device-token-not-a-secret",
+                "content-type": "application/json",
+                "user-agent": "Dline/0.12.0",
+                "x-dline-contract": "5",
+                "x-dline-request-id": "77777777-7777-4777-8777-777777777777"
+            },
+            "body": {
+                "operation": "issue.exchange",
+                "request_id": "77777777-7777-4777-8777-777777777777",
+                "authorization_code": "sssssssssssssssssssssssssssssssssssssssssss",
+                "authorization_revision": 1,
+                "client_version": "0.12.0",
+                "platform": "win32"
+            }
+        },
+        "otel_authority_check": {
+            "sources": [
+                "report_authorization_tickets",
+                "github_issue_claims",
+                "authorization_grants"
+            ],
+            "proof": "HMAC(authorization_code) equals ticket.authorization_code_hash and ticket.device_id equals the authenticated device",
+            "required_ticket_state": "approved",
+            "required_grant_state": "approved",
+            "required_revision": "authorization_revision equals the current approved revision and has not been consumed"
+        },
+        "response": {
+            "status": 200,
+            "body": {
+                "ok": true,
+                "request_id": "77777777-7777-4777-8777-777777777777",
+                "access_token": "fixture-issue-token-not-a-secret",
+                "profile": "issue_diagnostic",
+                "scopes": [
+                    "error",
+                    "runtime",
+                    "debug",
+                    "high_density_metrics",
+                    "high_density_traces"
+                ],
+                "authorization_id": "grant-fixture-001",
+                "authorization_revision": 1,
+                "expires_at": 1792808200000,
+                "capture_expires_at": 1792808200000,
+                "rate_limits": {
+                    "authorization_requests": 120,
+                    "authorization_bytes": 8388608,
+                    "authorization_records": 20000
+                }
+            }
+        },
+        "recovery": {
+            "same_request_id_same_body": "same encrypted response replayed for 24 hours",
+            "same_request_id_changed_body": "409 request_id_conflict",
+            "credential_publication": "completed before operation response is confirmed"
+        }
+    },
+    "ingest_permit": {
+        "request": {
+            "request_id": "88888888-8888-4888-8888-888888888888",
+            "authorization_id": "grant-fixture-001",
+            "authorization_revision": 1,
+            "authenticated_device_id": "dev_0123456789abcdef0123456789abcdef",
+            "token_fingerprint": "issue-token-id-fixture",
+            "operation": "otlp.traces",
+            "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "payload_bytes": 4096,
+            "record_count": 8,
+            "observed_at": 1792802000000
+        },
+        "response": {
+            "allowed": true,
+            "permit_id": "permit-fixture-001",
+            "authorization_revision": 1,
+            "remaining_budget": {
+                "requests": 119,
+                "bytes": 8384512,
+                "records": 19992
+            }
+        },
+        "store_rule": "diagnostic persistence may begin only after an allowed response for this exact request_id and content_hash"
+    },
+    "revoke": {
+        "triggers": [
+            "Issue closed or deleted",
+            "approved label removed",
+            "telemetry-revoked label added",
+            "administrator revokes the grant"
+        ],
+        "server_effects": [
+            "authorization_grants.status becomes revoked",
+            "authorization_grants.revision increments",
+            "issue tokens of the revoked revision are revoked",
+            "the ticket keeps answering status queries until ticket_expires_at"
+        ],
+        "client_capture_seal": [
+            "stop issue-only production",
+            "abort in-flight issue-only requests",
+            "purge issue-only queue and token"
+        ],
+        "client_delete": [
+            "client_capture_seal",
+            "purge the authorization code, public code and ticket state",
+            "purge pending report.authorize and issue.exchange operation intents"
+        ],
+        "client_remote_revoke_requests": 0
+    },
+    "invalid_cases": [
+        {
+            "name": "approved-label-without-issue-consent",
+            "expected": {
+                "claim_state": "pending_approval",
+                "token_issued": false,
+                "zero_business_writes": true
+            }
+        },
+        {
+            "name": "approval-by-non-allowlisted-actor",
+            "expected": {
+                "claim_state": "pending_approval",
+                "token_issued": false,
+                "zero_business_writes": true
+            }
+        },
+        {
+            "name": "stale-authorization-revision-at-ingest",
+            "expected": {
+                "status": 403,
+                "code": "authorization_revision_stale",
+                "diagnostic_records_written": 0
+            }
+        },
+        {
+            "name": "authorization-do-unavailable-at-ingest",
+            "expected": {
+                "status": 503,
+                "code": "authorization_unavailable",
+                "diagnostic_records_written": 0
+            }
+        },
+        {
+            "name": "permit-response-loss-replay",
+            "expected": {
+                "same_permit_result": true,
+                "budget_consumed_once": true,
+                "diagnostic_batch_stored_once": true
+            }
+        },
+        {
+            "name": "authorization-code-from-another-device",
+            "expected": {
+                "status": 404,
+                "code": "report_authorization_not_found",
+                "token_issued": false
+            }
+        },
+        {
+            "name": "public-code-in-a-second-issue",
+            "expected": {
+                "second_issue_linked": false,
+                "ticket_association_unchanged": true
+            }
+        },
+        {
+            "name": "exchange-before-approval",
+            "expected": {
+                "status": 202,
+                "code": "authorization_pending",
+                "token_issued": false
+            }
+        },
+        {
+            "name": "exchange-with-consumed-revision",
+            "expected": {
+                "status": 409,
+                "code": "grant_not_available",
+                "token_issued": false
+            }
+        }
+    ]
+}

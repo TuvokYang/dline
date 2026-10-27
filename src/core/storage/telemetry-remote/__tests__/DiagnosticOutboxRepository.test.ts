@@ -7,6 +7,7 @@ import {
     DIAGNOSTICS_PER_HOUR,
     type DiagnosticEncoder,
     DiagnosticOutboxRepository,
+    type DiagnosticOutboxRepositoryOptions,
     MAX_DIAGNOSTICS_REQUEST_BYTES,
 } from "../DiagnosticOutboxRepository"
 
@@ -32,18 +33,24 @@ const heavyEncoder: DiagnosticEncoder = (records, dropped) =>
 describe("DiagnosticOutboxRepository", () => {
     let root: string
     let filePath: string
+    let quarantineDir: string
 
     beforeEach(async () => {
         root = await fs.mkdtemp(path.join(os.tmpdir(), "dline-diagnostic-outbox-"))
         filePath = path.join(root, "diagnostics", "outbox.json")
+        quarantineDir = path.join(root, "quarantine")
     })
 
     afterEach(async () => {
         await fs.rm(root, { recursive: true, force: true })
     })
 
+    function repository(options: Partial<DiagnosticOutboxRepositoryOptions> = {}): DiagnosticOutboxRepository {
+        return new DiagnosticOutboxRepository(filePath, { encode: heavyEncoder, quarantineDir, ...options })
+    }
+
     it("keeps one request within 128 KiB by sending fewer records, leaving the rest queued", async () => {
-        const outbox = new DiagnosticOutboxRepository(filePath, { encode: heavyEncoder })
+        const outbox = repository()
         await outbox.append(
             Array.from({ length: DIAGNOSTICS_PER_HOUR }, (_, index) => record(index)),
             START,
@@ -61,7 +68,7 @@ describe("DiagnosticOutboxRepository", () => {
     })
 
     it("forgets queued records when reporting is withdrawn, but keeps a running wait and the hourly count", async () => {
-        const outbox = new DiagnosticOutboxRepository(filePath, { encode: heavyEncoder, random: () => 0 })
+        const outbox = repository({ random: () => 0 })
         await outbox.append([record(1), record(2), record(3)], START)
         const claimed = await outbox.claim("window-a", START)
         await outbox.settle("window-a", claimed?.requestId ?? "", { kind: "wait", retryAfterMs: 2 * HOUR }, START)
@@ -80,7 +87,7 @@ describe("DiagnosticOutboxRepository", () => {
     })
 
     it("reports records the caller had to drop before they reached the outbox", async () => {
-        const outbox = new DiagnosticOutboxRepository(filePath, { encode: heavyEncoder })
+        const outbox = repository()
 
         await outbox.append([record(1)], START, 4)
 
@@ -89,9 +96,9 @@ describe("DiagnosticOutboxRepository", () => {
 
     it("never rewrites a document a newer build wrote", async () => {
         await fs.mkdir(path.dirname(filePath), { recursive: true })
-        const newer = JSON.stringify({ schema_version: 3, records: ["kept as is"] })
+        const newer = JSON.stringify({ schema_version: 4, records: ["kept as is"] })
         await fs.writeFile(filePath, newer)
-        const outbox = new DiagnosticOutboxRepository(filePath, { encode: heavyEncoder })
+        const outbox = repository()
 
         await outbox.append([record(1)], START)
 
@@ -99,41 +106,42 @@ describe("DiagnosticOutboxRepository", () => {
         expect(await fs.readFile(filePath, "utf8")).toBe(newer)
     })
 
-    describe("absorbing a queue an earlier build kept under another file name", () => {
-        const fingerprints = (records: readonly DiagnosticRecord[]) =>
-            records.map((entry) => entry.attributes["error.fingerprint"])
+    it("discards a document an earlier contract wrote instead of replaying it, leaving only counts as evidence", async () => {
+        await fs.mkdir(path.dirname(filePath), { recursive: true })
+        const earlier = {
+            schema_version: 2,
+            records: [record(1), record(2)],
+            dropped: 3,
+            quota: { hour_start: START, hour_count: 2, day_start: START, day_count: 2 },
+            pacing: { next_eligible_at: 0, wait_until: 0, consecutive_waits: 0 },
+            inflight: { request_id: "earlier", body: "earlier wire bytes", records: [record(5)], dropped: 1 },
+        }
+        await fs.writeFile(filePath, JSON.stringify(earlier))
+        const outbox = repository()
 
-        it("leaves a batch another window is sending, then moves every record and the later gate over and deletes the file", async () => {
-            const retiredPath = path.join(root, "diagnostics", "retired.json")
-            const retired = new DiagnosticOutboxRepository(retiredPath, { encode: heavyEncoder })
-            await retired.append([record(1), record(2)], START)
-            expect(await retired.claim("older-window", START)).toBeDefined()
-            const retiredGate = (await retired.read()).pacing.next_eligible_at
-            const outbox = new DiagnosticOutboxRepository(filePath, { encode: heavyEncoder })
-            await outbox.append([record(3)], START)
+        expect((await outbox.read()).records).toEqual([])
+        await outbox.append([record(3)], START)
+        const claimed = await outbox.claim("window-a", START)
 
-            await outbox.absorb(retiredPath, START + 30_000)
-            expect(fingerprints((await outbox.read()).records)).toEqual([record(3).attributes["error.fingerprint"]])
-            expect((await retired.read()).inflight?.records).toHaveLength(2)
-
-            await outbox.absorb(retiredPath, START + 61_000)
-            const absorbed = await outbox.read()
-            expect(fingerprints(absorbed.records)).toEqual(
-                [1, 2, 3].map((index) => record(index).attributes["error.fingerprint"]),
-            )
-            expect(absorbed.pacing.next_eligible_at).toBe(retiredGate)
-            await expect(fs.access(retiredPath)).rejects.toThrow()
-        })
-
-        it("keeps the earlier queue when this outbox belongs to a newer build, so no record is lost", async () => {
-            const retiredPath = path.join(root, "diagnostics", "retired.json")
-            await new DiagnosticOutboxRepository(retiredPath, { encode: heavyEncoder }).append([record(1)], START)
-            await fs.writeFile(filePath, JSON.stringify({ schema_version: 3 }))
-
-            await new DiagnosticOutboxRepository(filePath, { encode: heavyEncoder }).absorb(retiredPath, START)
-
-            const kept = await new DiagnosticOutboxRepository(retiredPath, { encode: heavyEncoder }).read()
-            expect(kept.records).toHaveLength(1)
-        })
+        // Only the record this build queued travels; the earlier inflight bytes are never replayed.
+        expect(claimed?.requestId).not.toBe("earlier")
+        const sent = (JSON.parse(claimed?.body ?? "{}") as { records: DiagnosticRecord[] }).records
+        expect(sent.map((entry) => entry.attributes["error.fingerprint"])).toEqual([record(3).attributes["error.fingerprint"]])
+        const evidence = await Promise.all(
+            (await fs.readdir(quarantineDir))
+                .filter((name) => name.endsWith(".discarded.json"))
+                .map(async (name) => JSON.parse(await fs.readFile(path.join(quarantineDir, name), "utf8")) as unknown),
+        )
+        expect(evidence).toEqual([
+            {
+                schema_version: 1,
+                kind: "telemetry_state_discarded",
+                document: "diagnostics-outbox",
+                reason: "older_schema",
+                found_schema_version: 2,
+                counts: { records: 3, dropped: 4 },
+                recorded_at: expect.any(Number),
+            },
+        ])
     })
 })

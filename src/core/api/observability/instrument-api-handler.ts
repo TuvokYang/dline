@@ -24,20 +24,19 @@ export function instrumentApiHandler(handler: ApiHandler, context: ApiHandlerCon
             const taskId = options?.taskNamespace ?? context.ulid
             const task = taskTraceSource(taskId)
             const provider = handler.getProviderId?.() ?? context.profile.provider
+            // The Profile's custom-model switch is frozen with the provider for every
+            // send of this request, so the Usage namespace never depends on a registry.
+            const adapter = provider ? { provider, customModel: handler.isCustomModel?.() === true } : undefined
             const attemptScope: ProviderAttemptScopeInput = {
                 role: providerTelemetryRole(options),
                 logicalRequestId: options?.telemetryRequestId,
                 taskAttempt: options?.telemetryAttempt ?? 0,
-                ...(provider ? { adapter: { provider } } : {}),
+                ...(adapter ? { adapter } : {}),
             }
             const attemptObserver = task?.providerAttemptObserver?.(attemptScope)
             const bindAttempts = (stream: ApiStream): ApiStream => {
                 const bound = attemptObserver
-                    ? (ApiHandler.bindProviderAttemptScope(
-                          stream,
-                          attemptObserver,
-                          provider ? { provider } : undefined,
-                      ) as ApiStream)
+                    ? (ApiHandler.bindProviderAttemptScope(stream, attemptObserver, adapter) as ApiStream)
                     : stream
                 return observeExactUsage(bound, task, attemptScope)
             }

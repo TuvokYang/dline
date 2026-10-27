@@ -1,6 +1,7 @@
 import type { ProviderAttemptIdentity, ProviderAttemptObserver } from "@shared/provider-attempt-observer"
 import { Logger } from "@shared/services/Logger"
 import { ulid } from "ulid"
+import { projectUsageModelId } from "@/services/telemetry/remote/contracts/modelIdentity"
 import type { BlockPhase, KernelBlock } from "../kernel"
 import type { UsageToolCall } from "../telemetry/UsageToolCalls"
 import type { ApiRequestRoundScopeInput } from "./api-request-round-lifecycle"
@@ -12,6 +13,7 @@ import type { ProviderRequestRoundAdmission, ProviderRequestRoundAdmissionInput 
 interface ProviderRequestRoundLifecyclePort {
     createObserver(input: ApiRequestRoundScopeInput): ProviderAttemptObserver<ApiRequestRoundHandle>
     attachExactUsage(handle: ApiRequestRoundHandle, usage: ApiRequestRoundUsage): void
+    finalizeTokens(handle: ApiRequestRoundHandle): void
     completeProviderOnly(logicalRequestId: string): void
     completeTools(logicalRequestId: string, summary: ApiResponseExecutionToolSummary, toolCalls?: readonly UsageToolCall[]): void
     completeTurnEndAwaitingUser(
@@ -38,7 +40,6 @@ export interface TaskProviderRequestRoundOwnerOptions {
         awaitingBlockId?: string,
     ) => Promise<readonly UsageToolCall[]>
     readonly readPolicyGeneration?: () => number | undefined
-    readonly projectUsageModelId?: (provider: string, wireModelId: string) => string
 }
 
 type ActiveProviderExecution = ProviderExecutionRegistration
@@ -79,8 +80,8 @@ export class TaskProviderRequestRoundOwner {
             })
             return {
                 beginAttempt: (identity) => observer.beginAttempt(this.projectIdentity(identity)),
-                finishAttempt: async (handle, status) => {
-                    await observer.finishAttempt(handle, status)
+                finishAttempt: async (handle, status, failure) => {
+                    await observer.finishAttempt(handle, status, failure)
                     latestTerminal = handle
                 },
             }
@@ -88,7 +89,10 @@ export class TaskProviderRequestRoundOwner {
         return {
             createAttemptObserver,
             attachExactUsage: (usage) => {
-                if (latestTerminal) this.options.lifecycle.attachExactUsage(latestTerminal, usage)
+                if (!latestTerminal) return
+                // The ApiHandler wrapper accumulates a send's usage and delivers it once when the stream closes.
+                this.options.lifecycle.attachExactUsage(latestTerminal, usage)
+                this.options.lifecycle.finalizeTokens(latestTerminal)
             },
             completeProviderOnly: () => this.options.lifecycle.completeProviderOnly(logicalRequestId),
             completeTools: (summary, toolCalls) => this.options.lifecycle.completeTools(logicalRequestId, summary, toolCalls),
@@ -163,14 +167,10 @@ export class TaskProviderRequestRoundOwner {
         while (this.pendingCompletions.size > 0) await Promise.allSettled([...this.pendingCompletions])
     }
 
+    /** Freeze the contract model identity at admission; the raw wire model never leaves this boundary. */
     private projectIdentity(identity: ProviderAttemptIdentity | undefined): ProviderAttemptIdentity | undefined {
-        const projector = this.options.projectUsageModelId
-        if (!identity || !projector) return identity
-        try {
-            return { ...identity, modelId: projector(identity.provider, identity.modelId) }
-        } catch {
-            return { ...identity, modelId: "state:unknown" }
-        }
+        if (!identity) return identity
+        return { ...identity, modelId: projectUsageModelId(identity.modelId, { customModel: identity.customModel === true }) }
     }
 
     private clearExecution(admission: ProviderRequestRoundAdmission, execution: ActiveProviderExecution): void {

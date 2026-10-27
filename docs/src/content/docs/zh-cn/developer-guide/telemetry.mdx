@@ -45,7 +45,7 @@ registry 包含 `usage`、`account`、`error`、`runtime`、`raw-artifact` chann
 
 默认 loopback registration 声明支持 `account`。`OpenTelemetryTelemetryProvider.identifyUser()` 在每次账户切换时发出一个 `account.identified` log，只包含 `account_id`、`telemetry_channel=account`，不包含 `distinct_id`、display name、email、organization 或 membership。普通 OTel event 继续使用设备 `distinct_id`。
 
-PostHog account identification 不再改写或 alias 设备 ID。当前 PostHog usage registration 和组织配置 OTLP registration 都没有 opt in `account`，因此不会收到 account record。
+账号识别从不改写或 alias 设备 ID。组织配置的 OTLP registration 没有 opt in `account`，因此不会收到 account record。Dline 没有 PostHog registration。
 
 ## 当前兼容缺口
 
@@ -65,13 +65,13 @@ canonical registry 每次从 `StateManager` 读取 consent。runtime 兼容 life
 
 ## 当前远端 usage 投递
 
-`otel.dline.cc` 目前经 `/usage` 接收 `usage` profile，经 `/logs` 接收 `production` profile 的错误和运行时诊断。usage 路径的所有权如下：
+`otel.dline.cc` 经 `/usage` 接收 `usage` profile，经 OTLP/JSON 的 `/v1/logs`、`/v1/metrics` 和 `/v1/traces` 接收 `production` profile 的错误和运行时诊断；每个请求都带 `X-Dline-Contract: 5`。启动时删除早期合同留下的状态（`LegacyTelemetryState`），只在 remote quarantine 目录保留元数据形式的 loss evidence。usage 路径的所有权如下：
 
 | 层 | Owner | 职责 |
 |---|---|---|
 | Settlement port | `src/core/task/telemetry/UsageSettlement.ts` | 每个已结算的服务商请求产生一条类型化记录：purpose、outcome、新输入与缓存 token、时长、流式耗时、重试、失败类别，以及服务该请求的 provider 和模型（含是否为自定义模型） |
 | Policy | `remote/policy/usagePolicy.ts`、`RemotePolicyRepository` | 把使用情况设置（默认开启）、组织、宿主等级和服务端停止解析为机器级 policy epoch，并在决策变化时记录日志 |
-| 请求体 | `remote/usage/usageTally.ts`、`usageBatch.ts`、`remote/contracts/usageBody.ts` | 按请求累计、按分钟相加，再合并为一个 `schema_version: 2` 请求体：最多 8 个模型和 8 个 provider，其余合并为 `_other`；保存前在本地校验 |
+| 请求体 | `remote/usage/attemptBucket.ts`、`remote/contracts/usageBody.ts`、`remote/contracts/usageBodySchema.ts` | 已终结的 attempt 合并为 bucket，再构建为一个 schema 5 请求体；保存前按合同在本地校验 |
 | Spool 与 outbox | `UsageObservationSpool`、`UsageOutboxRepository` | 按进程分片的 observation；发送租约、投递闸门、待发分钟和 exact-bytes inflight 在同一把锁下修改 |
 | 投递 | `UsageDeliveryWorker`、`RemoteUsageCoordinator` | 窗口、批次、重放、延后与停止处理；policy 离开允许状态时删除未发送数据 |
 | 凭据与传输 | `DeviceCredentialRepository`、`DeviceTokenBroker`、`DlineOtelHttpClient` | owner-only 设备密钥、single-flight 令牌交换、经 `@shared/net` 的固定 origin |

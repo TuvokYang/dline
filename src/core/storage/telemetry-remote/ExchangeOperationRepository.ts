@@ -54,8 +54,8 @@ interface StoredExchangeOperationDocument {
 export interface PrepareExchangeOperationInput {
     /** Stable operation identity, for example the device ID or device secret hash domain. */
     readonly principal: string
-    /** Secret key material for the local receipt; defaults to principal for device bootstrap compatibility. */
-    readonly receiptSecret?: string
+    /** Secret key material for the local receipt; a receipt sealed under another secret is dropped and replayed. */
+    readonly receiptSecret: string
     readonly request: ExchangeOperationRequest & object
 }
 
@@ -109,7 +109,7 @@ export class ExchangeOperationRepository {
                 try {
                     return {
                         intent: existing.intent,
-                        response: decryptReceipt(existing.intent, existing.receipt, input.receiptSecret ?? input.principal),
+                        response: decryptReceipt(existing.intent, existing.receipt, input.receiptSecret),
                     }
                 } catch {
                     // The request may already have committed remotely. Drop only the unreadable local
@@ -151,7 +151,10 @@ export class ExchangeOperationRepository {
         })
     }
 
-    /** Drop only a non-publishable legacy receipt while preserving the original operation identity for retry. */
+    /**
+     * Drop a sealed receipt that can no longer be published, such as one whose grant
+     * expired before recovery, while preserving the original operation identity for retry.
+     */
     async clearReceipt(intent: ExchangeOperationIntent): Promise<void> {
         const validatedIntent = validateExchangeIntent(intent)
         const key = exchangeOperationKey(validatedIntent.principalHash, validatedIntent.operation)

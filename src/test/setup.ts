@@ -144,7 +144,6 @@ vi.mock("@services/telemetry", () => {
         getTelemetryService: async () => ({}),
         resetTelemetryService: () => {},
         TelemetryProviderFactory: { createProviders: fn },
-        PostHogTelemetryProvider: class {},
         TerminalOutputFailureReason: {},
         TerminalUserInterventionAction: {},
         TerminalHangStage: {},

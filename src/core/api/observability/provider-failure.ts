@@ -1,3 +1,5 @@
+import type { UsageFailureClass } from "@/services/telemetry/remote/contracts/usageBodySchema"
+
 /**
  * Why a provider request failed, in the vocabulary the telemetry service accepts.
  * A failure that fits none of them is `other`, never a new value.
@@ -92,6 +94,25 @@ export function providerFailureClassOf(error: unknown): ProviderFailureClass {
         if (match) return match[1]
     }
     return "other"
+}
+
+/** Usage failure catalog entry of each diagnostic class (usage-contract §5). */
+const USAGE_FAILURE_CLASS_BY_PROVIDER_CLASS: Readonly<Record<ProviderFailureClass, UsageFailureClass>> = {
+    rate_limited: "rate_limited",
+    overloaded: "provider_unavailable",
+    timeout: "timeout",
+    auth: "authentication",
+    network: "network",
+    invalid_request: "provider_rejected",
+    other: "unknown",
+}
+
+/**
+ * The Usage failure class of a failed Provider attempt. It names the category
+ * only; the error text, status body and model never leave as part of it.
+ */
+export function usageFailureClassOf(error: unknown): UsageFailureClass {
+    return USAGE_FAILURE_CLASS_BY_PROVIDER_CLASS[providerFailureClassOf(error)]
 }
 
 /**

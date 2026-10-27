@@ -9,6 +9,7 @@ import {
     mergeAttempts,
     observeAttempt,
     projectFinalizedAttempt,
+    projectLogicalExecution,
     sealAttempts,
 } from "../attemptProjection"
 
@@ -105,12 +106,20 @@ describe("finalized attempt projection", () => {
         expect(() => projectFinalizedAttempt(handle({ provider: undefined }), record())).toThrow(/identity/i)
     })
 
-    it("never exposes an unclassified final wire model and accepts the frozen disabled thinking state", () => {
+    it("never exposes a wire model the admission boundary did not project and accepts the revision 5 off state", () => {
         const privateWireModel = "tenant/private-finetune-42"
-        const observation = projectFinalizedAttempt(handle({ modelId: privateWireModel, thinking: "state:disabled" }), record())
+        const observation = projectFinalizedAttempt(handle({ modelId: privateWireModel, thinking: "state:off" }), record())
 
-        expect(observation.identity).toMatchObject({ modelId: "state:unknown", thinking: "state:disabled" })
+        expect(observation.identity).toMatchObject({ modelId: "state:unknown", thinking: "state:off" })
         expect(JSON.stringify(observation)).not.toContain(privateWireModel)
+    })
+
+    it("rejects thinking vocabulary revision 5 removed instead of reporting it", () => {
+        expect(() => projectFinalizedAttempt(handle({ thinking: "state:disabled" }), record())).toThrow(/thinking/i)
+    })
+
+    it("reports a sub-millisecond send as one millisecond so it stays inside the duration histogram", () => {
+        expect(projectFinalizedAttempt(handle(), record({ providerDurationMs: 0 })).durationMs).toBe(1)
     })
 
     it("keeps an unreported attempt in request and duration math without claiming real zero tokens", () => {
@@ -192,9 +201,14 @@ describe("finalized attempt projection", () => {
         expect(observation.logicalExecution?.tools).toBeUndefined()
     })
 
-    it("attaches session starts only to a final result-producing attempt", () => {
-        expect(projectFinalizedAttempt(handle(), record(), execution(), undefined, 2)).toMatchObject({ sessionsStarted: 2 })
-        expect(() => projectFinalizedAttempt(handle(), record(), undefined, undefined, 1)).toThrow(/session starts/i)
+    it("projects a late logical claim with the request's total task attempts and one turn sample", () => {
+        const late = projectLogicalExecution(handle({ taskAttempt: 2 }), execution({ executionDurationMs: 4_200.4 }))
+
+        expect(late.taskAttempts).toEqual({ count: 1, sum: 3, min: 3, max: 3 })
+        expect(late.turnDurationMs).toEqual({ count: 1, sum: 4_200, min: 4_200, max: 4_200 })
+        expect(() => projectLogicalExecution(handle(), execution({ roundId: "other", executionId: "other" }))).toThrow(
+            /does not match/i,
+        )
     })
 
     it("rejects a logical execution belonging to another attempt handle", () => {

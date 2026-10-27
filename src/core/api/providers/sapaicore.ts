@@ -779,10 +779,13 @@ export class SapAiCoreHandler extends ApiHandler {
         } else {
             throw new Error(`Unsupported model: ${model.id}`)
         }
+        // The deployment URL, not the payload, names the model for every family, so the
+        // identity reads the sent model ID beside the payload's own thinking fields.
+        const identity = ApiHandler.identifyProviderAttempt("sapaicore", { ...payload, model: model.id })
 
         try {
             if (model.id === "o3-mini") {
-                const response = await ApiHandler.observeProviderCall(undefined, () =>
+                const response = await ApiHandler.observeProviderCall(identity, () =>
                     axios.post(url, JSON.stringify(payload, null, 2), { headers, ...getAxiosSettings() }),
                 )
 
@@ -815,7 +818,7 @@ export class SapAiCoreHandler extends ApiHandler {
             }
 
             const { stream } = await ApiHandler.observeProviderStreamResponse(
-                undefined,
+                identity,
                 () =>
                     axios.post(url, JSON.stringify(payload, null, 2), {
                         headers,

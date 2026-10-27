@@ -1,4 +1,4 @@
-import type { UsageHostEditor, UsageReleaseChannel } from "./contracts/usageBody"
+import type { UsageHostEditor, UsageReleaseChannel } from "./contracts/usageBodySchema"
 
 /**
  * How this build describes itself to the telemetry service: the release channel
@@ -6,9 +6,17 @@ import type { UsageHostEditor, UsageReleaseChannel } from "./contracts/usageBody
  * in `client`, diagnostics in the logs resource.
  */
 
-/** The release channel of a build, read from its extension name (`dline-insiders` for Insiders). */
-export function releaseChannelOf(extensionName: string): UsageReleaseChannel {
-    return extensionName.endsWith("-insiders") ? "insiders" : "stable"
+const MINOR_VERSION = /^\d+\.(\d+)\./u
+
+/**
+ * The release channel of a build. Insiders is a separate extension
+ * (`dline-insiders`); a pre-release ships under the production name with an odd
+ * minor version, so it must not report itself as stable (usage-contract §14).
+ */
+export function releaseChannelOf(extensionName: string, version: string): UsageReleaseChannel {
+    if (extensionName.endsWith("-insiders")) return "insiders"
+    const minor = MINOR_VERSION.exec(version)?.[1]
+    return minor !== undefined && Number(minor) % 2 === 1 ? "pre-release" : "stable"
 }
 
 /** The editor hosting the extension, from its application name. */

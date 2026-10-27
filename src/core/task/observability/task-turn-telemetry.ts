@@ -17,7 +17,7 @@ import {
 } from "@/services/telemetry/service/task-trace-context"
 import type { TaskState } from "../kernel"
 import type { ApiRateSnapshot } from "../performance/api-rate-tracker"
-import type { FinalizedProviderAttempt } from "../performance/provider-request-round-port"
+import type { ProviderAttemptUsageEvent } from "../performance/provider-request-round-port"
 import type { DurableTaskSnapshot, StateVault } from "../stores"
 import { taskUsageAccounting } from "./task-usage-accounting"
 
@@ -92,12 +92,8 @@ export class TaskTurnTelemetry implements TaskTraceSource {
         return taskUsageAccounting.currentPolicyGeneration()
     }
 
-    projectUsageModelId(provider: string, wireModelId: string): string {
-        return taskUsageAccounting.projectModelId(provider, wireModelId)
-    }
-
-    recordFinalizedAttempt(attempt: FinalizedProviderAttempt): void {
-        taskUsageAccounting.recordFinalizedAttempt(attempt)
+    recordAttemptEvent(event: ProviderAttemptUsageEvent): void {
+        taskUsageAccounting.recordAttemptEvent(event)
     }
 
     currentSpan(): SignalSpanHandle | undefined {

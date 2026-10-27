@@ -19,10 +19,6 @@ on:
         required: false
         default: auto
     secrets:
-      TELEMETRY_SERVICE_API_KEY:
-        required: false
-      ERROR_SERVICE_API_KEY:
-        required: false
       OTEL_TELEMETRY_ENABLED:
         required: false
       OTEL_EXPORTER_OTLP_PROTOCOL:
@@ -215,9 +211,7 @@ jobs:
       profile: ${{ needs.typecheck.outputs.package_profile }}
       channel: ${{ needs.typecheck.outputs.package_channel }}
     secrets:
-      TELEMETRY_SERVICE_API_KEY: ${{ needs.typecheck.outputs.package_profile == 'release' && secrets.TELEMETRY_SERVICE_API_KEY || '' }}
-      ERROR_SERVICE_API_KEY: ${{ needs.typecheck.outputs.package_profile == 'release' && secrets.ERROR_SERVICE_API_KEY || '' }}
-      OTEL_TELEMETRY_ENABLED: ${{ needs.typecheck.outputs.package_profile == 'release' && secrets.OTEL_TELEMETRY_ENABLED || '' }}
+      OTEL_TELEMETRY_ENABLED:
       OTEL_EXPORTER_OTLP_PROTOCOL: ${{ needs.typecheck.outputs.package_profile == 'release' && secrets.OTEL_EXPORTER_OTLP_PROTOCOL || '' }}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${{ needs.typecheck.outputs.package_profile == 'release' && secrets.OTEL_EXPORTER_OTLP_ENDPOINT || '' }}
       OTEL_EXPORTER_OTLP_HEADERS: ${{ needs.typecheck.outputs.package_profile == 'release' && secrets.OTEL_EXPORTER_OTLP_HEADERS || '' }}

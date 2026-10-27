@@ -1,5 +1,6 @@
 import { buildApiHandler } from "@core/api"
 import { isBinaryFile } from "isbinaryfile"
+import { createUntaskedMessage } from "@/core/task/performance/UntaskedProviderRequest"
 import { HostProvider } from "@/hosts/host-provider"
 import { formatContentBlockToMarkdown } from "@/integrations/misc/export-markdown"
 import { ApiConfiguration } from "@/shared/api"
@@ -176,7 +177,7 @@ Output your explanation comments now using the @@@ format:`
     let inComment = false
 
     try {
-        for await (const chunk of apiHandler.createMessage(systemPrompt, [{ role: "user", content: userMessage }])) {
+        for await (const chunk of createUntaskedMessage(apiHandler, systemPrompt, [{ role: "user", content: userMessage }])) {
             // Check if we should abort before processing each chunk
             if (shouldAbort?.()) {
                 // If we're in the middle of a comment, end it cleanly
@@ -351,7 +352,7 @@ ${replyText}
 Please respond to the user's question about this code.`
 
     try {
-        for await (const chunk of apiHandler.createMessage(systemPrompt, [{ role: "user", content: userMessage }])) {
+        for await (const chunk of createUntaskedMessage(apiHandler, systemPrompt, [{ role: "user", content: userMessage }])) {
             if (chunk.type === "text") {
                 onChunk(chunk.text)
             }

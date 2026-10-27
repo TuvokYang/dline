@@ -161,7 +161,7 @@ The service's retention, access, and deletion policy must be published before th
 
 ## Error diagnostics delivery to `otel.dline.cc`
 
-Dline sends error and runtime diagnostics to `https://otel.dline.cc/logs` only while every condition holds:
+Dline sends error and runtime diagnostics to `https://otel.dline.cc/v1/logs` only while every condition holds:
 
 - **Allow error reporting** is checked. It is on by default; unchecking it in **Settings → About** stops delivery at once and deletes unsent diagnostics.
 - Organization policy has not disabled error reporting.
@@ -171,7 +171,9 @@ Dline sends error and runtime diagnostics to `https://otel.dline.cc/logs` only w
 
 ### What is sent
 
-Only log records are sent, no metrics or traces. A record is created only for an event listed below, and only at warning severity or worse:
+Log records follow the OTLP/JSON format, and every request carries `X-Dline-Contract: 5`. Under the same conditions, Dline also sends delta metrics to `/v1/metrics`, closing one window every 60 seconds and sending one window per request, and spans for tasks (`dline.task`), tool executions (`dline.tool.execute`), and provider requests (`gen_ai.client.operation`) to `/v1/traces`. Metrics and spans use the same attribute rules and resource as log records and wait in their own queues; one device keeps at most 300 spans per UTC hour and 1,200 per UTC day, and a request holds at most 200 spans and 128 KiB.
+
+A log record is created only for an event listed below, and only at warning severity or worse:
 
 | Event | Channel | Severity |
 |---|---|---|
@@ -195,13 +197,13 @@ Its other attributes come only from this fixed list:
 
 A text value is kept only as a short token of letters, digits, `_`, `.`, `+`, and `-` (at most 64 characters), and a number only as a non-negative integer. A value outside an attribute's list is left out. Older attribute names still used inside Dline are read into these keys; every other attribute is left out. A failure names its model the same way as usage delivery, and `model.custom` is `true` only for a custom model as defined above.
 
-The request resource names only the client version, the operating-system type, the release channel (`stable` or `insiders`), the editor family (`vscode`, `cursor`, `vscodium`, `windsurf`, or `other`), and the number of records dropped locally since the previous request (`dline.dropped_records`). A development build also sends `dline.is_dev=true`; other builds omit it.
+The request resource names only the client version, the operating-system type and CPU architecture, the release channel
 
 Error messages, stack traces, prompts, responses, file contents, paths, URLs, commands, Task or workspace identity, `distinct_id`, and account ID are not sent.
 
 ### Device identity, queue, and limits
 
-Diagnostics use the same pseudonymous device secret as usage delivery but exchange it for their own `production` access token, so each consent controls only its own token. The queue is `telemetry/remote/diagnostics/outbox.json` below the Dline data root and is shared by every Dline window. At startup, records that earlier 0.11 builds queued in `outbox-v2.json` move into it and that file is removed, unless a window of such a build is sending a batch from it at that moment:
+Diagnostics use the same pseudonymous device secret as usage delivery but exchange it for their own `production` access token, so each consent controls only its own token. The queue is `telemetry/remote/diagnostics/outbox.json` below the Dline data root and is shared by every Dline window. Queues that earlier builds left, such as `outbox-v2.json` from early 0.11 builds or a queue written under an earlier telemetry contract, are deleted without being sent; the device keeps only metadata recording what was discarded and how much:
 
 - Windows write gathered records to the queue every 5 seconds. One window at a time checks the queue about every 20 seconds and starts a new batch at most every 5 minutes, as described in **Send timing and waits** above.
 - One device keeps at most 50 new records per UTC hour and 200 per UTC day; a repeat of a kept record still merges into it. At most 1,000 records wait. Records beyond these limits are dropped and counted in `dline.dropped_records`.

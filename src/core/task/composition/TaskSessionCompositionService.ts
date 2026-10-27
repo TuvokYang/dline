@@ -408,9 +408,8 @@ export class TaskSessionCompositionService {
             readState,
             legacyMessages: () => messages.clineMessages,
             onChanged: () => void options.publishState().catch(() => undefined),
-            finalizedAttempts: taskTelemetry,
+            attemptUsage: taskTelemetry,
             readUsagePolicyGeneration: () => taskTelemetry.usagePolicyGeneration(),
-            projectUsageModelId: (provider, wireModelId) => taskTelemetry.projectUsageModelId(provider, wireModelId),
             // Usage reports which tool each settled call ran. The kernel keeps the
             // call, not its tool, so the name comes from the stored invocation.
             resolveInvocationToolName: async (invocationRef) => {

@@ -50,6 +50,9 @@ import { SubagentBuilder } from "../SubagentBuilder"
 import { renderContextBudgetSection } from "../SubagentContextBudget"
 import { SubagentRunner } from "../SubagentRunner"
 
+/** A subagent semantic request is labelled by its role and a per-request unique identity. */
+const SUBAGENT_REQUEST_ID = /^subagent:[0-9a-f-]{36}$/u
+
 function initializeHostProvider() {
     HostProvider.reset()
     HostProvider.initialize(
@@ -644,12 +647,12 @@ describe("SubagentRunner", () => {
         )
 
         assert.equal(result.status, "completed", result.error)
-        assert.deepEqual(createMessage.mock.calls[0][3], {
+        expect(createMessage.mock.calls[0][3]).toStrictEqual({
             serverTools: [],
             taskNamespace: "task-1",
             retryOwner: "subagent",
             telemetryRole: "subagent",
-            telemetryRequestId: "subagent:1",
+            telemetryRequestId: expect.stringMatching(SUBAGENT_REQUEST_ID),
             telemetryAttempt: 0,
         })
     })
@@ -682,12 +685,12 @@ describe("SubagentRunner", () => {
         }).run("Use the frozen request gate", () => {})
 
         assert.equal(result.status, "completed", result.error)
-        assert.deepEqual(createMessage.mock.calls[0][3], {
+        expect(createMessage.mock.calls[0][3]).toStrictEqual({
             serverTools: [ServerTool.WEB_SEARCH],
             taskNamespace: "task-1",
             retryOwner: "subagent",
             telemetryRole: "subagent",
-            telemetryRequestId: "subagent:1",
+            telemetryRequestId: expect.stringMatching(SUBAGENT_REQUEST_ID),
             telemetryAttempt: 0,
         })
     })
@@ -735,12 +738,12 @@ describe("SubagentRunner", () => {
         }).run("Search remotely", progress)
 
         assert.equal(result.status, "completed", result.error)
-        assert.deepEqual(createMessage.mock.calls[0][3], {
+        expect(createMessage.mock.calls[0][3]).toStrictEqual({
             serverTools: [ServerTool.WEB_SEARCH],
             taskNamespace: "task-1",
             retryOwner: "subagent",
             telemetryRole: "subagent",
-            telemetryRequestId: "subagent:1",
+            telemetryRequestId: expect.stringMatching(SUBAGENT_REQUEST_ID),
             telemetryAttempt: 0,
         })
         const hostedEvents = progress.mock.calls
@@ -1072,12 +1075,12 @@ describe("SubagentRunner", () => {
         }).run("Use only the allowed web tool", () => {})
 
         assert.equal(result.status, "completed", result.error)
-        assert.deepEqual(createMessage.mock.calls[0][3], {
+        expect(createMessage.mock.calls[0][3]).toStrictEqual({
             serverTools,
             taskNamespace: "task-1",
             retryOwner: "subagent",
             telemetryRole: "subagent",
-            telemetryRequestId: "subagent:1",
+            telemetryRequestId: expect.stringMatching(SUBAGENT_REQUEST_ID),
             telemetryAttempt: 0,
         })
     })
@@ -1117,12 +1120,12 @@ describe("SubagentRunner", () => {
         }).run("Use the allowed hosted web tools", () => {})
 
         assert.equal(result.status, "completed", result.error)
-        assert.deepEqual(createMessage.mock.calls[0][3], {
+        expect(createMessage.mock.calls[0][3]).toStrictEqual({
             serverTools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH],
             taskNamespace: "task-1",
             retryOwner: "subagent",
             telemetryRole: "subagent",
-            telemetryRequestId: "subagent:1",
+            telemetryRequestId: expect.stringMatching(SUBAGENT_REQUEST_ID),
             telemetryAttempt: 0,
         })
     })
@@ -2813,7 +2816,7 @@ describe("SubagentRunner", () => {
             yield* []
             throw Object.assign(new Error("408 Temporary provider failure"), { status: 408 })
         })
-        createMessage.mockImplementationOnce(async function* () {
+        const completeRound = async function* () {
             yield { type: "usage", inputTokens: 100, outputTokens: 20, cacheReadTokens: 0 }
             yield {
                 type: "tool_calls",
@@ -2826,7 +2829,9 @@ describe("SubagentRunner", () => {
                     },
                 },
             }
-        })
+        }
+        createMessage.mockImplementationOnce(completeRound)
+        createMessage.mockImplementationOnce(completeRound)
         const setTimeoutSpy = vi.spyOn(global, "setTimeout").mockImplementation(((callback: (...args: unknown[]) => void) => {
             queueMicrotask(callback)
             return {} as NodeJS.Timeout
@@ -2841,21 +2846,31 @@ describe("SubagentRunner", () => {
 
         assert.equal(result.status, "completed")
         assert.equal(createMessage.mock.calls.length, 2)
+        // A retry continues the semantic request it retries.
+        assert.equal(createMessage.mock.calls[1]?.[3]?.telemetryRequestId, createMessage.mock.calls[0]?.[3]?.telemetryRequestId)
         expect(createMessage.mock.calls.map((call) => call[3])).toEqual([
             expect.objectContaining({
                 telemetryRole: "subagent",
-                telemetryRequestId: "subagent:1",
+                telemetryRequestId: expect.stringMatching(SUBAGENT_REQUEST_ID),
                 telemetryAttempt: 0,
             }),
             expect.objectContaining({
                 telemetryRole: "subagent",
-                telemetryRequestId: "subagent:1",
+                telemetryRequestId: expect.stringMatching(SUBAGENT_REQUEST_ID),
                 telemetryAttempt: 1,
             }),
         ])
         assert.deepEqual(
             setTimeoutSpy.mock.calls.map(([, timeout]) => timeout),
             [5_000],
+        )
+
+        // Another runner of the same Task counts its requests from 1 too; it must not reuse the label.
+        const second = await new SubagentRunner(createTaskConfig(false)).run("Run in parallel", () => {})
+        assert.equal(second.status, "completed")
+        assert.notEqual(
+            createMessage.mock.calls[2]?.[3]?.telemetryRequestId,
+            createMessage.mock.calls[0]?.[3]?.telemetryRequestId,
         )
     })
 

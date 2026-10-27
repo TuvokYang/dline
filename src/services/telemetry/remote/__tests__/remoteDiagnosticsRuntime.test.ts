@@ -3,13 +3,13 @@ import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { DiagnosticOutboxRepository } from "@/core/storage/telemetry-remote/DiagnosticOutboxRepository"
+import { resolveOtelStorageLayout } from "@/core/storage/telemetry-remote/OtelStorageLayout"
 import type { TelemetryProviderInput, TelemetryProviderRegistration } from "../../providers/capabilities"
 import type { TelemetrySettings } from "../../providers/ITelemetryProvider"
 import { encodeDiagnosticLogs } from "../diagnostics/diagnosticRecord"
 import { diagnosticsAllowed } from "../policy/hostDiagnosticsPolicy"
 import {
     diagnosticOutboxPath,
-    legacyDiagnosticOutboxPath,
     refreshRemoteDiagnostics,
     startRemoteDiagnostics,
     stopRemoteDiagnostics,
@@ -64,6 +64,7 @@ describe("remote diagnostics runtime", () => {
     function outbox(): DiagnosticOutboxRepository {
         return new DiagnosticOutboxRepository(diagnosticOutboxPath(path.join(root, "data")), {
             encode: (records, dropped) => encodeDiagnosticLogs(records, { clientVersion: "0.11.0", platform: "linux" }, dropped),
+            quarantineDir: resolveOtelStorageLayout(path.join(root, "data")).remoteQuarantineDir,
         })
     }
 
@@ -119,44 +120,4 @@ describe("remote diagnostics runtime", () => {
 
         expect((await outbox().read()).records).toEqual([])
     })
-
-    it("moves what an earlier build queued under its own file name into the outbox, then removes that file", async () => {
-        await stopRemoteDiagnostics()
-        const legacyPath = legacyDiagnosticOutboxPath(path.join(root, "data"))
-        expect(legacyPath).not.toBe(diagnosticOutboxPath(path.join(root, "data")))
-        const earlier = new DiagnosticOutboxRepository(legacyPath, {
-            encode: (records, dropped) => encodeDiagnosticLogs(records, { clientVersion: "0.11.0", platform: "linux" }, dropped),
-        })
-        await earlier.append(
-            [
-                {
-                    name: "task.browser_error",
-                    channel: "error",
-                    severity: "error",
-                    firstSeenMs: Date.now(),
-                    lastSeenMs: Date.now(),
-                    occurrences: 2,
-                    attributes: {},
-                },
-            ],
-            Date.now(),
-        )
-
-        start()
-
-        const deadline = Date.now() + 2_000
-        while (await fileExists(legacyPath)) {
-            if (Date.now() > deadline) throw new Error("the earlier queue was not absorbed")
-            await new Promise((resolve) => setTimeout(resolve, 10))
-        }
-        const { records } = await outbox().read()
-        expect(records.map((record) => [record.name, record.occurrences])).toEqual([["task.browser_error", 2]])
-    })
 })
-
-async function fileExists(filePath: string): Promise<boolean> {
-    return fs.access(filePath).then(
-        () => true,
-        () => false,
-    )
-}

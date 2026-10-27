@@ -318,9 +318,7 @@ describe("AwsBedrockHandler", () => {
             error.should.equal(protocolError)
         }
 
-        observation.identities.should.deepEqual([
-            { provider: "bedrock", modelId: "deepseek.r1-v1:0", thinking: "state:disabled" },
-        ])
+        observation.identities.should.deepEqual([{ provider: "bedrock", modelId: "deepseek.r1-v1:0", thinking: "state:default" }])
         observation.terminals.should.deepEqual(["failed"])
     })
 
@@ -710,7 +708,7 @@ describe("AwsBedrockHandler", () => {
                 }
 
                 observation.identities.should.deepEqual([
-                    { provider: "bedrock", modelId: "test-model", thinking: "state:disabled" },
+                    { provider: "bedrock", modelId: "test-model", thinking: "state:default" },
                 ])
                 observation.terminals.should.deepEqual(["failed"])
             })
@@ -740,7 +738,7 @@ describe("AwsBedrockHandler", () => {
                 }
 
                 observation.identities.should.deepEqual([
-                    { provider: "bedrock", modelId: "test-model", thinking: "state:disabled" },
+                    { provider: "bedrock", modelId: "test-model", thinking: "state:default" },
                 ])
                 observation.terminals.should.deepEqual(["failed"])
             })

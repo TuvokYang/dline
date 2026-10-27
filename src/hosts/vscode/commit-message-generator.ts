@@ -2,6 +2,7 @@ import { buildApiHandler } from "@core/api"
 import * as path from "path"
 import * as vscode from "vscode"
 import { Controller } from "@/core/controller"
+import { createUntaskedMessage } from "@/core/task/performance/UntaskedProviderRequest"
 import { HostProvider } from "@/hosts/host-provider"
 import { ExtensionRegistryInfo } from "@/registry"
 import { ShowMessageType } from "@/shared/proto/dline/host/window"
@@ -206,7 +207,8 @@ async function performCommitMsgGeneration(controller: Controller, gitDiff: strin
         const messages = [{ role: "user" as const, content: prompt }]
 
         commitGenerationAbortController = new AbortController()
-        const stream = apiHandler.createMessage(systemPrompt, messages)
+        // The generation belongs to no Task; its sends still count as Usage with role `other`.
+        const stream = createUntaskedMessage(apiHandler, systemPrompt, messages)
 
         let response = ""
         for await (const chunk of stream) {

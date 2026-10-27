@@ -1,11 +1,10 @@
 import { randomUUID } from "node:crypto"
-import { access, mkdir, rm } from "node:fs/promises"
+import { mkdir, rm } from "node:fs/promises"
 import path from "node:path"
 import { backupPathOf, readJsonWithBackup, writeJsonAtomic } from "@shared/storage/atomic-file"
 import {
     afterAcknowledged,
     afterRateLimited,
-    type ChannelPacing,
     isWaiting,
     mayStartBatch,
     replayBudgetExhausted,
@@ -14,6 +13,19 @@ import {
 } from "@/services/telemetry/remote/contracts/pacing"
 import { aggregateDiagnostics, type DiagnosticRecord } from "@/services/telemetry/remote/diagnostics/diagnosticRecord"
 import { FileLock } from "../backend/jsonl/FileLock"
+import {
+    countAdmitted,
+    EMPTY_PACING,
+    EMPTY_QUOTA,
+    isStoredPacing,
+    isStoredQuota,
+    pacingOf,
+    rollQuota,
+    type StoredPacing,
+    type StoredQuota,
+    storedPacing,
+} from "./OutboxGates"
+import { discardDocument } from "./quarantine"
 
 /** Aggregated records one device may create per UTC hour and per UTC day (otel contract v2.1 §3.3). */
 export const DIAGNOSTICS_PER_HOUR = 50
@@ -27,9 +39,14 @@ export const MAX_DIAGNOSTICS_REQUEST_BYTES = 128 * 1024
 export const DIAGNOSTICS_CLAIM_TTL_MS = 60_000
 /** A stop the service asked for is retried after this long, never sooner. */
 export const DIAGNOSTICS_STOP_RETRY_MS = 30 * 60_000
-const HOUR_MS = 60 * 60_000
-const DAY_MS = 24 * HOUR_MS
-const SCHEMA_VERSION = 2
+/**
+ * 3: contract 5 Resource, Scope and model projection. A version 2 document holds
+ * records and an inflight body encoded under the earlier contract; it is
+ * discarded with loss evidence, never replayed or migrated.
+ */
+const SCHEMA_VERSION = 3
+/** Label of this document in loss evidence. */
+const EVIDENCE_DOCUMENT = "diagnostics-outbox"
 
 /** Encodes records and the count dropped since the previous request into one `/logs` body. */
 export type DiagnosticEncoder = (records: readonly DiagnosticRecord[], droppedRecords: number) => string
@@ -66,20 +83,13 @@ interface Inflight {
     readonly not_before: number
 }
 
-interface Quota {
-    readonly hour_start: number
-    readonly hour_count: number
-    readonly day_start: number
-    readonly day_count: number
-}
-
 interface OutboxDocument {
     readonly schema_version: typeof SCHEMA_VERSION
     readonly records: DiagnosticRecord[]
     /** Records discarded locally since the last delivered request, reported as `dline.dropped_records`. */
     readonly dropped: number
-    readonly quota: Quota
-    readonly pacing: { readonly next_eligible_at: number; readonly wait_until: number; readonly consecutive_waits: number }
+    readonly quota: StoredQuota
+    readonly pacing: StoredPacing
     readonly inflight?: Inflight
     readonly claim?: { readonly owner: string; readonly until: number }
     readonly stop?: { readonly code: string; readonly stopped_at: number }
@@ -89,12 +99,14 @@ const EMPTY: OutboxDocument = {
     schema_version: SCHEMA_VERSION,
     records: [],
     dropped: 0,
-    quota: { hour_start: 0, hour_count: 0, day_start: 0, day_count: 0 },
-    pacing: { next_eligible_at: 0, wait_until: 0, consecutive_waits: 0 },
+    quota: EMPTY_QUOTA,
+    pacing: EMPTY_PACING,
 }
 
 export interface DiagnosticOutboxRepositoryOptions {
     readonly encode: DiagnosticEncoder
+    /** Where loss evidence of a discarded older document is written. */
+    readonly quarantineDir: string
     /** Source of the 429 wait jitter. */
     readonly random?: () => number
 }
@@ -130,7 +142,7 @@ export class DiagnosticOutboxRepository {
             const admit = () => {
                 if (quota.hour_count >= DIAGNOSTICS_PER_HOUR || quota.day_count >= DIAGNOSTICS_PER_DAY) return false
                 if (pending >= MAX_PENDING_DIAGNOSTICS) return false
-                quota = { ...quota, hour_count: quota.hour_count + 1, day_count: quota.day_count + 1 }
+                quota = countAdmitted(quota)
                 pending++
                 return true
             }
@@ -154,7 +166,7 @@ export class DiagnosticOutboxRepository {
                 next = withoutStop(next)
             }
             if (next.claim && next.claim.owner !== owner && next.claim.until > now) return current
-            const pacing = pacingOf(next)
+            const pacing = pacingOf(next.pacing)
             if (isWaiting(pacing, now)) return current
             let inflight = next.inflight
             let records = next.records
@@ -197,7 +209,7 @@ export class DiagnosticOutboxRepository {
                 case "acknowledged":
                     return {
                         ...rest,
-                        pacing: storedPacing(afterAcknowledged(pacingOf(rest), "logs", settlement.nextEligibleAt, now)),
+                        pacing: storedPacing(afterAcknowledged(pacingOf(rest.pacing), "logs", settlement.nextEligibleAt, now)),
                     }
                 case "replay": {
                     const attempts = inflight.attempts + 1
@@ -209,7 +221,7 @@ export class DiagnosticOutboxRepository {
                     // §1.7 rule 7: the batch stays as it is and is replayed first once the wait
                     // ends, so a copy an earlier timed-out attempt stored is answered as a duplicate.
                     // The wait does not count against the 24-hour replay age (rule 8).
-                    const pacing = afterRateLimited(pacingOf(rest), settlement.retryAfterMs, now, this.options.random)
+                    const pacing = afterRateLimited(pacingOf(rest.pacing), settlement.retryAfterMs, now, this.options.random)
                     const waitedMs = Math.max(0, pacing.waitUntil - now)
                     return {
                         ...released,
@@ -255,34 +267,7 @@ export class DiagnosticOutboxRepository {
         })
     }
 
-    /**
-     * Move what a queue under another file name holds into this outbox, then
-     * delete that file. Builds before the stable name queued there. While a
-     * window of such a build sends a batch from it, the file is left whole: that
-     * window settles the batch and keeps using its file, and a later start moves
-     * what remains. The later server gate and stop of both queues are kept, so
-     * the move cannot send early.
-     */
-    async absorb(retiredPath: string, now: number): Promise<void> {
-        // The usual start finds nothing to move; it then takes no lock and creates nothing.
-        if (!(await exists(retiredPath)) && !(await exists(backupPathOf(retiredPath)))) return
-        await mkdir(path.dirname(retiredPath), { recursive: true })
-        await this.lock.withLock(retiredPath, async () => {
-            const stored = await readJsonWithBackup(retiredPath, parseOutbox)
-            if (stored.status === "missing") return
-            if (stored.status === "invalid") return removeDocument(retiredPath)
-            if (stored.value.kind === "newer") return
-            const retired = stored.value.document
-            if (retired.claim && retired.claim.until > now) return
-            const records = [...(retired.inflight?.records ?? []), ...retired.records]
-            const dropped = retired.dropped + (retired.inflight?.dropped ?? 0)
-            const moved = await this.mutate((current) => this.restore(withLaterGates(current, retired), records, dropped))
-            // Removed only after the records were written here, so a crash in between duplicates rather than loses them.
-            if (moved) await removeDocument(retiredPath)
-        })
-    }
-
-    /** The current document; empty when there is none, it is unreadable, or a newer build owns it. */
+    /** The current document; empty when there is none, it is unreadable, older, or a newer build owns it. */
     async read(): Promise<OutboxDocument> {
         const stored = await this.load()
         return stored?.kind === "current" ? stored.document : EMPTY
@@ -329,55 +314,28 @@ export class DiagnosticOutboxRepository {
         return this.lock.withLock(this.filePath, async () => {
             const stored = await this.load()
             if (stored?.kind === "newer") return false
-            const current = stored?.document ?? EMPTY
+            if (stored?.kind === "older") await this.discardOlder(stored)
+            const current = stored?.kind === "current" ? stored.document : EMPTY
             const next = change(current)
             if (next !== current) await writeJsonAtomic(this.filePath, next, { fsync: true })
             return true
         })
     }
-}
 
-function exists(filePath: string): Promise<boolean> {
-    return access(filePath).then(
-        () => true,
-        () => false,
-    )
-}
-
-async function removeDocument(filePath: string): Promise<void> {
-    await Promise.all([rm(filePath, { force: true }), rm(backupPathOf(filePath), { force: true })])
-}
-
-/** The later server gate, 429 wait and stop of two queues of the same device. */
-function withLaterGates(current: OutboxDocument, other: OutboxDocument): OutboxDocument {
-    const pacing = {
-        next_eligible_at: Math.max(current.pacing.next_eligible_at, other.pacing.next_eligible_at),
-        wait_until: Math.max(current.pacing.wait_until, other.pacing.wait_until),
-        consecutive_waits: Math.max(current.pacing.consecutive_waits, other.pacing.consecutive_waits),
+    /** Drop a document an earlier contract wrote, leaving only how much it held. */
+    private async discardOlder(stored: OlderOutbox): Promise<void> {
+        await discardDocument(
+            this.filePath,
+            this.options.quarantineDir,
+            {
+                document: EVIDENCE_DOCUMENT,
+                reason: "older_schema",
+                schemaVersion: stored.schemaVersion,
+                counts: { records: stored.records, dropped: stored.dropped },
+            },
+            Date.now(),
+        )
     }
-    const stop = !other.stop || (current.stop && current.stop.stopped_at >= other.stop.stopped_at) ? current.stop : other.stop
-    return { ...withoutStop(current), pacing, ...(stop ? { stop } : {}) }
-}
-
-/** Start a new hour or day count once the UTC hour or day changed. */
-function rollQuota(quota: Quota, now: number): Quota {
-    const hourStart = Math.floor(now / HOUR_MS) * HOUR_MS
-    const dayStart = Math.floor(now / DAY_MS) * DAY_MS
-    return {
-        hour_start: hourStart,
-        hour_count: quota.hour_start === hourStart ? quota.hour_count : 0,
-        day_start: dayStart,
-        day_count: quota.day_start === dayStart ? quota.day_count : 0,
-    }
-}
-
-function pacingOf(document: OutboxDocument): ChannelPacing {
-    const { pacing } = document
-    return { nextEligibleAt: pacing.next_eligible_at, waitUntil: pacing.wait_until, consecutiveWaits: pacing.consecutive_waits }
-}
-
-function storedPacing(pacing: ChannelPacing): OutboxDocument["pacing"] {
-    return { next_eligible_at: pacing.nextEligibleAt, wait_until: pacing.waitUntil, consecutive_waits: pacing.consecutiveWaits }
 }
 
 function withoutStop({ stop: _stop, ...rest }: OutboxDocument): OutboxDocument {
@@ -392,30 +350,54 @@ function withoutInflight({ inflight: _inflight, ...rest }: OutboxDocument): Outb
     return rest
 }
 
-/** A document this build owns, or one a newer build wrote, which is read as empty and never rewritten. */
-type StoredOutbox = { readonly kind: "current"; readonly document: OutboxDocument } | { readonly kind: "newer" }
+/** What an earlier contract's document held, as far as loss evidence needs it. */
+interface OlderOutbox {
+    readonly kind: "older"
+    readonly schemaVersion: number
+    readonly records: number
+    readonly dropped: number
+}
+
+/**
+ * A document this build owns; one a newer build wrote, which is read as empty
+ * and never rewritten; or one an earlier contract wrote, which the next write
+ * discards with loss evidence.
+ */
+type StoredOutbox = { readonly kind: "current"; readonly document: OutboxDocument } | { readonly kind: "newer" } | OlderOutbox
 
 /**
  * Throws for anything that is not a complete outbox document, as
  * `readJsonWithBackup` requires, so a damaged batch cannot wedge every later
- * settle. A document of an older schema is unreadable here and is replaced by
- * the next write.
+ * settle.
  */
 function parseOutbox(value: unknown): StoredOutbox {
     if (!isRecord(value) || !isCount(value.schema_version)) throw new Error("Not a diagnostic outbox document")
     if (value.schema_version > SCHEMA_VERSION) return { kind: "newer" }
+    if (value.schema_version < SCHEMA_VERSION) return olderOutbox(value, value.schema_version)
     const valid =
         value.schema_version === SCHEMA_VERSION &&
         Array.isArray(value.records) &&
         value.records.every(isDiagnosticRecord) &&
         isCount(value.dropped) &&
-        isQuota(value.quota) &&
-        isPacing(value.pacing) &&
+        isStoredQuota(value.quota) &&
+        isStoredPacing(value.pacing) &&
         (value.inflight === undefined || isInflight(value.inflight)) &&
         (value.claim === undefined || isClaim(value.claim)) &&
         (value.stop === undefined || isStop(value.stop))
     if (!valid) throw new Error("Not a diagnostic outbox document")
     return { kind: "current", document: value as unknown as OutboxDocument }
+}
+
+function olderOutbox(value: Record<string, unknown>, schemaVersion: number): OlderOutbox {
+    const length = (candidate: unknown) => (Array.isArray(candidate) ? candidate.length : 0)
+    const inflight = isRecord(value.inflight) ? value.inflight : undefined
+    const count = (candidate: unknown) => (isCount(candidate) ? candidate : 0)
+    return {
+        kind: "older",
+        schemaVersion,
+        records: length(value.records) + length(inflight?.records),
+        dropped: count(value.dropped) + count(inflight?.dropped),
+    }
 }
 
 function isDiagnosticRecord(value: unknown): value is DiagnosticRecord {
@@ -444,20 +426,6 @@ function isInflight(value: unknown): value is Inflight {
         isCount(value.attempts) &&
         isCount(value.not_before)
     )
-}
-
-function isQuota(value: unknown): value is Quota {
-    return (
-        isRecord(value) &&
-        isCount(value.hour_start) &&
-        isCount(value.hour_count) &&
-        isCount(value.day_start) &&
-        isCount(value.day_count)
-    )
-}
-
-function isPacing(value: unknown): value is OutboxDocument["pacing"] {
-    return isRecord(value) && isCount(value.next_eligible_at) && isCount(value.wait_until) && isCount(value.consecutive_waits)
 }
 
 function isClaim(value: unknown): value is OutboxDocument["claim"] {

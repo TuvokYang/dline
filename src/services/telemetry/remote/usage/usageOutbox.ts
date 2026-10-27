@@ -1,32 +1,30 @@
 import { createHash } from "node:crypto"
 import type {
     PendingUsageAttemptObservation,
+    PendingUsageLogicalClaim,
     SettledUsageAttemptShard,
 } from "@/core/storage/telemetry-remote/UsageObservationSpool"
 import type { DeliveryOutcome } from "../contracts/classification"
+import { USAGE_GRANT_HARD_LIMITS } from "../contracts/deviceGrant"
 import {
     afterAcknowledged,
     afterRateLimited,
     type ChannelPacing,
     INITIAL_PACING,
     isWaiting,
-    MAX_REPLAY_AGE_MS,
     MAX_WAIT_MS,
     mayStartBatch,
+    type ReplayBudget,
     replayBudgetExhausted,
     replayDelayMs,
 } from "../contracts/pacing"
-import {
-    buildUsageAttemptBody,
-    type UsageAttemptBodyValidation,
-    type UsageAttemptBodyWire,
-    type UsageClientWire,
-    validateUsageAttemptBody,
-} from "../contracts/usageBody"
+import { buildUsageBody, type UsageBodyGrant, type UsageBodyWire, type UsageClientWire } from "../contracts/usageBody"
+import { canonicalUsageBodyBytes, type UsageBodyViolation, validateUsageBodySchema } from "../contracts/usageBodySchema"
 import {
     type AttemptBucket,
     type AttemptBucketState,
     appendAttemptToBucketsWithTarget,
+    claimLogicalExecution,
     emptyAttemptBucketState,
     sealOpenAttemptBucket,
     sealOpenAttemptBucketIfDue,
@@ -56,15 +54,27 @@ export interface UsageAttemptOutboxState {
     readonly foldedShards: readonly string[]
     /** Highest revision durably reduced for each finalized attempt ID while its bucket remains retained. */
     readonly observationRevisions: Readonly<Record<string, UsageAttemptObservationCheckpoint>>
+    /** Logical request ID → bucket of its one coverage claim, released with that bucket. */
+    readonly logicalClaims: Readonly<Record<string, string>>
+    /** Local sessions already counted in `sessionsStarted`, oldest first; they outlive their buckets. */
+    readonly sessionClaims: readonly UsageSessionClaim[]
     readonly inflight?: UsageAttemptInflight
 }
+
+export interface UsageSessionClaim {
+    readonly sessionId: string
+    readonly bucketId: string
+}
+
+/** Sessions are process starts; this many claims cover every window a machine plausibly ran since. */
+export const USAGE_SESSION_CLAIMS_MAX = 1_024
 
 export type UsageInflightResolution =
     | Extract<DeliveryOutcome, { kind: "acknowledged" | "replay" | "wait" | "too_large" | "discard" }>
     | { readonly kind: "body_lost" }
 
-/** A 7-day service wait plus the 24-hour unknown-outcome replay budget. */
-export const USAGE_ATTEMPT_BACKLOG_MAX_AGE_MS = MAX_WAIT_MS + MAX_REPLAY_AGE_MS
+/** A 7-day service wait plus the longest unknown-outcome replay horizon a grant may name. */
+export const USAGE_ATTEMPT_BACKLOG_MAX_AGE_MS = MAX_WAIT_MS + USAGE_GRANT_HARD_LIMITS.maxRequestReplayAgeMs
 /** A bounded FIFO prefix large enough for 512 maximum-size requests. */
 export const USAGE_ATTEMPT_BACKLOG_MAX_BUCKETS = 4_096
 /** Durable bucket plus checkpoint budget; exact request bodies remain separately capped at 64 KiB. */
@@ -83,6 +93,8 @@ export function emptyUsageAttemptOutbox(
         buckets: emptyAttemptBucketState(),
         foldedShards: [],
         observationRevisions: {},
+        logicalClaims: {},
+        sessionClaims: [],
     }
 }
 
@@ -97,17 +109,36 @@ export interface UsageAttemptFoldOptions {
     readonly newBucketId: () => string
     readonly sealedAt: number
     readonly eventWindowMs?: number
+    /** Capacity of one request under the current grant; see {@link usageBucketFitsGrant}. */
+    readonly fits?: (sealed: AttemptBucket) => boolean
     readonly onRejected?: (rejection: UsageAttemptObservationRejection) => void
+}
+
+const CAPACITY_RULES: ReadonlySet<UsageBodyViolation["rule"]> = new Set(["capacity", "body_size", "write_budget"])
+
+/**
+ * Whether one sealed bucket alone forms a request within the effective grant
+ * limits. Only capacity counts here; any other violation is a defect that the
+ * batch selection reports as loss evidence.
+ */
+export function usageBucketFitsGrant(grant: UsageBodyGrant, client: UsageClientWire): (sealed: AttemptBucket) => boolean {
+    const validation = { limits: grant.contract, clientVersion: client.version }
+    return (sealed) =>
+        !validateUsageBodySchema(buildUsageBody([sealed], client), validation).some((violation) =>
+            CAPACITY_RULES.has(violation.rule),
+        )
 }
 
 /**
  * Deterministically fold settled process shards into durable open/sealed buckets.
  *
  * All candidates are sorted independently of process completion order. A shard
- * checkpoint and per-attempt revision are committed with the bucket mutation;
- * replaying the same settled files is therefore a no-op. A higher revision after
- * an attempt was already reduced is rejected rather than double-counted: the
- * finalization barrier must publish only its highest revision.
+ * checkpoint, per-attempt revision, session claim and logical coverage claim are
+ * committed with the bucket mutation; replaying the same settled files is
+ * therefore a no-op. A higher revision after an attempt was already reduced is
+ * rejected rather than double-counted: the finalizer publishes only its final
+ * revision. Logical claims run after every attempt of the fold, so a claim never
+ * precedes the attempt it names.
  */
 export function foldUsageAttemptShards(
     state: UsageAttemptOutboxState,
@@ -129,6 +160,9 @@ export function foldUsageAttemptShards(
 
     let buckets = state.buckets
     const revisions = { ...state.observationRevisions }
+    const logicalClaims = { ...state.logicalClaims }
+    const sessionClaims = [...state.sessionClaims]
+    const claimedSessions = new Set(sessionClaims.map((claim) => claim.sessionId))
     for (const candidate of candidates) {
         const { observation: pending } = candidate
         const observation = pending.observation
@@ -148,16 +182,46 @@ export function foldUsageAttemptShards(
             }
             continue
         }
+        const startsSession = !claimedSessions.has(pending.localSessionId)
+        const logicalClaimed = logicalClaims[observation.logicalRequestId] !== undefined
         try {
             const appended = appendAttemptToBucketsWithTarget(buckets, observation, {
                 newBucketId: options.newBucketId,
                 sealedAt: () => options.sealedAt,
                 eventWindowMs: options.eventWindowMs,
+                fits: options.fits,
+                startsSession,
+                logicalClaimed,
             })
             buckets = appended.state
             revisions[pending.id] = { revision: pending.revision, bucketId: appended.bucketId }
+            if (startsSession) {
+                claimedSessions.add(pending.localSessionId)
+                sessionClaims.push({ sessionId: pending.localSessionId, bucketId: appended.bucketId })
+            }
+            if (observation.logicalExecution && !logicalClaimed) logicalClaims[observation.logicalRequestId] = appended.bucketId
         } catch (error) {
             options.onRejected?.({ ...candidate, violations: [attemptReductionViolation(error)] })
+        }
+    }
+
+    for (const claim of sortedClaims(shards, alreadyFolded)) {
+        if (logicalClaims[claim.logicalRequestId] !== undefined) continue
+        const attemptBucketId = revisions[claim.attemptObservationId]?.bucketId
+        if (attemptBucketId === undefined) continue
+        try {
+            const claimed = claimLogicalExecution(buckets, claim)
+            if (claimed.bucketId !== undefined && !fitsOpenBucket(claimed.state, options)) {
+                // Attaching would make the open bucket unsendable; the request stays unreported instead.
+                logicalClaims[claim.logicalRequestId] = claimed.bucketId
+                continue
+            }
+            buckets = claimed.state
+            if (claimed.bucketId !== undefined) logicalClaims[claim.logicalRequestId] = claimed.bucketId
+            // Its bucket already sealed the request as unreported; recording the claim keeps a duplicate from attaching.
+            else if (buckets.open?.bucketId !== attemptBucketId) logicalClaims[claim.logicalRequestId] = attemptBucketId
+        } catch {
+            // The spool validated the claim; a claim that still cannot apply leaves the request unreported.
         }
     }
 
@@ -166,7 +230,25 @@ export function foldUsageAttemptShards(
         buckets,
         foldedShards: shards.map((shard) => shard.name),
         observationRevisions: revisions,
+        logicalClaims,
+        sessionClaims: sessionClaims.slice(-USAGE_SESSION_CLAIMS_MAX),
     }
+}
+
+function fitsOpenBucket(state: AttemptBucketState, options: UsageAttemptFoldOptions): boolean {
+    if (!options.fits || !state.open) return true
+    const sealed = sealOpenAttemptBucket(state, Math.max(options.sealedAt, state.open.lastAttemptAt)).sealed.at(-1)
+    return sealed === undefined || options.fits(sealed)
+}
+
+function sortedClaims(
+    shards: readonly SettledUsageAttemptShard[],
+    alreadyFolded: ReadonlySet<string>,
+): PendingUsageLogicalClaim[] {
+    return shards
+        .filter((shard) => !alreadyFolded.has(shard.name))
+        .flatMap((shard) => shard.claims)
+        .sort((left, right) => left.receivedAt - right.receivedAt || left.logicalRequestId.localeCompare(right.logicalRequestId))
 }
 
 function compareAttemptCandidates(
@@ -276,16 +358,28 @@ export function attemptBacklogStorageBytes(state: UsageAttemptOutboxState): numb
         entries[attemptId] = checkpoint
         checkpointsByBucket.set(checkpoint.bucketId, entries)
     }
+    const claimsByBucket = new Map<string, Record<string, string>>()
+    for (const [logicalRequestId, bucketId] of Object.entries(state.logicalClaims)) {
+        const entries = claimsByBucket.get(bucketId) ?? {}
+        entries[logicalRequestId] = bucketId
+        claimsByBucket.set(bucketId, entries)
+    }
     const buckets = [...state.buckets.sealed, ...(state.buckets.open ? [state.buckets.open] : [])]
     const fixed = {
         policyGeneration: state.policyGeneration,
         pacing: state.pacing,
         foldedShards: state.foldedShards,
+        sessionClaims: state.sessionClaims,
         inflight: state.inflight,
     }
     let bytes = encodedBytes(fixed)
     for (const bucket of buckets) {
-        bytes += encodedBytes({ bucket, checkpoints: checkpointsByBucket.get(bucket.bucketId) ?? {} }) + 2
+        bytes +=
+            encodedBytes({
+                bucket,
+                checkpoints: checkpointsByBucket.get(bucket.bucketId) ?? {},
+                logicalClaims: claimsByBucket.get(bucket.bucketId) ?? {},
+            }) + 2
     }
     return bytes
 }
@@ -314,7 +408,8 @@ function pruneAttemptCheckpoints(state: UsageAttemptOutboxState): UsageAttemptOu
     const revisions = Object.fromEntries(
         Object.entries(state.observationRevisions).filter(([, checkpoint]) => retained.has(checkpoint.bucketId)),
     )
-    return { ...state, observationRevisions: revisions }
+    const logicalClaims = Object.fromEntries(Object.entries(state.logicalClaims).filter(([, bucketId]) => retained.has(bucketId)))
+    return { ...state, observationRevisions: revisions, logicalClaims }
 }
 
 function positiveBound(value: number, label: string): number {
@@ -332,7 +427,8 @@ export type UsageAttemptBatchDecision =
           readonly kind: "batch"
           readonly state: UsageAttemptOutboxState
           readonly inflight: UsageAttemptInflight
-          readonly body: UsageAttemptBodyWire
+          readonly body: UsageBodyWire
+          /** RFC 8785 canonical bytes: stored once, hashed, and replayed unchanged. */
           readonly bytes: Uint8Array
       }
     | {
@@ -342,28 +438,34 @@ export type UsageAttemptBatchDecision =
           readonly violations: readonly string[]
       }
 
-export interface UsageAttemptBatchInput extends UsageAttemptBodyValidation {
+export interface UsageAttemptBatchInput extends UsageBodyGrant {
     readonly now: number
     readonly requestId: string
     readonly client: UsageClientWire
     readonly random?: () => number
 }
 
-/** Select the longest complete FIFO bucket prefix that satisfies every effective grant bound. */
+/**
+ * Select the longest complete FIFO bucket prefix the contract accepts under the
+ * effective grant limits (usage-contract §14). A first bucket that cannot form
+ * a valid request on its own is released with its violations as loss evidence;
+ * it is never split, merged or sent.
+ */
 export function takeUsageAttemptBatch(state: UsageAttemptOutboxState, input: UsageAttemptBatchInput): UsageAttemptBatchDecision {
     if (state.inflight || !mayStartBatch(state.pacing, input.now)) return { kind: "none" }
+    const validation = { limits: input.contract, clientVersion: input.client.version }
     let selected: AttemptBucket[] = []
-    let prepared: { body: UsageAttemptBodyWire; bytes: Uint8Array } | undefined
+    let body: UsageBodyWire | undefined
     for (const bucket of state.buckets.sealed) {
         const candidate = [...selected, bucket]
-        const body = buildUsageAttemptBody(candidate, input.client)
-        const violations = validateUsageAttemptBody(body, input)
+        const candidateBody = buildUsageBody(candidate, input.client)
+        const violations = validateUsageBodySchema(candidateBody, validation)
         if (violations.length > 0) {
             if (selected.length > 0) break
             return {
                 kind: "rejected",
                 bucketIds: [bucket.bucketId],
-                violations,
+                violations: describeViolations(violations),
                 state: pruneAttemptCheckpoints({
                     ...state,
                     buckets: { ...state.buckets, sealed: state.buckets.sealed.slice(1) },
@@ -371,12 +473,13 @@ export function takeUsageAttemptBatch(state: UsageAttemptOutboxState, input: Usa
             }
         }
         selected = candidate
-        prepared = { body, bytes: new TextEncoder().encode(JSON.stringify(body)) }
+        body = candidateBody
     }
-    if (!prepared || selected.length === 0) return { kind: "none" }
+    if (!body || selected.length === 0) return { kind: "none" }
+    const bytes = canonicalUsageBodyBytes(body)
     const inflight: UsageAttemptInflight = {
         requestId: input.requestId,
-        bodySha256: sha256Hex(prepared.bytes),
+        bodySha256: sha256Hex(bytes),
         bucketIds: selected.map((bucket) => bucket.bucketId),
         createdAt: input.now,
         attempts: 0,
@@ -385,8 +488,8 @@ export function takeUsageAttemptBatch(state: UsageAttemptOutboxState, input: Usa
     return {
         kind: "batch",
         inflight,
-        body: prepared.body,
-        bytes: prepared.bytes,
+        body,
+        bytes,
         state: {
             ...state,
             inflight,
@@ -395,9 +498,14 @@ export function takeUsageAttemptBatch(state: UsageAttemptOutboxState, input: Usa
     }
 }
 
+/** Loss-evidence tokens: the stable rejection code and the violated rule, without contract paths. */
+function describeViolations(violations: readonly UsageBodyViolation[]): string[] {
+    return [...new Set(violations.map((violation) => `${violation.code}:${violation.rule}`))]
+}
+
 function reserveAttemptInterval(
     pacing: ChannelPacing,
-    contract: UsageAttemptBodyValidation["contract"],
+    contract: UsageBodyGrant["contract"],
     now: number,
     random: () => number,
 ): ChannelPacing {
@@ -417,6 +525,8 @@ export function settleUsageAttemptInflight(
     requestId: string,
     resolution: UsageInflightResolution,
     now: number,
+    /** The grant's replay horizon; see `usageReplayBudget`. */
+    replayBudget: ReplayBudget,
     random: () => number = Math.random,
 ): UsageAttemptOutboxState {
     const inflight = state.inflight
@@ -444,7 +554,7 @@ export function settleUsageAttemptInflight(
         }
         case "replay": {
             const attempts = inflight.attempts + 1
-            if (replayBudgetExhausted(attempts, inflight.createdAt, now)) return releaseBuckets()
+            if (replayBudgetExhausted(attempts, inflight.createdAt, now, replayBudget)) return releaseBuckets()
             return {
                 ...state,
                 inflight: { ...inflight, attempts, notBefore: now + replayDelayMs(attempts, resolution.retryAfterMs) },

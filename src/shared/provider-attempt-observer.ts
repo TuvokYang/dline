@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks"
+import { projectUsageThinking } from "@/services/telemetry/remote/contracts/thinking"
 
 export type ProviderAttemptTerminalStatus = "completed" | "failed" | "cancelled" | "aborted"
 export type ProviderAttemptThinking = string | number
@@ -13,17 +14,27 @@ export function providerTelemetryRoleForSubagent(name: string): "subagent" | "re
 /** Identity known only after the Provider-specific encoder has formed the real wire request. */
 export interface ProviderAttemptIdentity {
     readonly provider: string
+    /** Final wire model ID; Usage projects it through the contract model identity projector. */
     readonly modelId: string
     readonly thinking: ProviderAttemptThinking
+    /** The Profile's custom-model switch at send time; it selects the `custom:` namespace. */
+    readonly customModel?: boolean
 }
 
 export interface ProviderAttemptAdapterIdentity {
     readonly provider: string
+    /** The serving handler's custom-model switch, frozen into every attempt of this scope. */
+    readonly customModel?: boolean
 }
 
 export interface ProviderAttemptObserver<THandle = unknown> {
     beginAttempt(identity?: ProviderAttemptIdentity): THandle | Promise<THandle>
-    finishAttempt(handle: THandle, status: ProviderAttemptTerminalStatus): void | Promise<void>
+    /**
+     * `failure` is what ended a `failed` send: the thrown error, or the HTTP
+     * status of a refused response. It is read for its failure class only and
+     * is never stored or forwarded.
+     */
+    finishAttempt(handle: THandle, status: ProviderAttemptTerminalStatus, failure?: unknown): void | Promise<void>
 }
 
 export interface ProviderAttemptObservationOptions {
@@ -31,7 +42,19 @@ export interface ProviderAttemptObservationOptions {
     classifyError?: (error: unknown) => ProviderAttemptTerminalStatus | undefined
 }
 
+/**
+ * Abort reason of a user-requested stop. Usage reports it as `cancelled`; every
+ * other abort reason is an owner or process abort and is reported as `aborted`.
+ */
+export const PROVIDER_USER_CANCEL_REASON = "provider_cancel"
+
 const providerAttemptContext = new AsyncLocalStorage<ProviderAttemptObserver>()
+/**
+ * Marks a send that an enclosing observation already counts. An SDK call observed
+ * at the SDK boundary whose transport is the observed provider fetch is one
+ * attempt, not two.
+ */
+const observedSendContext = new AsyncLocalStorage<true>()
 const providerAttemptIdentityContext = new AsyncLocalStorage<ProviderAttemptIdentity>()
 const providerAttemptAdapterContext = new AsyncLocalStorage<ProviderAttemptAdapterIdentity>()
 
@@ -69,8 +92,7 @@ export function bindProviderAttemptScope<T>(
 /** Build identity from a Provider SDK's final encoded request object; incomplete requests stay unidentifiable. */
 export function providerAttemptIdentityFromEncodedRequest(provider: string, body: unknown): ProviderAttemptIdentity | undefined {
     if (!provider || !isRecord(body) || typeof body.model !== "string" || body.model.length === 0) return undefined
-    const thinking = encodedThinking(body)
-    return thinking === undefined ? undefined : { provider, modelId: body.model, thinking }
+    return { provider, modelId: body.model, thinking: projectUsageThinking(body) }
 }
 
 /** Read model and thinking from the final JSON body handed to fetch; unsupported bodies stay unidentifiable. */
@@ -98,15 +120,15 @@ export async function observeProviderCall<T>(
     send: () => T | PromiseLike<T>,
     options: ProviderAttemptObservationOptions = {},
 ): Promise<T> {
-    const observer = providerAttemptContext.getStore()
+    const observer = unobservedSendObserver()
     if (!observer) return send()
-    const handle = await observer.beginAttempt(providerAttemptIdentityContext.getStore())
+    const handle = await observer.beginAttempt(currentAttemptIdentity())
     try {
-        const result = await send()
-        await observer.finishAttempt(handle, options.signal?.aborted ? "aborted" : "completed")
+        const result = await observedSendContext.run(true, send)
+        await observer.finishAttempt(handle, signalOutcome(options.signal) ?? "completed")
         return result
     } catch (error) {
-        await observer.finishAttempt(handle, classifyError(error, options))
+        await observer.finishAttempt(handle, classifyError(error, options), error)
         throw error
     }
 }
@@ -117,22 +139,22 @@ export async function observeProviderStreamResponse<TResponse, TChunk>(
     selectStream: (response: TResponse) => AsyncIterable<TChunk> | undefined,
     options: ProviderAttemptObservationOptions = {},
 ): Promise<{ response: TResponse; stream: AsyncIterable<TChunk> | undefined }> {
-    const observer = providerAttemptContext.getStore()
+    const observer = unobservedSendObserver()
     if (!observer) {
         const response = await send()
         return { response, stream: selectStream(response) }
     }
-    const handle = await observer.beginAttempt(providerAttemptIdentityContext.getStore())
+    const handle = await observer.beginAttempt(currentAttemptIdentity())
     try {
-        const response = await send()
+        const response = await observedSendContext.run(true, send)
         const stream = selectStream(response)
         if (!stream) {
-            await observer.finishAttempt(handle, options.signal?.aborted ? "aborted" : "completed")
+            await observer.finishAttempt(handle, signalOutcome(options.signal) ?? "completed")
             return { response, stream: undefined }
         }
         return { response, stream: wrapProviderStream(stream, observer, handle, options) }
     } catch (error) {
-        await observer.finishAttempt(handle, classifyError(error, options))
+        await observer.finishAttempt(handle, classifyError(error, options), error)
         throw error
     }
 }
@@ -142,14 +164,14 @@ export async function observeProviderStream<T>(
     send: () => AsyncIterable<T> | PromiseLike<AsyncIterable<T>>,
     options: ProviderAttemptObservationOptions = {},
 ): Promise<AsyncIterable<T>> {
-    const observer = providerAttemptContext.getStore()
+    const observer = unobservedSendObserver()
     if (!observer) return send()
-    const handle = await observer.beginAttempt(providerAttemptIdentityContext.getStore())
+    const handle = await observer.beginAttempt(currentAttemptIdentity())
     try {
-        const stream = await send()
+        const stream = await observedSendContext.run(true, send)
         return wrapProviderStream(stream, observer, handle, options)
     } catch (error) {
-        await observer.finishAttempt(handle, classifyError(error, options))
+        await observer.finishAttempt(handle, classifyError(error, options), error)
         throw error
     }
 }
@@ -159,20 +181,26 @@ export async function observeProviderResponse(
     send: () => Promise<Response>,
     options: ProviderAttemptObservationOptions = {},
 ): Promise<Response> {
-    const observer = providerAttemptContext.getStore()
+    const observer = unobservedSendObserver()
     if (!observer) return send()
-    const handle = await observer.beginAttempt(providerAttemptIdentityContext.getStore())
+    const handle = await observer.beginAttempt(currentAttemptIdentity())
     try {
-        const response = await send()
+        const response = await observedSendContext.run(true, send)
         if (!response.body) {
-            await observer.finishAttempt(handle, response.ok ? "completed" : "failed")
+            if (response.ok) await observer.finishAttempt(handle, "completed")
+            else await observer.finishAttempt(handle, "failed", refusedResponse(response))
             return response
         }
         return wrapProviderResponse(response, observer, handle, options)
     } catch (error) {
-        await observer.finishAttempt(handle, classifyError(error, options))
+        await observer.finishAttempt(handle, classifyError(error, options), error)
         throw error
     }
+}
+
+/** The part of a refused response its failure class is read from. */
+function refusedResponse(response: Response): { readonly status: number } {
+    return { status: response.status }
 }
 
 function wrapProviderStream<T>(
@@ -185,19 +213,19 @@ function wrapProviderStream<T>(
         [Symbol.asyncIterator](): AsyncIterator<T> {
             const iterator = iterable[Symbol.asyncIterator]()
             let settled = false
-            const settle = async (status: ProviderAttemptTerminalStatus): Promise<void> => {
+            const settle = async (status: ProviderAttemptTerminalStatus, failure?: unknown): Promise<void> => {
                 if (settled) return
                 settled = true
-                await observer.finishAttempt(handle, status)
+                await observer.finishAttempt(handle, status, failure)
             }
             return {
                 async next(value?: unknown): Promise<IteratorResult<T>> {
                     try {
                         const result = await iterator.next(value as never)
-                        if (result.done) await settle(options.signal?.aborted ? "aborted" : "completed")
+                        if (result.done) await settle(signalOutcome(options.signal) ?? "completed")
                         return result
                     } catch (error) {
-                        await settle(classifyError(error, options))
+                        await settle(classifyError(error, options), error)
                         throw error
                     }
                 },
@@ -205,7 +233,7 @@ function wrapProviderStream<T>(
                     try {
                         return iterator.return ? await iterator.return(value as never) : { done: true, value: value as T }
                     } finally {
-                        await settle(options.signal?.aborted ? "aborted" : "cancelled")
+                        await settle(signalOutcome(options.signal) ?? "cancelled")
                     }
                 },
                 async throw(error?: unknown): Promise<IteratorResult<T>> {
@@ -213,7 +241,7 @@ function wrapProviderStream<T>(
                         if (iterator.throw) return await iterator.throw(error)
                         throw error
                     } finally {
-                        await settle(classifyError(error, options))
+                        await settle(classifyError(error, options), error)
                     }
                 },
             }
@@ -232,26 +260,27 @@ function wrapProviderResponse(
     let settled = false
     let cancellationStatus: ProviderAttemptTerminalStatus | undefined
     const protocolTerminal = createSseDoneDetector(response.headers.get("content-type"))
-    const settle = async (status: ProviderAttemptTerminalStatus): Promise<void> => {
+    const settle = async (status: ProviderAttemptTerminalStatus, failure?: unknown): Promise<void> => {
         if (settled) return
         settled = true
-        await observer.finishAttempt(handle, status)
+        await observer.finishAttempt(handle, status, failure)
     }
     const body = new ReadableStream<Uint8Array>({
         async pull(controller) {
             try {
                 const result = await reader.read()
                 if (result.done) {
-                    await settle(
-                        cancellationStatus ?? (options.signal?.aborted ? "aborted" : response.ok ? "completed" : "failed"),
-                    )
+                    const settledStatus = cancellationStatus ?? signalOutcome(options.signal)
+                    if (settledStatus) await settle(settledStatus)
+                    else if (response.ok) await settle("completed")
+                    else await settle("failed", refusedResponse(response))
                     controller.close()
                     return
                 }
                 protocolTerminal.observe(result.value)
                 controller.enqueue(result.value)
             } catch (error) {
-                await settle(cancellationStatus ?? classifyError(error, options))
+                await settle(cancellationStatus ?? classifyError(error, options), error)
                 controller.error(error)
             }
         },
@@ -260,7 +289,7 @@ function wrapProviderResponse(
             try {
                 await reader.cancel(reason)
             } finally {
-                await settle(cancellationStatus)
+                await settle(cancellationStatus, reason)
             }
         },
     })
@@ -303,31 +332,31 @@ function createSseDoneDetector(contentType: string | null): { observe(chunk: Uin
     }
 }
 
-function encodedThinking(body: Record<string, unknown>): ProviderAttemptThinking | undefined {
-    if (typeof body.reasoning_effort === "string") return `level:${body.reasoning_effort}`
-    if (typeof body.thinking === "number" || typeof body.thinking === "string") return body.thinking
-    const config = isRecord(body.config) ? body.config : undefined
-    const nestedThinking = config && isRecord(config.thinkingConfig) ? config.thinkingConfig : undefined
-    for (const value of [body.thinking, body.reasoning, nestedThinking]) {
-        if (!isRecord(value)) continue
-        for (const key of ["budget_tokens", "max_tokens", "thinkingBudget"]) {
-            if (typeof value[key] === "number") return value[key] as number
-        }
-        for (const key of ["effort", "thinkingLevel"]) {
-            if (typeof value[key] === "string") return `level:${value[key]}`
-        }
-        if (typeof value.type === "string") return `state:${value.type}`
-        if (typeof value.includeThoughts === "boolean") return value.includeThoughts ? "state:enabled" : "state:disabled"
-    }
-    return "state:disabled"
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
+/** The send identity, carrying the scope's custom-model switch unless the encoder set it. */
+function currentAttemptIdentity(): ProviderAttemptIdentity | undefined {
+    const identity = providerAttemptIdentityContext.getStore()
+    const customModel = providerAttemptAdapterContext.getStore()?.customModel
+    if (!identity || customModel === undefined || identity.customModel !== undefined) return identity
+    return { ...identity, customModel }
+}
+
+/** The observer for a send no enclosing observation counts yet. */
+function unobservedSendObserver(): ProviderAttemptObserver | undefined {
+    return observedSendContext.getStore() ? undefined : providerAttemptContext.getStore()
+}
+
+function signalOutcome(signal?: AbortSignal): ProviderAttemptTerminalStatus | undefined {
+    if (!signal?.aborted) return undefined
+    return signal.reason === PROVIDER_USER_CANCEL_REASON ? "cancelled" : "aborted"
+}
+
 function classifyCancellation(reason: unknown, signal?: AbortSignal, protocolCompleted = false): ProviderAttemptTerminalStatus {
-    if (signal?.aborted) return "aborted"
+    const fromSignal = signalOutcome(signal)
+    if (fromSignal) return fromSignal
     if (reason instanceof DOMException && reason.name === "AbortError") return "aborted"
     if (reason instanceof Error && reason.name === "AbortError") return "aborted"
     if (reason instanceof Error) return "failed"
@@ -337,7 +366,8 @@ function classifyCancellation(reason: unknown, signal?: AbortSignal, protocolCom
 function classifyError(error: unknown, options: ProviderAttemptObservationOptions): ProviderAttemptTerminalStatus {
     const classified = options.classifyError?.(error)
     if (classified) return classified
-    if (options.signal?.aborted) return "aborted"
+    const fromSignal = signalOutcome(options.signal)
+    if (fromSignal) return fromSignal
     if (error instanceof DOMException && error.name === "AbortError") return "aborted"
     if (error instanceof Error && error.name === "AbortError") return "aborted"
     return "failed"

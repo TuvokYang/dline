@@ -1,5 +1,5 @@
 import { type ModelInfo, openRouterDefaultModelId, openRouterDefaultModelInfo } from "@shared/api"
-import { providerFetch } from "@shared/net"
+import { fetch, providerFetch } from "@shared/net"
 import { resolveProfileModelId, resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import { shouldSkipReasoningForModel } from "@utils/model-utils"
 import OpenAI from "openai"
@@ -253,7 +253,8 @@ export class ClineHandler extends ApiHandler {
 
                 const url = new URL("/generation", `${this._baseUrl}/`)
                 url.searchParams.set("id", this.lastGenerationId)
-                const response = await providerFetch(url, { headers, signal: AbortSignal.timeout(15_000) })
+                // A cost lookup is not a model send; it must never count as a Provider attempt.
+                const response = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) })
                 if (!response.ok) return undefined
                 const generation = await response.json()
                 const totalCost = generation?.total_cost || 0

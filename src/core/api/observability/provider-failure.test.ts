@@ -1,9 +1,24 @@
 import { describe, expect, it } from "vitest"
-import { providerFailureAttributes, providerFailureClassOf } from "./provider-failure"
+import { providerFailureAttributes, providerFailureClassOf, usageFailureClassOf } from "./provider-failure"
 
 function wrapped(cause: unknown): Error {
     return new Error("Provider request failed", { cause })
 }
+
+describe("usageFailureClassOf", () => {
+    it.each([
+        [{ status: 429 }, "rate_limited"],
+        [{ status: 529 }, "provider_unavailable"],
+        [{ status: 504 }, "timeout"],
+        [{ status: 403 }, "authentication"],
+        [{ status: 422 }, "provider_rejected"],
+        [Object.assign(new Error("x"), { code: "ECONNRESET" }), "network"],
+        [new Error("model refused"), "unknown"],
+        [undefined, "unknown"],
+    ] as const)("names %o in the Usage failure catalog", (error, expected) => {
+        expect(usageFailureClassOf(wrapped(error))).toBe(expected)
+    })
+})
 
 describe("providerFailureClassOf", () => {
     it.each([

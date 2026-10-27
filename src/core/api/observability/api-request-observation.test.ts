@@ -228,7 +228,8 @@ describe("API and Task turn trace correlation", () => {
         const scope = {
             role: "subagent",
             logicalRequestId: "subagent:request-1",
-            adapter: { provider: "openai" },
+            // The handler declares no custom-model switch, so the frozen selection is a listed model.
+            adapter: { provider: "openai", customModel: false },
         }
 
         await expect(drain(api.createMessage("", [], undefined, { ...request, telemetryAttempt: 0 }))).rejects.toBe(failure)

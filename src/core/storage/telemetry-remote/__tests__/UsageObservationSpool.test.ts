@@ -10,10 +10,11 @@ function attemptObservation(id: string, revision = 1): PendingUsageAttemptObserv
         id,
         revision,
         receivedAt: 1_900_000_000_000,
+        localSessionId: "spool-session",
         observation: {
             attemptObservationId: id,
             logicalRequestId: "request-1",
-            identity: { role: "task", provider: "openai", modelId: "state:unknown", thinking: "state:disabled" },
+            identity: { role: "task", provider: "openai", modelId: "state:unknown", thinking: "state:off" },
             policyGeneration: 7,
             admittedAt: 1_900_000_000_000,
             outcome: "completed",
@@ -73,22 +74,6 @@ describe("UsageObservationSpool", () => {
         expect(settled.shards.flatMap((shard) => shard.observations)).toEqual([attemptObservation("attempt-1", 2)])
     })
 
-    it("purges only legacy shards at schema 4 clean-cut and preserves attempt revisions", async () => {
-        const spool = new UsageObservationSpool(layout, "host-a")
-        await fs.mkdir(layout.usageObservationsDir, { recursive: true })
-        await fs.writeFile(path.join(layout.usageObservationsDir, "host-a.jsonl"), '{"legacy":true}\n')
-        await spool.appendAttempt(attemptObservation("attempt-1"))
-        const sealedAt = futureSeal()
-        await spool.sealActiveAttempts(sealedAt)
-
-        await spool.purgeLegacy()
-
-        const names = await fs.readdir(layout.usageObservationsDir)
-        expect(names).toEqual([`host-a.${sealedAt}.attempts.sealed.jsonl`])
-        const settled = await spool.readSettledAttempts(sealedAt + SEALED_SHARD_SETTLE_MS)
-        expect(settled.shards.flatMap((shard) => shard.observations)).toEqual([attemptObservation("attempt-1")])
-    })
-
     it("purges unsent attempt observations and forgets exact revisions", async () => {
         const spool = new UsageObservationSpool(layout, "host-a")
         await spool.appendAttempt(attemptObservation("attempt-1"))
@@ -102,6 +87,60 @@ describe("UsageObservationSpool", () => {
 
         expect(settled.shards.flatMap((shard) => shard.observations)).toEqual([attemptObservation("attempt-1")])
         expect(await fs.readdir(layout.usageObservationsDir)).toEqual([])
+    })
+
+    it("round-trips one late logical claim per logical request beside the attempts of its shard", async () => {
+        const spool = new UsageObservationSpool(layout, "host-a")
+        const claim = {
+            logicalRequestId: "request-1",
+            attemptObservationId: "attempt-1",
+            receivedAt: 1_900_000_001_000,
+            execution: {
+                logicalRequests: { completed: 1, failed: 0, cancelled: 0, aborted: 0 },
+                turnDurationMs: { count: 1, sum: 900, min: 900, max: 900 },
+                taskAttempts: { count: 1, sum: 1, min: 1, max: 1 },
+            },
+        }
+        await spool.appendAttempt(attemptObservation("attempt-1"))
+        await spool.appendLogicalClaim(claim)
+        await spool.appendLogicalClaim({ ...claim, receivedAt: claim.receivedAt + 1 })
+        const sealedAt = futureSeal()
+        await spool.sealActiveAttempts(sealedAt)
+
+        const settled = await spool.readSettledAttempts(sealedAt + SEALED_SHARD_SETTLE_MS)
+
+        expect(settled.skipped).toBe(0)
+        expect(settled.shards).toEqual([
+            {
+                name: `host-a.${sealedAt}.attempts.sealed.jsonl`,
+                observations: [attemptObservation("attempt-1")],
+                claims: [claim],
+            },
+        ])
+        await expect(
+            spool.appendLogicalClaim({
+                ...claim,
+                logicalRequestId: "request-2",
+                execution: { ...claim.execution, taskAttempts: { count: 2, sum: 2, min: 1, max: 1 } },
+            }),
+        ).rejects.toThrow(/logical/i)
+    })
+
+    it("quarantines attempt lines written before contract 5, which carry no kind or local session", async () => {
+        const spool = new UsageObservationSpool(layout, "host-a")
+        const { localSessionId: _session, ...legacy } = attemptObservation("attempt-old")
+        await fs.mkdir(layout.usageObservationsDir, { recursive: true })
+        const sealedAt = futureSeal()
+        await fs.writeFile(
+            path.join(layout.usageObservationsDir, `host-old.${sealedAt}.attempts.sealed.jsonl`),
+            `${JSON.stringify(legacy)}\n${JSON.stringify({ kind: "attempt", ...legacy })}\n`,
+        )
+
+        const settled = await spool.readSettledAttempts(sealedAt + SEALED_SHARD_SETTLE_MS)
+
+        expect(settled.skipped).toBe(2)
+        expect(settled.shards.flatMap((shard) => shard.observations)).toEqual([])
+        expect(await fs.readdir(layout.remoteQuarantineDir)).toHaveLength(2)
     })
 
     it("rejects a shard ID that could escape or collide with the shard naming scheme", () => {

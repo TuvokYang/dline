@@ -4,6 +4,7 @@ import path from "node:path"
 import { removeStaleAtomicTempFiles, writeJsonAtomic } from "@shared/storage/atomic-file"
 import {
     type AtomicDeviceGrant,
+    isDeviceId,
     parseAtomicDeviceGrant,
     sameAtomicDeviceGrant,
     serializeAtomicDeviceGrant,
@@ -18,7 +19,6 @@ export const DEVICE_CREDENTIAL_SCHEMA_VERSION = 1
 const CREDENTIAL_FILE_MODE = 0o600
 const DEVICE_SECRET_BYTES = 32
 const BASE64URL_43_PATTERN = /^[A-Za-z0-9_-]{43}$/
-const MAX_DEVICE_ID_LENGTH = 128
 const REMOTE_PROFILES: readonly RemoteProfile[] = ["usage", "production", "development"]
 /**
  * Credential writes are rare but every window may start at once after an update;
@@ -61,8 +61,8 @@ export interface RefreshClaim {
 
 export interface DeviceCredentialState {
     readonly tokens: Readonly<Partial<Record<RemoteProfile, StoredDeviceToken>>>
-    /** Omitted by legacy token-only mutations; the repository preserves only grants still matching their token projection. */
-    readonly grants?: Readonly<Partial<Record<RemoteProfile, AtomicDeviceGrant>>>
+    /** The repository keeps only grants that still match their token projection. */
+    readonly grants: Readonly<Partial<Record<RemoteProfile, AtomicDeviceGrant>>>
     readonly enrollment?: EnrollmentBackoff
     readonly refreshClaim?: RefreshClaim
 }
@@ -176,7 +176,7 @@ export class DeviceCredentialRepository {
             const decision = decide(current.document)
             if (!decision.next) return { status: "valid", document: current.document, value: decision.value }
             const next: DeviceCredentialDocument = {
-                ...normalizeState(decision.next, current.document.grants),
+                ...normalizeState(decision.next),
                 deviceSecret: current.document.deviceSecret,
                 createdAt: current.document.createdAt,
                 generation: current.document.generation + 1,
@@ -186,10 +186,15 @@ export class DeviceCredentialRepository {
         })
     }
 
-    /** Publish the token and its complete schema capability in one credential generation. */
-    async publishDeviceGrantAtomically(grant: AtomicDeviceGrant): Promise<void> {
+    /**
+     * Publish the token and its complete schema capability in one credential
+     * generation. Returns `false`, writing nothing, when the stored device is no
+     * longer the one `deviceSecret` names: the grant belongs to a reset identity.
+     */
+    async publishDeviceGrantAtomically(grant: AtomicDeviceGrant, deviceSecret: string): Promise<boolean> {
         const validated = validateAtomicDeviceGrant(grant)
-        const result = await this.mutate((current) => {
+        const result = await this.mutate<boolean>((current) => {
+            if (current.deviceSecret !== deviceSecret) return { value: false }
             const obtainedAt = this.clock()
             if (validated.expiresAt <= obtainedAt) throw new Error("Refusing to publish an expired device grant")
             const token: StoredDeviceToken = {
@@ -204,7 +209,7 @@ export class DeviceCredentialRepository {
                 sameAtomicDeviceGrant(currentGrant, validated) &&
                 tokenMatchesGrant(current.tokens[validated.profile], validated)
             ) {
-                return { value: undefined }
+                return { value: true }
             }
             return {
                 next: {
@@ -212,12 +217,13 @@ export class DeviceCredentialRepository {
                     tokens: { ...current.tokens, [validated.profile]: token },
                     grants: { ...current.grants, [validated.profile]: validated },
                 },
-                value: undefined,
+                value: true,
             }
         })
-        if (result.status === "missing") throw new Error("Cannot publish a device grant after the device identity was reset")
+        if (result.status === "missing") return false
         if (result.status === "unsupported")
             throw new Error("Cannot publish a device grant into a credential owned by a newer Dline")
+        return result.value
     }
 
     /** Return a complete, unexpired grant only when its compatibility token projection matches the same generation. */
@@ -347,8 +353,9 @@ function parseDeviceCredentialDocument(value: unknown): ParsedDocument {
             createdAt,
             generation: generation as number,
             // Tokens, backoff and claims are recoverable state: an unreadable entry is ignored rather
-            // than costing the device its identity.
-            tokens: parseTokens(value.tokens),
+            // than costing the device its identity. A document without grants predates contract 5:
+            // its tokens came from the retired exchange and are dropped, so the next write removes them.
+            tokens: value.grants === undefined ? {} : parseTokens(value.tokens),
             grants: parseGrants(value.grants),
             ...(enrollment ? { enrollment } : {}),
             ...(refreshClaim ? { refreshClaim } : {}),
@@ -370,7 +377,7 @@ function parseToken(value: unknown): StoredDeviceToken | undefined {
     if (!isRecord(value)) return undefined
     const { access_token: accessToken, device_id: deviceId, expires_at: expiresAt, obtained_at: obtainedAt } = value
     if (typeof accessToken !== "string" || !BASE64URL_43_PATTERN.test(accessToken)) return undefined
-    if (typeof deviceId !== "string" || deviceId.length === 0 || deviceId.length > MAX_DEVICE_ID_LENGTH) return undefined
+    if (!isDeviceId(deviceId)) return undefined
     if (!isTimestamp(expiresAt) || !isTimestamp(obtainedAt)) return undefined
     return { accessToken, deviceId, expiresAt, obtainedAt }
 }
@@ -402,10 +409,7 @@ function parseRefreshClaim(value: unknown): RefreshClaim | undefined {
     return { ownerId, profile: profile as RemoteProfile, expiresAt }
 }
 
-function normalizeState(
-    state: DeviceCredentialState,
-    currentGrants: Readonly<Partial<Record<RemoteProfile, AtomicDeviceGrant>>>,
-): DeviceCredentialState & { readonly grants: Readonly<Partial<Record<RemoteProfile, AtomicDeviceGrant>>> } {
+function normalizeState(state: DeviceCredentialState): DeviceCredentialState {
     const tokens: Partial<Record<RemoteProfile, StoredDeviceToken>> = {}
     for (const profile of REMOTE_PROFILES) {
         const token = state.tokens[profile]
@@ -415,9 +419,8 @@ function normalizeState(
         }
     }
     const grants: Partial<Record<RemoteProfile, AtomicDeviceGrant>> = {}
-    const candidates = state.grants ?? currentGrants
     for (const profile of REMOTE_PROFILES) {
-        const grant = candidates[profile]
+        const grant = state.grants[profile]
         if (!grant) continue
         const validated = validateAtomicDeviceGrant(grant)
         if (validated.profile === profile && tokenMatchesGrant(tokens[profile], validated)) grants[profile] = validated

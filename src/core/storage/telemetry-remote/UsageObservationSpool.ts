@@ -2,7 +2,11 @@ import { createHash } from "node:crypto"
 import fs from "node:fs/promises"
 import path from "node:path"
 import { renameWithRetry, writeJsonAtomic } from "@shared/storage/atomic-file"
-import { validateUsageAttemptObservation } from "@/services/telemetry/remote/usage/attemptBucket"
+import {
+    type LogicalExecutionClaim,
+    validateLogicalExecutionClaim,
+    validateUsageAttemptObservation,
+} from "@/services/telemetry/remote/usage/attemptBucket"
 import type { UsageAttemptObservation } from "@/services/telemetry/remote/usage/attemptProjection"
 import type { UsageAttemptObservationRejection } from "@/services/telemetry/remote/usage/usageOutbox"
 import type { OtelStorageLayout } from "./OtelStorageLayout"
@@ -15,23 +19,31 @@ import type { OtelStorageLayout } from "./OtelStorageLayout"
 export const SEALED_SHARD_SETTLE_MS = 5_000
 /** Observation IDs remembered per process; settlement already happens once, this only absorbs a duplicate call. */
 const REMEMBERED_APPENDS = 4_096
-const ACTIVE_SUFFIX = ".jsonl"
-const SEALED_SUFFIX = ".sealed.jsonl"
 const ATTEMPT_ACTIVE_SUFFIX = ".attempts.jsonl"
 const ATTEMPT_SEALED_SUFFIX = ".attempts.sealed.jsonl"
 const SHARD_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/
 const ATTEMPT_SEALED_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}\.(\d{1,16})\.attempts\.sealed\.jsonl$/
+/** A process-local Usage session; it claims `sessionsStarted` once and never leaves the device. */
+export const LOCAL_SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/
 
 export interface PendingUsageAttemptObservation {
     readonly id: string
     readonly revision: number
     readonly receivedAt: number
+    readonly localSessionId: string
     readonly observation: UsageAttemptObservation
+}
+
+/** A logical execution that settled after its result-producing attempt had been spooled. */
+export interface PendingUsageLogicalClaim extends LogicalExecutionClaim {
+    readonly receivedAt: number
 }
 
 export interface SettledUsageAttemptShard {
     readonly name: string
     readonly observations: readonly PendingUsageAttemptObservation[]
+    /** Applied after every attempt of the same fold, so a claim always finds its attempt first. */
+    readonly claims: readonly PendingUsageLogicalClaim[]
 }
 
 /**
@@ -64,11 +76,19 @@ export class UsageObservationSpool {
         if (observation.observation.attemptObservationId !== observation.id) {
             throw new Error("Usage attempt envelope identity does not match the observation")
         }
-        await fs.mkdir(this.directory, { recursive: true })
-        await fs.appendFile(
-            path.join(this.directory, `${this.shardId}${ATTEMPT_ACTIVE_SUFFIX}`),
-            `${JSON.stringify(observation)}\n`,
-        )
+        if (!LOCAL_SESSION_ID_PATTERN.test(observation.localSessionId)) throw new Error("Usage local session ID is invalid")
+        await this.appendLine({ kind: "attempt", ...observation })
+        this.rememberAttempt(key)
+    }
+
+    /** Append one late logical execution; the fold attaches it only while its attempt's bucket is open. */
+    async appendLogicalClaim(claim: PendingUsageLogicalClaim): Promise<void> {
+        const key = `logical:${claim.logicalRequestId}`
+        if (this.appendedAttempts.has(key)) return
+        validateLogicalExecutionClaim(claim)
+        if (!Number.isSafeInteger(claim.receivedAt) || claim.receivedAt < 0)
+            throw new Error("Usage logical claim time is invalid")
+        await this.appendLine({ kind: "logical", ...claim })
         this.rememberAttempt(key)
     }
 
@@ -92,6 +112,7 @@ export class UsageObservationSpool {
             string,
             { readonly shardName: string; readonly observation: PendingUsageAttemptObservation }
         >()
+        const firstClaimByRequest = new Map<string, { readonly shardName: string; readonly claim: PendingUsageLogicalClaim }>()
         let skipped = 0
         for (const name of await this.list()) {
             const sealedAt = ATTEMPT_SEALED_NAME_PATTERN.exec(name)?.[1]
@@ -104,12 +125,19 @@ export class UsageObservationSpool {
             settledNames.push(name)
             for (const [lineIndex, line] of content.split("\n").entries()) {
                 if (!line.trim()) continue
-                const observation = parseAttemptObservation(line)
-                if (!observation) {
+                const parsed = parseSpoolLine(line)
+                if (!parsed) {
                     skipped++
                     await this.quarantineLine(name, lineIndex + 1, line)
                     continue
                 }
+                if (parsed.kind === "logical") {
+                    if (!firstClaimByRequest.has(parsed.claim.logicalRequestId)) {
+                        firstClaimByRequest.set(parsed.claim.logicalRequestId, { shardName: name, claim: parsed.claim })
+                    }
+                    continue
+                }
+                const observation = parsed.observation
                 const current = highestByAttempt.get(observation.id)
                 if (!current || observation.revision > current.observation.revision) {
                     highestByAttempt.set(observation.id, { shardName: name, observation })
@@ -121,8 +149,14 @@ export class UsageObservationSpool {
         for (const { shardName, observation } of highestByAttempt.values()) {
             observationsByShard.get(shardName)?.push(observation)
         }
+        const claimsByShard = new Map(settledNames.map((name) => [name, [] as PendingUsageLogicalClaim[]]))
+        for (const { shardName, claim } of firstClaimByRequest.values()) claimsByShard.get(shardName)?.push(claim)
         return {
-            shards: settledNames.map((name) => ({ name, observations: observationsByShard.get(name) ?? [] })),
+            shards: settledNames.map((name) => ({
+                name,
+                observations: observationsByShard.get(name) ?? [],
+                claims: claimsByShard.get(name) ?? [],
+            })),
             skipped,
         }
     }
@@ -153,15 +187,6 @@ export class UsageObservationSpool {
         }
     }
 
-    /** Destructive schema 4 clean-cut: remove only legacy schema 3 observation shards. */
-    async purgeLegacy(): Promise<void> {
-        for (const name of await this.list()) {
-            if (name.endsWith(ATTEMPT_ACTIVE_SUFFIX) || name.endsWith(ATTEMPT_SEALED_SUFFIX)) continue
-            if (!name.endsWith(ACTIVE_SUFFIX) && !name.endsWith(SEALED_SUFFIX)) continue
-            await fs.rm(path.join(this.directory, name), { force: true })
-        }
-    }
-
     /** Delete every unsent observation, for example when the user turns usage reporting off. */
     async purge(): Promise<void> {
         await fs.rm(this.directory, { recursive: true, force: true })
@@ -181,6 +206,11 @@ export class UsageObservationSpool {
             },
             { fsync: true },
         )
+    }
+
+    private async appendLine(record: Record<string, unknown>): Promise<void> {
+        await fs.mkdir(this.directory, { recursive: true })
+        await fs.appendFile(path.join(this.directory, `${this.shardId}${ATTEMPT_ACTIVE_SUFFIX}`), `${JSON.stringify(record)}\n`)
     }
 
     private rememberAttempt(key: string): void {
@@ -211,15 +241,50 @@ async function readIfPresent(filePath: string): Promise<string | undefined> {
     }
 }
 
-function parseAttemptObservation(line: string): PendingUsageAttemptObservation | undefined {
+type SpoolLine =
+    | { readonly kind: "attempt"; readonly observation: PendingUsageAttemptObservation }
+    | { readonly kind: "logical"; readonly claim: PendingUsageLogicalClaim }
+
+/** Lines without a current kind, including schema 4 lines written before contract 5, are malformed. */
+function parseSpoolLine(line: string): SpoolLine | undefined {
     let value: Record<string, unknown>
     try {
         value = JSON.parse(line) as Record<string, unknown>
     } catch {
         return undefined
     }
-    const { id, revision, receivedAt, observation } = value
+    if (typeof value !== "object" || value === null) return undefined
+    if (value.kind === "logical") {
+        const claim = parseLogicalClaim(value)
+        return claim ? { kind: "logical", claim } : undefined
+    }
+    if (value.kind !== "attempt") return undefined
+    const observation = parseAttemptObservation(value)
+    return observation ? { kind: "attempt", observation } : undefined
+}
+
+function parseLogicalClaim(value: Record<string, unknown>): PendingUsageLogicalClaim | undefined {
+    const { logicalRequestId, attemptObservationId, receivedAt, execution } = value
+    if (!Number.isSafeInteger(receivedAt) || (receivedAt as number) < 0) return undefined
+    if (typeof execution !== "object" || execution === null) return undefined
+    const claim = {
+        logicalRequestId,
+        attemptObservationId,
+        receivedAt,
+        execution,
+    } as PendingUsageLogicalClaim
+    try {
+        validateLogicalExecutionClaim(claim)
+    } catch {
+        return undefined
+    }
+    return claim
+}
+
+function parseAttemptObservation(value: Record<string, unknown>): PendingUsageAttemptObservation | undefined {
+    const { id, revision, receivedAt, localSessionId, observation } = value
     if (typeof id !== "string" || id.length === 0) return undefined
+    if (typeof localSessionId !== "string" || !LOCAL_SESSION_ID_PATTERN.test(localSessionId)) return undefined
     if (!Number.isSafeInteger(revision) || (revision as number) < 0 || !Number.isSafeInteger(receivedAt)) return undefined
     if (typeof observation !== "object" || observation === null) return undefined
     try {
@@ -229,5 +294,5 @@ function parseAttemptObservation(line: string): PendingUsageAttemptObservation |
     }
     const parsed = observation as UsageAttemptObservation
     if (parsed.attemptObservationId !== id) return undefined
-    return { id, revision: revision as number, receivedAt: receivedAt as number, observation: parsed }
+    return { id, revision: revision as number, receivedAt: receivedAt as number, localSessionId, observation: parsed }
 }

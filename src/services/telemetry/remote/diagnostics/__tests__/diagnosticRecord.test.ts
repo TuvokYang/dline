@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs"
+import path from "node:path"
 import { describe, expect, it } from "vitest"
 import type { JournalTelemetrySignal } from "../../../providers/capabilities"
 import { hostEditorOf, releaseChannelOf } from "../../clientIdentity"
@@ -11,6 +13,15 @@ import {
 
 const NOW = 1_800_000_000_123
 const FINGERPRINT = "0123456789abcdef"
+const OTLP_FIXTURE = JSON.parse(
+    readFileSync(
+        path.join(__dirname, "..", "..", "contracts", "__tests__", "fixtures", "otlp-production-reference.json"),
+        "utf8",
+    ),
+)
+const LOGS_EXAMPLE = OTLP_FIXTURE.logs.example
+const TRACE_ID = LOGS_EXAMPLE.input.trace_id as string
+const SPAN_ID = LOGS_EXAMPLE.input.span_id as string
 
 type EventSignal = Extract<JournalTelemetrySignal, { kind: "event" }>
 
@@ -35,6 +46,23 @@ function record(properties: NonNullable<EventSignal["properties"]>, at = NOW): D
 interface EncodedAttribute {
     key: string
     value: { stringValue?: string; intValue?: string; boolValue?: boolean }
+}
+
+/** The fixture compares attribute lists as sets; every other array keeps its order. */
+function sortAttributes(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(sortAttributes)
+    if (typeof value !== "object" || value === null) return value
+    return Object.fromEntries(
+        Object.entries(value).map(([key, entry]) => {
+            const sorted = sortAttributes(entry)
+            return [
+                key,
+                key === "attributes" && Array.isArray(sorted)
+                    ? [...sorted].sort((left, right) => String(left.key).localeCompare(String(right.key)))
+                    : sorted,
+            ]
+        }),
+    )
 }
 
 function decode(body: string) {
@@ -121,8 +149,7 @@ describe("toDiagnosticRecord (contract v2.1 §3.1-§3.2)", () => {
         expect(diff?.attributes).toEqual({
             "error.type": "search_not_found",
             provider: "openrouter",
-            model: "anthropic_claude-sonnet-4.5",
-            "model.custom": false,
+            model: "catalog:anthropic/claude-sonnet-4.5",
         })
         expect(mention?.attributes).toEqual({ "error.code": "folder", "error.type": "not_found" })
     })
@@ -185,18 +212,24 @@ describe("toDiagnosticRecord (contract v2.1 §3.1-§3.2)", () => {
         expect(record({ api_format: "OPENAI_CHAT" }).attributes).toEqual({ "api.format": "openai-chat" })
     })
 
-    it("names a model the way usage does, and marks it custom only when the event says so", () => {
+    it("names a model by the usage-contract §3.1 projection, in the custom namespace only when the event says so", () => {
         const catalog = record({ provider: "OpenRouter", model: "anthropic/claude-sonnet-4.5", "model.custom": false })
         const custom = record({ provider: "openai", model: "Acme/Private-Finetune", "model.custom": true })
         const unmarked = record({ provider: "ollama", model: "qwen3:8b" })
 
-        expect(catalog.attributes).toMatchObject({
+        expect(catalog.attributes).toEqual({
             provider: "openrouter",
-            model: "anthropic_claude-sonnet-4.5",
+            model: "catalog:anthropic/claude-sonnet-4.5",
             "model.custom": false,
         })
-        expect(custom.attributes).toMatchObject({ provider: "openai", model: "acme_private-finetune", "model.custom": true })
-        expect(unmarked.attributes).toMatchObject({ provider: "ollama", model: "qwen3_8b", "model.custom": false })
+        expect(custom.attributes).toEqual({ provider: "openai", model: "custom:acme/private-finetune", "model.custom": true })
+        expect(unmarked.attributes).toEqual({ provider: "ollama", model: "catalog:qwen3:8b" })
+    })
+
+    it("never discloses a path- or URL-shaped model, and keeps an existing projection as it is", () => {
+        expect(record({ model: "C:\\models\\llama.gguf" }).attributes).toEqual({ model: "state:private" })
+        expect(record({ model: "http://10.0.0.5:8080/v1/llama" }).attributes).toEqual({ model: "state:private" })
+        expect(record({ model: "custom:acme/private" }).attributes).toEqual({ model: "custom:acme/private" })
     })
 
     it("keeps a plain-text warning's model identity only under the catalog keys", () => {
@@ -208,7 +241,7 @@ describe("toDiagnosticRecord (contract v2.1 §3.1-§3.2)", () => {
 
         expect(warning({ provider: "anthropic", model: "claude-sonnet", "model.custom": true })).toMatchObject({
             provider: "anthropic",
-            model: "claude-sonnet",
+            model: "custom:claude-sonnet",
             "model.custom": true,
         })
         // The spelling an earlier build sent: nothing in it identifies the model once filtered.
@@ -216,6 +249,63 @@ describe("toDiagnosticRecord (contract v2.1 §3.1-§3.2)", () => {
         expect(legacy).toBeDefined()
         expect(legacy).not.toHaveProperty("provider")
         expect(legacy).not.toHaveProperty("model")
+    })
+
+    it("carries a provider failure onto the fixture's attributes and first-occurrence span (TADR §6.1, §6.3)", () => {
+        const failure = record({
+            provider: "Anthropic",
+            model: "claude-sonnet-4-5",
+            "error.type": "rate_limit",
+            "http.status": 429,
+            "retry.attempt": 1,
+            "dline.role": "task",
+            "dline.attempt_observation_id": LOGS_EXAMPLE.input.attributes["dline.attempt_observation_id"],
+            "dline.logical_request_id": LOGS_EXAMPLE.input.attributes["dline.logical_request_id"],
+            runtime_trace_id: TRACE_ID,
+            runtime_span_id: SPAN_ID,
+            runtime_trace_flags: 1,
+        })
+
+        expect(failure.attributes).toEqual(LOGS_EXAMPLE.input.attributes)
+        expect(failure).toMatchObject({ traceId: TRACE_ID, spanId: SPAN_ID })
+    })
+
+    it("keeps the first occurrence's span when later occurrences merge in", () => {
+        const first = record({ "error.fingerprint": FINGERPRINT, runtime_trace_id: TRACE_ID, runtime_span_id: SPAN_ID })
+        const later = record(
+            { "error.fingerprint": FINGERPRINT, runtime_trace_id: "f".repeat(32), runtime_span_id: "e".repeat(16) },
+            NOW + 1,
+        )
+
+        const [merged] = aggregateDiagnostics([], [first, later]).records
+
+        expect(merged).toMatchObject({ occurrences: 2, traceId: TRACE_ID, spanId: SPAN_ID })
+    })
+
+    it("leaves out a span context that is missing, all zero or not lowercase hex", () => {
+        const contextOf = (traceId: unknown, spanId: unknown) => {
+            const { traceId: kept, spanId: keptSpan } = record({ runtime_trace_id: traceId, runtime_span_id: spanId } as never)
+            return [kept, keptSpan]
+        }
+
+        expect(contextOf(undefined, undefined)).toEqual([undefined, undefined])
+        expect(contextOf("0".repeat(32), SPAN_ID)).toEqual([undefined, undefined])
+        expect(contextOf(TRACE_ID.toUpperCase(), SPAN_ID)).toEqual([undefined, undefined])
+        expect(contextOf(TRACE_ID, "short")).toEqual([undefined, undefined])
+    })
+
+    it("sends a correlation key only with a registered role or a client-shaped id", () => {
+        expect(
+            record({
+                "dline.role": "planner",
+                "dline.attempt_observation_id": "has spaces",
+                "dline.logical_request_id": "/home/alice/request",
+            }).attributes,
+        ).toEqual({})
+        expect(record({ "dline.role": "subagent", "dline.logical_request_id": "task:01JC3Z8R4M" }).attributes).toEqual({
+            "dline.role": "subagent",
+            "dline.logical_request_id": "task:01JC3Z8R4M",
+        })
     })
 })
 
@@ -274,14 +364,16 @@ describe("v2.1 §3.5 diagnostic extension", () => {
         expect(records.map((entry) => entry.occurrences)).toEqual([1, 1, 2])
     })
 
-    it("marks a development build in the resource only when it is one", () => {
-        const keys = (isDev?: boolean) =>
-            decode(encodeDiagnosticLogs([], { clientVersion: "0.11.1", platform: "linux", isDev }, 0)).resource.map(
-                (attribute) => [attribute.key, attribute.value.boolValue],
+    it("names a development build in the resource and its deployment environment", () => {
+        const resourceOf = (isDev?: boolean) =>
+            Object.fromEntries(
+                decode(encodeDiagnosticLogs([], { clientVersion: "0.11.1", platform: "linux", isDev }, 0)).resource.map(
+                    (attribute) => [attribute.key, attribute.value.boolValue ?? attribute.value.stringValue],
+                ),
             )
 
-        expect(keys(true)).toContainEqual(["dline.is_dev", true])
-        expect(keys(false).map(([key]) => key)).not.toContain("dline.is_dev")
+        expect(resourceOf(true)).toMatchObject({ "dline.is_dev": true, "deployment.environment.name": "development" })
+        expect(resourceOf(false)).toMatchObject({ "dline.is_dev": false, "deployment.environment.name": "production" })
     })
 })
 
@@ -321,37 +413,54 @@ describe("aggregateDiagnostics (contract v2.1 §3.3)", () => {
 })
 
 describe("encodeDiagnosticLogs", () => {
-    it("encodes one OTLP logs request with the first time, the count and only catalog attributes", () => {
+    it("encodes the fixture's aggregated record as the production logs request (TADR §2.4, §6)", () => {
+        const { input } = LOGS_EXAMPLE
+        const resourceInput = OTLP_FIXTURE.resource.input
+        const aggregated: DiagnosticRecord = {
+            name: input.event_name,
+            channel: input.channel,
+            severity: input.severity,
+            firstSeenMs: input.first_seen_ms,
+            lastSeenMs: input.last_seen_ms,
+            occurrences: input.occurrences,
+            attributes: input.attributes,
+            traceId: input.trace_id,
+            spanId: input.span_id,
+        }
+        const resource = {
+            clientVersion: resourceInput.client_version,
+            platform: resourceInput.platform,
+            arch: resourceInput.arch,
+            releaseChannel: resourceInput.release_channel,
+            hostEditor: resourceInput.host_editor,
+            isDev: resourceInput.is_dev,
+        }
+
+        const body = JSON.parse(
+            encodeDiagnosticLogs([aggregated], resource, resourceInput.dropped_records, LOGS_EXAMPLE.exported_at_ms),
+        )
+
+        expect(sortAttributes(body)).toEqual(sortAttributes(LOGS_EXAMPLE.expected_body))
+    })
+
+    it("sends only catalog keys and reports the local drops in the resource", () => {
         const merged = aggregateDiagnostics(
             [],
             [
-                record({ "error.fingerprint": FINGERPRINT, "http.status": 429 }, NOW),
+                record({ "error.fingerprint": FINGERPRINT, "http.status": 429, error_message: "secret" }, NOW),
                 record({ "error.fingerprint": FINGERPRINT }, NOW + 9_000),
             ],
         ).records
-        const resource = { clientVersion: "0.11.1", platform: "win32", releaseChannel: "insiders", hostEditor: "cursor" } as const
 
-        const { resource: attributes, scope } = decode(encodeDiagnosticLogs(merged, resource, 7))
+        const { resource, scope } = decode(encodeDiagnosticLogs(merged, { clientVersion: "0.11.1", platform: "win32" }, 7))
         const [logRecord] = scope.logRecords
 
-        expect(attributes).toEqual([
-            { key: "service.name", value: { stringValue: "dline" } },
-            { key: "service.version", value: { stringValue: "0.11.1" } },
-            { key: "os.type", value: { stringValue: "win32" } },
-            { key: "dline.release_channel", value: { stringValue: "insiders" } },
-            { key: "dline.host_editor", value: { stringValue: "cursor" } },
-            { key: "dline.dropped_records", value: { intValue: "7" } },
-        ])
-        expect(scope.scope.name).toBe("dline.diagnostics")
-        expect(logRecord).toMatchObject({
-            timeUnixNano: `${NOW}000000`,
-            severityNumber: 17,
-            body: { stringValue: "api.request.failed" },
-        })
+        expect(resource).toContainEqual({ key: "dline.dropped_records", value: { intValue: "7" } })
         expect(logRecord.attributes.every((attribute) => DIAGNOSTIC_ATTRIBUTE_KEYS.includes(attribute.key))).toBe(true)
         expect(Object.fromEntries(logRecord.attributes.map(({ key, value }) => [key, value]))).toEqual({
             "dline.channel": { stringValue: "error" },
             "dline.occurrences": { intValue: "2" },
+            "dline.first_seen_ms": { intValue: String(NOW) },
             "dline.last_seen_ms": { intValue: String(NOW + 9_000) },
             "error.fingerprint": { stringValue: FINGERPRINT },
             "http.status": { intValue: "429" },
@@ -360,9 +469,12 @@ describe("encodeDiagnosticLogs", () => {
 })
 
 describe("client identity", () => {
-    it("reads the release channel from the extension name", () => {
-        expect(releaseChannelOf("dline")).toBe("stable")
-        expect(releaseChannelOf("dline-insiders")).toBe("insiders")
+    it("reads the release channel from the extension name and the minor version parity", () => {
+        expect(releaseChannelOf("dline", "0.12.0")).toBe("stable")
+        // A pre-release ships under the production name; only its odd minor tells it apart.
+        expect(releaseChannelOf("dline", "0.11.3")).toBe("pre-release")
+        expect(releaseChannelOf("dline-insiders", "0.13.1792900510")).toBe("insiders")
+        expect(releaseChannelOf("dline", "not-a-version")).toBe("stable")
     })
 
     it("maps the host application name onto the service vocabulary", () => {

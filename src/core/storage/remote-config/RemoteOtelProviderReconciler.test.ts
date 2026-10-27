@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { TelemetryProviderRegistration } from "@/services/telemetry/providers/capabilities"
 import type { OpenTelemetryClientValidConfig } from "@/shared/services/config/otel-config"
-import { REMOTE_CONFIG_OTEL_PROVIDER_ID, RemoteOtelProviderReconciler } from "./RemoteOtelProviderReconciler"
+import {
+    organizationMayReceive,
+    REMOTE_CONFIG_OTEL_PROVIDER_ID,
+    RemoteOtelProviderReconciler,
+} from "./RemoteOtelProviderReconciler"
 
 function deferred<T>(): {
     readonly promise: Promise<T>
@@ -216,5 +220,32 @@ describe("RemoteOtelProviderReconciler", () => {
         expect(replay).not.toHaveBeenCalled()
         expect(createProvider).not.toHaveBeenCalled()
         expect(service.addProvider).not.toHaveBeenCalled()
+    })
+})
+
+describe("organization journal replay channel filter", () => {
+    const line = (...channels: unknown[]) =>
+        JSON.stringify({
+            resourceLogs: [
+                {
+                    scopeLogs: [
+                        {
+                            logRecords: channels.map((channel) => ({
+                                attributes: [{ key: "dline.channel", value: { stringValue: channel } }],
+                            })),
+                        },
+                    ],
+                },
+            ],
+        })
+
+    it("replays only lines whose every record belongs to the usage channel the registration covers", () => {
+        expect(organizationMayReceive(line("usage"))).toBe(true)
+        expect(organizationMayReceive(line("usage", "usage"))).toBe(true)
+        expect(organizationMayReceive(line("error"))).toBe(false)
+        expect(organizationMayReceive(line("usage", "runtime"))).toBe(false)
+        expect(organizationMayReceive(line(42))).toBe(false)
+        expect(organizationMayReceive(JSON.stringify({ resourceLogs: [] }))).toBe(false)
+        expect(organizationMayReceive("{partial")).toBe(false)
     })
 })

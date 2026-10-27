@@ -1,21 +1,22 @@
 import { randomUUID } from "node:crypto"
 import type { ExchangeOperationRepository } from "@/core/storage/telemetry-remote/ExchangeOperationRepository"
 import type { WireResponse } from "../contracts/classification"
+import { isDeviceId } from "../contracts/deviceGrant"
 import {
+    boundExchangeClientField,
     ExchangeOperationConflictError,
     ExchangeOperationExpiredError,
-    type IssueExchangeReference,
     type IssueExchangeRequest,
     type IssueExchangeTransport,
 } from "../contracts/exchangeOperation"
 import { type AtomicIssueGrant, parseAtomicIssueGrant } from "../contracts/issueGrant"
+import { isAuthorizationCode } from "../contracts/supportCode"
 import { parseServiceError } from "../contracts/wire"
 import type { IssueGrantPort } from "./IssueGrantPort"
 
 const BASE64URL_43_PATTERN = /^[A-Za-z0-9_-]{43}$/
-const ISSUE_COMPONENT_PATTERN = /^[A-Za-z0-9_.-]{1,100}$/
-const MAX_DEVICE_ID_LENGTH = 128
-const MAX_CLIENT_FIELD_LENGTH = 64
+/** Refusals after which the ticket itself is unusable; the caller deletes it (telemetry-exchange-flow §5.5). */
+export const ISSUE_EXCHANGE_DELETE_CODES: ReadonlySet<string> = new Set(["device_revoked", "report_authorization_not_found"])
 
 export type IssueExchangeResult =
     | { readonly status: "ready"; readonly grant: AtomicIssueGrant }
@@ -27,8 +28,8 @@ export type IssueExchangeResult =
 export interface RecoverableIssueExchangeInput {
     readonly deviceId: string
     readonly deviceAccessToken: string
-    readonly issue: IssueExchangeReference
-    readonly pairingSecret: string
+    readonly authorizationCode: string
+    /** The approved revision the status query reported. */
     readonly authorizationRevision: number
 }
 
@@ -79,7 +80,7 @@ export class RecoverableIssueExchangeCoordinator {
         try {
             prepared = await this.options.repository.prepare({
                 principal: input.deviceId,
-                receiptSecret: input.pairingSecret,
+                receiptSecret: input.authorizationCode,
                 request: proposed,
             })
         } catch (error) {
@@ -116,7 +117,7 @@ export class RecoverableIssueExchangeCoordinator {
             return outcome
         }
         try {
-            await this.options.repository.storeReceipt(prepared.intent, input.pairingSecret, response)
+            await this.options.repository.storeReceipt(prepared.intent, input.authorizationCode, response)
         } catch (error) {
             const active = await this.options.port.readActive(this.clock(), input.authorizationRevision)
             if (active) return { status: "ready", grant: active }
@@ -140,7 +141,7 @@ export class RecoverableIssueExchangeCoordinator {
         if ((response.status === 409 || response.status === 410) && isExpiredCode(code)) {
             return { status: "stopped", code: "exchange_operation_expired" }
         }
-        if (response.status === 202 || response.status === 404) {
+        if (response.status === 202) {
             return { status: "pending", code, ...(error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }) }
         }
         if (response.status === 401) return { status: "refresh_device", code }
@@ -162,46 +163,30 @@ export class RecoverableIssueExchangeCoordinator {
 function buildRequest(
     input: RecoverableIssueExchangeInput,
     requestId: string,
-    clientVersion = "",
-    platform = "",
+    clientVersion: string,
+    platform: string,
 ): IssueExchangeRequest {
     return {
         operation: "issue.exchange",
         request_id: requestId,
-        issue: { ...input.issue },
-        pairing_secret: input.pairingSecret,
-        client_version: boundClientField(clientVersion),
-        platform: boundClientField(platform),
+        authorization_code: input.authorizationCode,
+        authorization_revision: input.authorizationRevision,
+        client_version: boundExchangeClientField(clientVersion),
+        platform: boundExchangeClientField(platform),
     }
 }
 
 function validateInput(input: RecoverableIssueExchangeInput): void {
-    if (input.deviceId.length < 16 || input.deviceId.length > MAX_DEVICE_ID_LENGTH) {
-        throw new Error("Issue exchange device identity is invalid")
-    }
+    if (!isDeviceId(input.deviceId)) throw new Error("Issue exchange device identity is invalid")
     if (!BASE64URL_43_PATTERN.test(input.deviceAccessToken)) throw new Error("Issue exchange device token is invalid")
-    if (!BASE64URL_43_PATTERN.test(input.pairingSecret)) throw new Error("Issue exchange pairing secret is invalid")
-    if (
-        !ISSUE_COMPONENT_PATTERN.test(input.issue.owner) ||
-        !ISSUE_COMPONENT_PATTERN.test(input.issue.repo) ||
-        !Number.isSafeInteger(input.issue.number) ||
-        input.issue.number <= 0
-    ) {
-        throw new Error("Issue exchange issue identity is invalid")
-    }
+    if (!isAuthorizationCode(input.authorizationCode)) throw new Error("Issue exchange authorization code is invalid")
     if (!Number.isSafeInteger(input.authorizationRevision) || input.authorizationRevision <= 0) {
         throw new Error("Issue exchange authorization revision is invalid")
     }
 }
 
 function inflightKey(input: RecoverableIssueExchangeInput): string {
-    return `${input.deviceId}\0${input.issue.owner.toLowerCase()}/${input.issue.repo.toLowerCase()}#${input.issue.number}\0${input.authorizationRevision}\0${input.pairingSecret}`
-}
-
-function boundClientField(value: string): string {
-    const trimmed = value.trim().slice(0, MAX_CLIENT_FIELD_LENGTH)
-    if (!trimmed) throw new Error("Issue exchange client fields must not be empty")
-    return trimmed
+    return `${input.deviceId}\0${input.authorizationRevision}\0${input.authorizationCode}`
 }
 
 function isConflictCode(code: string): boolean {
@@ -214,8 +199,8 @@ function isExpiredCode(code: string): boolean {
 
 function clearReason(code: string): Parameters<IssueGrantPort["clear"]>[0] | undefined {
     if (code === "authorization_expired") return "expired"
-    if (code === "authorization_revision_stale") return "revision_changed"
-    if (code === "authorization_deleted") return "deleted"
+    if (code === "authorization_revision_stale" || code === "grant_not_available") return "revision_changed"
+    if (ISSUE_EXCHANGE_DELETE_CODES.has(code)) return "deleted"
     if (code === "authorization_inactive" || code === "authorization_revoked") return "revoked"
     return undefined
 }

@@ -1,26 +1,25 @@
-import type { WireResponse } from "../contracts/classification"
-import type { AtomicDeviceGrant } from "../contracts/deviceGrant"
+import type { AtomicDeviceGrant, DeviceGrantProfile } from "../contracts/deviceGrant"
+import type { USAGE_SCHEMA_VERSION } from "../contracts/usageBodySchema"
 
-/** One bounded Phase U request; Phase E may replay it but must preserve these semantics. */
-export interface BootstrapDeviceGrantRequest {
+/** The `/auth/device/grant` body (telemetry-exchange-flow §4); an unknown outcome replays it unchanged. */
+export interface DeviceGrantRequest {
     readonly operation: "device.grant"
     readonly request_id: string
     readonly device_secret: string
-    readonly requested_profile: "usage"
+    readonly requested_profile: DeviceGrantProfile
     readonly client_version: string
     readonly platform: string
-    readonly supported_usage_schema_versions: readonly [4]
+    readonly supported_usage_schema_versions: readonly [typeof USAGE_SCHEMA_VERSION]
 }
 
-/** Transport-only boundary. It does not own credential publication. */
-export interface DeviceGrantTransport {
-    requestBootstrapDeviceGrant(request: BootstrapDeviceGrantRequest, signal?: AbortSignal): Promise<WireResponse>
-}
-
-/** Stable credential authority shared by the bootstrap and recoverable exchange clients. */
+/** Stable credential authority: one complete grant per profile, published and read as a unit. */
 export interface DeviceGrantPort {
-    publish(grant: AtomicDeviceGrant): Promise<void>
-    readActive(now: number): Promise<AtomicDeviceGrant | null>
+    /**
+     * Publish a grant obtained for `deviceSecret`. Resolves `false`, publishing
+     * nothing, when that device identity was reset while the request was in flight.
+     */
+    publish(grant: AtomicDeviceGrant, deviceSecret: string): Promise<boolean>
+    readActive(profile: DeviceGrantProfile, now: number): Promise<AtomicDeviceGrant | null>
 }
 
 export type DeviceGrantRefusal =
@@ -35,27 +34,41 @@ export class DeviceGrantRefusalError extends Error {
     }
 }
 
-/** Adapter contract consumed by Usage; Phase E replaces the bootstrap implementation through the registry. */
+export interface EnsureDeviceGrantOptions {
+    /** A token the service just answered with 401; a stored grant carrying it counts as absent. */
+    readonly rejectedAccessToken?: string
+    readonly signal?: AbortSignal
+}
+
+export type DeviceGrantAttempt =
+    | { readonly kind: "granted"; readonly grant: AtomicDeviceGrant }
+    /** Nothing was granted now: the outcome is transient or unknown. `retryAfterMs` is the delay the service named. */
+    | { readonly kind: "deferred"; readonly retryAfterMs?: number }
+
+/** Device grant acquisition consumed by the token broker. */
 export interface DeviceGrantClient {
+    /** No-network projection read before the broker takes the machine-wide acquisition claim. */
+    readActiveGrant(profile: DeviceGrantProfile, now: number): Promise<AtomicDeviceGrant | null>
     /**
-     * Phase U may fall back to the legacy device exchange when its bootstrap endpoint is unavailable.
-     * A recoverable owner sets this to false because replaying through another issuer could mint a second token.
+     * Return an active grant, requesting one when needed. Rejects with
+     * {@link DeviceGrantRefusalError} when the service refused the device.
      */
-    readonly allowsLegacyFallback?: boolean
-    /** Optional no-network projection used before taking the machine-wide acquisition claim. */
-    readActiveGrant?(now: number): Promise<AtomicDeviceGrant | null>
-    ensureActiveGrant(deviceSecret: string, signal?: AbortSignal): Promise<AtomicDeviceGrant | null>
+    ensureActiveGrant(
+        profile: DeviceGrantProfile,
+        deviceSecret: string,
+        options?: EnsureDeviceGrantOptions,
+    ): Promise<DeviceGrantAttempt>
 }
 
 /** Repository shape kept structural so the service contract does not depend on a concrete storage class. */
 export interface AtomicDeviceGrantRepository {
-    publishDeviceGrantAtomically(grant: AtomicDeviceGrant): Promise<void>
-    readActiveDeviceGrant(now: number): Promise<AtomicDeviceGrant | null>
+    publishDeviceGrantAtomically(grant: AtomicDeviceGrant, deviceSecret: string): Promise<boolean>
+    readActiveDeviceGrant(now: number, profile: DeviceGrantProfile): Promise<AtomicDeviceGrant | null>
 }
 
 export function deviceGrantPortFromRepository(repository: AtomicDeviceGrantRepository): DeviceGrantPort {
     return {
-        publish: (grant) => repository.publishDeviceGrantAtomically(grant),
-        readActive: (now) => repository.readActiveDeviceGrant(now),
+        publish: (grant, deviceSecret) => repository.publishDeviceGrantAtomically(grant, deviceSecret),
+        readActive: (profile, now) => repository.readActiveDeviceGrant(now, profile),
     }
 }

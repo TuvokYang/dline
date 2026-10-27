@@ -40,10 +40,6 @@ on:
         description: SHA-256 of the packaged VSIX.
         value: ${{ jobs.package-ci.outputs.sha256 || jobs.package-release.outputs.sha256 }}
     secrets:
-      TELEMETRY_SERVICE_API_KEY:
-        required: false
-      ERROR_SERVICE_API_KEY:
-        required: false
       OTEL_TELEMETRY_ENABLED:
         required: false
       OTEL_EXPORTER_OTLP_PROTOCOL:
@@ -260,8 +256,6 @@ jobs:
       - name: Build production VSIX
         env:
           DLINE_ENVIRONMENT: production
-          TELEMETRY_SERVICE_API_KEY: ${{ secrets.TELEMETRY_SERVICE_API_KEY }}
-          ERROR_SERVICE_API_KEY: ${{ secrets.ERROR_SERVICE_API_KEY }}
           OTEL_TELEMETRY_ENABLED: ${{ secrets.OTEL_TELEMETRY_ENABLED }}
           OTEL_LOGS_EXPORTER: otlp
           OTEL_METRICS_EXPORTER: otlp

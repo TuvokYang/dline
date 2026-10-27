@@ -1,20 +1,15 @@
 import { randomUUID } from "node:crypto"
-import { ModelRegistry } from "@/core/model-registry/ModelRegistry"
 import { DeviceCredentialRepository } from "@/core/storage/telemetry-remote/DeviceCredentialRepository"
-import { ExchangeOperationRepository } from "@/core/storage/telemetry-remote/ExchangeOperationRepository"
 import { resolveOtelStorageLayout } from "@/core/storage/telemetry-remote/OtelStorageLayout"
 import type { LocalUsagePolicyInputs } from "@/core/storage/telemetry-remote/RemotePolicyRepository"
 import { RemotePolicyRepository } from "@/core/storage/telemetry-remote/RemotePolicyRepository"
+import { UsageAttemptFinalizationStore } from "@/core/storage/telemetry-remote/UsageAttemptFinalizationStore"
 import { UsageObservationSpool } from "@/core/storage/telemetry-remote/UsageObservationSpool"
 import { UsageOutboxRepository } from "@/core/storage/telemetry-remote/UsageOutboxRepository"
 import { installTaskUsageAccountingSink } from "@/core/task/observability/task-usage-accounting"
-import { projectProviderUsageModelId } from "@/core/task/performance/provider-request-round-port"
-import { deviceGrantPortFromRepository } from "./auth/DeviceGrantPort"
-import { DeviceGrantPortRegistry } from "./auth/DeviceGrantPortRegistry"
-import { DeviceTokenBroker } from "./auth/DeviceTokenBroker"
-import { installRecoverableExchange } from "./auth/exchangeRuntime"
-import { UsageGrantBootstrap } from "./auth/UsageGrantBootstrap"
-import { estimateUsageWriteRowsV4, sanitizeUsageClient, type UsageClientWire } from "./contracts/usageBody"
+import type { DeviceTokenBroker } from "./auth/DeviceTokenBroker"
+import { createDeviceTokenBroker } from "./auth/exchangeRuntime"
+import { sanitizeUsageClient, type UsageClientWire } from "./contracts/usageBody"
 import { DlineOtelHttpClient } from "./transport/DlineOtelHttpClient"
 import { RemoteUsageCoordinator } from "./usage/RemoteUsageCoordinator"
 import { UsageDeliveryWorker } from "./usage/UsageDeliveryWorker"
@@ -72,29 +67,14 @@ export async function startRemoteUsage(options: RemoteUsageRuntimeOptions): Prom
                   ),
     })
     const spool = new UsageObservationSpool(layout, ownerId)
-    const grantPort = deviceGrantPortFromRepository(credentials)
-    const bootstrap = new UsageGrantBootstrap({
-        port: grantPort,
-        transport,
-        clientVersion: options.clientVersion,
-        platform: options.platform,
-    })
-    const grantRegistry = new DeviceGrantPortRegistry(grantPort, bootstrap)
-    installRecoverableExchange({
-        registry: grantRegistry,
-        expectedBootstrap: bootstrap,
-        repository: new ExchangeOperationRepository(layout, { onQuarantine }),
-        transport,
-        clientVersion: options.clientVersion,
-        platform: options.platform,
-    })
-    const tokens = new DeviceTokenBroker({
-        repository: credentials,
+    const tokens = createDeviceTokenBroker({
+        layout,
+        credentials,
         transport,
         clientVersion: options.clientVersion,
         platform: options.platform,
         ownerId,
-        grantClient: grantRegistry,
+        onQuarantine,
     })
     const worker = new UsageDeliveryWorker({
         outbox,
@@ -103,9 +83,9 @@ export async function startRemoteUsage(options: RemoteUsageRuntimeOptions): Prom
         transport,
         client,
         ownerId,
-        readAttemptValidation: async () => {
+        readAttemptGrant: async () => {
             const grant = await credentials.readActiveDeviceGrant(Date.now(), "usage")
-            return grant ? { contract: grant.usageContract, estimateWriteRows: estimateUsageWriteRowsV4 } : undefined
+            return grant ? { contract: grant.usageContract } : undefined
         },
     })
     const started = new RemoteUsageCoordinator({
@@ -113,6 +93,7 @@ export async function startRemoteUsage(options: RemoteUsageRuntimeOptions): Prom
         credentials,
         outbox,
         spool,
+        finalization: new UsageAttemptFinalizationStore(layout, ownerId, { onQuarantine }),
         worker,
         readPolicyInputs: options.readPolicyInputs,
         log: options.log,
@@ -122,13 +103,11 @@ export async function startRemoteUsage(options: RemoteUsageRuntimeOptions): Prom
     tokenBroker = tokens
     releaseTaskUsageAccounting = installTaskUsageAccountingSink({
         currentPolicyGeneration: () => started.activePolicyGeneration,
-        projectModelId: (provider, wireModelId) =>
-            projectProviderUsageModelId(ModelRegistry.getInstance(), provider, wireModelId),
-        recordFinalizedAttempt: (attempt) => started.recordFinalizedAttempt(attempt),
+        recordAttemptEvent: (event) => started.recordAttemptEvent(event),
     })
     options.log?.("debug", `[RemoteUsage] starting in ${ownerId}, reporting to ${transport.origin}`)
+    // This process's session is counted by its first Provider observation, not by activation.
     await started.start()
-    started.recordSessionStarted()
 }
 
 /**

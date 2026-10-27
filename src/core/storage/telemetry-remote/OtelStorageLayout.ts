@@ -13,10 +13,8 @@ export interface OtelStorageLayout {
     readonly deviceCredentialPath: string
     /** Owner-only issue diagnostic token plus revoke/expiry tombstone. */
     readonly issueGrantPath: string
-    /** Owner-only support authorization, resume credential, exchange ticket and revoke tombstone. */
+    /** Owner-only Report Authorization ticket: authorization code, public code and server-reported state. */
     readonly issueCredentialPath: string
-    /** Owner-only durable create/status/revoke intent and encrypted response receipt. */
-    readonly supportOperationPath: string
     /** Malformed credential documents, kept for diagnosis instead of being overwritten. */
     readonly secretsQuarantineDir: string
     readonly remoteDir: string
@@ -25,6 +23,8 @@ export interface OtelStorageLayout {
     readonly usageDir: string
     /** Process-sharded observation segments; each extension host appends only to its own. */
     readonly usageObservationsDir: string
+    /** Per-process attempts inside their token finalization window, with persisted deadlines for restart recovery. */
+    readonly usageFinalizationDir: string
     /** Sender lease, delivery gate, pending minutes and the inflight manifest, changed under one lock. */
     readonly usageOutboxPath: string
     /** Exact request bodies, named by request ID, so an unknown outcome replays the same bytes. */
@@ -43,13 +43,13 @@ export function resolveOtelStorageLayout(dataDir: string): OtelStorageLayout {
         deviceCredentialPath: path.join(secretsDir, "device.json"),
         issueGrantPath: path.join(secretsDir, "issue-grant.json"),
         issueCredentialPath: path.join(secretsDir, "issue-credential.json"),
-        supportOperationPath: path.join(secretsDir, "support-operation.json"),
         secretsQuarantineDir: path.join(secretsDir, "quarantine"),
         remoteDir,
         policyPath: path.join(remoteDir, "policy.json"),
         remoteQuarantineDir: path.join(remoteDir, "quarantine"),
         usageDir,
         usageObservationsDir: path.join(usageDir, "observations"),
+        usageFinalizationDir: path.join(usageDir, "finalization"),
         usageOutboxPath: path.join(usageDir, "outbox.json"),
         usageInflightDir: path.join(usageDir, "inflight"),
         issueDiagnosticsOutboxPath: path.join(remoteDir, "diagnostics", "issue-outbox.json"),

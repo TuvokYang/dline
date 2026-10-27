@@ -11,7 +11,7 @@ import { TaskApiRequestRoundRepository } from "./api-request-round-repository"
 import { ApiRequestRoundTracker } from "./api-request-round-tracker"
 import { ApiResponseExecutionLifecycle } from "./api-response-execution-lifecycle"
 import { TaskApiResponseExecutionRepository } from "./api-response-execution-repository"
-import type { FinalizedProviderAttemptPort } from "./provider-request-round-port"
+import type { ProviderAttemptUsagePort } from "./provider-request-round-port"
 import { type ProviderExecutionBlock, TaskProviderRequestRoundOwner } from "./TaskProviderRequestRoundOwner"
 import { TaskApiRateMetricsRepository } from "./task-api-rate-metrics-repository"
 import { TaskApiRateMetricsService } from "./task-api-rate-metrics-service"
@@ -23,10 +23,10 @@ export interface TaskPerformanceOwnerOptions {
     readonly readState: () => Readonly<TaskState>
     readonly legacyMessages: () => readonly UiMessage[]
     readonly onChanged?: () => void
-    readonly finalizedAttempts?: FinalizedProviderAttemptPort
+    /** Ordered Provider attempt facts for remote Usage; the port owns token finalization. */
+    readonly attemptUsage?: ProviderAttemptUsagePort
     /** Current allowed remote Usage generation, sampled once at each real Provider send admission. */
     readonly readUsagePolicyGeneration?: () => number | undefined
-    readonly projectUsageModelId?: (provider: string, wireModelId: string) => string
     /** An explicit metrics database, used as is instead of the task's own layout. */
     readonly location?: string
     /**
@@ -94,7 +94,7 @@ export class TaskPerformanceOwner {
         this.roundLifecycle = new ApiRequestRoundLifecycle(
             new ApiRequestRoundTracker({ taskId: options.taskId, repository: roundRepository, onChanged: options.onChanged }),
             executions,
-            options.finalizedAttempts,
+            options.attemptUsage,
         )
         this.rounds = new TaskProviderRequestRoundOwner({
             lifecycle: this.roundLifecycle,
@@ -105,7 +105,6 @@ export class TaskPerformanceOwner {
             isExecutionCancelling: () => options.readState().halt.status === "stopping",
             resolveExecutionToolCalls: (blocks, awaitingBlockId) => this.toolCallsOfBlocks(blocks, awaitingBlockId),
             readPolicyGeneration: options.readUsagePolicyGeneration,
-            projectUsageModelId: options.projectUsageModelId,
         })
         this.queryService = new TaskRateMetricsQueryService({
             activeMetrics: this.activeMetrics,

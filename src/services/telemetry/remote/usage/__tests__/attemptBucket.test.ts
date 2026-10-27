@@ -40,6 +40,81 @@ function attempt(overrides: Partial<UsageAttemptObservation> = {}): UsageAttempt
 }
 
 describe("schema 4 attempt bucket reducer", () => {
+    const sealAt = { newBucketId: () => "bucket-1", sealedAt: () => 99_000 }
+
+    it("adds exactly one error per failed attempt, by its failure class", () => {
+        let state = emptyAttemptBucketState()
+        for (const [id, overrides] of [
+            ["a", { outcome: "failed", failureClass: "rate_limited" }],
+            ["b", { outcome: "failed", failureClass: "rate_limited" }],
+            ["c", { outcome: "failed", failureClass: "network" }],
+            ["d", { outcome: "cancelled" }],
+        ] as const) {
+            state = appendAttemptToBuckets(state, attempt({ attemptObservationId: id, ...overrides }), sealAt)
+        }
+        const fact = state.open?.facts[0]
+
+        expect(fact?.requests).toEqual({ completed: 0, failed: 3, cancelled: 1, aborted: 0 })
+        expect(fact?.errors).toEqual({ rate_limited: 2, network: 1 })
+        expect(() => validateAttemptBucket(state.open as NonNullable<typeof state.open>)).not.toThrow()
+    })
+
+    it.each([
+        ["a failed attempt without a class", { outcome: "failed" }],
+        ["a class on a completed attempt", { outcome: "completed", failureClass: "timeout" }],
+        ["a class outside the catalog token", { outcome: "failed", failureClass: "Rate Limited" as never }],
+    ] as const)("rejects %s before it can break error conservation", (_name, overrides) => {
+        expect(() => appendAttemptToBuckets(emptyAttemptBucketState(), attempt(overrides), sealAt)).toThrow()
+    })
+
+    it("counts the generation subset, its timing and its output only for attempts that carried the pair", () => {
+        let state = emptyAttemptBucketState()
+        state = appendAttemptToBuckets(
+            state,
+            attempt({ attemptObservationId: "timed", ttftMs: 300, generationMs: 700, generationOutputTokens: 15 }),
+            sealAt,
+        )
+        state = appendAttemptToBuckets(state, attempt({ attemptObservationId: "untimed", ttftMs: 900 }), sealAt)
+        const fact = state.open?.facts[0]
+
+        expect(fact?.generationCoverage).toEqual({ reported: 1, unreported: 1 })
+        expect(fact?.generationOutputTokens).toBe(15)
+        expect(fact?.generation).toMatchObject({ count: 1, sum: 700 })
+        expect(fact?.ttft).toMatchObject({ count: 2, sum: 1_200, min: 300, max: 900 })
+        expect(() => validateAttemptBucket(state.open as NonNullable<typeof state.open>)).not.toThrow()
+    })
+
+    it.each([
+        ["timing without output", { generationMs: 700 }],
+        ["output without timing", { generationOutputTokens: 5 }],
+        ["a pair on unreported tokens", { generationMs: 700, generationOutputTokens: 5, tokenUsageReported: false }],
+        ["more generated than reported output", { generationMs: 700, generationOutputTokens: 21 }],
+    ] as const)("rejects %s", (_name, overrides) => {
+        expect(() => appendAttemptToBuckets(emptyAttemptBucketState(), attempt(overrides), sealAt)).toThrow()
+    })
+
+    it("seals the open bucket first when the next attempt would no longer fit one request", () => {
+        let nextBucket = 0
+        const options = {
+            newBucketId: () => `bucket-${++nextBucket}`,
+            sealedAt: () => 99_000,
+            // Stand-in for the grant capacity check: at most one fact per request.
+            fits: (bucket: { readonly facts: readonly unknown[] }) => bucket.facts.length <= 1,
+        }
+        let state = emptyAttemptBucketState()
+        state = appendAttemptToBuckets(state, attempt({ attemptObservationId: "a" }), options)
+        state = appendAttemptToBuckets(state, attempt({ attemptObservationId: "b" }), options)
+        state = appendAttemptToBuckets(
+            state,
+            attempt({ attemptObservationId: "c", identity: { ...attempt().identity, modelId: "catalog:other" } }),
+            options,
+        )
+
+        expect(state.sealed.map((bucket) => [bucket.bucketId, bucket.facts[0].requests.completed])).toEqual([["bucket-1", 2]])
+        expect(state.open?.bucketId).toBe("bucket-2")
+        expect(state.open?.facts.map((fact) => fact.identity.modelId)).toEqual(["catalog:other"])
+    })
+
     it("seals after full-duration overshoot without clipping the attempt", () => {
         let nextBucket = 0
         const options = { newBucketId: () => `bucket-${++nextBucket}`, sealedAt: () => 99_000 }
@@ -117,6 +192,7 @@ describe("schema 4 attempt bucket reducer", () => {
             attempt({
                 attemptObservationId: "b",
                 outcome: "failed",
+                failureClass: "timeout",
                 durationMs: 20_000,
                 tokenUsageReported: false,
                 tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
@@ -141,12 +217,13 @@ describe("schema 4 attempt bucket reducer", () => {
 
         const reference = new Map<
             string,
-            { requests: number; input: number; reported: number; unreported: number; duration: number }
+            { requests: number; failed: number; input: number; reported: number; unreported: number; duration: number }
         >()
         for (const observation of observations) {
             const key = JSON.stringify(observation.identity)
-            const current = reference.get(key) ?? { requests: 0, input: 0, reported: 0, unreported: 0, duration: 0 }
+            const current = reference.get(key) ?? { requests: 0, failed: 0, input: 0, reported: 0, unreported: 0, duration: 0 }
             current.requests += 1
+            current.failed += observation.outcome === "failed" ? 1 : 0
             current.duration += observation.durationMs
             current.reported += observation.tokenUsageReported ? 1 : 0
             current.unreported += observation.tokenUsageReported ? 0 : 1
@@ -162,6 +239,7 @@ describe("schema 4 attempt bucket reducer", () => {
             expect(fact.tokens.input).toBe(expected?.input)
             expect(fact.tokenCoverage).toEqual({ reported: expected?.reported, unreported: expected?.unreported })
             expect(fact.duration.sum).toBe(expected?.duration)
+            expect(Object.values(fact.errors).reduce((sum, count) => sum + count, 0)).toBe(expected?.failed)
         }
     })
 
@@ -208,6 +286,7 @@ describe("schema 4 attempt bucket reducer", () => {
             attempt({
                 attemptObservationId: "final-b",
                 outcome: "failed",
+                failureClass: "provider_unavailable",
                 logicalExecution: logicalExecution({
                     logicalRequests: { completed: 0, failed: 1, cancelled: 0, aborted: 0 },
                     turnDurationMs: { count: 1, sum: 3_000, min: 3_000, max: 3_000 },

@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest"
-import { classifyDeliveryResponse, classifyExchangeResponse, type WireResponse } from "../classification"
-import { buildDeviceExchangeRequest, parseRetryAfterMs } from "../wire"
+import { classifyDeliveryResponse, type WireResponse } from "../classification"
+import { parseRetryAfterMs } from "../wire"
 
 // Response bodies below follow the service's documented wire format.
-const SECRET = "A".repeat(43)
-const TOKEN = "t".repeat(43)
 const NOW = 1_800_000_000_000
 
 const json = (status: number, body: unknown, retryAfter: string | null = null): WireResponse => ({
@@ -110,82 +108,7 @@ describe("usage and logs response classification (contract v2.1 §1.5)", () => {
     })
 })
 
-describe("device exchange classification", () => {
-    const grant = {
-        ok: true,
-        access_token: TOKEN,
-        device_id: `dev_${"a".repeat(32)}`,
-        endpoint: "https://otel.dline.cc",
-        profile: "usage",
-        scopes: ["usage"],
-        expires_at: NOW + 30 * 86_400_000,
-        capture_policy: { metric_export_interval_ms: 60_000 },
-        rate_limits: { request_capacity: 2 },
-        request_id: "r",
-    }
-
-    it("reads the grant the client acts on and ignores the rest", () => {
-        expect(classifyExchangeResponse(json(200, grant))).toEqual({
-            kind: "granted",
-            grant: {
-                accessToken: TOKEN,
-                deviceId: grant.device_id,
-                profile: "usage",
-                expiresAt: grant.expires_at,
-                metricExportIntervalMs: 60_000,
-            },
-        })
-    })
-
-    it("backs off instead of trusting a grant with a malformed token", () => {
-        expect(classifyExchangeResponse(json(200, { ...grant, access_token: "short" })).kind).toBe("backoff")
-    })
-
-    it("backs off for the enrollment budget using the server's Retry-After", () => {
-        const limited = json(429, { ok: false, retryable: true, error: { code: "device_enrollment_rate_limited" } }, "60")
-
-        expect(classifyExchangeResponse(limited)).toEqual({
-            kind: "backoff",
-            code: "device_enrollment_rate_limited",
-            retryAfterMs: 60_000,
-        })
-    })
-
-    it("resets the device credential when the server revoked it, even without an error message", () => {
-        const revoked = json(403, { ok: false, error: { code: "device_revoked" } })
-
-        expect(classifyExchangeResponse(revoked)).toEqual({ kind: "reset_credential", code: "device_revoked" })
-    })
-
-    it("stops on a credential conflict and stops everything on an edge block", () => {
-        expect(classifyExchangeResponse(json(409, { ok: false, error: { code: "device_credential_conflict" } }))).toEqual({
-            kind: "stop",
-            scope: "profile",
-            code: "device_credential_conflict",
-        })
-        expect(classifyExchangeResponse(edge(403))).toEqual({ kind: "stop", scope: "all", code: "edge_blocked" })
-    })
-})
-
-describe("wire builders and validation", () => {
-    it("refuses a device secret the server would reject", () => {
-        expect(() =>
-            buildDeviceExchangeRequest({ deviceSecret: "short", profile: "usage", clientVersion: "1.0.0", platform: "win32" }),
-        ).toThrow()
-    })
-
-    it("keeps client fields within the server's 1-64 character bounds", () => {
-        const request = buildDeviceExchangeRequest({
-            deviceSecret: SECRET,
-            profile: "usage",
-            clientVersion: "9".repeat(80),
-            platform: "",
-        })
-
-        expect(request.client_version).toHaveLength(64)
-        expect(request.platform.length).toBeGreaterThan(0)
-    })
-
+describe("wire validation", () => {
     it("reads Retry-After as seconds or as an HTTP date", () => {
         expect(parseRetryAfterMs("12", NOW)).toBe(12_000)
         expect(parseRetryAfterMs(new Date(NOW + 5_000).toUTCString(), NOW)).toBe(5_000)

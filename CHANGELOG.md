@@ -10,7 +10,12 @@
 - 账号灰度改为同时开启使用统计和错误报告才会获取；任一项关闭（包括在其他窗口中关闭）会立即退出灰度，并删除本地保存的灰度结果，不再保留旧配置
 - 自定义模型只按设置判定：在 Profile 中勾选 Use custom model ID 并手动输入模型 ID，或在 Bedrock 模型列表中选择 Custom，才算自定义模型；从模型列表中选择的模型不再算自定义，即使服务商是 Ollama、LM Studio、LiteLLM，使用了自定义 Base URL，或模型不在内置目录中。使用统计和错误报告按规范化后的模型 ID 报告所有模型，包括自定义模型，不再替换为 `_custom`，因此手动输入的 ID 也会发送（例如 Bedrock 推理配置文件 ARN 中的区域和 AWS 账号 ID）；自定义模型在使用统计中另外标记 `custom: true`，在错误报告中 `model.custom` 为 `true`
 - 错误报告只发送明确列出的失败与运行时健康事件：服务商请求失败只以 `api.request.failed` 报告一次，不再另发 `task.provider_api_error`；`task.error`、预期内的取消（如停止请求、撤回审查）和记为 warning 的日志只留在本机，只以 warning 记录的失败不再按 error 报告；同一扩展主机中只有一个采样器报告性能预算超限。记录新增 `error.site`（失败被捕获的位置）、`error.fingerprint_version`（指纹版本 3 按该位置分组）、内置工具的 `tool.name`、`failure.stage`，以及性能预算超限时的 `perf.*`；开发构建的请求带 `dline.is_dev=true`。本地 loopback OTLP 也接收 error 通道，不再记录 `dline.errors.*` 指标
-- 发往 `otel.dline.cc` 的遥测请求改用不带 `/v1` 前缀的路径：`/auth/device/exchange`、`/usage` 和 `/logs`；功能开关请求同样改用 `/features`
+- 发往 `otel.dline.cc` 的遥测改用修订 5 合同，所有请求都带 `X-Dline-Contract: 5`：设备授权改用 `/auth/device/grant`，使用统计按 schema 5 发往 `/usage`；错误报告与运行时诊断按标准 OTLP/JSON 发往 `/v1/logs`，并新增生产 `/v1/metrics`（每 60 秒一个 delta 窗口）与 `/v1/traces` 通道。Dline 自有路径不带 `/v1`，功能开关请求同样改用 `/features`
+- Report Bug 的临时诊断授权改用服务端签发的授权（`/auth/report-authorizations` 与 `/auth/exchange`）；授权或遥测失败不会阻止打开 Issue
+
+### Removed
+- 移除 PostHog 产品分析与错误跟踪（扩展和 Webview 均移除），构建不再注入其 API key；旧的 `/auth/device/exchange` 授权方式也已移除
+- 升级后，旧版本留在本机、尚未发送的使用统计与错误报告队列、从未使用的配对码以及旧授权令牌会被直接删除，不迁移也不再发送；本机只保留记录丢弃了什么、丢弃多少的元数据，不含内容
 
 ### Fixed
 - VS Code Terminal 在 WSL/Linux bash 与 Windows PowerShell 中会为每条前台命令记录内部退出标记，即使没有项目终端配置也能稳定返回 stdout 与退出码；新任务会立即预热终端，慢启动的冷终端会等待 Shell Integration 真正可执行，aggressive terminal reuse 的顺序命令不再为每次执行额外创建并丢弃替代终端

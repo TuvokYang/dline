@@ -1,6 +1,6 @@
 /**
- * Tests for selfHosted mode behavior across PostHog-based services.
- * When ClineEndpoint.isSelfHosted() returns true, all PostHog functionality should be disabled.
+ * Self-hosted mode must not change which local providers are used: feature
+ * flags resolve locally and the error provider never reports anywhere.
  */
 
 import * as assert from "assert"
@@ -18,7 +18,7 @@ import { Logger } from "@/shared/services/Logger"
 import { ErrorProviderFactory } from "../error/ErrorProviderFactory"
 import { FeatureFlagsProviderFactory } from "../feature-flags/FeatureFlagsProviderFactory"
 
-describe("SelfHosted Mode - PostHog Disabling", () => {
+describe("SelfHosted Mode - local providers", () => {
     let isSelfHostedStub: any /* sinon.SinonStub → vitest */
 
     afterEach(() => {
@@ -47,22 +47,6 @@ describe("SelfHosted Mode - PostHog Disabling", () => {
     })
 
     describe("ErrorProviderFactory", () => {
-        it("should return no-op config when in selfHosted mode", () => {
-            isSelfHostedStub = vi.spyOn(ClineEndpoint, "isSelfHosted").mockReturnValue(true)
-
-            const config = ErrorProviderFactory.getDefaultConfig()
-
-            assert.strictEqual(config.type, "no-op", "Should return no-op type in selfHosted mode")
-        })
-
-        it("should keep the compatibility provider local when NOT in selfHosted mode", () => {
-            isSelfHostedStub = vi.spyOn(ClineEndpoint, "isSelfHosted").mockReturnValue(false)
-
-            const config = ErrorProviderFactory.getDefaultConfig()
-
-            assert.strictEqual(config.type, "no-op", "Remote error sinks must be registered through TelemetryService")
-        })
-
         it("should create a disabled provider with zero logging side effects", async () => {
             isSelfHostedStub = vi.spyOn(ClineEndpoint, "isSelfHosted").mockReturnValue(true)
             const messages: string[] = []
@@ -80,16 +64,6 @@ describe("SelfHosted Mode - PostHog Disabling", () => {
             assert.strictEqual(provider.isEnabled(), false, "NoOp provider must report as disabled")
             assert.deepStrictEqual(provider.getSettings(), { enabled: false, hostEnabled: false, level: "off" })
             assert.deepStrictEqual(messages, [])
-        })
-    })
-
-    describe("Integration - selfHosted should disable all PostHog services", () => {
-        it("should return no-op for every PostHog-based factory when selfHosted", () => {
-            isSelfHostedStub = vi.spyOn(ClineEndpoint, "isSelfHosted").mockReturnValue(true)
-
-            // Feature flags are no longer PostHog-based, so they are not part of
-            // this assertion: local resolution makes no request to suppress.
-            assert.strictEqual(ErrorProviderFactory.getDefaultConfig().type, "no-op", "Error provider should be no-op")
         })
     })
 })

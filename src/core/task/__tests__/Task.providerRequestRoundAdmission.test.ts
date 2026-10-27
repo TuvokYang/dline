@@ -12,7 +12,7 @@ import type { BlockPhase } from "../kernel"
 import type { ApiRequestRoundScopeInput } from "../performance/api-request-round-lifecycle"
 import type { ApiRequestRoundHandle } from "../performance/api-request-round-tracker"
 import type { ApiRequestRoundUsage } from "../performance/api-request-round-types"
-import { type ProviderRequestRoundAdmission, projectProviderUsageModelId } from "../performance/provider-request-round-port"
+import type { ProviderRequestRoundAdmission } from "../performance/provider-request-round-port"
 import { TaskProviderRequestRoundOwner } from "../performance/TaskProviderRequestRoundOwner"
 import type { UsageToolCall } from "../telemetry/UsageToolCalls"
 
@@ -74,6 +74,7 @@ function createOwner(
                 finishAttempt: () => undefined,
             })),
             attachExactUsage: vi.fn(),
+            finalizeTokens: vi.fn(),
             completeProviderOnly: vi.fn(),
             completeTools: vi.fn(),
             completeTurnEndAwaitingUser: vi.fn(),
@@ -88,6 +89,7 @@ describe("Task Provider request round admission", () => {
     it("creates a new logical request for task attempt zero and attaches usage by its exact terminal handle", async () => {
         const observedScopes: ApiRequestRoundScopeInput[] = []
         const attachedUsage: Array<{ handle: ApiRequestRoundHandle; usage: ApiRequestRoundUsage }> = []
+        const finalizedHandles: ApiRequestRoundHandle[] = []
         let providerAttempt = 0
         const owner = new TaskProviderRequestRoundOwner({
             lifecycle: {
@@ -101,6 +103,9 @@ describe("Task Provider request round admission", () => {
                 }),
                 attachExactUsage: vi.fn((handle, usage) => {
                     attachedUsage.push({ handle, usage })
+                }),
+                finalizeTokens: vi.fn((handle) => {
+                    finalizedHandles.push(handle)
                 }),
                 completeProviderOnly: vi.fn(),
                 completeTools: vi.fn(),
@@ -136,26 +141,11 @@ describe("Task Provider request round admission", () => {
         expect(attachedUsage).toEqual([
             { handle: expect.objectContaining({ logicalRequestId: restoredScope?.logicalRequestId }), usage },
         ])
+        // The wrapper's single accumulated usage also closes that same send's finalization window.
+        expect(finalizedHandles).toEqual([attachedUsage[0]?.handle])
     })
 
-    it("projects only explicit public catalog entries and never exposes private or untrusted model IDs", async () => {
-        const catalog = {
-            getProviderModels: (provider: string) =>
-                provider === "openai"
-                    ? {
-                          models: {
-                              "gpt-public": { id: "gpt-public", userDefined: false },
-                              "secret-tuned-model": { id: "secret-tuned-model", userDefined: true },
-                              "legacy-unclassified": { id: "legacy-unclassified" },
-                          },
-                      }
-                    : undefined,
-        }
-        expect(projectProviderUsageModelId(catalog, "openai", "gpt-public")).toBe("catalog:gpt-public")
-        expect(projectProviderUsageModelId(catalog, "openai", "secret-tuned-model")).toBe("state:private")
-        expect(projectProviderUsageModelId(catalog, "openai", "legacy-unclassified")).toBe("state:unknown")
-        expect(projectProviderUsageModelId(catalog, "openai", "raw-private-model")).toBe("state:unknown")
-
+    it("freezes the contract model identity from the Profile selection mode and never forwards the raw wire model", async () => {
         const observedIdentities: Array<ProviderAttemptIdentity | undefined> = []
         const owner = new TaskProviderRequestRoundOwner({
             lifecycle: {
@@ -167,25 +157,32 @@ describe("Task Provider request round admission", () => {
                     finishAttempt: () => undefined,
                 })),
                 attachExactUsage: vi.fn(),
+                finalizeTokens: vi.fn(),
                 completeProviderOnly: vi.fn(),
                 completeTools: vi.fn(),
                 completeTurnEndAwaitingUser: vi.fn(),
             },
             readExecutionBlocks: () => [],
             isExecutionCancelling: () => false,
-            projectUsageModelId: (provider, wireModelId) => projectProviderUsageModelId(catalog, provider, wireModelId),
         })
+        const sends: ProviderAttemptIdentity[] = [
+            { provider: "openai", modelId: "GPT-4o", thinking: "level:high" },
+            { provider: "openai", modelId: "Secret Tuned/Model", thinking: "state:default", customModel: true },
+            { provider: "ollama", modelId: "C:\\models\\llama.gguf", thinking: "state:off", customModel: true },
+        ]
 
         const admission = owner.admit({ source: "task" })
-        await drain(
-            bindProviderAttemptScope(
-                identifiedSend({ provider: "openai", modelId: "gpt-public", thinking: "state:disabled" }),
-                admission.createAttemptObserver(0),
-            ),
-        )
+        for (const [index, identity] of sends.entries()) {
+            await drain(bindProviderAttemptScope(identifiedSend(identity), admission.createAttemptObserver(index)))
+        }
 
-        expect(observedIdentities).toEqual([{ provider: "openai", modelId: "catalog:gpt-public", thinking: "state:disabled" }])
-        expect(JSON.stringify(observedIdentities)).not.toContain("secret-tuned-model")
+        expect(observedIdentities.map((identity) => identity?.modelId)).toEqual([
+            "catalog:gpt-4o",
+            "custom:secret_tuned/model",
+            "state:private",
+        ])
+        expect(observedIdentities.map((identity) => identity?.thinking)).toEqual(["level:high", "state:default", "state:off"])
+        expect(observedIdentities.some((identity) => identity?.modelId.includes("llama.gguf"))).toBe(false)
     })
 
     it("passes the frozen five-role catalog into every attempt scope and recognizes reviewer subagents", () => {
@@ -197,6 +194,7 @@ describe("Task Provider request round admission", () => {
                     return { beginAttempt: () => attemptHandle(input), finishAttempt: () => undefined }
                 }),
                 attachExactUsage: vi.fn(),
+                finalizeTokens: vi.fn(),
                 completeProviderOnly: vi.fn(),
                 completeTools: vi.fn(),
                 completeTurnEndAwaitingUser: vi.fn(),

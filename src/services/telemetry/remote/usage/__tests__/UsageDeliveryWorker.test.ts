@@ -8,30 +8,22 @@ import { USAGE_SENDER_LEASE_MS, UsageOutboxRepository } from "@/core/storage/tel
 import type { AcquireOptions, TokenAcquisition } from "../../auth/DeviceTokenBroker"
 import type { WireResponse } from "../../contracts/classification"
 import { USAGE_GRANT_HARD_LIMITS, type UsageGrantContract } from "../../contracts/deviceGrant"
-import {
-    USAGE_MINUTE_MS,
-    USAGE_SECOND_MS,
-    type UsageAttemptBodyValidation,
-    type UsageAttemptBodyWire,
-} from "../../contracts/usageBody"
+import type { UsageBodyGrant, UsageBodyWire } from "../../contracts/usageBody"
+import { canonicalUsageBodyBytes, validateUsageBodySchema } from "../../contracts/usageBodySchema"
 import { DlineOtelTransportError, type UsageDelivery, type UsageTransport } from "../../transport/DlineOtelHttpClient"
 import { UsageDeliveryWorker } from "../UsageDeliveryWorker"
 
-const MINUTE = USAGE_MINUTE_MS
-const SECOND = USAGE_SECOND_MS
+const SECOND = 1_000
+const MINUTE = 60 * SECOND
 const SETTLE = 20_000
-const HOUR = 60 * MINUTE
 const ATTEMPT_CONTRACT: UsageGrantContract = {
-    schemaVersion: 4,
-    contractVersion: 4,
+    schemaVersion: 5,
+    contractVersion: 1,
     ...USAGE_GRANT_HARD_LIMITS,
     defaultIntervalMs: 600_000,
     newBatchJitterMaxMs: 0,
 }
-const ATTEMPT_VALIDATION: UsageAttemptBodyValidation = {
-    contract: ATTEMPT_CONTRACT,
-    estimateWriteRows: (body) => 1 + body.buckets.length + body.buckets.reduce((sum, bucket) => sum + bucket.facts.length, 0),
-}
+const ATTEMPT_VALIDATION: UsageBodyGrant = { contract: ATTEMPT_CONTRACT }
 
 class FakeTokens {
     readonly calls: AcquireOptions[] = []
@@ -66,14 +58,14 @@ class FakeTransport implements UsageTransport {
         return reply
     }
 
-    sentAttempt(index: number): UsageAttemptBodyWire {
-        return JSON.parse(this.deliveries[index].body) as UsageAttemptBodyWire
+    sentAttempt(index: number): UsageBodyWire {
+        return JSON.parse(this.deliveries[index].body) as UsageBodyWire
     }
 }
 
-function accepted(disposition = "accepted", nextEligibleAt?: number): WireResponse {
-    const gate = nextEligibleAt === undefined ? {} : { next_eligible_at: nextEligibleAt }
-    return { status: 200, json: { ok: true, disposition, ...gate }, retryAfter: null }
+/** A `UsageAck` (usage-contract §15): flat body, and `next_eligible_at` is mandatory. */
+function accepted(disposition = "accepted", nextEligibleAt = 0): WireResponse {
+    return { status: 200, json: { disposition, next_eligible_at: nextEligibleAt }, retryAfter: null }
 }
 
 describe("UsageDeliveryWorker", () => {
@@ -100,8 +92,8 @@ describe("UsageDeliveryWorker", () => {
         ownerId: string,
         tokens: FakeTokens,
         transport: FakeTransport,
-        attemptValidation?: UsageAttemptBodyValidation,
-        readAttemptValidation?: () => Promise<UsageAttemptBodyValidation | undefined>,
+        attemptGrant?: UsageBodyGrant,
+        readAttemptGrant?: () => Promise<UsageBodyGrant | undefined>,
     ): UsageDeliveryWorker {
         return new UsageDeliveryWorker({
             outbox: new UsageOutboxRepository(layout, { clock: () => now }),
@@ -113,8 +105,8 @@ describe("UsageDeliveryWorker", () => {
             clock: () => now,
             newRequestId: () => `0b4f8a52-5d0e-4e55-9a0c-${String(++requestCounter).padStart(12, "0")}`,
             random: () => 0,
-            attemptValidation,
-            readAttemptValidation,
+            attemptGrant,
+            readAttemptGrant,
         })
     }
 
@@ -128,6 +120,7 @@ describe("UsageDeliveryWorker", () => {
             id,
             revision: 1,
             receivedAt: admittedAt + durationMs,
+            localSessionId: "worker-session",
             observation: {
                 attemptObservationId: id,
                 logicalRequestId: `logical-${id}`,
@@ -162,10 +155,10 @@ describe("UsageDeliveryWorker", () => {
         expect((await fs.readdir(layout.usageObservationsDir)).some((name) => name.endsWith(".attempts.jsonl"))).toBe(true)
     })
 
-    it("bootstraps the schema 4 grant before selecting a delivery contract", async () => {
+    it("bootstraps the schema 5 grant before selecting a delivery contract", async () => {
         const transport = new FakeTransport()
         const tokens = new FakeTokens()
-        let activeValidation: UsageAttemptBodyValidation | undefined
+        let activeValidation: UsageBodyGrant | undefined
         tokens.onAcquire = () => {
             activeValidation = ATTEMPT_VALIDATION
         }
@@ -181,7 +174,7 @@ describe("UsageDeliveryWorker", () => {
         now = start + MINUTE + SETTLE
         expect(await sender.runCycle(7)).toMatchObject({ kind: "delivered", disposition: "accepted" })
         expect(transport.deliveries).toHaveLength(1)
-        expect(transport.sentAttempt(0).schema_version).toBe(4)
+        expect(transport.sentAttempt(0).schema_version).toBe(5)
     })
 
     it("preserves auxiliary roles in the final schema 4 delivery body", async () => {
@@ -205,7 +198,7 @@ describe("UsageDeliveryWorker", () => {
 
     it("uses the live grant for clean cut and stops sending after that grant expires", async () => {
         const transport = new FakeTransport()
-        let activeValidation: UsageAttemptBodyValidation | undefined
+        let activeValidation: UsageBodyGrant | undefined
         const sender = worker("window-a", new FakeTokens(), transport, undefined, async () => activeValidation)
         const outbox = new UsageOutboxRepository(layout, { clock: () => now })
         await observeAttempt("attempt-a", start + 1_000, 58_400)
@@ -231,7 +224,7 @@ describe("UsageDeliveryWorker", () => {
 
     it("fsyncs deterministic loss evidence before rejecting an unsendable sealed bucket", async () => {
         const transport = new FakeTransport()
-        const validation: UsageAttemptBodyValidation = {
+        const validation: UsageBodyGrant = {
             ...ATTEMPT_VALIDATION,
             contract: { ...ATTEMPT_CONTRACT, maxBodyBytes: 1 },
         }
@@ -240,7 +233,7 @@ describe("UsageDeliveryWorker", () => {
 
         expect(await sender.runCycle(7)).toEqual({ kind: "idle" })
         now += SEALED_SHARD_SETTLE_MS
-        expect(await sender.runCycle(7)).toEqual({ kind: "rejected", violations: ["body_size"] })
+        expect(await sender.runCycle(7)).toEqual({ kind: "rejected", violations: ["payload_too_large:body_size"] })
 
         const names = (await fs.readdir(layout.remoteQuarantineDir)).filter((name) => name.startsWith("usage-attempt-loss-"))
         expect(names).toHaveLength(1)
@@ -250,20 +243,24 @@ describe("UsageDeliveryWorker", () => {
             kind: "usage_attempt_bucket_loss",
             stage: "validation",
             bucket_ids: [expect.any(String)],
-            violations: ["body_size"],
+            violations: ["payload_too_large:body_size"],
         })
         expect(transport.deliveries).toEqual([])
     })
 
     it("records permanent delivery loss before releasing the immutable bucket", async () => {
         const transport = new FakeTransport()
-        transport.replies.push({ status: 422, json: { ok: false, error: { code: "invalid_usage" } }, retryAfter: null })
+        transport.replies.push({
+            status: 422,
+            json: { disposition: "rejected", code: "invalid_usage_body", path: "buckets[0].facts[0].errors" },
+            retryAfter: null,
+        })
         const sender = worker("window-a", new FakeTokens(), transport, ATTEMPT_VALIDATION)
         await observeAttempt("attempt-a", start + 1_000, 60_000)
 
         expect(await sender.runCycle(7)).toEqual({ kind: "idle" })
         now += SEALED_SHARD_SETTLE_MS
-        expect(await sender.runCycle(7)).toMatchObject({ kind: "discarded", code: "invalid_usage" })
+        expect(await sender.runCycle(7)).toMatchObject({ kind: "discarded", code: "invalid_usage_body" })
 
         const names = (await fs.readdir(layout.remoteQuarantineDir)).filter((name) => name.startsWith("usage-attempt-loss-"))
         expect(names).toHaveLength(1)
@@ -271,7 +268,7 @@ describe("UsageDeliveryWorker", () => {
         expect(evidence).toMatchObject({
             kind: "usage_attempt_bucket_loss",
             stage: "delivery",
-            violations: ["invalid_usage"],
+            violations: ["invalid_usage_body"],
         })
         expect((await new UsageOutboxRepository(layout).readAttempts())?.buckets.sealed).toEqual([])
     })
@@ -322,10 +319,12 @@ describe("UsageDeliveryWorker", () => {
 
     it("persists a schema 4 429 wait across restart and replays the exact request before later work", async () => {
         const transport = new FakeTransport()
+        const nextEligibleAt = start + SEALED_SHARD_SETTLE_MS + 120_000
         transport.replies.push({
             status: 429,
-            json: { ok: false, retry_after_ms: 120_000, error: { code: "telemetry_paused" } },
-            retryAfter: "120",
+            json: { disposition: "rejected", code: "quota_limited", next_eligible_at: nextEligibleAt },
+            // The body names the gate; the header disagrees and must lose.
+            retryAfter: "5",
         })
         const sender = worker("window-a", new FakeTokens(), transport, ATTEMPT_VALIDATION)
         await observeAttempt("attempt-paused", start + 1_000, 60_000)
@@ -334,6 +333,7 @@ describe("UsageDeliveryWorker", () => {
         now += SEALED_SHARD_SETTLE_MS
         const paused = await sender.runCycle(7)
         const waitUntil = (await new UsageOutboxRepository(layout).readAttempts())?.pacing.waitUntil ?? 0
+        expect(waitUntil).toBe(nextEligibleAt)
         const restarted = worker("window-a", new FakeTokens(), transport, ATTEMPT_VALIDATION)
         now = waitUntil - 1
         expect(await restarted.runCycle(7)).toEqual({ kind: "idle" })
@@ -341,7 +341,7 @@ describe("UsageDeliveryWorker", () => {
         transport.replies.push(accepted("duplicate"))
         expect(await restarted.runCycle(7)).toMatchObject({ kind: "delivered", disposition: "duplicate" })
 
-        expect(paused).toMatchObject({ kind: "paused", code: "telemetry_paused", until: waitUntil })
+        expect(paused).toMatchObject({ kind: "paused", code: "quota_limited", until: waitUntil })
         expect(transport.deliveries).toHaveLength(2)
         expect(transport.deliveries[1].requestId).toBe(transport.deliveries[0].requestId)
         expect(transport.deliveries[1].body).toBe(transport.deliveries[0].body)
@@ -367,7 +367,66 @@ describe("UsageDeliveryWorker", () => {
         expect(transport.deliveries[1].body).toBe(transport.deliveries[0].body)
     })
 
-    it("publishes immutable schema 4 bytes only when complete grant validation is present", async () => {
+    it("replays a 200 that is not a UsageAck and confirms ignored_version without a business write", async () => {
+        const transport = new FakeTransport()
+        // A confirmation without its gate is not a UsageAck: the outcome stays unknown.
+        transport.replies.push({ status: 200, json: { disposition: "accepted" }, retryAfter: null })
+        transport.replies.push(accepted("ignored_version", start))
+        const sender = worker("window-a", new FakeTokens(), transport, ATTEMPT_VALIDATION)
+        const outbox = new UsageOutboxRepository(layout, { clock: () => now })
+        await observeAttempt("attempt-ignored", start + 1_000, 60_000)
+
+        expect(await sender.runCycle(7)).toEqual({ kind: "idle" })
+        now += SEALED_SHARD_SETTLE_MS
+        expect(await sender.runCycle(7)).toMatchObject({ kind: "retrying" })
+        now = (await outbox.readAttempts())?.inflight?.notBefore ?? now
+        expect(await sender.runCycle(7)).toMatchObject({ kind: "delivered", disposition: "ignored_version" })
+
+        expect(transport.deliveries).toHaveLength(2)
+        expect(transport.deliveries[1].body).toBe(transport.deliveries[0].body)
+        expect((await outbox.readAttempts())?.buckets.sealed).toEqual([])
+    })
+
+    it("dead-letters a request ID conflict without rebuilding the request", async () => {
+        const transport = new FakeTransport()
+        transport.replies.push({
+            status: 409,
+            json: { disposition: "rejected", code: "request_id_conflict", path: "request_id" },
+            retryAfter: null,
+        })
+        const sender = worker("window-a", new FakeTokens(), transport, ATTEMPT_VALIDATION)
+        const outbox = new UsageOutboxRepository(layout, { clock: () => now })
+        await observeAttempt("attempt-conflict", start + 1_000, 60_000)
+
+        expect(await sender.runCycle(7)).toEqual({ kind: "idle" })
+        now += SEALED_SHARD_SETTLE_MS
+        expect(await sender.runCycle(7)).toMatchObject({ kind: "discarded", code: "request_id_conflict" })
+        now += 10 * MINUTE
+        expect(await sender.runCycle(7)).toEqual({ kind: "idle" })
+
+        expect(transport.deliveries).toHaveLength(1)
+        expect((await outbox.readAttempts())?.buckets.sealed).toEqual([])
+    })
+
+    it("sends RFC 8785 canonical bytes whose hash is the stored manifest hash", async () => {
+        const transport = new FakeTransport()
+        const sender = worker("window-a", new FakeTokens(), transport, ATTEMPT_VALIDATION)
+        await observeAttempt("attempt-z", start + 1_000, 30_000, "subagent")
+        await observeAttempt("attempt-y", start + 2_000, 31_000, "compaction")
+
+        expect(await sender.runCycle(7)).toEqual({ kind: "idle" })
+        now += SEALED_SHARD_SETTLE_MS
+        expect(await sender.runCycle(7)).toMatchObject({ kind: "delivered" })
+
+        const sent = transport.deliveries[0].body
+        expect(sent).toBe(new TextDecoder().decode(canonicalUsageBodyBytes(JSON.parse(sent))))
+        expect(transport.sentAttempt(0).buckets[0].facts.map((fact) => fact.role)).toEqual(["compaction", "subagent"])
+        expect(validateUsageBodySchema(transport.sentAttempt(0), { limits: ATTEMPT_CONTRACT, clientVersion: "0.11.1" })).toEqual(
+            [],
+        )
+    })
+
+    it("publishes immutable schema 5 bytes only when complete grant validation is present", async () => {
         const tokens = new FakeTokens()
         const transport = new FakeTransport()
         const sender = worker("window-a", tokens, transport, ATTEMPT_VALIDATION)
@@ -383,7 +442,7 @@ describe("UsageDeliveryWorker", () => {
         expect(result).toMatchObject({ kind: "delivered", disposition: "accepted" })
         expect(transport.deliveries).toHaveLength(1)
         expect(transport.sentAttempt(0)).toMatchObject({
-            schema_version: 4,
+            schema_version: 5,
             buckets: [
                 {
                     duration_ms: 76_900,

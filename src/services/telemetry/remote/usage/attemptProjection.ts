@@ -13,6 +13,9 @@ import type { ApiRequestRoundHandle, ProviderAttemptRole } from "@/core/task/per
 import type { ApiRequestRoundRecord } from "@/core/task/performance/api-request-round-types"
 import type { ApiResponseExecutionRecord } from "@/core/task/performance/api-response-execution-types"
 import type { UsageToolCall } from "@/core/task/telemetry/UsageToolCalls"
+import { isUsageModelId, USAGE_MODEL_UNKNOWN } from "../contracts/modelIdentity"
+import { isUsageThinking } from "../contracts/thinking"
+import type { UsageFailureClass } from "../contracts/usageBodySchema"
 import {
     EMPTY_EXECUTION_SUMMARY,
     type ExecutionSummary,
@@ -60,21 +63,22 @@ export interface UsageAttemptObservation {
     readonly durationMs: number
     readonly tokens: UsageAttemptTokens
     readonly tokenUsageReported: boolean
+    /** Present exactly when `outcome` is `failed` (usage-contract §5). */
+    readonly failureClass?: UsageFailureClass
     readonly ttftMs?: number
+    /** Generation timing and output exist only as a pair, and only with reported tokens. */
     readonly generationMs?: number
     readonly generationOutputTokens?: number
-    /** Activation delta attached only to a final result-producing attempt. */
-    readonly sessionsStarted?: number
+    /** Present when the logical request settled before this attempt's tokens were final. */
     readonly logicalExecution?: UsageLogicalExecutionObservation
 }
 
-/** Convert the highest revision of one terminal attempt into the sole schema 4 observation for that handle. */
+/** Convert one revision of a terminal attempt into the schema 4 observation for that handle. */
 export function projectFinalizedAttempt(
     handle: ApiRequestRoundHandle,
     record: ApiRequestRoundRecord,
     execution?: ApiResponseExecutionRecord,
     logicalToolCalls?: readonly UsageToolCall[],
-    sessionsStarted = 0,
 ): UsageAttemptObservation {
     if (handle.roundId !== record.roundId || handle.logicalRequestId !== record.logicalRequestId) {
         throw new Error("Attempt handle and revision identity do not match")
@@ -82,10 +86,9 @@ export function projectFinalizedAttempt(
     const identity = readIdentity(handle)
     const policyGeneration = requireCount(handle.policyGeneration, "policy generation")
     const admittedAt = requireCount(handle.startedAtMs, "admittedAt")
-    const durationMs = requireCount(Math.round(record.providerDurationMs ?? 0), "duration")
+    // Every real send lasts at least 1 ms; timer resolution may report 0 (usage-contract §5).
+    const durationMs = Math.max(1, requireCount(Math.round(record.providerDurationMs ?? 0), "duration"))
     const tokenUsageReported = record.usageQuality === "exact"
-    const activationCount = requireCount(sessionsStarted, "sessions started")
-    if (activationCount > 0 && !execution) throw new Error("Session starts require a final logical execution")
     const tokens: UsageAttemptTokens = tokenUsageReported
         ? {
               input: requireCount(record.inputTokens, "input tokens"),
@@ -106,12 +109,12 @@ export function projectFinalizedAttempt(
         durationMs,
         tokens,
         tokenUsageReported,
-        ...(activationCount > 0 ? { sessionsStarted: activationCount } : {}),
         ...(execution ? { logicalExecution: projectLogicalExecution(handle, execution, logicalToolCalls) } : {}),
     }
 }
 
-function projectLogicalExecution(
+/** Project the settled execution of the logical request whose result-producing attempt is `handle`. */
+export function projectLogicalExecution(
     handle: ApiRequestRoundHandle,
     execution: ApiResponseExecutionRecord,
     logicalToolCalls?: readonly UsageToolCall[],
@@ -190,22 +193,10 @@ function readIdentity(handle: ApiRequestRoundHandle): UsageAttemptIdentity {
     const { role, provider, modelId, thinking } = handle
     if (!role || !provider || !modelId || thinking === undefined)
         throw new Error("Complete schema 4 attempt identity is required")
-    if (!/^[a-z0-9_-]{1,32}$/u.test(provider)) throw new Error("Attempt provider identity is invalid")
-    if (!isThinking(thinking)) throw new Error("Attempt thinking identity is invalid")
-    return { role, provider, modelId: projectModelIdentity(modelId), thinking }
-}
-
-function projectModelIdentity(modelId: string): string {
-    if (/^(?:catalog:[a-z0-9][a-z0-9_.:/-]{0,95}|state:(?:private|unknown))$/u.test(modelId)) return modelId
-    // A final wire model is known to exist, but without a trusted catalog/custom classification its raw value is private.
-    return "state:unknown"
-}
-
-function isThinking(value: ProviderAttemptThinking): boolean {
-    if (typeof value === "number") {
-        return Number.isSafeInteger(value) && !Object.is(value, -0) && (value === -1 || value >= 0)
-    }
-    return /^(?:level:[a-z0-9_.-]{1,32}|state:(?:enabled|disabled|off|dynamic|default|unknown))$/u.test(value)
+    if (!/^[a-z][a-z0-9_-]{0,31}$/u.test(provider)) throw new Error("Attempt provider identity is invalid")
+    if (!isUsageThinking(thinking)) throw new Error("Attempt thinking identity is invalid")
+    // The admission boundary already projected the model; anything else never leaves as a raw value.
+    return { role, provider, modelId: isUsageModelId(modelId) ? modelId : USAGE_MODEL_UNKNOWN, thinking }
 }
 
 function requireCount(value: number | undefined, label: string): number {

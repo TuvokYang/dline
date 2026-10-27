@@ -2,8 +2,9 @@ import { randomUUID } from "node:crypto"
 import type { UsageObservationSpool } from "@/core/storage/telemetry-remote/UsageObservationSpool"
 import type { UsageOutboxRepository, UsageSenderGrant } from "@/core/storage/telemetry-remote/UsageOutboxRepository"
 import type { DeviceTokenBroker } from "../auth/DeviceTokenBroker"
-import { classifyDeliveryResponse, type DeliveryOutcome, type StopScope } from "../contracts/classification"
-import type { UsageAttemptBodyValidation, UsageClientWire } from "../contracts/usageBody"
+import { classifyUsageResponse, type DeliveryOutcome, type StopScope } from "../contracts/classification"
+import { type ReplayBudget, usageReplayBudget } from "../contracts/pacing"
+import type { UsageBodyGrant, UsageClientWire } from "../contracts/usageBody"
 import type { DeliveryDisposition } from "../contracts/wire"
 import { DlineOtelTransportError, type UsageTransport } from "../transport/DlineOtelHttpClient"
 import {
@@ -15,6 +16,7 @@ import {
     type UsageAttemptInflight,
     type UsageAttemptObservationRejection,
     type UsageInflightResolution,
+    usageBucketFitsGrant,
 } from "./usageOutbox"
 
 export type UsageCycleResult =
@@ -53,8 +55,8 @@ export interface UsageDeliveryWorkerOptions {
     /** Source of the 429 wait jitter. */
     readonly random?: () => number
     /** Static test seam; production reads the active atomic grant before every cycle. */
-    readonly attemptValidation?: UsageAttemptBodyValidation
-    readonly readAttemptValidation?: () => Promise<UsageAttemptBodyValidation | undefined>
+    readonly attemptGrant?: UsageBodyGrant
+    readonly readAttemptGrant?: () => Promise<UsageBodyGrant | undefined>
 }
 
 type PreparedAttempts = (
@@ -84,39 +86,20 @@ export class UsageDeliveryWorker {
     private readonly clock: () => number
     private readonly newRequestId: () => string
     private grant: UsageSenderGrant | undefined
-    private attemptsActive = false
 
     constructor(private readonly options: UsageDeliveryWorkerOptions) {
         this.clock = options.clock ?? Date.now
         this.newRequestId = options.newRequestId ?? randomUUID
     }
 
-    /** Synchronous authority projection used to retire the schema 3 logical intake after clean-cut. */
-    get attemptAuthorityActive(): boolean {
-        return this.attemptsActive
-    }
-
-    /** Resolve persisted authority before coordinator intake opens after a restart. */
-    async refreshAttemptAuthority(): Promise<boolean> {
-        try {
-            this.attemptsActive = (await this.options.outbox.readAttempts()) !== undefined
-            return this.attemptsActive
-        } catch (error) {
-            // Unknown ownership must not reopen the retired schema 3 authority.
-            this.attemptsActive = true
-            throw error
-        }
-    }
-
     async runCycle(policyEpoch: number, signal?: AbortSignal): Promise<UsageCycleResult> {
-        const { outbox, spool } = this.options
-        let attemptValidation = (await this.options.readAttemptValidation?.()) ?? this.options.attemptValidation
-        let attemptAuthorityActive = await this.refreshAttemptAuthority()
+        const { outbox } = this.options
+        let attemptGrant = (await this.options.readAttemptGrant?.()) ?? this.options.attemptGrant
+        let outboxActive = await this.outboxActive()
 
-        // A dynamic grant reader means the current service contract owns schema selection. Bootstrap the
-        // grant before creating a legacy outbox; otherwise the token exchange can admit schema 4 only after
-        // a schema 3 body has already been built, and the authoritative service correctly stops the profile.
-        if (!attemptValidation && !attemptAuthorityActive && this.options.readAttemptValidation) {
+        // A dynamic grant reader means the service contract owns admission. The grant is bootstrapped
+        // before the outbox exists, so no batch is ever built without the contract 5 grant it must satisfy.
+        if (!attemptGrant && !outboxActive && this.options.readAttemptGrant) {
             let acquired
             try {
                 acquired = await this.options.tokens.acquire("usage", { signal })
@@ -129,26 +112,28 @@ export class UsageDeliveryWorker {
                 return { kind: "waiting", reason: acquired.reason, retryAt: acquired.retryAt }
             }
             if (acquired.status === "unavailable") return { kind: "waiting", reason: "token_unavailable" }
-            attemptValidation = await this.options.readAttemptValidation()
+            attemptGrant = await this.options.readAttemptGrant()
         }
 
-        if (attemptValidation) {
+        if (attemptGrant) {
             await outbox.activateAttempts(policyEpoch)
-            attemptAuthorityActive = await this.refreshAttemptAuthority()
+            outboxActive = await this.outboxActive()
         }
-        if (attemptAuthorityActive) {
-            await spool.purgeLegacy()
-            return this.runAttemptFoldCycle(policyEpoch, attemptValidation, signal)
-        }
-        // Schema 3 has no sender path. Until the schema 4 grant contract is durably visible, keep attempt
-        // observations in their process shards and retry on the next cycle.
+        if (outboxActive) return this.runAttemptFoldCycle(policyEpoch, attemptGrant, signal)
+        // Until a contract 5 grant is durably visible, attempt observations stay in their process shards
+        // and the next cycle retries.
         return { kind: "idle" }
+    }
+
+    /** Whether this machine's contract 5 outbox exists; observations are folded only into it. */
+    private async outboxActive(): Promise<boolean> {
+        return (await this.options.outbox.readAttempts()) !== undefined
     }
 
     /** Fold schema 4 shards under the same fenced machine lease; manifest delivery is the next stage. */
     private async runAttemptFoldCycle(
         policyGeneration: number,
-        validation: UsageAttemptBodyValidation | undefined,
+        attemptGrant: UsageBodyGrant | undefined,
         signal?: AbortSignal,
     ): Promise<UsageCycleResult> {
         const { outbox, spool } = this.options
@@ -165,7 +150,8 @@ export class UsageDeliveryWorker {
                 currentPolicyGeneration: policyGeneration,
                 newBucketId: randomUUID,
                 sealedAt: committedAt,
-                eventWindowMs: validation?.contract.eventWindowMs,
+                eventWindowMs: attemptGrant?.contract.eventWindowMs,
+                ...(attemptGrant ? { fits: usageBucketFitsGrant(attemptGrant, this.options.client) } : {}),
                 onRejected: (rejection) => rejected.push(rejection),
             })
             const bounded = boundUsageAttemptBacklog(next, committedAt)
@@ -183,18 +169,18 @@ export class UsageDeliveryWorker {
         if (folded.status === "fenced") return { kind: "fenced" }
         if (shards.length > 0) await spool.discardAttempts(shards.map((shard) => shard.name))
         if (!(await outbox.removeAttemptBodies(grant, folded.result))) return { kind: "fenced" }
-        if (!validation) return { kind: "idle" }
+        if (!attemptGrant) return { kind: "idle" }
 
-        const prepared = await this.prepareAttempts(grant, validation)
+        const prepared = await this.prepareAttempts(grant, attemptGrant)
         if (prepared.status === "fenced") return { kind: "fenced" }
         const next = prepared.result
         if (!(await outbox.removeAttemptBodies(grant, next.keepRequestId))) return { kind: "fenced" }
         if (next.kind === "idle") return { kind: "idle" }
         if (next.kind === "rejected") return { kind: "rejected", violations: next.violations }
-        return this.deliverAttempt(grant, next.inflight, signal)
+        return this.deliverAttempt(grant, next.inflight, usageReplayBudget(attemptGrant.contract.maxRequestReplayAgeMs), signal)
     }
 
-    private prepareAttempts(grant: UsageSenderGrant, validation: UsageAttemptBodyValidation) {
+    private prepareAttempts(grant: UsageSenderGrant, attemptGrant: UsageBodyGrant) {
         const { outbox } = this.options
         return outbox.transactAttempts<PreparedAttempts>(grant, async (state, now) => {
             if (state.inflight) {
@@ -207,7 +193,7 @@ export class UsageDeliveryWorker {
                 requestId: this.newRequestId(),
                 client: this.options.client,
                 random: this.options.random,
-                ...validation,
+                contract: attemptGrant.contract,
             })
             if (decision.kind === "none") return { state, result: { kind: "idle", keepRequestId: undefined } }
             if (decision.kind === "rejected") {
@@ -233,26 +219,28 @@ export class UsageDeliveryWorker {
     private async deliverAttempt(
         grant: UsageSenderGrant,
         inflight: UsageAttemptInflight,
+        replayBudget: ReplayBudget,
         signal?: AbortSignal,
     ): Promise<UsageCycleResult> {
         const body = await this.options.outbox.readBody(inflight)
-        if (!body) return this.settleAttempt(grant, inflight, { kind: "body_lost" })
+        if (!body) return this.settleAttempt(grant, inflight, { kind: "body_lost" }, replayBudget)
         const attempted = await this.attempt(inflight, body, signal)
         if (attempted.kind === "result") return attempted.result
         const { outcome } = attempted
         if (outcome.kind === "stop") return { kind: "stopped", scope: outcome.scope, code: outcome.code }
         if (outcome.kind === "refresh_token") return { kind: "stopped", scope: "profile", code: USAGE_TOKEN_REJECTED }
-        return this.settleAttempt(grant, inflight, outcome)
+        return this.settleAttempt(grant, inflight, outcome, replayBudget)
     }
 
     private async settleAttempt(
         grant: UsageSenderGrant,
         inflight: UsageAttemptInflight,
         resolution: UsageInflightResolution,
+        replayBudget: ReplayBudget,
     ): Promise<UsageCycleResult> {
         const { outbox } = this.options
         const committed = await outbox.transactAttempts(grant, async (state, now) => {
-            const next = settleUsageAttemptInflight(state, inflight.requestId, resolution, now, this.options.random)
+            const next = settleUsageAttemptInflight(state, inflight.requestId, resolution, now, replayBudget, this.options.random)
             const violations = attemptLossViolations(resolution, state.inflight !== undefined && next.inflight === undefined)
             if (violations) {
                 await outbox.writeAttemptLoss({
@@ -320,7 +308,7 @@ export class UsageDeliveryWorker {
                     { accessToken, requestId: inflight.requestId, body },
                     signal,
                 )
-                outcome = classifyDeliveryResponse(response)
+                outcome = classifyUsageResponse(response, this.clock())
             } catch (error) {
                 if (!(error instanceof DlineOtelTransportError)) throw error
                 if (error.failure === "aborted") return { kind: "result", result: { kind: "aborted" } }

@@ -78,7 +78,6 @@ export {
     type ScenarioReplayReport,
 } from "./reproduction/scenario-runner"
 export { RuntimeEventBus, type RuntimeEventBusOptions } from "./runtime-event-bus"
-export { PairingAuthorization, PairingRejection } from "./transports/pairing-authorization"
 export { SessionJournal, type SessionJournalOptions, type SessionJournalStats } from "./transports/session-journal"
 export {
     type NormalizedRuntimeError,

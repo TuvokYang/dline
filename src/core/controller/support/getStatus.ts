@@ -10,7 +10,8 @@ export function toSupportStatus(status: SupportStatusProjection | undefined): Su
         state: status?.state ?? "",
         authorizationExpiresAt: status?.authorizationExpiresAt ?? 0,
         captureExpiresAt: status?.captureExpiresAt,
-        issue: status?.issue,
+        issueState: status?.issueState ?? "",
+        resolution: status?.resolution,
     })
 }
 

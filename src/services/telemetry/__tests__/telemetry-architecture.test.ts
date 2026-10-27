@@ -145,9 +145,7 @@ describe("telemetry module boundaries", () => {
         // which is where metadata and the category policy are applied.
         const forbidden = [
             "@opentelemetry",
-            "posthog",
             "providers/opentelemetry",
-            "providers/posthog",
             "host-provider",
             "@hosts/",
             "runtime/",

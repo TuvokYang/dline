@@ -3,8 +3,12 @@ const AUTHORIZATION_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/
 const SCOPE_PATTERN = /^[a-z][a-z0-9_.-]{0,63}$/
 const MAX_SCOPES = 16
 
+/**
+ * Fixed budget of one grant revision (telemetry-exchange-flow §6). Every value is a total across all
+ * requests of the revision, not a per-request cap; the server rejects a request that would exceed it.
+ */
 export interface IssueGrantRateLimits {
-    readonly maxRequestBytes: number
+    readonly maxBytes: number
     readonly maxRequests: number
     readonly maxRecords: number
 }
@@ -62,7 +66,7 @@ export function serializeAtomicIssueGrant(grant: AtomicIssueGrant): Record<strin
         expires_at: grant.expiresAt,
         capture_expires_at: grant.captureExpiresAt,
         rate_limits: {
-            max_request_bytes: grant.rateLimits.maxRequestBytes,
+            max_bytes: grant.rateLimits.maxBytes,
             max_requests: grant.rateLimits.maxRequests,
             max_records: grant.rateLimits.maxRecords,
         },
@@ -87,13 +91,14 @@ function parseScopes(value: unknown): readonly string[] | undefined {
 
 function parseRateLimits(value: unknown): IssueGrantRateLimits | undefined {
     if (!isRecord(value)) return undefined
-    const maxRequestBytes = value.byte_capacity ?? value.max_request_bytes
+    // Wire names come from telemetry-exchange-flow §6 (`authorization_*`); the `max_*` names are the local store's.
+    const maxBytes = value.authorization_bytes ?? value.max_bytes
     const maxRequests = value.authorization_requests ?? value.max_requests
     const maxRecords = value.authorization_records ?? value.max_records
-    if (!isPositiveInteger(maxRequestBytes) || !isNonNegativeInteger(maxRequests) || !isNonNegativeInteger(maxRecords)) {
+    if (!isPositiveInteger(maxBytes) || !isNonNegativeInteger(maxRequests) || !isNonNegativeInteger(maxRecords)) {
         return undefined
     }
-    return { maxRequestBytes, maxRequests, maxRecords }
+    return { maxBytes, maxRequests, maxRecords }
 }
 
 function isTimestamp(value: unknown): value is number {

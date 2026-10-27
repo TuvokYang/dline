@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { type OtelStorageLayout, resolveOtelStorageLayout } from "@/core/storage/telemetry-remote/OtelStorageLayout"
 import { UsageOutboxRepository } from "@/core/storage/telemetry-remote/UsageOutboxRepository"
 import { USAGE_GRANT_HARD_LIMITS, type UsageGrantContract } from "../contracts/deviceGrant"
-import type { UsageAttemptBodyValidation } from "../contracts/usageBody"
+import { usageReplayBudget } from "../contracts/pacing"
+import type { UsageBodyGrant } from "../contracts/usageBody"
 import {
     attemptBacklogStorageBytes,
     boundUsageAttemptBacklog,
@@ -20,17 +21,15 @@ import {
 const POLICY_GENERATION = 7
 const BASE_TIME = 1_900_000_000_000
 const CONTRACT: UsageGrantContract = {
-    schemaVersion: 4,
-    contractVersion: 4,
+    schemaVersion: 5,
+    contractVersion: 1,
     ...USAGE_GRANT_HARD_LIMITS,
     maxBuckets: 3,
     defaultIntervalMs: 1,
     newBatchJitterMaxMs: 0,
 }
-const VALIDATION: UsageAttemptBodyValidation = {
-    contract: CONTRACT,
-    estimateWriteRows: (body) => 6 + body.buckets.reduce((sum, bucket) => sum + bucket.facts.length, 0),
-}
+const GRANT: UsageBodyGrant = { contract: CONTRACT }
+const REPLAY_BUDGET = usageReplayBudget(CONTRACT.maxRequestReplayAgeMs)
 const CLIENT = {
     version: "0.11.1",
     platform: "win32",
@@ -148,7 +147,7 @@ describe("schema 4 remote Usage pressure gate", () => {
             requestId: requestId(++requestSequence),
             client: CLIENT,
             random: () => 0,
-            ...VALIDATION,
+            ...GRANT,
         })
         if (first.kind !== "batch") throw new Error("expected first pressure batch")
         expect(first.body.buckets.map((bucket) => bucket.bucket_id)).toEqual(["bucket-1", "bucket-2", "bucket-3"])
@@ -158,6 +157,7 @@ describe("schema 4 remote Usage pressure gate", () => {
             first.inflight.requestId,
             { kind: "wait", code: "telemetry_paused", retryAfterMs: 120_000 },
             now,
+            REPLAY_BUDGET,
             () => 0,
         )
         expect(
@@ -166,7 +166,7 @@ describe("schema 4 remote Usage pressure gate", () => {
                 requestId: requestId(++requestSequence),
                 client: CLIENT,
                 random: () => 0,
-                ...VALIDATION,
+                ...GRANT,
             }),
         ).toEqual({ kind: "none" })
 
@@ -185,6 +185,7 @@ describe("schema 4 remote Usage pressure gate", () => {
             first.inflight.requestId,
             { kind: "acknowledged", disposition: "duplicate", nextEligibleAt: now },
             now,
+            REPLAY_BUDGET,
             () => 0,
         )
         now = state.pacing.nextEligibleAt
@@ -195,7 +196,7 @@ describe("schema 4 remote Usage pressure gate", () => {
                 requestId: requestId(++requestSequence),
                 client: CLIENT,
                 random: () => 0,
-                ...VALIDATION,
+                ...GRANT,
             })
             if (decision.kind !== "batch") {
                 throw new Error(`expected FIFO recovery batch: ${JSON.stringify({ decision, now, pacing: state.pacing })}`)
@@ -206,6 +207,7 @@ describe("schema 4 remote Usage pressure gate", () => {
                 decision.inflight.requestId,
                 { kind: "acknowledged", disposition: "accepted", nextEligibleAt: now },
                 now,
+                REPLAY_BUDGET,
                 () => 0,
             )
             now = state.pacing.nextEligibleAt
@@ -223,6 +225,7 @@ function foldConcurrentAttempts(count: number, sealedAt: number): UsageAttemptOu
     const shards = Array.from({ length: 4 }, (_, shardIndex) => ({
         name: `host-${shardIndex}.${sealedAt}.attempts.sealed.jsonl`,
         observations: observations.filter((_, index) => index % 4 === shardIndex),
+        claims: [],
     }))
     let nextBucket = 0
     return foldUsageAttemptShards(emptyUsageAttemptOutbox(POLICY_GENERATION), shards, {
@@ -239,6 +242,7 @@ function pendingAttempt(index: number) {
         id,
         revision: 1,
         receivedAt: admittedAt + 60_000,
+        localSessionId: "pressure-session",
         observation: {
             attemptObservationId: id,
             logicalRequestId: `logical-${id}`,

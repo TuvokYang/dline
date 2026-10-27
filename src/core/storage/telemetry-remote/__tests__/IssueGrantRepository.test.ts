@@ -17,7 +17,7 @@ function grant(revision: number, expiresAt = START + 60_000): AtomicIssueGrant {
         authorizationRevision: revision,
         expiresAt,
         captureExpiresAt: expiresAt,
-        rateLimits: { maxRequestBytes: 262_144, maxRequests: 120, maxRecords: 20_000 },
+        rateLimits: { maxBytes: 8 * 1024 * 1024, maxRequests: 120, maxRecords: 20_000 },
     }
 }
 

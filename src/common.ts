@@ -13,6 +13,7 @@ import { ensureSeedProviders } from "./core/model-registry/seed-initializer"
 import { getWorkspaceCapabilityCatalogRegistry } from "./core/prompts/capabilities/WorkspaceCapabilityCatalog"
 import { getWorkspacePromptInputWatcherRegistry } from "./core/prompts/system-prompt-cache/WorkspacePromptInputWatcherRegistry"
 import { StateManager } from "./core/storage/StateManager"
+import { retireLegacyTelemetryState } from "./core/storage/telemetry-remote/LegacyTelemetryState"
 import type { FlowPhase } from "./core/task/kernel"
 import { AgentConfigLoader } from "./core/task/tools/subagent/AgentConfigLoader"
 import { ExtensionRegistryInfo } from "./registry"
@@ -27,7 +28,6 @@ import { disposeTelemetryService, telemetryService } from "./services/telemetry"
 import { isTelemetryDevelopmentMode } from "./services/telemetry/development-mode"
 import { recordPerfPhase } from "./services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "./services/telemetry/instrumentation/perf-domains"
-import { PostHogClientProvider } from "./services/telemetry/providers/posthog/PostHogClientProvider"
 import { hostEditorOf, releaseChannelOf } from "./services/telemetry/remote/clientIdentity"
 import { HostDiagnosticsPolicy } from "./services/telemetry/remote/policy/hostDiagnosticsPolicy"
 import { readHostUsagePolicyInputs } from "./services/telemetry/remote/policy/hostUsagePolicyInputs"
@@ -164,7 +164,6 @@ export async function initialize(storageContext: StorageContext): Promise<Webvie
 
     // =============== External services ===============
     await ErrorService.initialize()
-    // PostHog client provider disabled - no telemetry data upload
 
     // =============== Webview services ===============
     {
@@ -222,9 +221,12 @@ export async function initialize(storageContext: StorageContext): Promise<Webvie
         dataDir: storageContext.dataDir,
         clientVersion: ExtensionRegistryInfo.version,
         platform: process.platform,
-        supportEndpoint: process.env.DLINE_SUPPORT_ENDPOINT,
         otelEndpoint: loopbackEndpointOverride(process.env.DLINE_OTEL_ENDPOINT),
     })
+    // State earlier builds left under an older telemetry contract is dropped, never migrated; no runtime reads it.
+    void retireLegacyTelemetryState(storageContext.dataDir).catch((error) =>
+        Logger.warn("[Dline] Failed to retire legacy telemetry state:", error),
+    )
     // Remote usage reporting is a machine-wide side path; it stays off until its policy allows it.
     const remoteUsageStarted = startRemoteUsageReporting(storageContext.dataDir).catch((error) =>
         Logger.warn("[Dline] Failed to start remote usage reporting:", error),
@@ -346,7 +348,6 @@ export async function tearDown(): Promise<void> {
     await markRuntimeSessionStage("shutdown_started").catch(() => undefined)
     try {
         AgentConfigLoader.getInstance()?.dispose()
-        PostHogClientProvider.getInstance().dispose()
         featureFlagsService.dispose()
 
         // Keep consent and telemetry alive while controllers finish their tasks.
@@ -483,7 +484,8 @@ async function startRemoteDiagnosticsReporting(dataDir: string): Promise<void> {
         dataDir,
         clientVersion: ExtensionRegistryInfo.version,
         platform: process.platform,
-        releaseChannel: releaseChannelOf(ExtensionRegistryInfo.name),
+        arch: process.arch,
+        releaseChannel: releaseChannelOf(ExtensionRegistryInfo.name, ExtensionRegistryInfo.version),
         hostEditor: hostEditorOf(host?.platform),
         isDev: isTelemetryDevelopmentMode(),
         allowed: policy.allowed,
@@ -509,7 +511,7 @@ async function startRemoteUsageReporting(dataDir: string): Promise<void> {
             architecture: process.arch,
             host_version: host?.version,
             host_editor: hostEditorOf(host?.platform),
-            channel: releaseChannelOf(ExtensionRegistryInfo.name),
+            channel: releaseChannelOf(ExtensionRegistryInfo.name, ExtensionRegistryInfo.version),
             is_dev: isTelemetryDevelopmentMode(),
         },
         endpoint,

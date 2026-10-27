@@ -4,7 +4,7 @@ import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { SERVER_STOP_RETRY_INTERVAL_MS } from "@/services/telemetry/remote/policy/usagePolicy"
 import { type OtelStorageLayout, resolveOtelStorageLayout } from "../OtelStorageLayout"
-import { type LocalUsagePolicyInputs, RemotePolicyRepository } from "../RemotePolicyRepository"
+import { type LocalUsagePolicyInputs, REMOTE_POLICY_SCHEMA_VERSION, RemotePolicyRepository } from "../RemotePolicyRepository"
 
 const ALLOWED: LocalUsagePolicyInputs = {
     usageConsent: "enabled",
@@ -155,40 +155,23 @@ describe("RemotePolicyRepository", () => {
         expect(await fs.readdir(layout.remoteQuarantineDir)).toHaveLength(1)
     })
 
-    it("continues the epoch of a legacy decision it cannot read and hands older builds a newer owner", async () => {
+    it("quarantines a version 1 policy instead of migrating it and seeds the next epoch from the clock", async () => {
         await fs.mkdir(layout.remoteDir, { recursive: true })
-        const legacy = { schema_version: 1, usage: { epoch: 7, decision: { allowed: false, reason: "development_unenrolled" } } }
+        const legacy = { schema_version: 1, usage: { epoch: 7, decision: { allowed: true, profile: "usage" } } }
         await fs.writeFile(layout.policyPath, JSON.stringify(legacy))
         const quarantined: string[] = []
         const policy = new RemotePolicyRepository(layout, { clock: () => now, onQuarantine: (name) => quarantined.push(name) })
 
-        expect(await policy.read()).toEqual({})
+        expect(await policy.read()).toBeUndefined()
         const resolved = await policy.resolveUsage(ALLOWED)
-        // An older build that rewrites its legacy decision is read the same way again, not quarantined.
-        await fs.writeFile(layout.policyPath, JSON.stringify({ ...legacy, usage: { ...legacy.usage, epoch: 9 } }))
-        const again = await policy.resolveUsage(ALLOWED)
         const stored = JSON.parse(await fs.readFile(layout.policyPath, "utf8")) as { schema_version: number }
 
-        expect(resolved).toEqual({ epoch: 8, decision: { allowed: true, profile: "usage" } })
-        expect(again).toEqual({ epoch: 10, decision: { allowed: true, profile: "usage" } })
-        expect(quarantined).toEqual([])
-        await expect(fs.access(layout.remoteQuarantineDir)).rejects.toThrow()
+        // The old decision is neither carried on nor continued: a fresh epoch starts at the clock.
+        expect(resolved).toEqual({ epoch: now, decision: { allowed: true, profile: "usage" } })
+        expect(quarantined).toEqual([path.basename(layout.policyPath)])
+        expect(await fs.readdir(layout.remoteQuarantineDir)).toHaveLength(1)
         // Version 1 readers treat any higher version as a newer owner and stop writing.
-        expect(stored.schema_version).toBeGreaterThan(1)
-    })
-
-    it("upgrades a legacy document whose decision still holds without moving its epoch", async () => {
-        await fs.mkdir(layout.remoteDir, { recursive: true })
-        await fs.writeFile(
-            layout.policyPath,
-            JSON.stringify({ schema_version: 1, usage: { epoch: 4, decision: { allowed: true, profile: "usage" } } }),
-        )
-
-        const resolved = await repository().resolveUsage(ALLOWED)
-        const stored = JSON.parse(await fs.readFile(layout.policyPath, "utf8")) as { schema_version: number }
-
-        expect(resolved).toEqual({ epoch: 4, decision: { allowed: true, profile: "usage" } })
-        expect(stored.schema_version).toBeGreaterThan(1)
+        expect(stored.schema_version).toBe(REMOTE_POLICY_SCHEMA_VERSION)
     })
 
     it("treats a policy written by a newer Dline as off and leaves it untouched", async () => {

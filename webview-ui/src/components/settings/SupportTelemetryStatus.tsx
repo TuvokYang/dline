@@ -4,7 +4,7 @@ import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
 import { useCallback, useEffect, useState } from "react"
 import { SupportServiceClient } from "@/services/grpc-client"
 
-type SupportAction = "check" | "open" | "delete"
+type SupportAction = "check" | "delete"
 
 const STATE_LABELS: Record<string, string> = {
     awaiting_issue: "Waiting for the GitHub issue",
@@ -12,7 +12,28 @@ const STATE_LABELS: Record<string, string> = {
     approved: "Approved and capturing temporary diagnostics",
     revoked: "Revoked",
     expired: "Expired",
-    deleted: "Deleted",
+}
+
+const ISSUE_STATE_LABELS: Record<string, string> = {
+    unlinked: "Not linked yet",
+    open: "Open",
+    closed: "Closed",
+}
+
+const RESOLUTION_LABELS: Record<string, string> = {
+    none: "No resolution yet",
+    investigating: "Investigating",
+    fixed: "Fixed",
+    wont_fix: "Won't fix",
+    duplicate: "Duplicate",
+    not_reproducible: "Not reproducible",
+}
+
+function resolutionLabel(status: SupportStatus): string {
+    const resolution = status.resolution
+    if (!resolution) return RESOLUTION_LABELS.none
+    const label = RESOLUTION_LABELS[resolution.state] ?? (resolution.state || "Unknown")
+    return resolution.fixedInVersion ? `${label} in ${resolution.fixedInVersion}` : label
 }
 
 function formatCountdown(expiresAt: number | undefined, now: number): string {
@@ -95,11 +116,6 @@ export function SupportTelemetryStatus() {
             setNow(Date.now())
         })
 
-    const openIssue = () =>
-        run("open", async () => {
-            await SupportServiceClient.openIssue(EmptyRequest.create({}))
-        })
-
     const deleteAndRevoke = () =>
         run("delete", async () => {
             await SupportServiceClient.deleteAndRevoke(EmptyRequest.create({}))
@@ -110,7 +126,8 @@ export function SupportTelemetryStatus() {
     if (!loaded || !status?.present) return null
 
     const stateLabel = STATE_LABELS[status.state] ?? (status.state || "Unknown")
-    const issueLabel = status.issue ? `${status.issue.owner}/${status.issue.repo}#${status.issue.number}` : "Not linked yet"
+    const issueLabel = ISSUE_STATE_LABELS[status.issueState] ?? (status.issueState || "Unknown")
+    const summary = status.resolution?.summary
 
     return (
         <div data-testid="support-telemetry-status">
@@ -123,6 +140,8 @@ export function SupportTelemetryStatus() {
                 <StatusRow label="Public support code" testId="support-public-code" value={status.publicCode} />
                 <StatusRow label="Security status" testId="support-state" value={stateLabel} />
                 <StatusRow label="GitHub issue" testId="support-issue" value={issueLabel} />
+                <StatusRow label="Resolution" testId="support-resolution" value={resolutionLabel(status)} />
+                {summary && <StatusRow label="Maintainer note" testId="support-resolution-summary" value={summary} />}
                 <StatusRow
                     label="Authorization remaining"
                     testId="support-authorization-countdown"
@@ -137,9 +156,6 @@ export function SupportTelemetryStatus() {
             <div className="mt-2 flex flex-wrap gap-2">
                 <VSCodeButton appearance="secondary" disabled={busy !== undefined} onClick={checkNow}>
                     {busy === "check" ? "Checking…" : "Check now"}
-                </VSCodeButton>
-                <VSCodeButton appearance="secondary" disabled={busy !== undefined || !status.issue} onClick={openIssue}>
-                    {busy === "open" ? "Opening…" : "Open issue"}
                 </VSCodeButton>
                 {!deleteArmed ? (
                     <VSCodeButton appearance="secondary" disabled={busy !== undefined} onClick={() => setDeleteArmed(true)}>
@@ -158,8 +174,8 @@ export function SupportTelemetryStatus() {
             </div>
             {deleteArmed && (
                 <p className="mt-[5px] text-sm text-description">
-                    Dline will stop local capture first, clear issue-only access, retain an owner-only revoke tombstone if
-                    offline, and then request idempotent revocation.
+                    Dline will stop local capture, clear issue-only access and delete the local authorization. Nothing is sent to
+                    the service or the issue; the server ends the authorization when the issue closes or it expires.
                 </p>
             )}
             {error && (

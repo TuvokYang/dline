@@ -161,7 +161,7 @@ provider 用 Profile 的 provider ID 表示，模型用模型 ID 表示，均转
 
 ## 向 `otel.dline.cc` 投递错误诊断
 
-只有以下条件全部成立时，Dline 才会向 `https://otel.dline.cc/logs` 发送错误和运行时诊断：
+只有以下条件全部成立时，Dline 才会向 `https://otel.dline.cc/v1/logs` 发送错误和运行时诊断：
 
 - 已勾选 **Allow error reporting**。该项默认开启；在 **Settings → About** 中取消勾选会立即停止投递并删除尚未发送的诊断。
 - 组织 policy 没有禁用错误报告。
@@ -171,7 +171,9 @@ provider 用 Profile 的 provider ID 表示，模型用模型 ID 表示，均转
 
 ### 发送内容
 
-只发送 log 记录，不发送 metrics 或 traces。只有下表列出的事件，且严重度为 warning 及以上时，才会生成记录：
+log 记录采用 OTLP/JSON 格式，每个请求都带 `X-Dline-Contract: 5`。在相同条件下，Dline 还会向 `/v1/metrics` 发送 delta metrics（每 60 秒结束一个窗口，每个请求只含一个窗口），并向 `/v1/traces` 发送任务（`dline.task`）、工具执行（`dline.tool.execute`）和服务商请求（`gen_ai.client.operation`）的 span。metrics 与 span 使用与 log 记录相同的属性规则和 resource，在各自的队列中等待发送；一台设备每个 UTC 小时最多保留 300 个 span、每个 UTC 日最多 1,200 个，每个请求最多 200 个 span 且不超过 128 KiB。
+
+只有下表列出的事件，且严重度为 warning 及以上时，才会生成 log 记录：
 
 | 事件 | 通道 | 严重度 |
 |---|---|---|
@@ -195,13 +197,13 @@ provider 用 Profile 的 provider ID 表示，模型用模型 ID 表示，均转
 
 文本值只有是由字母、数字、`_`、`.`、`+`、`-` 组成的短 token（最多 64 个字符）时才保留，数值只保留非负整数。不在属性取值列表内的值不发送。Dline 内部仍在使用的旧属性名会映射到这些键；其他属性一律不发送。失败事件按与使用统计相同的方式命名模型；只有上文定义的自定义模型，`model.custom` 才为 `true`。
 
-请求 resource 只包含客户端版本、操作系统类型、发布通道（`stable` 或 `insiders`）、编辑器类别（`vscode`、`cursor`、`vscodium`、`windsurf` 或 `other`），以及自上一个请求以来在本地丢弃的记录数（`dline.dropped_records`）。开发构建还会发送 `dline.is_dev=true`；其他构建不发送该属性。
+请求 resource 只包含客户端版本、操作系统类型与 CPU 架构、发布通道（`stable` 或 `insiders`）、编辑器类别（`vscode`、`cursor`、`vscodium`、`windsurf` 或 `other`），以及自上一个请求以来在本地丢弃的记录数（`dline.dropped_records`）。开发构建还会发送 `dline.is_dev=true`；其他构建不发送该属性。
 
 不会发送错误消息、堆栈、提示词、响应、文件内容、路径、URL、命令、Task 或 workspace 身份、`distinct_id` 和 account ID。
 
 ### 设备身份、队列与上限
 
-诊断与使用统计共用同一个假名化设备密钥，但交换各自的 `production` 访问令牌，因此每项同意只控制自己的令牌。队列位于 Dline data root 下的 `telemetry/remote/diagnostics/outbox.json`，由所有 Dline 窗口共享。启动时，早期 0.11 构建写在 `outbox-v2.json` 中的记录会移入该队列并删除该文件；如果此时有这类构建的窗口正在从中发送批次，则暂不移动：
+诊断与使用统计共用同一个假名化设备密钥，但交换各自的 `production` 访问令牌，因此每项同意只控制自己的令牌。队列位于 Dline data root 下的 `telemetry/remote/diagnostics/outbox.json`，由所有 Dline 窗口共享。早期构建留下的队列，例如早期 0.11 构建的 `outbox-v2.json`，或按更早遥测合同写入的队列，会被直接删除而不发送；本机只保留记录丢弃了什么、丢弃多少的元数据：
 
 - 各窗口每 5 秒把收集到的记录写入队列。同一时间只有一个窗口约每 20 秒检查一次队列，并按上文“发送时机与等待”最多每 5 分钟开始一个新批次。
 - 每台设备每个 UTC 小时最多新增 50 条、每个 UTC 日最多新增 200 条记录；已保留记录的重复事件仍会合并进去。最多保留 1,000 条待发记录。超出这些上限的记录会被丢弃，并计入 `dline.dropped_records`。

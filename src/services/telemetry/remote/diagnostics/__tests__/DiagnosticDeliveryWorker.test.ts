@@ -35,11 +35,13 @@ function record(index: number, at = START): DiagnosticRecord {
     }
 }
 
-const accepted = (nextEligibleAt?: number): WireResponse => ({
+/** An acknowledgement always names the next gate (TADR §2.4); without it the result is unknown and replayed. */
+const accepted = (nextEligibleAt: number): WireResponse => ({
     status: 200,
-    json: { ok: true, disposition: "accepted", ...(nextEligibleAt === undefined ? {} : { next_eligible_at: nextEligibleAt }) },
+    json: { ok: true, disposition: "accepted", next_eligible_at: nextEligibleAt },
     retryAfter: null,
 })
+const DEFAULT_GATE_MS = 5 * 60_000
 
 interface SentLogs {
     readonly requestId: string
@@ -68,6 +70,7 @@ describe("DiagnosticDeliveryWorker (contract v2.1 §1.5-§1.7, §3.3)", () => {
     function outbox(): DiagnosticOutboxRepository {
         return new DiagnosticOutboxRepository(path.join(root, "diagnostics", "outbox.json"), {
             encode: (records, dropped) => encodeDiagnosticLogs(records, RESOURCE, dropped),
+            quarantineDir: path.join(root, "quarantine"),
             random: () => 0,
         })
     }
@@ -84,24 +87,22 @@ describe("DiagnosticDeliveryWorker (contract v2.1 §1.5-§1.7, §3.3)", () => {
                         token: { accessToken: "token", deviceId: "device", expiresAt: Number.MAX_SAFE_INTEGER, obtainedAt: 0 },
                     },
             },
-            transport: {
-                sendLogs: async (delivery: DiagnosticDelivery) => {
-                    const text = new TextDecoder().decode(delivery.body)
-                    const body = JSON.parse(text)
-                    const [resourceLogs] = body.resourceLogs
-                    const dropped = resourceLogs.resource.attributes.find(
-                        (attribute: { key: string }) => attribute.key === "dline.dropped_records",
-                    )
-                    sent.push({
-                        requestId: delivery.requestId,
-                        body: text,
-                        records: resourceLogs.scopeLogs[0].logRecords,
-                        dropped: Number(dropped?.value.intValue),
-                    })
-                    const reply = replies.shift() ?? accepted()
-                    if (reply instanceof DlineOtelTransportError) throw reply
-                    return reply
-                },
+            send: async (delivery: DiagnosticDelivery) => {
+                const text = new TextDecoder().decode(delivery.body)
+                const body = JSON.parse(text)
+                const [resourceLogs] = body.resourceLogs
+                const dropped = resourceLogs.resource.attributes.find(
+                    (attribute: { key: string }) => attribute.key === "dline.dropped_records",
+                )
+                sent.push({
+                    requestId: delivery.requestId,
+                    body: text,
+                    records: resourceLogs.scopeLogs[0].logRecords,
+                    dropped: Number(dropped?.value.intValue),
+                })
+                const reply = replies.shift() ?? accepted(now + DEFAULT_GATE_MS)
+                if (reply instanceof DlineOtelTransportError) throw reply
+                return reply
             },
         })
     }
@@ -168,7 +169,7 @@ describe("DiagnosticDeliveryWorker (contract v2.1 §1.5-§1.7, §3.3)", () => {
             { status: 429, json: undefined, retryAfter: null },
             {
                 status: 200,
-                json: { ok: true, disposition: "duplicate" },
+                json: { ok: true, disposition: "duplicate", next_eligible_at: START },
                 retryAfter: null,
             },
         )
