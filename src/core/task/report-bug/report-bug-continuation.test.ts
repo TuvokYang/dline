@@ -37,7 +37,7 @@ function entry(
             payloadRef,
             source: "intake",
         },
-        kind: "user_input",
+        kind: options.assistantTool ? "provider_final" : "user_input",
         messages,
         ...(options.declaration
             ? {
@@ -96,5 +96,15 @@ describe("report bug continuation", () => {
         ])
 
         expect(continuation?.metadata).toEqual({ sourcePayloadRef: "payload:second" })
+    })
+
+    it("closes an intent the work completed without a report", () => {
+        expect(
+            deriveReportBugContinuationFromEntries([
+                entry("payload:reportbug", { declaration: true }),
+                entry("payload:done", { assistantTool: DlineDefaultTool.ATTEMPT }),
+                entry("payload:later", { userText: "unrelated work" }),
+            ]),
+        ).toBeUndefined()
     })
 })

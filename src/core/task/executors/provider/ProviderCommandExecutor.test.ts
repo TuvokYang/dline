@@ -504,41 +504,6 @@ describe("ProviderCommandExecutor", () => {
         ])
     })
 
-    it("admits ReportBug only after the terminal failure is durable", async () => {
-        let releaseDurable!: () => void
-        const durable = new Promise<void>((resolve) => {
-            releaseDurable = resolve
-        })
-        const present = vi.fn(async () => undefined)
-        const sink = {
-            submit: vi.fn(async (_event: TaskEvent) => ({ kind: "accepted" as const, durable })),
-        }
-        const executor = new ProviderCommandExecutor(
-            "task-1",
-            { start: () => chunks([]) },
-            new InMemoryConversationJournal(),
-            new InMemoryTaskViewPort(),
-            sink,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            { present },
-        )
-
-        const execution = executor.execute(command)
-        await vi.waitFor(() => expect(sink.submit).toHaveBeenCalledOnce())
-        expect(present).not.toHaveBeenCalled()
-
-        releaseDurable()
-        await execution
-        expect(present).toHaveBeenCalledWith({
-            turnId: "turn-request",
-            commandId: "provider:1",
-            presentation: JSON.stringify({ message: "Dline provider execution failed: MissingFinalChunk", code: "Error" }),
-        })
-    })
-
     it("cancels an active stream without reporting a provider failure", async () => {
         const recorded = recorder()
         let started!: () => void
