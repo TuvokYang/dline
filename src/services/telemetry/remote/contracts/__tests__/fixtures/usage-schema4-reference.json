@@ -1,5 +1,5 @@
 {
-    "fixture_version": 3,
+    "fixture_version": 4,
     "contract_version": 1,
     "contract": "dline.usage.schema5",
     "mutation_format": "RFC 6902 JSON Patch subset: add, remove, replace",
@@ -343,6 +343,8 @@
             "name": "accepted-ack",
             "status": 200,
             "body": {
+                "ok": true,
+                "request_id": "11111111-1111-4111-8111-111111111111",
                 "disposition": "accepted",
                 "next_eligible_at": 1792800900000
             },
@@ -352,6 +354,8 @@
             "name": "duplicate-ack",
             "status": 200,
             "body": {
+                "ok": true,
+                "request_id": "11111111-1111-4111-8111-111111111111",
                 "disposition": "duplicate",
                 "next_eligible_at": 1792800900000
             },
@@ -361,9 +365,11 @@
             "name": "request-conflict",
             "status": 409,
             "body": {
-                "disposition": "rejected",
-                "code": "request_id_conflict",
-                "path": "request_id"
+                "ok": false,
+                "error": {
+                    "code": "request_id_conflict",
+                    "path": "request_id"
+                }
             },
             "client_action": "dead-letter without changing request id or bytes"
         },
@@ -371,8 +377,10 @@
             "name": "quota-limited",
             "status": 429,
             "body": {
-                "disposition": "rejected",
-                "code": "quota_limited",
+                "ok": false,
+                "error": {
+                    "code": "quota_limited"
+                },
                 "next_eligible_at": 1792801200000
             },
             "client_action": "persist wait and replay exact manifest"
@@ -381,8 +389,10 @@
             "name": "temporarily-unavailable",
             "status": 503,
             "body": {
-                "disposition": "rejected",
-                "code": "temporarily_unavailable"
+                "ok": false,
+                "error": {
+                    "code": "temporarily_unavailable"
+                }
             },
             "client_action": "bounded exact-byte replay"
         }
@@ -704,7 +714,7 @@
             "identity_mismatch",
             "invalid_coverage",
             "write_budget_exceeded",
-            "invalid_schema4_filter"
+            "invalid_schema5_filter"
         ],
         "429": [
             "reservation_limited",
@@ -899,6 +909,42 @@
         }
     ],
     "invalid_cases": [
+        {
+            "name": "missing-contract-header",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "remove",
+                    "path": "/headers/x-dline-contract"
+                }
+            ],
+            "expected": {
+                "status": 422,
+                "code": "invalid_schema",
+                "path": "headers.x-dline-contract",
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "todos-not-in-schema5",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "add",
+                    "path": "/body/buckets/0/facts/0/logical_execution/todos",
+                    "value": {
+                        "created": 1,
+                        "completed": 1
+                    }
+                }
+            ],
+            "expected": {
+                "status": 422,
+                "code": "invalid_usage_body",
+                "path": "buckets[0].facts[0].logical_execution.todos",
+                "business_write_occurred": false
+            }
+        },
         {
             "name": "client-version-mismatch",
             "base": "schema5-valid",

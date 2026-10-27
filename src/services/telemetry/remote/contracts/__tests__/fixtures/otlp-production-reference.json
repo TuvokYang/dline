@@ -1,9 +1,35 @@
 {
-    "fixture_version": 1,
+    "fixture_version": 2,
     "contract": "dline.otlp.production.v1",
     "source": "telemetry-analysis-and-diagnostics-requirements.md §2.4, §3, §5.3, §6, §7.2",
     "comparison": "Bodies compare as JSON values. Order of resource, record, span and data point attributes is insignificant; every other array keeps the order shown (scopes and instruments in catalog order).",
     "x_dline_contract": "5",
+    "contract_header_rules": {
+        "retired": {
+            "values": [
+                "3",
+                "4"
+            ],
+            "status": 200,
+            "disposition": "ignored_version",
+            "d1_writes": 0
+        },
+        "missing_legacy_cohort": {
+            "condition": "User-Agent version below the configured first contract-5 client version",
+            "status": 200,
+            "disposition": "ignored_version",
+            "d1_writes": 0
+        },
+        "missing_other": {
+            "status": 422,
+            "code": "invalid_schema"
+        },
+        "illegal_or_unknown": {
+            "status": 422,
+            "code": "invalid_schema"
+        },
+        "enforcement": "missing-header rules stay disabled until installed-client behaviour is verified and approved"
+    },
     "schema_url": "https://opentelemetry.io/schemas/1.37.0",
     "scope_version": "1",
     "routes": {
@@ -370,7 +396,7 @@
                 "unit": "{record}",
                 "description": "Diagnostic records dropped by the client before delivery.",
                 "attributes": [
-                    "dline.channel"
+                    "dline.signal"
                 ]
             },
             {
@@ -641,7 +667,8 @@
                 "kind": 1,
                 "attributes": [
                     "dline.role",
-                    "dline.outcome"
+                    "dline.outcome",
+                    "error.type"
                 ]
             },
             {
@@ -1099,9 +1126,9 @@
             "body": {
                 "ok": false,
                 "error": {
-                    "code": "telemetry_paused",
-                    "retry_after_ms": 60000
-                }
+                    "code": "telemetry_paused"
+                },
+                "retry_after_ms": 60000
             },
             "client_action": {
                 "kind": "wait",

@@ -1,6 +1,6 @@
 import { mockFetchForTesting } from "@shared/net"
 import { describe, expect, it } from "vitest"
-import { classifyDeliveryResponse } from "../../contracts/classification"
+import { classifyUsageResponse } from "../../contracts/classification"
 import { DlineOtelHttpClient, DlineOtelTransportError, loopbackEndpointOverride } from "../DlineOtelHttpClient"
 
 const TOKEN = "tok_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_abcd"
@@ -42,8 +42,9 @@ describe("DlineOtelHttpClient", () => {
     it("posts exact schema 5 Usage bytes with the fixed contract header and refuses redirects", async () => {
         const captured: Captured[] = []
         const body = new TextEncoder().encode('{"schema_version":5,"buckets":[]}')
+        const answer = { ok: true, request_id: REQUEST_ID, disposition: "duplicate", next_eligible_at: 5 }
         const ok = () =>
-            new Response(JSON.stringify({ ok: true, disposition: "duplicate", next_eligible_at: 5 }), {
+            new Response(JSON.stringify(answer), {
                 status: 200,
                 headers: { "retry-after": "3" },
             })
@@ -66,8 +67,7 @@ describe("DlineOtelHttpClient", () => {
             "x-dline-request-id": REQUEST_ID,
             "x-dline-contract": "5",
         })
-        expect(classifyDeliveryResponse(response))
-        expect(response.retryAfter).toBe("3")
+        expect(response).toEqual({ status: 200, json: answer, retryAfter: "3" })
     })
 
     it("keeps the OTLP specification path for logs and leaves Dline's own paths unprefixed", async () => {
@@ -247,7 +247,7 @@ describe("DlineOtelHttpClient", () => {
         )
 
         expect(response.json).toBeUndefined()
-        expect(classifyDeliveryResponse(response)).toMatchObject({ kind: "stop", scope: "all" })
+        expect(classifyUsageResponse(response)).toMatchObject({ kind: "stop", scope: "all" })
     })
 
     it("does not parse a response larger than the service ever sends", async () => {
@@ -262,7 +262,7 @@ describe("DlineOtelHttpClient", () => {
         )
 
         expect(response.json).toBeUndefined()
-        expect(classifyDeliveryResponse(response)).toEqual({ kind: "replay" })
+        expect(classifyUsageResponse(response)).toEqual({ kind: "replay" })
     })
 
     it("turns a stalled request into a timeout and a caller abort into an abort", async () => {

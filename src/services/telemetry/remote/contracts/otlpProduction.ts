@@ -11,6 +11,7 @@
 import { type DeliveryOutcome, EDGE_BLOCKED, EDGE_RATE_LIMITED, type WireResponse } from "./classification"
 import type { UsageHostEditor, UsageReleaseChannel } from "./usageBodySchema"
 import { USAGE_SCHEMA_VERSION } from "./usageBodySchema"
+import { parseAcknowledgement, parseServiceError, serviceWaitMs } from "./wire"
 
 /** `X-Dline-Contract` of every Dline request: `/usage`, `/auth/*` and OTLP alike (§2.4, exchange flow §8). */
 export const DLINE_CONTRACT = String(USAGE_SCHEMA_VERSION)
@@ -227,7 +228,7 @@ export const OTLP_METRIC_CATALOG: readonly OtlpMetricDescriptor[] = [
         monotonic: true,
         unit: "{record}",
         description: "Diagnostic records dropped by the client before delivery.",
-        attributes: ["dline.channel"],
+        attributes: ["dline.signal"],
     },
     {
         name: "gen_ai.client.operation.duration",
@@ -357,7 +358,7 @@ interface SpanDescriptor {
 }
 
 export const OTLP_SPAN_CATALOG: readonly SpanDescriptor[] = [
-    { name: "dline.task", scope: OTLP_SCOPES.tasks, kind: 1, attributes: ["dline.role", "dline.outcome"] },
+    { name: "dline.task", scope: OTLP_SCOPES.tasks, kind: 1, attributes: ["dline.role", "dline.outcome", "error.type"] },
     {
         name: "gen_ai.client.operation",
         scope: OTLP_SCOPES.genAi,
@@ -433,10 +434,9 @@ function encodeSpan(descriptor: SpanDescriptor, span: OtlpSpanInput): object {
 // ---------------------------------------------------------------------------
 // Responses (§2.4)
 
-const OTLP_DISPOSITIONS = ["accepted", "duplicate", "ignored_version"] as const
-
 /**
- * Classify a `/v1/logs|metrics|traces` response.
+ * Classify a `/v1/logs|metrics|traces` response; the envelope is the one
+ * `/usage` uses (`wire.ts`).
  *
  * Only `ok:true` with a known disposition and `next_eligible_at` confirms the
  * batch; any other 200 is an unknown result and replays the same bytes. A wait
@@ -445,37 +445,23 @@ const OTLP_DISPOSITIONS = ["accepted", "duplicate", "ignored_version"] as const
  */
 export function classifyOtlpResponse(response: WireResponse, now = Date.now()): DeliveryOutcome {
     const { status } = response
-    const body = isRecord(response.json) ? response.json : undefined
     if (status === 200) {
-        const disposition = OTLP_DISPOSITIONS.find((value) => value === body?.disposition)
-        const next = body?.next_eligible_at
-        if (body?.ok !== true || !disposition || !isCount(next)) return { kind: "replay" }
-        return { kind: "acknowledged", disposition, nextEligibleAt: next }
+        const acknowledgement = parseAcknowledgement(response.json)
+        return acknowledgement ? { kind: "acknowledged", ...acknowledgement } : { kind: "replay" }
     }
-    const error = isRecord(body?.error) ? body.error : undefined
-    const code = typeof error?.code === "string" && error.code.length > 0 ? error.code : undefined
-    const delay = waitDelay(body, error, response.retryAfter, now)
+    const error = parseServiceError(response.json, response.retryAfter, now)
+    const { code } = error
+    const waitMs = serviceWaitMs(error, now)
+    const delay = waitMs === undefined ? {} : { retryAfterMs: waitMs }
     if (status === 401) return { kind: "refresh_token" }
-    if (status === 403) return { kind: "stop", scope: "profile", code: body ? (code ?? "forbidden") : EDGE_BLOCKED }
+    if (status === 403) {
+        return { kind: "stop", scope: "profile", code: isRecord(response.json) ? (code ?? "forbidden") : EDGE_BLOCKED }
+    }
     if (status === 429) return { kind: "wait", code: code ?? EDGE_RATE_LIMITED, ...delay }
     if (status === 413) return { kind: "too_large" }
     if (status === 408 || status >= 500) return { kind: "replay", ...delay }
     if (status >= 400) return { kind: "discard", code: code ?? `http_${status}` }
     return { kind: "replay", ...delay }
-}
-
-function waitDelay(
-    body: Record<string, unknown> | undefined,
-    error: Record<string, unknown> | undefined,
-    retryAfter: string | null,
-    now: number,
-): { readonly retryAfterMs?: number } {
-    const next = body?.next_eligible_at
-    if (isCount(next)) return { retryAfterMs: Math.max(0, next - now) }
-    const bodyDelay = error?.retry_after_ms ?? body?.retry_after_ms
-    if (isCount(bodyDelay)) return { retryAfterMs: bodyDelay }
-    if (retryAfter && /^\d+$/u.test(retryAfter.trim())) return { retryAfterMs: Number(retryAfter.trim()) * 1_000 }
-    return {}
 }
 
 // ---------------------------------------------------------------------------
@@ -524,10 +510,6 @@ function pick(attributes: OtlpAttributes, allowed: readonly string[]): Record<st
         if (value !== undefined) picked[key] = value
     }
     return picked
-}
-
-function isCount(value: unknown): value is number {
-    return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

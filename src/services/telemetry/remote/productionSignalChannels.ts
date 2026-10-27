@@ -9,7 +9,7 @@ import {
     type ProductionOtlpOutbox,
 } from "./diagnostics/DiagnosticDeliveryWorker"
 import { type DiagnosticResource, diagnosticOtlpResource } from "./diagnostics/diagnosticRecord"
-import { type DroppedChannel, isMetricsWindow, type MetricsWindow, ProductionMetricsWindow } from "./metrics/productionMetrics"
+import { type DroppedSignal, isMetricsWindow, type MetricsWindow, ProductionMetricsWindow } from "./metrics/productionMetrics"
 import { isOtlpSpanInput, ProductionSpanRecorder } from "./traces/productionSpans"
 import type { OtlpTransport } from "./transport/DlineOtelHttpClient"
 
@@ -100,9 +100,9 @@ export class ProductionSignalChannels {
         if (this.options.allowed()) this.window.observe(signal)
     }
 
-    /** Records a channel dropped before they reached its outbox. */
-    recordDropped(channel: DroppedChannel, count: number): void {
-        this.window.recordDropped(channel, count)
+    /** Records the records of one signal dropped before they reached its outbox. */
+    recordDropped(signal: DroppedSignal, count: number): void {
+        this.window.recordDropped(signal, count)
     }
 
     startSpan(

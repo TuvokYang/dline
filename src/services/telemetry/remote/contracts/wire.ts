@@ -1,7 +1,7 @@
 /**
- * Wire contract of the Dline OTEL service (`otel.dline.cc`): acknowledgements
- * and error bodies. The device grant lives in `deviceGrant.ts` and the usage
- * body in `usageBody.ts`.
+ * Wire contract of the Dline OTEL service (`otel.dline.cc`): the response
+ * envelope `/usage` and the OTLP endpoints share (usage-contract §15, TADR §2.4).
+ * The device grant lives in `deviceGrant.ts` and the usage body in `usageBody.ts`.
  *
  * Parsers validate only the fields the client acts on and ignore everything
  * else, so a server that adds fields does not break delivery.
@@ -12,68 +12,62 @@ export type RemoteProfile = "usage" | "production" | "development"
 /**
  * How the service settled a request it confirmed.
  *
- * `accepted` stored the batch and `duplicate` recognised the same request ID
- * and bytes as an earlier attempt. `ignored_version` confirms a Usage request
- * without a business write (usage-contract §15); the logs channel does not
- * treat it as a confirmation, so there a batch is replayed instead of dropped.
+ * `accepted` stored the batch, `duplicate` recognised the same request ID and
+ * bytes as an earlier attempt, and `ignored_version` confirms the request
+ * without a business write.
  */
 export type DeliveryDisposition = "accepted" | "duplicate" | "ignored_version"
-const DELIVERY_DISPOSITIONS: readonly DeliveryDisposition[] = ["accepted", "duplicate"]
+const DELIVERY_DISPOSITIONS: readonly DeliveryDisposition[] = ["accepted", "duplicate", "ignored_version"]
 
-/** A confirmed batch and the earliest time, server epoch milliseconds, the next new batch may follow. */
+/** A confirmed request and the earliest time, server epoch milliseconds, the next new request may follow. */
 export interface DeliveryAcknowledgement {
     readonly disposition: DeliveryDisposition
-    readonly nextEligibleAt?: number
+    readonly nextEligibleAt: number
 }
 
-/** `200 ok:true` with a known disposition; anything else is not a confirmation. */
+/**
+ * The success envelope `{ok: true, request_id, disposition, next_eligible_at}`.
+ * Without a known disposition and its gate a 200 confirms nothing, so the
+ * caller replays the same bytes instead of dropping them.
+ */
 export function parseAcknowledgement(body: unknown): DeliveryAcknowledgement | undefined {
     if (!isRecord(body) || body.ok !== true) return undefined
-    const disposition = body.disposition
-    if (!DELIVERY_DISPOSITIONS.includes(disposition as DeliveryDisposition)) return undefined
+    const disposition = DELIVERY_DISPOSITIONS.find((value) => value === body.disposition)
     const next = body.next_eligible_at
-    return {
-        disposition: disposition as DeliveryDisposition,
-        ...(isSafeNonNegativeInteger(next) ? { nextEligibleAt: next } : {}),
-    }
+    if (!disposition || !isSafeNonNegativeInteger(next)) return undefined
+    return { disposition, nextEligibleAt: next }
 }
 
-const USAGE_DISPOSITIONS = ["accepted", "duplicate", "ignored_version", "rejected"] as const
-const USAGE_RESPONSE_CODE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/u
-
-/** A `/usage` response body (usage-contract §15): flat, without the `ok` envelope of the other endpoints. */
-export interface UsageResponseBody {
-    readonly disposition: (typeof USAGE_DISPOSITIONS)[number]
+/**
+ * The failure envelope `{ok: false, error: {code, path?}}`. `retry_after_ms`
+ * and `next_eligible_at` sit at the top level and appear only where they apply;
+ * some edge answers carry no body at all.
+ */
+export interface ServiceError {
     readonly code?: string
+    /** The body's `retry_after_ms`, else `Retry-After` relative to the local clock. */
+    readonly retryAfterMs?: number
     /** Server epoch milliseconds. */
     readonly nextEligibleAt?: number
 }
 
-/** The fields of a `/usage` response the client acts on; an unknown disposition is not a response body. */
-export function parseUsageResponseBody(body: unknown): UsageResponseBody | undefined {
-    if (!isRecord(body)) return undefined
-    const disposition = USAGE_DISPOSITIONS.find((value) => value === body.disposition)
-    if (!disposition) return undefined
-    const { code, next_eligible_at: next } = body
+export function parseServiceError(body: unknown, retryAfterHeader: string | null, now = Date.now()): ServiceError {
+    const envelope: Record<string, unknown> = isRecord(body) ? body : {}
+    const error = isRecord(envelope.error) ? envelope.error : undefined
+    const code = typeof error?.code === "string" && error.code.length > 0 ? error.code : undefined
+    const delay = envelope.retry_after_ms
+    const retryAfterMs = isSafeNonNegativeInteger(delay) ? delay : parseRetryAfterMs(retryAfterHeader, now)
+    const next = envelope.next_eligible_at
     return {
-        disposition,
-        ...(typeof code === "string" && USAGE_RESPONSE_CODE_PATTERN.test(code) ? { code } : {}),
+        ...(code ? { code } : {}),
+        ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
         ...(isSafeNonNegativeInteger(next) ? { nextEligibleAt: next } : {}),
     }
 }
 
-/** The machine-readable part of an error body; some error bodies carry no message at all. */
-export interface ServiceError {
-    readonly code?: string
-    readonly retryAfterMs?: number
-}
-
-export function parseServiceError(body: unknown, retryAfterHeader: string | null, now = Date.now()): ServiceError {
-    const error = isRecord(body) && isRecord(body.error) ? body.error : undefined
-    const code = typeof error?.code === "string" && error.code.length > 0 ? error.code : undefined
-    const bodyDelay = isRecord(body) && isSafeNonNegativeInteger(body.retry_after_ms) ? body.retry_after_ms : undefined
-    const retryAfterMs = bodyDelay ?? parseRetryAfterMs(retryAfterHeader, now)
-    return { ...(code ? { code } : {}), ...(retryAfterMs === undefined ? {} : { retryAfterMs }) }
+/** How long a failure asks the client to wait: its `next_eligible_at` gate wins over any delay. */
+export function serviceWaitMs(error: ServiceError, now: number): number | undefined {
+    return error.nextEligibleAt === undefined ? error.retryAfterMs : Math.max(0, error.nextEligibleAt - now)
 }
 
 /** Read `Retry-After` as delay seconds or an HTTP date, relative to the local clock. */

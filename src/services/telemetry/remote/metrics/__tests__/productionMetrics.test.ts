@@ -134,15 +134,15 @@ describe("ProductionMetricsWindow (TADR §7.2)", () => {
         ])
     })
 
-    it("counts local drops per channel", () => {
+    it("counts local drops per signal", () => {
         const window = new ProductionMetricsWindow(0)
         window.recordDropped("logs", 2)
         window.recordDropped("logs", 3)
         window.recordDropped("traces", 1)
 
         expect(window.freeze(60_000)?.points).toEqual([
-            { name: "dline.telemetry.dropped.records", attributes: { "dline.channel": "logs" }, value: 5 },
-            { name: "dline.telemetry.dropped.records", attributes: { "dline.channel": "traces" }, value: 1 },
+            { name: "dline.telemetry.dropped.records", attributes: { "dline.signal": "logs" }, value: 5 },
+            { name: "dline.telemetry.dropped.records", attributes: { "dline.signal": "traces" }, value: 1 },
         ])
     })
 })

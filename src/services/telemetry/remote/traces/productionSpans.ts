@@ -128,7 +128,7 @@ function catalogAttributes(
     const errorType = failed ? firstOf(raw, ["error.type", "error_type"], diagnosticValue.token) : undefined
     switch (name) {
         case "dline.task":
-            return { "dline.role": internalName === "subagent.run" ? "subagent" : "task" }
+            return compact({ "dline.role": internalName === "subagent.run" ? "subagent" : "task", "error.type": errorType })
         case "dline.tool.execute":
             return compact({
                 "tool.name": firstOf(raw, ["tool.name", "tool_name"], diagnosticValue.builtInTool),
