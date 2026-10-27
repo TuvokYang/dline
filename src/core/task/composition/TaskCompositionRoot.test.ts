@@ -50,13 +50,13 @@ describe("TaskCompositionRoot", () => {
         })
         const payloadRef = await payloads.put(encodeTaskPayload({ kind: "user_input", text: "hello" }))
         await result.task.start({ entryId: "entry-1", payloadRef })
-        // This provider answers every round in prose without calling a tool. The
-        // kernel continues through such answers until the third, which opens the
-        // mistake-limit dialog instead of another round, as dev's default of three
-        // consecutive mistakes did. A single call would be the old defect: the task
-        // stopped after one unanswered answer.
+        // This provider answers every round in prose without calling a tool. Each
+        // such answer is a plain-text warning, five warnings count as one mistake,
+        // and the default limit of three mistakes opens the mistake-limit dialog
+        // instead of a sixteenth round. A single call would be the old defect: the
+        // task stopped after one unanswered answer.
         await vi.waitFor(() => expect(provider.mock.calls.length).toBeGreaterThan(1))
-        await vi.waitFor(() => expect(provider).toHaveBeenCalledTimes(3))
+        await vi.waitFor(() => expect(provider).toHaveBeenCalledTimes(15))
         expect(Object.getOwnPropertyNames(Object.getPrototypeOf(result.task)).sort()).toEqual([
             "cancel",
             "constructor",
