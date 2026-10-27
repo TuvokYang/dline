@@ -1,4 +1,4 @@
-import type { ProviderTurnPlan, ProviderTurnProseAuthorization } from "../../kernel"
+import type { ProviderTurnPlan } from "../../kernel"
 import type { TaskPayloadStore } from "../../stores"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
 import type {
@@ -48,12 +48,12 @@ export type ProductionProviderChunk =
           readonly reasoning?: string
           readonly content?: ProviderFinalEnvelope["content"]
           readonly modelInfo?: ProviderFinalEnvelope["modelInfo"]
+          /** Whether the Profile marks the model custom; reported with diagnostics, never journaled. */
+          readonly modelCustom?: boolean
           /** How the reply ended; journaled with it so the next round can say why it continues. */
           readonly ending?: ProviderFinalEnvelope["ending"]
           readonly mode: ProviderTurnPlan["mode"]
           readonly blocks: readonly ProviderBlockOutput[]
-          /** Trusted explicit-instruction authority exercised by parsed blocks in this turn. */
-          readonly proseAuthorization?: ProviderTurnProseAuthorization
           /** Chat rows of the calls the turn settled; see ProviderTextPresentationPort. */
           readonly toolRows?: readonly number[]
       }
@@ -73,17 +73,9 @@ export interface ProductionProviderAdapterOptions {
     readonly service: ProductionProviderService
 }
 
-function plainTextWarningOf(
-    text: string | undefined,
-    blocks: ProviderTurnPlan["blocks"],
-    authorization: ProviderTurnPlan["proseAuthorization"],
-    turnId: string,
-): ProviderTurnPlan["plainTextWarning"] {
-    if (!text?.trim()) return undefined
-    if (blocks.length === 0) return "text_only"
-    const blockIds = new Set(blocks.map((block) => block.blockId))
-    const authorized = authorization?.grants.some((grant) => grant.requestId === turnId && blockIds.has(grant.blockId)) === true
-    return authorized ? undefined : "plain_text_outside_tool"
+/** Plain text with no call is the only warning; prose beside a call is an ordinary reply. */
+function plainTextWarningOf(text: string | undefined, blocks: ProviderTurnPlan["blocks"]): ProviderTurnPlan["plainTextWarning"] {
+    return text?.trim() && blocks.length === 0 ? "text_only" : undefined
 }
 
 /** Translates provider values to immutable payload refs consumed by the kernel. */
@@ -146,11 +138,10 @@ export class ProductionProviderAdapter implements ProviderExecutionPort {
                     approval: block.approval,
                 })),
             )
-            const plainTextWarning = plainTextWarningOf(chunk.text, blocks, chunk.proseAuthorization, chunk.turnId)
+            const plainTextWarning = plainTextWarningOf(chunk.text, blocks)
             const turnPlan: ProviderTurnPlan = {
                 mode: chunk.mode,
                 blocks,
-                ...(chunk.proseAuthorization === undefined ? {} : { proseAuthorization: chunk.proseAuthorization }),
                 ...(plainTextWarning === undefined ? {} : { plainTextWarning }),
             }
             const finalPayload: ProviderFinalEnvelope = {
@@ -170,6 +161,7 @@ export class ProductionProviderAdapter implements ProviderExecutionPort {
                 ...(chunk.reasoning === undefined ? {} : { reasoning: chunk.reasoning }),
                 ...(chunk.toolRows === undefined ? {} : { toolRows: chunk.toolRows }),
                 ...(chunk.modelInfo === undefined ? {} : { modelInfo: chunk.modelInfo }),
+                ...(chunk.modelCustom === undefined ? {} : { modelCustom: chunk.modelCustom }),
                 turnPlan,
             }
         }

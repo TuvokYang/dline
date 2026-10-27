@@ -198,6 +198,25 @@ describe("toDiagnosticRecord (contract v2.1 §3.1-§3.2)", () => {
         expect(custom.attributes).toMatchObject({ provider: "openai", model: "acme_private-finetune", "model.custom": true })
         expect(unmarked.attributes).toMatchObject({ provider: "ollama", model: "qwen3_8b", "model.custom": false })
     })
+
+    it("keeps a plain-text warning's model identity only under the catalog keys", () => {
+        const warning = (properties: NonNullable<EventSignal["properties"]>) =>
+            toDiagnosticRecord(
+                event({ name: "provider.plain_text_warning", channel: "runtime", severity: "warn", properties }),
+                NOW,
+            )?.attributes
+
+        expect(warning({ provider: "anthropic", model: "claude-sonnet", "model.custom": true })).toMatchObject({
+            provider: "anthropic",
+            model: "claude-sonnet",
+            "model.custom": true,
+        })
+        // The spelling an earlier build sent: nothing in it identifies the model once filtered.
+        const legacy = warning({ provider_id: "anthropic", model_id: "claude-sonnet", warning_kind: "text_only" })
+        expect(legacy).toBeDefined()
+        expect(legacy).not.toHaveProperty("provider")
+        expect(legacy).not.toHaveProperty("model")
+    })
 })
 
 describe("v2.1 §3.5 diagnostic extension", () => {

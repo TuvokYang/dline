@@ -53,8 +53,6 @@ export const formatResponse = {
     permissionDeniedError: (reason: string) =>
         generateToolResponse("executeCommand", "permissionDeniedError", { REASON: reason }),
 
-    plainTextOutsideTool: () => generateToolResponse("toolHandlers", "plainTextOutsideTool"),
-
     noToolsUsed: (usingNativeToolCalls: boolean) =>
         generateToolResponse("toolHandlers", "noToolsUsed", {
             TOOL_REMINDER: usingNativeToolCalls ? "" : generateToolResponse("toolHandlers", "toolUseInstructionsReminder"),

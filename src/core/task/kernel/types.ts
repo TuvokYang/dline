@@ -41,31 +41,16 @@ export interface ProviderTurnBlockPlan {
     readonly approval: ProviderTurnApproval
 }
 
-/**
- * Trusted authority for prose that accompanied an explicit-instruction call.
- *
- * Each grant names the parsed block that exercised the authority, so a turn
- * cannot exempt unrelated prose merely because its input happened to carry an
- * explicit instruction. Request identity blocks cross-turn reuse; attempt
- * identity preserves the exact provider-request provenance across recovery.
- */
-export interface ProviderTurnProseAuthorization {
-    readonly kind: "explicit_instruction"
-    readonly grants: readonly {
-        readonly instructionId: string
-        readonly requestId: string
-        readonly attemptId: string
-        readonly blockId: BlockId
-    }[]
-}
+/** Plain text without any tool call; prose beside a call is an ordinary reply. */
+export type ProviderPlainTextWarningKind = "text_only"
 
-export type ProviderPlainTextWarningKind = "text_only" | "plain_text_outside_tool"
+/** What exhausted the consecutive-mistake budget; selects how the recovery explains it. */
+export type MistakeLimitReason = "rule_violations" | "no_tool_turns" | "tool_mistakes"
 
 export interface ProviderTurnPlan {
     readonly mode: "serial" | "parallel"
     readonly blocks: readonly ProviderTurnBlockPlan[]
-    readonly proseAuthorization?: ProviderTurnProseAuthorization
-    /** Durable classification shared by presentation, runtime budgeting and telemetry. */
+    /** Durable classification shared by runtime budgeting and telemetry. */
     readonly plainTextWarning?: ProviderPlainTextWarningKind
 }
 

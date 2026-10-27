@@ -1,4 +1,4 @@
-import type { Command, CompactionFlowState, ComposeRoundCommand, FlowState, TaskEvent } from "../types"
+import type { Command, CompactionFlowState, ComposeRoundCommand, FlowState, ProviderTurnPlan, TaskEvent } from "../types"
 
 export interface FlowReduction {
     readonly state: FlowState
@@ -30,6 +30,28 @@ export function expireAbandonedCompaction(
 ): CompactionFlowState | undefined {
     if (compaction?.status !== "scheduled" && compaction?.status !== "running") return compaction
     return { ...compaction, status: "expired", message }
+}
+
+/**
+ * The tool handlers' share of the effective mistake count.
+ *
+ * Snapshots written before the count was split only hold the combined total,
+ * which was the tool handlers' count alone; reading it back keeps a restored
+ * task from silently forgetting the mistakes it had already made.
+ */
+function toolMistakesOf(state: FlowState): number {
+    return state.toolMistakeCount ?? Math.max(0, (state.consecutiveMistakeCount ?? 0) - (state.plainTextWarningMistakes ?? 0))
+}
+
+/**
+ * Whether a settled turn spends the plain-text warning budget.
+ *
+ * Only a reply with no tool call at all is a warning: prose beside a call is an
+ * ordinary reply. The block check also ignores a mixed-turn classification a
+ * development build may have journaled before mixed replies were allowed.
+ */
+export function isPlainTextWarningTurn(turnPlan: ProviderTurnPlan): boolean {
+    return turnPlan.plainTextWarning === "text_only" && turnPlan.blocks.length === 0
 }
 
 export function reduceFlow(state: FlowState, event: TaskEvent): FlowReduction {
@@ -68,11 +90,11 @@ export function reduceFlow(state: FlowState, event: TaskEvent): FlowReduction {
                 commands: [],
             }
         case "provider.turn_ready": {
-            const warning = event.turnPlan.plainTextWarning
+            const warning = isPlainTextWarningTurn(event.turnPlan)
             const warningCount = warning ? (state.plainTextWarningCount ?? 0) + 1 : (state.plainTextWarningCount ?? 0)
             const promoted = warningCount >= 5
             const warningMistakes = (state.plainTextWarningMistakes ?? 0) + (promoted ? 1 : 0)
-            const toolMistakes = state.toolMistakeCount ?? 0
+            const toolMistakes = toolMistakesOf(state)
             return {
                 state: {
                     ...state,
@@ -81,8 +103,7 @@ export function reduceFlow(state: FlowState, event: TaskEvent): FlowReduction {
                     replyAdmission: undefined,
                     // Ordinary plain text consumes the weighted warning budget.
                     // Other no-tool outcomes retain the strict raw-turn guard.
-                    textOnlyTurnStreak:
-                        event.turnPlan.blocks.length === 0 && warning === undefined ? (state.textOnlyTurnStreak ?? 0) + 1 : 0,
+                    textOnlyTurnStreak: event.turnPlan.blocks.length === 0 && !warning ? (state.textOnlyTurnStreak ?? 0) + 1 : 0,
                     plainTextWarningCount: warning ? (promoted ? 0 : warningCount) : state.plainTextWarningCount,
                     plainTextWarningMistakes: warningMistakes,
                     toolMistakeCount: toolMistakes,
@@ -110,7 +131,7 @@ export function reduceFlow(state: FlowState, event: TaskEvent): FlowReduction {
         case "tool.completed":
         case "tool.failed":
         case "tool.cancelled": {
-            const toolMistakes = event.mistakeCount ?? state.toolMistakeCount ?? 0
+            const toolMistakes = event.mistakeCount ?? toolMistakesOf(state)
             // A persisted tool result can be terminal yet failed. The executor
             // supplies that semantic fact; absent stays success-compatible for
             // restored events written before the field existed.

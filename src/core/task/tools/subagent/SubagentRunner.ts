@@ -1415,11 +1415,15 @@ export class SubagentRunner {
                     )
                     turnFailures.record(failure)
                     if (failure.kind === "text_only")
-                        reportSubagentPlainTextWarning(providerInfo.providerId, providerInfo.model.id, providerInfo.mode)
+                        reportSubagentPlainTextWarning(
+                            providerInfo.providerId,
+                            providerInfo.model.id,
+                            this.apiHandler.isCustomModel?.() === true,
+                        )
                     // Shape only, never content: enough to tell a truncated, reasoning-only,
                     // or malformed response apart when a run misbehaves in the field.
                     Logger.warn(
-                        `[SubagentRunner] Response without a tool call: kind=${failure.kind} stopReason=${roundStopReason ?? "unreported"} textChars=${assistantText.trim().length} reasoning=${assistantContent.some((block) => block.type === "thinking" || block.type === "redacted_thinking")} outputTokens=${requestUsage.outputTokens} nativeTools=${useNativeToolCalls} consecutive=${turnFailures.count}/${turnFailures.limit}`,
+                        `[SubagentRunner] Response without a tool call: kind=${failure.kind} stopReason=${roundStopReason ?? "unreported"} textChars=${assistantText.trim().length} reasoning=${assistantContent.some((block) => block.type === "thinking" || block.type === "redacted_thinking")} outputTokens=${requestUsage.outputTokens} nativeTools=${useNativeToolCalls} consecutive=${turnFailures.count}/${turnFailures.limit} warnings=${turnFailures.warningCount}`,
                     )
                     if (turnFailures.exhausted) return failAfterConsecutiveTurnFailures()
                     appendUserFeedback(conversation, turnFailureFeedback(failure))
