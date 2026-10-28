@@ -84,7 +84,7 @@ jobs:
 
       - name: Upload failed work smoke artifacts
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: playwright-work-smoke-ubuntu-${{ github.sha }}
           path: tmp/test-result/
@@ -185,7 +185,7 @@ jobs:
 
       - name: Upload failed daily workflow artifacts
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: playwright-work-shard-${{ matrix.shard.id }}-${{ matrix.shard.slug }}-${{ matrix.runner }}-${{ github.sha }}
           path: tmp/test-result/
