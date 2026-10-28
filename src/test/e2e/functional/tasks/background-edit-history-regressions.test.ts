@@ -82,6 +82,77 @@ e2e(
     },
 )
 
+/**
+ * Reproduce the Windows default (`files.eol: auto` resolves to CRLF) on every platform,
+ * so the LF contract is checked against the end-of-line VS Code would otherwise choose.
+ */
+async function preferCrlfInWorkspace(workspaceDir: string): Promise<void> {
+    const settingsDir = path.join(workspaceDir, ".vscode")
+    await mkdir(settingsDir, { recursive: true })
+    await writeFile(path.join(settingsDir, "settings.json"), `${JSON.stringify({ "files.eol": "\r\n" }, null, 2)}\n`, "utf8")
+}
+
+e2e(
+    "Background Edit writes LF for a new file and for an existing CRLF file",
+    async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+        e2e.setTimeout(180_000)
+        await configureBackgroundEdit(dlineDir)
+        await preferCrlfInWorkspace(workspaceDir)
+        const createdPath = path.join(workspaceDir, "background-edit-created.ts")
+        const existingPath = path.join(workspaceDir, "background-edit-existing.ts")
+        await writeFile(existingPath, "export const before = 1\r\n", "utf8")
+        const createdContent = "export const created = true\nexport const lines = 2\n"
+        const rewrittenContent = "export const after = 2\nexport const lines = 2\n"
+
+        server.resetOpenAiMock()
+        server.enqueueOpenAiResponses(
+            {
+                type: "tool",
+                id: "call_background_lf_create",
+                name: "write_to_file",
+                arguments: { path: "background-edit-created.ts", content: createdContent },
+            },
+            {
+                type: "tool",
+                id: "call_background_lf_rewrite",
+                name: "write_to_file",
+                arguments: { path: "background-edit-existing.ts", content: rewrittenContent },
+                expectedToolResults: [{ callId: "call_background_lf_create", contentIncludes: "successfully saved" }],
+            },
+            {
+                type: "tool",
+                id: "call_background_lf_done",
+                name: "attempt_completion",
+                arguments: { result: "E2E_BACKGROUND_EDIT_LF" },
+                expectedToolResults: [{ callId: "call_background_lf_rewrite", contentIncludes: "successfully saved" }],
+            },
+        )
+
+        const app = await openVSCode(workspaceDir)
+        try {
+            const page = await app.firstWindow()
+            await E2ETestHelper.openClineSidebar(page)
+            const sidebar = await helper.getSidebar(page)
+            await E2ETestHelper.dismissWhatsNewModal(sidebar)
+            await helper.signin(sidebar)
+            await setAutoApproveProjectEdits(sidebar, true)
+
+            await sendTask(sidebar, "Write both background edit fixtures with LF line endings.")
+            await expect(sidebar.getByText("E2E_BACKGROUND_EDIT_LF", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+
+            // Compare raw bytes: a CRLF file must fail here rather than be normalized by the reader.
+            expect(await readFile(createdPath, "utf8")).toBe(createdContent)
+            expect(await readFile(existingPath, "utf8")).toBe(rewrittenContent)
+            expect(server.getMockConsumptions("openai-compatible-chat").every((entry) => entry.contractError === undefined)).toBe(
+                true,
+            )
+            await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+        } finally {
+            await app.close()
+        }
+    },
+)
+
 const STALE_TASK_ID = "e2e-stale-history-lock"
 const STALE_TASK_TEXT = "E2E_STALE_HISTORY_LOCK_TASK"
 
