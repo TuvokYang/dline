@@ -206,6 +206,26 @@ describe("opening a task from History", () => {
         expect(controller.messageIndexSpace).toBe(1)
     })
 
+    // The runtime publishes its canonical totals as soon as initTask installs it.
+    // A state carrying those totals with the display's numbering makes the Webview
+    // page forward from display positions and splice old rows into its window.
+    it("announces the new numbering before the promoted runtime can publish its rows", async () => {
+        const { controller } = subject()
+        await controllerPrototype.initHistoryDisplaySession.call(controller, historyItem)
+        const [session] = display.instances
+        if (!session) throw new Error("expected a history display")
+        session.canonicalIndexes = false
+        const numberingSeenByRuntime: number[] = []
+        controller.initTask.mockImplementation(async () => {
+            numberingSeenByRuntime.push(controller.messageIndexSpace)
+        })
+
+        await controllerPrototype.promoteHistoryDisplay.call(controller, session)
+
+        expect(numberingSeenByRuntime).toEqual([1])
+        expect(controller.messageIndexSpace).toBe(1)
+    })
+
     it("keeps the window numbering when the promoted display read the task's own rows", async () => {
         const { controller } = subject()
         await controllerPrototype.initHistoryDisplaySession.call(controller, historyItem)

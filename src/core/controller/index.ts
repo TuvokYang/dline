@@ -1730,6 +1730,14 @@ export class Controller {
                 // Read-only hydration and Profile identity refresh continue outside
                 // provider admission; both target the same task-local stores/cache.
                 await display.disposeForPromotion()
+                // The runtime imported the legacy history the display read, so the
+                // window it served is numbered differently from the runtime's rows.
+                // Announce that before initTask: the runtime publishes its canonical
+                // totals as soon as it is installed, and a state pairing them with the
+                // display's numbering makes the Webview page forward from display
+                // positions and splice runtime rows into the window it holds. No state
+                // goes out before the install, because the handoff holds it.
+                if (renumbers) this.messageIndexSpace++
                 await this.initTask(undefined, undefined, undefined, display.historyItem, undefined, {
                     skipInitialClear: true,
                     activateHistory: true,
@@ -1737,9 +1745,6 @@ export class Controller {
                     // the Webview's message window and the draft being sent.
                     taskInstanceId: display.taskInstanceId,
                 })
-                // The runtime imported the legacy history the display read, so the
-                // window it served is numbered differently from the runtime's rows.
-                if (renumbers) this.messageIndexSpace++
             },
             () => this.postStateToWebview({ immediate: true }),
         )

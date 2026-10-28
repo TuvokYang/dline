@@ -42,6 +42,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - The page the browser opens after authorizing an MCP server or another remote service shows the Dline mark instead of the old Cline icon
 - Compacting the context, a reply without tools, or Retry after a failed request no longer leaves two checkpoints next to each other: when nothing visible sits between them, an unchanged workspace reuses the previous checkpoint and a changed one replaces it with the new checkpoint
 - API error cards such as an exhausted balance no longer carry their own Retry Request button; Retry, Start New Task, and replies come only from the task footer, and the card keeps only links such as top-up or sign-in
+- Opening a long task saved by an earlier version from History and immediately pressing Resume or sending a message no longer leaves the chat stuck mid-history; the message just sent and the replies after it are shown
 
 ## [0.11.1]
 
