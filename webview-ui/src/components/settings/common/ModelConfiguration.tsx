@@ -4,8 +4,8 @@ import { declaredServerTools, isServerToolEnabled, withServerToolSwitch } from "
 import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import { useEffect, useId, useState } from "react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { getCurrencySymbol, SUPPORTED_CURRENCY_CODES } from "@/utils/currency"
 import { ProfileDisclosure, ProfileField, ProfileInlineGrid, ProfileSection, ProfileSectionTitle } from "../profile-ui"
-import { getCurrencySymbol } from "../utils/pricingUtils"
 import { DebouncedTextField } from "./DebouncedTextField"
 import { ContextTierEditor, PricingTierEditor } from "./ModelTierEditor"
 
@@ -448,10 +448,11 @@ export const ModelConfiguration = ({
                                 <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="USD">USD ($)</SelectItem>
-                                <SelectItem value="CNY">CNY (¥)</SelectItem>
-                                <SelectItem value="EUR">EUR (€)</SelectItem>
-                                <SelectItem value="GBP">GBP (£)</SelectItem>
+                                {SUPPORTED_CURRENCY_CODES.map((code) => (
+                                    <SelectItem key={code} value={code}>
+                                        {`${code} (${getCurrencySymbol(code)})`}
+                                    </SelectItem>
+                                ))}
                             </SelectContent>
                         </Select>
                     </ProfileField>

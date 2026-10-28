@@ -124,7 +124,6 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
         return () => document.removeEventListener("mousedown", handleClickOutside)
     }, [isHighlightedTextExpanded])
 
-    const displayCurrency = (currency || "USD").toUpperCase()
     const totalInputTokens = tokensIn + (cacheWrites ?? 0) + (cacheReads ?? 0)
     const currentContextTokens = lastApiReqTotalTokens ?? totalInputTokens
     const isCostAvailable = totalCost != null && hasNonZeroModelPricing(pricing)
@@ -186,7 +185,7 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
                                 <CopyTaskButton className={BUTTON_CLASS} taskText={task.text} />
                                 <RefreshPromptButton
                                     className={BUTTON_CLASS}
-                                    currency={displayCurrency}
+                                    currency={currency}
                                     estimatedInputTokens={currentContextTokens}
                                     inputPrice={pricing?.inputPrice}
                                     promptFreshness={promptFreshness}
@@ -216,7 +215,7 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
                                 cacheHitRate={cacheHitRate}
                                 cacheReads={cacheReads}
                                 cacheWrites={cacheWrites}
-                                currency={displayCurrency}
+                                currency={currency}
                                 isCostAvailable={isCostAvailable}
                                 requestsPerMinute={requestsPerMinute ?? 0}
                                 taskId={taskId}

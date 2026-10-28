@@ -4,16 +4,10 @@ import { VSCodeDropdown, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
 import { CheckIcon, MinusIcon } from "lucide-react"
 import { useId } from "react"
 import styled from "styled-components"
+import { formatCurrencyAmount, getCurrencySymbol } from "@/utils/currency"
 import { ModelDescriptionMarkdown } from "../ModelDescriptionMarkdown"
 import { ProfileField } from "../profile-ui"
-import {
-    formatPrice,
-    getCurrencySymbol,
-    hasThinkingBudget,
-    supportsBrowserUse,
-    supportsImages,
-    supportsPromptCache,
-} from "../utils/pricingUtils"
+import { hasThinkingBudget, supportsBrowserUse, supportsImages, supportsPromptCache } from "../utils/pricingUtils"
 
 // ========== Styled Components ==========
 
@@ -142,7 +136,7 @@ const formatTiers = (
 
             return (
                 <span key={`tier-${tier.contextWindow}`} style={{ paddingLeft: "15px" }}>
-                    {formatPrice(price, currency)}/million tokens (
+                    {formatCurrencyAmount(price, currency)}/million tokens (
                     {tier.contextWindow === Number.POSITIVE_INFINITY || tier.contextWindow >= Number.MAX_SAFE_INTEGER ? (
                         <span>
                             {">"} {prevLimit.toLocaleString()} input tokens

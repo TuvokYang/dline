@@ -1,6 +1,7 @@
 import type { ApiConfiguration } from "@shared/api"
 import type { ApiProfile } from "@shared/proto/dline/profile"
 import type { Mode } from "@shared/storage/types"
+import { normalizeCurrencyCode } from "@/utils/currency"
 
 /**
  * Resolve the active API profile for the current chat mode.
@@ -21,6 +22,13 @@ export function resolveActiveProfile(
     return namedProfile ?? profiles.find((profile) => profile.enabled && profile.usedFor?.includes(mode)) ?? profiles[0]
 }
 
+/**
+ * Resolve the billing currency of the current task.
+ *
+ * Both inputs originate from `ModelInfo.pricing.currency`: API metrics record the
+ * model that produced the cost, and the active profile's model covers a task
+ * that has not reported metrics yet.
+ */
 export function resolveTaskCurrency(apiCurrency: string | undefined, profileCurrency: string | undefined): string {
-    return (apiCurrency?.trim() || profileCurrency?.trim() || "USD").toUpperCase()
+    return normalizeCurrencyCode(apiCurrency?.trim() || profileCurrency)
 }

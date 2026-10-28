@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import { describe, expect, it } from "vitest"
 import { SubagentMetrics } from "./SubagentMetrics"
 
@@ -82,13 +82,13 @@ describe("SubagentMetrics context usage", () => {
 
     it.each([
         ["USD", "$0.01"],
-        ["CNY", "CN¥0.01"],
-        ["JPY", "JP¥0.01"],
+        ["CNY", "¥0.01"],
         ["EUR", "€0.01"],
         ["CHF", "CHF 0.01"],
-    ])("formats model currency %s without a yuan fallback", (currency, expected) => {
+    ])("formats model currency %s with the shared symbol", (currency, expected) => {
         render(<SubagentMetrics {...baseProps} currency={currency} />)
 
-        expect(screen.getByTestId("subagent-metrics")).toHaveTextContent(expected)
+        // Exact match on the cost segment, so a prefixed form such as `CN¥0.01` fails.
+        expect(within(screen.getByTestId("subagent-metrics")).getByText(expected)).toBeInTheDocument()
     })
 })

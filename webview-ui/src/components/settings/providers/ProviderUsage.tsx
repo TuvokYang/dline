@@ -1,8 +1,8 @@
 import { ChevronDownIcon, ChevronRightIcon, LoaderIcon, RefreshCwIcon } from "lucide-react"
 import { useState } from "react"
 import { cn } from "@/lib/utils"
+import { formatCurrencyAmount } from "@/utils/currency"
 import {
-    formatProviderUsageCurrency,
     formatUsageRetrievedAt,
     ProviderUsageDetails,
     providerUsageRemainingLabel,
@@ -28,7 +28,7 @@ export function ProviderUsage({
           : effectiveQuota
             ? providerUsageRemainingLabel(effectiveQuota)
             : !usage?.planType && usage?.remainingBalance !== undefined
-              ? formatProviderUsageCurrency(usage.currency, usage.remainingBalance)
+              ? formatCurrencyAmount(usage.remainingBalance, usage.currency)
               : "No usage data"
     // The snapshot is held until refreshed, so its age is shown next to it
     // rather than letting an old reading look current.

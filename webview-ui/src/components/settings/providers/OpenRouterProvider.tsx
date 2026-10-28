@@ -2,11 +2,14 @@ import { EmptyRequest } from "@shared/proto/dline/common"
 // Mode import removed — no longer needed in profile-driven architecture
 import { VSCodeButton, VSCodeLink } from "@vscode/webview-ui-toolkit/react"
 import { AccountServiceClient } from "@/services/grpc-client"
+import { formatCurrencyAmount } from "@/utils/currency"
 import { useOpenRouterKeyInfo } from "../../ui/hooks/useOpenRouterKeyInfo"
 import { DebouncedTextField } from "../common/DebouncedTextField"
 import OpenRouterModelPicker from "../OpenRouterModelPicker"
-import { formatPrice } from "../utils/pricingUtils"
 import type { ApiProfile } from "./ProviderProfile"
+
+/** OpenRouter bills key credit in US dollars, independent of the selected model. */
+const OPENROUTER_CREDIT_CURRENCY = "USD"
 
 /**
  * Component to display OpenRouter balance information
@@ -23,7 +26,8 @@ const OpenRouterBalanceDisplay = ({ apiKey }: { apiKey: string }) => {
     }
 
     const remainingBalance = keyInfo.limit - keyInfo.usage
-    const formattedBalance = formatPrice(remainingBalance)
+    const formatCredit = (amount: number) => formatCurrencyAmount(amount, OPENROUTER_CREDIT_CURRENCY)
+    const formattedBalance = formatCredit(remainingBalance)
 
     return (
         <VSCodeLink
@@ -36,7 +40,7 @@ const OpenRouterBalanceDisplay = ({ apiKey }: { apiKey: string }) => {
                 paddingLeft: 4,
                 cursor: "pointer",
             }}
-            title={`Remaining balance: ${formattedBalance}\nLimit: ${formatPrice(keyInfo.limit)}\nUsage: ${formatPrice(keyInfo.usage)}`}>
+            title={`Remaining balance: ${formattedBalance}\nLimit: ${formatCredit(keyInfo.limit)}\nUsage: ${formatCredit(keyInfo.usage)}`}>
             Balance: {formattedBalance}
         </VSCodeLink>
     )

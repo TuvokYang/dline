@@ -10,8 +10,8 @@ describe("refresh prompt budget", () => {
         })
 
         expect(budget.tokenLine).toBe("12.4K input tokens")
-        expect(budget.priceLine).toBe("≈ $ 0.0186")
-        expect(budget.inputPriceLine).toBe("Input price: $ 1.50 / 1M tokens")
+        expect(budget.priceLine).toBe("≈ $0.0186")
+        expect(budget.inputPriceLine).toBe("Input price: $1.50 / 1M tokens")
     })
 
     it("formats CNY with the yuan symbol instead of dollar prefix", () => {
@@ -21,8 +21,18 @@ describe("refresh prompt budget", () => {
             currency: "CNY",
         })
 
-        expect(budget.priceLine).toBe("≈ ¥ 0.0186")
-        expect(budget.inputPriceLine).toBe("Input price: ¥ 1.50 / 1M tokens")
+        expect(budget.priceLine).toBe("≈ ¥0.0186")
+        expect(budget.inputPriceLine).toBe("Input price: ¥1.50 / 1M tokens")
+    })
+
+    it("names an unlisted currency instead of pricing it in dollars", () => {
+        const budget = buildRefreshPromptBudget({
+            estimatedInputTokens: 12_400,
+            inputPrice: 1.5,
+            currency: "CHF",
+        })
+
+        expect(budget.inputPriceLine).toBe("Input price: CHF 1.50 / 1M tokens")
     })
 
     it("switches to M tokens without showing K at million scale", () => {

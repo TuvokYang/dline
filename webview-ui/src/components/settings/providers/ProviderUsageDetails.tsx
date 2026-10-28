@@ -10,25 +10,10 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/common/AlertDialog"
+import { formatCurrencyAmount } from "@/utils/currency"
 import { formatTokenMetric } from "@/utils/format"
 
 export type ProviderUsageProgressTone = "success" | "warning" | "caution" | "danger"
-
-export function formatProviderUsageCurrency(currency: string | undefined, amount: number): string {
-    const code = (currency || "USD").toUpperCase()
-    if (code === "CNY") return `￥${amount.toFixed(2)}`
-    try {
-        return new Intl.NumberFormat(undefined, {
-            style: "currency",
-            currency: code,
-            currencyDisplay: "narrowSymbol",
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-        }).format(amount)
-    } catch {
-        return `${code} ${amount.toFixed(2)}`
-    }
-}
 
 /**
  * Report whether a quota carries a percentage that can be shown.
@@ -205,7 +190,7 @@ export function ProviderUsageDetails({
                     <div className="flex items-center justify-between gap-2">
                         <span className="text-description">Balance</span>
                         <span className="font-medium text-foreground">
-                            {formatProviderUsageCurrency(usage.currency, usage.remainingBalance)}
+                            {formatCurrencyAmount(usage.remainingBalance, usage.currency)}
                         </span>
                     </div>
                 ) : null}

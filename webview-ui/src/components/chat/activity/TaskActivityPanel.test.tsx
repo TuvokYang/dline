@@ -637,9 +637,8 @@ describe("TaskActivityPanel", () => {
         // In = uncached 1,000 + cache write 1,000 + cache read 8,000.
         expect(metrics).toHaveTextContent("In:10.0K")
         expect(metrics).toHaveTextContent("Cache:80%")
-        // Yuan and yen share the ¥ glyph, so runtime metrics name the currency.
-        expect(metrics).toHaveTextContent("CN¥0.01")
-        expect(metrics).not.toHaveTextContent("JP¥")
+        // The subagent model's CNY pricing renders with the shared yuan symbol, unprefixed.
+        expect(within(metrics).getByText("¥0.01")).toBeInTheDocument()
     })
 
     it("shows all activities and filters the vertical list by type", () => {

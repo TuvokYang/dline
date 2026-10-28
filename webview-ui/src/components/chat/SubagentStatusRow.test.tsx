@@ -910,7 +910,8 @@ describe("SubagentStatusRow", () => {
         // In = uncached 1,000 + cache write 500 + cache read 8,500 from the activity metrics.
         expect(metrics).toHaveTextContent("In:10.0K")
         expect(metrics).toHaveTextContent("Cache:85%")
-        expect(metrics).toHaveTextContent("CN¥0.01")
+        // The subagent model's CNY pricing renders with the shared yuan symbol, unprefixed.
+        expect(within(metrics).getByText("¥0.01")).toBeInTheDocument()
     })
 
     it("keeps Task, Tools, and Output content-sized within the bounded Work card", () => {

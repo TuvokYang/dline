@@ -7,6 +7,8 @@
  * they drifted apart.
  */
 
+import { formatCurrencyAmount } from "@/utils/currency"
+
 /** Minimal shape both history panels can supply. */
 export interface TaskUsageSummary {
     totalCost?: number
@@ -22,13 +24,6 @@ export interface TaskCompletionSummary {
     isCompleted?: boolean
     /** Present only once a canonical completion projection exists. */
     completionStateRevision?: number
-}
-
-const CURRENCY_SYMBOLS: Record<string, string> = { USD: "$", CNY: "¥", EUR: "€", GBP: "£" }
-
-/** Resolve the display symbol for a task's billing currency. */
-export function getCostSymbol(currency?: string): string {
-    return CURRENCY_SYMBOLS[currency?.trim().toUpperCase() ?? ""] ?? "$"
 }
 
 /**
@@ -77,7 +72,7 @@ export function getTaskUsageLabel(item: TaskUsageSummary, fractionDigits = 2): T
     if (Number.isFinite(cost) && cost > 0) {
         return {
             kind: "cost",
-            text: `${getCostSymbol(item.currency)}${cost.toFixed(fractionDigits)}`,
+            text: formatCurrencyAmount(cost, item.currency, fractionDigits),
             title: "Total cost",
         }
     }

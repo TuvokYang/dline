@@ -7,8 +7,8 @@ import { createPortal } from "react-dom"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { AccountServiceClient } from "@/services/grpc-client"
+import { formatCurrencyAmount } from "@/utils/currency"
 import {
-    formatProviderUsageCurrency,
     isReadableUsageQuota,
     ProviderUsageDetails,
     selectEffectiveUsageQuota,
@@ -148,7 +148,7 @@ export const UsageBar = () => {
     const summary = effectiveQuota
         ? `${effectiveQuota.shortLabel ?? effectiveQuota.label}: ${usageRemainingPercent(effectiveQuota).toFixed(0)}%`
         : !usage.planType && usage.remainingBalance !== undefined
-          ? formatProviderUsageCurrency(usage.currency, usage.remainingBalance)
+          ? formatCurrencyAmount(usage.remainingBalance, usage.currency)
           : undefined
     if (!summary) return null
 

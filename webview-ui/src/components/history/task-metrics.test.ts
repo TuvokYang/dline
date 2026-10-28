@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { getCostSymbol, getTaskUsageLabel, getTotalTokens, isTaskCompleted } from "./task-metrics"
+import { getTaskUsageLabel, getTotalTokens, isTaskCompleted } from "./task-metrics"
 
 describe("isTaskCompleted", () => {
     it("accepts only a revisioned completion projection", () => {
@@ -23,21 +23,16 @@ describe("getTotalTokens", () => {
     })
 })
 
-describe("getCostSymbol", () => {
-    it("maps known currencies and defaults to dollars", () => {
-        expect(getCostSymbol("CNY")).toBe("¥")
-        expect(getCostSymbol("usd")).toBe("$")
-        expect(getCostSymbol("")).toBe("$")
-        expect(getCostSymbol(undefined)).toBe("$")
-    })
-})
-
 describe("getTaskUsageLabel", () => {
     it("shows the billed cost when the task has a real price", () => {
         expect(getTaskUsageLabel({ totalCost: 22.588, currency: "USD", tokensIn: 100 })).toMatchObject({
             kind: "cost",
             text: "$22.59",
         })
+    })
+
+    it("labels a yuan-billed task with the yuan symbol", () => {
+        expect(getTaskUsageLabel({ totalCost: 3.5, currency: "CNY" })).toMatchObject({ kind: "cost", text: "¥3.50" })
     })
 
     it("shows total tokens instead of a meaningless zero cost", () => {

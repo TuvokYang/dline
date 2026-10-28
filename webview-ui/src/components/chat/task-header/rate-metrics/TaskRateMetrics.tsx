@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { formatCurrencyAmount } from "@/utils/currency"
 import { formatTokenMetric } from "../util"
 import { TaskRateMetricsDialog } from "./TaskRateMetricsDialog"
 
@@ -33,11 +34,10 @@ export function TaskRateMetrics({
     tokensPerMinute,
 }: TaskRateMetricsProps) {
     const [open, setOpen] = useState(false)
-    const displayCurrency = (currency || "USD").toUpperCase()
     const hasTokenUsage = totalInputTokens > 0 || tokensOut > 0
     const hasRateUsage = requestsPerMinute > 0 || tokensPerMinute > 0
     const usageTitle = `In: ${totalInputTokens} / Out: ${tokensOut} / Cache read: ${cacheReads ?? 0} / Cache write: ${cacheWrites ?? 0}`
-    const costLabel = `${{ USD: "$", CNY: "¥", EUR: "€", GBP: "£" }[displayCurrency] || "$"}${totalCost.toFixed(3)}`
+    const costLabel = formatCurrencyAmount(totalCost, currency, 3)
     const accessibleLabel = [
         "View API rate history",
         `In: ${totalInputTokens}`,
