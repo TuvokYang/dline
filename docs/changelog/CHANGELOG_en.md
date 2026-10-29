@@ -183,6 +183,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - On a new_task handoff, text not yet sent in the source task's composer carries over to the successor task's composer
 - Replying `/cmd:reportbug` to a question or a completed task starts the bug report, even when the model asks further questions before filing it
 - The slash command and @ mention menus stay open while focus is briefly in another window or another part of VS Code, so picking continues on return without retyping
+- A command run in a reused VS Code terminal no longer occasionally keeps showing as running until it times out after it has finished
 
 ### Release
 - Each Insiders run now keeps only the latest draft and shows the current cumulative dev changes; pre-release and production notes come from the matching changelog version section, fail when that section is missing or empty, and verify that a production Release has exactly one correctly named, non-empty VSIX
