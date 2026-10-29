@@ -63,7 +63,7 @@ export interface SemanticComposerEditorProps {
     readonly onPasteText?: (text: string, range: ComposerRange) => boolean
     readonly onChipAction?: (atom: ComposerAtom, action: ChipAction) => void
     readonly onFocus?: () => void
-    readonly onBlur?: () => void
+    readonly onBlur?: (event: React.FocusEvent<HTMLDivElement>) => void
     readonly onHeightChange?: (height: number) => void
 }
 

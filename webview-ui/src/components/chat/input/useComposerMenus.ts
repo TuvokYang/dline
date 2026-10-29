@@ -77,8 +77,11 @@ export interface ComposerMenus {
     readonly handleKeyDown: (event: React.KeyboardEvent, isComposing: boolean) => boolean
     /** Record that a menu is being clicked, so the editor's blur does not close it. */
     readonly onMenuMouseDown: () => void
-    /** Close menus on blur, unless the blur came from clicking a menu. */
-    readonly onEditorBlur: () => void
+    /**
+     * Close menus when focus leaves the editor, unless the blur came from
+     * clicking a menu or only the editor's window or frame lost focus.
+     */
+    readonly onEditorBlur: (event: React.FocusEvent<HTMLElement>) => void
     readonly close: () => void
 }
 
@@ -119,6 +122,18 @@ function useSlashCommandSources(workflowDescriptions: Record<string, string>, av
             availableSkillCommands,
         ],
     )
+}
+
+/**
+ * Whether a blur only took focus away from the editor's window or frame.
+ *
+ * Another window or the hosting frame taking focus blurs the editor while it
+ * stays its document's focused element, and returning puts the caret back
+ * where it was. A move to anything inside the document has a related target or
+ * leaves the body focused instead.
+ */
+function isFrameFocusLoss(event: React.FocusEvent<HTMLElement>): boolean {
+    return event.relatedTarget === null && event.currentTarget.ownerDocument.activeElement === event.currentTarget
 }
 
 /** Close a menu when the user clicks anywhere outside it. */
@@ -177,11 +192,13 @@ export function useComposerMenus({ engine, catalog, onPicked }: ComposerMenusOpt
     const onMenuMouseDown = useCallback(() => {
         menuMouseDownRef.current = true
     }, [])
-    const onEditorBlur = useCallback(() => {
+    const onEditorBlur = useCallback((event: React.FocusEvent<HTMLElement>) => {
         if (menuMouseDownRef.current) {
             menuMouseDownRef.current = false
             return
         }
+        // The caret still completes the trigger once focus comes back, so the open menu stays.
+        if (isFrameFocusLoss(event)) return
         setAnchor(undefined)
     }, [])
 
