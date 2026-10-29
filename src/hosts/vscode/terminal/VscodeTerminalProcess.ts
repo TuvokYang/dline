@@ -4,6 +4,7 @@ import * as vscode from "vscode"
 import { getLatestTerminalOutput } from "@/hosts/vscode/terminal/get-latest-output"
 import {
     containsInternalCommandExitMarker,
+    findMarkedCommandCompletion,
     parseInternalCommandExitMarker,
     removeInternalCommandExitMarkers,
 } from "@/integrations/terminal/command-completion-marker"
@@ -24,6 +25,11 @@ import type {
 import { Logger } from "@/shared/services/Logger"
 
 const MARKER_SNAPSHOT_TIMEOUT_MS = 5_000
+/**
+ * An execution end only hints that the marker may be on screen: the terminal renders the marker
+ * line before the end sequence, so a short window suffices, and later ends re-arm the check.
+ */
+const MARKER_END_HINT_WINDOW_MS = 1_500
 const MARKER_SNAPSHOT_INITIAL_POLL_MS = 250
 const MARKER_SNAPSHOT_MAX_POLL_MS = 1_000
 
@@ -74,6 +80,10 @@ export class VscodeTerminalProcess extends EventEmitter<TerminalProcessEvents> i
     private supplementalReaderCount = 0
     private readonly executionStateWaiters = new Set<() => void>()
     private completionMarkerToken: string | undefined
+    /** Output recovered from the terminal buffer when the marker was proven there instead of in a stream. */
+    private recoveredMarkerOutput: string | undefined
+    private markerVerification: Promise<void> | null = null
+    private markerVerificationRequested = false
     private terminationPromise: Promise<void> | null = null
     private cancelledBeforeRun = false
     private terminalDisposed = false
@@ -105,6 +115,8 @@ export class VscodeTerminalProcess extends EventEmitter<TerminalProcessEvents> i
         this.supplementalReaderCount = 0
         this.executionStateWaiters.clear()
         this.completionMarkerToken = options.completionMarkerToken
+        this.recoveredMarkerOutput = undefined
+        this.markerVerificationRequested = false
         this.terminationPromise = null
         this.resetTerminalEndSignal()
 
@@ -209,31 +221,26 @@ export class VscodeTerminalProcess extends EventEmitter<TerminalProcessEvents> i
 
             this.emitRemainingBufferIfListening()
 
-            let terminalSnapshot: string | undefined
-            if (
-                this.completionMarkerToken &&
-                !this.completionDetailsReceived &&
-                this.exitCode === undefined &&
-                this.signal === null &&
-                !this.terminalDisposed
-            ) {
-                terminalSnapshot = await this.waitForCompletionMarkerInSnapshot(
-                    this.completionMarkerToken,
-                    captureTerminalContents,
-                )
+            if (this.isAwaitingMarker()) {
+                await this.pollTerminalBufferForMarker("primary_stream_end", {
+                    windowMs: MARKER_SNAPSHOT_TIMEOUT_MS,
+                    yieldToSupplementalReaders: true,
+                })
             }
 
-            const sanitizedSnapshot =
-                terminalSnapshot === undefined ? undefined : removeInternalCommandExitMarkers(terminalSnapshot).trim()
             const capturedOutput = removeInternalCommandExitMarkers(this.fullOutput).trim()
-            const snapshotAddsOutput = Boolean(
-                sanitizedSnapshot && (!capturedOutput || !capturedOutput.includes(sanitizedSnapshot)),
-            )
+            const recoveredOutput = this.readRecoveredMarkerOutput()
+            // Output proven by the marker in the buffer is authoritative; otherwise fall back to the
+            // current terminal contents only when the streams carried nothing.
+            const needsTerminalContents =
+                recoveredOutput === undefined
+                    ? !capturedOutput
+                    : Boolean(recoveredOutput) && !capturedOutput.includes(recoveredOutput)
 
             // the command process is finished, let's check the output to see if we need to use the terminal capture fallback
-            if ((!capturedOutput || snapshotAddsOutput) && !this.terminalDisposed) {
+            if (needsTerminalContents && !this.terminalDisposed) {
                 telemetryService.captureTerminalOutputFailure(TerminalOutputFailureReason.TIMEOUT, "vscode")
-                terminalSnapshot = await returnCurrentTerminalContents(terminalSnapshot)
+                const terminalSnapshot = await returnCurrentTerminalContents(recoveredOutput)
                 if (terminalSnapshot?.trim()) {
                     telemetryService.captureTerminalExecution(true, "vscode", "clipboard")
                 } else {
@@ -381,10 +388,15 @@ export class VscodeTerminalProcess extends EventEmitter<TerminalProcessEvents> i
 
     /** Accept completion metadata only from an execution observed after this command started. */
     acceptCompletionDetails(execution: unknown, details: TerminalCompletionDetails): boolean {
-        if (execution === undefined || !this.observedExecutions.has(execution)) return false
         if (this.completionMarkerToken) {
+            // VS Code can bind the shell's report to an execution other than the one it returned,
+            // leaving that stream open forever, or end one split part of the wrapper. Any end on
+            // this terminal is therefore only a hint to look for this command's exact marker.
+            this.requestMarkerVerification("execution_end")
+            if (execution === undefined || !this.observedExecutions.has(execution)) return false
             return typeof details.exitCode === "number" || (details.signal !== undefined && details.signal !== null)
         }
+        if (execution === undefined || !this.observedExecutions.has(execution)) return false
         if (execution !== this.activeExecution) return false
         return this.applyCompletionDetails(details)
     }
@@ -405,10 +417,18 @@ export class VscodeTerminalProcess extends EventEmitter<TerminalProcessEvents> i
                 finish()
                 return
             }
-            void this.readSupplementalExecution(execution).then(finish, (error) => {
-                Logger.debug(`[TerminalProcess] Failed to read supplemental shell execution: ${error}`)
-                finish()
-            })
+            void this.readSupplementalExecution(execution).then(
+                () => {
+                    finish()
+                    // The part ended without carrying the marker into this reader; its output may
+                    // have been emitted before the reader attached, so look in the buffer instead.
+                    this.requestMarkerVerification("supplemental_end")
+                },
+                (error) => {
+                    Logger.debug(`[TerminalProcess] Failed to read supplemental shell execution: ${error}`)
+                    finish()
+                },
+            )
         })
     }
 
@@ -494,33 +514,91 @@ export class VscodeTerminalProcess extends EventEmitter<TerminalProcessEvents> i
         }
     }
 
-    private async waitForCompletionMarkerInSnapshot(
-        token: string,
-        capture: (preserveLastLine?: boolean) => Promise<string | undefined>,
-    ): Promise<string | undefined> {
-        let deadline = Date.now() + MARKER_SNAPSHOT_TIMEOUT_MS
+    /** Read through a method: the field changes asynchronously, which control-flow narrowing cannot see. */
+    private readRecoveredMarkerOutput(): string | undefined {
+        return this.recoveredMarkerOutput?.trim()
+    }
+
+    /** Whether a marker command still lacks proof that its whole wrapper finished. */
+    private isAwaitingMarker(): boolean {
+        return (
+            Boolean(this.completionMarkerToken && this.terminal) &&
+            !this.completionEmitted &&
+            !this.completionDetailsReceived &&
+            this.exitCode === undefined &&
+            this.signal === null &&
+            !this.terminalDisposed
+        )
+    }
+
+    /**
+     * Look for this command's marker in the terminal buffer after an end hint. One check runs at a
+     * time; hints arriving meanwhile re-arm it. A miss never completes the command, because a split
+     * part can end while the rest of the wrapper is still running.
+     */
+    private requestMarkerVerification(trigger: string): void {
+        if (!this.isAwaitingMarker()) return
+        if (this.markerVerification) {
+            this.markerVerificationRequested = true
+            return
+        }
+        this.markerVerification = this.pollTerminalBufferForMarker(trigger, {
+            windowMs: MARKER_END_HINT_WINDOW_MS,
+            yieldToSupplementalReaders: false,
+        }).finally(() => {
+            this.markerVerification = null
+            if (!this.markerVerificationRequested) return
+            this.markerVerificationRequested = false
+            this.requestMarkerVerification(trigger)
+        })
+    }
+
+    /** Poll the terminal buffer with backoff until the marker appears, the command settles, or the window closes. */
+    private async pollTerminalBufferForMarker(
+        trigger: string,
+        options: { windowMs: number; yieldToSupplementalReaders: boolean },
+    ): Promise<void> {
+        let deadline = Date.now() + options.windowMs
         let pollInterval = MARKER_SNAPSHOT_INITIAL_POLL_MS
-        while (!this.completionDetailsReceived && this.exitCode === undefined && this.signal === null && !this.terminalDisposed) {
-            if (this.supplementalReaderCount > 0) {
+        while (this.isAwaitingMarker()) {
+            if (options.yieldToSupplementalReaders && this.supplementalReaderCount > 0) {
+                // A split part is still streaming and may carry the marker itself. Its end requests
+                // a buffer check of its own, so this wait cannot strand a command that finished.
                 await this.waitForExecutionStateChange()
-                deadline = Date.now() + MARKER_SNAPSHOT_TIMEOUT_MS
+                deadline = Date.now() + options.windowMs
                 pollInterval = MARKER_SNAPSHOT_INITIAL_POLL_MS
                 continue
             }
-            const latestSnapshot = await capture(true)
-            const markerExitCode =
-                latestSnapshot === undefined ? undefined : parseInternalCommandExitMarker(latestSnapshot, token)
-            if (markerExitCode !== undefined) {
-                this.exitCode = markerExitCode
-                this.completionVerified = true
-                return latestSnapshot
-            }
+            if (await this.adoptMarkerFromTerminalBuffer(trigger)) return
             const remainingMs = deadline - Date.now()
-            if (remainingMs <= 0) break
+            if (remainingMs <= 0) return
             await this.waitForExecutionStateChange(Math.min(pollInterval, remainingMs))
             pollInterval = Math.min(pollInterval * 2, MARKER_SNAPSHOT_MAX_POLL_MS)
         }
-        return undefined
+    }
+
+    /** Adopt this command's exact marker from the whole terminal buffer; returns whether it was found. */
+    private async adoptMarkerFromTerminalBuffer(trigger: string): Promise<boolean> {
+        const token = this.completionMarkerToken
+        const terminal = this.terminal
+        if (!token || !terminal || !this.isAwaitingMarker()) return false
+        let buffer: string
+        try {
+            buffer = await getLatestTerminalOutput({ terminal, wholeBuffer: true })
+        } catch (error) {
+            Logger.error("Error capturing terminal output:", error)
+            return false
+        }
+        // The command may have completed, been cancelled, or lost its terminal during the capture.
+        if (!this.isAwaitingMarker() || this.completionMarkerToken !== token) return false
+        const completion = findMarkedCommandCompletion(buffer, token)
+        if (!completion) return false
+        this.exitCode = completion.exitCode
+        this.completionVerified = true
+        this.recoveredMarkerOutput = completion.output
+        Logger.debug(`[TerminalProcess] completion_source=terminal_buffer trigger=${trigger} exitCode=${completion.exitCode}`)
+        this.signalTerminalEnd()
+        return true
     }
 
     private waitForExecutionStateChange(timeoutMs?: number): Promise<void> {

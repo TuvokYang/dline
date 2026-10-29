@@ -6,6 +6,11 @@ export interface LatestTerminalOutputOptions {
     preserveLastLine?: boolean
     /** Refuse to capture another terminal after focus changes. */
     terminal?: vscode.Terminal
+    /**
+     * Return every captured line instead of cropping to the latest prompt. A completion marker
+     * can sit above prompts printed after the command, and cropping would discard it.
+     */
+    wholeBuffer?: boolean
 }
 
 let terminalCaptureTail: Promise<void> = Promise.resolve()
@@ -52,7 +57,7 @@ async function captureLatestTerminalOutput(options: LatestTerminalOutputOptions)
         // Clean up command separation
         const lines = terminalContents.split("\n")
         const lastLine = lines.pop()?.trim()
-        if (lastLine) {
+        if (lastLine && !options.wholeBuffer) {
             let i = lines.length - 1
             while (i >= 0 && !lines[i].trim().startsWith(lastLine)) {
                 i--
