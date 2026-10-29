@@ -9,12 +9,14 @@ import { showSystemNotification } from "@integrations/notifications"
 import { telemetryService } from "@services/telemetry"
 import { findLastIndex } from "@shared/array"
 import { Logger } from "@shared/services/Logger"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { commitCompletion } from "../../completion/CompletionCommit"
-import type { ToolResponse } from "../../index"
-import type { InteractionOutcome } from "../../interaction/InteractionCoordinator"
+import { isAllItemsCompleted } from "../../focus-chain/file-utils"
+import type { InteractionOutcome } from "../../interaction/InteractionProtocol"
 import { buildUserFeedbackContent } from "../../utils/buildUserFeedbackContent"
+import { type ToolHandlerResult, withToolDocuments } from "../ToolExecutionResult"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
+import type { ToolResponse } from "../ToolResponse"
 import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { getTaskCompletionTelemetry } from "../utils"
@@ -23,249 +25,296 @@ import { attachToolFeedbackFiles, sayFeedbackOnce } from "../utils/UserFeedbackU
 const TASK_PREVIEW_MAX_CHARS = 8000
 
 function getInitialTaskPreview(config: TaskConfig): string | undefined {
-	const firstTaskMessage = config.messageState.clineMessages.find((message) => message.say === "task")?.text?.trim()
-	if (!firstTaskMessage) {
-		return undefined
-	}
-	if (firstTaskMessage.length <= TASK_PREVIEW_MAX_CHARS) {
-		return firstTaskMessage
-	}
-	return `${firstTaskMessage.slice(0, TASK_PREVIEW_MAX_CHARS)}\n...[truncated]`
+    const firstTaskMessage = config.messageState.clineMessages.find((message) => message.say === "task")?.text?.trim()
+    if (!firstTaskMessage) {
+        return undefined
+    }
+    if (firstTaskMessage.length <= TASK_PREVIEW_MAX_CHARS) {
+        return firstTaskMessage
+    }
+    return `${firstTaskMessage.slice(0, TASK_PREVIEW_MAX_CHARS)}\n...[truncated]`
+}
+
+/**
+ * Return the stored checklist when it still blocks completion.
+ *
+ * Completion is refused while the task's own TODO list has unchecked items, so a
+ * model cannot declare victory over a plan it has not finished. A subagent runs
+ * without the parent's checklist, and a disabled Focus Chain has no plan to hold.
+ */
+function readUnfinishedFocusChecklist(config: TaskConfig): string | undefined {
+    if (config.isSubagentExecution || config.focusChainSettings?.enabled !== true) return undefined
+    const checklist = config.taskState.currentFocusChainChecklist
+    if (!checklist || isAllItemsCompleted(checklist)) return undefined
+    return checklist
 }
 
 export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHandler {
-	readonly name = ClineDefaultTool.ATTEMPT
+    readonly name = DlineDefaultTool.ATTEMPT
 
-	getDescription(block: ToolUse): string {
-		return `[${block.name}]`
-	}
+    getDescription(block: ToolUse): string {
+        return `[${block.name}]`
+    }
 
-	/**
-	 * Handle partial block streaming for attempt_completion
-	 */
-	async handlePartialBlock(_block: ToolUse, _uiHelpers: StronglyTypedUIHelpers): Promise<void> {
-		// Completion remains provisional until all commit prerequisites succeed.
-	}
+    /**
+     * Handle partial block streaming for attempt_completion
+     */
+    async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
+        const result = uiHelpers.removeClosingTag(block, "result", block.params.result)
+        if (result) await uiHelpers.say("completion_result", result, undefined, undefined, true, block.ts)
+    }
 
-	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
-		const result: string | undefined = block.params.result
+    async execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
+        const result: string | undefined = block.params.result
 
-		// Validate required parameters
-		if (!result) {
-			config.taskState.consecutiveMistakeCount++
-			return await config.callbacks.sayAndCreateMissingParamError(this.name, "result", undefined, block.ts)
-		}
+        // Validate required parameters
+        if (!result) {
+            config.taskState.consecutiveMistakeCount++
+            await this.discardUncommittedPreview(config, block)
+            return await config.callbacks.sayAndCreateMissingParamError(this.name, "result", undefined, block.ts)
+        }
 
-		config.taskState.consecutiveMistakeCount = 0
+        const unfinishedChecklist = readUnfinishedFocusChecklist(config)
+        if (unfinishedChecklist) {
+            config.taskState.consecutiveMistakeCount++
+            await this.discardUncommittedPreview(config, block)
+            return formatResponse.toolError(
+                `${getPrompt("focusChain", "attemptCompletionBlocked")}\n\nCurrent checklist:\n${unfinishedChecklist}`,
+            )
+        }
 
-		// Double-check completion: reject attempt_completion calls that haven't been re-verified
-		if (config.doubleCheckCompletionEnabled && !config.taskState.doubleCheckCompletionPending) {
-			config.taskState.doubleCheckCompletionPending = true
-			// Use block.ts to remove the partial completion_result from handlePartialBlock
-			if (block.ts !== undefined) {
-				await config.callbacks.say("completion_result", "", undefined, undefined, false, block.ts)
-			}
+        config.taskState.consecutiveMistakeCount = 0
 
-			const taskPreview = getInitialTaskPreview(config)
-			const taskSection = taskPreview ? `\n\n<initial_task>\n${taskPreview}\n</initial_task>` : ""
+        // Double-check completion: reject attempt_completion calls that haven't been re-verified
+        if (config.doubleCheckCompletionEnabled && !config.taskState.doubleCheckCompletionPending) {
+            config.taskState.doubleCheckCompletionPending = true
+            await this.discardUncommittedPreview(config, block)
 
-			return formatResponse.toolError(
-				renderPrompt("toolHandlers", "doubleCheckVerification", { TASK_SECTION: taskSection }),
-			)
-		}
-		// Reset so the next attempt_completion pair triggers double-check again
-		config.taskState.doubleCheckCompletionPending = false
+            const taskPreview = getInitialTaskPreview(config)
+            const taskSection = taskPreview ? `\n\n<initial_task>\n${taskPreview}\n</initial_task>` : ""
 
-		// Run PreToolUse hook before execution
-		try {
-			const { ToolHookUtils } = await import("../utils/ToolHookUtils")
-			await ToolHookUtils.runPreToolUseIfEnabled(config, block)
-		} catch (error) {
-			const { PreToolUseHookCancellationError } = await import("@core/hooks/PreToolUseHookCancellationError")
-			if (error instanceof PreToolUseHookCancellationError) {
-				return formatResponse.toolDenied()
-			}
-			throw error
-		}
+            return formatResponse.toolError(
+                renderPrompt("toolHandlers", "doubleCheckVerification", { TASK_SECTION: taskSection }),
+            )
+        }
+        // Reset so the next attempt_completion pair triggers double-check again
+        config.taskState.doubleCheckCompletionPending = false
 
-		// Show notification if enabled
-		if (config.autoApprovalSettings.enableNotifications) {
-			showSystemNotification({
-				subtitle: getPrompt("toolHandlers", "attemptCompletionNotificationSubtitle"),
-				message: result.replace(/\n/g, " "),
-			})
-		}
+        // Run PreToolUse hook before execution
+        try {
+            const { ToolHookUtils } = await import("../utils/ToolHookUtils")
+            await ToolHookUtils.runPreToolUseIfEnabled(config, block)
+        } catch (error) {
+            const { PreToolUseHookCancellationError } = await import("@core/hooks/PreToolUseHookCancellationError")
+            if (error instanceof PreToolUseHookCancellationError) {
+                await this.discardUncommittedPreview(config, block)
+                return formatResponse.toolDenied()
+            }
+            throw error
+        }
 
-		return this.commitAndPresentCompletion(config, block)
-	}
+        // Show notification if enabled
+        if (config.autoApprovalSettings.enableNotifications) {
+            showSystemNotification({
+                subtitle: getPrompt("toolHandlers", "attemptCompletionNotificationSubtitle"),
+                message: result.replace(/\n/g, " "),
+            })
+        }
 
-	private async commitAndPresentCompletion(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
-		const result = block.params.result
-		if (!result) throw new Error("Invalid attempt_completion continuation result")
+        return this.commitAndPresentCompletion(config, block)
+    }
 
-		await commitCompletion({
-			publishResult: () => config.callbacks.say("completion_result", result, undefined, undefined, false, block.ts),
-			saveCheckpoint: (completionMessageTs) => config.callbacks.saveCheckpoint(true, completionMessageTs),
-			markWorkspaceChanges: (completionMessageTs) => this.markCompletionWorkspaceChanges(config, completionMessageTs),
-			captureTelemetry: () => telemetryService.captureTaskCompleted(config.ulid ?? "", getTaskCompletionTelemetry(config)),
-		})
+    /** Settle a streamed completion preview before a deliberate pre-commit rejection. */
+    private async discardUncommittedPreview(config: TaskConfig, block: ToolUse): Promise<void> {
+        if (block.ts === undefined) return
+        await config.callbacks.say("completion_result", "", undefined, undefined, false, block.ts)
+    }
 
-		// Run TaskComplete hook BEFORE presenting the "Start New Task" button
-		// At this point we know: task is complete, checkpoint saved, result shown to user
-		await this.runTaskCompleteHook(config, block)
-		await NotificationHook.emitTaskCompleteNotification(
-			{
-				messageStateHandler: config.messageState,
-				taskId: config.taskId,
-				hooksEnabled: getHooksEnabledSafe(config.services.stateManager.getGlobalSettingsKey("hooksEnabled")),
-				model: getHookModelContext(config.api, config.services.stateManager),
-			},
-			{ message: result },
-		)
+    private async commitAndPresentCompletion(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
+        const result = block.params.result
+        if (!result) throw new Error("Invalid attempt_completion continuation result")
+        const completion = {
+            turnId: interactionTurnId(block),
+            interactionId: interactionId(block),
+            completionId: interactionId(block),
+            presentation: result,
+            existingTs: block.ts,
+        }
 
-		const outcome = await config.interactions.complete({
-			turnId: interactionTurnId(block),
-			interactionId: interactionId(block),
-			completionId: interactionId(block),
-			presentation: result,
-			existingTs: block.ts,
-		})
-		return this.continueInteraction(config, block, outcome)
-	}
+        // Staged before the result is shown: a close from here on keeps the task finished.
+        await config.interactions.stageCompletion?.(completion)
+        const commit = await commitCompletion({
+            publishResult: () => config.callbacks.say("completion_result", result, undefined, undefined, false, block.ts),
+            // A task surface without workspace history has nothing to commit, so
+            // completion stays available to one that only produces an answer.
+            saveCheckpoint: async (completionMessageTs) => {
+                await config.callbacks.saveCheckpoint?.(true, completionMessageTs)
+            },
+            markWorkspaceChanges: (completionMessageTs) => this.markCompletionWorkspaceChanges(config, completionMessageTs),
+            captureTelemetry: () => telemetryService.captureTaskCompleted(config.ulid ?? "", getTaskCompletionTelemetry(config)),
+            // Observation-only, so they run beside the open dialog: the checkpoint
+            // they may inspect is saved before them, the user's answer is not.
+            announce: async () => {
+                await this.runTaskCompleteHook(config, block)
+                await NotificationHook.emitTaskCompleteNotification(
+                    {
+                        messageStateHandler: config.messageState,
+                        taskId: config.taskId,
+                        hooksEnabled: getHooksEnabledSafe(config.services.stateManager.getGlobalSettingsKey("hooksEnabled")),
+                        model: getHookModelContext(config.api, config.services.stateManager),
+                    },
+                    { message: result },
+                )
+            },
+        })
 
-	/**
-	 * Record whether this completion produced diffable workspace changes.
-	 *
-	 * The verdict is stored as a field on the completion row instead of a marker
-	 * appended to its text: the same row is immediately rewritten as an ask
-	 * presentation carrying the model's original result, which would discard any
-	 * text marker. The row is located by its timestamp because that rewrite also
-	 * clears `say`.
-	 */
-	private async markCompletionWorkspaceChanges(config: TaskConfig, completionMessageTs: number | undefined): Promise<void> {
-		const hasNewChanges = await config.callbacks.doesLatestTaskCompletionHaveNewChanges()
-		if (!hasNewChanges) {
-			return
-		}
-		const clineMessages = config.messageState.clineMessages
-		const completionIndex =
-			completionMessageTs === undefined
-				? findLastIndex(clineMessages, (message) => message.say === "completion_result")
-				: clineMessages.findIndex((message) => message.ts === completionMessageTs)
-		if (completionIndex === -1 || clineMessages[completionIndex]?.completionHasChanges === true) {
-			return
-		}
-		await config.messageState.updateClineMessage(completionIndex, { completionHasChanges: true })
-	}
+        // The dialog opens while the completion settles, so input queued for it is
+        // delivered at once; the round its answer starts waits for the settlement.
+        // A stop ends the wait for an answer, not the checkpoint already under way;
+        // and a settlement that fails once the user answered must not drop the answer.
+        let outcome: InteractionOutcome
+        try {
+            outcome = await config.interactions.complete(completion)
+        } finally {
+            await commit.settled.catch((error: unknown) => Logger.warn("[attempt_completion] Completion did not settle:", error))
+        }
+        return this.continueInteraction(config, block, outcome)
+    }
 
-	/** Consume completion feedback without replaying the completion commit. */
-	async continueInteraction(config: TaskConfig, _block: ToolUse, outcome: InteractionOutcome): Promise<ToolResponse> {
-		const text = outcome.draft?.text
-		const images = outcome.draft?.images
-		const completionFiles = outcome.draft?.files
-		const prefix = "[attempt_completion] Result: Done"
-		if (outcome.actionId === "start_new_task") {
-			return prefix
-		}
-		await sayFeedbackOnce(config, "messageResponse", text, images, completionFiles)
+    /**
+     * Record whether this completion produced diffable workspace changes.
+     *
+     * The verdict is stored as a field on the completion row instead of a marker
+     * appended to its text: the same row is immediately rewritten as an ask
+     * presentation carrying the model's original result, which would discard any
+     * text marker. The row is located by its timestamp because that rewrite also
+     * clears `say`.
+     */
+    private async markCompletionWorkspaceChanges(config: TaskConfig, completionMessageTs: number | undefined): Promise<void> {
+        const hasNewChanges = await config.callbacks.doesLatestTaskCompletionHaveNewChanges(completionMessageTs)
+        if (!hasNewChanges) {
+            return
+        }
+        const clineMessages = config.messageState.clineMessages
+        const completionIndex =
+            completionMessageTs === undefined
+                ? findLastIndex(clineMessages, (message) => message.say === "completion_result")
+                : clineMessages.findIndex((message) => message.ts === completionMessageTs)
+        if (completionIndex === -1 || clineMessages[completionIndex]?.completionHasChanges === true) {
+            return
+        }
+        await config.messageState.updateClineMessage(completionIndex, { completionHasChanges: true })
+    }
 
-		// Run UserPromptSubmit hook when user provides post-completion feedback
-		let hookContextModification: string | undefined
-		if (text || (images && images.length > 0) || (completionFiles && completionFiles.length > 0)) {
-			const userContentForHook = await buildUserFeedbackContent(text, images, completionFiles)
+    /** Consume completion feedback without replaying the completion commit. */
+    async continueInteraction(config: TaskConfig, _block: ToolUse, outcome: InteractionOutcome): Promise<ToolHandlerResult> {
+        const text = outcome.draft?.text
+        const images = outcome.draft?.images
+        const completionFiles = outcome.draft?.files
+        const prefix = "[attempt_completion] Result: Done"
+        if (outcome.actionId === "start_new_task") {
+            return prefix
+        }
+        await sayFeedbackOnce(config, "messageResponse", text, images, completionFiles, outcome)
 
-			const hookResult = await config.callbacks.runUserPromptSubmitHook(userContentForHook, "feedback")
+        // Run UserPromptSubmit hook when user provides post-completion feedback
+        let hookContextModification: string | undefined
+        if (text || (images && images.length > 0) || (completionFiles && completionFiles.length > 0)) {
+            const userContentForHook = await buildUserFeedbackContent(text, images, completionFiles)
 
-			if (hookResult.cancel === true) {
-				return formatResponse.toolDenied()
-			}
+            const hookResult = await config.callbacks.runUserPromptSubmitHook(userContentForHook, "feedback")
 
-			// Capture hook context modification to add to tool results
-			hookContextModification = hookResult.contextModification
-		}
+            if (hookResult.cancel === true) {
+                return formatResponse.toolDenied()
+            }
 
-		const toolResults: (Anthropic.TextBlockParam | Anthropic.ImageBlockParam)[] = []
+            // Capture hook context modification to add to tool results
+            hookContextModification = hookResult.contextModification
+        }
 
-		if (text) {
-			toolResults.push(
-				{
-					type: "text",
-					text: "The user has provided feedback on the results. Consider their input to continue the task, and then attempt completion again.",
-				},
-				{
-					type: "text",
-					text: `<feedback>\n${text}\n</feedback>`,
-				},
-			)
-		}
+        const toolResults: (Anthropic.TextBlockParam | Anthropic.ImageBlockParam)[] = []
 
-		// Add hook context modification if provided
-		if (hookContextModification) {
-			toolResults.push({
-				type: "text" as const,
-				text: `<hook_context source="UserPromptSubmit">\n${hookContextModification}\n</hook_context>`,
-			})
-		}
+        if (text) {
+            toolResults.push(
+                {
+                    type: "text",
+                    text: "The user has provided feedback on the results. Consider their input to continue the task, and then attempt completion again.",
+                },
+                {
+                    type: "text",
+                    text: `<feedback>\n${text}\n</feedback>`,
+                },
+            )
+        }
 
-		const fileContentString = await attachToolFeedbackFiles(config.taskState.userMessageContent, completionFiles)
-		if (fileContentString) {
-			toolResults.push({
-				type: "text" as const,
-				text: fileContentString,
-			})
-		}
+        // Add hook context modification if provided
+        if (hookContextModification) {
+            toolResults.push({
+                type: "text" as const,
+                text: `<hook_context source="UserPromptSubmit">\n${hookContextModification}\n</hook_context>`,
+            })
+        }
 
-		if (images && images.length > 0) {
-			toolResults.push(...formatResponse.imageBlocks(images))
-		}
+        const attachments = await attachToolFeedbackFiles(completionFiles)
+        if (attachments.text) {
+            toolResults.push({
+                type: "text" as const,
+                text: attachments.text,
+            })
+        }
 
-		// Return the tool results as a complex response
-		return [
-			{
-				type: "text" as const,
-				text: prefix,
-			},
-			...toolResults,
-		]
-	}
+        if (images && images.length > 0) {
+            toolResults.push(...formatResponse.imageBlocks(images))
+        }
 
-	/**
-	 * Runs the TaskComplete hook after user confirms task completion.
-	 * This is a non-cancellable, observation-only hook similar to TaskCancel.
-	 * Errors are logged but do not affect task completion.
-	 */
-	private async runTaskCompleteHook(config: TaskConfig, block: ToolUse): Promise<void> {
-		const hooksEnabled = getHooksEnabledSafe(config.services.stateManager.getGlobalSettingsKey("hooksEnabled"))
-		if (!hooksEnabled) {
-			return
-		}
+        // Return the tool results as a complex response
+        const response: ToolResponse = [
+            {
+                type: "text" as const,
+                text: prefix,
+            },
+            ...toolResults,
+        ]
+        return withToolDocuments(response, attachments.documents)
+    }
 
-		try {
-			const { executeHook } = await import("@core/hooks/hook-executor")
+    /**
+     * Runs the TaskComplete hook after user confirms task completion.
+     * This is a non-cancellable, observation-only hook similar to TaskCancel.
+     * Errors are logged but do not affect task completion.
+     */
+    private async runTaskCompleteHook(config: TaskConfig, block: ToolUse): Promise<void> {
+        const hooksEnabled = getHooksEnabledSafe(config.services.stateManager.getGlobalSettingsKey("hooksEnabled"))
+        if (!hooksEnabled) {
+            return
+        }
 
-			await executeHook({
-				hookName: "TaskComplete",
-				hookInput: {
-					taskComplete: {
-						taskMetadata: {
-							taskId: config.taskId,
-							ulid: config.ulid ?? "",
-							result: block.params.result || "",
-						},
-					},
-				},
-				isCancellable: false, // Non-cancellable - task is already complete
-				say: config.callbacks.say,
-				setActiveHookExecution: undefined, // Explicitly undefined for non-cancellable hooks
-				clearActiveHookExecution: undefined, // Explicitly undefined for non-cancellable hooks
-				messageStateHandler: config.messageState,
-				taskId: config.taskId,
-				hooksEnabled,
-				model: getHookModelContext(config.api, config.services.stateManager),
-			})
-		} catch (error) {
-			// TaskComplete hook failed - non-fatal, just log
-			Logger.error("[TaskComplete Hook] Failed (non-fatal):", error)
-		}
-	}
+        try {
+            const { executeHook } = await import("@core/hooks/hook-executor")
+
+            await executeHook({
+                hookName: "TaskComplete",
+                hookInput: {
+                    taskComplete: {
+                        taskMetadata: {
+                            taskId: config.taskId,
+                            ulid: config.ulid ?? "",
+                            result: block.params.result || "",
+                        },
+                    },
+                },
+                isCancellable: false, // Non-cancellable - task is already complete
+                say: config.callbacks.say,
+                setActiveHookExecution: undefined, // Explicitly undefined for non-cancellable hooks
+                clearActiveHookExecution: undefined, // Explicitly undefined for non-cancellable hooks
+                messageStateHandler: config.messageState,
+                taskId: config.taskId,
+                hooksEnabled,
+                model: getHookModelContext(config.api, config.services.stateManager),
+            })
+        } catch (error) {
+            // TaskComplete hook failed - non-fatal, just log
+            Logger.error("[TaskComplete Hook] Failed (non-fatal):", error)
+        }
+    }
 }

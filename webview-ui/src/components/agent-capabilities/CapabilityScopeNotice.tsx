@@ -8,13 +8,13 @@
 export type CapabilityStorageScope = "global" | "workspace" | "task"
 
 interface CapabilityScopeNoticeProps {
-	scope: CapabilityStorageScope
+    scope: CapabilityStorageScope
 }
 
 const SCOPE_TEXT: Readonly<Record<CapabilityStorageScope, string>> = {
-	global: "Toggles saved globally",
-	workspace: "Toggles saved for this workspace",
-	task: "Toggles saved for this task only",
+    global: "Toggles saved globally",
+    workspace: "Toggles saved for this workspace",
+    task: "Toggles saved for this task only",
 }
 
 /**
@@ -25,10 +25,10 @@ const SCOPE_TEXT: Readonly<Record<CapabilityStorageScope, string>> = {
  * toggles themselves.
  */
 export const CapabilityScopeNotice = ({ scope }: CapabilityScopeNoticeProps) => (
-	<div
-		className="-mt-0.5 mb-3 text-[11px] italic text-vscode-descriptionForeground"
-		data-scope={scope}
-		data-testid="capability-scope-notice">
-		{SCOPE_TEXT[scope]}
-	</div>
+    <div
+        className="-mt-0.5 mb-3 text-[11px] italic text-vscode-descriptionForeground"
+        data-scope={scope}
+        data-testid="capability-scope-notice">
+        {SCOPE_TEXT[scope]}
+    </div>
 )

@@ -3,8 +3,8 @@ import { MemoryUnifyStoreBackend } from "../fixtures/MemoryUnifyStore"
 import { runUnifyStoreConformance } from "./unify-store-conformance"
 
 describe("MemoryUnifyStore conformance", () => {
-	runUnifyStoreConformance({
-		backend: new MemoryUnifyStoreBackend(),
-		location: (testName) => testName,
-	})
+    runUnifyStoreConformance({
+        backend: new MemoryUnifyStoreBackend(),
+        location: (testName) => testName,
+    })
 })

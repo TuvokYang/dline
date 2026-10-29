@@ -1,10 +1,12 @@
 import { Empty, StringRequest } from "@shared/proto/dline/common"
+import { AskResponseRequest } from "@shared/proto/dline/task"
 import { Controller } from ".."
+import { askResponse } from "../task/askResponse"
 
 /**
  * Command slash command logic
  */
 export async function condense(controller: Controller, _request: StringRequest): Promise<Empty> {
-	await controller.task?.handleWebviewAskResponse("yesButtonClicked")
-	return Empty.create()
+    await askResponse(controller, AskResponseRequest.create({ responseType: "yesButtonClicked" }))
+    return Empty.create()
 }

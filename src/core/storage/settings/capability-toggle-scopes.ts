@@ -16,9 +16,9 @@ export type CapabilityScope = "global" | "workspace" | "task"
  * means "inherit", never "disabled".
  */
 export interface ScopedToggles {
-	readonly global?: Readonly<ClineRulesToggles>
-	readonly workspace?: Readonly<ClineRulesToggles>
-	readonly task?: Readonly<ClineRulesToggles>
+    readonly global?: Readonly<ClineRulesToggles>
+    readonly workspace?: Readonly<ClineRulesToggles>
+    readonly task?: Readonly<ClineRulesToggles>
 }
 
 /** Ordered from the weakest to the strongest override. */
@@ -31,9 +31,9 @@ export const CAPABILITY_SCOPES: readonly CapabilityScope[] = ["global", "workspa
  * preference is always an explicit user action against exactly one scope.
  */
 export function activeCapabilityScope(context: { hasWorkspace: boolean; hasTask: boolean }): CapabilityScope {
-	if (context.hasTask) return "task"
-	if (context.hasWorkspace) return "workspace"
-	return "global"
+    if (context.hasTask) return "task"
+    if (context.hasWorkspace) return "workspace"
+    return "global"
 }
 
 /**
@@ -47,13 +47,13 @@ export function activeCapabilityScope(context: { hasWorkspace: boolean; hasTask:
  * discovery off the storage write path.
  */
 export function resolveToggles(discovered: Readonly<ClineRulesToggles>, scopes: ScopedToggles = {}): ClineRulesToggles {
-	const resolved: ClineRulesToggles = {}
+    const resolved: ClineRulesToggles = {}
 
-	for (const [resourcePath, defaultEnabled] of Object.entries(discovered)) {
-		resolved[resourcePath] = resolveToggle(resourcePath, defaultEnabled, scopes)
-	}
+    for (const [resourcePath, defaultEnabled] of Object.entries(discovered)) {
+        resolved[resourcePath] = resolveToggle(resourcePath, defaultEnabled, scopes)
+    }
 
-	return resolved
+    return resolved
 }
 
 /**
@@ -65,14 +65,14 @@ export function resolveToggles(discovered: Readonly<ClineRulesToggles>, scopes: 
  * resource would stay at its discovered default.
  */
 export function resolveToggle(resourcePath: string, defaultEnabled: boolean, scopes: ScopedToggles = {}): boolean {
-	const id = capabilityResourceId(resourcePath)
-	for (let index = CAPABILITY_SCOPES.length - 1; index >= 0; index--) {
-		const overrides = scopes[CAPABILITY_SCOPES[index]]
-		if (overrides === undefined) continue
-		const override = overrides[id] ?? overrides[resourcePath]
-		if (override !== undefined) return override
-	}
-	return defaultEnabled
+    const id = capabilityResourceId(resourcePath)
+    for (let index = CAPABILITY_SCOPES.length - 1; index >= 0; index--) {
+        const overrides = scopes[CAPABILITY_SCOPES[index]]
+        if (overrides === undefined) continue
+        const override = overrides[id] ?? overrides[resourcePath]
+        if (override !== undefined) return override
+    }
+    return defaultEnabled
 }
 
 /**
@@ -82,17 +82,17 @@ export function resolveToggle(resourcePath: string, defaultEnabled: boolean, sco
  * from the scope above instead of being frozen at their current effective value.
  */
 export function withToggleOverride(
-	current: Readonly<ClineRulesToggles> | undefined,
-	resourcePath: string,
-	enabled: boolean,
+    current: Readonly<ClineRulesToggles> | undefined,
+    resourcePath: string,
+    enabled: boolean,
 ): ClineRulesToggles {
-	return { ...(current ?? {}), [resourcePath]: enabled }
+    return { ...(current ?? {}), [resourcePath]: enabled }
 }
 
 /**
  * Drop one explicit override so the capability inherits from the scope above again.
  */
 export function withoutToggleOverride(current: Readonly<ClineRulesToggles> | undefined, resourcePath: string): ClineRulesToggles {
-	const { [resourcePath]: _removed, ...remaining } = current ?? {}
-	return remaining
+    const { [resourcePath]: _removed, ...remaining } = current ?? {}
+    return remaining
 }

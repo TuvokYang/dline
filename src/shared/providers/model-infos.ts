@@ -10,9 +10,9 @@ import type { ProviderModelsConfig } from "./types"
 export { allProviderModels }
 
 export function getProviderSeedConfig(providerId: string): ProviderModelsConfig | undefined {
-	return allProviderModels[providerId]
+    return allProviderModels[providerId]
 }
 
 export function getSeedProviderIds(): string[] {
-	return Object.keys(allProviderModels)
+    return Object.keys(allProviderModels)
 }

@@ -1,64 +1,149 @@
 ---
-title: Telemetry System
-description: How Dline's telemetry is layered, from the capture API and domain recorders to consent-gated providers, the runtime diagnostics pipeline, and diagnostic bundles.
+title: Telemetry System and Unification Plan
+description: Dline's canonical telemetry pipeline, device and account identity boundary, compatibility paths, current remote usage and diagnostics delivery, and planned Issue diagnostics integration.
 ---
 
 import { Aside } from "@astrojs/starlight/components"
 
-Telemetry lives in `src/services/telemetry/`. It is built so that producers can record from the first line of activation, while consent, content policy, and delivery are decided in one place. For the user-facing consent contract, see [Telemetry and Diagnostics](/troubleshooting/telemetry/).
+Dline's target is one canonical telemetry mechanism. Loopback OTLP, local journals, account identity logs, `otel.dline.cc`, diagnostic bundles, and Issue diagnostics are sinks, views, or profile overlays of the same admission and privacy system. Today `otel.dline.cc` receives usage counts and error and runtime diagnostics, through the dedicated paths described in [Current remote usage delivery](#current-remote-usage-delivery).
 
-## Layers
+See [Telemetry and Issue Diagnostics](/troubleshooting/telemetry/) for the public telemetry contract, and the [Dline Privacy Policy](/privacy/) for the privacy contract.
 
-| Layer | Location | Responsibility |
+## Invariants
+
+- Usage and error reporting are independent consents; `unset` is not consent.
+- The `account` channel follows usage consent but is distinct from ordinary usage records.
+- `distinct_id` is device/installation scoped and never changes on sign-in or account switch.
+- Account and organization identity never enter ordinary Event/Metric attributes.
+- Organization, host, server, and kill-switch policy can only narrow consent.
+- Content, credentials, raw artifacts, and free-form exception prose do not enter canonical telemetry.
+- Delivery failure never changes product outcomes.
+- A transport outbox is sink state, not another telemetry source.
+- `RuntimeSessionLedger` is a crash capsule, not Task lifecycle authority.
+
+## Current pipeline
+
+| Layer | Owner | Responsibility |
 |---|---|---|
-| Call surface | `index.ts`, `TelemetryService.ts` | The `telemetryService.capture*()` contract used across the extension |
-| Domain recorders | `events/` | Task, tool, UI, user, workspace, and hook events; the event catalog; error and runtime recorders |
-| Instrumentation | `instrumentation/` | Duration recorders, performance domains, and diagnostic events |
-| Producer contract | `service/pipeline-port.ts` | The single port between producers and the recording pipeline |
-| Delivery | `service/provider-registry.ts`, `providers/` | Fan-out to OpenTelemetry, PostHog, and legacy adapters |
-| Local journal | `journal/` | JSONL session journals written as OTLP-shaped records |
-| Runtime diagnostics | `runtime/` | Event bus, lifecycle, content policy, transports, export, analysis |
+| Facade | `TelemetryService.ts` | Product-facing capture API |
+| Recorders | `events/`, `instrumentation/`, Task observability | Produce typed facts |
+| Early admission | `service/pipeline-port.ts` | Bounded bootstrap and runtime recording predicate |
+| Consent | `service/channel-policy.ts` | Maps `usage` and `account` to usage consent; maps `error` and `runtime` to error consent |
+| Context | `context/telemetry-context.ts` | Adds host metadata only; no account identity |
+| Delivery | `service/provider-registry.ts` | Lazily materializes properties and fans out capabilities |
+| Local canonical journal | `journal/` | OTLP-shaped Event, Metric, and Trace partitions |
+| Runtime diagnostics | `runtime/` | Runtime producer, sampler, analysis, compatibility journal, bundle source |
+| Crash capsule | `runtime/session-ledger.ts` | Bounded next-start process reconciliation |
 
-## Call surface
+The registry carries `usage`, `account`, `error`, `runtime`, and `raw-artifact` channels. The account channel is a dedicated `identify` delivery. Sinks must opt in explicitly.
 
-`telemetryService` is a proxy: importing the module does not construct the service, and the first call creates it synchronously so `capture*` stays a plain synchronous call. Providers and host metadata are attached asynchronously. Until they arrive, the provider registry holds signals in a bounded buffer and replays them in order.
+## Device and account identity
 
-`TelemetryService` is deliberately thin. It owns the public `capture*` names and delegates everything else. After shutdown, late calls reach a service with no providers, so they are inert instead of rebuilding the singleton.
+`src/services/logging/distinctId.ts` owns one device-scoped value. Production code can set it only during initialization. `setDistinctIdForTesting()` exists solely for tests.
 
-## Producers and the pipeline port
+`TelemetrySignalDispatcher.identifyUser()` no longer mutates device identity or account-enriches `TelemetryContext`. It dispatches through `account`. Ordinary metrics now contain host metadata and metric dimensions only.
 
-Instrumentation helpers, domain recorders, and the runtime pipeline only meet through `pipeline-port.ts`:
+The default loopback registration declares `account` support. `OpenTelemetryTelemetryProvider.identifyUser()` emits one `account.identified` log for each account transition with `account_id`, `telemetry_channel=account`, and no `distinct_id`, display name, email, organization, or membership. Ordinary OTel events continue to receive device `distinct_id`.
 
-- Producers describe what kind of fact they report; queue priority and eviction stay inside the pipeline.
-- Signals recorded before a pipeline exists go to a bounded bootstrap buffer that evicts the oldest entry when full.
-- Installing a pipeline does not flush that buffer automatically. Admitting early startup facts is a consent decision owned by the lifecycle.
-- Whether producers record at all is a predicate, so a consent change takes effect without restarting the extension host.
+Account identification never mutates or aliases the device ID. The organization-configured OTLP registration does not opt into `account`, so it does not receive the account record. Dline has no PostHog registration.
 
-`category-policy.ts` switches individual noisy event categories on or off. It is separate from consent: consent decides whether telemetry exists at all.
+## Current compatibility gaps
 
-## Providers
+### Duplicate local persistence
 
-The provider registry owns the set of providers and isolates each call, so a vendor SDK that throws or stalls cannot break the caller. The OpenTelemetry provider exports logs, metrics, and traces through `OpenTelemetryExporterFactory`. By default the endpoint is a local collector at `http://127.0.0.1:4318`; organizations can override it through remote configuration. Network traffic follows the shared transport rules in [Networking](/troubleshooting/networking-and-proxies/).
+`LocalJournalProvider` writes canonical `usage-*`, `metrics-*`, and `traces-*` files, each with a 4 MiB tail budget. While error reporting is enabled, `runtime/transports/session-journal.ts` also writes an unprefixed 1 MiB runtime tail.
 
-## Runtime diagnostics
+The existing cleanup scans all `.jsonl` files in the shared directory, excludes only the exact active unprefixed runtime file, treats each remaining file as one item, keeps up to eight eligible files, and removes eligible files older than 3 days. It runs only when the error lifecycle starts. Do not describe this as an 8-session or global-byte bound.
 
-`runtime/lifecycle.ts` turns the **Allow error reporting** choice into a running or stopped diagnostics pipeline, and is the only place that decides whether diagnostics may touch the disk or the network.
+### Split consent propagation
 
-- `runtime-event-bus.ts` is the single bounded buffer, with priority eviction.
-- The lifecycle drains the bus on a timer into its sinks: the session journal and the OTLP log transport. On disable, recorded events are flushed before the sinks close.
-- `transports/session-journal.ts` appends one OTLP log record per line, so a standard collector can tail the directory with a `filelog` receiver. Writing is best-effort; failures are counted, never propagated.
-- `content-policy.ts` is the boundary for attribute bags: it rejects fields that carry prompts, commands, output, or credentials, and tracks per-attribute cardinality.
-- `export/` builds the diagnostic bundle ZIP behind **Export diagnostic bundle**, redacting again before writing.
-- `analysis/`, `performance/`, and `reproduction/` hold the root-cause analyzer, runtime sampler with threshold policy, and scenario replay used by diagnostics.
+The canonical registry reads consent from `StateManager` for each delivery. The runtime compatibility lifecycle holds an enabled state updated at activation and through explicit error-setting changes. A live organization disable reaches the canonical registry through state replacement but does not currently call the runtime lifecycle transition. The single resolver migration must close this gap before remote diagnostics rollout. Remote usage delivery does not depend on this lifecycle: it re-reads its policy inputs on every cycle and on each consent or organization change.
+
+### Legacy pairing credential
+
+Starting error diagnostics currently ensures an owner-only legacy pairing credential. No current transport consumes it. Issue diagnostics must migrate or discard it and require a new explicit per-Issue action.
+
+## Current remote usage delivery
+
+`otel.dline.cc` receives the `usage` profile through `/usage`, and the error and runtime diagnostics of the `production` profile through OTLP/JSON `/v1/logs`, `/v1/metrics`, and `/v1/traces`; every request carries `X-Dline-Contract: 5`. Startup deletes state earlier contracts left (`LegacyTelemetryState`) and keeps only metadata loss evidence in the remote quarantine directory. The usage path is owned as follows:
+
+| Layer | Owner | Responsibility |
+|---|---|---|
+| Settlement port | `src/core/task/telemetry/UsageSettlement.ts` | One typed record per settled provider request: purpose, outcome, fresh and cached tokens, duration, stream timing, retries, failure class, and the provider and model that served it, including whether the model is custom |
+| Policy | `remote/policy/usagePolicy.ts`, `RemotePolicyRepository` | Resolves the usage setting (on by default), organization, host level, and server stop into a machine-wide policy epoch, and logs each change of decision |
+| Body | `remote/usage/attemptBucket.ts`, `remote/contracts/usageBody.ts`, `remote/contracts/usageBodySchema.ts` | Settled attempts folded into buckets and built into one schema 5 body that is validated against the contract before it is stored |
+| Spool and outbox | `UsageObservationSpool`, `UsageOutboxRepository` | Per-process observation shards; sender lease, delivery gate, pending minutes, and exact-bytes inflight changed under one lock |
+| Delivery | `UsageDeliveryWorker`, `RemoteUsageCoordinator` | Windowing, batching, replay, defer, and stop handling; deletes unsent data when the policy leaves the allowed state |
+| Credentials and transport | `DeviceCredentialRepository`, `DeviceTokenBroker`, `DlineOtelHttpClient` | Owner-only device secret, single-flight token exchange, fixed origin over `@shared/net` |
+| Composition | `remote/remoteUsageRuntime.ts` | Started from `initialize()` and stopped in `tearDown()` in `src/common.ts` |
+
+`remote/` paths are below `src/services/telemetry/`; the repositories live in `src/core/storage/telemetry-remote/`.
+
+Error and runtime diagnostics are owned by `remote/diagnostics/`, `remote/remoteDiagnosticsRuntime.ts`, and the shared `DiagnosticOutboxRepository`. The user documentation lists the records they send and their limits.
+
+This path does not yet meet the target below: settlements bypass `provider-registry.ts` and the canonical channel catalog. Privacy holds by construction instead. The settlement type has no content fields, the body has a fixed structure, and batch attributes are allowlisted and validated against the wire contract before sending. Moving this path behind the canonical admission boundary remains open work.
+
+`DLINE_OTEL_ENDPOINT` can replace the origin only with a loopback origin, for local contract testing against a mock service. Any other value is ignored with a warning.
+
+## Target single mechanism
+
+```text
+normal signal ingress ─┐
+authoritative usage ingress ─┤
+account identity ingress ────┘
+  -> one consent/profile resolver
+  -> one channel/severity catalog
+  -> canonicalization and baseline content policy
+  -> sink-specific narrowing
+  -> one provider registry
+       -> one local journal owner
+       -> loopback OTLP
+       -> account-capable sink
+       -> otel.dline.cc
+       -> tests
+  -> diagnostic bundle read view
+```
+
+In the target, authoritative usage settlement remains a typed durable ingress because Provider totals require an awaited handoff, but it is governed by the same consent, policy epoch, channel catalog, privacy admission, and audit rules. It is not a second telemetry system.
+
+The local-journal migration must first reproduce current file sizes, cleanup selection, ordering, crash evidence, cancellation, bundle export, and restart recovery. Only after parity may production stop duplicate compatibility writes. Any change to grouping, count, age, active-file protection, or byte budgets requires a separate approved storage contract.
 
 <Aside type="caution">
-Never log prompts, command output, file contents, tokens, or headers from a producer. Add a new attribute to the content policy explicitly, and prefer bounded enums over free text so cardinality stays predictable.
+Do not remove the compatibility writer first. The final stop-write step depends on canonical parity and historical readers.
 </Aside>
 
-## Adding an event
+## Remote profiles
 
-1. Add the event to `events/catalog.ts` and record it from the owning domain recorder, not directly from UI or controller code.
-2. Keep attributes structured and bounded; rely on the content policy rather than ad-hoc masking.
-3. Cover the recorder with a focused test, and extend the architecture or consent-boundary tests when the event crosses a new boundary.
+- `usage` (current): content-free Provider token, cache, and timing settlements aggregated into the `schema_version: 2` body above.
+- `production` (current for logs): content-safe `error` and `runtime` log records; no metrics or traces are sent.
+- `issue_diagnostic`: time-bounded diagnostic density requiring error consent and an active per-Issue grant.
+- `development` (planned): a separate development stream. Today development builds send usage under the `usage` profile with `is_dev=true`, and automated test runs send nothing.
 
-Relevant tests include `telemetry-architecture.test.ts`, `TelemetryService.test.ts`, `pipeline-port.test.ts`, `runtime/__tests__/consent-boundary.test.ts`, `lifecycle.drain.test.ts`, `session-journal.test.ts`, and `bundle-builder.test.ts`.
+`issue_diagnostic` is planned.
+
+The Dline remote provider attaches to the existing registry. It must not introduce a remote-only catalog or consent system. Remote diagnostics excludes both device `distinct_id` and account identity. A future account destination must be a separately declared account-capable sink.
+
+Remote HTTP uses shared proxy-aware transport, fixed HTTPS origin, rejected redirects, bounded response reads, finite timeout, `AbortSignal`, and sanitized errors. Outboxes are bounded by count, bytes, and age, partitioned by profile, credential/token generation, grant, signal, and policy revision, and never source payloads from forensic journals.
+
+Disabling a channel persists a stricter policy epoch first, stops capture and sends, aborts in-flight work, and deletes unsent remote outbox and local remote token for that channel. It does not delete accepted server data.
+
+## Issue diagnostics
+
+The host owns create, attach/check, and local-stop operations. Pairing secret, support code, consent marker, Issue token, journals, and bundle bytes never enter model context.
+
+Ordinary Issue filing remains independent. Before Issue diagnostics release, `ReportBugHandler` must stop requiring and automatically placing `api_request_output` into the Issue `logs` field.
+
+Authorization checks are user initiated, not polled. A maintainer-approved server grant has an expiry shown in UI. Invalid or failed checks leave the Issue stream off and preserve the base production profile. Local stop, expiry, consent disable, host/organization restriction, or kill switch deletes local Issue credential/outbox and stops delivery.
+
+The service currently lacks a client revoke endpoint. Local stop cannot be described as remote grant revocation or deletion of already uploaded data. Issue rollout remains blocked until high-density scope enforcement and server retention/access/deletion policy are verified.
+
+## Adding a signal
+
+1. Register a stable event or metric name.
+2. Assign channel and severity in the canonical catalog.
+3. Record through the facade or a typed canonical ingress.
+4. Keep fields bounded and content-free.
+5. Decide explicitly whether an account-capable sink may receive it.
+6. Add consent, identity-boundary, privacy-canary, journal, retry, and recovery tests as applicable.
+
+Relevant tests include `TelemetryChannelPolicy.test.ts`, `TelemetryService.test.ts`, `OpenTelemetryTelemetryProvider.test.ts`, `distinctId.test.ts`, `LocalJournalProvider.test.ts`, `consent-boundary.test.ts`, `session-journal.test.ts`, and `bundle-builder.test.ts`.

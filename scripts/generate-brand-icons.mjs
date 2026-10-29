@@ -10,7 +10,7 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import sharp from "sharp"
 import svg2ttf from "svg2ttf"
 import ttf2woff from "ttf2woff"
-import { faviconSvg, fontSvg, GRID, glyphSvg, logoSvg, panelSvg, tileSvg, webviewPathsModule } from "./brand/dline-mark.mjs"
+import { faviconSvg, fontSvg, GRID, glyphSvg, logoSvg, markPathsModule, panelSvg, tileSvg } from "./brand/dline-mark.mjs"
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 /** Marketplace icon size; the Marketplace requires at least 128 px. */
@@ -24,26 +24,27 @@ const PNG_SIZE = 256
 
 /** @returns {Promise<BrandAsset[]>} */
 export async function buildBrandAssets() {
-	return [
-		// VS Code: Marketplace and editor-tab tile, activity bar, product icon font, Webview logo.
-		{ file: "assets/icons/icon-tile.svg", content: tileSvg(), kind: "text" },
-		{ file: "assets/icons/icon.png", content: await rasterize(tileSvg(), PNG_SIZE), kind: "raster" },
-		{ file: "assets/icons/icon.svg", content: glyphSvg(), kind: "text" },
-		{ file: "assets/icons/panel-dark.svg", content: panelSvg("dark"), kind: "text" },
-		{ file: "assets/icons/panel-light.svg", content: panelSvg("light"), kind: "text" },
-		{ file: "assets/icons/dline-icon.woff", content: iconFont(), kind: "binary" },
-		{ file: "webview-ui/src/assets/dlineMarkPaths.ts", content: webviewPathsModule(), kind: "text" },
-		// Docs site: transparent marks.
-		{ file: "docs/public/favicon.svg", content: faviconSvg(), kind: "text" },
-		{ file: "docs/src/assets/brand/logo-light.svg", content: logoSvg("light"), kind: "text" },
-		{ file: "docs/src/assets/brand/logo-dark.svg", content: logoSvg("dark"), kind: "text" },
-	]
+    return [
+        // VS Code: Marketplace and editor-tab tile, activity bar, product icon font.
+        { file: "assets/icons/icon-tile.svg", content: tileSvg(), kind: "text" },
+        { file: "assets/icons/icon.png", content: await rasterize(tileSvg(), PNG_SIZE), kind: "raster" },
+        { file: "assets/icons/icon.svg", content: glyphSvg(), kind: "text" },
+        { file: "assets/icons/panel-dark.svg", content: panelSvg("dark"), kind: "text" },
+        { file: "assets/icons/panel-light.svg", content: panelSvg("light"), kind: "text" },
+        { file: "assets/icons/dline-icon.woff", content: iconFont(), kind: "binary" },
+        // The mark's paths, shared by the Webview logo and the pages the extension host serves.
+        { file: "src/shared/brand/dlineMarkPaths.ts", content: markPathsModule(), kind: "text" },
+        // Docs site: transparent marks.
+        { file: "docs/public/favicon.svg", content: faviconSvg(), kind: "text" },
+        { file: "docs/src/assets/brand/logo-light.svg", content: logoSvg("light"), kind: "text" },
+        { file: "docs/src/assets/brand/logo-dark.svg", content: logoSvg("dark"), kind: "text" },
+    ]
 }
 
 /** Icon font for the `$(dline-icon)` product icon. A fixed timestamp keeps the output reproducible. */
 function iconFont() {
-	const ttf = svg2ttf(fontSvg(), { ts: 0, version: "Version 1.0", description: "Dline product icon" })
-	return ttf2woff(new Uint8Array(ttf.buffer))
+    const ttf = svg2ttf(fontSvg(), { ts: 0, version: "Version 1.0", description: "Dline product icon" })
+    return ttf2woff(new Uint8Array(ttf.buffer))
 }
 
 /**
@@ -51,20 +52,20 @@ function iconFont() {
  * @param {number} size
  */
 async function rasterize(svg, size) {
-	// Render the vector at the target size instead of upscaling a 32 px bitmap.
-	const density = (72 * size) / GRID
-	return new Uint8Array(await sharp(Buffer.from(svg), { density }).resize(size, size).png().toBuffer())
+    // Render the vector at the target size instead of upscaling a 32 px bitmap.
+    const density = (72 * size) / GRID
+    return new Uint8Array(await sharp(Buffer.from(svg), { density }).resize(size, size).png().toBuffer())
 }
 
 async function main() {
-	for (const asset of await buildBrandAssets()) {
-		const target = path.join(PROJECT_ROOT, asset.file)
-		await mkdir(path.dirname(target), { recursive: true })
-		await writeFile(target, asset.content)
-		console.log(`wrote ${asset.file}`)
-	}
+    for (const asset of await buildBrandAssets()) {
+        const target = path.join(PROJECT_ROOT, asset.file)
+        await mkdir(path.dirname(target), { recursive: true })
+        await writeFile(target, asset.content)
+        console.log(`wrote ${asset.file}`)
+    }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-	await main()
+    await main()
 }

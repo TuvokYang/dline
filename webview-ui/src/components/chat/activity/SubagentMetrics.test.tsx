@@ -1,59 +1,94 @@
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import { describe, expect, it } from "vitest"
 import { SubagentMetrics } from "./SubagentMetrics"
 
 const baseProps = {
-	toolCalls: 3,
-	startedAt: 1_000,
-	finishedAt: 5_000,
-	inputTokens: 1_200,
-	outputTokens: 340,
-	totalCost: 0.0123,
-	currency: "USD",
+    toolCalls: 3,
+    startedAt: 1_000,
+    finishedAt: 5_000,
+    inputTokens: 1_200,
+    outputTokens: 340,
+    totalCost: 0.0123,
+    currency: "USD",
 }
 
 describe("SubagentMetrics context usage", () => {
-	it("renders context tokens against the context window", () => {
-		render(<SubagentMetrics {...baseProps} contextTokens={64_000} contextWindow={200_000} />)
+    it("renders context tokens against the context window", () => {
+        render(<SubagentMetrics {...baseProps} contextTokens={64_000} contextWindow={200_000} />)
 
-		const usage = screen.getByTestId("subagent-context-usage")
-		expect(usage.textContent).toBe("Ctx:64.0K/200.0K (32%)")
-	})
+        const usage = screen.getByTestId("subagent-context-usage")
+        expect(usage.textContent).toBe("Ctx:64.0K/200.0K (32%)")
+    })
 
-	it("omits the segment when the context window is unknown", () => {
-		render(<SubagentMetrics {...baseProps} contextTokens={64_000} />)
+    it("omits the segment when the context window is unknown", () => {
+        render(<SubagentMetrics {...baseProps} contextTokens={64_000} />)
 
-		expect(screen.queryByTestId("subagent-context-usage")).toBeNull()
-	})
+        expect(screen.queryByTestId("subagent-context-usage")).toBeNull()
+    })
 
-	it("omits the segment when the context window is zero", () => {
-		render(<SubagentMetrics {...baseProps} contextTokens={64_000} contextWindow={0} />)
+    it("omits the segment when the context window is zero", () => {
+        render(<SubagentMetrics {...baseProps} contextTokens={64_000} contextWindow={0} />)
 
-		expect(screen.queryByTestId("subagent-context-usage")).toBeNull()
-	})
+        expect(screen.queryByTestId("subagent-context-usage")).toBeNull()
+    })
 
-	it("omits the segment when context tokens are unknown", () => {
-		render(<SubagentMetrics {...baseProps} contextWindow={200_000} />)
+    it("omits the segment when context tokens are unknown", () => {
+        render(<SubagentMetrics {...baseProps} contextWindow={200_000} />)
 
-		expect(screen.queryByTestId("subagent-context-usage")).toBeNull()
-	})
+        expect(screen.queryByTestId("subagent-context-usage")).toBeNull()
+    })
 
-	it("caps the reported percentage at 100 when usage exceeds the window", () => {
-		render(<SubagentMetrics {...baseProps} contextTokens={250_000} contextWindow={200_000} />)
+    it("caps the reported percentage at 100 when usage exceeds the window", () => {
+        render(<SubagentMetrics {...baseProps} contextTokens={250_000} contextWindow={200_000} />)
 
-		expect(screen.getByTestId("subagent-context-usage").textContent).toContain("100%")
-	})
+        expect(screen.getByTestId("subagent-context-usage").textContent).toContain("100%")
+    })
 
-	it("keeps the existing token and cost segments intact", () => {
-		render(<SubagentMetrics {...baseProps} contextTokens={64_000} contextWindow={200_000} />)
+    it("keeps the existing token and cost segments intact", () => {
+        render(<SubagentMetrics {...baseProps} contextTokens={64_000} contextWindow={200_000} />)
 
-		const metrics = screen.getByTestId("subagent-metrics")
-		expect(metrics.textContent).toContain("3 tools")
-		expect(metrics.textContent).toContain("In:")
-		expect(metrics.textContent).toContain("Out:")
-		// Costs at or above 0.01 render with two fraction digits by existing design.
-		expect(metrics.textContent).toContain("$0.01")
-	})
+        const metrics = screen.getByTestId("subagent-metrics")
+        expect(metrics.textContent).toContain("3 tools")
+        expect(metrics.textContent).toContain("In:")
+        expect(metrics.textContent).toContain("Out:")
+        // Costs at or above 0.01 render with two fraction digits by existing design.
+        expect(metrics.textContent).toContain("$0.01")
+    })
+
+    it("counts cached input in In, matching the main task header", () => {
+        // A well-cached Anthropic run reports only the uncached tail as input.
+        render(
+            <SubagentMetrics
+                {...baseProps}
+                cacheHitRate={90.12}
+                cacheReadTokens={9_012}
+                cacheWriteTokens={900}
+                inputTokens={88}
+            />,
+        )
+
+        const metrics = screen.getByTestId("subagent-metrics")
+        expect(metrics.textContent).toContain("In:10.0K")
+        expect(metrics.textContent).not.toContain("In:88")
+    })
+
+    it("falls back to uncached input when no cache usage was reported", () => {
+        render(<SubagentMetrics {...baseProps} inputTokens={64_000} />)
+
+        expect(screen.getByTestId("subagent-metrics").textContent).toContain("In:64.0K")
+    })
+
+    it.each([
+        ["USD", "$0.01"],
+        ["CNY", "¥0.01"],
+        ["EUR", "€0.01"],
+        ["CHF", "CHF 0.01"],
+    ])("formats model currency %s with the shared symbol", (currency, expected) => {
+        render(<SubagentMetrics {...baseProps} currency={currency} />)
+
+        // Exact match on the cost segment, so a prefixed form such as `CN¥0.01` fails.
+        expect(within(screen.getByTestId("subagent-metrics")).getByText(expected)).toBeInTheDocument()
+    })
 })

@@ -1,7 +1,7 @@
-# Unlock Specialized Capabilities with MCP
+# Run Concurrent Tasks in Separate Panels
 
-**The Model Context Protocol (MCP) connects Cline to a world of powerful tools.**
+The **New Task** command opens a separate Dline editor panel without replacing the sidebar or existing panels. Each task keeps its own selected Profile, mode, conversation, approvals, capability toggles, Activities, checkpoints, queued input, and recovery state.
 
-Go beyond local code. With the Model Context Protocol (MCP), Cline accesses vital context from external datasources like databases and APIs. It can interact with these platforms and leverage a growing marketplace of specialized, secure tools to tackle complex, real-world development tasks.
+Panels can run concurrently, but they operate on the same workspace files by default. Use separate worktrees when the tasks also need filesystem isolation.
 
-![Cline MCP Servers Demo](https://storage.googleapis.com/cline_public_images/docs/assets/clines-mcp-servers-4_compress.webp)
+[Open another Dline task](command:dline.plusButtonClicked) · [Read the task management guide](https://docs.dline.cc/core-workflows/task-management/)

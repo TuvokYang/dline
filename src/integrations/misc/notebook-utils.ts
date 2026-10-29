@@ -16,28 +16,28 @@ const IMAGE_MIME_TYPES = ["image/png", "image/jpeg", "image/gif", "image/svg+xml
  * @returns The cell with sanitized outputs
  */
 export function sanitizeCellOutputs(cell: Record<string, unknown>): Record<string, unknown> {
-	if (cell.cell_type !== "code" || !cell.outputs || !Array.isArray(cell.outputs)) {
-		return cell
-	}
+    if (cell.cell_type !== "code" || !cell.outputs || !Array.isArray(cell.outputs)) {
+        return cell
+    }
 
-	const sanitizedOutputs = cell.outputs.map((output: Record<string, unknown>) => {
-		// Handle display_data and execute_result outputs with data field
-		if (output.data && typeof output.data === "object") {
-			const data = output.data as Record<string, unknown>
-			const sanitizedData = { ...data }
+    const sanitizedOutputs = cell.outputs.map((output: Record<string, unknown>) => {
+        // Handle display_data and execute_result outputs with data field
+        if (output.data && typeof output.data === "object") {
+            const data = output.data as Record<string, unknown>
+            const sanitizedData = { ...data }
 
-			for (const mimeType of IMAGE_MIME_TYPES) {
-				if (mimeType in sanitizedData) {
-					sanitizedData[mimeType] = "[IMAGE DATA TRUNCATED]"
-				}
-			}
+            for (const mimeType of IMAGE_MIME_TYPES) {
+                if (mimeType in sanitizedData) {
+                    sanitizedData[mimeType] = "[IMAGE DATA TRUNCATED]"
+                }
+            }
 
-			return { ...output, data: sanitizedData }
-		}
-		return output
-	})
+            return { ...output, data: sanitizedData }
+        }
+        return output
+    })
 
-	return { ...cell, outputs: sanitizedOutputs }
+    return { ...cell, outputs: sanitizedOutputs }
 }
 
 /**
@@ -51,27 +51,27 @@ export function sanitizeCellOutputs(cell: Record<string, unknown>): Record<strin
  * @returns Sanitized JSON string
  */
 export function sanitizeNotebookForLLM(jsonString: string, stripAllOutputs = false): string {
-	try {
-		const notebook = JSON.parse(jsonString)
+    try {
+        const notebook = JSON.parse(jsonString)
 
-		if (!notebook.cells || !Array.isArray(notebook.cells)) {
-			return jsonString
-		}
+        if (!notebook.cells || !Array.isArray(notebook.cells)) {
+            return jsonString
+        }
 
-		if (stripAllOutputs) {
-			notebook.cells = notebook.cells.map((cell: Record<string, unknown>) => ({
-				...cell,
-				outputs: cell.cell_type === "code" ? [] : cell.outputs,
-			}))
-		} else {
-			notebook.cells = notebook.cells.map((cell: Record<string, unknown>) => sanitizeCellOutputs(cell))
-		}
+        if (stripAllOutputs) {
+            notebook.cells = notebook.cells.map((cell: Record<string, unknown>) => ({
+                ...cell,
+                outputs: cell.cell_type === "code" ? [] : cell.outputs,
+            }))
+        } else {
+            notebook.cells = notebook.cells.map((cell: Record<string, unknown>) => sanitizeCellOutputs(cell))
+        }
 
-		return JSON.stringify(notebook, null, 1)
-	} catch {
-		// If parsing fails, return original string
-		return jsonString
-	}
+        return JSON.stringify(notebook, null, 1)
+    } catch {
+        // If parsing fails, return original string
+        return jsonString
+    }
 }
 
 /**
@@ -82,6 +82,6 @@ export function sanitizeNotebookForLLM(jsonString: string, stripAllOutputs = fal
  * @returns JSON string of the sanitized cell
  */
 export function sanitizeCellForLLM(cell: Record<string, unknown>): string {
-	const sanitized = sanitizeCellOutputs(cell)
-	return JSON.stringify(sanitized, null, 2)
+    const sanitized = sanitizeCellOutputs(cell)
+    return JSON.stringify(sanitized, null, 2)
 }

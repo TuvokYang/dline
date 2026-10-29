@@ -6,10 +6,10 @@ import { SettingsRequestTracker } from "./settingsRequestTracker"
 
 type SettingsField = Exclude<keyof UpdateSettingsRequest, "metadata">
 type SettingsInputValue<K extends SettingsField> = K extends "mcpDisplayMode"
-	? UpdateSettingsRequest[K] | "rich" | "plain" | "markdown"
-	: UpdateSettingsRequest[K]
+    ? UpdateSettingsRequest[K] | "rich" | "plain" | "markdown"
+    : UpdateSettingsRequest[K]
 type SettingsUpdate = {
-	[K in SettingsField]?: SettingsInputValue<K>
+    [K in SettingsField]?: SettingsInputValue<K>
 }
 
 const settingsRequestTracker = new SettingsRequestTracker()
@@ -21,7 +21,7 @@ export const flushPendingSettingsRequests = () => settingsRequestTracker.flush()
 export const flushPendingTaskSettingsRequests = (taskId: string) => settingsRequestTracker.flushPrefix(`task:${taskId}:`)
 
 function settingsRequestKeys(scope: string, fields: readonly string[]): string[] {
-	return fields.map((field) => `${scope}:${field}`)
+    return fields.map((field) => `${scope}:${field}`)
 }
 
 /**
@@ -32,33 +32,33 @@ function settingsRequestKeys(scope: string, fields: readonly string[]): string[]
  * @throws Error if the value is invalid for the field
  */
 const convertToProtoValue = (field: SettingsField, value: unknown): unknown => {
-	if (field === "mcpDisplayMode" && typeof value === "string") {
-		switch (value) {
-			case "rich":
-				return McpDisplayMode.RICH
-			case "plain":
-				return McpDisplayMode.PLAIN
-			case "markdown":
-				return McpDisplayMode.MARKDOWN
-			default:
-				throw new Error(`Invalid MCP display mode value: ${value}`)
-		}
-	}
-	return value
+    if (field === "mcpDisplayMode" && typeof value === "string") {
+        switch (value) {
+            case "rich":
+                return McpDisplayMode.RICH
+            case "plain":
+                return McpDisplayMode.PLAIN
+            case "markdown":
+                return McpDisplayMode.MARKDOWN
+            default:
+                throw new Error(`Invalid MCP display mode value: ${value}`)
+        }
+    }
+    return value
 }
 
 /** Updates multiple global settings in one request. */
 export const updateSettings = (settings: SettingsUpdate) => {
-	const updateRequest: Partial<UpdateSettingsRequest> = {}
-	for (const [field, value] of Object.entries(settings) as Array<[SettingsField, unknown]>) {
-		Object.assign(updateRequest, { [field]: convertToProtoValue(field, value) })
-	}
+    const updateRequest: Partial<UpdateSettingsRequest> = {}
+    for (const [field, value] of Object.entries(settings) as Array<[SettingsField, unknown]>) {
+        Object.assign(updateRequest, { [field]: convertToProtoValue(field, value) })
+    }
 
-	return settingsRequestTracker.trackQueued(
-		settingsRequestKeys("global", Object.keys(updateRequest)),
-		() => StateServiceClient.updateSettings(UpdateSettingsRequest.create(updateRequest)),
-		"Failed to update settings:",
-	)
+    return settingsRequestTracker.trackQueued(
+        settingsRequestKeys("global", Object.keys(updateRequest)),
+        () => StateServiceClient.updateSettings(UpdateSettingsRequest.create(updateRequest)),
+        "Failed to update settings:",
+    )
 }
 
 /**
@@ -68,7 +68,7 @@ export const updateSettings = (settings: SettingsUpdate) => {
  * @param value - The new value for the field
  */
 export const updateSetting = <K extends SettingsField>(field: K, value: SettingsInputValue<K>) =>
-	updateSettings({ [field]: value } as SettingsUpdate)
+    updateSettings({ [field]: value } as SettingsUpdate)
 
 /**
  * Updates a task-level setting for a specific task.
@@ -79,7 +79,7 @@ export const updateSetting = <K extends SettingsField>(field: K, value: Settings
  * @param value - The new value for the field
  */
 export const updateTaskSetting = <K extends keyof Settings>(taskId: string, field: K, value: Settings[K]) =>
-	updateTaskSettings(taskId, { [field]: value } as Partial<Settings>)
+    updateTaskSettings(taskId, { [field]: value } as Partial<Settings>)
 
 /**
  * Updates multiple task-level settings for a specific task.
@@ -88,14 +88,14 @@ export const updateTaskSetting = <K extends keyof Settings>(taskId: string, fiel
  * @param settings - The task-level settings to update in one request
  */
 export const updateTaskSettings = (taskId: string | undefined, settings: Partial<Settings>) => {
-	const request = UpdateTaskSettingsRequest.create({
-		taskId: taskId ?? "",
-		settings,
-	})
+    const request = UpdateTaskSettingsRequest.create({
+        taskId: taskId ?? "",
+        settings,
+    })
 
-	return settingsRequestTracker.trackQueued(
-		settingsRequestKeys(`task:${taskId ?? "active"}`, Object.keys(settings)),
-		() => StateServiceClient.updateTaskSettings(request),
-		`Failed to update task settings for task ${taskId ?? "active"}:`,
-	)
+    return settingsRequestTracker.trackQueued(
+        settingsRequestKeys(`task:${taskId ?? "active"}`, Object.keys(settings)),
+        () => StateServiceClient.updateTaskSettings(request),
+        `Failed to update task settings for task ${taskId ?? "active"}:`,
+    )
 }

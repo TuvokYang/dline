@@ -12,10 +12,10 @@ import { E2E_RUN_ID } from "./run-context"
  * clean up the root rather than the individual directories below it.
  */
 export interface VSCodeLaunchIsolation {
-	/** Value passed as `VSCODE_PORTABLE`; owns user data, `argv.json`, and shared data. */
-	readonly portableRoot: string
-	/** Real VS Code user data path. The Dline output channel log lives under its `logs` directory. */
-	readonly userDataDir: string
+    /** Value passed as `VSCODE_PORTABLE`; owns user data, `argv.json`, and shared data. */
+    readonly portableRoot: string
+    /** Real VS Code user data path. The Dline output channel log lives under its `logs` directory. */
+    readonly userDataDir: string
 }
 
 export const E2E_EXTENSIONS_ROOT = path.join(os.tmpdir(), "dline-e2e-extensions", E2E_RUN_ID)
@@ -23,31 +23,38 @@ const DLINE_EXTENSION_DIRECTORY_PATTERN = /^tuvokyang\.dline-/i
 export const E2E_VSIX_INSTALL_TIMEOUT_MS = 120_000
 const INSTALL_DIAGNOSTIC_LIMIT = 4_000
 const PACKAGED_E2E_LIFECYCLES = new Set(["test:e2e", "test:e2e:optimal", "test:e2e:pressure"])
-type PackagedE2EEnvironment = Pick<NodeJS.ProcessEnv, "DLINE_E2E_INSTALL_VSIX" | "npm_lifecycle_event">
+type PackagedE2EEnvironment = Pick<NodeJS.ProcessEnv, "DLINE_E2E_INSTALL_VSIX" | "DLINE_E2E_VSIX_PATH" | "npm_lifecycle_event">
 
 export interface VSCodeExtensionInstallInvocation {
-	readonly command: string
-	readonly args: readonly string[]
-	readonly environment?: NodeJS.ProcessEnv
-	readonly timeoutMs: number
+    readonly command: string
+    readonly args: readonly string[]
+    readonly environment?: NodeJS.ProcessEnv
+    readonly timeoutMs: number
 }
 
 function trimInstallDiagnostic(value: string | null | undefined): string {
-	const diagnostic = value?.trim() ?? ""
-	return diagnostic.length <= INSTALL_DIAGNOSTIC_LIMIT ? diagnostic : diagnostic.slice(-INSTALL_DIAGNOSTIC_LIMIT)
+    const diagnostic = value?.trim() ?? ""
+    return diagnostic.length <= INSTALL_DIAGNOSTIC_LIMIT ? diagnostic : diagnostic.slice(-INSTALL_DIAGNOSTIC_LIMIT)
 }
 
 function hasInstalledDlineVsix(extensionsDir: string): boolean {
-	if (!existsSync(extensionsDir)) return false
-	return readdirSync(extensionsDir, { withFileTypes: true }).some(
-		(entry) => entry.isDirectory() && DLINE_EXTENSION_DIRECTORY_PATTERN.test(entry.name),
-	)
+    if (!existsSync(extensionsDir)) return false
+    return readdirSync(extensionsDir, { withFileTypes: true }).some(
+        (entry) => entry.isDirectory() && DLINE_EXTENSION_DIRECTORY_PATTERN.test(entry.name),
+    )
 }
 
 /** Whether the current npm lifecycle builds the packaged VSIX before running Playwright. */
 export function shouldPreinstallDlineVsix(environment: PackagedE2EEnvironment = process.env): boolean {
-	if (environment.DLINE_E2E_INSTALL_VSIX?.trim() === "1") return true
-	return PACKAGED_E2E_LIFECYCLES.has(environment.npm_lifecycle_event?.trim() ?? "")
+    if (environment.DLINE_E2E_INSTALL_VSIX?.trim() === "1") return true
+    return PACKAGED_E2E_LIFECYCLES.has(environment.npm_lifecycle_event?.trim() ?? "")
+}
+
+/** Resolve the exact packaged artifact; relative overrides are rooted at the checkout, never the caller cwd. */
+export function resolveDlineVsixPath(codebaseRoot: string, environment: PackagedE2EEnvironment = process.env): string {
+    const configured = environment.DLINE_E2E_VSIX_PATH?.trim()
+    if (!configured) return path.join(codebaseRoot, "dist", "e2e.vsix")
+    return path.isAbsolute(configured) ? path.normalize(configured) : path.resolve(codebaseRoot, configured)
 }
 
 /**
@@ -57,11 +64,11 @@ export function shouldPreinstallDlineVsix(environment: PackagedE2EEnvironment = 
  * replaced. Ordinary focused runs retain `workerIndex` so their on-demand directories stay unique.
  */
 export function resolveWorkerExtensionsSlot(
-	workerIndex: number,
-	parallelIndex: number,
-	environment: PackagedE2EEnvironment = process.env,
+    workerIndex: number,
+    parallelIndex: number,
+    environment: PackagedE2EEnvironment = process.env,
 ): number {
-	return shouldPreinstallDlineVsix(environment) ? parallelIndex : workerIndex
+    return shouldPreinstallDlineVsix(environment) ? parallelIndex : workerIndex
 }
 
 /**
@@ -74,9 +81,9 @@ export function resolveWorkerExtensionsSlot(
  * it launches Chromium itself; it does not when it launches Electron.
  */
 export const FULL_RATE_RENDERING_ARGUMENTS: readonly string[] = [
-	"--disable-renderer-backgrounding",
-	"--disable-backgrounding-occluded-windows",
-	"--disable-background-timer-throttling",
+    "--disable-renderer-backgrounding",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-background-timer-throttling",
 ]
 
 /**
@@ -86,36 +93,36 @@ export const FULL_RATE_RENDERING_ARGUMENTS: readonly string[] = [
  * extensions and load the checkout through `--extensionDevelopmentPath` instead.
  */
 export function createVSCodeExtensionLaunchArguments(extensionsDir: string, extensionDevelopmentPath?: string): string[] {
-	return [
-		...(extensionDevelopmentPath ? ["--disable-extensions"] : []),
-		`--extensions-dir=${extensionsDir}`,
-		...(extensionDevelopmentPath ? [`--extensionDevelopmentPath=${extensionDevelopmentPath}`] : []),
-	]
+    return [
+        ...(extensionDevelopmentPath ? ["--disable-extensions"] : []),
+        `--extensions-dir=${extensionsDir}`,
+        ...(extensionDevelopmentPath ? [`--extensionDevelopmentPath=${extensionDevelopmentPath}`] : []),
+    ]
 }
 
 /** Build the isolated arguments shared by every VS Code CLI installation path. */
 export function createVSCodeExtensionInstallArguments(extensionsDir: string, vsixPath: string): string[] {
-	return [
-		`--extensions-dir=${extensionsDir}`,
-		`--user-data-dir=${path.join(extensionsDir, ".install-user-data")}`,
-		"--force",
-		"--install-extension",
-		vsixPath,
-	]
+    return [
+        `--extensions-dir=${extensionsDir}`,
+        `--user-data-dir=${path.join(extensionsDir, ".install-user-data")}`,
+        "--force",
+        "--install-extension",
+        vsixPath,
+    ]
 }
 
 function resolveWindowsCliScriptPath(executablePath: string): string {
-	const installDirectory = path.dirname(executablePath)
-	const relativeCliPath = path.join("resources", "app", "out", "cli.js")
-	const directCliPath = path.join(installDirectory, relativeCliPath)
-	if (existsSync(directCliPath)) return directCliPath
+    const installDirectory = path.dirname(executablePath)
+    const relativeCliPath = path.join("resources", "app", "out", "cli.js")
+    const directCliPath = path.join(installDirectory, relativeCliPath)
+    if (existsSync(directCliPath)) return directCliPath
 
-	for (const entry of readdirSync(installDirectory, { withFileTypes: true })) {
-		if (!entry.isDirectory() || !/^[0-9a-f]{10}$/i.test(entry.name)) continue
-		const candidate = path.join(installDirectory, entry.name, relativeCliPath)
-		if (existsSync(candidate)) return candidate
-	}
-	throw new Error(`Unable to locate the VS Code CLI script beside ${executablePath}`)
+    for (const entry of readdirSync(installDirectory, { withFileTypes: true })) {
+        if (!entry.isDirectory() || !/^[0-9a-f]{10}$/i.test(entry.name)) continue
+        const candidate = path.join(installDirectory, entry.name, relativeCliPath)
+        if (existsSync(candidate)) return candidate
+    }
+    throw new Error(`Unable to locate the VS Code CLI script beside ${executablePath}`)
 }
 
 /**
@@ -125,24 +132,24 @@ function resolveWindowsCliScriptPath(executablePath: string): string {
  * `--install-extension` is passed to the same process that is expected to host the Webview.
  */
 export function createVSCodeExtensionInstallInvocation(
-	executablePath: string,
-	extensionsDir: string,
-	vsixPath: string,
+    executablePath: string,
+    extensionsDir: string,
+    vsixPath: string,
 ): VSCodeExtensionInstallInvocation {
-	const installArgs = createVSCodeExtensionInstallArguments(extensionsDir, vsixPath)
-	if (process.platform === "win32") {
-		return {
-			command: executablePath,
-			args: [resolveWindowsCliScriptPath(executablePath), ...installArgs],
-			environment: { ...process.env, ELECTRON_RUN_AS_NODE: "1", VSCODE_DEV: "" },
-			timeoutMs: E2E_VSIX_INSTALL_TIMEOUT_MS,
-		}
-	}
-	return {
-		command: resolveCliPathFromVSCodeExecutablePath(executablePath),
-		args: installArgs,
-		timeoutMs: E2E_VSIX_INSTALL_TIMEOUT_MS,
-	}
+    const installArgs = createVSCodeExtensionInstallArguments(extensionsDir, vsixPath)
+    if (process.platform === "win32") {
+        return {
+            command: executablePath,
+            args: [resolveWindowsCliScriptPath(executablePath), ...installArgs],
+            environment: { ...process.env, ELECTRON_RUN_AS_NODE: "1", VSCODE_DEV: "" },
+            timeoutMs: E2E_VSIX_INSTALL_TIMEOUT_MS,
+        }
+    }
+    return {
+        command: resolveCliPathFromVSCodeExecutablePath(executablePath),
+        args: installArgs,
+        timeoutMs: E2E_VSIX_INSTALL_TIMEOUT_MS,
+    }
 }
 
 /**
@@ -152,28 +159,28 @@ export function createVSCodeExtensionInstallInvocation(
  * directory once, and multi-instance launches must not race while unpacking the same VSIX.
  */
 export function ensureDlineVsixInstalled(executablePath: string, extensionsDir: string, vsixPath: string): void {
-	if (hasInstalledDlineVsix(extensionsDir)) return
+    if (hasInstalledDlineVsix(extensionsDir)) return
 
-	const invocation = createVSCodeExtensionInstallInvocation(executablePath, extensionsDir, vsixPath)
-	const result = spawnSync(invocation.command, [...invocation.args], {
-		encoding: "utf8",
-		env: invocation.environment,
-		timeout: invocation.timeoutMs,
-		windowsHide: true,
-	})
-	const diagnostic = [trimInstallDiagnostic(result.stderr), trimInstallDiagnostic(result.stdout)].filter(Boolean).join("\n")
+    const invocation = createVSCodeExtensionInstallInvocation(executablePath, extensionsDir, vsixPath)
+    const result = spawnSync(invocation.command, [...invocation.args], {
+        encoding: "utf8",
+        env: invocation.environment,
+        timeout: invocation.timeoutMs,
+        windowsHide: true,
+    })
+    const diagnostic = [trimInstallDiagnostic(result.stderr), trimInstallDiagnostic(result.stdout)].filter(Boolean).join("\n")
 
-	if (result.error) {
-		throw new Error(`Failed to install the Dline E2E VSIX: ${diagnostic || result.error.message}`, {
-			cause: result.error,
-		})
-	}
-	if (result.status !== 0) {
-		throw new Error(`Dline E2E VSIX installer exited with status ${result.status}: ${diagnostic || "no output"}`)
-	}
-	if (!hasInstalledDlineVsix(extensionsDir)) {
-		throw new Error(`Dline E2E VSIX installer completed without creating an extension under ${extensionsDir}`)
-	}
+    if (result.error) {
+        throw new Error(`Failed to install the Dline E2E VSIX: ${diagnostic || result.error.message}`, {
+            cause: result.error,
+        })
+    }
+    if (result.status !== 0) {
+        throw new Error(`Dline E2E VSIX installer exited with status ${result.status}: ${diagnostic || "no output"}`)
+    }
+    if (!hasInstalledDlineVsix(extensionsDir)) {
+        throw new Error(`Dline E2E VSIX installer completed without creating an extension under ${extensionsDir}`)
+    }
 }
 
 /**
@@ -189,10 +196,10 @@ export function ensureDlineVsixInstalled(executablePath: string, extensionsDir: 
  * present, which would move temporary files that tests and mocked tooling rely on.
  */
 export function createLaunchIsolation(prefix: string): VSCodeLaunchIsolation {
-	const portableRoot = mkdtempSync(path.join(os.tmpdir(), prefix))
-	const userDataDir = path.join(portableRoot, "user-data")
-	mkdirSync(userDataDir, { recursive: true })
-	return { portableRoot, userDataDir }
+    const portableRoot = mkdtempSync(path.join(os.tmpdir(), prefix))
+    const userDataDir = path.join(portableRoot, "user-data")
+    mkdirSync(userDataDir, { recursive: true })
+    return { portableRoot, userDataDir }
 }
 
 /**
@@ -203,12 +210,12 @@ export function createLaunchIsolation(prefix: string): VSCodeLaunchIsolation {
  * in a packaged full run to reuse the preinstalled directory for its stable `parallelIndex`.
  */
 export function createWorkerExtensionsDir(workerSlot: number): string {
-	const extensionsDir = path.join(E2E_EXTENSIONS_ROOT, `worker-${workerSlot}`)
-	mkdirSync(extensionsDir, { recursive: true })
-	return extensionsDir
+    const extensionsDir = path.join(E2E_EXTENSIONS_ROOT, `worker-${workerSlot}`)
+    mkdirSync(extensionsDir, { recursive: true })
+    return extensionsDir
 }
 
 /** Environment entries that activate portable mode for one launch. */
 export function portableEnvironment(isolation: VSCodeLaunchIsolation): Record<string, string> {
-	return { VSCODE_PORTABLE: isolation.portableRoot }
+    return { VSCODE_PORTABLE: isolation.portableRoot }
 }

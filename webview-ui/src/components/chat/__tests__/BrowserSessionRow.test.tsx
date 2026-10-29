@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { fireEvent, render, screen } from "@testing-library/react"
 import React, { type ReactElement } from "react"
 import { describe, expect, it, vi } from "vitest"
@@ -8,152 +8,252 @@ import BrowserSessionRow from "../BrowserSessionRow"
 void React
 
 vi.mock("react-use", () => ({
-	useSize: (element: ReactElement) => [element, { height: 100, width: 600 }],
+    useSize: (element: ReactElement) => [element, { height: 100, width: 600 }],
 }))
 
 vi.mock("@vscode/webview-ui-toolkit/react", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("@vscode/webview-ui-toolkit/react")>()
-	return {
-		...actual,
-		VSCodeButton: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
-			<button type="button" {...props}>
-				{children}
-			</button>
-		),
-	}
+    const actual = await importOriginal<typeof import("@vscode/webview-ui-toolkit/react")>()
+    return {
+        ...actual,
+        VSCodeButton: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
+            <button type="button" {...props}>
+                {children}
+            </button>
+        ),
+    }
 })
 
 vi.mock("@components/browser/BrowserSettingsMenu", () => ({
-	BrowserSettingsMenu: () => <button type="button">Browser settings</button>,
+    BrowserSettingsMenu: () => <button type="button">Browser settings</button>,
 }))
 
 vi.mock("@components/chat/ChatRow", () => ({
-	ChatRowContent: ({ message }: { message: ClineMessage }) => (
-		<div data-testid={`conversation-message-${message.ts}`}>{message.text}</div>
-	),
-	ProgressIndicator: () => <div>Browsing</div>,
+    ChatRowContent: ({ message }: { message: UiMessage }) => (
+        <div data-testid={`conversation-message-${message.ts}`}>{message.text}</div>
+    ),
+    ProgressIndicator: () => <div>Browsing</div>,
 }))
 
 vi.mock("@components/common/CodeBlock", () => ({
-	default: ({ source }: { source: string }) => <pre>{source}</pre>,
-	CODE_BLOCK_BG_COLOR: "#111",
+    default: ({ source }: { source: string }) => <pre>{source}</pre>,
+    CODE_BLOCK_BG_COLOR: "#111",
 }))
 
 vi.mock("@context/ExtensionStateContext", () => ({
-	useExtensionState: () => ({
-		browserSettings: { viewport: { height: 600, width: 900 } },
-	}),
+    useExtensionState: () => ({
+        browserSettings: { viewport: { height: 600, width: 900 } },
+    }),
 }))
 
 vi.mock("../../../services/grpc-client", () => ({
-	FileServiceClient: { openImage: vi.fn(async () => undefined) },
+    FileServiceClient: { openImage: vi.fn(async () => undefined) },
 }))
 
-function launch(ts: number): ClineMessage {
-	return { ts, type: "say", say: "browser_action_launch", text: "https://start.example" }
+vi.mock("@/components/chat/chat-view/components/messages/CheckpointMarker", () => ({
+    CheckpointMarker: ({ message }: { message: UiMessage }) => <div data-testid={`checkpoint-${message.ts}`} />,
+}))
+
+function checkpoint(ts: number, files = "files-1"): UiMessage {
+    return {
+        ts,
+        type: "say",
+        say: "checkpoint_created",
+        lastCheckpointHash: [files],
+        checkpointSource: { kind: "round_start", turnId: `turn-${ts}` },
+    }
 }
 
-function result(ts: number, currentUrl: string): ClineMessage {
-	return {
-		ts,
-		type: "say",
-		say: "browser_action_result",
-		text: JSON.stringify({
-			currentUrl,
-			screenshot: `data:image/png;base64,${ts}`,
-			currentMousePosition: "120,240",
-			logs: "",
-		}),
-	}
+function reasoning(ts: number, text: string): UiMessage {
+    return { ts, type: "say", say: "reasoning", text }
 }
 
-function action(ts: number, coordinate: string): ClineMessage {
-	return {
-		ts,
-		type: "say",
-		say: "browser_action",
-		text: JSON.stringify({ action: "click", coordinate }),
-	}
+function launch(ts: number): UiMessage {
+    return { ts, type: "say", say: "browser_action_launch", text: "https://start.example" }
+}
+
+function result(ts: number, currentUrl: string): UiMessage {
+    return {
+        ts,
+        type: "say",
+        say: "browser_action_result",
+        text: JSON.stringify({
+            currentUrl,
+            screenshot: `data:image/png;base64,${ts}`,
+            currentMousePosition: "120,240",
+            logs: "",
+        }),
+    }
+}
+
+function action(ts: number, coordinate: string): UiMessage {
+    return {
+        ts,
+        type: "say",
+        say: "browser_action",
+        text: JSON.stringify({ action: "click", coordinate }),
+    }
 }
 
 const baseProps = {
-	expandedRows: {},
-	isLast: false,
-	onHeightChange: vi.fn(),
-	onSetQuote: vi.fn(),
-	onToggleExpand: vi.fn(),
+    expandedRows: {},
+    isLast: false,
+    onHeightChange: vi.fn(),
+    onSetQuote: vi.fn(),
+    onToggleExpand: vi.fn(),
 }
 
+/** Launch round, two browser rounds and a close round, each led by its restore point. */
+const roundsWithRestorePoints: UiMessage[] = [
+    checkpoint(1),
+    reasoning(2, "LAUNCH_THOUGHT"),
+    launch(3),
+    result(4, "https://one.example"),
+    checkpoint(10),
+    action(11, "20,30"),
+    result(12, "https://two.example"),
+    checkpoint(20),
+    reasoning(21, "SCROLL_THOUGHT"),
+    action(22, "40,50"),
+    result(23, "https://three.example"),
+    checkpoint(30),
+    { ts: 31, type: "say", say: "browser_action", text: JSON.stringify({ action: "close" }) },
+]
+
 describe("BrowserSessionRow", () => {
-	it("renders navigation and browser actions before ordinary conversation messages", () => {
-		const messages: ClineMessage[] = [
-			launch(1),
-			result(2, "https://one.example"),
-			{ ts: 3, type: "say", say: "reasoning", text: "THINKING_OUTSIDE_BROWSER" },
-			{ ts: 4, type: "say", say: "text", text: "RESPOND_OUTSIDE_BROWSER" },
-			action(5, "20,30"),
-			result(6, "https://two.example"),
-		]
+    it("folds each round's restore point and thinking into the card, keeping only the head restore point", () => {
+        render(<BrowserSessionRow {...baseProps} end="closed" messages={roundsWithRestorePoints} />)
 
-		render(<BrowserSessionRow {...baseProps} messages={messages} />)
+        const frame = screen.getByTestId("browser-session-frame")
+        expect(frame.style.maxHeight).toBe("60vh")
+        expect(frame.style.overflowY).toBe("auto")
+        expect(screen.getByTestId("checkpoint-1")).toBeInTheDocument()
+        for (const folded of [10, 20, 30]) expect(screen.queryByTestId(`checkpoint-${folded}`)).toBeNull()
+        expect(screen.queryByText("LAUNCH_THOUGHT")).toBeNull()
+        expect(screen.getByTestId("browser-session-header").textContent).toContain("Dline used the browser")
+        expect(screen.getByTestId("browser-session-header").getAttribute("aria-expanded")).toBe("true")
+        expect(screen.getByTestId("browser-session-steps-toggle").getAttribute("aria-expanded")).toBe("false")
+        expect(screen.getByTestId("browser-session-steps-toggle").textContent).toBe("1 launch, 2 clicks · 2 thoughts · 4 rounds")
+    })
 
-		const previous = screen.getByRole("button", { name: "Previous browser step" })
-		const frame = screen.getByTestId("browser-session-frame")
-		const url = screen.getByText("https://two.example")
-		const browserAction = screen.getByText("Click (20, 30)", { exact: false })
-		const reasoning = screen.getByTestId("conversation-message-3")
-		const response = screen.getByTestId("conversation-message-4")
+    it("lists every round from the toggle under the frame and opens a round's page from its call", () => {
+        render(<BrowserSessionRow {...baseProps} end="closed" messages={roundsWithRestorePoints} />)
+        fireEvent.click(screen.getByTestId("browser-session-steps-toggle"))
 
-		expect(frame.style.maxHeight).toBe("60vh")
-		expect(frame.style.overflowY).toBe("auto")
-		expect(frame.style.overscrollBehavior).toBe("contain")
-		expect(previous.compareDocumentPosition(url) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
-		expect(browserAction.compareDocumentPosition(reasoning) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
-		expect(reasoning.compareDocumentPosition(response) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
-		expect(screen.getAllByText("THINKING_OUTSIDE_BROWSER")).toHaveLength(1)
-		expect(screen.getAllByText("RESPOND_OUTSIDE_BROWSER")).toHaveLength(1)
-	})
+        const steps = screen.getAllByTestId("browser-session-step")
+        expect(steps).toHaveLength(4)
+        expect(steps.map((step) => step.querySelector("[data-testid^='checkpoint-']")?.getAttribute("data-testid"))).toEqual([
+            undefined,
+            "checkpoint-10",
+            "checkpoint-20",
+            "checkpoint-30",
+        ])
+        expect(steps[2].textContent).toContain("Click (40, 50)")
+        fireEvent.click(screen.getAllByTestId("browser-session-step-action")[1])
+        expect(screen.getByText("Step 2 of 4")).toBeInTheDocument()
+        expect(screen.getByText("https://two.example")).toBeInTheDocument()
+    })
 
-	it("reconstructs the latest persisted page after the row is remounted", () => {
-		const messages: ClineMessage[] = [
-			launch(20),
-			result(21, "https://one.example"),
-			action(22, "40,40"),
-			result(23, "https://two.example"),
-		]
-		const firstRender = render(<BrowserSessionRow {...baseProps} messages={messages} />)
+    it("folds the whole card from its header down to the header and the page URL", () => {
+        const onToggleExpand = vi.fn()
+        const { rerender } = render(
+            <BrowserSessionRow {...baseProps} end="closed" messages={roundsWithRestorePoints} onToggleExpand={onToggleExpand} />,
+        )
+        fireEvent.click(screen.getByTestId("browser-session-header"))
+        expect(onToggleExpand).toHaveBeenCalledWith(3)
 
-		fireEvent.click(screen.getByRole("button", { name: "Previous browser step" }))
-		expect(screen.getByText("Step 1 of 2")).toBeInTheDocument()
-		firstRender.unmount()
+        // The chat list records the reader's toggle as the anchor's flag.
+        rerender(
+            <BrowserSessionRow
+                {...baseProps}
+                end="closed"
+                expandedRows={{ 3: true }}
+                messages={roundsWithRestorePoints}
+                onToggleExpand={onToggleExpand}
+            />,
+        )
 
-		render(<BrowserSessionRow {...baseProps} messages={messages} />)
-		expect(screen.getByText("Step 2 of 2")).toBeInTheDocument()
-		expect(screen.getByText("https://two.example")).toBeInTheDocument()
-	})
+        expect(screen.queryByTestId("browser-session-frame")).toBeNull()
+        expect(screen.queryByRole("img", { name: "Browser screenshot" })).toBeNull()
+        expect(screen.getByTestId("browser-session-header").getAttribute("aria-expanded")).toBe("false")
+        expect(screen.getByTestId("browser-session-header").textContent).toContain("1 launch, 2 clicks · 2 thoughts · 4 rounds")
+        expect(screen.getByTestId("browser-session-url-line").textContent).toBe("https://three.example")
+        expect(screen.getByTestId("checkpoint-1")).toBeInTheDocument()
+    })
 
-	it("keeps the selected historical page when a newer browser result arrives", () => {
-		const initialMessages: ClineMessage[] = [
-			launch(10),
-			result(11, "https://one.example"),
-			action(12, "10,10"),
-			result(13, "https://two.example"),
-		]
-		const { rerender } = render(<BrowserSessionRow {...baseProps} messages={initialMessages} />)
+    it("keeps a restore point that brings back different files visible while folded", () => {
+        const messages = roundsWithRestorePoints.map((message) => (message.ts === 20 ? checkpoint(20, "files-2") : message))
 
-		fireEvent.click(screen.getByRole("button", { name: "Previous browser step" }))
-		expect(screen.getByText("Step 1 of 2")).toBeInTheDocument()
-		expect(screen.getByText("https://one.example")).toBeInTheDocument()
+        render(<BrowserSessionRow {...baseProps} end="closed" messages={messages} />)
 
-		rerender(
-			<BrowserSessionRow
-				{...baseProps}
-				messages={[...initialMessages, action(14, "30,30"), result(15, "https://three.example")]}
-			/>,
-		)
+        expect(screen.getByTestId("checkpoint-20")).toBeInTheDocument()
+        expect(screen.queryByTestId("checkpoint-10")).toBeNull()
+    })
 
-		expect(screen.getByText("Step 1 of 3")).toBeInTheDocument()
-		expect(screen.getByText("https://one.example")).toBeInTheDocument()
-		expect(screen.queryByText("https://three.example")).not.toBeInTheDocument()
-	})
+    it("reports a session the transcript ends in as running, and as interrupted once the task waits to resume", () => {
+        const open = roundsWithRestorePoints.slice(0, 7)
+        const { rerender } = render(<BrowserSessionRow {...baseProps} isLast messages={open} />)
+        expect(screen.getByTestId("browser-session-header").textContent).toContain("Dline is using the browser")
+        expect(screen.getByText("Browsing")).toBeInTheDocument()
+
+        rerender(
+            <BrowserSessionRow
+                {...baseProps}
+                isLast
+                lastModifiedMessage={{ ts: 99, type: "ask", ask: "resume_task" }}
+                messages={open}
+            />,
+        )
+        expect(screen.getByTestId("browser-session-header").textContent).toContain("Browser session interrupted")
+        expect(screen.queryByText("Browsing")).toBeNull()
+    })
+
+    it("never draws a screenshot payload as text", () => {
+        const { container } = render(<BrowserSessionRow {...baseProps} end="closed" messages={roundsWithRestorePoints} />)
+        fireEvent.click(screen.getByTestId("browser-session-steps-toggle"))
+
+        expect(container.textContent).not.toContain("base64")
+    })
+
+    it("reconstructs the latest persisted page after the row is remounted", () => {
+        const messages: UiMessage[] = [
+            launch(20),
+            result(21, "https://one.example"),
+            action(22, "40,40"),
+            result(23, "https://two.example"),
+        ]
+        const firstRender = render(<BrowserSessionRow {...baseProps} messages={messages} />)
+
+        fireEvent.click(screen.getByRole("button", { name: "Previous browser step" }))
+        expect(screen.getByText("Step 1 of 2")).toBeInTheDocument()
+        firstRender.unmount()
+
+        render(<BrowserSessionRow {...baseProps} messages={messages} />)
+        expect(screen.getByText("Step 2 of 2")).toBeInTheDocument()
+        expect(screen.getByText("https://two.example")).toBeInTheDocument()
+    })
+
+    it("keeps the selected historical page when a newer browser result arrives", () => {
+        const initialMessages: UiMessage[] = [
+            launch(10),
+            result(11, "https://one.example"),
+            action(12, "10,10"),
+            result(13, "https://two.example"),
+        ]
+        const { rerender } = render(<BrowserSessionRow {...baseProps} messages={initialMessages} />)
+
+        fireEvent.click(screen.getByRole("button", { name: "Previous browser step" }))
+        expect(screen.getByText("Step 1 of 2")).toBeInTheDocument()
+        expect(screen.getByText("https://one.example")).toBeInTheDocument()
+
+        rerender(
+            <BrowserSessionRow
+                {...baseProps}
+                messages={[...initialMessages, action(14, "30,30"), result(15, "https://three.example")]}
+            />,
+        )
+
+        expect(screen.getByText("Step 1 of 3")).toBeInTheDocument()
+        expect(screen.getByText("https://one.example")).toBeInTheDocument()
+        expect(screen.queryByText("https://three.example")).not.toBeInTheDocument()
+    })
 })

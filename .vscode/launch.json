@@ -3,382 +3,373 @@
 // Hover to view descriptions of existing attributes.
 // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
 {
-	"version": "0.2.0",
-	"configurations": [
-		{
-			"name": "Run Extension (production)",
-			"type": "extensionHost",
-			"request": "launch",
-			"args": [
-				"--extensionDevelopmentPath=${workspaceFolder}",
-				"--disable-workspace-trust",
-				"--disable-extension",
-				"saoudrizwan.claude-dev", // Avoid conflicts with installed Cline
-				"--disable-extension",
-				"saoudrizwan.cline-nightly", // Avoid conflicts with installed Cline Nightly
-				"${workspaceFolder}",
-				"--disable-extensions"
-			],
-			"outFiles": [
-				"${workspaceFolder}/dist/**/*.js"
-			],
-			"preLaunchTask": "${defaultBuildTask}",
-			"envFile": "${workspaceFolder}/.env",
-			"env": {
-				"DLINE_LOG_API_CONTEXT": "1",
-				"IS_DEV": "true",
-				"DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
-				"DLINE_ENVIRONMENT": "production",
-				"DLINE_LOG_LEVEL": "debug",
-				"DLINE_SKIP_MIGRATION": "1"
-			}
-		},
-		{
-			"name": "Run Extension (staging)",
-			"type": "extensionHost",
-			"request": "launch",
-			"args": [
-				"--extensionDevelopmentPath=${workspaceFolder}",
-				"--disable-workspace-trust",
-				"--disable-extension",
-				"saoudrizwan.claude-dev", // Avoid conflicts with installed Cline
-				"--disable-extension",
-				"saoudrizwan.cline-nightly", // Avoid conflicts with installed Cline Nightly
-				"${workspaceFolder}"
-			],
-			"outFiles": [
-				"${workspaceFolder}/dist/**/*.js"
-			],
-			"preLaunchTask": "${defaultBuildTask}",
-			"envFile": "${workspaceFolder}/.env",
-			"env": {
-				"DLINE_LOG_API_CONTEXT": "1",
-				"IS_DEV": "true",
-				"DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
-				"DLINE_ENVIRONMENT": "staging",
-				"DLINE_LOG_LEVEL": "debug",
-				"DLINE_SKIP_MIGRATION": "1"
-			}
-		},
-		{
-			"name": "Run Extension (local)",
-			"type": "extensionHost",
-			"request": "launch",
-			"args": [
-				"--extensionDevelopmentPath=${workspaceFolder}",
-				"--disable-workspace-trust",
-				"--disable-extension",
-				"saoudrizwan.claude-dev", // Avoid conflicts with installed Cline
-				"--disable-extension",
-				"saoudrizwan.cline-nightly", // Avoid conflicts with installed Cline Nightly
-				"${workspaceFolder}"
-			],
-			"outFiles": [
-				"${workspaceFolder}/dist/**/*.js"
-			],
-			"preLaunchTask": "watch:debug",
-			"envFile": "${workspaceFolder}/.env",
-			"env": {
-				"DLINE_LOG_API_CONTEXT": "1",
-				"IS_DEV": "true",
-				"DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
-				"DLINE_ENVIRONMENT": "local",
-				"DLINE_LOG_LEVEL": "debug",
-				"DLINE_SKIP_MIGRATION": "1"
-			}
-		},
-		{
-			"name": "Run Extension (Semi-Fresh, keep test .dline)",
-			"type": "extensionHost",
-			"request": "launch",
-			"runtimeExecutable": "${execPath}",
-			"args": [
-				"--user-data-dir=${workspaceFolder}/tmp/user",
-				"--profile-temp",
-				"--sync=off",
-				"--extensionDevelopmentPath=${workspaceFolder}",
-				"${workspaceFolder}"
-			],
-			"outFiles": [
-				"${workspaceFolder}/dist/**/*.js"
-			],
-			"preLaunchTask": "clean-tmp-user",
-			"envFile": "${workspaceFolder}/.env",
-			"env": {
-				"DLINE_LOG_API_CONTEXT": "1",
-				"IS_DEV": "true",
-				"DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
-				"DLINE_ENVIRONMENT": "production",
-				"DLINE_LOG_LEVEL": "debug",
-				"DLINE_SKIP_MIGRATION": "1",
-				"DLINE_HOME_DIR": "${workspaceFolder}/tmp/.dline",
-				"DLINE_DIR": "${workspaceFolder}/tmp/.dline",
-				"DLINE_DOCS_DIR": "${workspaceFolder}/tmp/dline"
-			}
-		},
-		{
-			"name": "Run Extension (Semi-Fresh, workspace)",
-			"type": "extensionHost",
-			"request": "launch",
-			"runtimeExecutable": "${execPath}",
-			"args": [
-				"--user-data-dir=${workspaceFolder}/tmp/user",
-				"--profile-temp",
-				"--sync=off",
-				"--disable-extension",
-				"saoudrizwan.claude-dev",
-				"--disable-extension",
-				"saoudrizwan.cline-nightly",
-				"--extensionDevelopmentPath=${workspaceFolder}",
-				"E:/dline_test"
-			],
-			"outFiles": [
-				"${workspaceFolder}/dist/**/*.js"
-			],
-			"preLaunchTask": "clean-tmp-user",
-			"internalConsoleOptions": "openOnSessionStart",
-			"envFile": "${workspaceFolder}/.env",
-			"env": {
-				"DLINE_LOG_API_CONTEXT": "1",
-				"IS_DEV": "true",
-				"DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
-				"DLINE_ENVIRONMENT": "production",
-				"DLINE_LOG_LEVEL": "debug",
-				"DLINE_SKIP_MIGRATION": "1",
-				"DLINE_HOME_DIR": "${workspaceFolder}/tmp/.dline",
-				"DLINE_DOCS_DIR": "${workspaceFolder}/tmp/dline"
-			}
-		},
-		{
-			"name": "Run Extension (Fresh Install Mode)",
-			"type": "extensionHost",
-			"request": "launch",
-			"runtimeExecutable": "${execPath}",
-			"args": [
-				"--user-data-dir=${workspaceFolder}/tmp/user",
-				"--profile-temp",
-				"--sync=off",
-				"--disable-extension",
-				"saoudrizwan.claude-dev", // Avoid conflicts with installed Cline
-				"--disable-extension",
-				"saoudrizwan.cline-nightly", // Avoid conflicts with installed Cline Nightly
-				"--extensionDevelopmentPath=${workspaceFolder}",
-				"${workspaceFolder}"
-			],
-			"outFiles": [
-				"${workspaceFolder}/dist/**/*.js"
-			],
-			"preLaunchTask": "clean-tmp-user",
-			"internalConsoleOptions": "openOnSessionStart",
-			"postDebugTask": "stop",
-			"envFile": "${workspaceFolder}/.env",
-			"env": {
-				"DLINE_LOG_API_CONTEXT": "1",
-				"IS_DEV": "true",
-				"DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
-				"DLINE_ENVIRONMENT": "production",
-				"DLINE_LOG_LEVEL": "debug",
-				"DLINE_SKIP_MIGRATION": "1",
-				"DLINE_HOME_DIR": "${workspaceFolder}/tmp/.dline",
-				"DLINE_DOCS_DIR": "${workspaceFolder}/tmp/dline",
-				"DLINE_DIR": "${workspaceFolder}/tmp/.dline"
-			}
-		},
-		{
-			"type": "node",
-			"request": "launch",
-			"name": "Debug Test Standalone Core Api Server (test:sca-server)",
-			"skipFiles": [
-				"<node_internals>/**"
-			],
-			"sourceMaps": true,
-			"resolveSourceMapLocations": [
-				"${workspaceFolder}/**",
-				"!**/node_modules/**"
-			],
-			"cwd": "${workspaceFolder}",
-			"outFiles": [
-				"${workspaceFolder}/dist/**/*.js",
-				"${workspaceFolder}/dist-standalone/**/*.js"
-			],
-			"preLaunchTask": "compile-standalone",
-			"runtimeExecutable": "npx",
-			"runtimeArgs": [
-				"tsx"
-			],
-			"program": "scripts/test-standalone-core-api-server.ts",
-			"envFile": "${workspaceFolder}/.env",
-			"env": {
-				"DLINE_LOG_API_CONTEXT": "1",
-				"PROTOBUS_PORT": "26040",
-				"HOSTBRIDGE_PORT": "26041",
-				"WORKSPACE_DIR": "${workspaceFolder}",
-				"E2E_TEST": "true",
-				"DLINE_ENVIRONMENT": "local",
-				"DLINE_HOME_DIR": "${workspaceFolder}/tmp/.dline",
-				"DLINE_DIR": "${workspaceFolder}/tmp/.dline",
-				"DLINE_DOCS_DIR": "${workspaceFolder}/tmp/dline"
-			},
-			"console": "integratedTerminal",
-			"internalConsoleOptions": "neverOpen"
-		},
-		{
-			"type": "node",
-			"request": "launch",
-			"name": "Debug Current Vitest File",
-			"skipFiles": [
-				"<node_internals>/**"
-			],
-			"sourceMaps": true,
-			"resolveSourceMapLocations": [
-				"${workspaceFolder}/**",
-				"!**/node_modules/**"
-			],
-			"cwd": "${workspaceFolder}",
-			"program": "${workspaceFolder}/node_modules/vitest/vitest.mjs",
-			"args": [
-				"run",
-				"${relativeFile}"
-			],
-			"envFile": "${workspaceFolder}/.env",
-			"env": {
-				"DLINE_LOG_API_CONTEXT": "1",
-				"NODE_ENV": "test",
-				"IS_DEV": "true",
-				"DLINE_ENVIRONMENT": "local",
-				"DLINE_HOME_DIR": "${workspaceFolder}/tmp/.dline",
-				"DLINE_DIR": "${workspaceFolder}/tmp/.dline",
-				"DLINE_DOCS_DIR": "${workspaceFolder}/tmp/dline"
-			},
-			"console": "integratedTerminal",
-			"internalConsoleOptions": "openOnSessionStart"
-		},
-		{
-			"name": "Run Extension (Fresh, workspace1)",
-			"type": "extensionHost",
-			"request": "launch",
-			"runtimeExecutable": "${execPath}",
-			"args": [
-				"--user-data-dir=${workspaceFolder}/tmp/user",
-				"--profile-temp",
-				"--sync=off",
-				"--disable-extension",
-				"saoudrizwan.claude-dev",
-				"--disable-extension",
-				"saoudrizwan.cline-nightly",
-				"--extensionDevelopmentPath=${workspaceFolder}",
-				"${workspaceFolder}/tests/vscode/workspace1"
-			],
-			"outFiles": [
-				"${workspaceFolder}/dist/**/*.js"
-			],
-			"preLaunchTask": "clean-tmp-user",
-			"internalConsoleOptions": "openOnSessionStart",
-			"envFile": "${workspaceFolder}/.env",
-			"env": {
-				"DLINE_LOG_API_CONTEXT": "1",
-				"IS_DEV": "true",
-				"DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
-				"DLINE_ENVIRONMENT": "production",
-				"DLINE_LOG_LEVEL": "debug",
-				"DLINE_SKIP_MIGRATION": "1",
-				"DLINE_HOME_DIR": "${workspaceFolder}/tmp/.dline",
-				"DLINE_DIR": "${workspaceFolder}/tmp/.dline",
-				"DLINE_DOCS_DIR": "${workspaceFolder}/tmp/dline"
-			}
-		},
-		{
-			"name": "Run Extension (Fresh, workspace)",
-			"type": "extensionHost",
-			"request": "launch",
-			"runtimeExecutable": "${execPath}",
-			"args": [
-				"--user-data-dir=${workspaceFolder}/tmp/user",
-				"--profile-temp",
-				"--sync=off",
-				"--disable-extension",
-				"saoudrizwan.claude-dev",
-				"--disable-extension",
-				"saoudrizwan.cline-nightly",
-				"--extensionDevelopmentPath=${workspaceFolder}",
-				"E:/dline_test"
-			],
-			"outFiles": [
-				"${workspaceFolder}/dist/**/*.js"
-			],
-			"preLaunchTask": "clean-tmp-user",
-			"internalConsoleOptions": "openOnSessionStart",
-			"envFile": "${workspaceFolder}/.env",
-			"env": {
-				"DLINE_LOG_API_CONTEXT": "1",
-				"IS_DEV": "true",
-				"DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
-				"DLINE_ENVIRONMENT": "production",
-				"DLINE_LOG_LEVEL": "debug",
-				"DLINE_SKIP_MIGRATION": "1",
-				"DLINE_HOME_DIR": "${workspaceFolder}/tmp/.dline",
-				"DLINE_DIR": "${workspaceFolder}/tmp/.dline",
-				"DLINE_DOCS_DIR": "${workspaceFolder}/tmp/dline"
-			}
-		},
-		{
-			"name": "Run Extension (Fresh, multi-workspace)",
-			"type": "extensionHost",
-			"request": "launch",
-			"runtimeExecutable": "${execPath}",
-			"args": [
-				"--user-data-dir=${workspaceFolder}/tmp/user",
-				"--profile-temp",
-				"--sync=off",
-				"--disable-extension",
-				"saoudrizwan.claude-dev",
-				"--disable-extension",
-				"saoudrizwan.cline-nightly",
-				"--extensionDevelopmentPath=${workspaceFolder}",
-				"${workspaceFolder}/tests/vscode/workspace1",
-				"${workspaceFolder}/tests/vscode/workspace2",
-				"${workspaceFolder}/tests/vscode/workspace3"
-			],
-			"outFiles": [
-				"${workspaceFolder}/dist/**/*.js"
-			],
-			"preLaunchTask": "clean-tmp-user",
-			"internalConsoleOptions": "openOnSessionStart",
-			"postDebugTask": "stop",
-			"envFile": "${workspaceFolder}/.env",
-			"env": {
-				"DLINE_LOG_API_CONTEXT": "1",
-				"IS_DEV": "true",
-				"DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
-				"DLINE_ENVIRONMENT": "production",
-				"DLINE_LOG_LEVEL": "debug",
-				"DLINE_SKIP_MIGRATION": "1",
-				"DLINE_HOME_DIR": "${workspaceFolder}/tmp/.dline",
-				"DLINE_DIR": "${workspaceFolder}/tmp/.dline",
-				"DLINE_DOCS_DIR": "${workspaceFolder}/tmp/dline"
-			}
-		},
-		{
-			"name": "Open Storybook",
-			"type": "node",
-			"request": "launch",
-			"runtimeExecutable": "npm",
-			"runtimeArgs": [
-				"run",
-				"storybook"
-			],
-			"cwd": "${workspaceFolder}/webview-ui",
-			"console": "integratedTerminal",
-			"internalConsoleOptions": "neverOpen",
-			"serverReadyAction": {
-				"pattern": "Local:.*http://localhost:([0-9]+)",
-				"uriFormat": "http://localhost:%s",
-				"action": "openExternally"
-			},
-			"env": {
-				"DLINE_LOG_API_CONTEXT": "1",
-				"IS_DEV": "true"
-			}
-		}
-	]
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run Extension (production)",
+            "type": "extensionHost",
+            "request": "launch",
+            "args": [
+                "--extensionDevelopmentPath=${workspaceFolder}",
+                "--disable-workspace-trust",
+                "--disable-extension",
+                "saoudrizwan.claude-dev", // Avoid conflicts with installed Cline
+                "--disable-extension",
+                "saoudrizwan.cline-nightly", // Avoid conflicts with installed Cline Nightly
+                "${workspaceFolder}",
+                "--disable-extensions"
+            ],
+            "outFiles": [
+                "${workspaceFolder}/dist/**/*.js"
+            ],
+            "preLaunchTask": "${defaultBuildTask}",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "DLINE_LOG_API_CONTEXT": "1",
+                "IS_DEV": "true",
+                "DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
+                "DLINE_ENVIRONMENT": "production",
+                "DLINE_LOG_LEVEL": "debug"
+            }
+        },
+        {
+            "name": "Run Extension (staging)",
+            "type": "extensionHost",
+            "request": "launch",
+            "args": [
+                "--extensionDevelopmentPath=${workspaceFolder}",
+                "--disable-workspace-trust",
+                "--disable-extension",
+                "saoudrizwan.claude-dev", // Avoid conflicts with installed Cline
+                "--disable-extension",
+                "saoudrizwan.cline-nightly", // Avoid conflicts with installed Cline Nightly
+                "${workspaceFolder}"
+            ],
+            "outFiles": [
+                "${workspaceFolder}/dist/**/*.js"
+            ],
+            "preLaunchTask": "${defaultBuildTask}",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "DLINE_LOG_API_CONTEXT": "1",
+                "IS_DEV": "true",
+                "DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
+                "DLINE_ENVIRONMENT": "staging",
+                "DLINE_LOG_LEVEL": "debug"
+            }
+        },
+        {
+            "name": "Run Extension (local)",
+            "type": "extensionHost",
+            "request": "launch",
+            "args": [
+                "--extensionDevelopmentPath=${workspaceFolder}",
+                "--disable-workspace-trust",
+                "--disable-extension",
+                "saoudrizwan.claude-dev", // Avoid conflicts with installed Cline
+                "--disable-extension",
+                "saoudrizwan.cline-nightly", // Avoid conflicts with installed Cline Nightly
+                "${workspaceFolder}"
+            ],
+            "outFiles": [
+                "${workspaceFolder}/dist/**/*.js"
+            ],
+            "preLaunchTask": "watch:debug",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "DLINE_LOG_API_CONTEXT": "1",
+                "IS_DEV": "true",
+                "DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
+                "DLINE_ENVIRONMENT": "local",
+                "DLINE_LOG_LEVEL": "debug"
+            }
+        },
+        {
+            "name": "Run Extension (Semi-Fresh, keep test .dline)",
+            "type": "extensionHost",
+            "request": "launch",
+            "runtimeExecutable": "${execPath}",
+            "args": [
+                "--user-data-dir=${workspaceFolder}/tmp/user",
+                "--profile-temp",
+                "--sync=off",
+                "--extensionDevelopmentPath=${workspaceFolder}",
+                "${workspaceFolder}"
+            ],
+            "outFiles": [
+                "${workspaceFolder}/dist/**/*.js"
+            ],
+            "preLaunchTask": "clean-tmp-user",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "DLINE_LOG_API_CONTEXT": "1",
+                "IS_DEV": "true",
+                "DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
+                "DLINE_ENVIRONMENT": "production",
+                "DLINE_LOG_LEVEL": "debug",
+                "DLINE_HOME_DIR": "${workspaceFolder}/tmp/.dline",
+                "DLINE_DIR": "${workspaceFolder}/tmp/.dline",
+                "DLINE_DOCS_DIR": "${workspaceFolder}/tmp/dline"
+            }
+        },
+        {
+            "name": "Run Extension (Semi-Fresh, workspace)",
+            "type": "extensionHost",
+            "request": "launch",
+            "runtimeExecutable": "${execPath}",
+            "args": [
+                "--user-data-dir=${workspaceFolder}/tmp/user",
+                "--profile-temp",
+                "--sync=off",
+                "--disable-extension",
+                "saoudrizwan.claude-dev",
+                "--disable-extension",
+                "saoudrizwan.cline-nightly",
+                "--extensionDevelopmentPath=${workspaceFolder}",
+                "E:/dline_test"
+            ],
+            "outFiles": [
+                "${workspaceFolder}/dist/**/*.js"
+            ],
+            "preLaunchTask": "clean-tmp-user",
+            "internalConsoleOptions": "openOnSessionStart",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "DLINE_LOG_API_CONTEXT": "1",
+                "IS_DEV": "true",
+                "DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
+                "DLINE_ENVIRONMENT": "production",
+                "DLINE_LOG_LEVEL": "debug",
+                "DLINE_HOME_DIR": "${workspaceFolder}/tmp/.dline",
+                "DLINE_DOCS_DIR": "${workspaceFolder}/tmp/dline"
+            }
+        },
+        {
+            "name": "Run Extension (Fresh Install Mode)",
+            "type": "extensionHost",
+            "request": "launch",
+            "runtimeExecutable": "${execPath}",
+            "args": [
+                "--user-data-dir=${workspaceFolder}/tmp/user",
+                "--profile-temp",
+                "--sync=off",
+                "--disable-extension",
+                "saoudrizwan.claude-dev", // Avoid conflicts with installed Cline
+                "--disable-extension",
+                "saoudrizwan.cline-nightly", // Avoid conflicts with installed Cline Nightly
+                "--extensionDevelopmentPath=${workspaceFolder}",
+                "${workspaceFolder}"
+            ],
+            "outFiles": [
+                "${workspaceFolder}/dist/**/*.js"
+            ],
+            "preLaunchTask": "clean-tmp-user",
+            "internalConsoleOptions": "openOnSessionStart",
+            "postDebugTask": "stop",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "DLINE_LOG_API_CONTEXT": "1",
+                "IS_DEV": "true",
+                "DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
+                "DLINE_ENVIRONMENT": "production",
+                "DLINE_LOG_LEVEL": "debug",
+                "DLINE_HOME_DIR": "${workspaceFolder}/tmp/.dline",
+                "DLINE_DOCS_DIR": "${workspaceFolder}/tmp/dline",
+                "DLINE_DIR": "${workspaceFolder}/tmp/.dline"
+            }
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Debug Test Standalone Core Api Server (test:sca-server)",
+            "skipFiles": [
+                "<node_internals>/**"
+            ],
+            "sourceMaps": true,
+            "resolveSourceMapLocations": [
+                "${workspaceFolder}/**",
+                "!**/node_modules/**"
+            ],
+            "cwd": "${workspaceFolder}",
+            "outFiles": [
+                "${workspaceFolder}/dist/**/*.js",
+                "${workspaceFolder}/dist-standalone/**/*.js"
+            ],
+            "preLaunchTask": "compile-standalone",
+            "runtimeExecutable": "npx",
+            "runtimeArgs": [
+                "tsx"
+            ],
+            "program": "scripts/test-standalone-core-api-server.ts",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "DLINE_LOG_API_CONTEXT": "1",
+                "PROTOBUS_PORT": "26040",
+                "HOSTBRIDGE_PORT": "26041",
+                "WORKSPACE_DIR": "${workspaceFolder}",
+                "E2E_TEST": "true",
+                "DLINE_ENVIRONMENT": "local",
+                "DLINE_HOME_DIR": "${workspaceFolder}/tmp/.dline",
+                "DLINE_DIR": "${workspaceFolder}/tmp/.dline",
+                "DLINE_DOCS_DIR": "${workspaceFolder}/tmp/dline"
+            },
+            "console": "integratedTerminal",
+            "internalConsoleOptions": "neverOpen"
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Debug Current Vitest File",
+            "skipFiles": [
+                "<node_internals>/**"
+            ],
+            "sourceMaps": true,
+            "resolveSourceMapLocations": [
+                "${workspaceFolder}/**",
+                "!**/node_modules/**"
+            ],
+            "cwd": "${workspaceFolder}",
+            "program": "${workspaceFolder}/node_modules/vitest/vitest.mjs",
+            "args": [
+                "run",
+                "${relativeFile}"
+            ],
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "DLINE_LOG_API_CONTEXT": "1",
+                "NODE_ENV": "test",
+                "IS_DEV": "true",
+                "DLINE_ENVIRONMENT": "local",
+                "DLINE_HOME_DIR": "${workspaceFolder}/tmp/.dline",
+                "DLINE_DIR": "${workspaceFolder}/tmp/.dline",
+                "DLINE_DOCS_DIR": "${workspaceFolder}/tmp/dline"
+            },
+            "console": "integratedTerminal",
+            "internalConsoleOptions": "openOnSessionStart"
+        },
+        {
+            "name": "Run Extension (Fresh, workspace1)",
+            "type": "extensionHost",
+            "request": "launch",
+            "runtimeExecutable": "${execPath}",
+            "args": [
+                "--user-data-dir=${workspaceFolder}/tmp/user",
+                "--profile-temp",
+                "--sync=off",
+                "--disable-extension",
+                "saoudrizwan.claude-dev",
+                "--disable-extension",
+                "saoudrizwan.cline-nightly",
+                "--extensionDevelopmentPath=${workspaceFolder}",
+                "${workspaceFolder}/tests/vscode/workspace1"
+            ],
+            "outFiles": [
+                "${workspaceFolder}/dist/**/*.js"
+            ],
+            "preLaunchTask": "clean-tmp-user",
+            "internalConsoleOptions": "openOnSessionStart",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "DLINE_LOG_API_CONTEXT": "1",
+                "IS_DEV": "true",
+                "DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
+                "DLINE_ENVIRONMENT": "production",
+                "DLINE_LOG_LEVEL": "debug",
+                "DLINE_HOME_DIR": "${workspaceFolder}/tmp/.dline",
+                "DLINE_DIR": "${workspaceFolder}/tmp/.dline",
+                "DLINE_DOCS_DIR": "${workspaceFolder}/tmp/dline"
+            }
+        },
+        {
+            "name": "Run Extension (Fresh, workspace)",
+            "type": "extensionHost",
+            "request": "launch",
+            "runtimeExecutable": "${execPath}",
+            "args": [
+                "--user-data-dir=${workspaceFolder}/tmp/user",
+                "--profile-temp",
+                "--sync=off",
+                "--disable-extension",
+                "saoudrizwan.claude-dev",
+                "--disable-extension",
+                "saoudrizwan.cline-nightly",
+                "--extensionDevelopmentPath=${workspaceFolder}",
+                "E:/dline_test"
+            ],
+            "outFiles": [
+                "${workspaceFolder}/dist/**/*.js"
+            ],
+            "preLaunchTask": "clean-tmp-user",
+            "internalConsoleOptions": "openOnSessionStart",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "DLINE_LOG_API_CONTEXT": "1",
+                "IS_DEV": "true",
+                "DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
+                "DLINE_ENVIRONMENT": "production",
+                "DLINE_LOG_LEVEL": "debug",
+                "DLINE_HOME_DIR": "${workspaceFolder}/tmp/.dline",
+                "DLINE_DIR": "${workspaceFolder}/tmp/.dline",
+                "DLINE_DOCS_DIR": "${workspaceFolder}/tmp/dline"
+            }
+        },
+        {
+            "name": "Run Extension (Fresh, multi-workspace)",
+            "type": "extensionHost",
+            "request": "launch",
+            "runtimeExecutable": "${execPath}",
+            "args": [
+                "--user-data-dir=${workspaceFolder}/tmp/user",
+                "--profile-temp",
+                "--sync=off",
+                "--disable-extension",
+                "saoudrizwan.claude-dev",
+                "--disable-extension",
+                "saoudrizwan.cline-nightly",
+                "--extensionDevelopmentPath=${workspaceFolder}",
+                "${workspaceFolder}/tests/vscode/workspace1",
+                "${workspaceFolder}/tests/vscode/workspace2",
+                "${workspaceFolder}/tests/vscode/workspace3"
+            ],
+            "outFiles": [
+                "${workspaceFolder}/dist/**/*.js"
+            ],
+            "preLaunchTask": "clean-tmp-user",
+            "internalConsoleOptions": "openOnSessionStart",
+            "postDebugTask": "stop",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "DLINE_LOG_API_CONTEXT": "1",
+                "IS_DEV": "true",
+                "DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
+                "DLINE_ENVIRONMENT": "production",
+                "DLINE_LOG_LEVEL": "debug",
+                "DLINE_HOME_DIR": "${workspaceFolder}/tmp/.dline",
+                "DLINE_DIR": "${workspaceFolder}/tmp/.dline",
+                "DLINE_DOCS_DIR": "${workspaceFolder}/tmp/dline"
+            }
+        },
+        {
+            "name": "Open Storybook",
+            "type": "node",
+            "request": "launch",
+            "runtimeExecutable": "npm",
+            "runtimeArgs": [
+                "run",
+                "storybook"
+            ],
+            "cwd": "${workspaceFolder}/webview-ui",
+            "console": "integratedTerminal",
+            "internalConsoleOptions": "neverOpen",
+            "serverReadyAction": {
+                "pattern": "Local:.*http://localhost:([0-9]+)",
+                "uriFormat": "http://localhost:%s",
+                "action": "openExternally"
+            },
+            "env": {
+                "DLINE_LOG_API_CONTEXT": "1",
+                "IS_DEV": "true"
+            }
+        }
+    ]
 }

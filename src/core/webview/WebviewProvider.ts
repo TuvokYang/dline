@@ -11,167 +11,167 @@ import { getNonce } from "./getNonce"
 import { WebviewProviderRegistry } from "./WebviewProviderRegistry"
 
 export function shouldUseWebviewHmr(
-	extensionMode: number,
-	e2eTest = process.env.E2E_TEST,
-	e2eDevWebview = process.env.DLINE_E2E_DEV_WEBVIEW,
+    extensionMode: number,
+    e2eTest = process.env.E2E_TEST,
+    e2eDevWebview = process.env.DLINE_E2E_DEV_WEBVIEW,
 ): boolean {
-	return extensionMode === 2 && (!envFlagEnabled(e2eTest) || envFlagEnabled(e2eDevWebview))
+    return extensionMode === 2 && (!envFlagEnabled(e2eTest) || envFlagEnabled(e2eDevWebview))
 }
 
 export function shouldLoadWebviewReactDevtools(
-	isDev = process.env.IS_DEV,
-	reactDevtools = process.env.DLINE_WEBVIEW_REACT_DEVTOOLS,
+    isDev = process.env.IS_DEV,
+    reactDevtools = process.env.DLINE_WEBVIEW_REACT_DEVTOOLS,
 ): boolean {
-	return envFlagEnabled(isDev) && envFlagEnabled(reactDevtools)
+    return envFlagEnabled(isDev) && envFlagEnabled(reactDevtools)
 }
 
 export abstract class WebviewProvider {
-	// DEPRECATED: Use WebviewProviderRegistry.getSidebar() or getPanels() instead.
-	// static instance is no longer maintained - each constructor previously
-	// overwrote the singleton, breaking multi-panel scenarios.
-	private _registryId?: string
-	private _controller?: Controller
-	private controllerReadyResolve!: (controller: Controller) => void
-	private startupReadyResolve!: (controller: Controller | undefined) => void
-	readonly controllerReady: Promise<Controller>
-	readonly startupReady: Promise<Controller | undefined>
-	private startupFailure?: Error
+    // DEPRECATED: Use WebviewProviderRegistry.getSidebar() or getPanels() instead.
+    // static instance is no longer maintained - each constructor previously
+    // overwrote the singleton, breaking multi-panel scenarios.
+    private _registryId?: string
+    private _controller?: Controller
+    private controllerReadyResolve!: (controller: Controller) => void
+    private startupReadyResolve!: (controller: Controller | undefined) => void
+    readonly controllerReady: Promise<Controller>
+    readonly startupReady: Promise<Controller | undefined>
+    private startupFailure?: Error
 
-	constructor(
-		readonly context: ClineExtensionContext,
-		options?: { deferController?: boolean; isSidebar?: boolean },
-	) {
-		this._registryId = WebviewProviderRegistry.register(this, options?.isSidebar)
-		this.controllerReady = new Promise((resolve) => {
-			this.controllerReadyResolve = resolve
-		})
-		this.startupReady = new Promise((resolve) => {
-			this.startupReadyResolve = resolve
-		})
+    constructor(
+        readonly context: ClineExtensionContext,
+        options?: { deferController?: boolean; isSidebar?: boolean },
+    ) {
+        this._registryId = WebviewProviderRegistry.register(this, options?.isSidebar)
+        this.controllerReady = new Promise((resolve) => {
+            this.controllerReadyResolve = resolve
+        })
+        this.startupReady = new Promise((resolve) => {
+            this.startupReadyResolve = resolve
+        })
 
-		if (!options?.deferController) {
-			this.ensureController()
-		}
-	}
+        if (!options?.deferController) {
+            this.ensureController()
+        }
+    }
 
-	get controller(): Controller {
-		if (!this._controller) {
-			throw new Error("WebviewProvider controller not initialized")
-		}
-		return this._controller
-	}
+    get controller(): Controller {
+        if (!this._controller) {
+            throw new Error("WebviewProvider controller not initialized")
+        }
+        return this._controller
+    }
 
-	hasController(): boolean {
-		return this._controller !== undefined
-	}
+    hasController(): boolean {
+        return this._controller !== undefined
+    }
 
-	setStartupFailure(error: unknown): void {
-		if (this._controller || this.startupFailure) return
-		this.startupFailure = error instanceof Error ? error : new Error(String(error))
-		this.startupReadyResolve(undefined)
-	}
+    setStartupFailure(error: unknown): void {
+        if (this._controller || this.startupFailure) return
+        this.startupFailure = error instanceof Error ? error : new Error(String(error))
+        this.startupReadyResolve(undefined)
+    }
 
-	getStartupFailure(): Error | undefined {
-		return this.startupFailure
-	}
+    getStartupFailure(): Error | undefined {
+        return this.startupFailure
+    }
 
-	ensureController(): Controller {
-		if (!this._controller) {
-			this.attachController(new Controller(this.context))
-		}
-		const controller = this._controller
-		if (!controller) {
-			throw new Error("WebviewProvider controller not initialized")
-		}
-		return controller
-	}
+    ensureController(): Controller {
+        if (!this._controller) {
+            this.attachController(new Controller(this.context))
+        }
+        const controller = this._controller
+        if (!controller) {
+            throw new Error("WebviewProvider controller not initialized")
+        }
+        return controller
+    }
 
-	attachController(controller: Controller): Controller {
-		if (this._controller) {
-			return this._controller
-		}
-		this._controller = controller
-		this.controllerReadyResolve(controller)
-		this.startupReadyResolve(controller)
-		return controller
-	}
+    attachController(controller: Controller): Controller {
+        if (this._controller) {
+            return this._controller
+        }
+        this._controller = controller
+        this.controllerReadyResolve(controller)
+        this.startupReadyResolve(controller)
+        return controller
+    }
 
-	async dispose() {
-		await this._controller?.dispose()
-		if (this._registryId) {
-			WebviewProviderRegistry.unregister(this._registryId)
-		}
-	}
+    async dispose() {
+        await this._controller?.dispose()
+        if (this._registryId) {
+            WebviewProviderRegistry.unregister(this._registryId)
+        }
+    }
 
-	/**
-	 * Returns the sidebar WebviewProvider instance, or undefined if not available.
-	 * Use WebviewProviderRegistry.getSidebar() for sidebar-specific access.
-	 * Use WebviewProviderRegistry.getPanels() for editor panel access.
-	 */
-	public static getInstance(): WebviewProvider | undefined {
-		return WebviewProviderRegistry.getSidebar() ?? undefined
-	}
+    /**
+     * Returns the sidebar WebviewProvider instance, or undefined if not available.
+     * Use WebviewProviderRegistry.getSidebar() for sidebar-specific access.
+     * Use WebviewProviderRegistry.getPanels() for editor panel access.
+     */
+    public static getInstance(): WebviewProvider | undefined {
+        return WebviewProviderRegistry.getSidebar() ?? undefined
+    }
 
-	/**
-	 * Restores the global instance reference after a WebviewView has been disposed
-	 * and is being re-resolved. Called by subclasses in resolveWebviewView().
-	 * DEPRECATED: No longer maintains a static singleton; kept for backward compat.
-	 */
-	protected restoreInstance(): void {
-		// No-op: singleton pattern deprecated in favor of WebviewProviderRegistry
-	}
+    /**
+     * Restores the global instance reference after a WebviewView has been disposed
+     * and is being re-resolved. Called by subclasses in resolveWebviewView().
+     * DEPRECATED: No longer maintains a static singleton; kept for backward compat.
+     */
+    protected restoreInstance(): void {
+        // No-op: singleton pattern deprecated in favor of WebviewProviderRegistry
+    }
 
-	public static getVisibleInstance(): WebviewProvider | undefined {
-		const sidebar = WebviewProviderRegistry.getSidebar()
-		return sidebar?.isVisible() ? sidebar : undefined
-	}
+    public static getVisibleInstance(): WebviewProvider | undefined {
+        const sidebar = WebviewProviderRegistry.getSidebar()
+        return sidebar?.isVisible() ? sidebar : undefined
+    }
 
-	public static async disposeAllInstances() {
-		await WebviewProviderRegistry.disposeAll()
-	}
+    public static async disposeAllInstances() {
+        await WebviewProviderRegistry.disposeAll()
+    }
 
-	/**
-	 * Converts a local filesystem path to a URL that can be used within the webview.
-	 *
-	 * @param path - The local path to convert
-	 * @returns A URL that can be used within the webview
-	 */
-	abstract getWebviewUrl(path: string): string
+    /**
+     * Converts a local filesystem path to a URL that can be used within the webview.
+     *
+     * @param path - The local path to convert
+     * @returns A URL that can be used within the webview
+     */
+    abstract getWebviewUrl(path: string): string
 
-	/**
-	 * Gets the Content Security Policy source for the webview.
-	 *
-	 * @returns The CSP source string to be used in the webview's Content-Security-Policy
-	 */
-	abstract getCspSource(): string
+    /**
+     * Gets the Content Security Policy source for the webview.
+     *
+     * @returns The CSP source string to be used in the webview's Content-Security-Policy
+     */
+    abstract getCspSource(): string
 
-	/**
-	 * Checks if the webview is currently visible to the user.
-	 *
-	 * @returns True if the webview is visible, false otherwise
-	 */
-	abstract isVisible(): boolean
+    /**
+     * Checks if the webview is currently visible to the user.
+     *
+     * @returns True if the webview is visible, false otherwise
+     */
+    abstract isVisible(): boolean
 
-	/**
-	 * Defines and returns the HTML that should be rendered within the webview panel.
-	 *
-	 * @remarks This is also the place where references to the React webview build files
-	 * are created and inserted into the webview HTML.
-	 *
-	 * @returns A template string literal containing the HTML that should be
-	 * rendered within the webview panel
-	 */
-	public getHtmlContent(): string {
-		// Get the local path to main script run in the webview,
-		// then convert it to a url we can use in the webview.
-		// The JS file from the React build output
-		const scriptUrl = this.getExtensionUrl("webview-ui", "build", "assets", "index.js")
+    /**
+     * Defines and returns the HTML that should be rendered within the webview panel.
+     *
+     * @remarks This is also the place where references to the React webview build files
+     * are created and inserted into the webview HTML.
+     *
+     * @returns A template string literal containing the HTML that should be
+     * rendered within the webview panel
+     */
+    public getHtmlContent(): string {
+        // Get the local path to main script run in the webview,
+        // then convert it to a url we can use in the webview.
+        // The JS file from the React build output
+        const scriptUrl = this.getExtensionUrl("webview-ui", "build", "assets", "index.js")
 
-		// The CSS file from the React build output
-		const stylesUrl = this.getExtensionUrl("webview-ui", "build", "assets", "index.css")
+        // The CSS file from the React build output
+        const stylesUrl = this.getExtensionUrl("webview-ui", "build", "assets", "index.css")
 
-		// Use a nonce to only allow a specific script to be run.
-		/*
+        // Use a nonce to only allow a specific script to be run.
+        /*
 				content security policy of your webview to only allow scripts that have a specific nonce
 				create a content security policy meta tag so that only loading scripts with a nonce is allowed
 				As your extension grows you will likely want to add custom styles, fonts, and/or images to your webview. If you do, you will need to update the content security policy meta tag to explicitly allow for these resources. E.g.
@@ -181,10 +181,10 @@ export abstract class WebviewProvider {
 
 				in meta tag we add nonce attribute: A cryptographic nonce (only used once) to allow scripts. The server must generate a unique nonce value each time it transmits a policy. It is critical to provide a nonce that cannot be guessed as bypassing a resource's policy is otherwise trivial.
 				*/
-		const nonce = getNonce()
+        const nonce = getNonce()
 
-		// Tip: Install the es6-string-html VS Code extension to enable code highlighting below
-		return /*html*/ `
+        // Tip: Install the es6-string-html VS Code extension to enable code highlighting below
+        return /*html*/ `
 			<!DOCTYPE html>
 			<html lang="en">
 				<head>
@@ -193,13 +193,13 @@ export abstract class WebviewProvider {
 				<meta name="theme-color" content="#000000">
 				<link rel="stylesheet" type="text/css" href="${stylesUrl}">
 				<meta http-equiv="Content-Security-Policy" content="default-src 'none';
-					connect-src https://*.posthog.com https://*.dline.bot; 
-					font-src ${this.getCspSource()} data:; 
-					style-src ${this.getCspSource()} 'unsafe-inline'; 
-					img-src ${this.getCspSource()} https: data:; 
+					connect-src https://*.dline.cc;
+					font-src ${this.getCspSource()} data:;
+					style-src ${this.getCspSource()} 'unsafe-inline';
+					img-src ${this.getCspSource()} https: data: blob:;
 					media-src ${this.getCspSource()} https: data: blob:;
 					script-src 'nonce-${nonce}' 'unsafe-eval';">
-				<title>Cline</title>
+				<title>Dline</title>
 			</head>
 			<body>
 				<noscript>You need to enable JavaScript to run this app.</noscript>
@@ -208,66 +208,66 @@ export abstract class WebviewProvider {
 			</body>
 		</html>
 		`
-	}
+    }
 
-	/**
-	 * Reads the Vite dev server port from the generated port file to avoid conflicts
-	 * Returns a Promise that resolves to the port number
-	 * If the file doesn't exist or can't be read, it resolves to the default port
-	 */
-	private getDevServerPort(): Promise<number> {
-		const DEFAULT_PORT = 25463
+    /**
+     * Reads the Vite dev server port from the generated port file to avoid conflicts
+     * Returns a Promise that resolves to the port number
+     * If the file doesn't exist or can't be read, it resolves to the default port
+     */
+    private getDevServerPort(): Promise<number> {
+        const DEFAULT_PORT = 25463
 
-		const portFilePath = path.join(__dirname, "..", "webview-ui", ".vite-port")
+        const portFilePath = path.join(__dirname, "..", "webview-ui", ".vite-port")
 
-		return readFile(portFilePath, "utf8")
-			.then((portFile) => {
-				const port = Number.parseInt(portFile.trim(), 10) || DEFAULT_PORT
-				Logger.info(`[getDevServerPort] Using dev server port ${port} from .vite-port file`)
+        return readFile(portFilePath, "utf8")
+            .then((portFile) => {
+                const port = Number.parseInt(portFile.trim(), 10) || DEFAULT_PORT
+                Logger.info(`[getDevServerPort] Using dev server port ${port} from .vite-port file`)
 
-				return port
-			})
-			.catch((_err) => {
-				Logger.warn(
-					`[getDevServerPort] Port file not found or couldn't be read at ${portFilePath}, using default port: ${DEFAULT_PORT}`,
-				)
-				return DEFAULT_PORT
-			})
-	}
+                return port
+            })
+            .catch((_err) => {
+                Logger.warn(
+                    `[getDevServerPort] Port file not found or couldn't be read at ${portFilePath}, using default port: ${DEFAULT_PORT}`,
+                )
+                return DEFAULT_PORT
+            })
+    }
 
-	/**
-	 * Connects to the local Vite dev server to allow HMR, with fallback to the bundled assets
-	 *
-	 * @param webview A reference to the extension webview
-	 * @returns A template string literal containing the HTML that should be
-	 * rendered within the webview panel
-	 */
-	protected async getHMRHtmlContent(): Promise<string> {
-		const localPort = await this.getDevServerPort()
-		const localServerUrl = `localhost:${localPort}`
+    /**
+     * Connects to the local Vite dev server to allow HMR, with fallback to the bundled assets
+     *
+     * @param webview A reference to the extension webview
+     * @returns A template string literal containing the HTML that should be
+     * rendered within the webview panel
+     */
+    protected async getHMRHtmlContent(): Promise<string> {
+        const localPort = await this.getDevServerPort()
+        const localServerUrl = `localhost:${localPort}`
 
-		// Check if local dev server is running.
-		try {
-			await axios.get(`http://${localServerUrl}`)
-		} catch (_error) {
-			// Only show the error message when in development mode.
-			if (envFlagEnabled(process.env.IS_DEV)) {
-				HostProvider.window.showMessage({
-					type: ShowMessageType.ERROR,
-					message:
-						"Dline: Local webview dev server is not running, HMR will not work. Please run 'npm run dev:webview' before launching the extension to enable HMR. Using bundled assets.",
-				})
-			}
+        // Check if local dev server is running.
+        try {
+            await axios.get(`http://${localServerUrl}`)
+        } catch (_error) {
+            // Only show the error message when in development mode.
+            if (envFlagEnabled(process.env.IS_DEV)) {
+                HostProvider.window.showMessage({
+                    type: ShowMessageType.ERROR,
+                    message:
+                        "Dline: Local webview dev server is not running, HMR will not work. Please run 'npm run dev:webview' before launching the extension to enable HMR. Using bundled assets.",
+                })
+            }
 
-			return this.getHtmlContent()
-		}
+            return this.getHtmlContent()
+        }
 
-		const nonce = getNonce()
-		const stylesUrl = this.getExtensionUrl("webview-ui", "build", "assets", "index.css")
-		const scriptEntrypoint = "src/main.tsx"
-		const scriptUrl = `http://${localServerUrl}/${scriptEntrypoint}`
+        const nonce = getNonce()
+        const stylesUrl = this.getExtensionUrl("webview-ui", "build", "assets", "index.css")
+        const scriptEntrypoint = "src/main.tsx"
+        const scriptUrl = `http://${localServerUrl}/${scriptEntrypoint}`
 
-		const reactRefresh = /*html*/ `
+        const reactRefresh = /*html*/ `
 			<script nonce="${nonce}" type="module">
 				import RefreshRuntime from "http://${localServerUrl}/@react-refresh"
 				RefreshRuntime.injectIntoGlobalHook(window)
@@ -277,17 +277,17 @@ export abstract class WebviewProvider {
 			</script>
 		`
 
-		const csp = [
-			"default-src 'none'",
-			`font-src ${this.getCspSource()} http://${localServerUrl} http://0.0.0.0:${localPort}`,
-			`style-src ${this.getCspSource()} 'unsafe-inline' https://* http://${localServerUrl} http://0.0.0.0:${localPort}`,
-			`img-src ${this.getCspSource()} https: data:`,
-			`media-src ${this.getCspSource()} https: data: blob: http://${localServerUrl} http://0.0.0.0:${localPort}`,
-			`script-src 'unsafe-eval' https://* http://${localServerUrl} http://0.0.0.0:${localPort} 'nonce-${nonce}'`,
-			`connect-src https://* ws://${localServerUrl} ws://0.0.0.0:${localPort} http://${localServerUrl} http://0.0.0.0:${localPort}`,
-		]
+        const csp = [
+            "default-src 'none'",
+            `font-src ${this.getCspSource()} http://${localServerUrl} http://0.0.0.0:${localPort}`,
+            `style-src ${this.getCspSource()} 'unsafe-inline' https://* http://${localServerUrl} http://0.0.0.0:${localPort}`,
+            `img-src ${this.getCspSource()} https: data: blob:`,
+            `media-src ${this.getCspSource()} https: data: blob: http://${localServerUrl} http://0.0.0.0:${localPort}`,
+            `script-src 'unsafe-eval' https://* http://${localServerUrl} http://0.0.0.0:${localPort} 'nonce-${nonce}'`,
+            `connect-src https://* ws://${localServerUrl} ws://0.0.0.0:${localPort} http://${localServerUrl} http://0.0.0.0:${localPort}`,
+        ]
 
-		return /*html*/ `
+        return /*html*/ `
 			<!DOCTYPE html>
 			<html lang="en">
 				<head>
@@ -305,18 +305,18 @@ export abstract class WebviewProvider {
 				</body>
 			</html>
 		`
-	}
-	/**
-	 * A helper function which will get the webview URL of a given file or resource in the extension directory.
-	 *
-	 * @remarks This URL can be used within a webview's HTML as a link to the
-	 * given file/resource.
-	 *
-	 * @param pathList An array of strings representing the path to a file/resource in the extension directory.
-	 * @returns A URL pointing to the file/resource
-	 */
-	private getExtensionUrl(...pathList: string[]): string {
-		const assetPath = path.resolve(HostProvider.get().extensionFsPath, ...pathList)
-		return this.getWebviewUrl(assetPath)
-	}
+    }
+    /**
+     * A helper function which will get the webview URL of a given file or resource in the extension directory.
+     *
+     * @remarks This URL can be used within a webview's HTML as a link to the
+     * given file/resource.
+     *
+     * @param pathList An array of strings representing the path to a file/resource in the extension directory.
+     * @returns A URL pointing to the file/resource
+     */
+    private getExtensionUrl(...pathList: string[]): string {
+        const assetPath = path.resolve(HostProvider.get().extensionFsPath, ...pathList)
+        return this.getWebviewUrl(assetPath)
+    }
 }

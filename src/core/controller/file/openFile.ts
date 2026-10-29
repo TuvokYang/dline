@@ -20,15 +20,15 @@ import { Controller } from ".."
  * @returns Empty response
  */
 export async function openFile(_controller: Controller, request: StringRequest): Promise<Empty> {
-	if (request.value) {
-		// Check for remote:// prefix for remote rules/workflows
-		if (request.value.startsWith(REMOTE_URI_SCHEME)) {
-			await openRemoteFile(request.value)
-		} else {
-			await openFileIntegration(request.value)
-		}
-	}
-	return Empty.create()
+    if (request.value) {
+        // Check for remote:// prefix for remote rules/workflows
+        if (request.value.startsWith(REMOTE_URI_SCHEME)) {
+            await openRemoteFile(request.value)
+        } else {
+            await openFileIntegration(request.value)
+        }
+    }
+    return Empty.create()
 }
 
 /**
@@ -36,46 +36,46 @@ export async function openFile(_controller: Controller, request: StringRequest):
  * @param uri The remote URI in format: remote://rule/{name}, remote://workflow/{name}, or remote://skill/{name}
  */
 async function openRemoteFile(uri: string): Promise<void> {
-	// Parse: remote://rule/{name}, remote://workflow/{name}, or remote://skill/{name}
-	const match = uri.match(/^remote:\/\/(rule|workflow|skill)\/(.+)$/)
-	if (!match) {
-		throw new Error(`Invalid remote file URI: ${uri}`)
-	}
+    // Parse: remote://rule/{name}, remote://workflow/{name}, or remote://skill/{name}
+    const match = uri.match(/^remote:\/\/(rule|workflow|skill)\/(.+)$/)
+    if (!match) {
+        throw new Error(`Invalid remote file URI: ${uri}`)
+    }
 
-	const [, type, name] = match
-	const remoteConfig = StateManager.get().getRemoteConfigSettings()
+    const [, type, name] = match
+    const remoteConfig = StateManager.get().getRemoteConfigSettings()
 
-	// Look up content based on type
-	let items: GlobalInstructionsFile[] | undefined
-	if (type === "rule") {
-		items = remoteConfig.remoteGlobalRules
-	} else if (type === "workflow") {
-		items = remoteConfig.remoteGlobalWorkflows
-	} else {
-		items = remoteConfig.remoteGlobalSkills
-	}
-	// Try entry.name first (fast path), fall back to frontmatter.name for skills
-	// in case entry.name drifts from the frontmatter
-	let item = items?.find((r) => r.name === name)
-	if (!item && type === "skill") {
-		item = items?.find((r) => {
-			const { data } = parseYamlFrontmatter(r.contents)
-			return typeof data.name === "string" && data.name === name
-		})
-	}
+    // Look up content based on type
+    let items: GlobalInstructionsFile[] | undefined
+    if (type === "rule") {
+        items = remoteConfig.remoteGlobalRules
+    } else if (type === "workflow") {
+        items = remoteConfig.remoteGlobalWorkflows
+    } else {
+        items = remoteConfig.remoteGlobalSkills
+    }
+    // Try entry.name first (fast path), fall back to frontmatter.name for skills
+    // in case entry.name drifts from the frontmatter
+    let item = items?.find((r) => r.name === name)
+    if (!item && type === "skill") {
+        item = items?.find((r) => {
+            const { data } = parseYamlFrontmatter(r.contents)
+            return typeof data.name === "string" && data.name === name
+        })
+    }
 
-	if (!item?.contents) {
-		throw new Error(`Remote ${type} not found: ${name}`)
-	}
+    if (!item?.contents) {
+        throw new Error(`Remote ${type} not found: ${name}`)
+    }
 
-	// Create temp file with read-only header comment
-	const header = `# ⚠️ READ-ONLY: This ${type} is managed by your organization.\n# Changes made here will not be saved.\n\n`
-	const content = header + item.contents
+    // Create temp file with read-only header comment
+    const header = `# ⚠️ READ-ONLY: This ${type} is managed by your organization.\n# Changes made here will not be saved.\n\n`
+    const content = header + item.contents
 
-	// Sanitize the name for use in filename (replace invalid characters)
-	const sanitizedName = name.replace(/[<>:"/\\|?*]/g, "_")
-	const tempPath = path.join(os.tmpdir(), `cline-remote-${type}-${sanitizedName}.md`)
+    // Sanitize the name for use in filename (replace invalid characters)
+    const sanitizedName = name.replace(/[<>:"/\\|?*]/g, "_")
+    const tempPath = path.join(os.tmpdir(), `cline-remote-${type}-${sanitizedName}.md`)
 
-	await writeFile(tempPath, content)
-	await openFileIntegration(tempPath)
+    await writeFile(tempPath, content)
+    await openFileIntegration(tempPath)
 }

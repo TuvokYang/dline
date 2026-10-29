@@ -1,10 +1,10 @@
 import {
-	configureSignalRecording,
-	emitSignal,
-	isSignalRecordingEnabled,
-	recordDurationHistogram,
-	resetSignalRecording,
-	type SignalContext,
+    configureSignalRecording,
+    emitSignal,
+    isSignalRecordingEnabled,
+    recordDurationHistogram,
+    resetSignalRecording,
+    type SignalContext,
 } from "../service/pipeline-port"
 import { type PerfDomain, type PerfPhase, perfEventName } from "./perf-domains"
 
@@ -28,10 +28,10 @@ export type PerfDimensions = Readonly<Record<string, string | number | boolean>>
 
 /** Handle returned by `startPerfPhase`. Stopping it emits the measurement. */
 export interface PerfPhaseHandle {
-	/** Emit the measurement. Calling more than once is ignored. */
-	stop(dimensions?: PerfDimensions): void
-	/** Whether this handle will emit anything. Lets a caller skip its own prep work. */
-	readonly active: boolean
+    /** Emit the measurement. Calling more than once is ignored. */
+    stop(dimensions?: PerfDimensions): void
+    /** Whether this handle will emit anything. Lets a caller skip its own prep work. */
+    readonly active: boolean
 }
 
 /**
@@ -41,8 +41,8 @@ export interface PerfPhaseHandle {
  * telemetry off costs a boolean check and a constant return.
  */
 const INERT_HANDLE: PerfPhaseHandle = Object.freeze({
-	stop(): void {},
-	active: false,
+    stop(): void {},
+    active: false,
 })
 
 type Clock = () => number
@@ -61,45 +61,45 @@ let clock: Clock = () => performance.now()
  * apart.
  */
 export function configurePerfRecorder(options: { enabled?: EnabledPredicate; now?: Clock }): void {
-	if (options.enabled) configureSignalRecording({ enabled: options.enabled })
-	if (options.now) clock = options.now
+    if (options.enabled) configureSignalRecording({ enabled: options.enabled })
+    if (options.now) clock = options.now
 }
 
 /** Restore the defaults. Intended for tests. */
 export function resetPerfRecorder(): void {
-	clock = () => performance.now()
-	resetSignalRecording()
+    clock = () => performance.now()
+    resetSignalRecording()
 }
 
 /** Whether measurements are currently being recorded. */
 export function isPerfRecordingEnabled(): boolean {
-	return isSignalRecordingEnabled()
+    return isSignalRecordingEnabled()
 }
 
 class ActivePerfPhase implements PerfPhaseHandle {
-	readonly active = true
-	private stopped = false
+    readonly active = true
+    private stopped = false
 
-	constructor(
-		private readonly name: string,
-		private readonly startedAt: number,
-		private readonly context: SignalContext | undefined,
-		private readonly baseDimensions: PerfDimensions | undefined,
-	) {}
+    constructor(
+        private readonly name: string,
+        private readonly startedAt: number,
+        private readonly context: SignalContext | undefined,
+        private readonly baseDimensions: PerfDimensions | undefined,
+    ) {}
 
-	stop(dimensions?: PerfDimensions): void {
-		if (this.stopped) return
-		this.stopped = true
-		const durationMs = Math.round(clock() - this.startedAt)
-		const attributes = { ...this.baseDimensions, ...dimensions, durationMs }
-		recordDurationHistogram(durationMs, metricAttributes(this.name, attributes))
-		emitSignal({
-			name: this.name,
-			level: "performance",
-			attributes,
-			context: this.context,
-		})
-	}
+    stop(dimensions?: PerfDimensions): void {
+        if (this.stopped) return
+        this.stopped = true
+        const durationMs = Math.round(clock() - this.startedAt)
+        const attributes = { ...this.baseDimensions, ...dimensions, durationMs }
+        recordDurationHistogram(durationMs, metricAttributes(this.name, attributes))
+        emitSignal({
+            name: this.name,
+            level: "performance",
+            attributes,
+            context: this.context,
+        })
+    }
 }
 
 /**
@@ -110,13 +110,13 @@ class ActivePerfPhase implements PerfPhaseHandle {
  * front while others (the outcome) are only known once the work finishes.
  */
 export function startPerfPhase<D extends PerfDomain>(
-	domain: D,
-	phase: PerfPhase<D>,
-	dimensions?: PerfDimensions,
-	context?: SignalContext,
+    domain: D,
+    phase: PerfPhase<D>,
+    dimensions?: PerfDimensions,
+    context?: SignalContext,
 ): PerfPhaseHandle {
-	if (!isSignalRecordingEnabled()) return INERT_HANDLE
-	return new ActivePerfPhase(perfEventName(domain, phase), clock(), context, dimensions)
+    if (!isSignalRecordingEnabled()) return INERT_HANDLE
+    return new ActivePerfPhase(perfEventName(domain, phase), clock(), context, dimensions)
 }
 
 /**
@@ -127,22 +127,22 @@ export function startPerfPhase<D extends PerfDomain>(
  * reachable. Prefer `startPerfPhase` when the call site owns both endpoints.
  */
 export function recordPerfPhase<D extends PerfDomain>(
-	domain: D,
-	phase: PerfPhase<D>,
-	durationMs: number,
-	dimensions?: PerfDimensions,
-	context?: SignalContext,
+    domain: D,
+    phase: PerfPhase<D>,
+    durationMs: number,
+    dimensions?: PerfDimensions,
+    context?: SignalContext,
 ): void {
-	if (!isSignalRecordingEnabled()) return
-	const roundedDurationMs = Math.round(durationMs)
-	const attributes = { ...dimensions, durationMs: roundedDurationMs }
-	recordDurationHistogram(roundedDurationMs, metricAttributes(perfEventName(domain, phase), attributes))
-	emitSignal({
-		name: perfEventName(domain, phase),
-		level: "performance",
-		attributes,
-		context,
-	})
+    if (!isSignalRecordingEnabled()) return
+    const roundedDurationMs = Math.round(durationMs)
+    const attributes = { ...dimensions, durationMs: roundedDurationMs }
+    recordDurationHistogram(roundedDurationMs, metricAttributes(perfEventName(domain, phase), attributes))
+    emitSignal({
+        name: perfEventName(domain, phase),
+        level: "performance",
+        attributes,
+        context,
+    })
 }
 
 /**
@@ -152,30 +152,30 @@ export function recordPerfPhase<D extends PerfDomain>(
  * timing data when the queue is under pressure.
  */
 function metricAttributes(operation: string, dimensions: PerfDimensions): Record<string, string | number | boolean> {
-	const attributes: Record<string, string | number | boolean> = { operation }
-	for (const [key, value] of Object.entries(dimensions)) {
-		if (key === "durationMs" || isIdentityDimension(key)) continue
-		attributes[key] = value
-	}
-	return attributes
+    const attributes: Record<string, string | number | boolean> = { operation }
+    for (const [key, value] of Object.entries(dimensions)) {
+        if (key === "durationMs" || isIdentityDimension(key)) continue
+        attributes[key] = value
+    }
+    return attributes
 }
 
 function isIdentityDimension(key: string): boolean {
-	const normalized = key.replace(/[A-Z]/g, (character) => `_${character.toLowerCase()}`).toLowerCase()
-	return /(^|_)(id|ulid|user_id|task_id|controller_id|workspace_id|terminal_id|organization_id|member_id)$/.test(normalized)
+    const normalized = key.replace(/[A-Z]/g, (character) => `_${character.toLowerCase()}`).toLowerCase()
+    return /(^|_)(id|ulid|user_id|task_id|controller_id|workspace_id|terminal_id|organization_id|member_id)$/.test(normalized)
 }
 
 export function markPerfPhase<D extends PerfDomain>(
-	domain: D,
-	phase: PerfPhase<D>,
-	dimensions?: PerfDimensions,
-	context?: SignalContext,
+    domain: D,
+    phase: PerfPhase<D>,
+    dimensions?: PerfDimensions,
+    context?: SignalContext,
 ): void {
-	if (!isSignalRecordingEnabled()) return
-	emitSignal({
-		name: perfEventName(domain, phase),
-		level: "debug",
-		attributes: dimensions,
-		context,
-	})
+    if (!isSignalRecordingEnabled()) return
+    emitSignal({
+        name: perfEventName(domain, phase),
+        level: "debug",
+        attributes: dimensions,
+        context,
+    })
 }

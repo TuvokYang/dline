@@ -23,31 +23,31 @@ const CASE_INSENSITIVE_PLATFORM = process.platform === "win32" || process.platfo
  * would depend on the root's own depth.
  */
 export function capabilityResourceId(resourcePath: string, root?: string): CapabilityResourceId {
-	const trimmed = resourcePath.trim()
-	if (trimmed === "") return ""
+    const trimmed = resourcePath.trim()
+    if (trimmed === "") return ""
 
-	// Remote resources are addressed by name, not by a filesystem path.
-	if (trimmed.startsWith("remote:")) {
-		return `remote:${normalizeCase(trimmed.slice("remote:".length))}`
-	}
+    // Remote resources are addressed by name, not by a filesystem path.
+    if (trimmed.startsWith("remote:")) {
+        return `remote:${normalizeCase(trimmed.slice("remote:".length))}`
+    }
 
-	const absolute = path.resolve(trimmed)
-	const relative = root ? relativeToRoot(absolute, path.resolve(root)) : undefined
-	return normalizeCase(toPosix(relative ?? absolute))
+    const absolute = path.resolve(trimmed)
+    const relative = root ? relativeToRoot(absolute, path.resolve(root)) : undefined
+    return normalizeCase(toPosix(relative ?? absolute))
 }
 
 /** Returns undefined when the path is not contained in the root. */
 function relativeToRoot(absolute: string, root: string): string | undefined {
-	const relative = path.relative(root, absolute)
-	if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) return undefined
-	return relative
+    const relative = path.relative(root, absolute)
+    if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) return undefined
+    return relative
 }
 
 /** Preference keys always use forward slashes so they read the same on every platform. */
 function toPosix(value: string): string {
-	return value.replace(/\\/g, "/").replace(/\/+$/, "")
+    return value.replace(/\\/g, "/").replace(/\/+$/, "")
 }
 
 function normalizeCase(value: string): string {
-	return CASE_INSENSITIVE_PLATFORM ? value.toLowerCase() : value
+    return CASE_INSENSITIVE_PLATFORM ? value.toLowerCase() : value
 }

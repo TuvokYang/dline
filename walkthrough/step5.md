@@ -1,7 +1,11 @@
-# No Black Box: Full Visibility & Control
+# Add Only the Capabilities You Need
 
-**Cline operates with complete transparency, showing you every file read and every proposed diff.**
+Dline discovers reusable capabilities from explicit project and user locations instead of treating every integration as one global switch:
 
-Understand exactly what Cline is doing and why—no obfuscation. Review all actions and approve changes before they're made. Cline uses checkpoints, allowing you to easily revert if needed, maintaining full control over your codebase. With BYO-key, you also have clear cost transparency.
+- rules, workflows, skills, named subagents, and MCP server toggles resolve through global, workspace, and task scopes;
+- workspace MCP descriptors and configured remote servers remain independently selectable;
+- browser, image, LSP, terminal, and other runtime tools use their own availability and approval controls rather than the same three-level scope model.
 
-![Cline Transparency Demo](https://storage.googleapis.com/cline_public_images/docs/assets/clines-transparency-hifi-5_compress.webp)
+MCP configuration does not grant tool approval by itself. Requests still follow the active approval policy and safety boundaries.
+
+[Open MCP Servers](command:dline.mcpButtonClicked) · [Read about capability scopes](https://docs.dline.cc/customization/capability-scopes/)

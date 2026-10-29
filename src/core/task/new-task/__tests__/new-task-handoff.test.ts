@@ -4,34 +4,36 @@ import type { StartSuccessorTaskPostCommitDirective } from "../../tools/ToolExec
 import { createNewTaskHandoff, type NewTaskSettingsSource } from "../new-task-handoff"
 
 interface StableProfileSettingsSource extends NewTaskSettingsSource {
-	readonly planModeProfileId: string
-	readonly actModeProfileId: string
+    readonly planModeProfileId: string
+    readonly actModeProfileId: string
 }
 
 describe("createNewTaskHandoff Profile identity", () => {
-	it("inherits stable Profile IDs together with the display names", () => {
-		const directive: StartSuccessorTaskPostCommitDirective = {
-			type: "start_successor_task",
-			context: "Continue the isolated task",
-			functionId: "function-new-task",
-			dlineTid: "tid-new-task",
-		}
-		const source: StableProfileSettingsSource = {
-			mode: "act" as Mode,
-			planModeProfileId: "plan-profile-id",
-			planModeProfile: "plan-profile",
-			actModeProfileId: "act-profile-id",
-			actModeProfile: "act-profile",
-		}
+    it("inherits stable Profile IDs together with the display names", () => {
+        const directive: StartSuccessorTaskPostCommitDirective = {
+            type: "start_successor_task",
+            task: "Finish the isolated task",
+            context: "Continue the isolated task",
+            functionId: "function-new-task",
+            dlineTid: "tid-new-task",
+        }
+        const source: StableProfileSettingsSource = {
+            mode: "act" as Mode,
+            planModeProfileId: "plan-profile-id",
+            planModeProfile: "plan-profile",
+            actModeProfileId: "act-profile-id",
+            actModeProfile: "act-profile",
+        }
 
-		const handoff = createNewTaskHandoff(directive, source, [])
+        const handoff = createNewTaskHandoff(directive, source)
 
-		expect(handoff.taskSettings).toMatchObject({
-			mode: "act",
-			planModeProfileId: "plan-profile-id",
-			planModeProfile: "plan-profile",
-			actModeProfileId: "act-profile-id",
-			actModeProfile: "act-profile",
-		})
-	})
+        expect(handoff).toMatchObject({ task: "Finish the isolated task", context: "Continue the isolated task" })
+        expect(handoff.taskSettings).toMatchObject({
+            mode: "act",
+            planModeProfileId: "plan-profile-id",
+            planModeProfile: "plan-profile",
+            actModeProfileId: "act-profile-id",
+            actModeProfile: "act-profile",
+        })
+    })
 })

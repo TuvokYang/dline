@@ -9,14 +9,14 @@
 
 /** Fields reported individually; everything else is summed as `other`. */
 export interface FieldSize {
-	field: string
-	bytes: number
+    field: string
+    bytes: number
 }
 
 export interface StateSizeBreakdown {
-	totalBytes: number
-	/** Largest first, so the dominant contributor reads off the front. */
-	fields: FieldSize[]
+    totalBytes: number
+    /** Largest first, so the dominant contributor reads off the front. */
+    fields: FieldSize[]
 }
 
 /**
@@ -29,26 +29,26 @@ export interface StateSizeBreakdown {
  * would withhold the measurement of every other one.
  */
 export function measureStateFieldSizes(state: object, totalBytes: number): StateSizeBreakdown {
-	const fields: FieldSize[] = []
+    const fields: FieldSize[] = []
 
-	for (const [field, value] of Object.entries(state)) {
-		if (value === undefined) {
-			continue
-		}
-		let bytes = 0
-		try {
-			bytes = Buffer.byteLength(JSON.stringify(value) ?? "", "utf8")
-		} catch {
-			// Cyclic or otherwise unserializable; the whole-state serialization
-			// that produced totalBytes already succeeded, so this is the field's
-			// own problem and must not hide the rest of the breakdown.
-			bytes = 0
-		}
-		fields.push({ field, bytes })
-	}
+    for (const [field, value] of Object.entries(state)) {
+        if (value === undefined) {
+            continue
+        }
+        let bytes = 0
+        try {
+            bytes = Buffer.byteLength(JSON.stringify(value) ?? "", "utf8")
+        } catch {
+            // Cyclic or otherwise unserializable; the whole-state serialization
+            // that produced totalBytes already succeeded, so this is the field's
+            // own problem and must not hide the rest of the breakdown.
+            bytes = 0
+        }
+        fields.push({ field, bytes })
+    }
 
-	fields.sort((left, right) => right.bytes - left.bytes)
-	return { totalBytes, fields }
+    fields.sort((left, right) => right.bytes - left.bytes)
+    return { totalBytes, fields }
 }
 
 /**
@@ -59,9 +59,9 @@ export function measureStateFieldSizes(state: object, totalBytes: number): State
  * the log it is meant to clarify.
  */
 export function formatStateSizeBreakdown(breakdown: StateSizeBreakdown, topFieldCount = 5): string {
-	const top = breakdown.fields.slice(0, topFieldCount)
-	const rendered = top.map(({ field, bytes }) => `${field}=${bytes}`).join(" ")
-	const remainderBytes = breakdown.fields.slice(topFieldCount).reduce((sum, entry) => sum + entry.bytes, 0)
-	const remainder = remainderBytes > 0 ? ` other=${remainderBytes}` : ""
-	return `totalBytes=${breakdown.totalBytes} ${rendered}${remainder}`
+    const top = breakdown.fields.slice(0, topFieldCount)
+    const rendered = top.map(({ field, bytes }) => `${field}=${bytes}`).join(" ")
+    const remainderBytes = breakdown.fields.slice(topFieldCount).reduce((sum, entry) => sum + entry.bytes, 0)
+    const remainder = remainderBytes > 0 ? ` other=${remainderBytes}` : ""
+    return `totalBytes=${breakdown.totalBytes} ${rendered}${remainder}`
 }

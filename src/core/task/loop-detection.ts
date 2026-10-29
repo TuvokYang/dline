@@ -13,7 +13,7 @@
  * comparison algorithm cannot drift between the two.
  */
 
-import type { TaskState } from "./TaskState"
+import type { ToolAttemptState } from "./tools/state/ToolHandlerState"
 
 // Soft threshold: inject a warning, giving the LLM one chance to self-correct.
 // Hard threshold: escalate to user or fail task. Set higher to avoid false
@@ -35,16 +35,16 @@ const IGNORED_PARAMS = new Set(["task_progress"])
  * string-valued, no nesting — so the replacer array is sufficient.
  */
 export function toolCallSignature(params: Partial<Record<string, string>> | undefined): string {
-	if (!params) return "{}"
-	const keys = Object.keys(params)
-		.filter((k) => !IGNORED_PARAMS.has(k))
-		.sort()
-	return JSON.stringify(params, keys)
+    if (!params) return "{}"
+    const keys = Object.keys(params)
+        .filter((k) => !IGNORED_PARAMS.has(k))
+        .sort()
+    return JSON.stringify(params, keys)
 }
 
 interface LoopDetectionResult {
-	softWarning: boolean
-	hardEscalation: boolean
+    softWarning: boolean
+    hardEscalation: boolean
 }
 
 /**
@@ -54,17 +54,17 @@ interface LoopDetectionResult {
  * Compares the current call against the previous state, updates the
  * counter, and returns which thresholds (if any) were crossed.
  */
-export function checkRepeatedToolCall(state: TaskState, toolName: string, currentSignature: string): LoopDetectionResult {
-	if (toolName === state.lastToolName && currentSignature === state.lastToolParams) {
-		state.consecutiveIdenticalToolCount++
-	} else {
-		state.consecutiveIdenticalToolCount = 1
-	}
+export function checkRepeatedToolCall(state: ToolAttemptState, toolName: string, currentSignature: string): LoopDetectionResult {
+    if (toolName === state.lastToolName && currentSignature === state.lastToolParams) {
+        state.consecutiveIdenticalToolCount++
+    } else {
+        state.consecutiveIdenticalToolCount = 1
+    }
 
-	return {
-		softWarning: state.consecutiveIdenticalToolCount === LOOP_DETECTION_SOFT_THRESHOLD,
-		hardEscalation: state.consecutiveIdenticalToolCount === LOOP_DETECTION_HARD_THRESHOLD,
-	}
+    return {
+        softWarning: state.consecutiveIdenticalToolCount === LOOP_DETECTION_SOFT_THRESHOLD,
+        hardEscalation: state.consecutiveIdenticalToolCount === LOOP_DETECTION_HARD_THRESHOLD,
+    }
 }
 
 /**
@@ -87,9 +87,9 @@ export function checkRepeatedToolCall(state: TaskState, toolName: string, curren
  * @param currentSignature Canonical signature of its parameters.
  * @returns Which thresholds this call crossed.
  */
-export function recordToolCall(state: TaskState, toolName: string, currentSignature: string): LoopDetectionResult {
-	const result = checkRepeatedToolCall(state, toolName, currentSignature)
-	state.lastToolName = toolName
-	state.lastToolParams = currentSignature
-	return result
+export function recordToolCall(state: ToolAttemptState, toolName: string, currentSignature: string): LoopDetectionResult {
+    const result = checkRepeatedToolCall(state, toolName, currentSignature)
+    state.lastToolName = toolName
+    state.lastToolParams = currentSignature
+    return result
 }

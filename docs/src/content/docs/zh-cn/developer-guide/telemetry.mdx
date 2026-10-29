@@ -1,64 +1,149 @@
 ---
-title: 遥测系统
-description: Dline 遥测的分层结构：从采集 API、领域记录器，到受同意控制的提供方、运行时诊断管线和诊断包。
+title: 遥测系统与统一规划
+description: Dline 的 canonical telemetry pipeline、设备与账户身份边界、当前兼容路径、当前远端 usage 与诊断投递，以及计划中的 Issue diagnostics 接入。
 ---
 
 import { Aside } from "@astrojs/starlight/components"
 
-遥测代码位于 `src/services/telemetry/`。它的设计目标是：生产方从激活的第一行代码起就能记录事件，而同意、内容策略和投递方式集中在一处决定。面向用户的同意说明见[遥测与诊断](/zh-cn/troubleshooting/telemetry/)。
+Dline 的目标是一套 canonical telemetry mechanism。loopback OTLP、本地 journal、账户身份日志、`otel.dline.cc`、diagnostic bundle 和 Issue diagnostics 都是同一接纳与隐私系统的 sink、视图或 profile overlay。目前 `otel.dline.cc` 接收使用计数以及错误和运行时诊断，经由[当前远端 usage 投递](#当前远端-usage-投递)所述的专用路径。
 
-## 分层
+面向用户的遥测合同见[遥测与 Issue 诊断](/zh-cn/troubleshooting/telemetry/)，隐私合同见 [Dline 隐私政策](/zh-cn/privacy/)。
 
-| 层 | 位置 | 职责 |
+## 不可破坏的约束
+
+- 使用统计和错误报告是独立 consent；`unset` 不等于同意。
+- `account` 通道服从 usage consent，但与普通 usage record 分离。
+- `distinct_id` 只表示设备/安装，登录或切换账户不能改写。
+- account/organization identity 不进入普通 Event/Metric attributes。
+- 组织、宿主、服务端和 kill switch 只能收紧 consent。
+- content、credential、raw artifact 和自由文本异常正文不进入 canonical telemetry。
+- 投递失败不改变产品结果。
+- transport outbox 是 sink 状态，不是另一遥测源。
+- `RuntimeSessionLedger` 是 crash capsule，不是 Task 生命周期权威。
+
+## 当前管线
+
+| 层 | Owner | 职责 |
 |---|---|---|
-| 调用入口 | `index.ts`、`TelemetryService.ts` | 全扩展使用的 `telemetryService.capture*()` 合同 |
-| 领域记录器 | `events/` | 任务、工具、UI、用户、工作区和 Hook 事件；事件目录；错误与运行时记录器 |
-| 埋点工具 | `instrumentation/` | 耗时记录、性能域和诊断事件 |
-| 生产方合同 | `service/pipeline-port.ts` | 生产方与记录管线之间唯一的端口 |
-| 投递 | `service/provider-registry.ts`、`providers/` | 分发到 OpenTelemetry、PostHog 和旧版适配器 |
-| 本地日志 | `journal/` | 以 OTLP 形态写入的 JSONL 会话日志 |
-| 运行时诊断 | `runtime/` | 事件总线、生命周期、内容策略、传输、导出和分析 |
+| Facade | `TelemetryService.ts` | 产品级 capture API |
+| Recorder | `events/`、`instrumentation/`、Task observability | 产生类型化事实 |
+| Early admission | `service/pipeline-port.ts` | 有界 bootstrap 和 runtime recording predicate |
+| Consent | `service/channel-policy.ts` | `usage`/`account` 映射 usage consent；`error`/`runtime` 映射 error consent |
+| Context | `context/telemetry-context.ts` | 只附加 host metadata，不保存 account identity |
+| Delivery | `service/provider-registry.ts` | lazy 物化属性并分发 capability |
+| Canonical local journal | `journal/` | OTLP 形态 Event、Metric、Trace partition |
+| Runtime diagnostics | `runtime/` | runtime producer、sampler、analysis、兼容 journal、bundle source |
+| Crash capsule | `runtime/session-ledger.ts` | 有界的下一次启动 process reconciliation |
 
-## 调用入口
+registry 包含 `usage`、`account`、`error`、`runtime`、`raw-artifact` channel。`account` 是专用 identify delivery，sink 必须显式 opt in。
 
-`telemetryService` 是一个代理：导入模块时不会构造服务，第一次调用时同步创建，因此 `capture*` 始终是普通同步调用。提供方和宿主元数据异步挂载；在它们就绪之前，提供方注册表把信号放入有界缓冲区，就绪后按顺序重放。
+## 设备与账户身份
 
-`TelemetryService` 有意保持精简，只负责公开的 `capture*` 名称，其余逻辑都委托出去。关闭之后，迟到的调用只会到达一个没有提供方的服务，因此不会产生副作用，也不会重建单例。
+`src/services/logging/distinctId.ts` 只拥有设备级值。production 代码只能在初始化时设置；`setDistinctIdForTesting()` 只供测试。
 
-## 生产方与管线端口
+`TelemetrySignalDispatcher.identifyUser()` 不再改写设备身份，也不把账户信息放入 `TelemetryContext`。普通 metric 只包含 host metadata 和自身维度。
 
-埋点工具、领域记录器和运行时管线只通过 `pipeline-port.ts` 交互：
+默认 loopback registration 声明支持 `account`。`OpenTelemetryTelemetryProvider.identifyUser()` 在每次账户切换时发出一个 `account.identified` log，只包含 `account_id`、`telemetry_channel=account`，不包含 `distinct_id`、display name、email、organization 或 membership。普通 OTel event 继续使用设备 `distinct_id`。
 
-- 生产方只描述上报的是哪类事实；队列优先级和淘汰策略属于管线内部。
-- 管线建立之前记录的信号进入有界的启动缓冲区，满时淘汰最旧的一条。
-- 安装管线不会自动冲刷该缓冲区。是否接纳启动早期的事实属于同意决策，由生命周期负责。
-- 生产方是否记录由一个谓词决定，因此同意设置变化后无需重启扩展宿主即可生效。
+账号识别从不改写或 alias 设备 ID。组织配置的 OTLP registration 没有 opt in `account`，因此不会收到 account record。Dline 没有 PostHog registration。
 
-`category-policy.ts` 用于单独开关某些噪声较大的事件类别，它与同意无关：同意决定遥测是否存在。
+## 当前兼容缺口
 
-## 提供方
+### 重复本地持久化
 
-提供方注册表持有全部提供方，并隔离每一次调用，因此某个厂商 SDK 抛错或卡住不会影响调用方。OpenTelemetry 提供方通过 `OpenTelemetryExporterFactory` 导出日志、指标和链路。默认端点是本机采集器 `http://127.0.0.1:4318`，组织可以通过远程配置覆盖。网络请求遵循[网络与代理](/zh-cn/troubleshooting/networking-and-proxies/)中的共享传输规则。
+`LocalJournalProvider` 写 `usage-*`、`metrics-*`、`traces-*`，各自有 4 MiB tail budget。错误报告开启时，`runtime/transports/session-journal.ts` 还会写无前缀的 1 MiB runtime tail。
 
-## 运行时诊断
+现有 cleanup 扫描共享目录全部 `.jsonl`，只排除精确匹配的活动无前缀 runtime 文件，把其他每个文件视为一个 item，最多保留 8 个符合条件文件，并删除超过 3 天的文件。它只在 error lifecycle 启动时运行。禁止把它描述成 8-session 或全局 byte bound。
 
-`runtime/lifecycle.ts` 把 **Allow error reporting** 选项转换为运行或停止的诊断管线，是唯一决定诊断数据能否写盘或联网的地方。
+### Consent 传播分裂
 
-- `runtime-event-bus.ts` 是唯一的有界缓冲区，按优先级淘汰。
-- 生命周期定时把总线中的事件排入各个输出端：会话日志和 OTLP 日志传输。关闭时先冲刷已记录的事件，再关闭输出端。
-- `transports/session-journal.ts` 每行追加一条 OTLP 日志记录，标准采集器可以用 `filelog` receiver 读取该目录。写入是尽力而为，失败只计数，不向上抛出。
-- `content-policy.ts` 是属性集合的边界：拒绝携带提示词、命令、输出或凭据的字段，并跟踪每个属性的基数。
-- `export/` 负责 **Export diagnostic bundle** 背后的诊断包 ZIP，写入前会再次脱敏。
-- `analysis/`、`performance/` 和 `reproduction/` 分别包含根因分析器、带阈值策略的运行时采样器，以及诊断使用的场景重放。
+canonical registry 每次从 `StateManager` 读取 consent。runtime 兼容 lifecycle 保存自己的 enabled 状态，只在 activation 和显式 error-setting 更新时变化。live organization disable 会通过 state replacement 影响 canonical registry，但当前不会调用 runtime lifecycle transition。统一 resolver 迁移必须在远端诊断发布前补齐。远端 usage 投递不依赖该 lifecycle：它在每个周期以及每次 consent 或组织设置变化时重新读取 policy 输入。
+
+### Legacy pairing credential
+
+启动错误诊断当前会确保存在 owner-only legacy pairing credential，但没有现有 transport 消费。Issue diagnostics 必须迁移或丢弃它，并要求新的单 Issue 显式操作。
+
+## 当前远端 usage 投递
+
+`otel.dline.cc` 经 `/usage` 接收 `usage` profile，经 OTLP/JSON 的 `/v1/logs`、`/v1/metrics` 和 `/v1/traces` 接收 `production` profile 的错误和运行时诊断；每个请求都带 `X-Dline-Contract: 5`。启动时删除早期合同留下的状态（`LegacyTelemetryState`），只在 remote quarantine 目录保留元数据形式的 loss evidence。usage 路径的所有权如下：
+
+| 层 | Owner | 职责 |
+|---|---|---|
+| Settlement port | `src/core/task/telemetry/UsageSettlement.ts` | 每个已结算的服务商请求产生一条类型化记录：purpose、outcome、新输入与缓存 token、时长、流式耗时、重试、失败类别，以及服务该请求的 provider 和模型（含是否为自定义模型） |
+| Policy | `remote/policy/usagePolicy.ts`、`RemotePolicyRepository` | 把使用情况设置（默认开启）、组织、宿主等级和服务端停止解析为机器级 policy epoch，并在决策变化时记录日志 |
+| 请求体 | `remote/usage/attemptBucket.ts`、`remote/contracts/usageBody.ts`、`remote/contracts/usageBodySchema.ts` | 已终结的 attempt 合并为 bucket，再构建为一个 schema 5 请求体；保存前按合同在本地校验 |
+| Spool 与 outbox | `UsageObservationSpool`、`UsageOutboxRepository` | 按进程分片的 observation；发送租约、投递闸门、待发分钟和 exact-bytes inflight 在同一把锁下修改 |
+| 投递 | `UsageDeliveryWorker`、`RemoteUsageCoordinator` | 窗口、批次、重放、延后与停止处理；policy 离开允许状态时删除未发送数据 |
+| 凭据与传输 | `DeviceCredentialRepository`、`DeviceTokenBroker`、`DlineOtelHttpClient` | owner-only 设备密钥、single-flight 令牌交换、经 `@shared/net` 的固定 origin |
+| 组合 | `remote/remoteUsageRuntime.ts` | 在 `src/common.ts` 的 `initialize()` 中启动，在 `tearDown()` 中停止 |
+
+`remote/` 路径位于 `src/services/telemetry/` 下；repository 位于 `src/core/storage/telemetry-remote/`。
+
+错误和运行时诊断由 `remote/diagnostics/`、`remote/remoteDiagnosticsRuntime.ts` 和共享的 `DiagnosticOutboxRepository` 负责；发送的记录与上限见用户文档。
+
+该路径尚未达到下文目标：settlement 绕过了 `provider-registry.ts` 和 canonical channel catalog。隐私由构造保证：settlement 类型没有正文字段，请求体结构固定，批次属性经过 allowlist，并在发送前按 wire 合同校验。把该路径纳入 canonical admission boundary 仍是待完成工作。
+
+`DLINE_OTEL_ENDPOINT` 只能把 origin 替换为 loopback origin，用于针对本地 mock 服务的契约测试；其他值会被忽略并记录警告。
+
+## 单一遥测机制目标
+
+```text
+normal signal ingress ─┐
+authoritative usage ingress ─┤
+account identity ingress ────┘
+  -> one consent/profile resolver
+  -> one channel/severity catalog
+  -> canonicalization and baseline content policy
+  -> sink-specific narrowing
+  -> one provider registry
+       -> one local journal owner
+       -> loopback OTLP
+       -> account-capable sink
+       -> otel.dline.cc
+       -> tests
+  -> diagnostic bundle read view
+```
+
+在目标形态中，权威 usage settlement 因为需要 awaited durable handoff，继续使用类型化 durable ingress，但它必须服从相同 consent、policy epoch、channel catalog、privacy admission 和审计规则，不构成第二套遥测系统。
+
+本地 journal 迁移必须先复现当前 file size、cleanup selection、顺序、崩溃证据、取消、bundle export 和 restart recovery，parity 通过后才能停止兼容写入。任何 grouping、count、age、active-file protection 或 byte budget 变化都需要独立批准的 storage 约定。
 
 <Aside type="caution">
-生产方不得记录提示词、命令输出、文件内容、token 或请求头。新增属性时要在内容策略中显式声明，并优先使用有界枚举而不是自由文本，以保证基数可控。
+不能先删除兼容 writer。停止重复写入是 canonical parity 和历史 reader 完成后的最后步骤。
 </Aside>
 
-## 新增事件
+## 远端 profile
 
-1. 在 `events/catalog.ts` 中登记事件，并从所属领域记录器上报，不要直接在 UI 或 Controller 代码中调用。
-2. 属性保持结构化且有界；依赖内容策略，而不是临时手动脱敏。
-3. 为记录器编写聚焦测试；事件跨越新边界时，同时扩展架构或同意边界测试。
+- `usage`（当前）：不含正文的 Provider token、缓存和耗时 settlement，聚合为上文的 `schema_version: 2` 请求体。
+- `production`（logs 已启用）：经过内容过滤的 `error`/`runtime` log 记录；不发送 metrics 和 traces。
+- `issue_diagnostic`：需要 error consent 与 active per-Issue grant 的有时限诊断密度。
+- `development`（计划）：独立的开发流。目前 development 构建以 `usage` profile 发送使用统计并带 `is_dev=true`，自动化测试运行不发送。
 
-相关测试包括 `telemetry-architecture.test.ts`、`TelemetryService.test.ts`、`pipeline-port.test.ts`、`runtime/__tests__/consent-boundary.test.ts`、`lifecycle.drain.test.ts`、`session-journal.test.ts` 和 `bundle-builder.test.ts`。
+`issue_diagnostic` 仍是计划。
+
+Dline remote provider 接入现有 registry，禁止新增 remote-only catalog 或 consent system。remote diagnostics 同时排除设备 `distinct_id` 和 account identity。未来 account 目的地必须是单独声明的 account-capable sink。
+
+远端 HTTP 使用共享且支持代理的 transport、固定 HTTPS origin、拒绝 redirect、有界 response read、有限 timeout、`AbortSignal` 和脱敏错误。outbox 按 count/byte/age 有界，并按 profile、credential/token generation、grant、signal、policy revision 分区；禁止从 forensic journal 重建 payload。
+
+关闭通道时先持久化更严格 policy epoch，再停止 capture/send、取消 in-flight，并删除该通道未发送 outbox 和本地 remote token；不能删除服务端已接受数据。
+
+## Issue diagnostics
+
+host 负责 create、attach/check 和本地停止。pairing secret、support code、consent marker、Issue token、journal 和 bundle bytes 都不进入模型上下文。
+
+普通 Issue 提交继续独立。Issue diagnostics 发布前，`ReportBugHandler` 必须停止要求并自动把 `api_request_output` 放入 Issue `logs` 字段。
+
+授权检查由用户触发，不做轮询。维护者批准的服务端 grant 带 expiry，UI 显示剩余时间。无效或失败检查保持 Issue stream 关闭，并保留基础 production profile。本地停止、过期、consent 关闭、宿主/组织限制或 kill switch 都删除本地 Issue credential/outbox 并停止投递。
+
+服务端当前没有 client revoke endpoint。本地停止不能表述成远端 grant 已撤销，也不能删除已上传数据。在 high-density scope enforcement 和服务端 retention/access/deletion policy 验证前，Issue rollout 保持阻塞。
+
+## 新增 signal
+
+1. 注册稳定 event 或 metric 名称。
+2. 在 canonical catalog 分配 channel 和 severity。
+3. 通过 facade 或类型化 canonical ingress 记录。
+4. 字段保持有界且不含正文。
+5. 显式决定 account-capable sink 是否可接收。
+6. 按需增加 consent、identity boundary、privacy canary、journal、retry 和 recovery 测试。
+
+相关测试包括 `TelemetryChannelPolicy.test.ts`、`TelemetryService.test.ts`、`OpenTelemetryTelemetryProvider.test.ts`、`distinctId.test.ts`、`LocalJournalProvider.test.ts`、`consent-boundary.test.ts`、`session-journal.test.ts` 和 `bundle-builder.test.ts`。

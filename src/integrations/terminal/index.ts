@@ -33,30 +33,28 @@ export { StandaloneTerminalRegistry } from "./standalone/StandaloneTerminalRegis
 
 // Export all types from types.ts
 export type {
-	// Command Executor types
-	ActiveBackgroundCommand,
-	AskResponse,
-	BackgroundCommand,
-	CommandCancellationResult,
-	CommandExecutionOptions,
-	CommandExecutionOutcome,
-	CommandExecutorCallbacks,
-	CommandExecutorConfig,
-	FullCommandExecutorConfig,
-	// Terminal types
-	ITerminal,
-	ITerminalManager,
-	ITerminalProcess,
-	ITerminalProcessResult,
-	// Command Orchestrator types
-	OrchestrationOptions,
-	OrchestrationResult,
-	StandaloneTerminalOptions,
-	TerminalInfo,
-	TerminalManagerConfiguration,
-	TerminalManagerConfigurationResult,
-	TerminalOutputLine,
-	TerminalOutputStream,
-	TerminalProcessEvents,
-	TerminalProcessResultPromise,
+    // Command Executor types
+    AskResponse,
+    BackgroundCommand,
+    CommandCancellationResult,
+    CommandExecutionOptions,
+    CommandExecutionOutcome,
+    CommandExecutorCallbacks,
+    CommandExecutorConfig,
+    FullCommandExecutorConfig,
+    // Terminal types
+    ITerminal,
+    ITerminalManager,
+    ITerminalProcess,
+    // Command Orchestrator types
+    OrchestrationOptions,
+    OrchestrationResult,
+    StandaloneTerminalOptions,
+    TerminalInfo,
+    TerminalManagerConfiguration,
+    TerminalManagerConfigurationResult,
+    TerminalOutputLine,
+    TerminalOutputStream,
+    TerminalProcessEvents,
+    TerminalProcessResultPromise,
 } from "./types"

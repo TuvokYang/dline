@@ -8,8 +8,10 @@ An Explicit Instruction is provided in a block such as \`<explicit_instructions 
 
 Invoke the operation by filling that template and emitting exactly one complete, well-formed XML document. The invocation begins with the template's single root opening tag and is complete only when the matching root closing tag has been emitted; every nested element must also be correctly ordered, nested, and closed. The matching root closing tag is the execution boundary: the invocation can be parsed and executed only when the entire response forms that one closed XML document, with no second root, wrapper, or content outside it. Preserve the injected structure exactly, and when a general response-format rule differs from this contract, the Explicit Instruction governs that invocation.`
 
+export const TURN_END_TOOL_RULES = `Tools marked [TURN-END] hand control back to the user. Use one when you need a user decision or information, the user requested a plan or report for review, or the entire task is complete. Use at most one TURN-END tool per assistant response, as the final tool call. Finish all reasoning, prose and other tool calls before it. Never place it in a parallel group or emit another tool call after it. The runtime ends the automatic tool loop at that boundary and resumes only from the user's feedback or selected action.`
+
 const prompts: Record<string, string> = {
-	main: `# Tool Use Guidelines
+    main: `# Tool Use Guidelines
 
 1. Assess the information already available and what the current step still requires.
 2. Choose the most appropriate exposed tool and provide every required parameter from the user request or verified context.
@@ -19,7 +21,7 @@ const prompts: Record<string, string> = {
 
 ## TURN-END Tools
 
-Tools marked [TURN-END] hand control back to the user. Calling one terminates the current execution turn: the runtime stops the automatic API/tool loop and opens the tool's user interaction. Do not emit additional tool calls after a TURN-END call in the same response. Execution resumes from the user's submitted feedback or selected action.
+${TURN_END_TOOL_RULES}
 
 ${EXPLICIT_INSTRUCTIONS_SECTION}`,
 }

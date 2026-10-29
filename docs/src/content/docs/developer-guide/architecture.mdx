@@ -17,7 +17,7 @@ Dline currently ships as a single VS Code extension with an embedded React Webvi
 | `scripts/` | Code generation, packaging, test, and build helpers |
 | `docs/` | This documentation site (a separate Astro Starlight project) and the English changelog |
 | `standalone/`, `src/standalone/`, `src/hosts/external/` | Code kept for a future standalone executable; the current release ships only the VS Code extension |
-| `evals/`, `testing-platform/`, `tests/` | Evaluation framework, testing platform, and extra tests such as Storybook specs |
+| `testing-platform/`, `tests/` | Standalone integration-test clients and extra tests such as Storybook specs |
 
 `src/core` is a source grouping, not a separately deployed product.
 
@@ -27,7 +27,7 @@ The `package.json` entry point is `dist/extension.js`, built from `activate()` i
 
 1. `setupHostProvider()` registers the VS Code implementations of the Webview, diff, review, terminal, and host bridge through `HostProvider.initialize()`;
 2. the sidebar Webview provider is created and registered right away; its Controller is created later;
-3. `migrateFromClineWithProgress()` copies legacy Cline data (see [Migrating from Cline](/getting-started/migration-cline-to-dline/)), then legacy VS Code storage is cleaned up;
+3. legacy VS Code storage is cleaned up; Dline does not import Cline data (see [Migrating from Cline](/getting-started/migration-cline-to-dline/) for the manual steps);
 4. `createStorageContext()` resolves the storage roots, and `exportVSCodeStorageToSharedFiles()` exports legacy `ExtensionContext` state to file storage;
 5. `initialize()` (in `src/common.ts`) initializes `StateManager` and `ModelRegistry`, creates the Controller, attaches it to the Webview provider, and registers it as the orchestrator's main Controller;
 6. the editor panel serializer, test mode, and hooks are registered, followed by the VS Code commands.
@@ -58,26 +58,28 @@ RPC between the extension and the Webview uses ProtoBus request/response envelop
 
 ## Task runtime
 
-`Task` in `src/core/task/index.ts` is the primary task coordinator. Its lifecycle is split across these components:
+A task runs on a journaled kernel. The Controller holds one `session/ActiveTaskSession.ts` per open task, and every lifecycle change flows through these components:
 
 | Source | Responsibility |
 |---|---|
-| `runtime/TaskRuntime.ts` | Dispatches task events serially |
-| `runtime/TaskReducer.ts`, `runtime/TaskEvent.ts`, `TaskPhase.ts` | Define the valid lifecycle transitions |
-| `TaskController.ts` | Coordinates block phases, approval ownership, and retained presentation state |
-| `MessageChannel.ts` | Delivers messages serially |
-| `message-state.ts` | Manages API and UI message state |
-| `interaction/InteractionCoordinator.ts` | Owns user interactions such as approval, retry, resume, Q&A, plan, and completion |
-| `TaskSnapshotPersistence.ts` | Coalesces snapshot writes used for crash recovery |
+| `shell/Task.ts`, `shell/TaskShell.ts` | The task's public surface: open, start, submit input, respond, cancel, and terminate |
+| `kernel/transition.ts` | The pure transition function that validates every event against the task state |
+| `kernel/hydrate.ts`, `kernel/recovery.ts` | Rebuild the state from `state.json` and the journal when a task reopens, and recover interrupted work |
+| `runtime/TaskRuntime.ts` | Serializes events, commits them through the commit pipeline, and dispatches commands from the durable outbox |
+| `stores/` | The journal, payload, and state stores behind each commit |
+| `composition/` | Assembles a session's runtime, stores, and executors, including the upgrade import of an earlier version's conversation |
+| `session/ActiveTaskSession.ts` | Owns one open task's resources and whether this window may write it |
+| `session/TaskInteractionOwner.ts` | Owns user interactions such as approval, retry, resume, Q&A, plan, and completion |
+| `MessageChannel.ts`, `message-state.ts` | Deliver messages serially and project the chat rows |
 | `activity/TaskActivityStore.ts` | Owns the task activities shown in chat and the Activities view |
 
-All paths are relative to `src/core/task/`. Express a new lifecycle transition as an event, validate it in the reducer, then project it to the UI and persist it when needed; do not add a parallel boolean lifecycle next to `TaskRuntime`.
+All paths are relative to `src/core/task/`. Express a new lifecycle transition as an event, validate it in the kernel transition, then project it to the UI; do not add a parallel boolean lifecycle next to `TaskRuntime`. Only the window holding the task lock may write a task: until `TaskShell.open()` grants write ownership, the runtime refuses every event with a `read_only` rejection, and the Controller shows the task read-only.
 
 ## Tools
 
 | Location | Contents |
 |---|---|
-| `src/shared/tools.ts` | Built-in tool identities, enum `ClineDefaultTool` |
+| `src/shared/tools.ts` | Built-in tool identities, enum `DlineDefaultTool` |
 | `src/core/prompts/tools/tool-specs.ts` | Canonical tool descriptors, `STANDARD_TOOL_SPECS` |
 | `src/core/prompts/tools/tool-ids.ts` | Ordered tool IDs registered for Standard and Lite |
 | `src/core/prompts/tools/provider-projector.ts` | Projection to provider-native tool schemas |

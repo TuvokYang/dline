@@ -19,13 +19,13 @@ const HTML_URL_ATTRIBUTE = /(\s(?:href|src)\s*=\s*)(["'])(\/(?!\/)[^"']*)\2/g
  * @param {{ base?: string }} [options]
  */
 export function remarkBaseLinks(options = {}) {
-	const prefix = toPrefix(options.base ?? "/")
-	return (/** @type {MdastNode} */ tree) => {
-		if (!prefix) {
-			return
-		}
-		walk(tree, (node) => rewriteNode(node, prefix))
-	}
+    const prefix = toPrefix(options.base ?? "/")
+    return (/** @type {MdastNode} */ tree) => {
+        if (!prefix) {
+            return
+        }
+        walk(tree, (node) => rewriteNode(node, prefix))
+    }
 }
 
 /**
@@ -35,8 +35,8 @@ export function remarkBaseLinks(options = {}) {
  * @returns {string}
  */
 export function toPrefix(base) {
-	const trimmed = base.replace(/^\/+|\/+$/g, "")
-	return trimmed ? `/${trimmed}` : ""
+    const trimmed = base.replace(/^\/+|\/+$/g, "")
+    return trimmed ? `/${trimmed}` : ""
 }
 
 /**
@@ -47,13 +47,13 @@ export function toPrefix(base) {
  * @returns {string}
  */
 export function withBase(url, prefix) {
-	if (!prefix || !isRootRelative(url)) {
-		return url
-	}
-	if (url === prefix || url.startsWith(`${prefix}/`)) {
-		return url
-	}
-	return `${prefix}${url}`
+    if (!prefix || !isRootRelative(url)) {
+        return url
+    }
+    if (url === prefix || url.startsWith(`${prefix}/`)) {
+        return url
+    }
+    return `${prefix}${url}`
 }
 
 /**
@@ -61,7 +61,7 @@ export function withBase(url, prefix) {
  * @returns {boolean}
  */
 function isRootRelative(url) {
-	return url.startsWith("/") && !url.startsWith("//")
+    return url.startsWith("/") && !url.startsWith("//")
 }
 
 /**
@@ -69,28 +69,28 @@ function isRootRelative(url) {
  * @param {string} prefix
  */
 function rewriteNode(node, prefix) {
-	if (URL_NODE_TYPES.has(node.type) && typeof node.url === "string") {
-		node.url = withBase(node.url, prefix)
-		return
-	}
-	if (JSX_ELEMENT_TYPES.has(node.type) && Array.isArray(node.attributes)) {
-		for (const attribute of node.attributes) {
-			if (
-				attribute.type === "mdxJsxAttribute" &&
-				LINK_ATTRIBUTES.has(attribute.name) &&
-				typeof attribute.value === "string"
-			) {
-				attribute.value = withBase(attribute.value, prefix)
-			}
-		}
-		return
-	}
-	if (node.type === "html" && typeof node.value === "string") {
-		node.value = node.value.replace(
-			HTML_URL_ATTRIBUTE,
-			(_match, lead, quote, url) => `${lead}${quote}${withBase(url, prefix)}${quote}`,
-		)
-	}
+    if (URL_NODE_TYPES.has(node.type) && typeof node.url === "string") {
+        node.url = withBase(node.url, prefix)
+        return
+    }
+    if (JSX_ELEMENT_TYPES.has(node.type) && Array.isArray(node.attributes)) {
+        for (const attribute of node.attributes) {
+            if (
+                attribute.type === "mdxJsxAttribute" &&
+                LINK_ATTRIBUTES.has(attribute.name) &&
+                typeof attribute.value === "string"
+            ) {
+                attribute.value = withBase(attribute.value, prefix)
+            }
+        }
+        return
+    }
+    if (node.type === "html" && typeof node.value === "string") {
+        node.value = node.value.replace(
+            HTML_URL_ATTRIBUTE,
+            (_match, lead, quote, url) => `${lead}${quote}${withBase(url, prefix)}${quote}`,
+        )
+    }
 }
 
 /**
@@ -98,12 +98,12 @@ function rewriteNode(node, prefix) {
  * @param {(node: MdastNode) => void} visitor
  */
 function walk(node, visitor) {
-	visitor(node)
-	if (Array.isArray(node.children)) {
-		for (const child of node.children) {
-			walk(child, visitor)
-		}
-	}
+    visitor(node)
+    if (Array.isArray(node.children)) {
+        for (const child of node.children) {
+            walk(child, visitor)
+        }
+    }
 }
 
 /**

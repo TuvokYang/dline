@@ -1,29 +1,43 @@
 import { McpDisplayMode } from "@shared/McpDisplayMode"
-import { VSCodeDropdown, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
 import React from "react"
+import { nativeSelectOptionStyle, nativeSelectStyle } from "@/components/ui/native-select-theme"
 
 interface McpDisplayModeDropdownProps {
-	value: McpDisplayMode
-	onChange: (mode: McpDisplayMode) => void
-	id?: string
-	className?: string
-	style?: React.CSSProperties
-	onClick?: (e: React.MouseEvent) => void
+    value: McpDisplayMode
+    onChange: (mode: McpDisplayMode) => void
+    id?: string
+    className?: string
+    style?: React.CSSProperties
+    onClick?: (e: React.MouseEvent) => void
 }
 
-const McpDisplayModeDropdown: React.FC<McpDisplayModeDropdownProps> = ({ value, onChange, id, className, style, onClick }) => {
-	const handleChange = (e: any) => {
-		const newMode = e.target.value as McpDisplayMode
-		onChange(newMode)
-	}
+const DISPLAY_MODES: ReadonlyArray<{ readonly value: McpDisplayMode; readonly label: string }> = [
+    { value: "plain", label: "Plain Text" },
+    { value: "rich", label: "Rich Display" },
+    { value: "markdown", label: "Markdown" },
+]
 
-	return (
-		<VSCodeDropdown className={className} id={id} onChange={handleChange} onClick={onClick} style={style} value={value}>
-			<VSCodeOption value="plain">Plain Text</VSCodeOption>
-			<VSCodeOption value="rich">Rich Display</VSCodeOption>
-			<VSCodeOption value="markdown">Markdown</VSCodeOption>
-		</VSCodeDropdown>
-	)
-}
+/**
+ * A native select painted from the live `--vscode-dropdown-*` variables.
+ *
+ * The toolkit dropdown it replaces painted from design tokens the toolkit
+ * resolved once, so a light theme could still show its dark palette.
+ */
+const McpDisplayModeDropdown: React.FC<McpDisplayModeDropdownProps> = ({ value, onChange, id, className, style, onClick }) => (
+    <select
+        aria-label="Response display mode"
+        className={["min-h-6 rounded-xs border px-1.5 text-xs", className].filter(Boolean).join(" ")}
+        id={id}
+        onChange={(event) => onChange(event.target.value as McpDisplayMode)}
+        onClick={onClick}
+        style={{ ...nativeSelectStyle, ...style }}
+        value={value}>
+        {DISPLAY_MODES.map((mode) => (
+            <option key={mode.value} style={nativeSelectOptionStyle} value={mode.value}>
+                {mode.label}
+            </option>
+        ))}
+    </select>
+)
 
 export default McpDisplayModeDropdown

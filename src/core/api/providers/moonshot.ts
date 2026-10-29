@@ -4,7 +4,7 @@ import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/com
 import { ModelInfo, moonshotDefaultModelId, moonshotModels } from "@/shared/api"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { createOpenAIClient } from "@/shared/net"
-import { ApiHandler, ApiHandlerContext } from "../index"
+import { ApiHandler, ApiHandlerContext } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { convertToOpenAiMessages } from "../transform/openai-format"
 import { ApiStream } from "../transform/stream"
@@ -13,107 +13,109 @@ import { splitInclusiveInputUsage } from "../transform/usage-normalization"
 
 // Enhanced usage interface to support Moonshot's cached token field
 interface MoonshotUsage extends OpenAI.CompletionUsage {
-	cached_tokens?: number
+    cached_tokens?: number
 }
 
-export class MoonshotHandler implements ApiHandler {
-	private client: OpenAI | undefined
+export class MoonshotHandler extends ApiHandler {
+    private client: OpenAI | undefined
 
-	constructor(private ctx: ApiHandlerContext) {}
+    constructor(private ctx: ApiHandlerContext) {
+        super()
+    }
 
-	private get config() {
-		return this.ctx.profile.moonshot
-	}
-	private get apiKey() {
-		return this.ctx.profile.apiKey
-	}
-	private get modelId() {
-		return this.ctx.profile.modelId || ""
-	}
-	private get modelInfo() {
-		return this.ctx.profile.modelInfo as ModelInfo | undefined
-	}
-	private get baseUrl() {
-		return this.ctx.profile.baseUrl
-	}
+    private get config() {
+        return this.ctx.profile.moonshot
+    }
+    private get apiKey() {
+        return this.ctx.profile.apiKey
+    }
+    private get modelId() {
+        return this.ctx.profile.modelId || ""
+    }
+    private get modelInfo() {
+        return this.ctx.profile.modelInfo as ModelInfo | undefined
+    }
+    private get baseUrl() {
+        return this.ctx.profile.baseUrl
+    }
 
-	private ensureClient(): OpenAI {
-		if (!this.client) {
-			if (!this.apiKey) {
-				throw new Error("Moonshot API key is required")
-			}
-			try {
-				this.client = createOpenAIClient({
-					baseURL:
-						this.baseUrl ||
-						(this.config?.moonshotVersion === "china" ? "https://api.moonshot.cn/v1" : "https://api.moonshot.ai/v1"),
-					apiKey: this.apiKey,
-				})
-			} catch (error) {
-				throw new Error(`Error creating Moonshot client: ${error.message}`)
-			}
-		}
-		return this.client
-	}
+    private ensureClient(): OpenAI {
+        if (!this.client) {
+            if (!this.apiKey) {
+                throw new Error("Moonshot API key is required")
+            }
+            try {
+                this.client = createOpenAIClient({
+                    baseURL:
+                        this.baseUrl ||
+                        (this.config?.moonshotVersion === "china" ? "https://api.moonshot.cn/v1" : "https://api.moonshot.ai/v1"),
+                    apiKey: this.apiKey,
+                })
+            } catch (error) {
+                throw new Error(`Error creating Moonshot client: ${error.message}`)
+            }
+        }
+        return this.client
+    }
 
-	@withRetry()
-	async *createMessage(systemPrompt: string, messages: ClineStorageMessage[], tools?: OpenAITool[]): ApiStream {
-		const client = this.ensureClient()
-		const model = this.getModel()
+    @withRetry()
+    async *createMessage(systemPrompt: string, messages: ClineStorageMessage[], tools?: OpenAITool[]): ApiStream {
+        const client = this.ensureClient()
+        const model = this.getModel()
 
-		const openAiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-			{ role: "system", content: systemPrompt },
-			...convertToOpenAiMessages(messages),
-		]
+        const openAiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+            { role: "system", content: systemPrompt },
+            ...convertToOpenAiMessages(messages),
+        ]
 
-		const stream = await client.chat.completions.create({
-			model: model.id,
-			messages: openAiMessages,
-			temperature: (model as any).info?.temperature as any,
-			max_tokens: model.info.capabilities?.maxTokens,
-			stream: true,
-			stream_options: { include_usage: true },
-			...getOpenAIToolParams(tools),
-		})
+        const stream = await client.chat.completions.create({
+            model: model.id,
+            messages: openAiMessages,
+            temperature: (model as any).info?.temperature as any,
+            max_tokens: model.info.capabilities?.maxTokens,
+            stream: true,
+            stream_options: { include_usage: true },
+            ...getOpenAIToolParams(tools),
+        })
 
-		const toolCallProcessor = new ToolCallProcessor()
+        const toolCallProcessor = new ToolCallProcessor()
 
-		for await (const chunk of stream) {
-			const delta = chunk.choices?.[0]?.delta
-			if (delta?.content) {
-				yield {
-					type: "text",
-					text: delta.content,
-				}
-			}
+        for await (const chunk of stream) {
+            const delta = chunk.choices?.[0]?.delta
+            if (delta?.content) {
+                yield {
+                    type: "text",
+                    text: delta.content,
+                }
+            }
 
-			if (delta?.tool_calls) {
-				yield* toolCallProcessor.processToolCallDeltas(delta.tool_calls)
-			}
+            if (delta?.tool_calls) {
+                yield* toolCallProcessor.processToolCallDeltas(delta.tool_calls)
+            }
 
-			if (delta && "reasoning_content" in delta && delta.reasoning_content) {
-				yield {
-					type: "reasoning",
-					reasoning: (delta.reasoning_content as string | undefined) || "",
-				}
-			}
+            if (delta && "reasoning_content" in delta && delta.reasoning_content) {
+                yield {
+                    type: "reasoning",
+                    reasoning: (delta.reasoning_content as string | undefined) || "",
+                }
+            }
 
-			if (chunk.usage) {
-				const usage = chunk.usage as MoonshotUsage
-				const inputUsage = splitInclusiveInputUsage({
-					totalInputTokens: usage.prompt_tokens,
-					cacheReadTokens: usage.cached_tokens,
-				})
-				yield {
-					type: "usage",
-					...inputUsage,
-					outputTokens: usage.completion_tokens || 0,
-				}
-			}
-		}
-	}
+            if (chunk.usage) {
+                const usage = chunk.usage as MoonshotUsage
+                const inputUsage = splitInclusiveInputUsage({
+                    totalInputTokens: usage.prompt_tokens,
+                    cacheReadTokens: usage.cached_tokens,
+                })
+                yield {
+                    type: "usage",
+                    ...inputUsage,
+                    outputTokens: usage.completion_tokens || 0,
+                }
+            }
+        }
+    }
 
-	getModel(): { id: string; info: ModelInfo } {
-		return resolveRuntimeModel(this.ctx.profile, { models: moonshotModels, defaultModelId: moonshotDefaultModelId })
-	}
+    getModel(): { id: string; info: ModelInfo } {
+        return resolveRuntimeModel(this.ctx.profile, { models: moonshotModels, defaultModelId: moonshotDefaultModelId })
+    }
 }

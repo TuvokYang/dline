@@ -1,20 +1,21 @@
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import { memo, useEffect, useMemo, useRef } from "react"
 import CodeBlock from "@/components/common/CodeBlock"
+import { useWorkspaceDisplayPath } from "@/hooks/useWorkspaceDisplayPath"
 import { cn } from "@/lib/utils"
 import { getLanguageFromPath } from "@/utils/getLanguageFromPath"
 import { Button } from "../ui/button"
 
 interface CodeAccordianProps {
-	code?: string
-	diff?: string
-	language?: string | undefined
-	path?: string
-	isFeedback?: boolean
-	isConsoleLogs?: boolean
-	isExpanded: boolean
-	onToggleExpand: () => void
-	isLoading?: boolean
+    code?: string
+    diff?: string
+    language?: string | undefined
+    path?: string
+    isFeedback?: boolean
+    isConsoleLogs?: boolean
+    isExpanded: boolean
+    onToggleExpand: () => void
+    isLoading?: boolean
 }
 
 /*
@@ -26,97 +27,96 @@ The replace method removes these matched characters, effectively trimming the st
 export const cleanPathPrefix = (path: string): string => path.replace(/^\.\//, "")
 
 const CodeAccordian = ({
-	code,
-	diff,
-	language,
-	path,
-	isFeedback,
-	isConsoleLogs,
-	isExpanded,
-	onToggleExpand,
-	isLoading,
+    code,
+    diff,
+    language,
+    path,
+    isFeedback,
+    isConsoleLogs,
+    isExpanded,
+    onToggleExpand,
+    isLoading,
 }: CodeAccordianProps) => {
-	const codeContainerRef = useRef<HTMLDivElement>(null)
+    const codeContainerRef = useRef<HTMLDivElement>(null)
+    const formatPath = useWorkspaceDisplayPath()
 
-	const inferredLanguage = useMemo(
-		() => code && (language ?? (path ? getLanguageFromPath(path) : undefined)),
-		[path, language, code],
-	)
+    const inferredLanguage = useMemo(
+        () => code && (language ?? (path ? getLanguageFromPath(path) : undefined)),
+        [path, language, code],
+    )
 
-	const numberOfEdits = useMemo(() => {
-		if (code) {
-			return (code.match(/[-]{3,} SEARCH/g) || []).length || undefined
-		}
-		return undefined
-	}, [code])
+    const numberOfEdits = useMemo(() => {
+        if (code) {
+            return (code.match(/[-]{3,} SEARCH/g) || []).length || undefined
+        }
+        return undefined
+    }, [code])
 
-	// Auto-scroll to bottom when content grows during streaming.
-	// Use rAF to wait for CodeBlock's async highlighting to finish DOM updates.
-	useEffect(() => {
-		const container = codeContainerRef.current
-		if (!isLoading || !isExpanded || !container) {
-			return
-		}
-		requestAnimationFrame(() => {
-			container.scrollTop = container.scrollHeight - container.clientHeight
-		})
-	}, [isLoading, isExpanded])
+    // Auto-scroll to bottom when content grows during streaming.
+    // Use rAF to wait for CodeBlock's async highlighting to finish DOM updates.
+    useEffect(() => {
+        const container = codeContainerRef.current
+        if (!isLoading || !isExpanded || !container) {
+            return
+        }
+        requestAnimationFrame(() => {
+            container.scrollTop = container.scrollHeight - container.clientHeight
+        })
+    }, [isLoading, isExpanded])
 
-	return (
-		<div className="bg-code overflow-hidden rounded-xs border border-editor-group-border">
-			{(path || isFeedback || isConsoleLogs) && (
-				<Button
-					aria-label={isExpanded ? "Collapse code block" : "Expand code block"}
-					className={cn("text-description flex items-center cursor-pointer select-none w-full py-[9px] px-2.5", {
-						"cursor-wait opacity-70": isLoading,
-					})}
-					onClick={isLoading ? undefined : onToggleExpand}
-					onKeyDown={(e) => {
-						if (!isLoading) {
-							e.preventDefault()
-							if (e.key === "Enter" || e.key === " ") {
-								e.stopPropagation()
-								onToggleExpand()
-							}
-						}
-					}}
-					tabIndex={0}
-					variant="text">
-					{isFeedback || isConsoleLogs ? (
-						<div className="flex items-center">
-							<span className={`mr-1.5 codicon codicon-${isFeedback ? "feedback" : "output"}`} />
-							<span className="whitespace-nowrap overflow-hidden text-ellipsis mr-2">
-								{isFeedback ? "User Edits" : "Console Logs"}
-							</span>
-						</div>
-					) : (
-						<span className="whitespace-nowrap overflow-hidden text-ellipsis mr-2 [direction: rtl] text-left">
-							{path?.startsWith(".") && <span>.</span>}
-							{path && !path.startsWith(".") && !path.match(/^[a-zA-Z]:/) && <span>/</span>}
-							{`${cleanPathPrefix(path ?? "")}\u200E`}
-						</span>
-					)}
-					<div className="grow" />
-					{numberOfEdits !== undefined && (
-						<div className="flex items-center mr-2 text-description">
-							<span className="codicon codicon-diff-single mr-1" />
-							<span>{numberOfEdits}</span>
-						</div>
-					)}
-					{isExpanded ? <ChevronDownIcon className="size-4" /> : <ChevronRightIcon className="size-4" />}
-				</Button>
-			)}
-			{(!(path || isFeedback || isConsoleLogs) || isExpanded) && (
-				<div className="overflow-auto max-h-80 max-w-full" ref={codeContainerRef}>
-					<CodeBlock
-						source={`${"```"}${diff !== undefined ? "diff" : inferredLanguage}\n${(
-							code ?? diff ?? ""
-						).trim()}\n${"```"}`}
-					/>
-				</div>
-			)}
-		</div>
-	)
+    return (
+        <div className="bg-code overflow-hidden rounded-xs border border-editor-group-border">
+            {(path || isFeedback || isConsoleLogs) && (
+                <Button
+                    aria-label={isExpanded ? "Collapse code block" : "Expand code block"}
+                    className={cn("text-description flex items-center cursor-pointer select-none w-full py-[9px] px-2.5", {
+                        "cursor-wait opacity-70": isLoading,
+                    })}
+                    onClick={isLoading ? undefined : onToggleExpand}
+                    onKeyDown={(e) => {
+                        if (!isLoading) {
+                            e.preventDefault()
+                            if (e.key === "Enter" || e.key === " ") {
+                                e.stopPropagation()
+                                onToggleExpand()
+                            }
+                        }
+                    }}
+                    tabIndex={0}
+                    variant="text">
+                    {isFeedback || isConsoleLogs ? (
+                        <div className="flex items-center">
+                            <span className={`mr-1.5 codicon codicon-${isFeedback ? "feedback" : "output"}`} />
+                            <span className="whitespace-nowrap overflow-hidden text-ellipsis mr-2">
+                                {isFeedback ? "User Edits" : "Console Logs"}
+                            </span>
+                        </div>
+                    ) : (
+                        <span className="whitespace-nowrap overflow-hidden text-ellipsis mr-2 [direction: rtl] text-left">
+                            {`${formatPath(path ?? "")}\u200E`}
+                        </span>
+                    )}
+                    <div className="grow" />
+                    {numberOfEdits !== undefined && (
+                        <div className="flex items-center mr-2 text-description">
+                            <span className="codicon codicon-diff-single mr-1" />
+                            <span>{numberOfEdits}</span>
+                        </div>
+                    )}
+                    {isExpanded ? <ChevronDownIcon className="size-4" /> : <ChevronRightIcon className="size-4" />}
+                </Button>
+            )}
+            {(!(path || isFeedback || isConsoleLogs) || isExpanded) && (
+                <div className="overflow-auto max-h-80 max-w-full" ref={codeContainerRef}>
+                    <CodeBlock
+                        source={`${"```"}${diff !== undefined ? "diff" : inferredLanguage}\n${(
+                            code ?? diff ?? ""
+                        ).trim()}\n${"```"}`}
+                    />
+                </div>
+            )}
+        </div>
+    )
 }
 
 // memo does shallow comparison of props, so if you need it to re-render when a nested object changes, you need to pass a custom comparison function

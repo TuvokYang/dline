@@ -1,4 +1,4 @@
-import type { HaltOrder, ToolDomainRunner, ToolRunCommand } from "./ToolExecutionDomain"
+import type { HaltOrder, ToolDomainRunner, ToolDomainRunResult, ToolRunCommand } from "./ToolExecutionDomain"
 
 /**
  * The workspace resources the tool domain owns.
@@ -8,17 +8,17 @@ import type { HaltOrder, ToolDomainRunner, ToolRunCommand } from "./ToolExecutio
  * so it is applied in one place instead of at each cancellation call site.
  */
 export interface OwnedToolResources {
-	/** Revert and close any editor-visible diff. Safe to call when not editing. */
-	revertDiff(): Promise<void>
-	/** Stop any running foreground command. */
-	cancelCommand(): Promise<void>
+    /** Revert and close any editor-visible diff. Safe to call when not editing. */
+    revertDiff(): Promise<void>
+    /** Stop any running foreground command. */
+    cancelCommand(): Promise<void>
 }
 
 export interface ToolDomainResourceOptions {
-	readonly resources: OwnedToolResources
-	/** Execute one admitted block; supplied by the assembling Task. */
-	readonly execute: (command: ToolRunCommand) => Promise<void>
-	readonly onReleaseError?: (error: unknown, order: HaltOrder) => void
+    readonly resources: OwnedToolResources
+    /** Execute one admitted block; supplied by the assembling Task. */
+    readonly execute: (command: ToolRunCommand) => Promise<ToolDomainRunResult | void>
+    readonly onReleaseError?: (error: unknown, order: HaltOrder) => void
 }
 
 /**
@@ -32,23 +32,20 @@ export interface ToolDomainResourceOptions {
  * single `release` per halt generation, and this adapter performs the resets.
  */
 export function createToolDomainRunner(options: ToolDomainResourceOptions): ToolDomainRunner {
-	const { resources, execute, onReleaseError } = options
+    const { resources, execute, onReleaseError } = options
 
-	return {
-		runBlock: (command) => execute(command),
-
-		release: async (order) => {
-			// Both resets are attempted even when the first fails, so one stuck
-			// handle cannot strand the other resource in an open state.
-			const outcomes = await Promise.allSettled([resources.revertDiff(), resources.cancelCommand()])
-
-			for (const outcome of outcomes) {
-				if (outcome.status === "rejected") {
-					// A release failure is reported but never rethrown: the runtime
-					// still needs the halt receipt to know the domain is quiet.
-					onReleaseError?.(outcome.reason, order)
-				}
-			}
-		},
-	}
+    const report = (outcome: PromiseSettledResult<void>, order: HaltOrder): void => {
+        if (outcome.status === "rejected") onReleaseError?.(outcome.reason, order)
+    }
+    return {
+        runBlock: (command) => execute(command),
+        requestStop: async (order) => {
+            const [outcome] = await Promise.allSettled([resources.cancelCommand()])
+            report(outcome, order)
+        },
+        release: async (order) => {
+            const [outcome] = await Promise.allSettled([resources.revertDiff()])
+            report(outcome, order)
+        },
+    }
 }

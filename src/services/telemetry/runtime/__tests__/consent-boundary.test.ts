@@ -26,106 +26,106 @@ import { RuntimeTelemetryLifecycle } from "../lifecycle"
 const SESSION_ID = "consent-session"
 
 describe("runtime telemetry consent boundary", () => {
-	let dataDir: string
-	let exporter: InMemoryLogRecordExporter
+    let dataDir: string
+    let exporter: InMemoryLogRecordExporter
 
-	function sessionsDir(): string {
-		return path.join(dataDir, "telemetry", "sessions")
-	}
+    function sessionsDir(): string {
+        return path.join(dataDir, "telemetry", "sessions")
+    }
 
-	function makeLifecycle(): RuntimeTelemetryLifecycle {
-		return new RuntimeTelemetryLifecycle({
-			dataDir,
-			sessionId: SESSION_ID,
-			samplerIntervalMs: 0,
-			drainIntervalMs: 0,
-			journalFlushIntervalMs: 5,
-			// Substituting only the exporting stage keeps the consent gate,
-			// the journal and the redaction policy exactly as they ship.
-			processorFactory: () => new SimpleLogRecordProcessor(exporter),
-		})
-	}
+    function makeLifecycle(): RuntimeTelemetryLifecycle {
+        return new RuntimeTelemetryLifecycle({
+            dataDir,
+            sessionId: SESSION_ID,
+            samplerIntervalMs: 0,
+            drainIntervalMs: 0,
+            journalFlushIntervalMs: 5,
+            // Substituting only the exporting stage keeps the consent gate,
+            // the journal and the redaction policy exactly as they ship.
+            processorFactory: () => new SimpleLogRecordProcessor(exporter),
+        })
+    }
 
-	/**
-	 * Records one event under the given consent and returns what was exported.
-	 *
-	 * The snapshot is taken before disposal because shutting a
-	 * `SimpleLogRecordProcessor` down also shuts down its exporter, and the
-	 * in-memory exporter discards its records at that point. Reading it
-	 * afterwards would report an empty list no matter what the pipeline did.
-	 */
-	async function recordUnder(setting: TelemetrySetting): Promise<unknown[]> {
-		const lifecycle = makeLifecycle()
-		try {
-			await lifecycle.applyConsent(setting)
-			lifecycle.service.recordInfo("consent.probe", { component: "runtime", operation: "probe" })
-			await lifecycle.flush()
-			return exporter.getFinishedLogRecords().map((record) => record.body)
-		} finally {
-			await lifecycle.dispose()
-		}
-	}
+    /**
+     * Records one event under the given consent and returns what was exported.
+     *
+     * The snapshot is taken before disposal because shutting a
+     * `SimpleLogRecordProcessor` down also shuts down its exporter, and the
+     * in-memory exporter discards its records at that point. Reading it
+     * afterwards would report an empty list no matter what the pipeline did.
+     */
+    async function recordUnder(setting: TelemetrySetting): Promise<unknown[]> {
+        const lifecycle = makeLifecycle()
+        try {
+            await lifecycle.applyConsent(setting)
+            lifecycle.service.recordInfo("consent.probe", { component: "runtime", operation: "probe" })
+            await lifecycle.flush()
+            return exporter.getFinishedLogRecords().map((record) => record.body)
+        } finally {
+            await lifecycle.dispose()
+        }
+    }
 
-	beforeEach(() => {
-		resetSharedLoggerProviderForTesting()
-		dataDir = mkdtempSync(path.join(tmpdir(), "dline-consent-"))
-		exporter = new InMemoryLogRecordExporter()
-	})
+    beforeEach(() => {
+        resetSharedLoggerProviderForTesting()
+        dataDir = mkdtempSync(path.join(tmpdir(), "dline-consent-"))
+        exporter = new InMemoryLogRecordExporter()
+    })
 
-	afterEach(() => {
-		resetSharedLoggerProviderForTesting()
-		rmSync(dataDir, { recursive: true, force: true })
-	})
+    afterEach(() => {
+        resetSharedLoggerProviderForTesting()
+        rmSync(dataDir, { recursive: true, force: true })
+    })
 
-	it("writes nothing and exports nothing while consent is unset", async () => {
-		const exported = await recordUnder("unset")
+    it("writes nothing and exports nothing while consent is unset", async () => {
+        const exported = await recordUnder("unset")
 
-		expect(existsSync(sessionsDir())).toBe(false)
-		expect(exported).toHaveLength(0)
-	})
+        expect(existsSync(sessionsDir())).toBe(false)
+        expect(exported).toHaveLength(0)
+    })
 
-	it("writes nothing and exports nothing once telemetry is disabled", async () => {
-		const exported = await recordUnder("disabled")
+    it("writes nothing and exports nothing once telemetry is disabled", async () => {
+        const exported = await recordUnder("disabled")
 
-		expect(existsSync(sessionsDir())).toBe(false)
-		expect(exported).toHaveLength(0)
-	})
+        expect(existsSync(sessionsDir())).toBe(false)
+        expect(exported).toHaveLength(0)
+    })
 
-	it("does not build a shared logger provider for an unconsented host", async () => {
-		await recordUnder("unset")
+    it("does not build a shared logger provider for an unconsented host", async () => {
+        await recordUnder("unset")
 
-		// Constructing the provider is itself the observable step that would
-		// precede any export, so its absence proves nothing was prepared.
-		expect(getSharedLoggerProvider()).toBeUndefined()
-	})
+        // Constructing the provider is itself the observable step that would
+        // precede any export, so its absence proves nothing was prepared.
+        expect(getSharedLoggerProvider()).toBeUndefined()
+    })
 
-	it("journals and exports once the user enables reporting", async () => {
-		const exported = await recordUnder("enabled")
+    it("journals and exports once the user enables reporting", async () => {
+        const exported = await recordUnder("enabled")
 
-		expect(readdirSync(sessionsDir())).toContain(`${SESSION_ID}.jsonl`)
-		expect(exported).toContain("consent.probe")
-	})
+        expect(readdirSync(sessionsDir())).toContain(`${SESSION_ID}.jsonl`)
+        expect(exported).toContain("consent.probe")
+    })
 
-	it("stops journaling and exporting when consent is withdrawn mid-session", async () => {
-		const lifecycle = makeLifecycle()
-		try {
-			await lifecycle.applyConsent("enabled")
-			lifecycle.service.recordInfo("before.optout", { component: "runtime", operation: "probe" })
-			await lifecycle.flush()
+    it("stops journaling and exporting when consent is withdrawn mid-session", async () => {
+        const lifecycle = makeLifecycle()
+        try {
+            await lifecycle.applyConsent("enabled")
+            lifecycle.service.recordInfo("before.optout", { component: "runtime", operation: "probe" })
+            await lifecycle.flush()
 
-			// Opting out flushes what was already recorded, so the count is
-			// taken after the transition rather than before it.
-			await lifecycle.applyConsent("disabled")
-			const exportedAtOptOut = exporter.getFinishedLogRecords().length
+            // Opting out flushes what was already recorded, so the count is
+            // taken after the transition rather than before it.
+            await lifecycle.applyConsent("disabled")
+            const exportedAtOptOut = exporter.getFinishedLogRecords().length
 
-			lifecycle.service.recordInfo("after.optout", { component: "runtime", operation: "probe" })
-			await lifecycle.flush()
+            lifecycle.service.recordInfo("after.optout", { component: "runtime", operation: "probe" })
+            await lifecycle.flush()
 
-			expect(exporter.getFinishedLogRecords()).toHaveLength(exportedAtOptOut)
-			const bodies = exporter.getFinishedLogRecords().map((record) => record.body)
-			expect(bodies).not.toContain("after.optout")
-		} finally {
-			await lifecycle.dispose()
-		}
-	})
+            expect(exporter.getFinishedLogRecords()).toHaveLength(exportedAtOptOut)
+            const bodies = exporter.getFinishedLogRecords().map((record) => record.body)
+            expect(bodies).not.toContain("after.optout")
+        } finally {
+            await lifecycle.dispose()
+        }
+    })
 })

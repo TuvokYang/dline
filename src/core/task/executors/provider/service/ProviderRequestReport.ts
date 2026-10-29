@@ -1,0 +1,168 @@
+/**
+ * Records that a provider request happened, and what it consumed.
+ *
+ * The usage a provider reports is the only place the task learns how much of
+ * the context window a turn occupied. Context pressure, prompt cache health,
+ * subagent budgets and the chat's request row all read that one fact, so the
+ * provider domain reports it through a port rather than reaching into any of
+ * those consumers. A headless assembly that needs none of them omits the port.
+ */
+export interface ProviderRequestReportPort {
+    /** Open a record before the stream starts, so the request is visible while it runs. */
+    begin(input: { readonly turnId: string }): Promise<ProviderRequestRecord>
+}
+
+/**
+ * How a provider request ended.
+ *
+ * Only a completed request describes a real turn: a cancelled one stopped on
+ * the user's order and a failed one never produced the turn it was opened for.
+ * Consumers that reason about context pressure or cache health must be able to
+ * tell them apart, so the outcome is explicit rather than a success flag.
+ */
+export type ProviderRequestOutcome = "completed" | "cancelled" | "failed"
+
+/** One automatic replay of a request that failed before its first chunk. */
+export interface ProviderRetryNotice {
+    /** One-based retry attempt within the request's retry budget. */
+    readonly attempt: number
+    readonly maxAttempts: number
+    /** How long the request waits before it is sent again. */
+    readonly delayMs: number
+    /** Serialized provider error, for display only; it never enters the conversation. */
+    readonly errorMessage: string
+}
+
+/**
+ * When the attempt that produced a reply ran, read from the provider service's clock.
+ *
+ * Earlier failed attempts and the backoff between them are excluded, so a rate
+ * limit does not make the model look slow; they are reported as retries instead.
+ */
+export interface ProviderAttemptTiming {
+    /** From sending the attempt to the end of its stream. */
+    readonly durationMs: number
+    /** From sending the attempt to its first content or reasoning; absent when none arrived. */
+    readonly ttftMs?: number
+    /** From the first content or reasoning to the end of the stream; absent when none arrived. */
+    readonly generationMs?: number
+}
+
+/**
+ * What a streaming response has occupied so far, before its final usage settles it.
+ *
+ * `receivingTokens` is the provider's reported output once it reports one and a
+ * local estimate of the generated text, reasoning, and tool arguments until
+ * then. `authoritativeContextTokens` is the provider's total so far, zero while
+ * it has reported nothing; providers such as Anthropic report the input first.
+ */
+export interface ProviderReceivingEstimate {
+    readonly receivingTokens: number
+    readonly authoritativeContextTokens: number
+}
+
+export interface ProviderRequestRecord {
+    /**
+     * The request failed before its first chunk and is sent again after the notice's delay.
+     *
+     * Optional because an assembly that renders nothing has no retry progress to show.
+     */
+    retrying?(notice: ProviderRetryNotice): Promise<void>
+    /** A replayed request produced its first chunk, so the retry is over. */
+    recovered?(): Promise<void>
+    /**
+     * The response grew while it streams.
+     *
+     * Optional because an assembly that shows no context occupancy has nothing to update.
+     */
+    receiving?(estimate: ProviderReceivingEstimate): Promise<void>
+    /**
+     * Settle the record with what the request actually consumed.
+     *
+     * Called once the stream ends, cancellation and failure included, so a
+     * request never stays open as a permanently running row.
+     */
+    settle(input: ProviderRequestSettlement): Promise<void>
+}
+
+/** What a logical request consumed and what its producing attempt left in the conversation. */
+export interface ProviderRequestSettlement {
+    /** Tokens and cost every provider attempt consumed, abandoned attempts included. */
+    readonly usage?: Readonly<Record<string, number>>
+    /**
+     * Usage of the attempt that produced the turn. A retried request carries the
+     * same conversation once, so context occupancy must never sum attempts.
+     */
+    readonly contextUsage?: Readonly<Record<string, number>>
+    readonly outcome: ProviderRequestOutcome
+    /** Timing of the attempt that produced the reply; absent when no attempt completed its stream. */
+    readonly attemptTiming?: ProviderAttemptTiming
+    /** What ended a failed request, for classifying the failure; absent unless `outcome` is `failed`. */
+    readonly failure?: unknown
+}
+
+/**
+ * Fold a usage chunk into what the turn has reported so far.
+ *
+ * A stream may report usage more than once. Token counts are increments and add
+ * up, while a reported total cost already covers the whole request and would be
+ * double counted if summed, so the latest total replaces the previous one.
+ */
+export function mergeProviderUsage(
+    accumulated: Readonly<Record<string, number>> | undefined,
+    next: Readonly<Record<string, number>>,
+): Readonly<Record<string, number>> {
+    if (!accumulated) return { ...next }
+    const merged: Record<string, number> = { ...accumulated }
+    for (const [key, value] of Object.entries(next)) {
+        if (!Number.isFinite(value)) continue
+        const previous = merged[key]
+        merged[key] = TOTAL_USAGE_KEYS.has(key) || previous === undefined ? value : previous + value
+    }
+    return merged
+}
+
+/**
+ * Fold one finished provider attempt into what the logical request consumed.
+ *
+ * Unlike chunks of one stream, separate attempts are separate charges, so a
+ * total cost adds up here; report flags stay set once any attempt reported them.
+ * A cost counts as reported only when every attempt reported one: otherwise the
+ * summed cost would miss the unpriced attempts and suppress the model-price fallback.
+ */
+export function sumAttemptUsage(
+    consumed: Readonly<Record<string, number>> | undefined,
+    attempt: Readonly<Record<string, number>>,
+): Readonly<Record<string, number>> {
+    if (!consumed) return { ...attempt }
+    const summed: Record<string, number> = { ...consumed }
+    for (const [key, value] of Object.entries(attempt)) {
+        if (!Number.isFinite(value)) continue
+        const previous = summed[key]
+        if (previous === undefined) summed[key] = value
+        else summed[key] = REPORT_FLAG_KEYS.has(key) ? Math.max(previous, value) : previous + value
+    }
+    if (COST_REPORTED_KEY in consumed || COST_REPORTED_KEY in attempt) {
+        summed[COST_REPORTED_KEY] = Math.min(consumed[COST_REPORTED_KEY] ?? 0, attempt[COST_REPORTED_KEY] ?? 0)
+    }
+    return summed
+}
+
+const COST_REPORTED_KEY = "costUsageReported"
+
+/** Usage fields that only flag whether a provider reported a category. */
+const REPORT_FLAG_KEYS: ReadonlySet<string> = new Set([
+    "cacheUsageReported",
+    "thoughtsUsageReported",
+    "costUsageReported",
+    "serverToolUsageReported",
+])
+
+/** Usage fields a provider reports as a running total for the whole request. */
+const TOTAL_USAGE_KEYS: ReadonlySet<string> = new Set([
+    "totalCost",
+    "cacheUsageReported",
+    "thoughtsUsageReported",
+    "costUsageReported",
+    "serverToolUsageReported",
+])

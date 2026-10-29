@@ -9,6 +9,6 @@ import type { Controller } from "../index"
  * @returns Empty response
  */
 export async function ocaAccountLogoutClicked(controller: Controller, _request: EmptyRequest): Promise<Empty> {
-	await controller.handleOcaSignOut()
-	return Empty.create({})
+    await controller.handleOcaSignOut()
+    return Empty.create({})
 }

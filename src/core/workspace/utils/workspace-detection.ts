@@ -18,11 +18,11 @@ import { Logger } from "@/shared/services/Logger"
  * ```
  */
 export async function isMultiRootWorkspace(): Promise<boolean> {
-	try {
-		const workspacePaths = await HostProvider.workspace.getWorkspacePaths(EmptyRequest.create({}))
-		return workspacePaths.paths.length > 1
-	} catch (error) {
-		Logger.error("Failed to detect multi-root workspace", error)
-		return false
-	}
+    try {
+        const workspacePaths = await HostProvider.workspace.getWorkspacePaths(EmptyRequest.create({}))
+        return workspacePaths.paths.length > 1
+    } catch (error) {
+        Logger.error("Failed to detect multi-root workspace", error)
+        return false
+    }
 }

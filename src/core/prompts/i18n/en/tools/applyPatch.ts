@@ -1,6 +1,6 @@
 // English prompts — key-value pairs only, no code logic.
 const prompts: Record<string, string> = {
-	description: `This is a custom utility that makes it more convenient to add, remove, move, or edit code in a single file. \`apply_patch\` effectively allows you to execute a diff/patch against a file, but the format of the diff specification is unique to this task, so pay careful attention to these instructions. To use the \`apply_patch\` command, you should pass a message of the following structure as "input":
+    description: `This is a custom utility that makes it more convenient to add, remove, move, or edit code in a single file. \`apply_patch\` effectively allows you to execute a diff/patch against a file, but the format of the diff specification is unique to this task, so pay careful attention to these instructions. To use the \`apply_patch\` command, you should pass a message of the following structure as "input":
 
 %%bash
 apply_patch <<"EOF"
@@ -58,6 +58,6 @@ apply_patch <<"EOF"
 
 *** End Patch
 EOF`,
-	inputInstruction: "The apply_patch command that you wish to execute.",
+    inputInstruction: "The apply_patch command that you wish to execute.",
 }
 export default prompts

@@ -9,8 +9,8 @@ import { providerFetch } from "@shared/net"
 export type AnthropicCredential = { kind: "api_key"; apiKey: string } | { kind: "bearer"; token: string }
 
 export interface AnthropicClientOptions {
-	baseUrl?: string
-	defaultHeaders?: Record<string, string>
+    baseUrl?: string
+    defaultHeaders?: Record<string, string>
 }
 
 /**
@@ -19,11 +19,11 @@ export interface AnthropicClientOptions {
  * SDK retries stay off because request-level retry belongs to the provider's `withRetry` policy.
  */
 export function createAnthropicClient(credential: AnthropicCredential, options: AnthropicClientOptions = {}): Anthropic {
-	return new Anthropic({
-		...(credential.kind === "api_key" ? { apiKey: credential.apiKey } : { apiKey: null, authToken: credential.token }),
-		...(options.baseUrl ? { baseURL: options.baseUrl } : {}),
-		...(options.defaultHeaders ? { defaultHeaders: options.defaultHeaders } : {}),
-		maxRetries: 0,
-		fetch: providerFetch,
-	})
+    return new Anthropic({
+        ...(credential.kind === "api_key" ? { apiKey: credential.apiKey } : { apiKey: null, authToken: credential.token }),
+        ...(options.baseUrl ? { baseURL: options.baseUrl } : {}),
+        ...(options.defaultHeaders ? { defaultHeaders: options.defaultHeaders } : {}),
+        maxRetries: 0,
+        fetch: providerFetch,
+    })
 }

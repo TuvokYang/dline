@@ -20,18 +20,18 @@ import type { ICheckpointLockManager } from "./ICheckpointLockManager"
  *   SqliteLockManager (standalone/CLI) path is required.
  */
 export class InProcessLockManager implements ICheckpointLockManager {
-	private registry: CheckpointMutexRegistry
+    private registry: CheckpointMutexRegistry
 
-	constructor() {
-		this.registry = CheckpointMutexRegistry.getInstance()
-	}
+    constructor() {
+        this.registry = CheckpointMutexRegistry.getInstance()
+    }
 
-	/**
-	 * Execute fn under process-level mutual exclusion for the given cwdHash.
-	 *
-	 * @inheritdoc
-	 */
-	async runExclusive<T>(cwdHash: string, fn: () => Promise<T>): Promise<T> {
-		return this.registry.runExclusive(cwdHash, fn)
-	}
+    /**
+     * Execute fn under process-level mutual exclusion for the given cwdHash.
+     *
+     * @inheritdoc
+     */
+    async runExclusive<T>(cwdHash: string, fn: () => Promise<T>): Promise<T> {
+        return this.registry.runExclusive(cwdHash, fn)
+    }
 }

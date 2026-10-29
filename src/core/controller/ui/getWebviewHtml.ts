@@ -9,6 +9,6 @@ import type { Controller } from "../index"
  * resolved through `resolveWebviewView()`.
  */
 export async function getWebviewHtml(_controller: Controller, _: EmptyRequest): Promise<String> {
-	const webview = WebviewProvider.getInstance()
-	return Promise.resolve(String.create({ value: webview?.getHtmlContent() ?? "" }))
+    const webview = WebviewProvider.getInstance()
+    return Promise.resolve(String.create({ value: webview?.getHtmlContent() ?? "" }))
 }

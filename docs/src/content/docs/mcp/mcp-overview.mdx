@@ -79,11 +79,23 @@ On the **Configure** tab, select **Configure MCP Servers**. Dline opens `<docume
 | `disabled` | Disables the server when `true` |
 | `autoApprove` | Names of tools allowed to be auto-approved |
 
-`${env:VAR}` in the configuration file is replaced with the environment variable's value. If the variable is not set, the text is left as-is and a warning is logged.
+`${env:VAR}` is resolved each time the server connects. Dline uses the value saved for this server first, then the environment variable of the VS Code process. If neither exists, Dline asks for the value in a masked input box and saves it for this server only, in the owner-only secret store under the Dline data directory rather than in the configuration file. Dline only asks after the Dline sidebar or a Dline panel has been opened in the window; until then the server waits, and the other servers connect as usual. If you cancel or submit an empty value, the server is not connected and shows an error; restart it to be asked again. The key icon (**Clear Saved Variables**) on the server row in the MCP settings forgets the values saved for that server and reconnects it.
 
 ## Workspace servers
 
-A project can place `.yaml`, `.yml`, or `.json` descriptor files under `<workspace>/.agents/mcp/`. Each file describes one server that applies only to that workspace:
+A project can place `.yaml`, `.yml`, or `.json` descriptor files under `<workspace>/.agents/mcp/`. Each file describes one server that applies only to that workspace. Subfolders are scanned as well. The file name is not used: a server is identified by its `name`.
+
+```text
+<workspace>/
+└── .agents/
+    └── mcp/
+        ├── project-db.yml
+        └── remote-docs.json
+```
+
+### Local server (STDIO)
+
+`.agents/mcp/project-db.yml`:
 
 ```yaml
 name: project-db
@@ -93,12 +105,33 @@ command: node
 args: ["${workspaceFolder}/tools/db-mcp.js"]
 env:
   DB_URL: "${env:PROJECT_DB_URL}"
+timeout: 120
 ```
 
-- `name` is required and `description` is optional. Other fields are the same as in the global configuration, without the outer `mcpServers` object.
+### Remote server
+
+`.agents/mcp/remote-docs.json`:
+
+```json
+{
+  "name": "remote-docs",
+  "description": "Search the team documentation service",
+  "type": "streamableHttp",
+  "url": "https://docs.example.com/mcp",
+  "headers": {
+    "Authorization": "Bearer ${env:DOCS_MCP_TOKEN}"
+  }
+}
+```
+
+### Descriptor rules
+
+- `name` is required and must be unique within the workspace. When two files use the same `name`, the file that sorts first by path is loaded and the other is ignored with a warning. `description` is optional. Other fields are the same as in the global configuration, without the outer `mcpServers` object.
 - `${workspaceFolder}` is replaced with the workspace root. A `stdio` server without `cwd` uses the workspace root as its working directory.
-- Sensitive fields must reference environment variables (`${env:VAR}`); plain-text credentials are rejected.
-- `autoApprove` in a workspace descriptor is ignored, so a descriptor cannot auto-approve tools.
+- `${env:VAR}` is resolved when the server connects, in the same order as for global servers. A value you enter is saved for this server in this workspace only and is not shared with global servers, other servers, or other workspaces.
+- Credentials must come from `${env:VAR}`. A descriptor is rejected when plain text appears in a field whose name has `token`, `secret`, `password`, `credential`, `cookie`, `authorization`, or `api_key` as a whole segment (for example `API_TOKEN`, `db-password`, or `Authorization`), in a URL query parameter with such a name, or in an argument written as `--token=<value>`. Pass credentials through `env` or `headers` rather than `args`.
+- `autoApprove` in a workspace descriptor is ignored, so a descriptor cannot auto-approve tools. A workspace server's tools start unapproved; you can turn on **Auto-approve** for them in MCP server management. Your choice is stored in Dline's settings for this workspace, not in the repository, and it is cleared when the descriptor changes, so an edited server must be approved again.
+- Dline watches `.agents/mcp/`. Adding, editing, or deleting a descriptor takes effect without reloading the window. A descriptor that fails validation is skipped and the error is logged.
 
 ## Managing servers
 
@@ -106,15 +139,15 @@ Enabling or disabling a server is saved per task while a task is open, and per w
 
 On the **Configure** tab, each server can be:
 
-- enabled or disabled with its switch (not available for workspace servers);
+- enabled or disabled with its switch, including workspace servers. The switch applies to the current workspace and is kept in Dline's local workspace state; it does not change `mcp_settings.json` or a descriptor file in the repository;
 - restarted with **Restart Server**, or reconnected with **Retry Connection** after a failed connection;
 - given a timeout from 30 seconds to 1 hour in **Request Timeout** (servers from the global configuration only);
-- configured to auto-approve individual tools with **Auto-approve**, or all tools with **Auto-approve all tools** (not available for workspace servers);
+- configured to auto-approve individual tools with **Auto-approve**, or all tools with **Auto-approve all tools** (for a workspace server, the choice applies only to this workspace and starts unchecked);
 - removed with **Delete Server**.
 
 ## OAuth authentication
 
-When a remote server requires OAuth, the connection reports that authentication is needed and the server row shows an **Authenticate** button. Selecting it opens the authorization page in your external browser. After you authorize, Dline reconnects automatically.
+When a remote server requires OAuth, the connection reports that authentication is needed and the server row shows an **Authenticate** button. Selecting it opens the authorization page in your external browser. After you authorize, the browser returns to a local Dline page at `http://127.0.0.1` (ports 48820–48839 are tried first) that confirms the result, and Dline reconnects the server automatically; there is no prompt to open VS Code. Dline registers itself with the server as the client "Dline". The browser is needed only for the first authorization: Dline refreshes the saved token afterwards until the server revokes it. In VS Code for the Web, the callback returns through VS Code instead.
 
 ## Security
 
@@ -134,3 +167,4 @@ For when MCP tools are available in a task, see the [Tools reference](/tools-ref
 | Tools are missing | Make sure the server is enabled and connected |
 | Authentication errors | Check `headers` or environment variables; for OAuth servers, select **Authenticate** |
 | Requests time out | Increase **Request Timeout** or `timeout` |
+| A workspace server does not appear | Check that the file is under `.agents/mcp/` with a `.yaml`, `.yml`, or `.json` extension, that its `name` is unique, and that the Dline output shows no descriptor validation error |

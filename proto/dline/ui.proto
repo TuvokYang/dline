@@ -3,6 +3,7 @@ syntax = "proto3";
 package dline;
 
 import "dline/common.proto";
+import "dline/input.proto";
 
 option go_package = "github.com/dline/grpc-go/dline";
 option java_multiple_files = true;
@@ -306,6 +307,32 @@ message ImageArtifactContent {
   string mime_type = 2;
 }
 
+// One span of a submitted user input, as the task read it when it was submitted.
+message SubmittedInputSegment {
+  string text = 1;
+  // One of "text", "command", "mention" or "resource".
+  string role = 2;
+  // Whether the entity acted: a command that ran, a mention that was read, a resource that was attached.
+  bool active = 3;
+  // The resource a "resource" segment names, so its chip can open it; absent on older rows.
+  optional SemanticResourceRef resource = 4;
+}
+
+// What one submitted input said and did, fixed at submission so history never re-reads it against a newer catalog.
+message SubmittedInput {
+  repeated SubmittedInputSegment segments = 1;
+}
+
+// Stable producer identity for a checkpoint presentation row.
+message CheckpointSource {
+  // One of "round_start", "pre_compaction" or "pre_edit".
+  string kind = 1;
+  optional string turn_id = 2;
+  optional int64 tool_ts = 3;
+  optional string tool_name = 4;
+  optional string dline_tid = 5;
+}
+
 // Main ClineMessage type
 message ClineMessage {
   int64 ts = 1;
@@ -353,10 +380,28 @@ message ClineMessage {
   // Transport-only opening identity; not persisted as conversation identity.
   optional string task_id = 39;
   optional string task_instance_id = 40;
+  // One entry per input a user row shows; empty for a legacy row, which renders as plain text.
+  repeated SubmittedInput submitted_inputs = 41;
+  optional CheckpointSource checkpoint_source = 42;
 }
 
 message ShowWebviewEvent {
   bool preserve_editor_focus = 1; // When true, webview should not steal focus from editor
+}
+
+// Content an app action adds to the composer without sending it.
+//
+// A producer without structure fills only `text`, which the composer inserts as
+// typed text. An editor selection also fills `selection`: the composer then
+// inserts the file as a mention and the fenced selection as one opaque literal,
+// so nothing inside the selected code can activate as a command or mention.
+message AddToInputEvent {
+  // The complete content as plain text; the fallback when no structure is given.
+  string text = 1;
+  // Workspace mention reference of the selection's file, without the leading "@".
+  string mention_reference = 2;
+  // The fenced selection plus any notebook context or problems, inserted as a literal.
+  string selection = 3;
 }
 
 // UiService provides methods for managing UI interactions
@@ -371,7 +416,7 @@ service UiService {
   rpc onDidShowAnnouncement(EmptyRequest) returns (Boolean);
 
   // Subscribe to addToInput events (when user adds content via context menu)
-  rpc subscribeToAddToInput(EmptyRequest) returns (stream String);
+  rpc subscribeToAddToInput(EmptyRequest) returns (stream AddToInputEvent);
 
   // Subscribe to MCP button clicked events
   rpc subscribeToMcpButtonClicked(EmptyRequest) returns (stream Empty);

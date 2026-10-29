@@ -49,7 +49,9 @@ import { execFileSync, execSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { createDistributionManifest, INSIDERS_PACKAGE_NAME } from "./extension-manifest-identity.mjs"
 import { restore as restoreMarketplaceReadme, swapIn as swapInMarketplaceReadme } from "./marketplace-readme.mjs"
+import { createInsidersVersion } from "./release-version-policy.mjs"
 
 // Get __dirname equivalent in ES modules
 const __filename = fileURLToPath(import.meta.url)
@@ -57,340 +59,309 @@ const __dirname = path.dirname(__filename)
 
 // ANSI color codes for console output
 const colors = {
-	reset: "\x1b[0m",
-	red: "\x1b[31m",
-	green: "\x1b[32m",
-	yellow: "\x1b[33m",
+    reset: "\x1b[0m",
+    red: "\x1b[31m",
+    green: "\x1b[32m",
+    yellow: "\x1b[33m",
 }
 
 // Logging utilities
 const log = {
-	info: (msg) => console.log(`${colors.green}[INFO]${colors.reset} ${msg}`),
-	warn: (msg) => console.log(`${colors.yellow}[WARN]${colors.reset} ${msg}`),
-	error: (msg) => console.error(`${colors.red}[ERROR]${colors.reset} ${msg}`),
+    info: (msg) => console.log(`${colors.green}[INFO]${colors.reset} ${msg}`),
+    warn: (msg) => console.log(`${colors.yellow}[WARN]${colors.reset} ${msg}`),
+    error: (msg) => console.error(`${colors.red}[ERROR]${colors.reset} ${msg}`),
 }
 
 // Configuration
 const config = {
-	// The name and display name for the insiders version
-	insidersName: "dline-insiders",
-	originalName: "dline",
-	insidersDisplayName: "Dline (Insiders)",
-	projectRoot: path.join(__dirname, ".."),
-	get packageJsonPath() {
-		return path.join(this.projectRoot, "package.json")
-	},
-	get packageBackupPath() {
-		return path.join(this.projectRoot, "package.json.backup")
-	},
-	get distDir() {
-		return path.join(this.projectRoot, "dist")
-	},
-	get vsixPath() {
-		return path.join(this.distDir, "dline-insiders.vsix")
-	},
+    projectRoot: path.join(__dirname, ".."),
+    get packageJsonPath() {
+        return path.join(this.projectRoot, "package.json")
+    },
+    get packageBackupPath() {
+        return path.join(this.projectRoot, "package.json.backup")
+    },
+    get distDir() {
+        return path.join(this.projectRoot, "dist")
+    },
+    get vsixPath() {
+        return path.join(this.distDir, "dline-insiders.vsix")
+    },
 }
 
 // Utility class for managing the publish process
 class InsidersPublisher {
-	constructor() {
-		this.originalPackageJson = null
-		this.hasBackup = false
-		this.didSwapMarketplaceReadme = false
-	}
+    constructor() {
+        this.originalPackageJson = null
+        this.hasBackup = false
+        this.didSwapMarketplaceReadme = false
+    }
 
-	/**
-	 * Check if required dependencies are installed
-	 */
-	checkDependencies() {
-		const dependencies = [
-			{ name: "vsce", check: "vsce --version" },
-			{ name: "npx", check: "npx --version" },
-		]
+    /**
+     * Check if required dependencies are installed
+     */
+    checkDependencies() {
+        const dependencies = [
+            { name: "vsce", check: "vsce --version" },
+            { name: "npx", check: "npx --version" },
+        ]
 
-		const missing = []
+        const missing = []
 
-		for (const dep of dependencies) {
-			try {
-				execSync(dep.check, { stdio: "ignore" })
-			} catch {
-				missing.push(dep.name)
-			}
-		}
+        for (const dep of dependencies) {
+            try {
+                execSync(dep.check, { stdio: "ignore" })
+            } catch {
+                missing.push(dep.name)
+            }
+        }
 
-		if (missing.length > 0) {
-			throw new Error(
-				`Missing required dependencies: ${missing.join(", ")}. Please install them before running this script.`,
-			)
-		}
+        if (missing.length > 0) {
+            throw new Error(
+                `Missing required dependencies: ${missing.join(", ")}. Please install them before running this script.`,
+            )
+        }
 
-		log.info("All dependencies are installed")
-	}
+        log.info("All dependencies are installed")
+    }
 
-	/**
-	 * Check if a command exists
-	 */
-	commandExists(command) {
-		try {
-			execSync(`which ${command}`, { stdio: "ignore" })
-			return true
-		} catch {
-			return false
-		}
-	}
+    /**
+     * Check if a command exists
+     */
+    commandExists(command) {
+        try {
+            execSync(`which ${command}`, { stdio: "ignore" })
+            return true
+        } catch {
+            return false
+        }
+    }
 
-	/**
-	 * Create backup of package.json
-	 */
-	backupPackageJson() {
-		if (!fs.existsSync(config.packageJsonPath)) {
-			throw new Error(`package.json not found at ${config.packageJsonPath}`)
-		}
+    /**
+     * Create backup of package.json
+     */
+    backupPackageJson() {
+        if (!fs.existsSync(config.packageJsonPath)) {
+            throw new Error(`package.json not found at ${config.packageJsonPath}`)
+        }
 
-		log.info("Backing up original package.json")
-		this.originalPackageJson = fs.readFileSync(config.packageJsonPath, "utf-8")
-		fs.writeFileSync(config.packageBackupPath, this.originalPackageJson)
-		this.hasBackup = true
-	}
+        log.info("Backing up original package.json")
+        this.originalPackageJson = fs.readFileSync(config.packageJsonPath, "utf-8")
+        fs.writeFileSync(config.packageBackupPath, this.originalPackageJson)
+        this.hasBackup = true
+    }
 
-	/**
-	 * Restore original package.json
-	 */
-	restorePackageJson() {
-		if (this.hasBackup && fs.existsSync(config.packageBackupPath)) {
-			log.info("Restoring original package.json")
-			fs.writeFileSync(config.packageJsonPath, this.originalPackageJson)
-			fs.unlinkSync(config.packageBackupPath)
-			this.hasBackup = false
-		}
-	}
+    /**
+     * Restore original package.json
+     */
+    restorePackageJson() {
+        if (this.hasBackup && fs.existsSync(config.packageBackupPath)) {
+            log.info("Restoring original package.json")
+            fs.writeFileSync(config.packageJsonPath, this.originalPackageJson)
+            fs.unlinkSync(config.packageBackupPath)
+            this.hasBackup = false
+        }
+    }
 
-	/**
-	 * Swap README.marketplace.md into README.md so the .vsix is packaged with
-	 * the marketplace-flavored README. vsce reads README.md from disk at
-	 * `vsce package` time and there's no flag to redirect it.
-	 *
-	 * An insiders build ships code from dev; the swap pins the README's
-	 * repository links and images to the checked-out commit, so the listing
-	 * shows this build's changelog and demos rather than the default branch's.
-	 */
-	swapMarketplaceReadme() {
-		const result = swapInMarketplaceReadme()
-		this.didSwapMarketplaceReadme = !result.skipped
-		if (this.didSwapMarketplaceReadme) {
-			log.info("Swapped README.marketplace.md into README.md for packaging")
-		}
-	}
+    /**
+     * Swap README.marketplace.md into README.md so the .vsix is packaged with
+     * the marketplace-flavored README. vsce reads README.md from disk at
+     * `vsce package` time and there's no flag to redirect it.
+     *
+     * An insiders build ships code from dev; the swap pins the README's
+     * repository links and images to the checked-out commit, so the listing
+     * shows this build's changelog and demos rather than the default branch's.
+     */
+    swapMarketplaceReadme() {
+        const result = swapInMarketplaceReadme()
+        this.didSwapMarketplaceReadme = !result.skipped
+        if (this.didSwapMarketplaceReadme) {
+            log.info("Swapped README.marketplace.md into README.md for packaging")
+        }
+    }
 
-	/**
-	 * Restore README.md if this publisher performed the swap.
-	 */
-	restoreMarketplaceReadme() {
-		if (!this.didSwapMarketplaceReadme) {
-			return
-		}
-		try {
-			restoreMarketplaceReadme()
-			log.info("Restored original README.md")
-		} catch (error) {
-			log.error(`Failed to restore README.md: ${error.message}`)
-		}
-		this.didSwapMarketplaceReadme = false
-	}
+    /**
+     * Restore README.md if this publisher performed the swap.
+     */
+    restoreMarketplaceReadme() {
+        if (!this.didSwapMarketplaceReadme) {
+            return
+        }
+        try {
+            restoreMarketplaceReadme()
+            log.info("Restored original README.md")
+        } catch (error) {
+            log.error(`Failed to restore README.md: ${error.message}`)
+        }
+        this.didSwapMarketplaceReadme = false
+    }
 
-	/**
-	 * Generate new version with timestamp
-	 * Format: major.minor.timestamp
-	 */
-	generateVersion(currentVersion) {
-		// Extract major.minor from current version (e.g., "3.27.1" -> "3.27")
-		const versionParts = currentVersion.split(".")
-		if (versionParts.length < 2) {
-			throw new Error(`Invalid version format: ${currentVersion}`)
-		}
+    /**
+     * Update package.json with the canonical Insiders distribution identity.
+     */
+    updatePackageJson() {
+        const sourceManifest = JSON.parse(fs.readFileSync(config.packageJsonPath, "utf-8"))
+        const currentVersion = sourceManifest.version
 
-		const major = versionParts[0]
-		const minor = versionParts[1]
-		const timestamp = Math.floor(Date.now() / 1000)
+        if (!currentVersion) {
+            throw new Error("Could not read version from package.json")
+        }
 
-		return `${major}.${minor}.${timestamp}`
-	}
+        log.info(`Current version: ${currentVersion}`)
 
-	/**
-	 * Update package.json with insiders configuration
-	 */
-	updatePackageJson() {
-		// Replace any occurrences cline. or claude-dev with insiders name
-		const rawContent = fs.readFileSync(config.packageJsonPath, "utf-8")
-		const content = rawContent.replaceAll("claude-dev", config.insidersName).replaceAll('"cline.', `"${config.insidersName}.`)
+        const newVersion = createInsidersVersion(currentVersion)
+        log.info(`New version: ${newVersion}`)
 
-		const pkg = JSON.parse(content)
-		const currentVersion = pkg.version
+        const insidersManifest = createDistributionManifest(sourceManifest, INSIDERS_PACKAGE_NAME, newVersion)
 
-		if (!currentVersion) {
-			throw new Error("Could not read version from package.json")
-		}
+        log.info("Updating package.json for insiders build")
+        fs.writeFileSync(config.packageJsonPath, `${JSON.stringify(insidersManifest, null, "\t")}\n`)
 
-		log.info(`Current version: ${currentVersion}`)
+        return newVersion
+    }
 
-		const newVersion = this.generateVersion(currentVersion)
-		log.info(`New version: ${newVersion}`)
+    /**
+     * Package the extension
+     */
+    packageExtension(isPreRelease = false) {
+        // Ensure dist directory exists
+        if (!fs.existsSync(config.distDir)) {
+            fs.mkdirSync(config.distDir, { recursive: true })
+        }
 
-		// Update package.json fields
-		pkg.version = newVersion
-		pkg.name = config.insidersName
-		pkg.displayName = config.insidersDisplayName
-		pkg.contributes.viewsContainers.activitybar.title = config.insidersDisplayName
+        log.info(`Packaging extension${isPreRelease ? " (pre-release)" : ""}`)
 
-		// Save updated package.json
-		log.info("Updating package.json for insiders build")
-		fs.writeFileSync(config.packageJsonPath, JSON.stringify(pkg, null, "\t"))
+        const args = [
+            "package",
+            "--no-dependencies",
+            ...(isPreRelease ? ["--pre-release"] : []),
+            "--no-update-package-json",
+            "--no-git-tag-version",
+            "--allow-package-secrets",
+            "sendgrid",
+            "--out",
+            config.vsixPath,
+        ]
 
-		return newVersion
-	}
+        try {
+            execFileSync("vsce", args, {
+                stdio: "inherit",
+                cwd: config.projectRoot,
+            })
+            log.info(`Package created: ${config.vsixPath}`)
+        } catch (error) {
+            throw new Error(`Failed to package extension: ${error.message}`)
+        }
+    }
 
-	/**
-	 * Package the extension
-	 */
-	packageExtension(isPreRelease = false) {
-		// Ensure dist directory exists
-		if (!fs.existsSync(config.distDir)) {
-			fs.mkdirSync(config.distDir, { recursive: true })
-		}
+    /**
+     * Publish to OpenVSX Registry
+     */
+    publishToOpenVSX(isPreRelease = false) {
+        const token = process.env.OVSX_PAT
 
-		log.info(`Packaging extension${isPreRelease ? " (pre-release)" : ""}`)
+        if (!token) {
+            log.warn("OVSX_PAT not set, skipping OpenVSX Registry publish")
+            return false
+        }
 
-		const args = [
-			"package",
-			"--no-dependencies",
-			...(isPreRelease ? ["--pre-release"] : []),
-			"--no-update-package-json",
-			"--no-git-tag-version",
-			"--allow-package-secrets",
-			"sendgrid",
-			"--out",
-			config.vsixPath,
-		]
+        log.info(`Publishing to OpenVSX Registry${isPreRelease ? " (pre-release channel)" : ""}`)
 
-		try {
-			execFileSync("vsce", args, {
-				stdio: "inherit",
-				cwd: config.projectRoot,
-			})
-			log.info(`Package created: ${config.vsixPath}`)
-		} catch (error) {
-			throw new Error(`Failed to package extension: ${error.message}`)
-		}
-	}
+        const args = [
+            "ovsx",
+            "publish",
+            ...(isPreRelease ? ["--pre-release"] : []),
+            "--packagePath",
+            config.vsixPath,
+            "--pat",
+            token,
+        ]
 
-	/**
-	 * Publish to OpenVSX Registry
-	 */
-	publishToOpenVSX(isPreRelease = false) {
-		const token = process.env.OVSX_PAT
+        try {
+            execFileSync("npx", args, {
+                stdio: "inherit",
+                cwd: config.projectRoot,
+            })
+            log.info("Successfully published to OpenVSX Registry")
+            return true
+        } catch (error) {
+            throw new Error(`Failed to publish to OpenVSX Registry: ${error.message}`)
+        }
+    }
 
-		if (!token) {
-			log.warn("OVSX_PAT not set, skipping OpenVSX Registry publish")
-			return false
-		}
+    /**
+     * Main execution flow
+     */
+    async run({ isDryRun = false, isPreRelease = false } = {}) {
+        try {
+            const channelLabel = isPreRelease ? " (pre-release channel)" : " (release channel)"
+            log.info(`Starting insiders publish process${channelLabel}${isDryRun ? " (dry run)" : ""}`)
 
-		log.info(`Publishing to OpenVSX Registry${isPreRelease ? " (pre-release channel)" : ""}`)
+            // Step 1: Check dependencies
+            this.checkDependencies()
 
-		const args = [
-			"ovsx",
-			"publish",
-			...(isPreRelease ? ["--pre-release"] : []),
-			"--packagePath",
-			config.vsixPath,
-			"--pat",
-			token,
-		]
+            // Step 2: Backup package.json
+            this.backupPackageJson()
 
-		try {
-			execFileSync("npx", args, {
-				stdio: "inherit",
-				cwd: config.projectRoot,
-			})
-			log.info("Successfully published to OpenVSX Registry")
-			return true
-		} catch (error) {
-			throw new Error(`Failed to publish to OpenVSX Registry: ${error.message}`)
-		}
-	}
+            // Step 3: Update package.json
+            const newVersion = this.updatePackageJson()
 
-	/**
-	 * Main execution flow
-	 */
-	async run({ isDryRun = false, isPreRelease = false } = {}) {
-		try {
-			const channelLabel = isPreRelease ? " (pre-release channel)" : " (release channel)"
-			log.info(`Starting insiders publish process${channelLabel}${isDryRun ? " (dry run)" : ""}`)
+            // Step 3.5: Swap in marketplace README before packaging
+            this.swapMarketplaceReadme()
 
-			// Step 1: Check dependencies
-			this.checkDependencies()
+            // Step 4: Package extension
+            this.packageExtension(isPreRelease)
 
-			// Step 2: Backup package.json
-			this.backupPackageJson()
+            // Step 5: Publish to marketplaces (skip if dry run)
+            let openVSXPublished = false
 
-			// Step 3: Update package.json
-			const newVersion = this.updatePackageJson()
+            if (isDryRun) {
+                log.info("Dry run mode: Skipping marketplace publishing")
+            } else {
+                openVSXPublished = this.publishToOpenVSX(isPreRelease)
+            }
 
-			// Step 3.5: Swap in marketplace README before packaging
-			this.swapMarketplaceReadme()
+            // Summary
+            log.info(`Insiders publish process completed successfully${isDryRun ? " (dry run)" : ""}`)
+            log.info(`Package created for v${newVersion}: ${config.vsixPath}`)
 
-			// Step 4: Package extension
-			this.packageExtension(isPreRelease)
+            if (!isDryRun && !openVSXPublished) {
+                log.warn("Extension was packaged but not published to Open VSX")
+                log.warn("Set OVSX_PAT to enable Open VSX publishing")
+            }
+        } catch (error) {
+            log.error(`Publish failed: ${error.message}`)
+            process.exit(1)
+        } finally {
+            // Always restore package.json
+            this.restorePackageJson()
 
-			// Step 5: Publish to marketplaces (skip if dry run)
-			let openVSXPublished = false
-
-			if (isDryRun) {
-				log.info("Dry run mode: Skipping marketplace publishing")
-			} else {
-				openVSXPublished = this.publishToOpenVSX(isPreRelease)
-			}
-
-			// Summary
-			log.info(`Insiders publish process completed successfully${isDryRun ? " (dry run)" : ""}`)
-			log.info(`Package created for v${newVersion}: ${config.vsixPath}`)
-
-			if (!isDryRun && !openVSXPublished) {
-				log.warn("Extension was packaged but not published to Open VSX")
-				log.warn("Set OVSX_PAT to enable Open VSX publishing")
-			}
-		} catch (error) {
-			log.error(`Publish failed: ${error.message}`)
-			process.exit(1)
-		} finally {
-			// Always restore package.json
-			this.restorePackageJson()
-
-			// Always restore README.md
-			this.restoreMarketplaceReadme()
-		}
-	}
+            // Always restore README.md
+            this.restoreMarketplaceReadme()
+        }
+    }
 }
 
 // Handle cleanup on process exit
 const publisher = new InsidersPublisher()
 
 process.on("exit", () => {
-	publisher.restorePackageJson()
-	publisher.restoreMarketplaceReadme()
+    publisher.restorePackageJson()
+    publisher.restoreMarketplaceReadme()
 })
 
 process.on("SIGINT", () => {
-	log.info("\nInterrupted, cleaning up...")
-	publisher.restorePackageJson()
-	publisher.restoreMarketplaceReadme()
-	process.exit(130)
+    log.info("\nInterrupted, cleaning up...")
+    publisher.restorePackageJson()
+    publisher.restoreMarketplaceReadme()
+    process.exit(130)
 })
 
 process.on("SIGTERM", () => {
-	log.info("\nTerminated, cleaning up...")
-	publisher.restorePackageJson()
-	publisher.restoreMarketplaceReadme()
-	process.exit(143)
+    log.info("\nTerminated, cleaning up...")
+    publisher.restorePackageJson()
+    publisher.restoreMarketplaceReadme()
+    process.exit(143)
 })
 
 // Parse command line arguments
@@ -400,13 +371,13 @@ const isPreRelease = args.includes("--pre-release")
 const knownFlags = ["--dry-run", "-n", "--pre-release", "--help", "-h"]
 const unknownArgs = args.filter((a) => !knownFlags.includes(a))
 if (unknownArgs.length > 0) {
-	log.error(`Unknown argument(s): ${unknownArgs.join(", ")}. Run with --help for usage.`)
-	process.exit(1)
+    log.error(`Unknown argument(s): ${unknownArgs.join(", ")}. Run with --help for usage.`)
+    process.exit(1)
 }
 const showHelp = args.includes("--help") || args.includes("-h")
 
 if (showHelp) {
-	console.log(`
+    console.log(`
 Insiders publish script for VS Code extension
 
 Usage:
@@ -427,11 +398,11 @@ Examples:
   npm run publish:marketplace:insiders -- --dry-run         # Package only
   OVSX_PAT="token" npm run publish:marketplace:insiders     # Publish to Open VSX
 `)
-	process.exit(0)
+    process.exit(0)
 }
 
 // Run the publisher
 publisher.run({ isDryRun, isPreRelease }).catch((error) => {
-	log.error(error.message)
-	process.exit(1)
+    log.error(error.message)
+    process.exit(1)
 })

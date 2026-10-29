@@ -8,11 +8,11 @@ import { useEffect, useId } from "react"
 const HOST_MARKER_ATTRIBUTE = "data-text-field-token"
 
 export interface TextFieldHostProps {
-	readonly [HOST_MARKER_ATTRIBUTE]: string
+    readonly [HOST_MARKER_ATTRIBUTE]: string
 }
 
 function findHost(token: string): HTMLElement | null {
-	return document.querySelector<HTMLElement>(`[${HOST_MARKER_ATTRIBUTE}="${CSS.escape(token)}"]`)
+    return document.querySelector<HTMLElement>(`[${HOST_MARKER_ATTRIBUTE}="${CSS.escape(token)}"]`)
 }
 
 /**
@@ -31,53 +31,53 @@ function findHost(token: string): HTMLElement | null {
  * Spread the returned props onto the text field to opt in.
  */
 export function useTextFieldHost(ariaLabel: string | undefined, value: string, syncValue = true): TextFieldHostProps {
-	const token = useId()
+    const token = useId()
 
-	useEffect(() => {
-		if (!ariaLabel) {
-			return
-		}
+    useEffect(() => {
+        if (!ariaLabel) {
+            return
+        }
 
-		const host = findHost(token)
-		if (!host) {
-			return
-		}
+        const host = findHost(token)
+        if (!host) {
+            return
+        }
 
-		const restoreLabel = (): void => {
-			if (host.getAttribute("aria-label") !== ariaLabel) {
-				host.setAttribute("aria-label", ariaLabel)
-			}
-		}
+        const restoreLabel = (): void => {
+            if (host.getAttribute("aria-label") !== ariaLabel) {
+                host.setAttribute("aria-label", ariaLabel)
+            }
+        }
 
-		restoreLabel()
+        restoreLabel()
 
-		// The element may connect or reconnect later, which repeats the overwrite.
-		const observer = new MutationObserver(restoreLabel)
-		observer.observe(host, { attributeFilter: ["aria-label"] })
+        // The element may connect or reconnect later, which repeats the overwrite.
+        const observer = new MutationObserver(restoreLabel)
+        observer.observe(host, { attributeFilter: ["aria-label"] })
 
-		return () => observer.disconnect()
-	}, [ariaLabel, token])
+        return () => observer.disconnect()
+    }, [ariaLabel, token])
 
-	useEffect(() => {
-		if (!syncValue) {
-			return
-		}
+    useEffect(() => {
+        if (!syncValue) {
+            return
+        }
 
-		const host = findHost(token)
-		if (!host) {
-			return
-		}
+        const host = findHost(token)
+        if (!host) {
+            return
+        }
 
-		const valueHost = host as HTMLElement & { value?: string }
-		if (valueHost.value !== value) {
-			valueHost.value = value
-		}
+        const valueHost = host as HTMLElement & { value?: string }
+        if (valueHost.value !== value) {
+            valueHost.value = value
+        }
 
-		const input = host instanceof HTMLInputElement ? host : host.shadowRoot?.querySelector("input")
-		if (input && input.value !== value) {
-			input.value = value
-		}
-	}, [syncValue, token, value])
+        const input = host instanceof HTMLInputElement ? host : host.shadowRoot?.querySelector("input")
+        if (input && input.value !== value) {
+            input.value = value
+        }
+    }, [syncValue, token, value])
 
-	return { [HOST_MARKER_ATTRIBUTE]: token }
+    return { [HOST_MARKER_ATTRIBUTE]: token }
 }

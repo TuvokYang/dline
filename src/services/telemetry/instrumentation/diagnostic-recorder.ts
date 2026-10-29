@@ -27,19 +27,19 @@ export type DiagnosticDimensions = Readonly<Record<string, string | number | boo
  * the same kind means different things when it recovered versus when it failed.
  */
 export function recordDiagnostic<D extends DiagnosticDomain>(
-	domain: D,
-	kind: DiagnosticKind<D>,
-	outcome: DiagnosticOutcome,
-	dimensions?: DiagnosticDimensions,
-	context?: SignalContext,
+    domain: D,
+    kind: DiagnosticKind<D>,
+    outcome: DiagnosticOutcome,
+    dimensions?: DiagnosticDimensions,
+    context?: SignalContext,
 ): void {
-	if (!isSignalRecordingEnabled()) return
-	emitSignal({
-		name: diagnosticEventName(domain, kind),
-		level: "debug",
-		attributes: { ...dimensions, outcome },
-		context,
-	})
+    if (!isSignalRecordingEnabled()) return
+    emitSignal({
+        name: diagnosticEventName(domain, kind),
+        level: "debug",
+        attributes: { ...dimensions, outcome },
+        context,
+    })
 }
 
 /**
@@ -50,5 +50,5 @@ export function recordDiagnostic<D extends DiagnosticDomain>(
  * entirely rather than computing values the recorder will discard.
  */
 export function isDiagnosticRecordingEnabled(): boolean {
-	return isSignalRecordingEnabled()
+    return isSignalRecordingEnabled()
 }

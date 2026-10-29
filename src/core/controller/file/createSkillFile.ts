@@ -37,79 +37,79 @@ Describe when and how to use this skill.
  * @returns The updated skills toggles
  */
 export async function createSkillFile(controller: Controller, request: CreateSkillRequest): Promise<SkillsToggles> {
-	const { skillName, isGlobal } = request
+    const { skillName, isGlobal } = request
 
-	if (!skillName || typeof skillName !== "string" || typeof isGlobal !== "boolean") {
-		Logger.error("createSkillFile: Missing or invalid parameters", {
-			skillName: typeof skillName === "string" ? skillName : `Invalid: ${typeof skillName}`,
-			isGlobal: typeof isGlobal === "boolean" ? isGlobal : `Invalid: ${typeof isGlobal}`,
-		})
-		throw new Error("Missing or invalid parameters for createSkillFile")
-	}
+    if (!skillName || typeof skillName !== "string" || typeof isGlobal !== "boolean") {
+        Logger.error("createSkillFile: Missing or invalid parameters", {
+            skillName: typeof skillName === "string" ? skillName : `Invalid: ${typeof skillName}`,
+            isGlobal: typeof isGlobal === "boolean" ? isGlobal : `Invalid: ${typeof isGlobal}`,
+        })
+        throw new Error("Missing or invalid parameters for createSkillFile")
+    }
 
-	// Validate skill name (must be valid directory name)
-	const sanitizedName = skillName.replace(/[^a-zA-Z0-9_-]/g, "-").toLowerCase()
-	if (!sanitizedName) {
-		throw new Error("Invalid skill name")
-	}
+    // Validate skill name (must be valid directory name)
+    const sanitizedName = skillName.replace(/[^a-zA-Z0-9_-]/g, "-").toLowerCase()
+    if (!sanitizedName) {
+        throw new Error("Invalid skill name")
+    }
 
-	let skillDir: string
+    let skillDir: string
 
-	if (isGlobal) {
-		// Global skills share Dline's Documents-backed configuration root.
-		const globalSkillsDir = await ensureAgentSkillsDirectoryExists({ isGlobal: true })
-		skillDir = path.join(globalSkillsDir, sanitizedName)
-	} else {
-		const workspacePaths = await HostProvider.workspace.getWorkspacePaths({})
-		const primaryWorkspace = workspacePaths.paths[0]
-		if (!primaryWorkspace) {
-			throw new Error("No workspace folder open")
-		}
-		// Create in .agents/skills using the unified helper
-		const localSkillsDir = await ensureAgentSkillsDirectoryExists({
-			isGlobal: false,
-			workspacePath: primaryWorkspace,
-		})
-		skillDir = path.join(localSkillsDir, sanitizedName)
-	}
+    if (isGlobal) {
+        // Global skills share Dline's Documents-backed configuration root.
+        const globalSkillsDir = await ensureAgentSkillsDirectoryExists({ isGlobal: true })
+        skillDir = path.join(globalSkillsDir, sanitizedName)
+    } else {
+        const workspacePaths = await HostProvider.workspace.getWorkspacePaths({})
+        const primaryWorkspace = workspacePaths.paths[0]
+        if (!primaryWorkspace) {
+            throw new Error("No workspace folder open")
+        }
+        // Create in .agents/skills using the unified helper
+        const localSkillsDir = await ensureAgentSkillsDirectoryExists({
+            isGlobal: false,
+            workspacePath: primaryWorkspace,
+        })
+        skillDir = path.join(localSkillsDir, sanitizedName)
+    }
 
-	// Check if skill already exists
-	if (await fileExistsAtPath(skillDir)) {
-		await HostProvider.window.showMessage({
-			type: ShowMessageType.WARNING,
-			message: `Skill "${sanitizedName}" already exists`,
-		})
-		// Return current toggles
-		const globalToggles = controller.stateManager.getGlobalSettingsKey("globalSkillsToggles") || {}
-		const localToggles = mergeScopedToggles(readScopedToggles(controller.stateManager, "skills"))
-		return SkillsToggles.create({
-			globalSkillsToggles: globalToggles,
-			localSkillsToggles: localToggles,
-		})
-	}
+    // Check if skill already exists
+    if (await fileExistsAtPath(skillDir)) {
+        await HostProvider.window.showMessage({
+            type: ShowMessageType.WARNING,
+            message: `Skill "${sanitizedName}" already exists`,
+        })
+        // Return current toggles
+        const globalToggles = controller.stateManager.getGlobalSettingsKey("globalSkillsToggles") || {}
+        const localToggles = mergeScopedToggles(readScopedToggles(controller.stateManager, "skills"))
+        return SkillsToggles.create({
+            globalSkillsToggles: globalToggles,
+            localSkillsToggles: localToggles,
+        })
+    }
 
-	// Create skill directory
-	await fs.mkdir(skillDir, { recursive: true })
+    // Create skill directory
+    await fs.mkdir(skillDir, { recursive: true })
 
-	// Create SKILL.md from template
-	const skillMdPath = path.join(skillDir, "SKILL.md")
-	const content = SKILL_TEMPLATE.replace(/\{\{SKILL_NAME\}\}/g, sanitizedName)
-	await fs.writeFile(skillMdPath, content, "utf-8")
-	if (controller.task) {
-		await controller.task.flushPromptFreshnessInvalidation("capability_mutation")
-	} else {
-		await controller.postStateToWebview()
-	}
+    // Create SKILL.md from template
+    const skillMdPath = path.join(skillDir, "SKILL.md")
+    const content = SKILL_TEMPLATE.replace(/\{\{SKILL_NAME\}\}/g, sanitizedName)
+    await fs.writeFile(skillMdPath, content, "utf-8")
+    if (controller.task) {
+        await controller.task.owners.prompt.flush("capability_mutation")
+    } else {
+        await controller.postStateToWebview()
+    }
 
-	// Open the file for editing
-	await openFile(controller, { value: skillMdPath })
+    // Open the file for editing
+    await openFile(controller, { value: skillMdPath })
 
-	// Return current toggles (new skill defaults to enabled)
-	const globalToggles = controller.stateManager.getGlobalSettingsKey("globalSkillsToggles") || {}
-	const localToggles = mergeScopedToggles(readScopedToggles(controller.stateManager, "skills"))
+    // Return current toggles (new skill defaults to enabled)
+    const globalToggles = controller.stateManager.getGlobalSettingsKey("globalSkillsToggles") || {}
+    const localToggles = mergeScopedToggles(readScopedToggles(controller.stateManager, "skills"))
 
-	return SkillsToggles.create({
-		globalSkillsToggles: globalToggles,
-		localSkillsToggles: localToggles,
-	})
+    return SkillsToggles.create({
+        globalSkillsToggles: globalToggles,
+        localSkillsToggles: localToggles,
+    })
 }

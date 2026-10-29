@@ -7,35 +7,35 @@ const secretsDirectory = path.dirname(fileURLToPath(new URL("./OpenAiCodexProfil
 const sourceRoot = path.resolve(secretsDirectory, "../../..")
 
 async function readSource(relativePath: string): Promise<string> {
-	return fs.readFile(path.join(sourceRoot, relativePath), "utf8")
+    return fs.readFile(path.join(sourceRoot, relativePath), "utf8")
 }
 
 describe("OpenAI Codex profile OAuth storage architecture", () => {
-	it("does not map Codex OAuth into the flat API key store or SecretStorage migration", async () => {
-		const [providerKeys, stateMigrations] = await Promise.all([
-			readSource("shared/storage/provider-keys.ts"),
-			readSource("core/storage/state-migrations.ts"),
-		])
+    it("does not map Codex OAuth into the flat API key store or SecretStorage migration", async () => {
+        const [providerKeys, stateMigrations] = await Promise.all([
+            readSource("shared/storage/provider-keys.ts"),
+            readSource("core/storage/state-migrations.ts"),
+        ])
 
-		expect(providerKeys).not.toContain('"openai-codex": "openai-codex-oauth-credentials"')
-		expect(stateMigrations).not.toContain('context.secrets.get("openai-codex-oauth-credentials")')
-	})
+        expect(providerKeys).not.toContain('"openai-codex": "openai-codex-oauth-credentials"')
+        expect(stateMigrations).not.toContain('context.secrets.get("openai-codex-oauth-credentials")')
+    })
 
-	it("uses only the dedicated legacy file and profile-owned files", async () => {
-		const [pathSource, repositorySource, migrationSource] = await Promise.all([
-			fs.readFile(path.join(secretsDirectory, "OpenAiCodexProfileAuthPath.ts"), "utf8"),
-			fs.readFile(path.join(secretsDirectory, "OpenAiCodexProfileAuthRepository.ts"), "utf8"),
-			fs.readFile(path.join(secretsDirectory, "OpenAiCodexProfileAuthMigration.ts"), "utf8"),
-		])
-		const combined = `${pathSource}\n${repositorySource}\n${migrationSource}`
+    it("uses only the dedicated legacy file and profile-owned files", async () => {
+        const [pathSource, repositorySource, migrationSource] = await Promise.all([
+            fs.readFile(path.join(secretsDirectory, "OpenAiCodexProfileAuthPath.ts"), "utf8"),
+            fs.readFile(path.join(secretsDirectory, "OpenAiCodexProfileAuthRepository.ts"), "utf8"),
+            fs.readFile(path.join(secretsDirectory, "OpenAiCodexProfileAuthMigration.ts"), "utf8"),
+        ])
+        const combined = `${pathSource}\n${repositorySource}\n${migrationSource}`
 
-		expect(combined).toContain("openai_codex_oauth.json")
-		expect(combined).toContain("openai_codex_")
-		expect(combined).not.toContain("secrets.json")
-		expect(combined).not.toContain("api_keys.json")
-		expect(repositorySource).toContain("mode: 0o600")
-		expect(repositorySource).toContain("fs.chmod(filePath, 0o600)")
-		expect(migrationSource).toContain("mode: 0o600")
-		expect(migrationSource).toContain("fs.chmod(filePath, 0o600)")
-	})
+        expect(combined).toContain("openai_codex_oauth.json")
+        expect(combined).toContain("openai_codex_")
+        expect(combined).not.toContain("secrets.json")
+        expect(combined).not.toContain("api_keys.json")
+        // Owner-only files published through the shared atomic writer.
+        expect(repositorySource).toContain("CREDENTIAL_FILE_MODE = 0o600")
+        expect(repositorySource).toContain("writeJsonAtomic(filePath, value, { mode: CREDENTIAL_FILE_MODE })")
+        expect(migrationSource).toContain("writeJsonAtomic(filePath, marker, { mode: 0o600 })")
+    })
 })

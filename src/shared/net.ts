@@ -96,7 +96,11 @@
 import OpenAI, { ClientOptions as OpenAIClientOptions } from "openai"
 import { EnvHttpProxyAgent, setGlobalDispatcher, fetch as undiciFetch } from "undici"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
-import { observeProviderResponse } from "./provider-attempt-observer"
+import {
+    observeProviderResponse,
+    providerAttemptIdentityFromFetch,
+    withProviderAttemptIdentity,
+} from "./provider-attempt-observer"
 
 let mockFetch: typeof globalThis.fetch | undefined
 
@@ -111,26 +115,28 @@ let mockFetch: typeof globalThis.fetch | undefined
  * ```
  */
 export const fetch: typeof globalThis.fetch = (() => {
-	// Note: Don't use Logger here; it may not be initialized.
+    // Note: Don't use Logger here; it may not be initialized.
 
-	let baseFetch: typeof globalThis.fetch = globalThis.fetch
-	// Note: See esbuild.mjs, process.env.IS_STANDALONE is statically rewritten
-	// to "true" or "false" (as strings) in the JetBrains/CLI build.
-	// We must use explicit string comparison because "false" is truthy in JS.
-	if (process.env.IS_STANDALONE === "true") {
-		// Configure undici with ProxyAgent
-		const agent = new EnvHttpProxyAgent({})
-		setGlobalDispatcher(agent)
-		baseFetch = undiciFetch as any as typeof globalThis.fetch
-	}
+    let baseFetch: typeof globalThis.fetch = globalThis.fetch
+    // Note: See esbuild.mjs, process.env.IS_STANDALONE is statically rewritten
+    // to "true" or "false" (as strings) in the JetBrains/CLI build.
+    // We must use explicit string comparison because "false" is truthy in JS.
+    if (process.env.IS_STANDALONE === "true") {
+        // Configure undici with ProxyAgent
+        const agent = new EnvHttpProxyAgent({})
+        setGlobalDispatcher(agent)
+        baseFetch = undiciFetch as any as typeof globalThis.fetch
+    }
 
-	return (input: string | URL | Request, init?: RequestInit): Promise<Response> => (mockFetch || baseFetch)(input, init)
+    return (input: string | URL | Request, init?: RequestInit): Promise<Response> => (mockFetch || baseFetch)(input, init)
 })()
 
 /** Fetch transport reserved for model sends observed inside a Provider attempt scope. */
 export const providerFetch: typeof globalThis.fetch = (input, init) => {
-	const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined)
-	return observeProviderResponse(() => fetch(input, init), signal ? { signal } : {})
+    const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined)
+    const send = () => observeProviderResponse(() => fetch(input, init), signal ? { signal } : {})
+    const identity = providerAttemptIdentityFromFetch(init)
+    return identity ? withProviderAttemptIdentity(identity, send) : send()
 }
 
 /**
@@ -142,23 +148,23 @@ export const providerFetch: typeof globalThis.fetch = (input, init) => {
  * @returns the result of `callback()`.
  */
 export function mockFetchForTesting<T>(theFetch: typeof globalThis.fetch, callback: () => T): T {
-	const originalMockFetch = mockFetch
-	mockFetch = theFetch
-	let willResetSync = true
-	try {
-		const result = callback()
-		if (result instanceof Promise) {
-			willResetSync = false
-			return result.finally(() => {
-				mockFetch = originalMockFetch
-			}) as typeof result
-		}
-		return result
-	} finally {
-		if (willResetSync) {
-			mockFetch = originalMockFetch
-		}
-	}
+    const originalMockFetch = mockFetch
+    mockFetch = theFetch
+    let willResetSync = true
+    try {
+        const result = callback()
+        if (result instanceof Promise) {
+            willResetSync = false
+            return result.finally(() => {
+                mockFetch = originalMockFetch
+            }) as typeof result
+        }
+        return result
+    } finally {
+        if (willResetSync) {
+            mockFetch = originalMockFetch
+        }
+    }
 }
 
 /**
@@ -178,10 +184,10 @@ export function mockFetchForTesting<T>(theFetch: typeof globalThis.fetch, callba
  * ```
  */
 export function getAxiosSettings(): { adapter?: any; fetch?: typeof globalThis.fetch } {
-	return {
-		adapter: "fetch" as any,
-		fetch, // Use our configured fetch
-	}
+    return {
+        adapter: "fetch" as any,
+        fetch, // Use our configured fetch
+    }
 }
 
 /**
@@ -190,14 +196,14 @@ export function getAxiosSettings(): { adapter?: any; fetch?: typeof globalThis.f
  * configuration across all providers.
  */
 export function createOpenAIClient(options: OpenAIClientOptions): OpenAI {
-	const externalHeaders = buildExternalBasicHeaders()
-	return new OpenAI({
-		...options,
-		maxRetries: options.maxRetries ?? 0,
-		defaultHeaders: {
-			...externalHeaders,
-			...options.defaultHeaders,
-		},
-		fetch: providerFetch,
-	})
+    const externalHeaders = buildExternalBasicHeaders()
+    return new OpenAI({
+        ...options,
+        maxRetries: options.maxRetries ?? 0,
+        defaultHeaders: {
+            ...externalHeaders,
+            ...options.defaultHeaders,
+        },
+        fetch: providerFetch,
+    })
 }

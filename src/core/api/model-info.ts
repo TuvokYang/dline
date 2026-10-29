@@ -10,6 +10,6 @@ import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
  * @returns Effective model metadata merged from registry and provider overrides.
  */
 export function getProfileModelInfo(profile: ApiProfile): ModelInfo {
-	const providerModels = ModelRegistry.getInstance().getProviderModels(profile.provider)
-	return resolveProfileModelInfo(profile, providerModels) as ModelInfo
+    const providerModels = ModelRegistry.getInstance().getProviderModels(profile.provider)
+    return resolveProfileModelInfo(profile, providerModels) as ModelInfo
 }

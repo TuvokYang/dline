@@ -24,108 +24,108 @@ import { refreshSkills } from "./refreshSkills"
  * @returns RefreshedDlineToggles containing updated toggles for all types
  */
 export function refreshRules(controller: Controller, _request: EmptyRequest): Promise<RefreshedDlineToggles> {
-	return coalesceCapabilityScan(controller, "rules", () => scanRules(controller))
+    return coalesceCapabilityScan(controller, "rules", () => scanRules(controller))
 }
 
 async function scanRules(controller: Controller): Promise<RefreshedDlineToggles> {
-	const startedAt = performance.now()
-	try {
-		const cwd = await getCwd(getDesktopDir())
-		const cwdMs = Math.round(performance.now() - startedAt)
-		let stageStartedAt = performance.now()
-		const rulesRefresh = await refreshClineRulesToggles(controller, cwd)
-		const { globalToggles, localToggles } = rulesRefresh
-		const dlineRulesMs = Math.round(performance.now() - stageStartedAt)
-		stageStartedAt = performance.now()
-		const externalRefresh = await refreshExternalRulesToggles(controller, cwd)
-		const { cursorLocalToggles, windsurfLocalToggles, agentsLocalToggles } = externalRefresh
-		const externalRulesMs = Math.round(performance.now() - stageStartedAt)
-		stageStartedAt = performance.now()
-		const workflowsRefresh = await refreshWorkflowToggles(controller, cwd)
-		const { localWorkflowToggles, globalWorkflowToggles } = workflowsRefresh
-		const workflowsMs = Math.round(performance.now() - stageStartedAt)
-		stageStartedAt = performance.now()
-		const { globalSkills, localSkills } = await refreshSkills(controller)
-		const skillsMs = Math.round(performance.now() - stageStartedAt)
+    const startedAt = performance.now()
+    try {
+        const cwd = await getCwd(getDesktopDir())
+        const cwdMs = Math.round(performance.now() - startedAt)
+        let stageStartedAt = performance.now()
+        const rulesRefresh = await refreshClineRulesToggles(controller, cwd)
+        const { globalToggles, localToggles } = rulesRefresh
+        const dlineRulesMs = Math.round(performance.now() - stageStartedAt)
+        stageStartedAt = performance.now()
+        const externalRefresh = await refreshExternalRulesToggles(controller, cwd)
+        const { cursorLocalToggles, windsurfLocalToggles, agentsLocalToggles } = externalRefresh
+        const externalRulesMs = Math.round(performance.now() - stageStartedAt)
+        stageStartedAt = performance.now()
+        const workflowsRefresh = await refreshWorkflowToggles(controller, cwd)
+        const { localWorkflowToggles, globalWorkflowToggles } = workflowsRefresh
+        const workflowsMs = Math.round(performance.now() - stageStartedAt)
+        stageStartedAt = performance.now()
+        const { globalSkills, localSkills } = await refreshSkills(controller)
+        const skillsMs = Math.round(performance.now() - stageStartedAt)
 
-		// The state push needs to know which resources exist. Discovery no longer
-		// writes its result into the preference store, so remember the raw scan
-		// here instead — the resolved maps above already fold in user overrides
-		// and cannot answer that question.
-		rememberDiscoveredToggles(controller, "rules", rulesRefresh.discoveredLocalToggles, rulesRefresh.localScanComplete)
-		rememberDiscoveredToggles(
-			controller,
-			"cursorRules",
-			externalRefresh.discovered.cursorRules.toggles,
-			externalRefresh.discovered.cursorRules.complete,
-		)
-		rememberDiscoveredToggles(
-			controller,
-			"windsurfRules",
-			externalRefresh.discovered.windsurfRules.toggles,
-			externalRefresh.discovered.windsurfRules.complete,
-		)
-		rememberDiscoveredToggles(
-			controller,
-			"agentsRules",
-			externalRefresh.discovered.agentsRules.toggles,
-			externalRefresh.discovered.agentsRules.complete,
-		)
-		rememberDiscoveredToggles(
-			controller,
-			"workflows",
-			workflowsRefresh.discoveredLocalToggles,
-			workflowsRefresh.localScanComplete,
-		)
-		recordPerfPhase(
-			PerfDomain.Capability,
-			"rules_refresh_rpc",
-			performance.now() - startedAt,
-			{
-				cwdMs,
-				dlineRulesMs,
-				externalRulesMs,
-				workflowsMs,
-				skillsMs,
-				dlineRules: Object.keys(globalToggles).length + Object.keys(localToggles).length,
-				externalRules:
-					Object.keys(cursorLocalToggles).length +
-					Object.keys(windsurfLocalToggles).length +
-					Object.keys(agentsLocalToggles).length,
-				workflows: Object.keys(localWorkflowToggles).length + Object.keys(globalWorkflowToggles).length,
-				skills: globalSkills.length + localSkills.length,
-			},
-			{ taskId: controller.task?.taskId },
-		)
-		if (Logger.isDebugEnabled()) {
-			Logger.debug(
-				`[CapabilityPerf] phase=rules_refresh_rpc taskId=${controller.task?.taskId ?? "none"} cwdMs=${cwdMs} dlineRulesMs=${dlineRulesMs} externalRulesMs=${externalRulesMs} workflowsMs=${workflowsMs} skillsMs=${skillsMs} totalMs=${Math.round(performance.now() - startedAt)} dlineRules=${Object.keys(globalToggles).length + Object.keys(localToggles).length} externalRules=${Object.keys(cursorLocalToggles).length + Object.keys(windsurfLocalToggles).length + Object.keys(agentsLocalToggles).length} workflows=${Object.keys(localWorkflowToggles).length + Object.keys(globalWorkflowToggles).length} skills=${globalSkills.length + localSkills.length}`,
-			)
-		}
+        // The state push needs to know which resources exist. Discovery no longer
+        // writes its result into the preference store, so remember the raw scan
+        // here instead — the resolved maps above already fold in user overrides
+        // and cannot answer that question.
+        rememberDiscoveredToggles(controller, "rules", rulesRefresh.discoveredLocalToggles, rulesRefresh.localScanComplete)
+        rememberDiscoveredToggles(
+            controller,
+            "cursorRules",
+            externalRefresh.discovered.cursorRules.toggles,
+            externalRefresh.discovered.cursorRules.complete,
+        )
+        rememberDiscoveredToggles(
+            controller,
+            "windsurfRules",
+            externalRefresh.discovered.windsurfRules.toggles,
+            externalRefresh.discovered.windsurfRules.complete,
+        )
+        rememberDiscoveredToggles(
+            controller,
+            "agentsRules",
+            externalRefresh.discovered.agentsRules.toggles,
+            externalRefresh.discovered.agentsRules.complete,
+        )
+        rememberDiscoveredToggles(
+            controller,
+            "workflows",
+            workflowsRefresh.discoveredLocalToggles,
+            workflowsRefresh.localScanComplete,
+        )
+        recordPerfPhase(
+            PerfDomain.Capability,
+            "rules_refresh_rpc",
+            performance.now() - startedAt,
+            {
+                cwdMs,
+                dlineRulesMs,
+                externalRulesMs,
+                workflowsMs,
+                skillsMs,
+                dlineRules: Object.keys(globalToggles).length + Object.keys(localToggles).length,
+                externalRules:
+                    Object.keys(cursorLocalToggles).length +
+                    Object.keys(windsurfLocalToggles).length +
+                    Object.keys(agentsLocalToggles).length,
+                workflows: Object.keys(localWorkflowToggles).length + Object.keys(globalWorkflowToggles).length,
+                skills: globalSkills.length + localSkills.length,
+            },
+            { taskId: controller.task?.taskId },
+        )
+        if (Logger.isDebugEnabled()) {
+            Logger.debug(
+                `[CapabilityPerf] phase=rules_refresh_rpc taskId=${controller.task?.taskId ?? "none"} cwdMs=${cwdMs} dlineRulesMs=${dlineRulesMs} externalRulesMs=${externalRulesMs} workflowsMs=${workflowsMs} skillsMs=${skillsMs} totalMs=${Math.round(performance.now() - startedAt)} dlineRules=${Object.keys(globalToggles).length + Object.keys(localToggles).length} externalRules=${Object.keys(cursorLocalToggles).length + Object.keys(windsurfLocalToggles).length + Object.keys(agentsLocalToggles).length} workflows=${Object.keys(localWorkflowToggles).length + Object.keys(globalWorkflowToggles).length} skills=${globalSkills.length + localSkills.length}`,
+            )
+        }
 
-		return RefreshedDlineToggles.create({
-			globalClineRulesToggles: { toggles: globalToggles },
-			localClineRulesToggles: { toggles: localToggles },
-			localCursorRulesToggles: { toggles: cursorLocalToggles },
-			localWindsurfRulesToggles: { toggles: windsurfLocalToggles },
-			localAgentsRulesToggles: { toggles: agentsLocalToggles },
-			localWorkflowToggles: { toggles: localWorkflowToggles },
-			globalWorkflowToggles: { toggles: globalWorkflowToggles },
-			localSkillsToggles: { toggles: buildSkillToggles(localSkills) },
-			globalSkillsToggles: { toggles: buildSkillToggles(globalSkills) },
-		})
-	} catch (error) {
-		Logger.error("Failed to refresh rules:", error)
-		recordPerfPhase(PerfDomain.Capability, "rules_refresh_rpc_error", performance.now() - startedAt, undefined, {
-			taskId: controller.task?.taskId,
-		})
-		if (Logger.isDebugEnabled()) {
-			Logger.debug(
-				`[CapabilityPerf] phase=rules_refresh_rpc_error taskId=${controller.task?.taskId ?? "none"} totalMs=${Math.round(performance.now() - startedAt)}`,
-			)
-		}
-		throw error
-	}
+        return RefreshedDlineToggles.create({
+            globalClineRulesToggles: { toggles: globalToggles },
+            localClineRulesToggles: { toggles: localToggles },
+            localCursorRulesToggles: { toggles: cursorLocalToggles },
+            localWindsurfRulesToggles: { toggles: windsurfLocalToggles },
+            localAgentsRulesToggles: { toggles: agentsLocalToggles },
+            localWorkflowToggles: { toggles: localWorkflowToggles },
+            globalWorkflowToggles: { toggles: globalWorkflowToggles },
+            localSkillsToggles: { toggles: buildSkillToggles(localSkills) },
+            globalSkillsToggles: { toggles: buildSkillToggles(globalSkills) },
+        })
+    } catch (error) {
+        Logger.error("Failed to refresh rules:", error)
+        recordPerfPhase(PerfDomain.Capability, "rules_refresh_rpc_error", performance.now() - startedAt, undefined, {
+            taskId: controller.task?.taskId,
+        })
+        if (Logger.isDebugEnabled()) {
+            Logger.debug(
+                `[CapabilityPerf] phase=rules_refresh_rpc_error taskId=${controller.task?.taskId ?? "none"} totalMs=${Math.round(performance.now() - startedAt)}`,
+            )
+        }
+        throw error
+    }
 }
 
 /**
@@ -133,9 +133,9 @@ async function scanRules(controller: Controller): Promise<RefreshedDlineToggles>
  * Maps skill name → enabled state (name from frontmatter, not file path).
  */
 function buildSkillToggles(skills: { name: string; path: string; enabled: boolean }[]): Record<string, boolean> {
-	const toggles: Record<string, boolean> = {}
-	for (const skill of skills) {
-		if (!skill.path.startsWith("remote:")) toggles[skill.path] = skill.enabled
-	}
-	return toggles
+    const toggles: Record<string, boolean> = {}
+    for (const skill of skills) {
+        if (!skill.path.startsWith("remote:")) toggles[skill.path] = skill.enabled
+    }
+    return toggles
 }

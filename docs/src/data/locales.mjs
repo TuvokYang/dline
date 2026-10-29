@@ -12,6 +12,6 @@ export const ROOT_LOCALE = "root"
 export const CHINESE_LOCALE = "zh-cn"
 
 export const locales = Object.freeze({
-	root: Object.freeze({ label: "English", lang: "en" }),
-	[CHINESE_LOCALE]: Object.freeze({ label: "简体中文", lang: "zh-CN" }),
+    root: Object.freeze({ label: "English", lang: "en" }),
+    [CHINESE_LOCALE]: Object.freeze({ label: "简体中文", lang: "zh-CN" }),
 })

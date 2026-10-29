@@ -1,140 +1,195 @@
+import { markExpectedCancellation } from "@shared/errors/expected-cancellation"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { Logger } from "@/shared/services/Logger"
 import { RuntimeContentPolicy, TELEMETRY_MASK_VALUE } from "../../runtime/content-policy"
+import { discardBootstrapSignals, emitSignal } from "../../service/pipeline-port"
 import type { RuntimeEventRecorderPort } from "../runtime"
 import { ErrorEventRecorder } from "./ErrorEventRecorder"
 import { installLoggerTelemetryBridge } from "./LoggerTelemetryBridge"
 
+class WithdrawnError extends Error {}
+markExpectedCancellation(WithdrawnError)
+
 function harness(developmentMode = false) {
-	const record = vi.fn<RuntimeEventRecorderPort["record"]>()
-	return { record, recorder: new ErrorEventRecorder({ record }, { developmentMode }) }
+    const record = vi.fn<RuntimeEventRecorderPort["record"]>()
+    return { record, recorder: new ErrorEventRecorder({ record }, { developmentMode }) }
 }
 
 describe("ErrorEventRecorder", () => {
-	afterEach(() => vi.restoreAllMocks())
+    afterEach(() => {
+        vi.restoreAllMocks()
+        discardBootstrapSignals()
+    })
 
-	it("uses one normalized runtime event contract for exceptions and messages", () => {
-		const { record, recorder } = harness()
-		const error = new Error("provider failed")
+    function bridged() {
+        const { record, recorder } = harness()
+        const dispose = installLoggerTelemetryBridge(recorder)
+        vi.spyOn(Logger as unknown as { output: (message: string) => void }, "output").mockImplementation(() => undefined)
+        return { record, dispose }
+    }
 
-		recorder.exception(error, { modelId: "gpt-test", nested: { secret: true } })
-		recorder.message("request failed", "warning", { status: 503 })
+    it("records a logged warning with an Error as a local warning, never as an extension error", () => {
+        const { record, dispose } = bridged()
+        const error = new Error("retrying after 503")
 
-		expect(record).toHaveBeenNthCalledWith(1, {
-			name: "extension.error",
-			level: "error",
-			error,
-			attributes: {
-				exception_message: TELEMETRY_MASK_VALUE,
-				modelId: "gpt-test",
-				nested: { secret: true },
-			},
-		})
-		expect(record).toHaveBeenNthCalledWith(2, {
-			name: "extension.message",
-			level: "error",
-			attributes: { message: TELEMETRY_MASK_VALUE, message_level: "warning", status: 503 },
-		})
-	})
+        Logger.warn("request retry", error)
+        dispose()
 
-	it("keeps production message fields fully masked", () => {
-		const { record, recorder } = harness(false)
-		const dispose = installLoggerTelemetryBridge(recorder, { developmentMode: false })
-		vi.spyOn(Logger as unknown as { output: (message: string) => void }, "output").mockImplementation(() => undefined)
+        expect(record).toHaveBeenCalledTimes(1)
+        expect(record).toHaveBeenCalledWith(expect.objectContaining({ name: "extension.warning", level: "info", error }))
+    })
 
-		Logger.warn("request failed apiKey=sk-live-123456", { token: "ghp_1234567890123456" })
-		dispose()
+    it("records an expected cancellation logged as an error as a local warning", () => {
+        const { record, dispose } = bridged()
+        const aborted = Object.assign(new Error("The operation was aborted"), { name: "AbortError" })
+        const withdrawn = new WithdrawnError("interaction withdrawn")
 
-		const attributes = record.mock.calls[0]?.[0].attributes
-		expect(attributes).toEqual(
-			expect.objectContaining({
-				message: TELEMETRY_MASK_VALUE,
-				logger_message: TELEMETRY_MASK_VALUE,
-			}),
-		)
-		expect(attributes).not.toHaveProperty("diagnostic_message")
-		expect(attributes).not.toHaveProperty("diagnostic_logger_message")
-		expect(attributes).not.toHaveProperty("diagnostic_logger_args")
-	})
+        Logger.error("request aborted", aborted)
+        Logger.error("interaction ended", withdrawn)
+        dispose()
 
-	it("retains sanitized logger diagnostics only in development mode", () => {
-		const { record, recorder } = harness(true)
-		const dispose = installLoggerTelemetryBridge(recorder, { developmentMode: true })
-		vi.spyOn(Logger as unknown as { output: (message: string) => void }, "output").mockImplementation(() => undefined)
+        expect(record.mock.calls.map(([input]) => [input.name, input.level, input.error])).toEqual([
+            ["extension.warning", "info", aborted],
+            ["extension.warning", "info", withdrawn],
+        ])
+    })
 
-		Logger.warn("request failed Authorization: Bearer sk-live-123456", {
-			status: 401,
-			apiKey: "sk-live-abcdef",
-			token: "ghp_1234567890123456",
-		})
-		dispose()
+    it("does not report an error again once a semantic signal has carried it", () => {
+        const { record, dispose } = bridged()
+        const reported = new Error("tool failed")
+        const unreported = new Error("unrelated failure")
 
-		const attributes = record.mock.calls[0]?.[0].attributes
-		expect(attributes).toEqual(
-			expect.objectContaining({
-				message: TELEMETRY_MASK_VALUE,
-				logger_message: TELEMETRY_MASK_VALUE,
-				diagnostic_message: "request failed Authorization: Bearer [REDACTED]",
-				diagnostic_logger_message: "request failed Authorization: Bearer [REDACTED]",
-				diagnostic_logger_args: ['{"status":401,"apiKey":"[REDACTED]","token":"[REDACTED]"}'],
-			}),
-		)
+        emitSignal({ name: "tool.execution.failed", level: "error", error: reported })
+        Logger.error("tool failed", reported)
+        Logger.error("unrelated failure", unreported)
+        dispose()
 
-		const policy = new RuntimeContentPolicy(Buffer.alloc(32), { preserveDevelopmentDiagnostics: true })
-		const exported = policy.apply(attributes).attributes
-		expect(exported.diagnostic_message).toBe("request failed Authorization: Bearer [REDACTED]")
-		expect(exported.diagnostic_logger_message).toBe("request failed Authorization: Bearer [REDACTED]")
-		expect(exported["diagnostic_logger_args.0"]).toContain("[REDACTED]")
-		expect(JSON.stringify(exported)).not.toContain("sk-live")
-		expect(JSON.stringify(exported)).not.toContain("ghp_")
-	})
+        expect(record).toHaveBeenCalledTimes(1)
+        expect(record).toHaveBeenCalledWith(expect.objectContaining({ name: "extension.error", error: unreported }))
+    })
 
-	it("bridges only structured warn/error records and ignores internal diagnostics", () => {
-		const { record, recorder } = harness()
-		const dispose = installLoggerTelemetryBridge(recorder)
-		vi.spyOn(Logger as unknown as { output: (message: string) => void }, "output").mockImplementation(() => undefined)
+    it("uses one normalized runtime event contract for exceptions and messages", () => {
+        const { record, recorder } = harness()
+        const error = new Error("provider failed")
 
-		Logger.warn("collector unavailable", {
-			status: 503,
-			provider: "openai-codex",
-			modelId: "gpt-5.3-codex",
-			snapshot: { status: "failed", count: 2 },
-		})
-		Logger.error("provider failed", new Error("private failure prose"), {
-			provider: "openai-codex",
-			apiFormat: "openai-responses",
-		})
-		Logger.internalError("exporter feedback", new Error("failed again"))
-		Logger.info("ordinary output")
-		dispose()
+        recorder.exception(error, { modelId: "gpt-test", nested: { secret: true } })
+        recorder.message("request failed", "warning", { status: 503 })
 
-		expect(record).toHaveBeenCalledTimes(2)
-		expect(record).toHaveBeenNthCalledWith(1, {
-			name: "extension.message",
-			level: "error",
-			attributes: expect.objectContaining({
-				message: TELEMETRY_MASK_VALUE,
-				message_level: "warning",
-				logger_message: TELEMETRY_MASK_VALUE,
-				logger_metadata: [
-					{
-						status: 503,
-						provider: "openai-codex",
-						modelId: "gpt-5.3-codex",
-						snapshot: { status: "failed", count: 2 },
-					},
-				],
-			}),
-		})
-		expect(record).toHaveBeenNthCalledWith(2, {
-			name: "extension.error",
-			level: "error",
-			error: expect.any(Error),
-			attributes: expect.objectContaining({
-				exception_message: TELEMETRY_MASK_VALUE,
-				logger_message: TELEMETRY_MASK_VALUE,
-				logger_metadata: [{ provider: "openai-codex", apiFormat: "openai-responses" }],
-			}),
-		})
-	})
+        expect(record).toHaveBeenNthCalledWith(1, {
+            name: "extension.error",
+            level: "error",
+            error,
+            attributes: {
+                exception_message: TELEMETRY_MASK_VALUE,
+                modelId: "gpt-test",
+                nested: { secret: true },
+            },
+        })
+        expect(record).toHaveBeenNthCalledWith(2, {
+            name: "extension.message",
+            level: "error",
+            attributes: { message: TELEMETRY_MASK_VALUE, message_level: "warning", status: 503 },
+        })
+    })
+
+    it("keeps production message fields fully masked", () => {
+        const { record, recorder } = harness(false)
+        const dispose = installLoggerTelemetryBridge(recorder, { developmentMode: false })
+        vi.spyOn(Logger as unknown as { output: (message: string) => void }, "output").mockImplementation(() => undefined)
+
+        Logger.warn("request failed apiKey=sk-live-123456", { token: "ghp_1234567890123456" })
+        dispose()
+
+        const attributes = record.mock.calls[0]?.[0].attributes
+        expect(attributes).toEqual(
+            expect.objectContaining({
+                message: TELEMETRY_MASK_VALUE,
+                logger_message: TELEMETRY_MASK_VALUE,
+            }),
+        )
+        expect(attributes).not.toHaveProperty("diagnostic_message")
+        expect(attributes).not.toHaveProperty("diagnostic_logger_message")
+        expect(attributes).not.toHaveProperty("diagnostic_logger_args")
+    })
+
+    it("retains sanitized logger diagnostics only in development mode", () => {
+        const { record, recorder } = harness(true)
+        const dispose = installLoggerTelemetryBridge(recorder, { developmentMode: true })
+        vi.spyOn(Logger as unknown as { output: (message: string) => void }, "output").mockImplementation(() => undefined)
+
+        Logger.warn("request failed Authorization: Bearer sk-live-123456", {
+            status: 401,
+            apiKey: "sk-live-abcdef",
+            token: "ghp_1234567890123456",
+        })
+        dispose()
+
+        const attributes = record.mock.calls[0]?.[0].attributes
+        expect(attributes).toEqual(
+            expect.objectContaining({
+                message: TELEMETRY_MASK_VALUE,
+                logger_message: TELEMETRY_MASK_VALUE,
+                diagnostic_message: "request failed Authorization: Bearer [REDACTED]",
+                diagnostic_logger_message: "request failed Authorization: Bearer [REDACTED]",
+                diagnostic_logger_args: ['{"status":401,"apiKey":"[REDACTED]","token":"[REDACTED]"}'],
+            }),
+        )
+
+        const policy = new RuntimeContentPolicy(Buffer.alloc(32), { preserveDevelopmentDiagnostics: true })
+        const exported = policy.apply(attributes).attributes
+        expect(exported.diagnostic_message).toBe("request failed Authorization: Bearer [REDACTED]")
+        expect(exported.diagnostic_logger_message).toBe("request failed Authorization: Bearer [REDACTED]")
+        expect(exported["diagnostic_logger_args.0"]).toContain("[REDACTED]")
+        expect(JSON.stringify(exported)).not.toContain("sk-live")
+        expect(JSON.stringify(exported)).not.toContain("ghp_")
+    })
+
+    it("bridges only structured warn/error records and ignores internal diagnostics", () => {
+        const { record, recorder } = harness()
+        const dispose = installLoggerTelemetryBridge(recorder)
+        vi.spyOn(Logger as unknown as { output: (message: string) => void }, "output").mockImplementation(() => undefined)
+
+        Logger.warn("collector unavailable", {
+            status: 503,
+            provider: "openai-codex",
+            modelId: "gpt-5.3-codex",
+            snapshot: { status: "failed", count: 2 },
+        })
+        Logger.error("provider failed", new Error("private failure prose"), {
+            provider: "openai-codex",
+            apiFormat: "openai-responses",
+        })
+        Logger.internalError("exporter feedback", new Error("failed again"))
+        Logger.info("ordinary output")
+        dispose()
+
+        expect(record).toHaveBeenCalledTimes(2)
+        expect(record).toHaveBeenNthCalledWith(1, {
+            name: "extension.message",
+            level: "error",
+            attributes: expect.objectContaining({
+                message: TELEMETRY_MASK_VALUE,
+                message_level: "warning",
+                logger_message: TELEMETRY_MASK_VALUE,
+                logger_metadata: [
+                    {
+                        status: 503,
+                        provider: "openai-codex",
+                        modelId: "gpt-5.3-codex",
+                        snapshot: { status: "failed", count: 2 },
+                    },
+                ],
+            }),
+        })
+        expect(record).toHaveBeenNthCalledWith(2, {
+            name: "extension.error",
+            level: "error",
+            error: expect.any(Error),
+            attributes: expect.objectContaining({
+                exception_message: TELEMETRY_MASK_VALUE,
+                logger_message: TELEMETRY_MASK_VALUE,
+                logger_metadata: [{ provider: "openai-codex", apiFormat: "openai-responses" }],
+            }),
+        })
+    })
 })

@@ -1,8 +1,8 @@
 // English MCP documentation prompts — key-value pairs only, no code logic.
 
 const prompts: Record<string, string> = {
-	noneRunning: "(None running currently)",
-	main: `## Creating an MCP Server
+    noneRunning: "(None running currently)",
+    main: `## Creating an MCP Server
 
 When creating MCP servers, it's important to understand that they operate in a non-interactive environment. The server cannot initiate OAuth flows, open browser windows, or prompt for user input during runtime. All credentials and authentication tokens must be provided upfront through environment variables in the MCP settings configuration. For example, Spotify's API uses OAuth to get a refresh token for the user, but the MCP server cannot initiate this flow. While you can walk the user through obtaining an application client ID and secret, you may have to create a separate one-time setup script (like get-refresh-token.js) that captures and logs the final piece of the puzzle: the user's refresh token (i.e. you might run the script using execute_command which would open a browser for authentication, and then log the refresh token so that you can see it in the command output for you to use in the MCP settings configuration).
 

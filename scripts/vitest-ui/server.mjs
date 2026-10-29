@@ -15,43 +15,43 @@ console.error(`[vitest-ui] starting: ${spawnCommand.file} ${spawnArgs.join(" ")}
 console.error(`[vitest-ui] url: ${url}`)
 
 const child = spawn(spawnCommand.file, spawnArgs, {
-	cwd: process.cwd(),
-	env: process.env,
-	stdio: "inherit",
-	...spawnCommand.options,
+    cwd: process.cwd(),
+    env: process.env,
+    stdio: "inherit",
+    ...spawnCommand.options,
 })
 
 function shutdown(signal) {
-	if (!child.killed) {
-		child.kill(signal)
-	}
+    if (!child.killed) {
+        child.kill(signal)
+    }
 }
 
 process.on("SIGINT", () => shutdown("SIGINT"))
 process.on("SIGTERM", () => shutdown("SIGTERM"))
 
 void (async () => {
-	await waitForReachable(url, {
-		timeoutMs: Number(process.env.VITEST_UI_START_TIMEOUT || 60_000),
-	})
-	const initialRun = await bootstrapVitestUiInitialRun(url, {
-		rpcTimeoutMs: Number(process.env.VITEST_UI_INITIAL_RUN_RPC_TIMEOUT || 30_000),
-		timeoutMs: Number(process.env.VITEST_UI_INITIAL_RUN_TIMEOUT || 15_000),
-	})
-	console.error(
-		initialRun.triggered
-			? `[vitest-ui] dispatched initial run for ${initialRun.targets.length} discovered paths`
-			: "[vitest-ui] initial run was already active or complete",
-	)
+    await waitForReachable(url, {
+        timeoutMs: Number(process.env.VITEST_UI_START_TIMEOUT || 60_000),
+    })
+    const initialRun = await bootstrapVitestUiInitialRun(url, {
+        rpcTimeoutMs: Number(process.env.VITEST_UI_INITIAL_RUN_RPC_TIMEOUT || 30_000),
+        timeoutMs: Number(process.env.VITEST_UI_INITIAL_RUN_TIMEOUT || 15_000),
+    })
+    console.error(
+        initialRun.triggered
+            ? `[vitest-ui] dispatched initial run for ${initialRun.targets.length} discovered paths`
+            : "[vitest-ui] initial run was already active or complete",
+    )
 })().catch((error) => {
-	console.error(`[vitest-ui] failed to bootstrap initial run: ${error instanceof Error ? error.message : String(error)}`)
-	shutdown("SIGTERM")
+    console.error(`[vitest-ui] failed to bootstrap initial run: ${error instanceof Error ? error.message : String(error)}`)
+    shutdown("SIGTERM")
 })
 
 child.on("exit", (code, signal) => {
-	if (signal) {
-		process.kill(process.pid, signal)
-		return
-	}
-	process.exit(code ?? 0)
+    if (signal) {
+        process.kill(process.pid, signal)
+        return
+    }
+    process.exit(code ?? 0)
 })

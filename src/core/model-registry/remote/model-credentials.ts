@@ -14,13 +14,13 @@ import * as SecretsManager from "@core/storage/secrets"
 import type { ProviderRemoteContext } from "./model-source"
 
 export function resolveSavedCredentials(providerId: string): ProviderRemoteContext {
-	for (const profile of findEnabledProfiles(providerId)) {
-		const apiKey = SecretsManager.getApiKey(profile.id)
-		if (apiKey) {
-			return { apiKey, baseUrl: profile.baseUrl || undefined }
-		}
-	}
+    for (const profile of findEnabledProfiles(providerId)) {
+        const apiKey = SecretsManager.getApiKey(profile.id)
+        if (apiKey) {
+            return { apiKey, baseUrl: profile.baseUrl || undefined }
+        }
+    }
 
-	const [firstProfile] = findEnabledProfiles(providerId)
-	return { baseUrl: firstProfile?.baseUrl || undefined }
+    const [firstProfile] = findEnabledProfiles(providerId)
+    return { baseUrl: firstProfile?.baseUrl || undefined }
 }

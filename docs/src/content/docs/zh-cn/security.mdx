@@ -1,0 +1,49 @@
+---
+title: 私下报告安全漏洞
+description: 通过 GitHub Private Vulnerability Reporting 向 Dline 维护者提交非公开安全报告。
+---
+
+import { Aside, Steps } from "@astrojs/starlight/components"
+
+仓库中的[安全政策](https://github.com/TuvokYang/dline/security/policy)是 Dline 漏洞报告的权威合同。Dline 通过 GitHub Private Vulnerability Reporting 接收疑似漏洞报告；该报告不会作为公开 Issue 发布。
+
+<Aside type="danger" title="请保持漏洞详情非公开">
+不要为疑似漏洞创建公开 Issue、Discussion 或 Pull Request。Dline 当前没有公开安全报告邮箱。
+</Aside>
+
+## 提交私密报告
+
+<Steps>
+
+1. 登录 GitHub，打开 [Report a vulnerability](https://github.com/TuvokYang/dline/security/advisories/new)。
+2. 说明受影响的 Dline 版本、操作系统、宿主编辑器、配置和触发前提。
+3. 说明影响，并提供能够证明问题的最小复现步骤或 PoC。
+4. 检查报告中是否包含 secret 或无关私密数据，然后通过 GitHub 提交。
+
+</Steps>
+
+## 建议包含的信息
+
+有效报告通常包括：
+
+- 受影响版本或 commit；
+- 存在问题的组件和预期安全边界；
+- 实际影响以及谁能够触发；
+- 可复现步骤或最小 PoC；
+- 是否需要凭据、用户批准、恶意工作区或其他前置条件；
+- 对调查有实际帮助且已经脱敏的日志、截图或诊断；
+- 已知规避方法或建议缓解措施。
+
+## 保护敏感信息
+
+不要提交 API Key、访问令牌、私有源代码、提示词、客户数据或无关个人信息。如果复现确实需要敏感材料，请先说明现有证据类型，等待维护者确认合适的传输方式。
+
+## 响应与披露
+
+维护者会通过 GitHub 私密报告评估影响版本、严重程度和修复方案。在维护者完成任何修复或披露协调前，请保持详情非公开。提交报告不代表承诺具体响应时间或发布时间。
+
+## 隐私请求和非安全问题
+
+- 漏洞表单只用于安全报告。Dline 当前没有公开专用的私密隐私请求渠道。不要在漏洞表单或公开 Issue 中提交个人数据；[Dline 隐私政策](/zh-cn/privacy/)说明当前可用的控制和这一限制。
+- 不含敏感信息的 bug 和产品问题请使用公开的 [Dline Issues](https://github.com/TuvokYang/dline/issues)。
+- Dline 当前没有邮箱 fallback。私密漏洞表单暂时不可用时，不要通过公开渠道披露漏洞详情。

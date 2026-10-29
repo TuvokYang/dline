@@ -11,10 +11,10 @@ import { ToolDurationScope } from "../tool-duration-scope"
  */
 
 interface Wiring {
-	ask: (waitMs: number) => Promise<string>
-	executeCommandTool: (waitMs: number) => Promise<string>
-	work: (ms: number) => void
-	read: () => ReturnType<ToolDurationScope["read"]>
+    ask: (waitMs: number) => Promise<string>
+    executeCommandTool: (waitMs: number) => Promise<string>
+    work: (ms: number) => void
+    read: () => ReturnType<ToolDurationScope["read"]>
 }
 
 /**
@@ -25,78 +25,78 @@ interface Wiring {
  * is currently active.
  */
 function createWiring(): Wiring {
-	let now = 0
-	const clock = () => now
-	const holder: { scope: ToolDurationScope | undefined } = { scope: undefined }
-	holder.scope = new ToolDurationScope(clock)
+    let now = 0
+    const clock = () => now
+    const holder: { scope: ToolDurationScope | undefined } = { scope: undefined }
+    holder.scope = new ToolDurationScope(clock)
 
-	const rawAsk = async (waitMs: number) => {
-		now += waitMs
-		return "approved"
-	}
-	const rawExecuteCommandTool = async (waitMs: number) => {
-		now += waitMs
-		return "command-output"
-	}
+    const rawAsk = async (waitMs: number) => {
+        now += waitMs
+        return "approved"
+    }
+    const rawExecuteCommandTool = async (waitMs: number) => {
+        now += waitMs
+        return "command-output"
+    }
 
-	return {
-		ask: (waitMs) => (holder.scope ? holder.scope.excludeWait("approval", () => rawAsk(waitMs)) : rawAsk(waitMs)),
-		executeCommandTool: (waitMs) =>
-			holder.scope
-				? holder.scope.excludeWait("command", () => rawExecuteCommandTool(waitMs))
-				: rawExecuteCommandTool(waitMs),
-		work: (ms) => {
-			now += ms
-		},
-		read: () => {
-			if (!holder.scope) throw new Error("scope missing")
-			return holder.scope.read()
-		},
-	}
+    return {
+        ask: (waitMs) => (holder.scope ? holder.scope.excludeWait("approval", () => rawAsk(waitMs)) : rawAsk(waitMs)),
+        executeCommandTool: (waitMs) =>
+            holder.scope
+                ? holder.scope.excludeWait("command", () => rawExecuteCommandTool(waitMs))
+                : rawExecuteCommandTool(waitMs),
+        work: (ms) => {
+            now += ms
+        },
+        read: () => {
+            if (!holder.scope) throw new Error("scope missing")
+            return holder.scope.read()
+        },
+    }
 }
 
 describe("tool duration wiring", () => {
-	it("excludes an approval taken through the tool callback", async () => {
-		const wiring = createWiring()
+    it("excludes an approval taken through the tool callback", async () => {
+        const wiring = createWiring()
 
-		wiring.work(15)
-		await expect(wiring.ask(120_000)).resolves.toBe("approved")
-		wiring.work(25)
+        wiring.work(15)
+        await expect(wiring.ask(120_000)).resolves.toBe("approved")
+        wiring.work(25)
 
-		const totals = wiring.read()
-		// Two minutes of a human deciding must not be reported as tool work.
-		expect(totals.elapsedMs).toBe(120_040)
-		expect(totals.activeMs).toBe(40)
-		expect(totals.approvalWaitMs).toBe(120_000)
-	})
+        const totals = wiring.read()
+        // Two minutes of a human deciding must not be reported as tool work.
+        expect(totals.elapsedMs).toBe(120_040)
+        expect(totals.activeMs).toBe(40)
+        expect(totals.approvalWaitMs).toBe(120_000)
+    })
 
-	it("excludes a command run through the tool callback", async () => {
-		const wiring = createWiring()
+    it("excludes a command run through the tool callback", async () => {
+        const wiring = createWiring()
 
-		wiring.work(10)
-		await expect(wiring.executeCommandTool(45_000)).resolves.toBe("command-output")
-		wiring.work(10)
+        wiring.work(10)
+        await expect(wiring.executeCommandTool(45_000)).resolves.toBe("command-output")
+        wiring.work(10)
 
-		const totals = wiring.read()
-		expect(totals.elapsedMs).toBe(45_020)
-		// A long build belongs to the workspace, not to the tool.
-		expect(totals.activeMs).toBe(20)
-		expect(totals.commandWaitMs).toBe(45_000)
-	})
+        const totals = wiring.read()
+        expect(totals.elapsedMs).toBe(45_020)
+        // A long build belongs to the workspace, not to the tool.
+        expect(totals.activeMs).toBe(20)
+        expect(totals.commandWaitMs).toBe(45_000)
+    })
 
-	it("excludes an approval and a command taken in the same execution", async () => {
-		const wiring = createWiring()
+    it("excludes an approval and a command taken in the same execution", async () => {
+        const wiring = createWiring()
 
-		wiring.work(8)
-		await wiring.ask(60_000)
-		wiring.work(4)
-		await wiring.executeCommandTool(20_000)
-		wiring.work(8)
+        wiring.work(8)
+        await wiring.ask(60_000)
+        wiring.work(4)
+        await wiring.executeCommandTool(20_000)
+        wiring.work(8)
 
-		const totals = wiring.read()
-		expect(totals.elapsedMs).toBe(80_020)
-		expect(totals.activeMs).toBe(20)
-		expect(totals.approvalWaitMs).toBe(60_000)
-		expect(totals.commandWaitMs).toBe(20_000)
-	})
+        const totals = wiring.read()
+        expect(totals.elapsedMs).toBe(80_020)
+        expect(totals.activeMs).toBe(20)
+        expect(totals.approvalWaitMs).toBe(60_000)
+        expect(totals.commandWaitMs).toBe(20_000)
+    })
 })

@@ -1,35 +1,34 @@
+import { type InputSemanticCatalog, indexCommandTriggers } from "@shared/input-semantics/catalog"
+import { namespacedCommandTrigger } from "@shared/input-semantics/command-namespace"
+import type { SlashCommandNamespace } from "@shared/input-semantics/document"
 import type { McpServer } from "@shared/mcp"
+import type { GlobalInstructionsFile } from "@shared/remote-config/schema"
 import { PLATFORM_CONFIG, PlatformType } from "@/config/platform.config"
 import {
-	getBuiltInSlashCommands,
-	pathToCommandName,
-	pathToSkillName,
-	type SlashCommand,
+    getBuiltInSlashCommands,
+    pathToCommandName,
+    pathToSkillName,
+    type SlashCommand,
 } from "../../../src/shared/slashCommands.ts"
 
-export type { SlashCommand }
+/** Menu sections in display order; keyboard navigation follows the same order. */
+export const SLASH_MENU_SECTIONS = ["default", "workflow", "skill", "mcp"] as const
+export type SlashMenuSection = (typeof SLASH_MENU_SECTIONS)[number]
 
-/**
- * Map section to prefix used when inserting the command into the input.
- * "default" → "cmd", "workflow" → "workflow", "skill" → "skills", "mcp" → "mcp"
- */
-export function sectionToPrefix(section?: string): string {
-	switch (section) {
-		case "default":
-			return "cmd"
-		case "workflow":
-			return "workflow"
-		case "skill":
-			return "skills"
-		case "mcp":
-			return "mcp"
-		default:
-			return ""
-	}
+/** The command namespace each menu section writes its triggers in. */
+const SECTION_NAMESPACE: Readonly<Record<SlashMenuSection, SlashCommandNamespace>> = {
+    default: "cmd",
+    workflow: "workflow",
+    skill: "skill",
+    mcp: "mcp",
+}
+
+function sectionOf(command: SlashCommand): SlashMenuSection {
+    return SLASH_MENU_SECTIONS.find((section) => section === command.section) ?? "default"
 }
 
 export const DEFAULT_SLASH_COMMANDS: SlashCommand[] = getBuiltInSlashCommands(
-	PLATFORM_CONFIG.type === PlatformType.VSCODE ? "vscode" : "standalone",
+    PLATFORM_CONFIG.type === PlatformType.VSCODE ? "vscode" : "standalone",
 )
 
 /**
@@ -37,66 +36,66 @@ export const DEFAULT_SLASH_COMMANDS: SlashCommand[] = getBuiltInSlashCommands(
  * Name format: "workflow:xxx" (without .md extension).
  */
 export function getWorkflowCommands(
-	localWorkflowToggles: Record<string, boolean>,
-	globalWorkflowToggles: Record<string, boolean>,
-	remoteWorkflowToggles?: Record<string, boolean>,
-	remoteWorkflows?: any[],
-	workflowDescriptions?: Record<string, string>,
+    localWorkflowToggles: Record<string, boolean>,
+    globalWorkflowToggles: Record<string, boolean>,
+    remoteWorkflowToggles?: Record<string, boolean>,
+    remoteWorkflows?: any[],
+    workflowDescriptions?: Record<string, string>,
 ): SlashCommand[] {
-	const { workflows: localWorkflows, nameSet: localWorkflowNames } = Object.entries(localWorkflowToggles)
-		.filter(([_, enabled]) => enabled)
-		.reduce(
-			(acc, [filePath, _]) => {
-				const baseName = pathToCommandName(filePath)
+    const { workflows: localWorkflows, nameSet: localWorkflowNames } = Object.entries(localWorkflowToggles)
+        .filter(([_, enabled]) => enabled)
+        .reduce(
+            (acc, [filePath, _]) => {
+                const baseName = pathToCommandName(filePath)
 
-				acc.workflows.push({
-					name: baseName,
-					section: "workflow",
-					description: workflowDescriptions?.[baseName],
-				} as SlashCommand)
+                acc.workflows.push({
+                    name: baseName,
+                    section: "workflow",
+                    description: workflowDescriptions?.[baseName],
+                } as SlashCommand)
 
-				acc.nameSet.add(baseName)
+                acc.nameSet.add(baseName)
 
-				return acc
-			},
-			{ workflows: [] as SlashCommand[], nameSet: new Set<string>() },
-		)
+                return acc
+            },
+            { workflows: [] as SlashCommand[], nameSet: new Set<string>() },
+        )
 
-	const globalWorkflows = Object.entries(globalWorkflowToggles)
-		.filter(([_, enabled]) => enabled)
-		.flatMap(([filePath, _]) => {
-			const baseName = pathToCommandName(filePath)
+    const globalWorkflows = Object.entries(globalWorkflowToggles)
+        .filter(([_, enabled]) => enabled)
+        .flatMap(([filePath, _]) => {
+            const baseName = pathToCommandName(filePath)
 
-			if (localWorkflowNames.has(baseName)) {
-				return []
-			}
+            if (localWorkflowNames.has(baseName)) {
+                return []
+            }
 
-			return [
-				{
-					name: baseName,
-					section: "workflow",
-					description: workflowDescriptions?.[baseName],
-				},
-			] as SlashCommand[]
-		})
+            return [
+                {
+                    name: baseName,
+                    section: "workflow",
+                    description: workflowDescriptions?.[baseName],
+                },
+            ] as SlashCommand[]
+        })
 
-	// Add remote workflows that are enabled
-	const remoteWorkflowCommands: SlashCommand[] = []
-	if (remoteWorkflows && remoteWorkflowToggles) {
-		for (const workflow of remoteWorkflows) {
-			const enabled = workflow.alwaysEnabled || remoteWorkflowToggles[workflow.name] !== false
-			if (enabled) {
-				remoteWorkflowCommands.push({
-					name: workflow.name,
-					section: "workflow",
-					description: workflowDescriptions?.[workflow.name],
-				})
-			}
-		}
-	}
+    // Add remote workflows that are enabled
+    const remoteWorkflowCommands: SlashCommand[] = []
+    if (remoteWorkflows && remoteWorkflowToggles) {
+        for (const workflow of remoteWorkflows) {
+            const enabled = workflow.alwaysEnabled || remoteWorkflowToggles[workflow.name] !== false
+            if (enabled) {
+                remoteWorkflowCommands.push({
+                    name: workflow.name,
+                    section: "workflow",
+                    description: workflowDescriptions?.[workflow.name],
+                })
+            }
+        }
+    }
 
-	const workflows = [...localWorkflows, ...globalWorkflows, ...remoteWorkflowCommands]
-	return workflows
+    const workflows = [...localWorkflows, ...globalWorkflows, ...remoteWorkflowCommands]
+    return workflows
 }
 
 /**
@@ -104,59 +103,59 @@ export function getWorkflowCommands(
  * Name format: "skills:xxx".
  */
 export function getSkillCommands(
-	localSkillsToggles: Record<string, boolean> = {},
-	globalSkillsToggles: Record<string, boolean> = {},
-	remoteSkills?: any[],
-	remoteSkillsToggles?: Record<string, boolean>,
-	availableSkillCommands?: SlashCommand[],
+    localSkillsToggles: Record<string, boolean> = {},
+    globalSkillsToggles: Record<string, boolean> = {},
+    remoteSkills?: any[],
+    remoteSkillsToggles?: Record<string, boolean>,
+    availableSkillCommands?: SlashCommand[],
 ): SlashCommand[] {
-	if (availableSkillCommands) {
-		return availableSkillCommands.map((command) => ({ ...command, section: "skill" }))
-	}
+    if (availableSkillCommands) {
+        return availableSkillCommands.map((command) => ({ ...command, section: "skill" }))
+    }
 
-	const skillNames = new Set<string>()
-	const commands: SlashCommand[] = []
+    const skillNames = new Set<string>()
+    const commands: SlashCommand[] = []
 
-	// Local skills
-	for (const [path, enabled] of Object.entries(localSkillsToggles)) {
-		if (enabled && path) {
-			const name = pathToSkillName(path)
-			skillNames.add(name)
-			commands.push({
-				name,
-				section: "skill",
-			} as SlashCommand)
-		}
-	}
+    // Local skills
+    for (const [path, enabled] of Object.entries(localSkillsToggles)) {
+        if (enabled && path) {
+            const name = pathToSkillName(path)
+            skillNames.add(name)
+            commands.push({
+                name,
+                section: "skill",
+            } as SlashCommand)
+        }
+    }
 
-	// Global skills (skip if local exists with same name)
-	for (const [path, enabled] of Object.entries(globalSkillsToggles)) {
-		if (enabled && path) {
-			const name = pathToSkillName(path)
-			if (skillNames.has(name)) continue
-			skillNames.add(name)
-			commands.push({
-				name,
-				section: "skill",
-			} as SlashCommand)
-		}
-	}
+    // Global skills (skip if local exists with same name)
+    for (const [path, enabled] of Object.entries(globalSkillsToggles)) {
+        if (enabled && path) {
+            const name = pathToSkillName(path)
+            if (skillNames.has(name)) continue
+            skillNames.add(name)
+            commands.push({
+                name,
+                section: "skill",
+            } as SlashCommand)
+        }
+    }
 
-	// Remote skills
-	if (remoteSkills && remoteSkillsToggles) {
-		for (const skill of remoteSkills) {
-			const enabled = skill.alwaysEnabled || remoteSkillsToggles[skill.name] !== false
-			if (enabled && !skillNames.has(skill.name)) {
-				skillNames.add(skill.name)
-				commands.push({
-					name: skill.name,
-					section: "skill",
-				} as SlashCommand)
-			}
-		}
-	}
+    // Remote skills
+    if (remoteSkills && remoteSkillsToggles) {
+        for (const skill of remoteSkills) {
+            const enabled = skill.alwaysEnabled || remoteSkillsToggles[skill.name] !== false
+            if (enabled && !skillNames.has(skill.name)) {
+                skillNames.add(skill.name)
+                commands.push({
+                    name: skill.name,
+                    section: "skill",
+                } as SlashCommand)
+            }
+        }
+    }
 
-	return commands
+    return commands
 }
 
 /**
@@ -164,218 +163,112 @@ export function getSkillCommands(
  * Format: mcp:<server-name>:<prompt-name>
  */
 export function getMcpPromptCommands(mcpServers: McpServer[] = []): SlashCommand[] {
-	const commands: SlashCommand[] = []
+    const commands: SlashCommand[] = []
 
-	for (const server of mcpServers) {
-		if (server.status !== "connected" || !server.prompts) {
-			continue
-		}
+    for (const server of mcpServers) {
+        if (server.status !== "connected" || !server.prompts) {
+            continue
+        }
 
-		for (const prompt of server.prompts) {
-			commands.push({
-				name: `${server.name}:${prompt.name}`,
-				description: prompt.description || prompt.title || `MCP prompt from ${server.name}`,
-				section: "mcp",
-			})
-		}
-	}
+        for (const prompt of server.prompts) {
+            commands.push({
+                name: `${server.name}:${prompt.name}`,
+                description: prompt.description || prompt.title || `MCP prompt from ${server.name}`,
+                section: "mcp",
+            })
+        }
+    }
 
-	return commands
+    return commands
 }
 
-// Regex for detecting slash commands in text
-// Must be at start of string OR preceded by whitespace to avoid matching URLs/paths
-// e.g., matches "/newtask" or "text /newtask" but not "http://example.com/newtask"
-// Note: Colons are allowed to support MCP prompt commands like /mcp:server:prompt
-export const slashCommandRegex = /(^|\s)(\/[a-zA-Z0-9_.:@-]+)(?=\s|$)/
-export const slashCommandRegexGlobal = new RegExp(slashCommandRegex.source, "g")
-// Regex for detecting a slash command at the end of text (for deletion)
-// Must be at start OR preceded by whitespace, captures the whole command including slash
-export const slashCommandDeleteRegex = /(^|\s)(\/[a-zA-Z0-9_.:@-]+)$/
-
-/**
- * Removes a slash command at the cursor position
- */
-export function removeSlashCommand(text: string, position: number): { newText: string; newPosition: number } {
-	const beforeCursor = text.slice(0, position)
-	const afterCursor = text.slice(position)
-
-	// Check if we're at the end of a slash command (anywhere in text, not just at start)
-	const matchEnd = beforeCursor.match(slashCommandDeleteRegex)
-
-	if (matchEnd) {
-		// matchEnd[1] is the whitespace or empty string before the slash
-		// matchEnd[2] is the slash command (e.g., "/newtask")
-		const slashCommand = matchEnd[2]
-		const newText = text.slice(0, position - slashCommand.length) + afterCursor.replace(" ", "") // removes the first space after the command
-		const newPosition = position - slashCommand.length
-		return { newText, newPosition }
-	}
-
-	// If we're not at the end of a slash command, just return the original text and position
-	return { newText: text, newPosition: position }
+/** Capability state the slash menu reads its entries and labels from. */
+export interface SlashCommandSources {
+    readonly localWorkflowToggles?: Record<string, boolean>
+    readonly globalWorkflowToggles?: Record<string, boolean>
+    readonly remoteWorkflowToggles?: Record<string, boolean>
+    readonly remoteWorkflows?: GlobalInstructionsFile[]
+    readonly mcpServers?: McpServer[]
+    readonly localSkillsToggles?: Record<string, boolean>
+    readonly globalSkillsToggles?: Record<string, boolean>
+    readonly remoteSkills?: GlobalInstructionsFile[]
+    readonly remoteSkillsToggles?: Record<string, boolean>
+    readonly workflowDescriptions?: Record<string, string>
+    readonly availableSkillCommands?: SlashCommand[]
 }
 
 /**
- * Determines whether the slash command menu should be displayed based on text input.
- * Only shows for the FIRST valid slash command position in the message - subsequent
- * slash commands won't trigger suggestions since only one is processed per message.
+ * The trigger a menu row writes for a command, sigil included: the command's
+ * name in its section's namespace, spelled by the shared namespace rules.
  */
-export function shouldShowSlashCommandsMenu(text: string, cursorPosition: number): boolean {
-	const beforeCursor = text.slice(0, cursorPosition)
+export function slashCommandTrigger(command: SlashCommand): string {
+    return command.section === undefined
+        ? `/${command.name}`
+        : namespacedCommandTrigger(SECTION_NAMESPACE[sectionOf(command)], command.name)
+}
 
-	// first check if there is a slash before the cursor
-	const slashIndex = beforeCursor.lastIndexOf("/")
-
-	if (slashIndex === -1) {
-		return false
-	}
-
-	// Check if slash is preceded by whitespace or is at the beginning
-	// This allows slash commands anywhere in the message, similar to @ mentions
-	const charBeforeSlash = slashIndex > 0 ? beforeCursor[slashIndex - 1] : null
-	if (charBeforeSlash !== null && !/\s/.test(charBeforeSlash)) {
-		return false
-	}
-
-	// potential partial or full command
-	const textAfterSlash = beforeCursor.slice(slashIndex + 1)
-
-	// don't show menu if there's whitespace after the slash but before the cursor
-	if (/\s/.test(textAfterSlash)) {
-		return false
-	}
-
-	// Only show suggestions for the FIRST slash command in the message.
-	// Check if there's already a valid slash command earlier in the text.
-	// A valid earlier slash command is one that: starts at beginning or after whitespace,
-	// and is followed by whitespace (meaning it's complete).
-	// Note: Colons are allowed to support MCP prompt commands like /mcp:server:prompt
-	const firstSlashCommandRegex = /(^|\s)\/[a-zA-Z0-9_.:@-]+\s/
-	const textBeforeCurrentSlash = text.slice(0, slashIndex)
-	if (firstSlashCommandRegex.test(textBeforeCurrentSlash)) {
-		return false
-	}
-
-	return true
+/** One slash menu row: what it shows, and the catalog entity a pick asks for. */
+export interface SlashMenuEntry {
+    /** Label, description and section shown in the menu. */
+    readonly command: SlashCommand
+    readonly section: SlashMenuSection
+    /** Catalog identity of the command. */
+    readonly commandId: string
+    /** Spelling the pick writes; unique within the menu, so it also keys the row. */
+    readonly trigger: string
 }
 
 /**
- * Gets filtered slash commands that match the current input
+ * Every command the slash menu may offer, grouped by section in menu order.
+ *
+ * Capability toggles say what the user enabled and supply labels, but the
+ * catalog decides what exists: an entry whose trigger the catalog does not
+ * resolve would be inserted and then sent as plain text, so it is never
+ * offered. Sources that list the same command twice yield one row.
  */
-export function getMatchingSlashCommands(
-	query: string,
-	localWorkflowToggles: Record<string, boolean> = {},
-	globalWorkflowToggles: Record<string, boolean> = {},
-	remoteWorkflowToggles?: Record<string, boolean>,
-	remoteWorkflows?: any[],
-	mcpServers: McpServer[] = [],
-	localSkillsToggles: Record<string, boolean> = {},
-	globalSkillsToggles: Record<string, boolean> = {},
-	remoteSkills?: any[],
-	remoteSkillsToggles?: Record<string, boolean>,
-	workflowDescriptions?: Record<string, string>,
-	availableSkillCommands?: SlashCommand[],
-): SlashCommand[] {
-	const workflowCommands = getWorkflowCommands(
-		localWorkflowToggles,
-		globalWorkflowToggles,
-		remoteWorkflowToggles,
-		remoteWorkflows,
-		workflowDescriptions,
-	)
-	const skillCommands = getSkillCommands(
-		localSkillsToggles,
-		globalSkillsToggles,
-		remoteSkills,
-		remoteSkillsToggles,
-		availableSkillCommands,
-	)
-	const mcpPromptCommands = getMcpPromptCommands(mcpServers)
-	const allCommands = [...DEFAULT_SLASH_COMMANDS, ...workflowCommands, ...skillCommands, ...mcpPromptCommands]
-
-	if (!query) {
-		return allCommands
-	}
-
-	// filter commands that start with the query (case insensitive)
-	return allCommands.filter((cmd) => cmd.name.toLowerCase().startsWith(query.toLowerCase()))
+export function getAvailableSlashCommands(sources: SlashCommandSources, catalog: InputSemanticCatalog): SlashMenuEntry[] {
+    const candidates = [
+        ...DEFAULT_SLASH_COMMANDS,
+        ...getWorkflowCommands(
+            sources.localWorkflowToggles ?? {},
+            sources.globalWorkflowToggles ?? {},
+            sources.remoteWorkflowToggles,
+            sources.remoteWorkflows,
+            sources.workflowDescriptions,
+        ),
+        ...getSkillCommands(
+            sources.localSkillsToggles,
+            sources.globalSkillsToggles,
+            sources.remoteSkills,
+            sources.remoteSkillsToggles,
+            sources.availableSkillCommands,
+        ),
+        ...getMcpPromptCommands(sources.mcpServers),
+    ]
+    const triggers = indexCommandTriggers(catalog)
+    const entries = new Map<string, SlashMenuEntry>()
+    for (const command of candidates) {
+        const trigger = slashCommandTrigger(command)
+        const descriptor = triggers.get(trigger)
+        if (!descriptor || entries.has(trigger)) continue
+        entries.set(trigger, { command, section: sectionOf(command), commandId: descriptor.id, trigger })
+    }
+    const rank = (entry: SlashMenuEntry) => SLASH_MENU_SECTIONS.indexOf(entry.section)
+    return [...entries.values()].sort((left, right) => rank(left) - rank(right))
 }
 
 /**
- * Insert a slash command at position or replace partial command
+ * Menu rows offered for a partial name, matched by case-insensitive prefix of
+ * the name or of the namespaced trigger, so `/li` and `/skills:li` both find
+ * `/skills:lint`.
+ *
+ * Matching is a search convenience only; the pick writes the row's exact
+ * trigger, so admission still sees the case-sensitive form.
  */
-export function insertSlashCommand(
-	text: string,
-	commandName: string,
-	partialCommandLength: number,
-	cursorPosition: number,
-): { newValue: string; commandIndex: number } {
-	// Find the slash nearest to cursor (before cursor position)
-	const beforeCursor = text.slice(0, cursorPosition)
-	const slashIndex = beforeCursor.lastIndexOf("/")
-
-	const beforeSlash = text.substring(0, slashIndex + 1)
-	const afterPartialCommand = text.substring(slashIndex + 1 + partialCommandLength)
-
-	// replace the partial command with the full command
-	const newValue =
-		beforeSlash + commandName + (afterPartialCommand.startsWith(" ") ? afterPartialCommand : ` ${afterPartialCommand}`)
-
-	return { newValue, commandIndex: slashIndex }
-}
-
-/**
- * Determines the validation state of a slash command
- * Returns partial if we have a partial match against valid commands, or full for full match
- */
-export function validateSlashCommand(
-	command: string,
-	localWorkflowToggles: Record<string, boolean> = {},
-	globalWorkflowToggles: Record<string, boolean> = {},
-	remoteWorkflowToggles?: Record<string, boolean>,
-	remoteWorkflows?: any[],
-	mcpServers: McpServer[] = [],
-	localSkillsToggles: Record<string, boolean> = {},
-	globalSkillsToggles: Record<string, boolean> = {},
-	remoteSkills?: any[],
-	remoteSkillsToggles?: Record<string, boolean>,
-	workflowDescriptions?: Record<string, string>,
-	availableSkillCommands?: SlashCommand[],
-): "full" | "partial" | null {
-	if (!command) {
-		return null
-	}
-
-	const workflowCommands = getWorkflowCommands(
-		localWorkflowToggles,
-		globalWorkflowToggles,
-		remoteWorkflowToggles,
-		remoteWorkflows,
-		workflowDescriptions,
-	)
-	const skillCommands = getSkillCommands(
-		localSkillsToggles,
-		globalSkillsToggles,
-		remoteSkills,
-		remoteSkillsToggles,
-		availableSkillCommands,
-	)
-	const mcpPromptCommands = getMcpPromptCommands(mcpServers)
-	const allCommands = [...DEFAULT_SLASH_COMMANDS, ...workflowCommands, ...skillCommands, ...mcpPromptCommands]
-
-	// case insensitive matching
-	const exactMatch = allCommands.some((cmd) => cmd.name.toLowerCase() === command.toLowerCase())
-
-	if (exactMatch) {
-		return "full"
-	}
-
-	const partialMatch = allCommands.some((cmd) => cmd.name.toLowerCase().startsWith(command.toLowerCase()))
-
-	if (partialMatch) {
-		return "partial"
-	}
-
-	return null // no match
+export function getMatchingSlashCommands(query: string, entries: readonly SlashMenuEntry[]): SlashMenuEntry[] {
+    if (!query) return [...entries]
+    const needle = query.toLowerCase()
+    return entries.filter(
+        (entry) => entry.command.name.toLowerCase().startsWith(needle) || entry.trigger.slice(1).toLowerCase().startsWith(needle),
+    )
 }

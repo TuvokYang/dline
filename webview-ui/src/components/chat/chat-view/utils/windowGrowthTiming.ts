@@ -33,12 +33,12 @@ export const SCROLL_SETTLE_MS = 180
 export const URGENT_MESSAGE_DISTANCE = 20
 
 export interface WindowGrowthSignals {
-	/** Milliseconds since the last scroll event, or null when never scrolled. */
-	msSinceLastScroll: number | null
-	/** Messages between the viewport and the start of the loaded window. */
-	messagesToLeadingEdge: number
-	/** Messages between the viewport and the end of the loaded window. */
-	messagesToTrailingEdge: number
+    /** Milliseconds since the last scroll event, or null when never scrolled. */
+    msSinceLastScroll: number | null
+    /** Messages between the viewport and the start of the loaded window. */
+    messagesToLeadingEdge: number
+    /** Messages between the viewport and the end of the loaded window. */
+    messagesToTrailingEdge: number
 }
 
 export type WindowGrowthDecision = "run" | "defer"
@@ -50,16 +50,16 @@ export type WindowGrowthDecision = "run" | "defer"
  * @returns `run` to fetch immediately, `defer` to wait for the scroll to stop.
  */
 export function decideWindowGrowth(signals: WindowGrowthSignals): WindowGrowthDecision {
-	const { msSinceLastScroll, messagesToLeadingEdge, messagesToTrailingEdge } = signals
+    const { msSinceLastScroll, messagesToLeadingEdge, messagesToTrailingEdge } = signals
 
-	// Never scrolled, or the scroll already settled: nothing is being watched
-	// closely enough for a size change to register as movement.
-	if (msSinceLastScroll === null || msSinceLastScroll >= SCROLL_SETTLE_MS) return "run"
+    // Never scrolled, or the scroll already settled: nothing is being watched
+    // closely enough for a size change to register as movement.
+    if (msSinceLastScroll === null || msSinceLastScroll >= SCROLL_SETTLE_MS) return "run"
 
-	// Running out of loaded messages outranks smoothness. A deferred fetch here
-	// would show the reader the end of the window instead of the conversation.
-	const nearestEdge = Math.min(messagesToLeadingEdge, messagesToTrailingEdge)
-	if (nearestEdge <= URGENT_MESSAGE_DISTANCE) return "run"
+    // Running out of loaded messages outranks smoothness. A deferred fetch here
+    // would show the reader the end of the window instead of the conversation.
+    const nearestEdge = Math.min(messagesToLeadingEdge, messagesToTrailingEdge)
+    if (nearestEdge <= URGENT_MESSAGE_DISTANCE) return "run"
 
-	return "defer"
+    return "defer"
 }

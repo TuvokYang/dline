@@ -15,16 +15,16 @@ import type { Controller } from ".."
  * @returns Empty
  */
 export async function forceReleaseTaskLock(controller: Controller, request: StringRequest): Promise<Empty> {
-	const taskId = request.value
-	if (!taskId) {
-		throw new Error("Missing task ID")
-	}
+    const taskId = request.value
+    if (!taskId) {
+        throw new Error("Missing task ID")
+    }
 
-	// Release only. The caller's unlock modal closes on this response.
-	await controller.lockService.forceReleaseTaskLock(taskId)
+    // Release only. The caller's unlock modal closes on this response.
+    await controller.lockService.forceReleaseTaskLock(taskId)
 
-	// Take the task over once the unlock itself has been answered.
-	controller.scheduleTakeoverAfterUnlock(taskId)
+    // Take the task over once the unlock itself has been answered.
+    controller.scheduleTakeoverAfterUnlock(taskId)
 
-	return Empty.create()
+    return Empty.create()
 }

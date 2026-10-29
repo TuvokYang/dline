@@ -54,8 +54,8 @@ With **Web Tools** on, some providers use their own hosted web search or fetch. 
 | `ask_followup_question` | Ask the user one question that needs an answer | Standard, Lite |
 | `qna_respond` | Answer the user's question | Standard, Lite |
 | `make_plan` | Submit a complete implementation or design plan | Standard, Lite |
-| `act_mode_respond` | Post a progress note in Act mode | Standard, Lite; Act mode only |
-| `status_update` | Post a progress announcement | Standard, Lite |
+| `working_respond` | Tell the user what the next tool call does and why, reply to a queued or mid-task message, or acknowledge a correction, then keep working. Never ends the turn and must be followed by a work tool. Same tool in Plan and Act mode; calls under the old name `act_mode_respond` still run it | Standard, Lite |
+| `phase_report` | Report a finished phase: what was completed, the verification result, and the next phase. Never ends the turn; with `requires_acknowledgment` it waits for the user to acknowledge or stop. Available in Plan and Act mode; calls under the old name `status_update` still run it | Standard, Lite |
 | `generate_report` | Submit a structured report for review | Standard, Lite |
 | `attempt_completion` | Submit the final result of the task | Standard, Lite |
 | `change_todo_list` | Ask the user to approve replacing the current to-do list | Standard only; **Focus Chain** is on |

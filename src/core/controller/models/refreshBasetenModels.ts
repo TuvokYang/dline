@@ -4,8 +4,8 @@ import { basetenModels } from "../../../shared/api"
 import { Controller } from ".."
 
 export function resolveBasetenSupportsTools(rawModel: any, staticModelInfo?: ModelInfo): boolean | undefined {
-	const supportedFeatures = rawModel?.supported_features
-	return Array.isArray(supportedFeatures) ? supportedFeatures.includes("tools") : staticModelInfo?.capabilities?.supportsTools
+    const supportedFeatures = rawModel?.supported_features
+    return Array.isArray(supportedFeatures) ? supportedFeatures.includes("tools") : staticModelInfo?.capabilities?.supportsTools
 }
 
 /**
@@ -17,6 +17,6 @@ export function resolveBasetenSupportsTools(rawModel: any, staticModelInfo?: Mod
  * @returns Record of model ID to ModelInfo (application types)
  */
 export async function refreshBasetenModels(_controller: Controller): Promise<Record<string, ModelInfo>> {
-	const models = await discoverProviderModels("baseten", undefined, { persist: true })
-	return Object.keys(models).length > 0 ? models : basetenModels
+    const models = await discoverProviderModels("baseten", undefined, { persist: true })
+    return Object.keys(models).length > 0 ? models : basetenModels
 }

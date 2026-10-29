@@ -1,19 +1,17 @@
-import { isPostHogConfigValid, PostHogClientConfig, posthogConfig } from "@/shared/services/config/posthog-config"
 import { ClineError } from "./ClineError"
 import { IErrorProvider } from "./providers/IErrorProvider"
-import { PostHogErrorProvider } from "./providers/PostHogErrorProvider"
 
 /**
- * Supported error provider types
+ * Supported error provider types. Remote error sinks are registered through
+ * TelemetryService; this factory only supplies the local compatibility provider.
  */
-export type ErrorProviderType = "posthog" | "no-op"
+export type ErrorProviderType = "no-op"
 
 /**
  * Configuration for error providers
  */
 export interface ErrorProviderConfig {
-	type: ErrorProviderType
-	config: PostHogClientConfig
+    type: ErrorProviderType
 }
 
 /**
@@ -21,43 +19,22 @@ export interface ErrorProviderConfig {
  * Allows easy switching between different error tracking providers
  */
 export class ErrorProviderFactory {
-	/**
-	 * Creates an error provider based on the provided configuration
-	 * @param config Configuration for the error provider
-	 * @returns IErrorProvider instance
-	 */
-	public static async createProvider(config: ErrorProviderConfig): Promise<IErrorProvider> {
-		switch (config.type) {
-			case "posthog": {
-				const { errorTrackingApiKey, host, uiHost, enableErrorAutocapture } = config.config
-				// A destination is as necessary as a key: with no configured
-				// host there is nowhere to report to.
-				if (!isPostHogConfigValid(config.config) || !errorTrackingApiKey || !host) {
-					return new NoOpErrorProvider()
-				}
-				return await new PostHogErrorProvider({
-					apiKey: errorTrackingApiKey,
-					errorTrackingApiKey,
-					host,
-					uiHost,
-					enableExceptionAutocapture: !!enableErrorAutocapture,
-				}).initialize()
-			}
-			default:
-				return new NoOpErrorProvider()
-		}
-	}
+    /**
+     * Creates an error provider based on the provided configuration
+     * @param config Configuration for the error provider
+     * @returns IErrorProvider instance
+     */
+    public static async createProvider(_config: ErrorProviderConfig): Promise<IErrorProvider> {
+        return new NoOpErrorProvider()
+    }
 
-	/**
-	 * Gets the default compatibility provider configuration.
-	 * Remote error sinks must be registered explicitly through TelemetryService.
-	 */
-	public static getDefaultConfig(): ErrorProviderConfig {
-		return {
-			type: "no-op",
-			config: posthogConfig,
-		}
-	}
+    /**
+     * Gets the default compatibility provider configuration.
+     * Remote error sinks must be registered explicitly through TelemetryService.
+     */
+    public static getDefaultConfig(): ErrorProviderConfig {
+        return { type: "no-op" }
+    }
 }
 
 /**
@@ -65,27 +42,27 @@ export class ErrorProviderFactory {
  * or for testing purposes
  */
 export class NoOpErrorProvider implements IErrorProvider {
-	async captureException(_error: Error | ClineError, _properties?: Record<string, unknown>): Promise<void> {}
+    async captureException(_error: Error | ClineError, _properties?: Record<string, unknown>): Promise<void> {}
 
-	public logException(_error: Error | ClineError, _properties?: Record<string, unknown>): void {}
+    public logException(_error: Error | ClineError, _properties?: Record<string, unknown>): void {}
 
-	public logMessage(
-		_message: string,
-		_level?: "error" | "warning" | "log" | "debug" | "info",
-		_properties?: Record<string, unknown>,
-	): void {}
+    public logMessage(
+        _message: string,
+        _level?: "error" | "warning" | "log" | "debug" | "info",
+        _properties?: Record<string, unknown>,
+    ): void {}
 
-	public isEnabled(): boolean {
-		return false
-	}
+    public isEnabled(): boolean {
+        return false
+    }
 
-	public getSettings() {
-		return {
-			enabled: false,
-			hostEnabled: false,
-			level: "off" as const,
-		}
-	}
+    public getSettings() {
+        return {
+            enabled: false,
+            hostEnabled: false,
+            level: "off" as const,
+        }
+    }
 
-	public async dispose(): Promise<void> {}
+    public async dispose(): Promise<void> {}
 }

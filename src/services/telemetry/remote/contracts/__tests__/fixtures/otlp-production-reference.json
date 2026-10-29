@@ -1,0 +1,1167 @@
+{
+    "fixture_version": 2,
+    "contract": "dline.otlp.production.v1",
+    "source": "telemetry-analysis-and-diagnostics-requirements.md §2.4, §3, §5.3, §6, §7.2",
+    "comparison": "Bodies compare as JSON values. Order of resource, record, span and data point attributes is insignificant; every other array keeps the order shown (scopes and instruments in catalog order).",
+    "x_dline_contract": "5",
+    "contract_header_rules": {
+        "retired": {
+            "values": [
+                "3",
+                "4"
+            ],
+            "status": 200,
+            "disposition": "ignored_version",
+            "d1_writes": 0
+        },
+        "missing_legacy_cohort": {
+            "condition": "User-Agent version below the configured first contract-5 client version",
+            "status": 200,
+            "disposition": "ignored_version",
+            "d1_writes": 0
+        },
+        "missing_other": {
+            "status": 422,
+            "code": "invalid_schema"
+        },
+        "illegal_or_unknown": {
+            "status": 422,
+            "code": "invalid_schema"
+        },
+        "enforcement": "missing-header rules stay disabled until installed-client behaviour is verified and approved"
+    },
+    "schema_url": "https://opentelemetry.io/schemas/1.37.0",
+    "scope_version": "1",
+    "routes": {
+        "logs": "/v1/logs",
+        "metrics": "/v1/metrics",
+        "traces": "/v1/traces"
+    },
+    "production_scopes": [
+        "error",
+        "runtime",
+        "metrics",
+        "traces"
+    ],
+    "limits": {
+        "max_body_bytes": 131072,
+        "max_log_records": 100,
+        "max_metric_points": 500,
+        "max_spans": 200,
+        "max_replays": 12,
+        "replay_horizon_ms": 86400000,
+        "server_idempotency_ms": 172800000
+    },
+    "admission": {
+        "logs_per_hour": 50,
+        "logs_per_day": 200,
+        "metrics_interval_ms": 60000,
+        "spans_per_hour": 300,
+        "spans_per_day": 1200
+    },
+    "resource": {
+        "allowed_keys": [
+            "service.name",
+            "service.version",
+            "os.type",
+            "host.arch",
+            "deployment.environment.name",
+            "dline.release_channel",
+            "dline.host_editor",
+            "dline.is_dev",
+            "dline.dropped_records"
+        ],
+        "os_type_map": {
+            "win32": "windows",
+            "darwin": "darwin",
+            "linux": "linux"
+        },
+        "host_arch_map": {
+            "x64": "amd64",
+            "arm64": "arm64",
+            "ia32": "x86"
+        },
+        "input": {
+            "client_version": "0.12.0",
+            "platform": "win32",
+            "arch": "x64",
+            "environment": "production",
+            "release_channel": "stable",
+            "host_editor": "vscode",
+            "is_dev": false,
+            "dropped_records": 0
+        },
+        "expected": {
+            "attributes": [
+                {
+                    "key": "service.name",
+                    "value": {
+                        "stringValue": "dline"
+                    }
+                },
+                {
+                    "key": "service.version",
+                    "value": {
+                        "stringValue": "0.12.0"
+                    }
+                },
+                {
+                    "key": "os.type",
+                    "value": {
+                        "stringValue": "windows"
+                    }
+                },
+                {
+                    "key": "host.arch",
+                    "value": {
+                        "stringValue": "amd64"
+                    }
+                },
+                {
+                    "key": "deployment.environment.name",
+                    "value": {
+                        "stringValue": "production"
+                    }
+                },
+                {
+                    "key": "dline.release_channel",
+                    "value": {
+                        "stringValue": "stable"
+                    }
+                },
+                {
+                    "key": "dline.host_editor",
+                    "value": {
+                        "stringValue": "vscode"
+                    }
+                },
+                {
+                    "key": "dline.is_dev",
+                    "value": {
+                        "boolValue": false
+                    }
+                },
+                {
+                    "key": "dline.dropped_records",
+                    "value": {
+                        "intValue": "0"
+                    }
+                }
+            ]
+        }
+    },
+    "logs": {
+        "scope": "dline.diagnostics",
+        "severity": {
+            "warn": {
+                "number": 13,
+                "text": "WARN"
+            },
+            "error": {
+                "number": 17,
+                "text": "ERROR"
+            },
+            "fatal": {
+                "number": 21,
+                "text": "FATAL"
+            }
+        },
+        "example": {
+            "exported_at_ms": 1792800120000,
+            "input": {
+                "event_name": "provider.request.failed",
+                "severity": "error",
+                "channel": "error",
+                "occurrences": 3,
+                "first_seen_ms": 1792800000000,
+                "last_seen_ms": 1792800060000,
+                "trace_id": "0af7651916cd43dd8448eb211c80319c",
+                "span_id": "b7ad6b7169203331",
+                "attributes": {
+                    "error.type": "rate_limit",
+                    "http.status": 429,
+                    "provider": "anthropic",
+                    "model": "catalog:claude-sonnet-4-5",
+                    "retry.attempt": 1,
+                    "dline.role": "task",
+                    "dline.attempt_observation_id": "99999999-9999-4999-8999-999999999999",
+                    "dline.logical_request_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+                }
+            },
+            "expected_body": {
+                "resourceLogs": [
+                    {
+                        "resource": {
+                            "attributes": [
+                                {
+                                    "key": "service.name",
+                                    "value": {
+                                        "stringValue": "dline"
+                                    }
+                                },
+                                {
+                                    "key": "service.version",
+                                    "value": {
+                                        "stringValue": "0.12.0"
+                                    }
+                                },
+                                {
+                                    "key": "os.type",
+                                    "value": {
+                                        "stringValue": "windows"
+                                    }
+                                },
+                                {
+                                    "key": "host.arch",
+                                    "value": {
+                                        "stringValue": "amd64"
+                                    }
+                                },
+                                {
+                                    "key": "deployment.environment.name",
+                                    "value": {
+                                        "stringValue": "production"
+                                    }
+                                },
+                                {
+                                    "key": "dline.release_channel",
+                                    "value": {
+                                        "stringValue": "stable"
+                                    }
+                                },
+                                {
+                                    "key": "dline.host_editor",
+                                    "value": {
+                                        "stringValue": "vscode"
+                                    }
+                                },
+                                {
+                                    "key": "dline.is_dev",
+                                    "value": {
+                                        "boolValue": false
+                                    }
+                                },
+                                {
+                                    "key": "dline.dropped_records",
+                                    "value": {
+                                        "intValue": "0"
+                                    }
+                                }
+                            ]
+                        },
+                        "scopeLogs": [
+                            {
+                                "scope": {
+                                    "name": "dline.diagnostics",
+                                    "version": "1"
+                                },
+                                "logRecords": [
+                                    {
+                                        "timeUnixNano": "1792800000000000000",
+                                        "observedTimeUnixNano": "1792800120000000000",
+                                        "severityNumber": 17,
+                                        "severityText": "ERROR",
+                                        "eventName": "provider.request.failed",
+                                        "body": {
+                                            "stringValue": "provider.request.failed"
+                                        },
+                                        "attributes": [
+                                            {
+                                                "key": "dline.channel",
+                                                "value": {
+                                                    "stringValue": "error"
+                                                }
+                                            },
+                                            {
+                                                "key": "dline.occurrences",
+                                                "value": {
+                                                    "intValue": "3"
+                                                }
+                                            },
+                                            {
+                                                "key": "dline.first_seen_ms",
+                                                "value": {
+                                                    "intValue": "1792800000000"
+                                                }
+                                            },
+                                            {
+                                                "key": "dline.last_seen_ms",
+                                                "value": {
+                                                    "intValue": "1792800060000"
+                                                }
+                                            },
+                                            {
+                                                "key": "error.type",
+                                                "value": {
+                                                    "stringValue": "rate_limit"
+                                                }
+                                            },
+                                            {
+                                                "key": "http.status",
+                                                "value": {
+                                                    "intValue": "429"
+                                                }
+                                            },
+                                            {
+                                                "key": "provider",
+                                                "value": {
+                                                    "stringValue": "anthropic"
+                                                }
+                                            },
+                                            {
+                                                "key": "model",
+                                                "value": {
+                                                    "stringValue": "catalog:claude-sonnet-4-5"
+                                                }
+                                            },
+                                            {
+                                                "key": "retry.attempt",
+                                                "value": {
+                                                    "intValue": "1"
+                                                }
+                                            },
+                                            {
+                                                "key": "dline.role",
+                                                "value": {
+                                                    "stringValue": "task"
+                                                }
+                                            },
+                                            {
+                                                "key": "dline.attempt_observation_id",
+                                                "value": {
+                                                    "stringValue": "99999999-9999-4999-8999-999999999999"
+                                                }
+                                            },
+                                            {
+                                                "key": "dline.logical_request_id",
+                                                "value": {
+                                                    "stringValue": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+                                                }
+                                            }
+                                        ],
+                                        "flags": 1,
+                                        "traceId": "0af7651916cd43dd8448eb211c80319c",
+                                        "spanId": "b7ad6b7169203331"
+                                    }
+                                ],
+                                "schemaUrl": "https://opentelemetry.io/schemas/1.37.0"
+                            }
+                        ],
+                        "schemaUrl": "https://opentelemetry.io/schemas/1.37.0"
+                    }
+                ]
+            }
+        }
+    },
+    "metrics": {
+        "catalog": [
+            {
+                "name": "dline.session.started",
+                "scope": "dline.runtime",
+                "type": "sum",
+                "monotonic": true,
+                "unit": "{session}",
+                "description": "Extension host sessions started.",
+                "attributes": []
+            },
+            {
+                "name": "dline.runtime.event_loop.delay",
+                "scope": "dline.runtime",
+                "type": "gauge",
+                "unit": "s",
+                "description": "Largest event loop delay observed in the export window.",
+                "attributes": []
+            },
+            {
+                "name": "dline.runtime.cpu.utilization",
+                "scope": "dline.runtime",
+                "type": "gauge",
+                "unit": "1",
+                "description": "Largest process CPU utilization observed in the export window.",
+                "attributes": []
+            },
+            {
+                "name": "dline.runtime.heap.growth",
+                "scope": "dline.runtime",
+                "type": "gauge",
+                "unit": "By",
+                "description": "Heap growth over the trailing minute at the end of the export window.",
+                "attributes": []
+            },
+            {
+                "name": "dline.telemetry.dropped.records",
+                "scope": "dline.runtime",
+                "type": "sum",
+                "monotonic": true,
+                "unit": "{record}",
+                "description": "Diagnostic records dropped by the client before delivery.",
+                "attributes": [
+                    "dline.signal"
+                ]
+            },
+            {
+                "name": "gen_ai.client.operation.duration",
+                "scope": "dline.gen_ai",
+                "type": "histogram",
+                "unit": "s",
+                "description": "Duration of one Provider send.",
+                "explicit_bounds": [
+                    0.01,
+                    0.02,
+                    0.04,
+                    0.08,
+                    0.16,
+                    0.32,
+                    0.64,
+                    1.28,
+                    2.56,
+                    5.12,
+                    10.24,
+                    20.48,
+                    40.96,
+                    81.92
+                ],
+                "attributes": [
+                    "gen_ai.operation.name",
+                    "gen_ai.provider.name",
+                    "gen_ai.request.model",
+                    "dline.role",
+                    "dline.outcome",
+                    "error.type"
+                ]
+            }
+        ],
+        "example": {
+            "window_start_ms": 1792800000000,
+            "window_end_ms": 1792800060000,
+            "input": {
+                "sessions_started": 1,
+                "event_loop_delay_ms": [
+                    12,
+                    42,
+                    7
+                ],
+                "operations": [
+                    {
+                        "provider": "anthropic",
+                        "model": "catalog:claude-sonnet-4-5",
+                        "role": "task",
+                        "outcome": "success",
+                        "duration_ms": 500
+                    },
+                    {
+                        "provider": "anthropic",
+                        "model": "catalog:claude-sonnet-4-5",
+                        "role": "task",
+                        "outcome": "success",
+                        "duration_ms": 3000
+                    }
+                ]
+            },
+            "expected_body": {
+                "resourceMetrics": [
+                    {
+                        "resource": {
+                            "attributes": [
+                                {
+                                    "key": "service.name",
+                                    "value": {
+                                        "stringValue": "dline"
+                                    }
+                                },
+                                {
+                                    "key": "service.version",
+                                    "value": {
+                                        "stringValue": "0.12.0"
+                                    }
+                                },
+                                {
+                                    "key": "os.type",
+                                    "value": {
+                                        "stringValue": "windows"
+                                    }
+                                },
+                                {
+                                    "key": "host.arch",
+                                    "value": {
+                                        "stringValue": "amd64"
+                                    }
+                                },
+                                {
+                                    "key": "deployment.environment.name",
+                                    "value": {
+                                        "stringValue": "production"
+                                    }
+                                },
+                                {
+                                    "key": "dline.release_channel",
+                                    "value": {
+                                        "stringValue": "stable"
+                                    }
+                                },
+                                {
+                                    "key": "dline.host_editor",
+                                    "value": {
+                                        "stringValue": "vscode"
+                                    }
+                                },
+                                {
+                                    "key": "dline.is_dev",
+                                    "value": {
+                                        "boolValue": false
+                                    }
+                                },
+                                {
+                                    "key": "dline.dropped_records",
+                                    "value": {
+                                        "intValue": "0"
+                                    }
+                                }
+                            ]
+                        },
+                        "scopeMetrics": [
+                            {
+                                "scope": {
+                                    "name": "dline.runtime",
+                                    "version": "1"
+                                },
+                                "metrics": [
+                                    {
+                                        "name": "dline.session.started",
+                                        "unit": "{session}",
+                                        "description": "Extension host sessions started.",
+                                        "sum": {
+                                            "aggregationTemporality": 1,
+                                            "isMonotonic": true,
+                                            "dataPoints": [
+                                                {
+                                                    "startTimeUnixNano": "1792800000000000000",
+                                                    "timeUnixNano": "1792800060000000000",
+                                                    "asInt": "1",
+                                                    "attributes": []
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "name": "dline.runtime.event_loop.delay",
+                                        "unit": "s",
+                                        "description": "Largest event loop delay observed in the export window.",
+                                        "gauge": {
+                                            "dataPoints": [
+                                                {
+                                                    "timeUnixNano": "1792800060000000000",
+                                                    "asDouble": 0.042,
+                                                    "attributes": []
+                                                }
+                                            ]
+                                        }
+                                    }
+                                ],
+                                "schemaUrl": "https://opentelemetry.io/schemas/1.37.0"
+                            },
+                            {
+                                "scope": {
+                                    "name": "dline.gen_ai",
+                                    "version": "1"
+                                },
+                                "metrics": [
+                                    {
+                                        "name": "gen_ai.client.operation.duration",
+                                        "unit": "s",
+                                        "description": "Duration of one Provider send.",
+                                        "histogram": {
+                                            "aggregationTemporality": 1,
+                                            "dataPoints": [
+                                                {
+                                                    "startTimeUnixNano": "1792800000000000000",
+                                                    "timeUnixNano": "1792800060000000000",
+                                                    "count": "2",
+                                                    "sum": 3.5,
+                                                    "min": 0.5,
+                                                    "max": 3,
+                                                    "bucketCounts": [
+                                                        "0",
+                                                        "0",
+                                                        "0",
+                                                        "0",
+                                                        "0",
+                                                        "0",
+                                                        "1",
+                                                        "0",
+                                                        "0",
+                                                        "1",
+                                                        "0",
+                                                        "0",
+                                                        "0",
+                                                        "0",
+                                                        "0"
+                                                    ],
+                                                    "explicitBounds": [
+                                                        0.01,
+                                                        0.02,
+                                                        0.04,
+                                                        0.08,
+                                                        0.16,
+                                                        0.32,
+                                                        0.64,
+                                                        1.28,
+                                                        2.56,
+                                                        5.12,
+                                                        10.24,
+                                                        20.48,
+                                                        40.96,
+                                                        81.92
+                                                    ],
+                                                    "attributes": [
+                                                        {
+                                                            "key": "gen_ai.operation.name",
+                                                            "value": {
+                                                                "stringValue": "chat"
+                                                            }
+                                                        },
+                                                        {
+                                                            "key": "gen_ai.provider.name",
+                                                            "value": {
+                                                                "stringValue": "anthropic"
+                                                            }
+                                                        },
+                                                        {
+                                                            "key": "gen_ai.request.model",
+                                                            "value": {
+                                                                "stringValue": "catalog:claude-sonnet-4-5"
+                                                            }
+                                                        },
+                                                        {
+                                                            "key": "dline.role",
+                                                            "value": {
+                                                                "stringValue": "task"
+                                                            }
+                                                        },
+                                                        {
+                                                            "key": "dline.outcome",
+                                                            "value": {
+                                                                "stringValue": "success"
+                                                            }
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    }
+                                ],
+                                "schemaUrl": "https://opentelemetry.io/schemas/1.37.0"
+                            }
+                        ],
+                        "schemaUrl": "https://opentelemetry.io/schemas/1.37.0"
+                    }
+                ]
+            }
+        }
+    },
+    "traces": {
+        "catalog": [
+            {
+                "name": "dline.task",
+                "scope": "dline.tasks",
+                "kind": 1,
+                "attributes": [
+                    "dline.role",
+                    "dline.outcome",
+                    "error.type"
+                ]
+            },
+            {
+                "name": "gen_ai.client.operation",
+                "scope": "dline.gen_ai",
+                "kind": 3,
+                "attributes": [
+                    "gen_ai.operation.name",
+                    "gen_ai.provider.name",
+                    "gen_ai.request.model",
+                    "dline.role",
+                    "dline.outcome",
+                    "error.type",
+                    "retry.attempt",
+                    "dline.attempt_observation_id",
+                    "dline.logical_request_id"
+                ]
+            },
+            {
+                "name": "dline.tool.execute",
+                "scope": "dline.tools",
+                "kind": 1,
+                "attributes": [
+                    "tool.name",
+                    "dline.outcome",
+                    "error.type",
+                    "failure.stage"
+                ]
+            }
+        ],
+        "status": {
+            "success": {
+                "code": 0
+            },
+            "cancelled": {
+                "code": 0
+            },
+            "failure": {
+                "code": 2
+            }
+        },
+        "example": {
+            "input": [
+                {
+                    "name": "dline.task",
+                    "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+                    "span_id": "00f067aa0ba902b7",
+                    "start_ms": 1792800000000,
+                    "end_ms": 1792800090000,
+                    "outcome": "success",
+                    "attributes": {
+                        "dline.role": "task"
+                    }
+                },
+                {
+                    "name": "gen_ai.client.operation",
+                    "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+                    "span_id": "53995c3f42cd8ad8",
+                    "parent_span_id": "00f067aa0ba902b7",
+                    "start_ms": 1792800001000,
+                    "end_ms": 1792800004000,
+                    "outcome": "failure",
+                    "attributes": {
+                        "gen_ai.provider.name": "anthropic",
+                        "gen_ai.request.model": "catalog:claude-sonnet-4-5",
+                        "dline.role": "task",
+                        "error.type": "rate_limit",
+                        "retry.attempt": 0,
+                        "dline.attempt_observation_id": "99999999-9999-4999-8999-999999999999",
+                        "dline.logical_request_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+                    }
+                },
+                {
+                    "name": "dline.tool.execute",
+                    "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+                    "span_id": "1b5e0a1c2d3e4f50",
+                    "parent_span_id": "00f067aa0ba902b7",
+                    "start_ms": 1792800005000,
+                    "end_ms": 1792800006000,
+                    "outcome": "success",
+                    "attributes": {
+                        "tool.name": "read_file"
+                    }
+                }
+            ],
+            "expected_body": {
+                "resourceSpans": [
+                    {
+                        "resource": {
+                            "attributes": [
+                                {
+                                    "key": "service.name",
+                                    "value": {
+                                        "stringValue": "dline"
+                                    }
+                                },
+                                {
+                                    "key": "service.version",
+                                    "value": {
+                                        "stringValue": "0.12.0"
+                                    }
+                                },
+                                {
+                                    "key": "os.type",
+                                    "value": {
+                                        "stringValue": "windows"
+                                    }
+                                },
+                                {
+                                    "key": "host.arch",
+                                    "value": {
+                                        "stringValue": "amd64"
+                                    }
+                                },
+                                {
+                                    "key": "deployment.environment.name",
+                                    "value": {
+                                        "stringValue": "production"
+                                    }
+                                },
+                                {
+                                    "key": "dline.release_channel",
+                                    "value": {
+                                        "stringValue": "stable"
+                                    }
+                                },
+                                {
+                                    "key": "dline.host_editor",
+                                    "value": {
+                                        "stringValue": "vscode"
+                                    }
+                                },
+                                {
+                                    "key": "dline.is_dev",
+                                    "value": {
+                                        "boolValue": false
+                                    }
+                                },
+                                {
+                                    "key": "dline.dropped_records",
+                                    "value": {
+                                        "intValue": "0"
+                                    }
+                                }
+                            ]
+                        },
+                        "scopeSpans": [
+                            {
+                                "scope": {
+                                    "name": "dline.tasks",
+                                    "version": "1"
+                                },
+                                "spans": [
+                                    {
+                                        "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+                                        "spanId": "00f067aa0ba902b7",
+                                        "name": "dline.task",
+                                        "kind": 1,
+                                        "startTimeUnixNano": "1792800000000000000",
+                                        "endTimeUnixNano": "1792800090000000000",
+                                        "attributes": [
+                                            {
+                                                "key": "dline.role",
+                                                "value": {
+                                                    "stringValue": "task"
+                                                }
+                                            },
+                                            {
+                                                "key": "dline.outcome",
+                                                "value": {
+                                                    "stringValue": "success"
+                                                }
+                                            }
+                                        ],
+                                        "status": {
+                                            "code": 0
+                                        }
+                                    }
+                                ],
+                                "schemaUrl": "https://opentelemetry.io/schemas/1.37.0"
+                            },
+                            {
+                                "scope": {
+                                    "name": "dline.gen_ai",
+                                    "version": "1"
+                                },
+                                "spans": [
+                                    {
+                                        "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+                                        "spanId": "53995c3f42cd8ad8",
+                                        "parentSpanId": "00f067aa0ba902b7",
+                                        "name": "gen_ai.client.operation",
+                                        "kind": 3,
+                                        "startTimeUnixNano": "1792800001000000000",
+                                        "endTimeUnixNano": "1792800004000000000",
+                                        "attributes": [
+                                            {
+                                                "key": "gen_ai.operation.name",
+                                                "value": {
+                                                    "stringValue": "chat"
+                                                }
+                                            },
+                                            {
+                                                "key": "gen_ai.provider.name",
+                                                "value": {
+                                                    "stringValue": "anthropic"
+                                                }
+                                            },
+                                            {
+                                                "key": "gen_ai.request.model",
+                                                "value": {
+                                                    "stringValue": "catalog:claude-sonnet-4-5"
+                                                }
+                                            },
+                                            {
+                                                "key": "dline.role",
+                                                "value": {
+                                                    "stringValue": "task"
+                                                }
+                                            },
+                                            {
+                                                "key": "dline.outcome",
+                                                "value": {
+                                                    "stringValue": "failure"
+                                                }
+                                            },
+                                            {
+                                                "key": "error.type",
+                                                "value": {
+                                                    "stringValue": "rate_limit"
+                                                }
+                                            },
+                                            {
+                                                "key": "retry.attempt",
+                                                "value": {
+                                                    "intValue": "0"
+                                                }
+                                            },
+                                            {
+                                                "key": "dline.attempt_observation_id",
+                                                "value": {
+                                                    "stringValue": "99999999-9999-4999-8999-999999999999"
+                                                }
+                                            },
+                                            {
+                                                "key": "dline.logical_request_id",
+                                                "value": {
+                                                    "stringValue": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+                                                }
+                                            }
+                                        ],
+                                        "status": {
+                                            "code": 2
+                                        }
+                                    }
+                                ],
+                                "schemaUrl": "https://opentelemetry.io/schemas/1.37.0"
+                            },
+                            {
+                                "scope": {
+                                    "name": "dline.tools",
+                                    "version": "1"
+                                },
+                                "spans": [
+                                    {
+                                        "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+                                        "spanId": "1b5e0a1c2d3e4f50",
+                                        "parentSpanId": "00f067aa0ba902b7",
+                                        "name": "dline.tool.execute",
+                                        "kind": 1,
+                                        "startTimeUnixNano": "1792800005000000000",
+                                        "endTimeUnixNano": "1792800006000000000",
+                                        "attributes": [
+                                            {
+                                                "key": "tool.name",
+                                                "value": {
+                                                    "stringValue": "read_file"
+                                                }
+                                            },
+                                            {
+                                                "key": "dline.outcome",
+                                                "value": {
+                                                    "stringValue": "success"
+                                                }
+                                            }
+                                        ],
+                                        "status": {
+                                            "code": 0
+                                        }
+                                    }
+                                ],
+                                "schemaUrl": "https://opentelemetry.io/schemas/1.37.0"
+                            }
+                        ],
+                        "schemaUrl": "https://opentelemetry.io/schemas/1.37.0"
+                    }
+                ]
+            }
+        }
+    },
+    "request_headers": {
+        "content-type": "application/json",
+        "user-agent": "Dline/0.12.0",
+        "x-dline-contract": "5",
+        "x-dline-request-id": "88888888-8888-4888-8888-888888888888",
+        "authorization": "Bearer <production device token, injected at send time and never persisted>"
+    },
+    "responses": [
+        {
+            "name": "accepted",
+            "status": 200,
+            "body": {
+                "ok": true,
+                "request_id": "88888888-8888-4888-8888-888888888888",
+                "disposition": "accepted",
+                "next_eligible_at": 1792800300000
+            },
+            "client_action": {
+                "kind": "acknowledge",
+                "next_eligible_at": 1792800300000
+            }
+        },
+        {
+            "name": "duplicate",
+            "status": 200,
+            "body": {
+                "ok": true,
+                "request_id": "88888888-8888-4888-8888-888888888888",
+                "disposition": "duplicate",
+                "next_eligible_at": 1792800300000
+            },
+            "client_action": {
+                "kind": "acknowledge",
+                "next_eligible_at": 1792800300000
+            }
+        },
+        {
+            "name": "ignored-version",
+            "status": 200,
+            "body": {
+                "ok": true,
+                "request_id": "88888888-8888-4888-8888-888888888888",
+                "disposition": "ignored_version",
+                "next_eligible_at": 1792800300000
+            },
+            "client_action": {
+                "kind": "acknowledge",
+                "next_eligible_at": 1792800300000
+            }
+        },
+        {
+            "name": "ack-without-gate",
+            "status": 200,
+            "body": {
+                "ok": true,
+                "request_id": "88888888-8888-4888-8888-888888888888",
+                "disposition": "accepted"
+            },
+            "client_action": {
+                "kind": "replay"
+            }
+        },
+        {
+            "name": "invalid-authorization",
+            "status": 401,
+            "body": {
+                "ok": false,
+                "error": {
+                    "code": "invalid_authorization"
+                }
+            },
+            "client_action": {
+                "kind": "refresh_and_replay"
+            }
+        },
+        {
+            "name": "scope-denied",
+            "status": 403,
+            "body": {
+                "ok": false,
+                "error": {
+                    "code": "scope_denied"
+                }
+            },
+            "client_action": {
+                "kind": "stop",
+                "code": "scope_denied"
+            }
+        },
+        {
+            "name": "edge-forbidden-without-envelope",
+            "status": 403,
+            "body": null,
+            "client_action": {
+                "kind": "stop",
+                "code": "edge_blocked"
+            }
+        },
+        {
+            "name": "request-id-conflict",
+            "status": 409,
+            "body": {
+                "ok": false,
+                "error": {
+                    "code": "request_id_conflict"
+                }
+            },
+            "client_action": {
+                "kind": "dead_letter"
+            }
+        },
+        {
+            "name": "payload-too-large",
+            "status": 413,
+            "body": {
+                "ok": false,
+                "error": {
+                    "code": "payload_too_large"
+                }
+            },
+            "client_action": {
+                "kind": "split"
+            }
+        },
+        {
+            "name": "unsupported-content-type",
+            "status": 415,
+            "body": {
+                "ok": false,
+                "error": {
+                    "code": "unsupported_content_type"
+                }
+            },
+            "client_action": {
+                "kind": "dead_letter"
+            }
+        },
+        {
+            "name": "invalid-otlp-body",
+            "status": 422,
+            "body": {
+                "ok": false,
+                "error": {
+                    "code": "invalid_otlp_body"
+                }
+            },
+            "client_action": {
+                "kind": "dead_letter"
+            }
+        },
+        {
+            "name": "paused-body-wins-over-retry-after",
+            "status": 429,
+            "retry_after": "10",
+            "body": {
+                "ok": false,
+                "error": {
+                    "code": "telemetry_paused"
+                },
+                "retry_after_ms": 60000
+            },
+            "client_action": {
+                "kind": "wait",
+                "retry_after_ms": 60000
+            }
+        },
+        {
+            "name": "quota-limited-until",
+            "status": 429,
+            "body": {
+                "ok": false,
+                "error": {
+                    "code": "quota_limited"
+                },
+                "next_eligible_at": 1792803600000
+            },
+            "client_action": {
+                "kind": "wait",
+                "next_eligible_at": 1792803600000
+            }
+        },
+        {
+            "name": "temporarily-unavailable",
+            "status": 503,
+            "body": {
+                "ok": false,
+                "error": {
+                    "code": "temporarily_unavailable"
+                }
+            },
+            "client_action": {
+                "kind": "replay"
+            }
+        }
+    ]
+}

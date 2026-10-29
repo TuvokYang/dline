@@ -5,32 +5,32 @@ import { LINKS } from "@/constants"
 import { McpServiceClient } from "@/services/grpc-client"
 
 type AddLocalServerFormProps = {
-	onServerAdded: () => void
+    onServerAdded: () => void
 }
 
 const AddLocalServerForm = ({}: AddLocalServerFormProps) => {
-	return (
-		<FormContainer>
-			<div className="text-(--vscode-foreground)">
-				Add a local MCP server by configuring it in <code>mcp_settings.json</code>. You'll need to specify the server
-				name, command, arguments, and any required environment variables in the JSON configuration. Learn more
-				<VSCodeLink href={LINKS.DOCUMENTATION.LOCAL_MCP_SERVER_DOCS} style={{ display: "inline" }}>
-					here.
-				</VSCodeLink>
-			</div>
+    return (
+        <FormContainer>
+            <div className="text-(--vscode-foreground)">
+                Add a local MCP server by configuring it in <code>mcp_settings.json</code>. You'll need to specify the server
+                name, command, arguments, and any required environment variables in the JSON configuration. Learn more
+                <VSCodeLink href={LINKS.DOCUMENTATION.LOCAL_MCP_SERVER_DOCS} style={{ display: "inline" }}>
+                    here.
+                </VSCodeLink>
+            </div>
 
-			<VSCodeButton
-				appearance="primary"
-				onClick={() => {
-					McpServiceClient.openMcpSettings(EmptyRequest.create({})).catch((error) => {
-						console.error("Error opening MCP settings:", error)
-					})
-				}}
-				style={{ width: "100%", marginBottom: "5px", marginTop: 8 }}>
-				Open mcp_settings.json
-			</VSCodeButton>
-		</FormContainer>
-	)
+            <VSCodeButton
+                appearance="primary"
+                onClick={() => {
+                    McpServiceClient.openMcpSettings(EmptyRequest.create({})).catch((error) => {
+                        console.error("Error opening MCP settings:", error)
+                    })
+                }}
+                style={{ width: "100%", marginBottom: "5px", marginTop: 8 }}>
+                Open mcp_settings.json
+            </VSCodeButton>
+        </FormContainer>
+    )
 }
 
 const FormContainer = styled.div`

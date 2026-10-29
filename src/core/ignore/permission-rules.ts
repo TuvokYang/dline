@@ -33,10 +33,10 @@ export const IGNORE_PERMISSIONS: readonly IgnorePermission[] = ["read", "write",
 export type PermissionRuleSet = Record<IgnorePermission, string>
 
 const ATTRIBUTE_LETTERS: Readonly<Record<string, IgnorePermission>> = {
-	r: "read",
-	w: "write",
-	x: "execute",
-	s: "scan",
+    r: "read",
+    w: "write",
+    x: "execute",
+    s: "scan",
 }
 
 /** A trailing token that removes one or more permissions, such as `-s` or `-sw`. */
@@ -44,7 +44,7 @@ const ATTRIBUTE_TOKEN = /^-[rwxs]+$/
 
 /** Create an empty rule set. */
 function emptyRuleSet(): Record<IgnorePermission, string[]> {
-	return { read: [], write: [], execute: [], scan: [] }
+    return { read: [], write: [], execute: [], scan: [] }
 }
 
 /**
@@ -56,11 +56,11 @@ function emptyRuleSet(): Record<IgnorePermission, string[]> {
  * merely happens to precede one.
  */
 function isEscaped(text: string, index: number): boolean {
-	let backslashes = 0
-	for (let cursor = index - 1; cursor >= 0 && text[cursor] === "\\"; cursor--) {
-		backslashes++
-	}
-	return backslashes % 2 === 1
+    let backslashes = 0
+    for (let cursor = index - 1; cursor >= 0 && text[cursor] === "\\"; cursor--) {
+        backslashes++
+    }
+    return backslashes % 2 === 1
 }
 
 /**
@@ -75,23 +75,23 @@ function isEscaped(text: string, index: number): boolean {
  * @returns The pattern and the permissions to remove; an empty set means all.
  */
 function splitLine(line: string): { pattern: string; removed: Set<IgnorePermission> } {
-	const removed = new Set<IgnorePermission>()
-	let pattern = line
+    const removed = new Set<IgnorePermission>()
+    let pattern = line
 
-	while (true) {
-		const match = /\s+(\S+)$/.exec(pattern)
-		const token = match?.[1]
-		if (!match || !token || !ATTRIBUTE_TOKEN.test(token)) break
-		if (isEscaped(pattern, match.index)) break
+    while (true) {
+        const match = /\s+(\S+)$/.exec(pattern)
+        const token = match?.[1]
+        if (!match || !token || !ATTRIBUTE_TOKEN.test(token)) break
+        if (isEscaped(pattern, match.index)) break
 
-		for (const letter of token.slice(1)) {
-			const permission = ATTRIBUTE_LETTERS[letter]
-			if (permission) removed.add(permission)
-		}
-		pattern = pattern.slice(0, match.index)
-	}
+        for (const letter of token.slice(1)) {
+            const permission = ATTRIBUTE_LETTERS[letter]
+            if (permission) removed.add(permission)
+        }
+        pattern = pattern.slice(0, match.index)
+    }
 
-	return { pattern: pattern.trimEnd(), removed }
+    return { pattern: pattern.trimEnd(), removed }
 }
 
 /**
@@ -105,28 +105,28 @@ function splitLine(line: string): { pattern: string; removed: Set<IgnorePermissi
  * @returns One gitignore-syntax rule text per permission; empty when unused.
  */
 export function parsePermissionRules(content: string | undefined): PermissionRuleSet {
-	const grouped = emptyRuleSet()
-	if (!content) return { read: "", write: "", execute: "", scan: "" }
+    const grouped = emptyRuleSet()
+    if (!content) return { read: "", write: "", execute: "", scan: "" }
 
-	for (const rawLine of content.split(/\r?\n/)) {
-		const line = rawLine.trim()
-		if (!line || line.startsWith("#")) continue
+    for (const rawLine of content.split(/\r?\n/)) {
+        const line = rawLine.trim()
+        if (!line || line.startsWith("#")) continue
 
-		const { pattern, removed } = splitLine(line)
-		if (!pattern) continue
+        const { pattern, removed } = splitLine(line)
+        if (!pattern) continue
 
-		const targets = removed.size > 0 ? removed : IGNORE_PERMISSIONS
-		for (const permission of targets) {
-			grouped[permission].push(pattern)
-		}
-	}
+        const targets = removed.size > 0 ? removed : IGNORE_PERMISSIONS
+        for (const permission of targets) {
+            grouped[permission].push(pattern)
+        }
+    }
 
-	return {
-		read: grouped.read.join("\n"),
-		write: grouped.write.join("\n"),
-		execute: grouped.execute.join("\n"),
-		scan: grouped.scan.join("\n"),
-	}
+    return {
+        read: grouped.read.join("\n"),
+        write: grouped.write.join("\n"),
+        execute: grouped.execute.join("\n"),
+        scan: grouped.scan.join("\n"),
+    }
 }
 
 /**
@@ -142,11 +142,11 @@ export function parsePermissionRules(content: string | undefined): PermissionRul
  * @param additional Rule text in gitignore syntax; ignored when empty.
  */
 export function withAdditionalRules(
-	rules: PermissionRuleSet,
-	permission: IgnorePermission,
-	additional: string | undefined,
+    rules: PermissionRuleSet,
+    permission: IgnorePermission,
+    additional: string | undefined,
 ): PermissionRuleSet {
-	if (!additional) return rules
-	const existing = rules[permission]
-	return { ...rules, [permission]: existing ? `${additional}\n${existing}` : additional }
+    if (!additional) return rules
+    const existing = rules[permission]
+    return { ...rules, [permission]: existing ? `${additional}\n${existing}` : additional }
 }

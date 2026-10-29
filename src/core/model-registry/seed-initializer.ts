@@ -26,67 +26,67 @@ import { markBuiltInModels, reconcileProviderModels } from "./provider-model-rec
  * @returns Number of newly created seed files
  */
 export async function ensureSeedProviders(providersDir: string): Promise<number> {
-	let created = 0
+    let created = 0
 
-	// Ensure the providers directory exists
-	await fsPromises.mkdir(providersDir, { recursive: true })
+    // Ensure the providers directory exists
+    await fsPromises.mkdir(providersDir, { recursive: true })
 
-	for (const [providerId, config] of Object.entries(allProviderModels)) {
-		const filePath = path.join(providersDir, getProviderConfigFileName(providerId))
-		const existingFilePath = [
-			filePath,
-			...getLegacyProviderConfigFileNames(providerId).map((name) => path.join(providersDir, name)),
-		].find((candidate) => fs.existsSync(candidate))
+    for (const [providerId, config] of Object.entries(allProviderModels)) {
+        const filePath = path.join(providersDir, getProviderConfigFileName(providerId))
+        const existingFilePath = [
+            filePath,
+            ...getLegacyProviderConfigFileNames(providerId).map((name) => path.join(providersDir, name)),
+        ].find((candidate) => fs.existsSync(candidate))
 
-		if (isDeferredProvider(providerId)) {
-			if (!existingFilePath) {
-				try {
-					await fsPromises.writeFile(filePath, serializeConfig(markBuiltInModels(config)), "utf8")
-					created++
-					Logger.log(`[seed-initializer] Created deferred provider config: ${path.basename(filePath)}`)
-				} catch (err) {
-					Logger.warn(`[seed-initializer] Failed to create deferred provider config for ${providerId}:`, err)
-				}
-			}
-			continue
-		}
+        if (isDeferredProvider(providerId)) {
+            if (!existingFilePath) {
+                try {
+                    await fsPromises.writeFile(filePath, serializeConfig(markBuiltInModels(config)), "utf8")
+                    created++
+                    Logger.log(`[seed-initializer] Created deferred provider config: ${path.basename(filePath)}`)
+                } catch (err) {
+                    Logger.warn(`[seed-initializer] Failed to create deferred provider config for ${providerId}:`, err)
+                }
+            }
+            continue
+        }
 
-		// Refresh built-ins while preserving explicitly marked and unknown user models.
-		if (existingFilePath) {
-			try {
-				const stored = JSON.parse(await fsPromises.readFile(existingFilePath, "utf8")) as ProviderModelsConfig
-				const reconciled = reconcileProviderModels(config, stored, "refresh-built-ins")
-				if (existingFilePath !== filePath || serializeConfig(reconciled) !== serializeConfig(stored)) {
-					await fsPromises.writeFile(filePath, serializeConfig(reconciled), "utf8")
-					Logger.log(`[seed-initializer] Refreshed built-in models: ${path.basename(filePath)}`)
-				}
-			} catch (err) {
-				Logger.warn(`[seed-initializer] Failed to refresh seed config for ${providerId}:`, err)
-			}
-			continue
-		}
+        // Refresh built-ins while preserving explicitly marked and unknown user models.
+        if (existingFilePath) {
+            try {
+                const stored = JSON.parse(await fsPromises.readFile(existingFilePath, "utf8")) as ProviderModelsConfig
+                const reconciled = reconcileProviderModels(config, stored, "refresh-built-ins")
+                if (existingFilePath !== filePath || serializeConfig(reconciled) !== serializeConfig(stored)) {
+                    await fsPromises.writeFile(filePath, serializeConfig(reconciled), "utf8")
+                    Logger.log(`[seed-initializer] Refreshed built-in models: ${path.basename(filePath)}`)
+                }
+            } catch (err) {
+                Logger.warn(`[seed-initializer] Failed to refresh seed config for ${providerId}:`, err)
+            }
+            continue
+        }
 
-		try {
-			// Convert the config to a clean JSON-serializable object
-			const jsonContent = serializeConfig(markBuiltInModels(config))
-			await fsPromises.writeFile(filePath, jsonContent, "utf8")
-			created++
-			Logger.log(`[seed-initializer] Created seed config: ${providerId}.json (${Object.keys(config.models).length} models)`)
-		} catch (err) {
-			Logger.warn(`[seed-initializer] Failed to create seed config for ${providerId}:`, err)
-		}
-	}
+        try {
+            // Convert the config to a clean JSON-serializable object
+            const jsonContent = serializeConfig(markBuiltInModels(config))
+            await fsPromises.writeFile(filePath, jsonContent, "utf8")
+            created++
+            Logger.log(`[seed-initializer] Created seed config: ${providerId}.json (${Object.keys(config.models).length} models)`)
+        } catch (err) {
+            Logger.warn(`[seed-initializer] Failed to create seed config for ${providerId}:`, err)
+        }
+    }
 
-	if (created > 0) {
-		Logger.log(`[seed-initializer] Created ${created} seed provider config(s) in ${providersDir}`)
-	}
+    if (created > 0) {
+        Logger.log(`[seed-initializer] Created ${created} seed provider config(s) in ${providersDir}`)
+    }
 
-	return created
+    return created
 }
 
 /**
  * Serialize a ProviderModelsConfig to formatted JSON string.
  */
 function serializeConfig(config: ProviderModelsConfig): string {
-	return `${JSON.stringify(config, null, "\t")}\n`
+    return `${JSON.stringify(config, null, "\t")}\n`
 }

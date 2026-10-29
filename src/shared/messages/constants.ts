@@ -14,8 +14,8 @@ export const USER_CONTENT_TAGS = ["<task>", "<feedback>", "<answer>", "<user_mes
  * These indicate content added by the system rather than the user.
  */
 export const SYSTEM_CONTENT_MARKERS = [
-	"[TASK RESUMPTION]",
-	"<hook_context",
-	"[Response interrupted",
-	"Task was interrupted",
+    "[TASK RESUMPTION]",
+    "<hook_context",
+    "[Response interrupted",
+    "Task was interrupted",
 ] as const

@@ -9,12 +9,12 @@ import { Controller } from ".."
  * @returns Empty response
  */
 export async function updateAutoApprovalSettings(controller: Controller, request: AutoApprovalSettingsRequest): Promise<Empty> {
-	await controller.stateManager.updateAutoApprovalSettings({
-		version: request.version,
-		enableNotifications: request.enableNotifications,
-		actions: request.actions
-			? Object.fromEntries(Object.entries(request.actions).filter(([_, value]) => value !== undefined))
-			: undefined,
-	})
-	return Empty.create()
+    await controller.stateManager.updateAutoApprovalSettings({
+        version: request.version,
+        enableNotifications: request.enableNotifications,
+        actions: request.actions
+            ? Object.fromEntries(Object.entries(request.actions).filter(([_, value]) => value !== undefined))
+            : undefined,
+    })
+    return Empty.create()
 }

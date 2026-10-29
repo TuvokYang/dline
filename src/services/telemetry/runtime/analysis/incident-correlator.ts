@@ -21,13 +21,13 @@ const DEFAULT_HISTORY_SIZE = 50
 const DEFAULT_CORRELATION_WINDOW_MS = 30_000
 
 export interface IncidentCorrelatorOptions {
-	readonly historySize?: number
-	readonly correlationWindowMs?: number
+    readonly historySize?: number
+    readonly correlationWindowMs?: number
 }
 
 function stringAttr(event: RuntimeTelemetryEvent, key: string): string | undefined {
-	const value = event.attributes[key]
-	return typeof value === "string" ? value : undefined
+    const value = event.attributes[key]
+    return typeof value === "string" ? value : undefined
 }
 
 /**
@@ -37,79 +37,79 @@ function stringAttr(event: RuntimeTelemetryEvent, key: string): string | undefin
  * would be explained using another task's events.
  */
 function scopeKeyOf(event: RuntimeTelemetryEvent): string {
-	return event.context.taskId ?? event.context.controllerId ?? event.context.sessionId
+    return event.context.taskId ?? event.context.controllerId ?? event.context.sessionId
 }
 
 function operationKeyOf(event: RuntimeTelemetryEvent): string {
-	const component = stringAttr(event, ANALYSIS_ATTRIBUTES.component) ?? "unknown"
-	const operation = stringAttr(event, ANALYSIS_ATTRIBUTES.operation) ?? "unknown"
-	return `${component}::${operation}`
+    const component = stringAttr(event, ANALYSIS_ATTRIBUTES.component) ?? "unknown"
+    const operation = stringAttr(event, ANALYSIS_ATTRIBUTES.operation) ?? "unknown"
+    return `${component}::${operation}`
 }
 
 export class IncidentCorrelator {
-	private readonly historySize: number
-	private readonly correlationWindowMs: number
-	private readonly history = new Map<string, RuntimeTelemetryEvent[]>()
-	private readonly lastSuccess = new Map<string, RuntimeTelemetryEvent>()
-	private incidentCounter = 0
+    private readonly historySize: number
+    private readonly correlationWindowMs: number
+    private readonly history = new Map<string, RuntimeTelemetryEvent[]>()
+    private readonly lastSuccess = new Map<string, RuntimeTelemetryEvent>()
+    private incidentCounter = 0
 
-	constructor(options: IncidentCorrelatorOptions = {}) {
-		this.historySize = options.historySize ?? DEFAULT_HISTORY_SIZE
-		this.correlationWindowMs = options.correlationWindowMs ?? DEFAULT_CORRELATION_WINDOW_MS
-	}
+    constructor(options: IncidentCorrelatorOptions = {}) {
+        this.historySize = options.historySize ?? DEFAULT_HISTORY_SIZE
+        this.correlationWindowMs = options.correlationWindowMs ?? DEFAULT_CORRELATION_WINDOW_MS
+    }
 
-	/** Records an event that is not itself a failure. */
-	observe(event: RuntimeTelemetryEvent): void {
-		this.remember(event)
-		if (stringAttr(event, ANALYSIS_ATTRIBUTES.outcome) === OUTCOME.success) {
-			this.lastSuccess.set(`${scopeKeyOf(event)}::${operationKeyOf(event)}`, event)
-		}
-	}
+    /** Records an event that is not itself a failure. */
+    observe(event: RuntimeTelemetryEvent): void {
+        this.remember(event)
+        if (stringAttr(event, ANALYSIS_ATTRIBUTES.outcome) === OUTCOME.success) {
+            this.lastSuccess.set(`${scopeKeyOf(event)}::${operationKeyOf(event)}`, event)
+        }
+    }
 
-	/**
-	 * Builds an incident around a failing event.
-	 *
-	 * The failing event is recorded too, so a later failure can cite it as a
-	 * preceding cause — repeated failures of the same dependency are themselves
-	 * evidence.
-	 */
-	correlate(failingEvent: RuntimeTelemetryEvent): Incident {
-		const scopeKey = scopeKeyOf(failingEvent)
-		const preceding = this.precedingWithinWindow(scopeKey, failingEvent)
-		const lastSuccess = this.lastSuccess.get(`${scopeKey}::${operationKeyOf(failingEvent)}`)
+    /**
+     * Builds an incident around a failing event.
+     *
+     * The failing event is recorded too, so a later failure can cite it as a
+     * preceding cause — repeated failures of the same dependency are themselves
+     * evidence.
+     */
+    correlate(failingEvent: RuntimeTelemetryEvent): Incident {
+        const scopeKey = scopeKeyOf(failingEvent)
+        const preceding = this.precedingWithinWindow(scopeKey, failingEvent)
+        const lastSuccess = this.lastSuccess.get(`${scopeKey}::${operationKeyOf(failingEvent)}`)
 
-		this.remember(failingEvent)
-		this.incidentCounter += 1
+        this.remember(failingEvent)
+        this.incidentCounter += 1
 
-		return {
-			incidentId: `rc-${this.incidentCounter}`,
-			failingEvent,
-			precedingEvents: preceding,
-			lastSuccess,
-		}
-	}
+        return {
+            incidentId: `rc-${this.incidentCounter}`,
+            failingEvent,
+            precedingEvents: preceding,
+            lastSuccess,
+        }
+    }
 
-	/** Drops retained history, for example when a session ends. */
-	reset(): void {
-		this.history.clear()
-		this.lastSuccess.clear()
-	}
+    /** Drops retained history, for example when a session ends. */
+    reset(): void {
+        this.history.clear()
+        this.lastSuccess.clear()
+    }
 
-	private remember(event: RuntimeTelemetryEvent): void {
-		const key = scopeKeyOf(event)
-		const bucket = this.history.get(key) ?? []
-		bucket.push(event)
-		if (bucket.length > this.historySize) {
-			bucket.shift()
-		}
-		this.history.set(key, bucket)
-	}
+    private remember(event: RuntimeTelemetryEvent): void {
+        const key = scopeKeyOf(event)
+        const bucket = this.history.get(key) ?? []
+        bucket.push(event)
+        if (bucket.length > this.historySize) {
+            bucket.shift()
+        }
+        this.history.set(key, bucket)
+    }
 
-	private precedingWithinWindow(scopeKey: string, failingEvent: RuntimeTelemetryEvent): RuntimeTelemetryEvent[] {
-		const bucket = this.history.get(scopeKey) ?? []
-		const cutoff = failingEvent.monotonicMs - this.correlationWindowMs
-		return bucket
-			.filter((event) => event.sequence < failingEvent.sequence && event.monotonicMs >= cutoff)
-			.sort((a, b) => a.sequence - b.sequence)
-	}
+    private precedingWithinWindow(scopeKey: string, failingEvent: RuntimeTelemetryEvent): RuntimeTelemetryEvent[] {
+        const bucket = this.history.get(scopeKey) ?? []
+        const cutoff = failingEvent.monotonicMs - this.correlationWindowMs
+        return bucket
+            .filter((event) => event.sequence < failingEvent.sequence && event.monotonicMs >= cutoff)
+            .sort((a, b) => a.sequence - b.sequence)
+    }
 }

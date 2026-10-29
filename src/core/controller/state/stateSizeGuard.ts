@@ -33,9 +33,9 @@ export const STATE_SIZE_DEGRADE_THRESHOLD_BYTES = 8 * 1024 * 1024
 const DEGRADABLE_FIELDS = ["focusChainHistory", "taskHistory"] as const
 
 export interface StateDegradation {
-	state: ExtensionState
-	/** Fields that were dropped, empty when the payload was left intact. */
-	droppedFields: string[]
+    state: ExtensionState
+    /** Fields that were dropped, empty when the payload was left intact. */
+    droppedFields: string[]
 }
 
 /**
@@ -47,32 +47,32 @@ export interface StateDegradation {
  * later pushes, and degrading it in place would make the loss permanent.
  */
 export function degradeOversizedState(
-	state: ExtensionState,
-	serializedBytes: number,
-	thresholdBytes: number = STATE_SIZE_DEGRADE_THRESHOLD_BYTES,
+    state: ExtensionState,
+    serializedBytes: number,
+    thresholdBytes: number = STATE_SIZE_DEGRADE_THRESHOLD_BYTES,
 ): StateDegradation {
-	if (serializedBytes < thresholdBytes) {
-		return { state, droppedFields: [] }
-	}
+    if (serializedBytes < thresholdBytes) {
+        return { state, droppedFields: [] }
+    }
 
-	const degraded: ExtensionState = { ...state, stateDegraded: true }
-	const droppedFields: string[] = []
+    const degraded: ExtensionState = { ...state, stateDegraded: true }
+    const droppedFields: string[] = []
 
-	for (const field of DEGRADABLE_FIELDS) {
-		if (degraded[field] === undefined) {
-			continue
-		}
-		// Emptied rather than deleted: an absent key and an empty one read the
-		// same to the webview, and `stateDegraded` is what tells them apart.
-		degraded[field] = (Array.isArray(state[field]) ? [] : null) as never
-		droppedFields.push(field)
+    for (const field of DEGRADABLE_FIELDS) {
+        if (degraded[field] === undefined) {
+            continue
+        }
+        // Emptied rather than deleted: an absent key and an empty one read the
+        // same to the webview, and `stateDegraded` is what tells them apart.
+        degraded[field] = (Array.isArray(state[field]) ? [] : null) as never
+        droppedFields.push(field)
 
-		if (measureBytes(degraded) < thresholdBytes) {
-			break
-		}
-	}
+        if (measureBytes(degraded) < thresholdBytes) {
+            break
+        }
+    }
 
-	return { state: degraded, droppedFields }
+    return { state: degraded, droppedFields }
 }
 
 /**
@@ -81,9 +81,9 @@ export function degradeOversizedState(
  * instead of concluding that an unmeasurable payload is safe to send.
  */
 function measureBytes(state: ExtensionState): number {
-	try {
-		return Buffer.byteLength(JSON.stringify(state), "utf8")
-	} catch {
-		return Number.POSITIVE_INFINITY
-	}
+    try {
+        return Buffer.byteLength(JSON.stringify(state), "utf8")
+    } catch {
+        return Number.POSITIVE_INFINITY
+    }
 }

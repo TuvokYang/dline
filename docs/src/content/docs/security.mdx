@@ -1,0 +1,49 @@
+---
+title: Report a Security Vulnerability
+description: Use GitHub Private Vulnerability Reporting to send Dline maintainers a non-public security report.
+---
+
+import { Aside, Steps } from "@astrojs/starlight/components"
+
+The repository's [Security Policy](https://github.com/TuvokYang/dline/security/policy) is the authority for reporting Dline vulnerabilities. Dline accepts suspected vulnerabilities through GitHub Private Vulnerability Reporting; the report is not opened as a public Issue.
+
+<Aside type="danger" title="Keep vulnerability details private">
+Do not open a public Issue, Discussion, or pull request for a suspected vulnerability. Dline does not currently publish a security-reporting email address.
+</Aside>
+
+## Send a private report
+
+<Steps>
+
+1. Sign in to GitHub and open [Report a vulnerability](https://github.com/TuvokYang/dline/security/advisories/new).
+2. Describe the affected Dline version, operating system, host editor, configuration, and prerequisites.
+3. Explain the impact and provide the smallest reproducible steps or proof of concept that demonstrates it.
+4. Review the report for secrets and unrelated private data, then submit it through GitHub.
+
+</Steps>
+
+## What to include
+
+A useful report includes:
+
+- the affected version or commit;
+- the vulnerable component and expected security boundary;
+- the observed impact and who can trigger it;
+- reproducible steps or a minimal proof of concept;
+- whether the issue requires credentials, user approval, a malicious workspace, or another precondition;
+- sanitized logs, screenshots, or diagnostics when they materially help the investigation;
+- any known workaround or suggested mitigation.
+
+## Protect sensitive material
+
+Do not include API keys, access tokens, private source code, prompts, customer data, or unrelated personal information. If sensitive material is essential to reproduce the issue, describe what evidence exists and wait for the maintainers to agree on a suitable transfer method.
+
+## Response and disclosure
+
+The maintainers will assess the report, affected versions, severity, and remediation options through the private GitHub report. Keep the details private until the maintainers have coordinated any fix or disclosure. A submitted report does not promise a specific response or release timeline.
+
+## Privacy and non-security requests
+
+- The vulnerability form is only for security reports. Dline does not currently publish a dedicated private channel for privacy requests. Do not place personal data in the vulnerability form or a public Issue; the [Dline Privacy Policy](/privacy/) documents the controls available now and this limitation.
+- For non-sensitive bugs and product questions, use the public [Dline Issues](https://github.com/TuvokYang/dline/issues).
+- Dline does not currently provide an email fallback. If the private vulnerability form is temporarily unavailable, do not disclose vulnerability details through a public channel.

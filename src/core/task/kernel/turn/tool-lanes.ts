@@ -1,4 +1,4 @@
-import { ClineDefaultTool } from "@shared/tools"
+import { KernelToolId } from "./tool-identities"
 
 /**
  * Exclusivity lanes for concurrent tool execution.
@@ -19,9 +19,6 @@ export const LANE_DIFF_EDITOR = "diff-editor"
 
 /** The shared browser session, which unrelated tools also close and replace. */
 export const LANE_BROWSER_SESSION = "browser-session"
-
-/** The checkpoint committer, which writes one shadow git repository. */
-export const LANE_CHECKPOINT = "checkpoint"
 
 /** The foreground terminal, which is one visible device with ordered output. */
 export const LANE_FOREGROUND_TERMINAL = "foreground-terminal"
@@ -62,12 +59,12 @@ export const LANE_FILE_READ_ACCOUNTING = "file-read-accounting"
 
 /** One MCP server connection, which serialises its own request stream. */
 export function mcpServerLane(serverName: string): ToolLane {
-	return `mcp-server:${serverName}`
+    return `mcp-server:${serverName}`
 }
 
 /** One canonical write path, so two edits of the same file cannot interleave. */
 export function writePathLane(canonicalPath: string): ToolLane {
-	return `write-path:${canonicalPath}`
+    return `write-path:${canonicalPath}`
 }
 
 /**
@@ -77,33 +74,33 @@ export function writePathLane(canonicalPath: string): ToolLane {
  * stays pure and does not resolve paths or inspect the workspace itself.
  */
 export interface ToolLaneContext {
-	/** Resolved MCP server name, for tools that address one server. */
-	mcpServerName?: string
-	/**
-	 * Canonical absolute write paths this execution will modify.
-	 *
-	 * A list rather than a single path because apply_patch, replace_text and
-	 * rename each modify several files in one invocation. A single path would
-	 * leave the second and later files unprotected, and the shared diff-editor
-	 * lane would be hiding that rather than solving it.
-	 */
-	canonicalWritePaths?: readonly string[]
-	/** Fall back to one global write lane when canonical targets cannot be confirmed. */
-	conservativeWriteFanout?: boolean
+    /** Resolved MCP server name, for tools that address one server. */
+    mcpServerName?: string
+    /**
+     * Canonical absolute write paths this execution will modify.
+     *
+     * A list rather than a single path because apply_patch, replace_text and
+     * rename each modify several files in one invocation. A single path would
+     * leave the second and later files unprotected, and the shared diff-editor
+     * lane would be hiding that rather than solving it.
+     */
+    canonicalWritePaths?: readonly string[]
+    /** Fall back to one global write lane when canonical targets cannot be confirmed. */
+    conservativeWriteFanout?: boolean
 }
 
 /** Minimal structural input accepted by the pure lane resolver. */
 export interface ToolLaneBlock {
-	name: string
-	params?: Record<string, unknown>
+    name: string
+    params?: Record<string, unknown>
 }
 
 /** Derive lane context from one finalized tool block without touching its target. */
 export function resolveLaneContext(tool: ToolLaneBlock): ToolLaneContext {
-	const serverName = tool.params?.server_name
-	return {
-		mcpServerName: typeof serverName === "string" ? serverName : undefined,
-	}
+    const serverName = tool.params?.server_name
+    return {
+        mcpServerName: typeof serverName === "string" ? serverName : undefined,
+    }
 }
 
 /**
@@ -113,59 +110,61 @@ export function resolveLaneContext(tool: ToolLaneBlock): ToolLaneContext {
  * parameterised lane through its context. Read-only tools are deliberately
  * absent — they are the tools that may overlap freely.
  */
-const STATIC_LANES: Partial<Record<ClineDefaultTool, readonly ToolLane[]>> = {
-	// Every file-editing tool drives the one shared DiffViewProvider. Its
-	// open() overwrites editType, originalContent and isEditing, so two edits
-	// corrupt each other even when their paths differ.
-	[ClineDefaultTool.FILE_NEW]: [LANE_DIFF_EDITOR],
-	[ClineDefaultTool.FILE_EDIT]: [LANE_DIFF_EDITOR],
-	[ClineDefaultTool.NEW_RULE]: [LANE_DIFF_EDITOR],
-	[ClineDefaultTool.APPLY_PATCH]: [LANE_DIFF_EDITOR],
-	[ClineDefaultTool.REPLACE_TEXT]: [LANE_DIFF_EDITOR, LANE_DYNAMIC_WRITE_FANOUT],
-	[ClineDefaultTool.RENAME]: [LANE_DIFF_EDITOR, LANE_DYNAMIC_WRITE_FANOUT],
+const STATIC_LANES: Partial<Record<KernelToolId, readonly ToolLane[]>> = {
+    // Every file-editing tool drives the one shared DiffViewProvider. Its
+    // open() overwrites editType, originalContent and isEditing, so two edits
+    // corrupt each other even when their paths differ.
+    [KernelToolId.FILE_NEW]: [LANE_DIFF_EDITOR],
+    [KernelToolId.FILE_EDIT]: [LANE_DIFF_EDITOR],
+    [KernelToolId.NEW_RULE]: [LANE_DIFF_EDITOR],
+    [KernelToolId.APPLY_PATCH]: [LANE_DIFF_EDITOR],
+    [KernelToolId.REPLACE_TEXT]: [LANE_DIFF_EDITOR, LANE_DYNAMIC_WRITE_FANOUT],
+    [KernelToolId.RENAME]: [LANE_DIFF_EDITOR, LANE_DYNAMIC_WRITE_FANOUT],
 
-	// The browser handler reassigns config.services.browserSession on launch,
-	// so a concurrent action would address a session that no longer exists.
-	[ClineDefaultTool.BROWSER]: [LANE_BROWSER_SESSION],
+    // The browser handler reassigns config.services.browserSession on launch,
+    // so a concurrent action would address a session that no longer exists.
+    [KernelToolId.BROWSER]: [LANE_BROWSER_SESSION],
 
-	// Command execution owns the foreground terminal device.
-	//
-	// A command can also rewrite files it never named, which no lane here can
-	// express. That reach is deliberately not contained by an exclusivity lane:
-	// the prompt discourages it today, and the intended mechanisms are the AI
-	// approver and a command sandbox allowlist. Serialising every command
-	// against every edit would be a large standing cost for a guarantee this
-	// lane cannot actually provide.
-	[ClineDefaultTool.BASH]: [LANE_FOREGROUND_TERMINAL],
-	[ClineDefaultTool.KILL_COMMAND]: [LANE_FOREGROUND_TERMINAL],
+    // Command execution owns the foreground terminal device.
+    //
+    // A command can also rewrite files it never named, which no lane here can
+    // express. That reach is deliberately not contained by an exclusivity lane:
+    // the prompt discourages it today, and the intended mechanisms are the AI
+    // approver and a command sandbox allowlist. Serialising every command
+    // against every edit would be a large standing cost for a guarantee this
+    // lane cannot actually provide.
+    [KernelToolId.BASH]: [LANE_FOREGROUND_TERMINAL],
+    [KernelToolId.KILL_COMMAND]: [LANE_FOREGROUND_TERMINAL],
 
-	// Both subagent entry points own the same task-level execution flag.
-	[ClineDefaultTool.USE_SUBAGENT]: [LANE_SUBAGENT_EXECUTION],
-	[ClineDefaultTool.USE_SUBAGENTS]: [LANE_SUBAGENT_EXECUTION],
+    // Both subagent entry points own the same task-level execution flag.
+    [KernelToolId.USE_SUBAGENT]: [LANE_SUBAGENT_EXECUTION],
+    [KernelToolId.USE_SUBAGENTS]: [LANE_SUBAGENT_EXECUTION],
 
-	// Read handlers share the file-read accounting cache.
-	[ClineDefaultTool.FILE_READ]: [LANE_FILE_READ_ACCOUNTING],
+    // Read handlers share the file-read accounting cache.
+    [KernelToolId.FILE_READ]: [LANE_FILE_READ_ACCOUNTING],
 
-	// MCP calls drain the hub-wide notification queue around their request.
-	[ClineDefaultTool.MCP_USE]: [LANE_MCP_NOTIFICATIONS],
+    // MCP calls drain the hub-wide notification queue around their request.
+    [KernelToolId.MCP_USE]: [LANE_MCP_NOTIFICATIONS],
 
-	// Turn-ending and conversational tools occupy the one interaction slot.
-	[ClineDefaultTool.ATTEMPT]: [LANE_USER_INTERACTION],
-	[ClineDefaultTool.ASK]: [LANE_USER_INTERACTION],
-	[ClineDefaultTool.MAKE_PLAN]: [LANE_USER_INTERACTION],
-	[ClineDefaultTool.QNA_RESPOND]: [LANE_USER_INTERACTION],
-	[ClineDefaultTool.GENERATE_REPORT]: [LANE_USER_INTERACTION],
-	[ClineDefaultTool.ACT_MODE]: [LANE_USER_INTERACTION],
-	[ClineDefaultTool.STATUS_UPDATE]: [LANE_USER_INTERACTION],
-	[ClineDefaultTool.NEW_TASK]: [LANE_USER_INTERACTION],
-	[ClineDefaultTool.SPAWN_TASK]: [LANE_USER_INTERACTION],
-	[ClineDefaultTool.REPORT_BUG]: [LANE_USER_INTERACTION],
-	[ClineDefaultTool.CONDENSE]: [LANE_USER_INTERACTION],
-	[ClineDefaultTool.SUMMARIZE_TASK]: [LANE_USER_INTERACTION],
+    // Turn-ending and conversational tools occupy the one interaction slot.
+    [KernelToolId.ATTEMPT]: [LANE_USER_INTERACTION],
+    [KernelToolId.ASK]: [LANE_USER_INTERACTION],
+    [KernelToolId.MAKE_PLAN]: [LANE_USER_INTERACTION],
+    [KernelToolId.QNA_RESPOND]: [LANE_USER_INTERACTION],
+    [KernelToolId.GENERATE_REPORT]: [LANE_USER_INTERACTION],
+    [KernelToolId.WORKING_RESPOND]: [LANE_USER_INTERACTION],
+    [KernelToolId.LEGACY_ACT_MODE_RESPOND]: [LANE_USER_INTERACTION],
+    [KernelToolId.PHASE_REPORT]: [LANE_USER_INTERACTION],
+    [KernelToolId.LEGACY_STATUS_UPDATE]: [LANE_USER_INTERACTION],
+    [KernelToolId.NEW_TASK]: [LANE_USER_INTERACTION],
+    [KernelToolId.SPAWN_TASK]: [LANE_USER_INTERACTION],
+    [KernelToolId.REPORT_BUG]: [LANE_USER_INTERACTION],
+    [KernelToolId.CONDENSE]: [LANE_USER_INTERACTION],
+    [KernelToolId.SUMMARIZE_TASK]: [LANE_USER_INTERACTION],
 
-	// The focus chain rewrites the one shared todo list.
-	[ClineDefaultTool.TODO]: [LANE_USER_INTERACTION],
-	[ClineDefaultTool.CHANGE_TODO_LIST]: [LANE_USER_INTERACTION],
+    // The focus chain rewrites the one shared todo list.
+    [KernelToolId.TODO]: [LANE_USER_INTERACTION],
+    [KernelToolId.CHANGE_TODO_LIST]: [LANE_USER_INTERACTION],
 }
 
 /**
@@ -176,19 +175,19 @@ const STATIC_LANES: Partial<Record<ClineDefaultTool, readonly ToolLane[]>> = {
  * @returns Lanes to acquire; empty when the tool may overlap freely.
  */
 export function resolveToolLanes(toolName: string, context: ToolLaneContext = {}): ToolLane[] {
-	const lanes = new Set<ToolLane>(STATIC_LANES[toolName as ClineDefaultTool] ?? [])
+    const lanes = new Set<ToolLane>(STATIC_LANES[toolName as KernelToolId] ?? [])
 
-	if (context.mcpServerName) {
-		lanes.add(mcpServerLane(context.mcpServerName))
-	}
-	for (const writePath of context.canonicalWritePaths ?? []) {
-		if (writePath) {
-			lanes.add(writePathLane(writePath))
-		}
-	}
-	if (context.conservativeWriteFanout) lanes.add(LANE_DYNAMIC_WRITE_FANOUT)
+    if (context.mcpServerName) {
+        lanes.add(mcpServerLane(context.mcpServerName))
+    }
+    for (const writePath of context.canonicalWritePaths ?? []) {
+        if (writePath) {
+            lanes.add(writePathLane(writePath))
+        }
+    }
+    if (context.conservativeWriteFanout) lanes.add(LANE_DYNAMIC_WRITE_FANOUT)
 
-	return Array.from(lanes)
+    return Array.from(lanes)
 }
 
 /**
@@ -199,11 +198,11 @@ export function resolveToolLanes(toolName: string, context: ToolLaneContext = {}
  * @returns True when the two sets are disjoint.
  */
 export function lanesAreCompatible(a: readonly ToolLane[], b: readonly ToolLane[]): boolean {
-	if (a.length === 0 || b.length === 0) {
-		return true
-	}
-	const held = new Set(a)
-	return !b.some((lane) => held.has(lane))
+    if (a.length === 0 || b.length === 0) {
+        return true
+    }
+    const held = new Set(a)
+    return !b.some((lane) => held.has(lane))
 }
 
 /**
@@ -213,7 +212,7 @@ export function lanesAreCompatible(a: readonly ToolLane[], b: readonly ToolLane[
  * and depends on its context. Declaring the dependency explicitly lets the
  * coverage check distinguish "freely concurrent" from "context supplies it".
  */
-export const MCP_SCOPED_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([ClineDefaultTool.MCP_USE, ClineDefaultTool.MCP_ACCESS])
+export const MCP_SCOPED_TOOLS: ReadonlySet<KernelToolId> = new Set([KernelToolId.MCP_USE, KernelToolId.MCP_ACCESS])
 
 /**
  * Tools that acquire a write-path lane once their path is resolved.
@@ -222,13 +221,13 @@ export const MCP_SCOPED_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([ClineDef
  * two edits of the same file from being ordered arbitrarily against each other
  * once the editor itself stops being the bottleneck.
  */
-export const PATH_SCOPED_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([
-	ClineDefaultTool.FILE_NEW,
-	ClineDefaultTool.FILE_EDIT,
-	ClineDefaultTool.NEW_RULE,
-	ClineDefaultTool.APPLY_PATCH,
-	ClineDefaultTool.REPLACE_TEXT,
-	ClineDefaultTool.RENAME,
+export const PATH_SCOPED_TOOLS: ReadonlySet<KernelToolId> = new Set([
+    KernelToolId.FILE_NEW,
+    KernelToolId.FILE_EDIT,
+    KernelToolId.NEW_RULE,
+    KernelToolId.APPLY_PATCH,
+    KernelToolId.REPLACE_TEXT,
+    KernelToolId.RENAME,
 ])
 
 /**
@@ -238,19 +237,19 @@ export const PATH_SCOPED_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([
  * resource. It exists so a newly added tool fails the coverage check rather
  * than silently defaulting to unrestricted concurrency.
  */
-export const UNRESTRICTED_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([
-	ClineDefaultTool.SEARCH,
-	ClineDefaultTool.LIST_FILES,
-	ClineDefaultTool.LIST_CODE_DEF,
-	ClineDefaultTool.FIND_REFERENCES,
-	ClineDefaultTool.WEB_FETCH,
-	ClineDefaultTool.WEB_SEARCH,
-	ClineDefaultTool.MCP_DOCS,
-	ClineDefaultTool.LOAD_MCP,
-	ClineDefaultTool.LOAD_SKILL,
-	ClineDefaultTool.LOAD_WORKFLOW,
-	ClineDefaultTool.GENERATE_EXPLANATION,
-	ClineDefaultTool.GENERATE_IMAGE,
+export const UNRESTRICTED_TOOLS: ReadonlySet<KernelToolId> = new Set([
+    KernelToolId.SEARCH,
+    KernelToolId.LIST_FILES,
+    KernelToolId.LIST_CODE_DEF,
+    KernelToolId.FIND_REFERENCES,
+    KernelToolId.WEB_FETCH,
+    KernelToolId.WEB_SEARCH,
+    KernelToolId.MCP_DOCS,
+    KernelToolId.LOAD_MCP,
+    KernelToolId.LOAD_SKILL,
+    KernelToolId.LOAD_WORKFLOW,
+    KernelToolId.GENERATE_EXPLANATION,
+    KernelToolId.GENERATE_IMAGE,
 ])
 
 /**
@@ -264,11 +263,11 @@ export const UNRESTRICTED_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([
  *   one, or is explicitly declared unrestricted.
  */
 export function hasDeclaredLaneAssignment(toolName: string): boolean {
-	const tool = toolName as ClineDefaultTool
-	return (
-		STATIC_LANES[tool] !== undefined ||
-		MCP_SCOPED_TOOLS.has(tool) ||
-		PATH_SCOPED_TOOLS.has(tool) ||
-		UNRESTRICTED_TOOLS.has(tool)
-	)
+    const tool = toolName as KernelToolId
+    return (
+        STATIC_LANES[tool] !== undefined ||
+        MCP_SCOPED_TOOLS.has(tool) ||
+        PATH_SCOPED_TOOLS.has(tool) ||
+        UNRESTRICTED_TOOLS.has(tool)
+    )
 }

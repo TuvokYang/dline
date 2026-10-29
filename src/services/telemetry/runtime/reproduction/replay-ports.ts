@@ -16,14 +16,14 @@
 
 /** Effect category a step wants to perform. */
 export enum ReplayEffect {
-	Command = "command",
-	McpTool = "mcp_tool",
-	Network = "network",
-	FileWrite = "file_write",
-	/** Reviewed component that only reads or computes; nothing to re-perform. */
-	Inert = "inert",
-	/** Component the classifier does not recognise; never replayed. */
-	Unknown = "unknown",
+    Command = "command",
+    McpTool = "mcp_tool",
+    Network = "network",
+    FileWrite = "file_write",
+    /** Reviewed component that only reads or computes; nothing to re-perform. */
+    Inert = "inert",
+    /** Component the classifier does not recognise; never replayed. */
+    Unknown = "unknown",
 }
 
 /**
@@ -35,33 +35,33 @@ export enum ReplayEffect {
  * user content.
  */
 export interface ReplayRequest {
-	readonly effect: ReplayEffect
-	readonly component: string
-	readonly operation: string
-	/** Outcome recorded when the incident happened. */
-	readonly recordedOutcome: string
-	readonly recordedDurationMs?: number
+    readonly effect: ReplayEffect
+    readonly component: string
+    readonly operation: string
+    /** Outcome recorded when the incident happened. */
+    readonly recordedOutcome: string
+    readonly recordedDurationMs?: number
 }
 
 export interface ReplayResult {
-	readonly outcome: string
-	readonly durationMs: number
-	/**
-	 * Always `true`.
-	 *
-	 * The literal type is the enforcement: a port that performed real work
-	 * could not honestly return it, so "no side effect" is checked by the
-	 * compiler at every implementation site rather than asserted in a test
-	 * that only ever sees a cooperative fake.
-	 */
-	readonly simulated: true
+    readonly outcome: string
+    readonly durationMs: number
+    /**
+     * Always `true`.
+     *
+     * The literal type is the enforcement: a port that performed real work
+     * could not honestly return it, so "no side effect" is checked by the
+     * compiler at every implementation site rather than asserted in a test
+     * that only ever sees a cooperative fake.
+     */
+    readonly simulated: true
 }
 
 /** The single capability a scenario runner is given. */
 export interface ReplayPort {
-	perform(request: ReplayRequest): ReplayResult
-	/** Requests seen so far, in order. */
-	readonly requests: readonly ReplayRequest[]
+    perform(request: ReplayRequest): ReplayResult
+    /** Requests seen so far, in order. */
+    readonly requests: readonly ReplayRequest[]
 }
 
 /**
@@ -71,10 +71,10 @@ export interface ReplayPort {
  * simulated or refused, and cannot decide what "simulated" means.
  */
 export enum ReplayPolicy {
-	/** Return the recorded outcome without performing anything. */
-	Simulate = "simulate",
-	/** Refuse every step, so an accidental replay fails loudly. */
-	Refuse = "refuse",
+    /** Return the recorded outcome without performing anything. */
+    Simulate = "simulate",
+    /** Refuse every step, so an accidental replay fails loudly. */
+    Refuse = "refuse",
 }
 
 /**
@@ -88,20 +88,20 @@ export enum ReplayPolicy {
  * every step through the port and that no other channel was used.
  */
 class SimulatingReplayPort implements ReplayPort {
-	private readonly performed: ReplayRequest[] = []
+    private readonly performed: ReplayRequest[] = []
 
-	get requests(): readonly ReplayRequest[] {
-		return this.performed
-	}
+    get requests(): readonly ReplayRequest[] {
+        return this.performed
+    }
 
-	perform(request: ReplayRequest): ReplayResult {
-		this.performed.push(request)
-		return {
-			outcome: request.recordedOutcome,
-			durationMs: request.recordedDurationMs ?? 0,
-			simulated: true,
-		}
-	}
+    perform(request: ReplayRequest): ReplayResult {
+        this.performed.push(request)
+        return {
+            outcome: request.recordedOutcome,
+            durationMs: request.recordedDurationMs ?? 0,
+            simulated: true,
+        }
+    }
 }
 
 /**
@@ -115,8 +115,8 @@ class SimulatingReplayPort implements ReplayPort {
  * hostile or careless consumer rather than only an honest one.
  */
 function sealPort<T extends ReplayPort>(port: T): T {
-	Object.freeze(Object.getPrototypeOf(port))
-	return Object.freeze(port)
+    Object.freeze(Object.getPrototypeOf(port))
+    return Object.freeze(port)
 }
 
 /**
@@ -126,13 +126,13 @@ function sealPort<T extends ReplayPort>(port: T): T {
  * accidental run fails loudly instead of quietly reporting simulated success.
  */
 class RefusingReplayPort implements ReplayPort {
-	get requests(): readonly ReplayRequest[] {
-		return []
-	}
+    get requests(): readonly ReplayRequest[] {
+        return []
+    }
 
-	perform(request: ReplayRequest): ReplayResult {
-		throw new ReplayNotPermitted(request)
-	}
+    perform(request: ReplayRequest): ReplayResult {
+        throw new ReplayNotPermitted(request)
+    }
 }
 
 /**
@@ -143,28 +143,28 @@ class RefusingReplayPort implements ReplayPort {
  * of the code rather than of the caller's good intentions.
  */
 export function resolveReplayPort(policy: ReplayPolicy): ReplayPort {
-	switch (policy) {
-		case ReplayPolicy.Simulate:
-			return sealPort(new SimulatingReplayPort())
-		case ReplayPolicy.Refuse:
-			return sealPort(new RefusingReplayPort())
-		default:
-			return assertNeverPolicy(policy)
-	}
+    switch (policy) {
+        case ReplayPolicy.Simulate:
+            return sealPort(new SimulatingReplayPort())
+        case ReplayPolicy.Refuse:
+            return sealPort(new RefusingReplayPort())
+        default:
+            return assertNeverPolicy(policy)
+    }
 }
 
 /** Count the requests routed to `port` for one effect. */
 export function countReplayedEffects(port: ReplayPort, effect: ReplayEffect): number {
-	return port.requests.reduce((total, request) => (request.effect === effect ? total + 1 : total), 0)
+    return port.requests.reduce((total, request) => (request.effect === effect ? total + 1 : total), 0)
 }
 
 function assertNeverPolicy(policy: never): never {
-	throw new Error(`unsupported replay policy: ${String(policy)}`)
+    throw new Error(`unsupported replay policy: ${String(policy)}`)
 }
 
 export class ReplayNotPermitted extends Error {
-	constructor(readonly request: ReplayRequest) {
-		super(`replay of ${request.component}.${request.operation} is not permitted`)
-		this.name = "ReplayNotPermitted"
-	}
+    constructor(readonly request: ReplayRequest) {
+        super(`replay of ${request.component}.${request.operation} is not permitted`)
+        this.name = "ReplayNotPermitted"
+    }
 }

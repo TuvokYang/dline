@@ -31,24 +31,24 @@ const RENAMED_KEYS: ReadonlyArray<readonly [legacy: string, current: string]> = 
  * removing them would make every migration run again on the next launch.
  */
 const PRESERVED_INTERNAL_KEYS = new Set([
-	GLOBAL_STATE_CLEANUP_GENERATION_KEY,
-	"__vscodeMigrationVersion",
-	"__settingsMigrationVersion",
-	"cline.generatedMachineId",
+    GLOBAL_STATE_CLEANUP_GENERATION_KEY,
+    "__vscodeMigrationVersion",
+    "__settingsMigrationVersion",
+    "cline.generatedMachineId",
 ])
 
 export interface GlobalStateCleanupResult {
-	/** False when the store was already at the current generation. */
-	readonly performed: boolean
-	/** Keys removed by this sweep, in discovery order. */
-	readonly removedKeys: readonly string[]
+    /** False when the store was already at the current generation. */
+    readonly performed: boolean
+    /** Keys removed by this sweep, in discovery order. */
+    readonly removedKeys: readonly string[]
 }
 
 /** A key survives only when it is a declared GlobalState field or an internal marker. */
 function shouldRemoveKey(key: string): boolean {
-	if (PRESERVED_INTERNAL_KEYS.has(key)) return false
-	if (isSettingsKey(key)) return true
-	return !isGlobalStateKey(key)
+    if (PRESERVED_INTERNAL_KEYS.has(key)) return false
+    if (isSettingsKey(key)) return true
+    return !isGlobalStateKey(key)
 }
 
 /**
@@ -64,34 +64,34 @@ function shouldRemoveKey(key: string): boolean {
  * leaves the marker untouched so the next launch retries.
  */
 export async function cleanupLegacyGlobalState(store: ClineFileStorage): Promise<GlobalStateCleanupResult> {
-	const appliedGeneration = store.get(GLOBAL_STATE_CLEANUP_GENERATION_KEY)
-	if (typeof appliedGeneration === "number" && appliedGeneration >= GLOBAL_STATE_CLEANUP_GENERATION) {
-		return { performed: false, removedKeys: [] }
-	}
+    const appliedGeneration = store.get(GLOBAL_STATE_CLEANUP_GENERATION_KEY)
+    if (typeof appliedGeneration === "number" && appliedGeneration >= GLOBAL_STATE_CLEANUP_GENERATION) {
+        return { performed: false, removedKeys: [] }
+    }
 
-	const removedKeys = store.keys().filter(shouldRemoveKey)
+    const removedKeys = store.keys().filter(shouldRemoveKey)
 
-	const entries: Record<string, unknown> = {}
-	for (const key of removedKeys) {
-		entries[key] = undefined
-	}
+    const entries: Record<string, unknown> = {}
+    for (const key of removedKeys) {
+        entries[key] = undefined
+    }
 
-	// Carry renamed values forward. An existing current value wins, because it
-	// was written by a build that already knows the new key.
-	for (const [legacy, current] of RENAMED_KEYS) {
-		const legacyValue = store.get(legacy)
-		if (legacyValue !== undefined && store.get(current) === undefined) {
-			entries[current] = legacyValue
-		}
-	}
+    // Carry renamed values forward. An existing current value wins, because it
+    // was written by a build that already knows the new key.
+    for (const [legacy, current] of RENAMED_KEYS) {
+        const legacyValue = store.get(legacy)
+        if (legacyValue !== undefined && store.get(current) === undefined) {
+            entries[current] = legacyValue
+        }
+    }
 
-	entries[GLOBAL_STATE_CLEANUP_GENERATION_KEY] = GLOBAL_STATE_CLEANUP_GENERATION
+    entries[GLOBAL_STATE_CLEANUP_GENERATION_KEY] = GLOBAL_STATE_CLEANUP_GENERATION
 
-	await store.setBatchAsync(entries)
+    await store.setBatchAsync(entries)
 
-	if (removedKeys.length > 0) {
-		Logger.debug(`[GlobalStateCleanup] Removed ${removedKeys.length} legacy keys: ${removedKeys.join(", ")}`)
-	}
+    if (removedKeys.length > 0) {
+        Logger.debug(`[GlobalStateCleanup] Removed ${removedKeys.length} legacy keys: ${removedKeys.join(", ")}`)
+    }
 
-	return { performed: true, removedKeys }
+    return { performed: true, removedKeys }
 }

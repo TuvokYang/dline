@@ -13,25 +13,26 @@
 
 /** Domain a measurement belongs to. Becomes the first segment of the event name. */
 export enum PerfDomain {
-	Terminal = "terminal",
-	TerminalPool = "terminal_pool",
-	Checkpoint = "checkpoint",
-	HookDiscovery = "hook_discovery",
-	Settings = "settings",
-	SettingsRepository = "settings_repository",
-	TaskInit = "task_init",
-	TaskClose = "task_close",
-	TaskSnapshot = "task_snapshot",
-	ControllerClose = "controller_close",
-	Profile = "profile",
-	Capability = "capability",
-	PromptInputWatcher = "prompt_input_watcher",
-	PromptFreshness = "prompt_freshness",
-	PromptBuild = "prompt_build",
-	FileLock = "file_lock",
-	BufferedStore = "buffered_store",
-	Tool = "tool",
-	Activation = "activation",
+    Terminal = "terminal",
+    TerminalPool = "terminal_pool",
+    Checkpoint = "checkpoint",
+    HookDiscovery = "hook_discovery",
+    Settings = "settings",
+    SettingsRepository = "settings_repository",
+    TaskInit = "task_init",
+    TaskClose = "task_close",
+    TaskSnapshot = "task_snapshot",
+    ControllerClose = "controller_close",
+    Profile = "profile",
+    Capability = "capability",
+    PromptInputWatcher = "prompt_input_watcher",
+    PromptFreshness = "prompt_freshness",
+    PromptBuild = "prompt_build",
+    FileLock = "file_lock",
+    BufferedStore = "buffered_store",
+    Tool = "tool",
+    Activation = "activation",
+    TurnPrepare = "turn_prepare",
 }
 
 /**
@@ -42,64 +43,101 @@ export enum PerfDomain {
  * vocabulary. New phases are added here first.
  */
 export const PERF_PHASES = {
-	[PerfDomain.Terminal]: [
-		"execute_start",
-		"terminal_acquired",
-		"execute_complete",
-		"execute_error",
-		"process_start",
-		"process_complete",
-		"capability_failure",
-		"shell_wait_start",
-		"shell_wait_complete",
-	],
-	[PerfDomain.TerminalPool]: ["warm_process_started", "warm_shell_integration_ready", "prewarm_failed"],
-	// `commit_lock` is separate from `commit` on purpose: waiting for the shared
-	// shadow repository and doing the Git work fail for different reasons, and
-	// only the split tells them apart. See CheckpointTracker.ts.
-	// `commit_attempt` covers one whole attempt, `commit_lock` the wait for the
-	// shared shadow repository, and `commit` only the Git work that runs once
-	// exclusive access was granted. An attempt refused the lock never reaches
-	// `commit`, so only `commit_attempt` counts every attempt.
-	[PerfDomain.Checkpoint]: ["existing_shadow_baseline", "add", "commit", "commit_attempt", "commit_lock", "restore"],
-	[PerfDomain.HookDiscovery]: ["file_check", "has_hook_scan", "global_directory", "directories", "workspace_directories"],
-	[PerfDomain.Settings]: ["controller_callback", "sync_callback", "sync_broadcast", "state_flush", "rpc_complete", "rpc_error"],
-	[PerfDomain.SettingsRepository]: ["mutate_complete", "reconcile", "listener", "publish"],
-	[PerfDomain.TaskInit]: ["stage"],
-	[PerfDomain.TaskClose]: ["stage"],
-	[PerfDomain.TaskSnapshot]: ["flush_now"],
-	[PerfDomain.ControllerClose]: ["stage"],
-	[PerfDomain.Profile]: ["catalog_initialize", "catalog_mutate", "catalog_reconcile", "get_profiles"],
-	[PerfDomain.Capability]: [
-		"workflows_refresh",
-		"skills_discover",
-		"skills_available",
-		"skills_refresh",
-		"subagents_refresh",
-		"subagents_refresh_error",
-		"rules_refresh_rpc",
-		"rules_refresh_rpc_error",
-		"rule_toggle_scan",
-		"external_rules_refresh",
-	],
-	[PerfDomain.PromptInputWatcher]: ["start", "ready", "dispose", "event_batch"],
-	[PerfDomain.PromptFreshness]: ["drain_complete", "reevaluate"],
-	[PerfDomain.PromptBuild]: ["capability_context"],
-	[PerfDomain.FileLock]: ["acquire"],
-	// A buffered store commits either by appending the new tail or by rewriting
-	// the whole collection. Reporting both under one phase with a `commit`
-	// dimension is what makes an unnoticed fallback to rewriting visible: the
-	// cost of that fallback grows with the history and is otherwise silent.
-	[PerfDomain.BufferedStore]: ["flush_commit"],
-	// Tool duration is reported as the work the tool itself performed. Approval
-	// and command waits are governed by the user and the workspace, so counting
-	// them would make the measurement describe how fast a reviewer clicks rather
-	// than how fast the tool runs.
-	[PerfDomain.Tool]: ["execution"],
-	// Activation reports each startup step as one `stage` sample carrying a
-	// `stage` dimension, plus one total per entry point. The per-step form
-	// mirrors `task_init` so both startup paths aggregate the same way.
-	[PerfDomain.Activation]: ["stage", "extension_activate", "common_initialize"],
+    [PerfDomain.Terminal]: [
+        "execute_start",
+        "terminal_acquired",
+        "execute_complete",
+        "execute_error",
+        "process_start",
+        "process_complete",
+        "capability_failure",
+        "shell_wait_start",
+        "shell_wait_complete",
+    ],
+    [PerfDomain.TerminalPool]: ["warm_process_started", "warm_shell_integration_ready", "prewarm_failed"],
+    // `commit_lock` is separate from `commit` on purpose: waiting for the shared
+    // shadow repository and doing the Git work fail for different reasons, and
+    // only the split tells them apart. See CheckpointTracker.ts.
+    // `commit_attempt` covers one whole attempt, `commit_lock` the wait for the
+    // shared shadow repository, and `commit` only the Git work that runs once
+    // exclusive access was granted. An attempt refused the lock never reaches
+    // `commit`, so only `commit_attempt` counts every attempt.
+    // `gate_wait`, `gate_ensure` and `gate_commit` describe one checkpoint check
+    // of a task: the wait for the task's checkpoint lock, the time it held it,
+    // and the shadow commit inside it, each with reason, outcome and failed part.
+    [PerfDomain.Checkpoint]: [
+        "existing_shadow_baseline",
+        "add",
+        "commit",
+        "commit_attempt",
+        "commit_lock",
+        "restore",
+        "gate_wait",
+        "gate_ensure",
+        "gate_commit",
+    ],
+    [PerfDomain.HookDiscovery]: ["file_check", "has_hook_scan", "global_directory", "directories", "workspace_directories"],
+    [PerfDomain.Settings]: ["controller_callback", "sync_callback", "sync_broadcast", "state_flush", "rpc_complete", "rpc_error"],
+    [PerfDomain.SettingsRepository]: ["mutate_complete", "reconcile", "listener", "publish"],
+    [PerfDomain.TaskInit]: ["stage"],
+    [PerfDomain.TaskClose]: ["stage"],
+    [PerfDomain.TaskSnapshot]: ["flush_now"],
+    [PerfDomain.ControllerClose]: ["stage"],
+    [PerfDomain.Profile]: ["catalog_initialize", "catalog_mutate", "catalog_reconcile", "get_profiles"],
+    [PerfDomain.Capability]: [
+        "workflows_refresh",
+        "skills_discover",
+        "skills_available",
+        "skills_refresh",
+        "subagents_refresh",
+        "subagents_refresh_error",
+        "rules_refresh_rpc",
+        "rules_refresh_rpc_error",
+        "rule_toggle_scan",
+        "external_rules_refresh",
+        "catalog_refresh",
+    ],
+    [PerfDomain.PromptInputWatcher]: ["start", "ready", "dispose", "event_batch"],
+    [PerfDomain.PromptFreshness]: ["drain_complete", "reevaluate"],
+    [PerfDomain.PromptBuild]: ["capability_context"],
+    [PerfDomain.FileLock]: ["acquire"],
+    // A buffered store commits either by appending the new tail or by rewriting
+    // the whole collection. Reporting both under one phase with a `commit`
+    // dimension is what makes an unnoticed fallback to rewriting visible: the
+    // cost of that fallback grows with the history and is otherwise silent.
+    //
+    // `flush_skipped` is the periodic tick that found nothing staged. Without it
+    // an idle store was invisible: the timer runs for every open store, a task
+    // keeps four open, and only the ticks that actually committed produced a
+    // span, so cost that scaled with "how many tasks are open" could not be
+    // attributed to anything.
+    [PerfDomain.BufferedStore]: ["flush_commit", "flush_skipped"],
+    // Tool duration is reported as the work the tool itself performed. Approval
+    // and command waits are governed by the user and the workspace, so counting
+    // them would make the measurement describe how fast a reviewer clicks rather
+    // than how fast the tool runs.
+    [PerfDomain.Tool]: ["execution"],
+    // Activation reports each startup step as one `stage` sample carrying a
+    // `stage` dimension, plus one total per entry point. The per-step form
+    // mirrors `task_init` so both startup paths aggregate the same way.
+    [PerfDomain.Activation]: ["stage", "extension_activate", "common_initialize"],
+    // Synchronous work between a tool settling and the next provider request,
+    // plus the per-mutation and per-publication projections a long task repeats.
+    // Each phase isolates one owner so an event-loop stall can be attributed to
+    // it; dimensions stay boolean or enumerated because every non-identity
+    // dimension becomes a metric label. `partial_tool_parse` is one sample per
+    // streamed response that sums the per-chunk preview parsing.
+    [PerfDomain.TurnPrepare]: [
+        "context_guard",
+        "context_measure",
+        "context_admission",
+        "request_prepare",
+        "api_rebuild",
+        "frame_build",
+        "history_update",
+        "state_build",
+        "partial_tool_parse",
+    ],
 } as const satisfies Record<PerfDomain, readonly string[]>
 
 /** Phase names valid for `D`. */
@@ -113,15 +151,15 @@ export type PerfPhase<D extends PerfDomain> = (typeof PERF_PHASES)[D][number]
  * be grouped by prefix in a backend.
  */
 export function perfEventName<D extends PerfDomain>(domain: D, phase: PerfPhase<D>): string {
-	return `${domain}.${phase}`
+    return `${domain}.${phase}`
 }
 
 /** Whether `phase` is declared for `domain`. Used by parity tests and guards. */
 export function isKnownPerfPhase(domain: PerfDomain, phase: string): boolean {
-	return (PERF_PHASES[domain] as readonly string[]).includes(phase)
+    return (PERF_PHASES[domain] as readonly string[]).includes(phase)
 }
 
 /** Every declared domain, in declaration order. */
 export function perfDomains(): readonly PerfDomain[] {
-	return Object.keys(PERF_PHASES) as PerfDomain[]
+    return Object.keys(PERF_PHASES) as PerfDomain[]
 }

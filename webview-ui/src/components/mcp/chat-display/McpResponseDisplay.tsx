@@ -2,7 +2,7 @@ import { McpDisplayMode } from "@shared/McpDisplayMode"
 import { VSCodeProgressRing } from "@vscode/webview-ui-toolkit/react"
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import React, { useCallback, useEffect, useState } from "react"
-import styled from "styled-components"
+import styled, { css } from "styled-components"
 import ChatErrorBoundary from "@/components/chat/ChatErrorBoundary"
 import { TOOL_RESPONSE_MAX_HEIGHT } from "@/components/chat/constants"
 import { CODE_BLOCK_BG_COLOR } from "@/components/common/CodeBlock"
@@ -46,7 +46,7 @@ const ResponseHeader = styled.div`
 	}
 `
 
-const ResponseContainer = styled.div`
+const ResponseContainer = styled.div<{ $embedded?: boolean }>`
 	position: relative;
 	display: flex;
 	flex-direction: column;
@@ -68,6 +68,19 @@ const ResponseContainer = styled.div`
 		max-width: 100%;
 		padding: 10px;
 	}
+
+	${({ $embedded }) =>
+        $embedded &&
+        css`
+			/* The request card owns the frame and the height bound, so the response
+			   only separates itself from the request and shrinks into what is left. */
+			min-height: 0;
+			max-height: none;
+			background-color: transparent;
+			border: none;
+			border-top: 1px solid var(--vscode-editorGroup-border);
+			border-radius: 0;
+		`}
 `
 
 // Style for URL text to ensure proper wrapping
@@ -80,215 +93,230 @@ const UrlText = styled.div`
 `
 
 interface McpResponseDisplayProps {
-	responseText: string
+    responseText: string
+    /**
+     * Render as the lower section of an MCP request card. The card supplies the
+     * border, background and 60vh bound; the response keeps its own collapse
+     * toggle and scrolling content area.
+     */
+    embedded?: boolean
 }
 
-const McpResponseDisplay: React.FC<McpResponseDisplayProps> = ({ responseText }) => {
-	const { mcpResponsesCollapsed, mcpDisplayMode } = useExtensionState() // Get setting from context
-	const [isExpanded, setIsExpanded] = useState(!mcpResponsesCollapsed) // Initialize with context setting
-	const [isLoading, setIsLoading] = useState(false) // Initial loading state for rich content
+const McpResponseDisplay: React.FC<McpResponseDisplayProps> = ({ responseText, embedded = false }) => {
+    const { mcpResponsesCollapsed, mcpDisplayMode } = useExtensionState() // Get setting from context
+    const containerStyle = embedded ? undefined : { maxHeight: TOOL_RESPONSE_MAX_HEIGHT }
+    const headerInset = embedded ? "10px" : undefined
+    const [isExpanded, setIsExpanded] = useState(!mcpResponsesCollapsed) // Initialize with context setting
+    const [isLoading, setIsLoading] = useState(false) // Initial loading state for rich content
 
-	const [urlMatches, setUrlMatches] = useState<UrlMatch[]>([])
-	const [error, setError] = useState<string | null>(null)
+    const [urlMatches, setUrlMatches] = useState<UrlMatch[]>([])
+    const [error, setError] = useState<string | null>(null)
 
-	const handleDisplayModeChange = useCallback((newMode: McpDisplayMode) => {
-		updateSetting("mcpDisplayMode", newMode)
-	}, [])
+    const handleDisplayModeChange = useCallback((newMode: McpDisplayMode) => {
+        updateSetting("mcpDisplayMode", newMode)
+    }, [])
 
-	const toggleExpand = useCallback(() => {
-		setIsExpanded((prev) => {
-			const newExpanded = !prev
-			// Save collapsed state so future MCP responses start in the same state
-			updateSetting("mcpResponsesCollapsed", !newExpanded)
-			return newExpanded
-		})
-	}, [])
+    const toggleExpand = useCallback(() => {
+        setIsExpanded((prev) => {
+            const newExpanded = !prev
+            // Save collapsed state so future MCP responses start in the same state
+            updateSetting("mcpResponsesCollapsed", !newExpanded)
+            return newExpanded
+        })
+    }, [])
 
-	// Find all URLs in the text and determine if they're images
-	useEffect(() => {
-		// Skip all processing if in plain mode or markdown mode
-		if (!isExpanded || mcpDisplayMode === "plain" || mcpDisplayMode === "markdown") {
-			setIsLoading(false)
-			if (urlMatches.length > 0) {
-				setUrlMatches([]) // Clear any existing matches when not in rich mode
-			}
-			return
-		}
+    // Find all URLs in the text and determine if they're images
+    useEffect(() => {
+        // Skip all processing if in plain mode or markdown mode
+        if (!isExpanded || mcpDisplayMode === "plain" || mcpDisplayMode === "markdown") {
+            setIsLoading(false)
+            if (urlMatches.length > 0) {
+                setUrlMatches([]) // Clear any existing matches when not in rich mode
+            }
+            return
+        }
 
-		console.log("Processing MCP response for URL extraction")
-		setIsLoading(true)
-		setError(null)
+        console.log("Processing MCP response for URL extraction")
+        setIsLoading(true)
+        setError(null)
 
-		// Use the orchestrator function from mcpRichUtil
-		const cleanup = processResponseUrls(
-			responseText || "",
-			MAX_URLS,
-			(matches) => {
-				setUrlMatches(matches)
-				setIsLoading(false)
-			},
-			(updatedMatches) => {
-				setUrlMatches(updatedMatches)
-			},
-			(errorMessage) => {
-				setError(errorMessage)
-				setIsLoading(false)
-			},
-		)
+        // Use the orchestrator function from mcpRichUtil
+        const cleanup = processResponseUrls(
+            responseText || "",
+            MAX_URLS,
+            (matches) => {
+                setUrlMatches(matches)
+                setIsLoading(false)
+            },
+            (updatedMatches) => {
+                setUrlMatches(updatedMatches)
+            },
+            (errorMessage) => {
+                setError(errorMessage)
+                setIsLoading(false)
+            },
+        )
 
-		return cleanup
-	}, [responseText, mcpDisplayMode, isExpanded, urlMatches.length])
+        return cleanup
+    }, [responseText, mcpDisplayMode, isExpanded, urlMatches.length])
 
-	// Helper function to render a display segment
-	const renderSegment = (segment: DisplaySegment): JSX.Element => {
-		switch (segment.type) {
-			case "text":
-			case "url":
-				return <UrlText key={segment.key}>{segment.content}</UrlText>
+    // Helper function to render a display segment
+    const renderSegment = (segment: DisplaySegment): JSX.Element => {
+        switch (segment.type) {
+            case "text":
+            case "url":
+                return <UrlText key={segment.key}>{segment.content}</UrlText>
 
-			case "image":
-				return (
-					<div key={segment.key}>
-						<ImagePreview url={segment.url!} />
-					</div>
-				)
+            case "image":
+                return (
+                    <div key={segment.key}>
+                        <ImagePreview url={segment.url!} />
+                    </div>
+                )
 
-			case "link":
-				return (
-					<div key={segment.key} style={{ margin: "10px 0" }}>
-						<LinkPreview url={segment.url!} />
-					</div>
-				)
+            case "link":
+                return (
+                    <div key={segment.key} style={{ margin: "10px 0" }}>
+                        <LinkPreview url={segment.url!} />
+                    </div>
+                )
 
-			case "error":
-				return (
-					<div
-						key={segment.key}
-						style={{
-							margin: "10px 0",
-							padding: "8px",
-							color: "var(--vscode-errorForeground)",
-							border: "1px solid var(--vscode-editorError-foreground)",
-							borderRadius: "4px",
-							height: "128px",
-							overflow: "auto",
-						}}>
-						{segment.content}
-					</div>
-				)
+            case "error":
+                return (
+                    <div
+                        key={segment.key}
+                        style={{
+                            margin: "10px 0",
+                            padding: "8px",
+                            color: "var(--vscode-errorForeground)",
+                            border: "1px solid var(--vscode-editorError-foreground)",
+                            borderRadius: "4px",
+                            height: "128px",
+                            overflow: "auto",
+                        }}>
+                        {segment.content}
+                    </div>
+                )
 
-			default:
-				return <React.Fragment key={segment.key} />
-		}
-	}
+            default:
+                return <React.Fragment key={segment.key} />
+        }
+    }
 
-	// Function to render content based on display mode
-	const renderContent = () => {
-		if (!isExpanded) {
-			return null
-		}
+    // Function to render content based on display mode
+    const renderContent = () => {
+        if (!isExpanded) {
+            return null
+        }
 
-		if (isLoading && mcpDisplayMode === "rich") {
-			return (
-				<div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "50px" }}>
-					<VSCodeProgressRing />
-				</div>
-			)
-		}
+        if (isLoading && mcpDisplayMode === "rich") {
+            return (
+                <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "50px" }}>
+                    <VSCodeProgressRing />
+                </div>
+            )
+        }
 
-		if (mcpDisplayMode === "plain") {
-			return <UrlText>{truncateDataUris(responseText)}</UrlText>
-		}
+        if (mcpDisplayMode === "plain") {
+            return <UrlText>{truncateDataUris(responseText)}</UrlText>
+        }
 
-		if (mcpDisplayMode === "markdown") {
-			return <MarkdownBlock markdown={truncateDataUris(responseText)} />
-		}
+        if (mcpDisplayMode === "markdown") {
+            return <MarkdownBlock markdown={truncateDataUris(responseText)} />
+        }
 
-		if (error) {
-			return (
-				<>
-					<div style={{ color: "var(--vscode-errorForeground)", marginBottom: "10px" }}>{error}</div>
-					<UrlText>{responseText}</UrlText>
-				</>
-			)
-		}
+        if (error) {
+            return (
+                <>
+                    <div style={{ color: "var(--vscode-errorForeground)", marginBottom: "10px" }}>{error}</div>
+                    <UrlText>{responseText}</UrlText>
+                </>
+            )
+        }
 
-		if (mcpDisplayMode === "rich") {
-			const segments = buildDisplaySegments(responseText, urlMatches)
-			return <>{segments.map(renderSegment)}</>
-		}
+        if (mcpDisplayMode === "rich") {
+            const segments = buildDisplaySegments(responseText, urlMatches)
+            return <>{segments.map(renderSegment)}</>
+        }
 
-		return null
-	}
+        return null
+    }
 
-	try {
-		return (
-			<ResponseContainer data-testid="mcp-response-card" style={{ maxHeight: TOOL_RESPONSE_MAX_HEIGHT }}>
-				<ResponseHeader
-					onClick={toggleExpand}
-					style={{
-						borderBottom: isExpanded ? "1px dashed var(--vscode-editorGroup-border)" : "none",
-						marginBottom: isExpanded ? "8px" : "0px",
-					}}>
-					<div className="header-title">
-						{isExpanded ? (
-							<ChevronDownIcon className="header-icon" size={16} />
-						) : (
-							<ChevronRightIcon className="header-icon" size={16} />
-						)}
-						Response
-					</div>
-					<DropdownContainer
-						style={{ minWidth: isExpanded ? "auto" : "0", visibility: isExpanded ? "visible" : "hidden" }}>
-						<McpDisplayModeDropdown
-							onChange={handleDisplayModeChange}
-							onClick={(e) => e.stopPropagation()}
-							style={{ minWidth: "120px" }}
-							value={mcpDisplayMode}
-						/>
-					</DropdownContainer>
-				</ResponseHeader>
+    try {
+        return (
+            <ResponseContainer $embedded={embedded} data-testid="mcp-response-card" style={containerStyle}>
+                <ResponseHeader
+                    onClick={toggleExpand}
+                    style={{
+                        borderBottom: isExpanded ? "1px dashed var(--vscode-editorGroup-border)" : "none",
+                        marginBottom: isExpanded ? "8px" : "0px",
+                        paddingLeft: headerInset,
+                    }}>
+                    <div className="header-title">
+                        {isExpanded ? (
+                            <ChevronDownIcon className="header-icon" size={16} />
+                        ) : (
+                            <ChevronRightIcon className="header-icon" size={16} />
+                        )}
+                        Response
+                    </div>
+                    <DropdownContainer
+                        style={{ minWidth: isExpanded ? "auto" : "0", visibility: isExpanded ? "visible" : "hidden" }}>
+                        <McpDisplayModeDropdown
+                            onChange={handleDisplayModeChange}
+                            onClick={(e) => e.stopPropagation()}
+                            style={{ minWidth: "120px" }}
+                            value={mcpDisplayMode}
+                        />
+                    </DropdownContainer>
+                </ResponseHeader>
 
-				{isExpanded && (
-					<div className="response-content" data-testid="mcp-response-content" style={{ overflowY: "auto" }}>
-						{renderContent()}
-					</div>
-				)}
-			</ResponseContainer>
-		)
-	} catch (_error) {
-		console.log("Error rendering MCP response - falling back to plain text") // Restored comment
-		// Fallback for critical rendering errors
-		return (
-			<ResponseContainer data-testid="mcp-response-card" style={{ maxHeight: TOOL_RESPONSE_MAX_HEIGHT }}>
-				<ResponseHeader onClick={toggleExpand}>
-					<div className="header-title">
-						{isExpanded ? (
-							<ChevronDownIcon className="header-icon" size={16} />
-						) : (
-							<ChevronRightIcon className="header-icon" size={16} />
-						)}
-						Response (Error)
-					</div>
-				</ResponseHeader>
-				{isExpanded && (
-					<div className="response-content" data-testid="mcp-response-content" style={{ overflowY: "auto" }}>
-						<div style={{ color: "var(--vscode-errorForeground)" }}>Error parsing response:</div>
-						<UrlText>{responseText}</UrlText>
-					</div>
-				)}
-			</ResponseContainer>
-		)
-	}
+                {isExpanded && (
+                    <div
+                        className="response-content themed-scrollbar"
+                        data-testid="mcp-response-content"
+                        style={{ overflowY: "auto" }}>
+                        {renderContent()}
+                    </div>
+                )}
+            </ResponseContainer>
+        )
+    } catch (_error) {
+        console.log("Error rendering MCP response - falling back to plain text") // Restored comment
+        // Fallback for critical rendering errors
+        return (
+            <ResponseContainer $embedded={embedded} data-testid="mcp-response-card" style={containerStyle}>
+                <ResponseHeader onClick={toggleExpand} style={{ paddingLeft: headerInset }}>
+                    <div className="header-title">
+                        {isExpanded ? (
+                            <ChevronDownIcon className="header-icon" size={16} />
+                        ) : (
+                            <ChevronRightIcon className="header-icon" size={16} />
+                        )}
+                        Response (Error)
+                    </div>
+                </ResponseHeader>
+                {isExpanded && (
+                    <div
+                        className="response-content themed-scrollbar"
+                        data-testid="mcp-response-content"
+                        style={{ overflowY: "auto" }}>
+                        <div style={{ color: "var(--vscode-errorForeground)" }}>Error parsing response:</div>
+                        <UrlText>{responseText}</UrlText>
+                    </div>
+                )}
+            </ResponseContainer>
+        )
+    }
 }
 
 // Wrap the entire McpResponseDisplay component with an error boundary
 const McpResponseDisplayWithErrorBoundary: React.FC<McpResponseDisplayProps> = (props) => {
-	return (
-		<ChatErrorBoundary>
-			<McpResponseDisplay {...props} />
-		</ChatErrorBoundary>
-	)
+    return (
+        <ChatErrorBoundary>
+            <McpResponseDisplay {...props} />
+        </ChatErrorBoundary>
+    )
 }
 
 export default McpResponseDisplayWithErrorBoundary

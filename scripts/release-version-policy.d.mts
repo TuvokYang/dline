@@ -1,7 +1,7 @@
 export interface ReleaseVersion {
-	major: number
-	minor: number
-	patch: number
+    major: number
+    minor: number
+    patch: number
 }
 
 export function parseReleaseVersion(version: string): ReleaseVersion

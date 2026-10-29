@@ -9,15 +9,15 @@ import { getCwd, getDesktopDir } from "@/utils/path"
  * These hooks correspond to specific lifecycle events in the task execution process.
  */
 export const VALID_HOOK_TYPES = [
-	"TaskStart",
-	"TaskResume",
-	"TaskCancel",
-	"TaskComplete",
-	"PreToolUse",
-	"PostToolUse",
-	"UserPromptSubmit",
-	"Notification",
-	"PreCompact",
+    "TaskStart",
+    "TaskResume",
+    "TaskCancel",
+    "TaskComplete",
+    "PreToolUse",
+    "PostToolUse",
+    "UserPromptSubmit",
+    "Notification",
+    "PreCompact",
 ] as const
 
 /**
@@ -32,7 +32,7 @@ export type HookType = (typeof VALID_HOOK_TYPES)[number]
  * @returns True if the hook name is valid, false otherwise
  */
 export function isValidHookType(hookName: string): hookName is HookType {
-	return VALID_HOOK_TYPES.includes(hookName as HookType)
+    return VALID_HOOK_TYPES.includes(hookName as HookType)
 }
 
 /**
@@ -46,28 +46,28 @@ export function isValidHookType(hookName: string): hookName is HookType {
  * @throws Error if the specified workspace cannot be found
  */
 export async function resolveHooksDirectory(
-	isGlobal: boolean,
-	workspaceName?: string,
-	globalHooksDirOverride?: string,
+    isGlobal: boolean,
+    workspaceName?: string,
+    globalHooksDirOverride?: string,
 ): Promise<string> {
-	if (isGlobal) {
-		return globalHooksDirOverride || path.join(await getDlineDocumentsPath(), "hooks")
-	}
+    if (isGlobal) {
+        return globalHooksDirOverride || path.join(await getDlineDocumentsPath(), "hooks")
+    }
 
-	// For workspace hooks, find the correct workspace
-	if (workspaceName) {
-		// Multi-root workspace: find the workspace with this name
-		const workspacePaths = await HostProvider.workspace.getWorkspacePaths({})
-		const targetWorkspace = workspacePaths.paths.find((p: string) => path.basename(p) === workspaceName)
-		if (!targetWorkspace) {
-			throw new Error(`Workspace "${workspaceName}" not found`)
-		}
-		return path.join(targetWorkspace, GlobalFileNames.hooksDir)
-	}
+    // For workspace hooks, find the correct workspace
+    if (workspaceName) {
+        // Multi-root workspace: find the workspace with this name
+        const workspacePaths = await HostProvider.workspace.getWorkspacePaths({})
+        const targetWorkspace = workspacePaths.paths.find((p: string) => path.basename(p) === workspaceName)
+        if (!targetWorkspace) {
+            throw new Error(`Workspace "${workspaceName}" not found`)
+        }
+        return path.join(targetWorkspace, GlobalFileNames.hooksDir)
+    }
 
-	// Single workspace: use getCwd
-	const cwd = await getCwd(getDesktopDir())
-	return path.join(cwd, GlobalFileNames.hooksDir)
+    // Single workspace: use getCwd
+    const cwd = await getCwd(getDesktopDir())
+    return path.join(cwd, GlobalFileNames.hooksDir)
 }
 
 /**
@@ -93,22 +93,22 @@ export async function resolveHooksDirectory(
  * @returns Resolved absolute file path if present, otherwise undefined
  */
 export async function resolveExistingHookPath(hooksDir: string, hookName: string): Promise<string | undefined> {
-	const candidates = process.platform === "win32" ? [path.join(hooksDir, `${hookName}.ps1`)] : [path.join(hooksDir, hookName)]
+    const candidates = process.platform === "win32" ? [path.join(hooksDir, `${hookName}.ps1`)] : [path.join(hooksDir, hookName)]
 
-	for (const candidate of candidates) {
-		if (await isRegularFile(candidate)) {
-			return candidate
-		}
-	}
+    for (const candidate of candidates) {
+        if (await isRegularFile(candidate)) {
+            return candidate
+        }
+    }
 
-	return undefined
+    return undefined
 }
 
 async function isRegularFile(filePath: string): Promise<boolean> {
-	try {
-		const stat = await fs.stat(filePath)
-		return stat.isFile()
-	} catch {
-		return false
-	}
+    try {
+        const stat = await fs.stat(filePath)
+        return stat.isFile()
+    } catch {
+        return false
+    }
 }

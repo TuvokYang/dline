@@ -10,13 +10,13 @@ import { Controller } from ".."
  * @returns Empty response since the client doesn't need a return value
  */
 export async function openInBrowser(_controller: Controller, request: StringRequest): Promise<Empty> {
-	try {
-		if (request.value) {
-			await openExternal(request.value)
-		}
-		return Empty.create()
-	} catch (error) {
-		Logger.error("Error opening URL in browser:", error)
-		return Empty.create()
-	}
+    try {
+        if (request.value) {
+            await openExternal(request.value)
+        }
+        return Empty.create()
+    } catch (error) {
+        Logger.error("Error opening URL in browser:", error)
+        return Empty.create()
+    }
 }

@@ -1,7 +1,7 @@
 // English execution prompts — key-value pairs only, no code logic.
 
 const prompts: Record<string, string> = {
-	standard: `EXECUTION
+    standard: `EXECUTION
 
 Follow this loop until the Objective is satisfied or a real boundary prevents safe completion:
 
@@ -20,7 +20,7 @@ Follow this loop until the Objective is satisfied or a real boundary prevents sa
 - Preserve unrelated or unexplained workspace changes. Reuse existing boundaries and make only task-relevant refactors that reduce coupling, risk, or ambiguity.
 - Treat tool results and verification failures as evidence. Do not repeat a failed approach without a new hypothesis, and never weaken expected behavior or tests to obtain a pass.
 - If the task is blocked or unsafe, stop the affected work, preserve safe progress, and report the evidence, impact, and exact decision needed.`,
-	lite: `EXECUTION
+    lite: `EXECUTION
 
 1. Define the requested result, constraints, preserved behavior, and completion check.
 2. Inspect enough real context to act from evidence rather than assumption.

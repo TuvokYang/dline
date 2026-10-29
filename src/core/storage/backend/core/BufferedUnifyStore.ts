@@ -6,13 +6,55 @@ import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
 import { runWithSignalSpan, type SignalSpanHandle, startSignalSpan } from "@/services/telemetry/service/pipeline-port"
 import { currentSignalSpan } from "@/services/telemetry/service/trace-scope"
 import { Logger } from "@/shared/services/Logger"
+import { stableJsonStringify } from "@/shared/stable-json"
 import type { EntityFieldRef } from "../api/EntitySchema"
 import type {
-	BufferedUnifyStoreChangeListener,
-	BufferedUnifyStore as BufferedUnifyStoreContract,
-	UnifyStore,
+    BufferedUnifyStoreChangeListener,
+    BufferedUnifyStore as BufferedUnifyStoreContract,
+    StagedTimestampMerge,
+    UnifyStore,
+    UnifyStoreWriteHint,
 } from "../api/UnifyStore"
 import { asc } from "../api/UnifyStoreQuery"
+
+/**
+ * The replaceAll hint for writing `next` over `previous`, both encoded entities.
+ *
+ * `previous` must be what the committing transaction itself read: a local
+ * baseline may be stale, and an index past the real first change would hide
+ * that change from every derived projection.
+ */
+function writeHintAgainst<TEntity>(previous: readonly TEntity[], next: readonly TEntity[]): UnifyStoreWriteHint {
+    const shared = Math.min(previous.length, next.length)
+    for (let index = 0; index < shared; index++) {
+        if (previous[index] === next[index]) continue
+        if (stableJsonStringify(previous[index]) !== stableJsonStringify(next[index])) return { firstChangedIndex: index }
+    }
+    return { firstChangedIndex: shared }
+}
+
+/**
+ * Encodes the rows a transaction read before anything can touch them.
+ *
+ * A mapping may hand out its stored payload by reference (UI messages do), so a
+ * transform that edits an item in place also rewrites the entity it came from.
+ * Comparing against the entities after the transform would then see no change
+ * at the edited row and report a first change that is too late.
+ */
+function encodePreimage<TEntity>(entities: readonly TEntity[]): readonly string[] {
+    return entities.map((entity) => stableJsonStringify(entity))
+}
+
+function writeHintAgainstPreimage<TEntity>(preimage: readonly string[], next: readonly TEntity[]): UnifyStoreWriteHint {
+    const shared = Math.min(preimage.length, next.length)
+    for (let index = 0; index < shared; index++) {
+        if (preimage[index] !== stableJsonStringify(next[index])) return { firstChangedIndex: index }
+    }
+    return { firstChangedIndex: shared }
+}
+
+/** A rewrite whose baseline cannot be trusted describes nothing about what it replaced. */
+const UNTRUSTED_BASELINE_HINT: UnifyStoreWriteHint = Object.freeze({ firstChangedIndex: 0 })
 
 const L2_MAX_SIZE = 500
 const DEFAULT_FLUSH_INTERVAL_MS = 1_000
@@ -38,998 +80,1124 @@ const COLLECTION_SIZE_BANDS = [100, 1_000, 10_000, 100_000] as const
  * distinction while leaving the label set bounded.
  */
 function collectionSizeBand(count: number): string {
-	for (const bound of COLLECTION_SIZE_BANDS) {
-		if (count < bound) return `<${bound}`
-	}
-	return `>=${COLLECTION_SIZE_BANDS.at(-1)}`
+    for (const bound of COLLECTION_SIZE_BANDS) {
+        if (count < bound) return `<${bound}`
+    }
+    return `>=${COLLECTION_SIZE_BANDS.at(-1)}`
 }
 
 /** Bookkeeping for the timer-driven flush; explicit flush() calls ignore it. */
 interface PeriodicFlushState {
-	inFlight: boolean
-	failures: number
-	retryAt: number
-	lastErrorCode?: string
+    inFlight: boolean
+    failures: number
+    retryAt: number
+    lastErrorCode?: string
+    /** Idle ticks observed since the last report; see `reportSkippedTicks`. */
+    skipped: number
 }
 
 /** What a commit wrote and how, for the state update and its telemetry. */
 interface CommitOutcome<TItem> {
-	readonly commit: string
-	readonly rewriteReason: string
-	readonly committed: TItem[]
-	readonly changed: boolean
+    readonly commit: string
+    readonly rewriteReason: string
+    readonly committed: TItem[]
+    readonly changed: boolean
 }
 
 export interface BufferedUnifyStoreMapping<TEntity extends object, TItem extends { ts: number }> {
-	readonly ordinal: EntityFieldRef<TEntity, number>
-	readonly timestamp: EntityFieldRef<TEntity, number>
-	toItem(entity: TEntity): TItem
-	toEntity(item: TItem, ordinal: number): TEntity
+    readonly ordinal: EntityFieldRef<TEntity, number>
+    readonly timestamp: EntityFieldRef<TEntity, number>
+    toItem(entity: TEntity): TItem
+    toEntity(item: TItem, ordinal: number): TEntity
 }
 
 export interface BufferedUnifyStoreOptions<TItem extends { ts: number }> {
-	readonly flushIntervalMs?: number
-	readonly ensureUniqueAppendTimestamp?: boolean
-	readonly subscriptionKey: string
-	readonly storeKind?: string
-	readonly acceptInitialItem?: (item: TItem) => boolean
-	/** Project compatibility rows into the logical collection without rewriting them during open. */
-	readonly normalizeReadItems?: (items: TItem[]) => TItem[]
-	readonly truncateTail?: (keepCount: number, expectedCount: number) => Promise<void>
-	/**
-	 * Replace the final `replacedCount` durable entries with `entries`, provided
-	 * the durable collection still ends with `expectedTailTimestamps`.
-	 *
-	 * Resolves false without writing when it does not, so the store can fall
-	 * back to reading and merging the whole collection. A backend that cannot
-	 * check its tail cheaply leaves this unset and always merges.
-	 */
-	readonly replaceTail?: (replacement: BufferedTailReplacement<TItem>) => Promise<boolean>
+    readonly flushIntervalMs?: number
+    readonly ensureUniqueAppendTimestamp?: boolean
+    readonly subscriptionKey: string
+    readonly storeKind?: string
+    readonly acceptInitialItem?: (item: TItem) => boolean
+    /** Project compatibility rows into the logical collection without rewriting them during open. */
+    readonly normalizeReadItems?: (items: TItem[]) => TItem[]
+    readonly truncateTail?: (keepCount: number, expectedCount: number) => Promise<void>
+    /**
+     * Replace the final `replacedCount` durable entries with `entries`, provided
+     * the durable collection still ends with `expectedTailTimestamps`.
+     *
+     * Resolves false without writing when it does not, so the store can fall
+     * back to reading and merging the whole collection. A backend that cannot
+     * check its tail cheaply leaves this unset and always merges.
+     */
+    readonly replaceTail?: (replacement: BufferedTailReplacement<TItem>) => Promise<boolean>
+    /**
+     * Whether a rejected `replaceTail` is guaranteed to have written nothing, as a
+     * single database transaction is.
+     *
+     * Unset means a failure may have cut the tail already, so the next commit writes
+     * the whole collection from memory. Set, the baseline stays valid and the next
+     * commit simply checks the tail again, or merges when it moved.
+     */
+    readonly replaceTailIsAtomic?: boolean
 }
 
 export interface BufferedTailReplacement<TItem> {
-	/** Timestamps the durable collection must end with, in order; empty asserts it is empty. */
-	readonly expectedTailTimestamps: readonly number[]
-	/** Final durable entries to replace; zero appends. Never more than the expected tail. */
-	readonly replacedCount: number
-	readonly entries: readonly TItem[]
+    /**
+     * Entries the durable collection holds according to the baseline. This is the
+     * logical count: rows `acceptInitialItem` dropped at open are not included, so a
+     * collection still holding them fails the tail check until one merge rewrites it.
+     */
+    readonly durableCount: number
+    /** Timestamps the durable collection must end with, in order; empty asserts it is empty. */
+    readonly expectedTailTimestamps: readonly number[]
+    /** Final durable entries to replace; zero appends. Never more than the expected tail. */
+    readonly replacedCount: number
+    readonly entries: readonly TItem[]
 }
 
 interface SubscriptionState {
-	generation: number
-	listeners: Set<BufferedUnifyStoreChangeListener>
+    generation: number
+    listeners: Set<BufferedUnifyStoreChangeListener>
 }
 
 const subscriptions = new Map<string, SubscriptionState>()
 
 export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: number }>
-	implements BufferedUnifyStoreContract<TItem>
+    implements BufferedUnifyStoreContract<TItem>
 {
-	private readonly mutex = new Mutex()
-	private readonly flushIntervalMs: number
-	private readonly ensureUniqueAppendTimestamp: boolean
-	private readonly subscriptionState: SubscriptionState
-	private readonly ownedListeners = new Set<BufferedUnifyStoreChangeListener>()
-	private readonly acceptInitialItem: (item: TItem) => boolean
-	private readonly normalizeReadItems?: (items: TItem[]) => TItem[]
-	private readonly truncateTail?: (keepCount: number, expectedCount: number) => Promise<void>
-	private readonly replaceTail?: (replacement: BufferedTailReplacement<TItem>) => Promise<boolean>
-	private readonly storeKind: string
-	/**
-	 * Set when a tail write failed after it may have cut the durable tail. The
-	 * file can then no longer be described by the baseline, and memory is the
-	 * only complete copy until it has been written back.
-	 */
-	private memoryRewriteRequired = false
-	/** The logical read view omitted compatibility rows still present in the physical JSONL file. */
-	private projectedPersistedRows = false
-	private flushTimer: ReturnType<typeof setInterval> | undefined
-	private periodicFlush: PeriodicFlushState = { inFlight: false, failures: 0, retryAt: 0 }
-	private closing = false
-	private closed = false
-	private closePromise: Promise<void> | undefined
-	private dirty = false
-	private items: TItem[] = []
-	private persistedItems: TItem[] = []
-	private sortedTimestamps: number[] = []
-	/** Set when a mutation invalidated the index; cleared by ensureTimestampIndex(). */
-	private timestampIndexStale = false
-	private l2Cache = new Map<number, TItem>()
-	private l2AccessOrder: number[] = []
-
-	private constructor(
-		private readonly store: UnifyStore<TEntity>,
-		private readonly mapping: BufferedUnifyStoreMapping<TEntity, TItem>,
-		options: BufferedUnifyStoreOptions<TItem>,
-	) {
-		this.flushIntervalMs = options.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS
-		this.ensureUniqueAppendTimestamp = options.ensureUniqueAppendTimestamp ?? false
-		this.subscriptionState = getSubscriptionState(options.subscriptionKey)
-		this.acceptInitialItem = options.acceptInitialItem ?? (() => true)
-		this.normalizeReadItems = options.normalizeReadItems
-		this.truncateTail = options.truncateTail
-		this.replaceTail = options.replaceTail
-		this.storeKind = options.storeKind ?? "other"
-	}
-
-	static async open<TEntity extends object, TItem extends { ts: number }>(options: {
-		store: UnifyStore<TEntity>
-		mapping: BufferedUnifyStoreMapping<TEntity, TItem>
-		bufferOptions: BufferedUnifyStoreOptions<TItem>
-	}): Promise<BufferedUnifyStore<TEntity, TItem>> {
-		const buffered = new BufferedUnifyStore(options.store, options.mapping, options.bufferOptions)
-		try {
-			await buffered.loadInitialState()
-			buffered.startFlushTimer()
-			return buffered
-		} catch (error) {
-			await options.store.close().catch(() => undefined)
-			throw error
-		}
-	}
-
-	get count(): number {
-		return this.items.length
-	}
-
-	get isFullyLoaded(): boolean {
-		return true
-	}
-
-	getAll(): ReadonlyArray<TItem> {
-		return this.items
-	}
-
-	getByTimestamp(timestamp: number): TItem | undefined {
-		const cached = this.l2Cache.get(timestamp)
-		if (cached) this.touchL2(timestamp)
-		return cached
-	}
-
-	getAt(index: number): TItem | undefined {
-		if (index < 0 || index >= this.items.length) return undefined
-		return this.items[index]
-	}
-
-	findTimestampIndex(timestamp: number): number {
-		this.ensureTimestampIndex()
-		let low = 0
-		let high = this.sortedTimestamps.length
-		while (low < high) {
-			const middle = (low + high) >>> 1
-			if (this.sortedTimestamps[middle] < timestamp) low = middle + 1
-			else high = middle
-		}
-		return low
-	}
-
-	async getRecent(limit: number): Promise<TItem[]> {
-		if (limit <= 0) return []
-		this.ensureTimestampIndex()
-		const start = Math.max(0, this.sortedTimestamps.length - limit)
-		return this.sortedTimestamps
-			.slice(start)
-			.map((timestamp) => this.resolveByTimestamp(timestamp))
-			.filter(isDefined)
-	}
-
-	async getRange(fromTimestamp: number, toTimestamp: number): Promise<TItem[]> {
-		const result: TItem[] = []
-		// Refresh before the loop rather than relying on findTimestampIndex to do
-		// it, so the bound read below cannot observe a different index than the
-		// start position was computed against.
-		this.ensureTimestampIndex()
-		for (let index = this.findTimestampIndex(fromTimestamp); index < this.sortedTimestamps.length; index++) {
-			const timestamp = this.sortedTimestamps[index]
-			if (timestamp >= toTimestamp) break
-			const item = this.resolveByTimestamp(timestamp)
-			if (item) result.push(item)
-		}
-		return result
-	}
-
-	async reload(force = false): Promise<void> {
-		if (!force) return
-		await this.mutex.withLock(async () => {
-			const loaded = await this.readCommittedItems(false)
-			this.setCommittedState(loaded.items)
-			this.projectedPersistedRows = loaded.projected
-			this.dirty = false
-			this.memoryRewriteRequired = false
-		})
-	}
-
-	async append(item: TItem): Promise<void> {
-		this.assertWritable()
-		await this.mutex.withLock(() => {
-			const admitted = this.ensureUniqueAppendTimestamp ? this.withLocallyUniqueTimestamp(item) : item
-			this.items.push(admitted)
-			// An append only adds one timestamp, so a materialized index can absorb
-			// it directly. This matters for stores that force unique timestamps:
-			// they must read the index on every append, which would otherwise
-			// rebuild it every time and lose the benefit of deferring.
-			this.insertIntoTimestampIndex(admitted.ts)
-			this.addToL2(admitted.ts, admitted)
-			this.dirty = true
-		})
-	}
-
-	async appendDurable(item: TItem): Promise<TItem> {
-		this.assertWritable()
-		return await this.mutex.withLock(async () => {
-			await this.settleInterruptedWrite()
-			const tailAdditions = this.dirty ? this.getPureTailAdditions() : []
-			if (!tailAdditions) {
-				throw new Error("BufferedUnifyStore.appendDurable requires a clean or append-only buffer")
-			}
-			const admitted = this.ensureUniqueAppendTimestamp ? this.withLocallyUniqueTimestamp(item) : item
-			if (this.items.some((candidate) => candidate.ts === admitted.ts)) {
-				throw new Error(`BufferedUnifyStore.appendDurable: timestamp ${admitted.ts} already exists`)
-			}
-			const additions = [...tailAdditions, admitted]
-			await this.store.insert(
-				additions.map((addition, index) => this.mapping.toEntity(addition, this.persistedItems.length + index)),
-			)
-			this.setCommittedState([...this.persistedItems, ...additions])
-			this.dirty = false
-			this.publishCommittedChange()
-			return admitted
-		})
-	}
-
-	async stageInsertAt(index: number, item: TItem): Promise<void> {
-		this.assertWritable()
-		await this.mutex.withLock(() => {
-			if (index >= this.items.length) this.items.push(item)
-			else this.items.splice(Math.max(0, index), 0, item)
-			this.invalidateTimestampIndex()
-			this.addToL2(item.ts, item)
-			this.dirty = true
-		})
-	}
-
-	async stageUpdateAt(index: number, item: TItem): Promise<void> {
-		this.assertWritable()
-		await this.mutex.withLock(() => {
-			this.assertIndex("stageUpdateAt", index)
-			this.items[index] = item
-			this.invalidateTimestampIndex()
-			this.addToL2(item.ts, item)
-			this.dirty = true
-		})
-	}
-
-	async stagePatchAt(index: number, updates: Partial<TItem>): Promise<TItem> {
-		this.assertWritable()
-		return await this.mutex.withLock(() => {
-			this.assertIndex("stagePatchAt", index)
-			const item = { ...this.items[index], ...updates }
-			this.items[index] = item
-			this.invalidateTimestampIndex()
-			this.addToL2(item.ts, item)
-			this.dirty = true
-			return item
-		})
-	}
-
-	async stageUpsertByTimestamp(item: TItem): Promise<void> {
-		this.assertWritable()
-		await this.mutex.withLock(() => {
-			const index = this.findLastTimestampIndex(item.ts)
-			if (index >= 0) this.items[index] = item
-			else this.items.push(item)
-			this.invalidateTimestampIndex()
-			this.addToL2(item.ts, item)
-			this.dirty = true
-		})
-	}
-
-	async removeAt(index: number): Promise<void> {
-		await this.mutate((items) => {
-			if (index < 0 || index >= items.length) {
-				throw new Error(`BufferedUnifyStore.removeAt: index ${index} out of range [0, ${items.length})`)
-			}
-			items.splice(index, 1)
-			return items
-		})
-	}
-
-	async insertAt(index: number, item: TItem): Promise<void> {
-		await this.mutate((items) => {
-			if (index >= items.length) items.push(item)
-			else items.splice(Math.max(0, index), 0, item)
-			return items
-		})
-	}
-
-	async clear(): Promise<void> {
-		this.assertWritable()
-		// A freshly created task clears an already-empty store on its startup path.
-		// Routing that through `mutate` costs a flush plus a full query/replaceAll
-		// transaction for no state change, which is pure latency before the first
-		// request. Skip the round trip when there is provably nothing to remove.
-		if (this.items.length === 0 && this.persistedItems.length === 0 && !this.dirty) {
-			return
-		}
-		await this.mutate(() => [])
-	}
-
-	async truncateAt(count: number): Promise<void> {
-		const keepCount = Math.min(this.items.length, Math.max(0, count))
-		const truncateTail = this.truncateTail
-		if (!truncateTail || this.projectedPersistedRows) {
-			await this.mutate((items) => items.slice(0, keepCount))
-			return
-		}
-		this.assertWritable()
-		await this.mutex.withLock(async () => {
-			// Tail truncation counts lines against the baseline, which an
-			// interrupted tail write left untrustworthy.
-			await this.settleInterruptedWrite()
-			const retained = this.items.slice(0, keepCount)
-			const persistedPrefixLength = Math.min(keepCount, this.persistedItems.length)
-			for (let index = 0; index < persistedPrefixLength; index++) {
-				// Same reference short-circuit as the append path: an untouched entry
-				// is still the identical object, so only replaced entries need the
-				// expensive structural comparison.
-				if (retained[index] === this.persistedItems[index]) continue
-				if (JSON.stringify(retained[index]) !== JSON.stringify(this.persistedItems[index])) {
-					throw new Error("BufferedUnifyStore.truncateAt cannot preserve a structurally modified prefix")
-				}
-			}
-			if (keepCount > this.persistedItems.length) {
-				const tailAdditions = this.getPureTailAdditions()
-				if (!tailAdditions) throw new Error("BufferedUnifyStore.truncateAt requires an append-only dirty tail")
-				const retainedAdditions = retained.slice(this.persistedItems.length)
-				if (retainedAdditions.length > 0) {
-					await this.store.insert(
-						retainedAdditions.map((item, index) => this.mapping.toEntity(item, this.persistedItems.length + index)),
-					)
-				}
-			} else if (keepCount < this.persistedItems.length) {
-				await truncateTail(keepCount, this.persistedItems.length)
-			}
-			this.setCommittedState(retained)
-			this.dirty = false
-			this.publishCommittedChange()
-		})
-	}
-
-	async truncateBeforeTimestamp(timestamp: number): Promise<void> {
-		await this.truncateAt(this.findTimestampIndex(timestamp))
-	}
-
-	async mutate(transform: (items: TItem[]) => TItem[]): Promise<void> {
-		this.assertWritable()
-		await this.mutex.withLock(async () => {
-			await this.flushLocked()
-			let result: TItem[] = []
-			await this.store.transaction(async (transaction) => {
-				const entities = await transaction.query({ orderBy: [asc(this.mapping.ordinal)] })
-				const committed = this.projectReadItems(entities.map((entity) => this.mapping.toItem(entity))).items
-				result = transform(committed)
-				await transaction.replaceAll(result.map((item, ordinal) => this.mapping.toEntity(item, ordinal)))
-			})
-			this.setCommittedState(result)
-			this.projectedPersistedRows = false
-			this.publishCommittedChange()
-		})
-	}
-
-	async replaceAll(items: readonly TItem[]): Promise<void> {
-		await this.mutate(() => [...items])
-	}
-
-	async flush(): Promise<void> {
-		await this.mutex.withLock(() => this.flushLocked())
-	}
-
-	subscribe(listener: BufferedUnifyStoreChangeListener): () => void {
-		this.subscriptionState.listeners.add(listener)
-		this.ownedListeners.add(listener)
-		return () => {
-			this.subscriptionState.listeners.delete(listener)
-			this.ownedListeners.delete(listener)
-		}
-	}
-
-	close(): Promise<void> {
-		if (this.closePromise) return this.closePromise
-		this.closing = true
-		if (this.flushTimer) clearInterval(this.flushTimer)
-		this.flushTimer = undefined
-		this.closePromise = this.mutex.withLock(async () => {
-			await this.flushLocked()
-			for (const listener of this.ownedListeners) this.subscriptionState.listeners.delete(listener)
-			this.ownedListeners.clear()
-			await this.store.close()
-			this.closed = true
-		})
-		return this.closePromise
-	}
-
-	private async loadInitialState(): Promise<void> {
-		const loaded = await this.readCommittedItems(true)
-		this.setCommittedState(loaded.items)
-		this.projectedPersistedRows = loaded.projected
-	}
-
-	private async readCommittedItems(initial: boolean): Promise<{ items: TItem[]; projected: boolean }> {
-		const result = await this.store.query({ orderBy: [asc(this.mapping.ordinal)] })
-		const items: TItem[] = []
-		for (const entity of result.records) {
-			try {
-				const item = this.mapping.toItem(entity)
-				if (!initial || this.acceptInitialItem(item)) items.push(item)
-			} catch {
-				// Invalid persisted records are isolated at the compatibility boundary.
-			}
-		}
-		return this.projectReadItems(items)
-	}
-
-	private startFlushTimer(): void {
-		this.flushTimer = setInterval(() => {
-			void this.runPeriodicFlush()
-		}, this.flushIntervalMs)
-		this.flushTimer.unref?.()
-	}
-
-	/**
-	 * One timer-driven flush.
-	 *
-	 * Ticks never overlap, so a slow commit does not queue another behind the
-	 * mutex every interval. A commit that keeps failing (a destination locked by
-	 * another process, a full disk) backs off up to MAX_PERIODIC_FLUSH_BACKOFF_MS
-	 * instead of staging a new temp file every second. The failure is logged when
-	 * it starts and whenever its error code changes, not on every retry.
-	 */
-	private async runPeriodicFlush(): Promise<void> {
-		const state = this.periodicFlush
-		if (state.inFlight || Date.now() < state.retryAt) return
-		state.inFlight = true
-		try {
-			await this.flush()
-			if (state.failures > 0) {
-				Logger.info(`[BufferedUnifyStore] periodic flush recovered: store=${this.storeKind}, failures=${state.failures}`)
-			}
-			this.periodicFlush = { inFlight: false, failures: 0, retryAt: 0 }
-		} catch (error) {
-			const code = (error as NodeJS.ErrnoException | undefined)?.code ?? "UNKNOWN"
-			state.failures++
-			if (state.failures === 1 || code !== state.lastErrorCode) {
-				Logger.warn(
-					`[BufferedUnifyStore] periodic flush failed: store=${this.storeKind}, code=${code}, failures=${state.failures}`,
-				)
-			}
-			state.lastErrorCode = code
-			state.retryAt = Date.now() + Math.min(this.flushIntervalMs * 2 ** state.failures, MAX_PERIODIC_FLUSH_BACKOFF_MS)
-		} finally {
-			state.inFlight = false
-		}
-	}
-
-	private async flushLocked(): Promise<void> {
-		if (!this.dirty) return
-		// Attached only to an operation already being traced. A flush also runs
-		// from a repeating timer, and starting a span there would emit a root
-		// trace every interval for every open store while explaining nothing:
-		// the work would have no caller to attribute it to. When a task is
-		// waiting on this commit the span is what shows that wait on its
-		// waterfall, which is the case worth seeing.
-		const span = this.beginFlushSpan()
-		if (!span) {
-			await this.commitLocked()
-			return
-		}
-		try {
-			await runWithSignalSpan(span, () => this.commitLocked(span))
-			span.end("success")
-		} catch (error) {
-			span.recordException(error)
-			span.end("failure")
-			throw error
-		}
-	}
-
-	/**
-	 * Start a flush span only when this commit belongs to a traced operation.
-	 *
-	 * Returning undefined is the common case: the periodic flush has no caller
-	 * to hang under, and an unparented span per interval per store would add
-	 * traces without adding information.
-	 */
-	private beginFlushSpan(): SignalSpanHandle | undefined {
-		const parent = currentSignalSpan()
-		if (!parent) return undefined
-		return startSignalSpan({ name: "storage.flush_commit", parent })
-	}
-
-	private async commitLocked(span?: SignalSpanHandle): Promise<void> {
-		const startedAt = performance.now()
-		try {
-			await this.commitShape(span)
-		} catch (error) {
-			// A periodic flush swallows its rejection, and the success paths
-			// below are the only ones that stop the phase. Without this a write
-			// that keeps failing would report nothing at all: the file-lock
-			// metric would still say it acquired the lock, and the store would
-			// look idle rather than broken.
-			//
-			// Reported as another value of the existing `commit` dimension
-			// rather than as a new label, so failures join the same series
-			// instead of splitting every existing one in two.
-			recordPerfPhase(PerfDomain.BufferedStore, "flush_commit", performance.now() - startedAt, {
-				commit: "error",
-				size: collectionSizeBand(this.items.length),
-				store_kind: this.storeKind,
-				rewrite_reason: "error",
-			})
-			throw error
-		}
-	}
-
-	private async commitShape(span?: SignalSpanHandle): Promise<void> {
-		// Every commit shape reports under one phase so a silent fall back to
-		// rewriting the whole collection shows up as a shift in the `commit`
-		// dimension instead of only as user-visible slowness.
-		const phase = startPerfPhase(PerfDomain.BufferedStore, "flush_commit")
-		const startedAt = performance.now()
-		const outcome = (await this.commitFromMemory()) ?? (await this.commitByMerge())
-		this.setCommittedState(outcome.committed)
-		this.dirty = false
-		this.memoryRewriteRequired = false
-		if (outcome.changed) this.publishCommittedChange()
-		const size = collectionSizeBand(outcome.committed.length)
-		phase.stop({ commit: outcome.commit, size, store_kind: this.storeKind, rewrite_reason: outcome.rewriteReason })
-		// The same facts the metric carries. A duration alone would leave a
-		// reader unable to tell a large history from a store that stopped
-		// appending, which is the distinction the span exists to show.
-		span?.setAttribute("commit", outcome.commit)
-		span?.setAttribute("size", size)
-		span?.setAttribute("store_kind", this.storeKind)
-		span?.setAttribute("rewrite_reason", outcome.rewriteReason)
-		this.reportSlowCommit(startedAt, outcome.commit, outcome.committed.length)
-	}
-
-	/**
-	 * Commit from memory, without reading the durable collection.
-	 *
-	 * A task holds the only writable handle on its message files, so the
-	 * baseline already says what the collection holds and a commit only has
-	 * to write what changed since. Returns undefined when the merge commit has
-	 * to run instead: the backend cannot check its tail, or the tail no longer
-	 * ends the way the baseline says.
-	 *
-	 * Cutting and appending are two writes, so a crash between them loses the
-	 * replaced entries from disk while every earlier entry stays intact. That is
-	 * accepted: a task resumed after a crash is already reported as interrupted,
-	 * and paying a whole-file rewrite on every edit is what made long tasks slow.
-	 */
-	private async commitFromMemory(): Promise<CommitOutcome<TItem> | undefined> {
-		if (this.memoryRewriteRequired) return await this.rewriteFromMemory()
-		const persisted = this.persistedItems
-		const firstChange = this.firstChangedIndex()
-		if (firstChange === undefined) {
-			return { commit: "noop", rewriteReason: "no_change", committed: this.items, changed: false }
-		}
-		const replacedCount = persisted.length - firstChange
-		const entries = this.items.slice(firstChange)
-		if (replacedCount === 0 && !this.ensureUniqueAppendTimestamp) {
-			await this.store.insert(entries.map((item, index) => this.mapping.toEntity(item, persisted.length + index)))
-			return { commit: "buffered_append", rewriteReason: "none", committed: this.items, changed: true }
-		}
-		// A projected compatibility row makes physical line counts differ from
-		// the logical baseline. Read and merge before any relative tail rewrite.
-		if (this.projectedPersistedRows) return undefined
-		const replaceTail = this.replaceTail
-		if (!replaceTail) return undefined
-
-		// One untouched entry before the replaced ones is checked as well, so
-		// a writer that appended after the baseline cannot line up by chance.
-		// A store that forces unique timestamps relies on this even for a pure
-		// append: its entries were made unique against memory, not against a
-		// line another handle may have added.
-		const anchor = Math.max(0, firstChange - 1)
-		let replaced: boolean
-		try {
-			replaced = await replaceTail({
-				expectedTailTimestamps: persisted.slice(anchor).map((item) => item.ts),
-				replacedCount,
-				entries,
-			})
-		} catch (error) {
-			// The tail may already be cut, so the baseline no longer describes
-			// the collection and memory holds its only complete copy.
-			this.memoryRewriteRequired = true
-			throw error
-		}
-		if (!replaced) {
-			recordDiagnostic(DiagnosticDomain.Storage, "baseline_diverged", DiagnosticOutcome.Degraded, {
-				reason: "tail_mismatch",
-				store_kind: this.storeKind,
-			})
-			return undefined
-		}
-		if (replacedCount === 0) {
-			return { commit: "buffered_append", rewriteReason: "none", committed: this.items, changed: true }
-		}
-		return {
-			commit: "tail_rewrite",
-			rewriteReason: this.classifyRewriteReason(persisted, this.items),
-			committed: this.items,
-			changed: true,
-		}
-	}
-
-	/**
-	 * Write memory back as the whole collection after a tail write failed
-	 * partway.
-	 *
-	 * Merging would read the cut file and keep it cut: an entry memory never
-	 * changed still matches the baseline, so it would look settled even though
-	 * its line is gone.
-	 */
-	private async rewriteFromMemory(): Promise<CommitOutcome<TItem>> {
-		await this.store.replaceAll(this.items.map((item, ordinal) => this.mapping.toEntity(item, ordinal)))
-		this.projectedPersistedRows = false
-		recordDiagnostic(DiagnosticDomain.Storage, "baseline_diverged", DiagnosticOutcome.Recovered, {
-			reason: "interrupted_write",
-			store_kind: this.storeKind,
-		})
-		return { commit: "rewrite", rewriteReason: "recovery", committed: this.items, changed: true }
-	}
-
-	/**
-	 * Read the committed collection, merge local changes into it, and write
-	 * the result. Used whenever memory cannot vouch for what the file holds.
-	 */
-	private async commitByMerge(): Promise<CommitOutcome<TItem>> {
-		return await this.store.transaction(async (transaction): Promise<CommitOutcome<TItem>> => {
-			const entities = await transaction.query({ orderBy: [asc(this.mapping.ordinal)] })
-			const projected = this.projectReadItems(entities.map((entity) => this.mapping.toItem(entity)))
-			const committed = projected.items
-			const merged = this.mergeWithCommitted(committed)
-			if (this.isSameCommittedSequence(committed, merged)) {
-				this.projectedPersistedRows = projected.projected
-				return { commit: "noop", rewriteReason: "no_change", committed: merged, changed: false }
-			}
-			// The merge already ran against the committed state read inside this
-			// transaction, so when it only grew a tail there is nothing to rewrite.
-			// Deciding from `committed` rather than from the local baseline keeps
-			// this correct even when another writer moved ahead of us, and keeps
-			// cross-process timestamp allocation fully intact.
-			const appended = this.suffixAfterUnchangedPrefixOf(committed, merged)
-			if (appended) {
-				await transaction.insert(appended.map((item, index) => this.mapping.toEntity(item, committed.length + index)))
-				this.projectedPersistedRows = projected.projected
-				return { commit: "append", rewriteReason: "none", committed: merged, changed: true }
-			}
-			const rewriteReason = this.classifyRewriteReason(committed, merged)
-			await transaction.replaceAll(merged.map((item, ordinal) => this.mapping.toEntity(item, ordinal)))
-			this.projectedPersistedRows = false
-			return { commit: "rewrite", rewriteReason, committed: merged, changed: true }
-		})
-	}
-
-	/**
-	 * Write memory back first when an earlier tail write may have cut the
-	 * collection. Operations that write relative to the baseline would
-	 * otherwise build on a file that no longer matches it.
-	 */
-	private async settleInterruptedWrite(): Promise<void> {
-		if (this.memoryRewriteRequired) await this.flushLocked()
-	}
-
-	/**
-	 * Log a commit that took long enough to be felt.
-	 *
-	 * Telemetry alone leaves a local user with no way to see why their session
-	 * degraded, and the collection size plus the commit shape is what separates
-	 * "this history is large" from "this store stopped appending".
-	 */
-	private reportSlowCommit(startedAt: number, commit: string, itemCount: number): void {
-		const durationMs = Math.round(performance.now() - startedAt)
-		if (durationMs < SLOW_COMMIT_MS) return
-		// The collection identity is deliberately absent: it derives from a user
-		// file path, and the size plus the commit shape already say whether this
-		// is a large history or a store that stopped appending.
-		Logger.warn(`[BufferedUnifyStore] slow commit: durationMs=${durationMs}, commit=${commit}, items=${itemCount}`)
-	}
-
-	/**
-	 * Return the entries appended after an unchanged prefix, when there are any.
-	 *
-	 * Identity is the only prefix test used here: merging reuses the very
-	 * objects it was given for untouched entries, so a replaced entry always
-	 * breaks reference equality and correctly forces a full rewrite.
-	 */
-	private projectReadItems(items: TItem[]): { items: TItem[]; projected: boolean } {
-		const projectedItems = this.normalizeReadItems?.(items) ?? items
-		const projected = projectedItems.length !== items.length || projectedItems.some((item, index) => item !== items[index])
-		return { items: projectedItems, projected }
-	}
-
-	private isSameCommittedSequence(committed: readonly TItem[], merged: readonly TItem[]): boolean {
-		return committed.length === merged.length && committed.every((item, index) => item === merged[index])
-	}
-
-	private classifyRewriteReason(committed: readonly TItem[], merged: readonly TItem[]): string {
-		if (merged.length < committed.length) return "remove"
-		if (merged.length > committed.length) return "insert_or_merge"
-		if (committed.some((item, index) => item.ts !== merged[index]?.ts)) return "reorder"
-		return "patch"
-	}
-
-	private suffixAfterUnchangedPrefixOf(committed: readonly TItem[], merged: readonly TItem[]): TItem[] | undefined {
-		if (merged.length <= committed.length) return undefined
-		for (let index = 0; index < committed.length; index++) {
-			if (merged[index] !== committed[index]) return undefined
-		}
-		return merged.slice(committed.length)
-	}
-
-	/** Index of the first entry that differs from the baseline, or undefined when none does. */
-	private firstChangedIndex(): number | undefined {
-		const shared = Math.min(this.items.length, this.persistedItems.length)
-		for (let index = 0; index < shared; index++) {
-			if (!this.isUnchangedAt(index)) return index
-		}
-		return this.items.length === this.persistedItems.length ? undefined : shared
-	}
-
-	private isUnchangedAt(index: number): boolean {
-		const item = this.items[index]
-		const baseline = this.persistedItems[index]
-		// Staging replaces whole entries, so an untouched entry is still the
-		// very object the baseline captured and needs no serialization.
-		return item === baseline || JSON.stringify(item) === JSON.stringify(baseline)
-	}
-
-	private getPureTailAdditions(): TItem[] | undefined {
-		if (this.ensureUniqueAppendTimestamp || this.items.length <= this.persistedItems.length) return undefined
-		for (let index = 0; index < this.persistedItems.length; index++) {
-			// Reference equality settles the common case without serializing: an
-			// untouched prefix still holds the very objects the baseline captured,
-			// because staging replaces whole entries instead of mutating them.
-			// Serializing every retained entry on each flush turned an append into
-			// work proportional to the entire history.
-			if (this.items[index] === this.persistedItems[index]) continue
-			if (JSON.stringify(this.items[index]) !== JSON.stringify(this.persistedItems[index])) return undefined
-		}
-		return this.items.slice(this.persistedItems.length)
-	}
-
-	private mergeWithCommitted(committedItems: TItem[]): TItem[] {
-		const baselineByTimestamp = new Map(this.persistedItems.map((item) => [item.ts, item]))
-		const baselineTimestamps = new Set(baselineByTimestamp.keys())
-		const localByTimestamp = new Map(this.items.map((item) => [item.ts, item]))
-		const removedTimestamps = new Set(
-			this.persistedItems.filter((item) => !localByTimestamp.has(item.ts)).map((item) => item.ts),
-		)
-		let merged = committedItems.filter((item) => !removedTimestamps.has(item.ts))
-		const additions: Array<{ item: TItem; localIndex: number }> = []
-
-		for (let localIndex = 0; localIndex < this.items.length; localIndex++) {
-			const localItem = this.items[localIndex]
-			const baselineItem = baselineByTimestamp.get(localItem.ts)
-			if (!baselineItem) {
-				additions.push({ item: localItem, localIndex })
-				continue
-			}
-			// Staging replaces whole entries, so an untouched entry is still the
-			// very object the baseline captured. Serializing both sides of that
-			// comparison cost a full pass over the history on every flush.
-			if (localItem === baselineItem) continue
-			if (JSON.stringify(localItem) === JSON.stringify(baselineItem)) continue
-			const committedIndex = merged.findIndex((item) => item.ts === localItem.ts)
-			if (committedIndex >= 0) merged[committedIndex] = localItem
-			else additions.push({ item: localItem, localIndex })
-		}
-
-		if (additions.length === 0) return merged
-		if (this.ensureUniqueAppendTimestamp) this.allocateUniqueCommittedTimestamps(merged, additions)
-
-		const additionTimestamps = new Set(additions.map(({ item }) => item.ts))
-		merged = merged.filter((item) => !additionTimestamps.has(item.ts))
-		const groups = new Map<string, { previous?: number; next?: number; items: TItem[] }>()
-		for (const addition of additions) {
-			const previous = findBaselineTimestamp(this.items, baselineTimestamps, addition.localIndex, -1)
-			const next = findBaselineTimestamp(this.items, baselineTimestamps, addition.localIndex, 1)
-			const key = `${previous ?? "start"}:${next ?? "end"}`
-			const group = groups.get(key) ?? { previous, next, items: [] }
-			group.items.push(addition.item)
-			groups.set(key, group)
-		}
-
-		for (const group of groups.values()) {
-			const previousIndex = group.previous === undefined ? -1 : merged.findIndex((item) => item.ts === group.previous)
-			const nextIndex = group.next === undefined ? merged.length : merged.findIndex((item) => item.ts === group.next)
-			const start = previousIndex >= 0 ? previousIndex + 1 : 0
-			const end = nextIndex >= start ? nextIndex : merged.length
-			const gap = merged.slice(start, end)
-			if (gap.some((item) => baselineTimestamps.has(item.ts))) {
-				merged.splice(end, 0, ...group.items)
-				continue
-			}
-			const byTimestamp = new Map(gap.map((item) => [item.ts, item]))
-			for (const item of group.items) byTimestamp.set(item.ts, item)
-			merged.splice(start, end - start, ...[...byTimestamp.values()].sort((left, right) => left.ts - right.ts))
-		}
-		return merged
-	}
-
-	private allocateUniqueCommittedTimestamps(
-		committed: readonly TItem[],
-		additions: Array<{ item: TItem; localIndex: number }>,
-	): void {
-		const used = new Set(committed.map((item) => item.ts))
-		let maximum = committed.reduce((value, item) => Math.max(value, item.ts), 0)
-		for (const addition of additions) {
-			if (used.has(addition.item.ts)) {
-				let next = Math.max(addition.item.ts, maximum) + 1
-				while (used.has(next)) next += 1
-				addition.item = { ...addition.item, ts: next }
-				this.items[addition.localIndex] = addition.item
-			}
-			used.add(addition.item.ts)
-			maximum = Math.max(maximum, addition.item.ts)
-		}
-	}
-
-	private setCommittedState(items: TItem[]): void {
-		this.items = items
-		// The baseline is only ever read: it is compared against `this.items` and
-		// sliced, never written through. Every staging path replaces a whole entry
-		// (`this.items[index] = item`) or builds a new object from a spread, so no
-		// entry is mutated in place and the two arrays cannot alias into each other.
-		//
-		// Deep-cloning every entry here doubled both the load time and the resident
-		// memory of a task's message history, which for a large task meant copying
-		// tens of megabytes on open before anything could be displayed.
-		this.persistedItems = [...items]
-		this.l2Cache.clear()
-		this.l2AccessOrder = []
-		this.invalidateTimestampIndex()
-		for (let index = 0; index < Math.min(items.length, L2_MAX_SIZE); index++) {
-			if (items[index].ts > 0) this.addToL2(items[index].ts, items[index])
-		}
-	}
-
-	private resolveByTimestamp(timestamp: number): TItem | undefined {
-		const cached = this.getByTimestamp(timestamp)
-		if (cached) return cached
-		const item = [...this.items].reverse().find((candidate) => candidate.ts === timestamp)
-		if (item) this.addToL2(timestamp, item)
-		return item
-	}
-
-	/**
-	 * Mark the timestamp index for rebuilding on the next read.
-	 *
-	 * Sorting eagerly inside every mutation made a burst of staged updates pay
-	 * one full sort each, which on a long conversation dominated streaming. The
-	 * rebuild itself is unchanged and still the only writer of the index, so
-	 * deferring it cannot make a reader observe a partially maintained order.
-	 */
-	private invalidateTimestampIndex(): void {
-		this.timestampIndexStale = true
-	}
-
-	/**
-	 * Add one timestamp to an already materialized index.
-	 *
-	 * A stale index is left alone: the pending rebuild reads `items`, which
-	 * already holds the new entry.
-	 */
-	private insertIntoTimestampIndex(timestamp: number): void {
-		if (this.timestampIndexStale || timestamp <= 0) return
-		this.sortedTimestamps.splice(this.findTimestampIndex(timestamp), 0, timestamp)
-	}
-
-	/** Restore the sorted index before any reader depends on its ordering. */
-	private ensureTimestampIndex(): void {
-		if (!this.timestampIndexStale) return
-		this.timestampIndexStale = false
-		this.rebuildTimestampIndex()
-	}
-
-	private rebuildTimestampIndex(): void {
-		this.sortedTimestamps = this.items
-			.filter((item) => item.ts > 0)
-			.map((item) => item.ts)
-			.sort((left, right) => left - right)
-	}
-
-	/**
-	 * Report whether the index already holds this timestamp.
-	 *
-	 * findTimestampIndex() refreshes a stale index first, so a collision staged
-	 * since the last read is still visible here.
-	 */
-	private hasTimestamp(timestamp: number): boolean {
-		return this.sortedTimestamps[this.findTimestampIndex(timestamp)] === timestamp
-	}
-
-	private addToL2(timestamp: number, item: TItem): void {
-		const existing = this.l2AccessOrder.indexOf(timestamp)
-		if (existing >= 0) this.l2AccessOrder.splice(existing, 1)
-		while (this.l2Cache.size >= L2_MAX_SIZE && this.l2AccessOrder.length > 0) {
-			const oldest = this.l2AccessOrder.shift()
-			if (oldest !== undefined) this.l2Cache.delete(oldest)
-		}
-		this.l2Cache.set(timestamp, item)
-		this.l2AccessOrder.push(timestamp)
-	}
-
-	private touchL2(timestamp: number): void {
-		const index = this.l2AccessOrder.indexOf(timestamp)
-		if (index < 0) return
-		this.l2AccessOrder.splice(index, 1)
-		this.l2AccessOrder.push(timestamp)
-	}
-
-	private withLocallyUniqueTimestamp(item: TItem): TItem {
-		// Uniqueness is decided against the index, so a run of appends that never
-		// gets read in between must still refresh it here. Skipping this let
-		// consecutive colliding appends all keep the same timestamp.
-		this.ensureTimestampIndex()
-		// Scanning the index linearly here cost a full pass per append, and the
-		// probe loop repeated that pass on every attempt. The index is sorted,
-		// so membership is a binary search.
-		if (!this.hasTimestamp(item.ts)) return item
-		let next = Math.max(item.ts, this.sortedTimestamps.at(-1) ?? item.ts) + 1
-		while (this.hasTimestamp(next)) next += 1
-		return { ...item, ts: next }
-	}
-
-	private findLastTimestampIndex(timestamp: number): number {
-		for (let index = this.items.length - 1; index >= 0; index--) {
-			if (this.items[index].ts === timestamp) return index
-		}
-		return -1
-	}
-
-	private assertIndex(operation: string, index: number): void {
-		if (index < 0 || index >= this.items.length) {
-			throw new Error(`BufferedUnifyStore.${operation}: index ${index} out of range [0, ${this.items.length})`)
-		}
-	}
-
-	private assertWritable(): void {
-		if (this.closing || this.closed) throw new Error("BufferedUnifyStore is closed")
-	}
-
-	private publishCommittedChange(): void {
-		this.subscriptionState.generation += 1
-		const change = { generation: this.subscriptionState.generation }
-		for (const listener of this.subscriptionState.listeners) {
-			void Promise.resolve(listener(change)).catch(() => undefined)
-		}
-	}
+    private readonly mutex = new Mutex()
+    private readonly flushIntervalMs: number
+    private readonly ensureUniqueAppendTimestamp: boolean
+    private readonly subscriptionState: SubscriptionState
+    private readonly ownedListeners = new Set<BufferedUnifyStoreChangeListener>()
+    private readonly acceptInitialItem: (item: TItem) => boolean
+    private readonly normalizeReadItems?: (items: TItem[]) => TItem[]
+    private readonly truncateTail?: (keepCount: number, expectedCount: number) => Promise<void>
+    private readonly replaceTail?: (replacement: BufferedTailReplacement<TItem>) => Promise<boolean>
+    private readonly replaceTailIsAtomic: boolean
+    private readonly storeKind: string
+    /**
+     * Set when a tail write failed after it may have cut the durable tail. The
+     * file can then no longer be described by the baseline, and memory is the
+     * only complete copy until it has been written back.
+     */
+    private memoryRewriteRequired = false
+    /** The logical read view omitted compatibility rows still present in the physical JSONL file. */
+    private projectedPersistedRows = false
+    private flushTimer: ReturnType<typeof setInterval> | undefined
+    private periodicFlush: PeriodicFlushState = { inFlight: false, failures: 0, retryAt: 0, skipped: 0 }
+    private closing = false
+    private closed = false
+    private closePromise: Promise<void> | undefined
+    private dirty = false
+    private items: TItem[] = []
+    private persistedItems: TItem[] = []
+    private sortedTimestamps: number[] = []
+    /** Set when a mutation invalidated the index; cleared by ensureTimestampIndex(). */
+    private timestampIndexStale = false
+    private l2Cache = new Map<number, TItem>()
+    private l2AccessOrder: number[] = []
+
+    private constructor(
+        private readonly store: UnifyStore<TEntity>,
+        private readonly mapping: BufferedUnifyStoreMapping<TEntity, TItem>,
+        options: BufferedUnifyStoreOptions<TItem>,
+    ) {
+        this.flushIntervalMs = options.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS
+        this.ensureUniqueAppendTimestamp = options.ensureUniqueAppendTimestamp ?? false
+        this.subscriptionState = getSubscriptionState(options.subscriptionKey)
+        this.acceptInitialItem = options.acceptInitialItem ?? (() => true)
+        this.normalizeReadItems = options.normalizeReadItems
+        this.truncateTail = options.truncateTail
+        this.replaceTail = options.replaceTail
+        this.replaceTailIsAtomic = options.replaceTailIsAtomic ?? false
+        this.storeKind = options.storeKind ?? "other"
+    }
+
+    static async open<TEntity extends object, TItem extends { ts: number }>(options: {
+        store: UnifyStore<TEntity>
+        mapping: BufferedUnifyStoreMapping<TEntity, TItem>
+        bufferOptions: BufferedUnifyStoreOptions<TItem>
+    }): Promise<BufferedUnifyStore<TEntity, TItem>> {
+        const buffered = new BufferedUnifyStore(options.store, options.mapping, options.bufferOptions)
+        try {
+            await buffered.loadInitialState()
+            buffered.startFlushTimer()
+            return buffered
+        } catch (error) {
+            await options.store.close().catch(() => undefined)
+            throw error
+        }
+    }
+
+    get count(): number {
+        return this.items.length
+    }
+
+    get isFullyLoaded(): boolean {
+        return true
+    }
+
+    getAll(): ReadonlyArray<TItem> {
+        return this.items
+    }
+
+    /**
+     * The latest entry with this timestamp, or undefined when the collection has none.
+     *
+     * The cache only holds a bounded window, so a miss falls back to the entries
+     * themselves. Answering from the cache alone reported committed rows outside
+     * the window as absent, and callers that check before writing then appended
+     * a duplicate timestamp.
+     */
+    getByTimestamp(timestamp: number): TItem | undefined {
+        const cached = this.l2Cache.get(timestamp)
+        if (cached) {
+            this.touchL2(timestamp)
+            return cached
+        }
+        const index = this.findLastTimestampIndex(timestamp)
+        if (index < 0) return undefined
+        const item = this.items[index]
+        this.addToL2(timestamp, item)
+        return item
+    }
+
+    getAt(index: number): TItem | undefined {
+        if (index < 0 || index >= this.items.length) return undefined
+        return this.items[index]
+    }
+
+    findTimestampIndex(timestamp: number): number {
+        this.ensureTimestampIndex()
+        let low = 0
+        let high = this.sortedTimestamps.length
+        while (low < high) {
+            const middle = (low + high) >>> 1
+            if (this.sortedTimestamps[middle] < timestamp) low = middle + 1
+            else high = middle
+        }
+        return low
+    }
+
+    async getRecent(limit: number): Promise<TItem[]> {
+        if (limit <= 0) return []
+        this.ensureTimestampIndex()
+        const start = Math.max(0, this.sortedTimestamps.length - limit)
+        return this.sortedTimestamps
+            .slice(start)
+            .map((timestamp) => this.getByTimestamp(timestamp))
+            .filter(isDefined)
+    }
+
+    async getRange(fromTimestamp: number, toTimestamp: number): Promise<TItem[]> {
+        const result: TItem[] = []
+        // Refresh before the loop rather than relying on findTimestampIndex to do
+        // it, so the bound read below cannot observe a different index than the
+        // start position was computed against.
+        this.ensureTimestampIndex()
+        for (let index = this.findTimestampIndex(fromTimestamp); index < this.sortedTimestamps.length; index++) {
+            const timestamp = this.sortedTimestamps[index]
+            if (timestamp >= toTimestamp) break
+            const item = this.getByTimestamp(timestamp)
+            if (item) result.push(item)
+        }
+        return result
+    }
+
+    async reload(force = false): Promise<void> {
+        if (!force) return
+        await this.mutex.withLock(async () => {
+            const loaded = await this.readCommittedItems(false)
+            this.setCommittedState(loaded.items)
+            this.projectedPersistedRows = loaded.projected
+            this.dirty = false
+            this.memoryRewriteRequired = false
+        })
+    }
+
+    async append(item: TItem): Promise<void> {
+        this.assertWritable()
+        await this.mutex.withLock(() => {
+            const admitted = this.ensureUniqueAppendTimestamp ? this.withLocallyUniqueTimestamp(item) : item
+            this.items.push(admitted)
+            // An append only adds one timestamp, so a materialized index can absorb
+            // it directly. This matters for stores that force unique timestamps:
+            // they must read the index on every append, which would otherwise
+            // rebuild it every time and lose the benefit of deferring.
+            this.insertIntoTimestampIndex(admitted.ts)
+            this.addToL2(admitted.ts, admitted)
+            this.dirty = true
+        })
+    }
+
+    async appendDurable(item: TItem): Promise<TItem> {
+        this.assertWritable()
+        return await this.mutex.withLock(async () => {
+            await this.settleInterruptedWrite()
+            const tailAdditions = this.dirty ? this.getPureTailAdditions() : []
+            if (!tailAdditions) {
+                throw new Error("BufferedUnifyStore.appendDurable requires a clean or append-only buffer")
+            }
+            return await this.appendDurableLocked(item, tailAdditions)
+        })
+    }
+
+    async commitPendingAndAppendDurable(item: TItem): Promise<TItem> {
+        this.assertWritable()
+        return await this.mutex.withLock(async () => {
+            // A pure tail would otherwise be inserted after a collection an
+            // earlier failed tail write may have cut. Same guard as appendDurable.
+            await this.settleInterruptedWrite()
+            let tailAdditions = this.dirty ? this.getPureTailAdditions() : []
+            if (!tailAdditions) {
+                // Committed under the same lock, so no other write can slip in
+                // between the staged rewrite and the row that follows it.
+                await this.flushLocked()
+                tailAdditions = []
+            }
+            return await this.appendDurableLocked(item, tailAdditions)
+        })
+    }
+
+    private async appendDurableLocked(item: TItem, tailAdditions: readonly TItem[]): Promise<TItem> {
+        const admitted = this.ensureUniqueAppendTimestamp ? this.withLocallyUniqueTimestamp(item) : item
+        if (this.items.some((candidate) => candidate.ts === admitted.ts)) {
+            throw new Error(`BufferedUnifyStore.appendDurable: timestamp ${admitted.ts} already exists`)
+        }
+        const additions = [...tailAdditions, admitted]
+        await this.store.insert(
+            additions.map((addition, index) => this.mapping.toEntity(addition, this.persistedItems.length + index)),
+        )
+        this.setCommittedState([...this.persistedItems, ...additions])
+        this.dirty = false
+        this.publishCommittedChange()
+        return admitted
+    }
+
+    async stageInsertAt(index: number, item: TItem): Promise<void> {
+        this.assertWritable()
+        await this.mutex.withLock(() => {
+            if (index >= this.items.length) this.items.push(item)
+            else this.items.splice(Math.max(0, index), 0, item)
+            this.invalidateTimestampIndex()
+            this.addToL2(item.ts, item)
+            this.dirty = true
+        })
+    }
+
+    async stageUpdateAt(index: number, item: TItem): Promise<void> {
+        this.assertWritable()
+        await this.mutex.withLock(() => {
+            this.assertIndex("stageUpdateAt", index)
+            this.items[index] = item
+            this.invalidateTimestampIndex()
+            this.addToL2(item.ts, item)
+            this.dirty = true
+        })
+    }
+
+    async stagePatchAt(index: number, updates: Partial<TItem>): Promise<TItem> {
+        this.assertWritable()
+        return await this.mutex.withLock(() => {
+            this.assertIndex("stagePatchAt", index)
+            const item = { ...this.items[index], ...updates }
+            this.items[index] = item
+            this.invalidateTimestampIndex()
+            this.addToL2(item.ts, item)
+            this.dirty = true
+            return item
+        })
+    }
+
+    async stageUpsertByTimestamp(item: TItem): Promise<void> {
+        this.assertWritable()
+        await this.mutex.withLock(() => {
+            const index = this.findLastTimestampIndex(item.ts)
+            if (index >= 0) this.items[index] = item
+            else this.items.push(item)
+            this.invalidateTimestampIndex()
+            this.addToL2(item.ts, item)
+            this.dirty = true
+        })
+    }
+
+    async stageMergeByTimestamp(
+        item: TItem,
+        admit: (current: TItem) => boolean = () => true,
+    ): Promise<StagedTimestampMerge<TItem>> {
+        this.assertWritable()
+        return await this.mutex.withLock(() => {
+            const existing = this.findLastTimestampIndex(item.ts)
+            if (existing >= 0 && !admit(this.items[existing])) {
+                return { index: existing, item: this.items[existing], applied: false }
+            }
+            const index = existing >= 0 ? existing : this.timestampInsertionIndex(item.ts)
+            const stored = existing >= 0 ? { ...this.items[existing], ...item } : item
+            if (existing >= 0) this.items[index] = stored
+            else this.items.splice(index, 0, stored)
+            this.invalidateTimestampIndex()
+            this.addToL2(stored.ts, stored)
+            this.dirty = true
+            return { index, item: stored, applied: true }
+        })
+    }
+
+    async removeAt(index: number): Promise<void> {
+        await this.mutate((items) => {
+            if (index < 0 || index >= items.length) {
+                throw new Error(`BufferedUnifyStore.removeAt: index ${index} out of range [0, ${items.length})`)
+            }
+            items.splice(index, 1)
+            return items
+        })
+    }
+
+    async insertAt(index: number, item: TItem): Promise<void> {
+        await this.mutate((items) => {
+            if (index >= items.length) items.push(item)
+            else items.splice(Math.max(0, index), 0, item)
+            return items
+        })
+    }
+
+    async clear(): Promise<void> {
+        this.assertWritable()
+        // A freshly created task clears an already-empty store on its startup path.
+        // Routing that through `mutate` costs a flush plus a full query/replaceAll
+        // transaction for no state change, which is pure latency before the first
+        // request. Skip the round trip when there is provably nothing to remove.
+        if (this.items.length === 0 && this.persistedItems.length === 0 && !this.dirty) {
+            return
+        }
+        await this.mutate(() => [])
+    }
+
+    async truncateAt(count: number): Promise<void> {
+        const keepCount = Math.min(this.items.length, Math.max(0, count))
+        const truncateTail = this.truncateTail
+        if (!truncateTail || this.projectedPersistedRows) {
+            await this.mutate((items) => items.slice(0, keepCount))
+            return
+        }
+        this.assertWritable()
+        await this.mutex.withLock(async () => {
+            // Tail truncation counts lines against the baseline, which an
+            // interrupted tail write left untrustworthy.
+            await this.settleInterruptedWrite()
+            const retained = this.items.slice(0, keepCount)
+            const persistedPrefixLength = Math.min(keepCount, this.persistedItems.length)
+            for (let index = 0; index < persistedPrefixLength; index++) {
+                // Same reference short-circuit as the append path: an untouched entry
+                // is still the identical object, so only replaced entries need the
+                // expensive structural comparison.
+                if (retained[index] === this.persistedItems[index]) continue
+                if (JSON.stringify(retained[index]) !== JSON.stringify(this.persistedItems[index])) {
+                    throw new Error("BufferedUnifyStore.truncateAt cannot preserve a structurally modified prefix")
+                }
+            }
+            if (keepCount > this.persistedItems.length) {
+                const tailAdditions = this.getPureTailAdditions()
+                if (!tailAdditions) throw new Error("BufferedUnifyStore.truncateAt requires an append-only dirty tail")
+                const retainedAdditions = retained.slice(this.persistedItems.length)
+                if (retainedAdditions.length > 0) {
+                    await this.store.insert(
+                        retainedAdditions.map((item, index) => this.mapping.toEntity(item, this.persistedItems.length + index)),
+                    )
+                }
+            } else if (keepCount < this.persistedItems.length) {
+                await truncateTail(keepCount, this.persistedItems.length)
+            }
+            this.setCommittedState(retained)
+            this.dirty = false
+            this.publishCommittedChange()
+        })
+    }
+
+    async truncateBeforeTimestamp(timestamp: number): Promise<void> {
+        await this.truncateAt(this.findTimestampIndex(timestamp))
+    }
+
+    async mutate(transform: (items: TItem[]) => TItem[]): Promise<void> {
+        this.assertWritable()
+        await this.mutex.withLock(async () => {
+            await this.flushLocked()
+            let result: TItem[] = []
+            await this.store.transaction(async (transaction) => {
+                const entities = await transaction.query({ orderBy: [asc(this.mapping.ordinal)] })
+                const preimage = encodePreimage(entities)
+                const committed = this.projectReadItems(entities.map((entity) => this.mapping.toItem(entity))).items
+                result = transform(committed)
+                const next = result.map((item, ordinal) => this.mapping.toEntity(item, ordinal))
+                await transaction.replaceAll(next, writeHintAgainstPreimage(preimage, next))
+            })
+            this.setCommittedState(result)
+            this.projectedPersistedRows = false
+            this.publishCommittedChange()
+        })
+    }
+
+    async replaceAll(items: readonly TItem[]): Promise<void> {
+        await this.mutate(() => [...items])
+    }
+
+    async flush(): Promise<void> {
+        // An idle store must not pay for a lock acquisition and an async hop on
+        // every timer tick: the periodic timer runs for every open store, and a
+        // task keeps four of them open, so an unconditional lock turned "nothing
+        // was written" into a steady stream of scheduler wake-ups.
+        //
+        // Reading `dirty` outside the lock is safe: it only ever means "a write
+        // has been staged". A write that lands between this check and the lock
+        // is picked up by the next tick, exactly as it was when the check lived
+        // inside `flushLocked`. The in-lock guard stays as the authoritative one.
+        if (!this.dirty) return
+        await this.mutex.withLock(() => this.flushLocked())
+    }
+
+    subscribe(listener: BufferedUnifyStoreChangeListener): () => void {
+        this.subscriptionState.listeners.add(listener)
+        this.ownedListeners.add(listener)
+        return () => {
+            this.subscriptionState.listeners.delete(listener)
+            this.ownedListeners.delete(listener)
+        }
+    }
+
+    close(): Promise<void> {
+        if (this.closed) return Promise.resolve()
+        if (this.closePromise) return this.closePromise
+        this.closing = true
+        if (this.flushTimer) clearInterval(this.flushTimer)
+        this.flushTimer = undefined
+        const attempt = this.mutex.withLock(async () => {
+            await this.flushLocked()
+            for (const listener of this.ownedListeners) this.subscriptionState.listeners.delete(listener)
+            this.ownedListeners.clear()
+            await this.store.close()
+            this.closed = true
+        })
+        this.closePromise = attempt
+        void attempt.catch(() => {
+            if (this.closePromise === attempt) this.closePromise = undefined
+        })
+        return attempt
+    }
+
+    private async loadInitialState(): Promise<void> {
+        const loaded = await this.readCommittedItems(true)
+        this.setCommittedState(loaded.items)
+        this.projectedPersistedRows = loaded.projected
+    }
+
+    private async readCommittedItems(initial: boolean): Promise<{ items: TItem[]; projected: boolean }> {
+        const result = await this.store.query({ orderBy: [asc(this.mapping.ordinal)] })
+        const items: TItem[] = []
+        for (const entity of result.records) {
+            try {
+                const item = this.mapping.toItem(entity)
+                if (!initial || this.acceptInitialItem(item)) items.push(item)
+            } catch {
+                // Invalid persisted records are isolated at the compatibility boundary.
+            }
+        }
+        return this.projectReadItems(items)
+    }
+
+    private startFlushTimer(): void {
+        this.flushTimer = setInterval(() => {
+            void this.runPeriodicFlush()
+        }, this.flushIntervalMs)
+        this.flushTimer.unref?.()
+    }
+
+    /**
+     * One timer-driven flush.
+     *
+     * Ticks never overlap, so a slow commit does not queue another behind the
+     * mutex every interval. A commit that keeps failing (a destination locked by
+     * another process, a full disk) backs off up to MAX_PERIODIC_FLUSH_BACKOFF_MS
+     * instead of staging a new temp file every second. The failure is logged when
+     * it starts and whenever its error code changes, not on every retry.
+     */
+    private async runPeriodicFlush(): Promise<void> {
+        const state = this.periodicFlush
+        if (state.inFlight || Date.now() < state.retryAt) return
+        // Count the ticks that found nothing instead of reporting them one by
+        // one: this timer runs once per second for every open store and a task
+        // opens four, so a per-tick event would cost more than the work it
+        // describes. The aggregate is what shows whether this timer is pure
+        // overhead.
+        if (!this.dirty) {
+            state.skipped++
+            return
+        }
+        state.inFlight = true
+        try {
+            await this.flush()
+            this.reportSkippedTicks()
+            if (state.failures > 0) {
+                Logger.info(`[BufferedUnifyStore] periodic flush recovered: store=${this.storeKind}, failures=${state.failures}`)
+            }
+            this.periodicFlush = { inFlight: false, failures: 0, retryAt: 0, skipped: 0 }
+        } catch (error) {
+            const code = (error as NodeJS.ErrnoException | undefined)?.code ?? "UNKNOWN"
+            state.failures++
+            if (state.failures === 1 || code !== state.lastErrorCode) {
+                Logger.warn(
+                    `[BufferedUnifyStore] periodic flush failed: store=${this.storeKind}, code=${code}, failures=${state.failures}`,
+                )
+            }
+            state.lastErrorCode = code
+            state.retryAt = Date.now() + Math.min(this.flushIntervalMs * 2 ** state.failures, MAX_PERIODIC_FLUSH_BACKOFF_MS)
+        } finally {
+            state.inFlight = false
+        }
+    }
+
+    /**
+     * Report the idle ticks accumulated since the last commit.
+     *
+     * Emitted only when a commit happens, so a store that never writes reports
+     * nothing: the point of the number is to show how much of the periodic
+     * timer's work was discarded because nothing was staged. Reporting it from
+     * the timer would recreate the per-tick cost it is meant to expose.
+     */
+    private reportSkippedTicks(): void {
+        const skipped = this.periodicFlush.skipped
+        if (skipped === 0) return
+        this.periodicFlush.skipped = 0
+        recordPerfPhase(PerfDomain.BufferedStore, "flush_skipped", 0, { store: this.storeKind, skipped })
+    }
+
+    private async flushLocked(): Promise<void> {
+        if (!this.dirty) return
+        // Attached only to an operation already being traced. A flush also runs
+        // from a repeating timer, and starting a span there would emit a root
+        // trace every interval for every open store while explaining nothing:
+        // the work would have no caller to attribute it to. When a task is
+        // waiting on this commit the span is what shows that wait on its
+        // waterfall, which is the case worth seeing.
+        const span = this.beginFlushSpan()
+        if (!span) {
+            await this.commitLocked()
+            return
+        }
+        try {
+            await runWithSignalSpan(span, () => this.commitLocked(span))
+            span.end("success")
+        } catch (error) {
+            span.recordException(error)
+            span.end("failure")
+            throw error
+        }
+    }
+
+    /**
+     * Start a flush span only when this commit belongs to a traced operation.
+     *
+     * Returning undefined is the common case: the periodic flush has no caller
+     * to hang under, and an unparented span per interval per store would add
+     * traces without adding information.
+     */
+    private beginFlushSpan(): SignalSpanHandle | undefined {
+        const parent = currentSignalSpan()
+        if (!parent) return undefined
+        return startSignalSpan({ name: "storage.flush_commit", parent })
+    }
+
+    private async commitLocked(span?: SignalSpanHandle): Promise<void> {
+        const startedAt = performance.now()
+        try {
+            await this.commitShape(span)
+        } catch (error) {
+            // A periodic flush swallows its rejection, and the success paths
+            // below are the only ones that stop the phase. Without this a write
+            // that keeps failing would report nothing at all: the file-lock
+            // metric would still say it acquired the lock, and the store would
+            // look idle rather than broken.
+            //
+            // Reported as another value of the existing `commit` dimension
+            // rather than as a new label, so failures join the same series
+            // instead of splitting every existing one in two.
+            recordPerfPhase(PerfDomain.BufferedStore, "flush_commit", performance.now() - startedAt, {
+                commit: "error",
+                size: collectionSizeBand(this.items.length),
+                store_kind: this.storeKind,
+                rewrite_reason: "error",
+            })
+            throw error
+        }
+    }
+
+    private async commitShape(span?: SignalSpanHandle): Promise<void> {
+        // Every commit shape reports under one phase so a silent fall back to
+        // rewriting the whole collection shows up as a shift in the `commit`
+        // dimension instead of only as user-visible slowness.
+        const phase = startPerfPhase(PerfDomain.BufferedStore, "flush_commit")
+        const startedAt = performance.now()
+        const outcome = (await this.commitFromMemory()) ?? (await this.commitByMerge())
+        this.setCommittedState(outcome.committed)
+        this.dirty = false
+        this.memoryRewriteRequired = false
+        if (outcome.changed) this.publishCommittedChange()
+        const size = collectionSizeBand(outcome.committed.length)
+        phase.stop({ commit: outcome.commit, size, store_kind: this.storeKind, rewrite_reason: outcome.rewriteReason })
+        // The same facts the metric carries. A duration alone would leave a
+        // reader unable to tell a large history from a store that stopped
+        // appending, which is the distinction the span exists to show.
+        span?.setAttribute("commit", outcome.commit)
+        span?.setAttribute("size", size)
+        span?.setAttribute("store_kind", this.storeKind)
+        span?.setAttribute("rewrite_reason", outcome.rewriteReason)
+        this.reportSlowCommit(startedAt, outcome.commit, outcome.committed.length)
+    }
+
+    /**
+     * Commit from memory, without reading the durable collection.
+     *
+     * A task holds the only writable handle on its message files, so the
+     * baseline already says what the collection holds and a commit only has
+     * to write what changed since. Returns undefined when the merge commit has
+     * to run instead: the backend cannot check its tail, or the tail no longer
+     * ends the way the baseline says.
+     *
+     * Cutting and appending are two writes, so a crash between them loses the
+     * replaced entries from disk while every earlier entry stays intact. That is
+     * accepted: a task resumed after a crash is already reported as interrupted,
+     * and paying a whole-file rewrite on every edit is what made long tasks slow.
+     */
+    private async commitFromMemory(): Promise<CommitOutcome<TItem> | undefined> {
+        if (this.memoryRewriteRequired) return await this.rewriteFromMemory()
+        const persisted = this.persistedItems
+        const firstChange = this.firstChangedIndex()
+        if (firstChange === undefined) {
+            return { commit: "noop", rewriteReason: "no_change", committed: this.items, changed: false }
+        }
+        const replacedCount = persisted.length - firstChange
+        const entries = this.items.slice(firstChange)
+        if (replacedCount === 0 && !this.ensureUniqueAppendTimestamp) {
+            await this.store.insert(entries.map((item, index) => this.mapping.toEntity(item, persisted.length + index)))
+            return { commit: "buffered_append", rewriteReason: "none", committed: this.items, changed: true }
+        }
+        // A projected compatibility row makes physical line counts differ from
+        // the logical baseline. Read and merge before any relative tail rewrite.
+        if (this.projectedPersistedRows) return undefined
+        const replaceTail = this.replaceTail
+        if (!replaceTail) return undefined
+
+        // One untouched entry before the replaced ones is checked as well, so
+        // a writer that appended after the baseline cannot line up by chance.
+        // A store that forces unique timestamps relies on this even for a pure
+        // append: its entries were made unique against memory, not against a
+        // line another handle may have added.
+        const anchor = Math.max(0, firstChange - 1)
+        let replaced: boolean
+        try {
+            replaced = await replaceTail({
+                durableCount: persisted.length,
+                expectedTailTimestamps: persisted.slice(anchor).map((item) => item.ts),
+                replacedCount,
+                entries,
+            })
+        } catch (error) {
+            // A non-atomic tail write may already have cut the tail, so the baseline
+            // no longer describes the collection and memory holds its only complete
+            // copy. An atomic one rolled back, and rewriting everything would both
+            // cost what the tail path exists to avoid and overwrite rows another
+            // writer committed meanwhile.
+            if (!this.replaceTailIsAtomic) this.memoryRewriteRequired = true
+            throw error
+        }
+        if (!replaced) {
+            recordDiagnostic(DiagnosticDomain.Storage, "baseline_diverged", DiagnosticOutcome.Degraded, {
+                reason: "tail_mismatch",
+                store_kind: this.storeKind,
+            })
+            return undefined
+        }
+        if (replacedCount === 0) {
+            return { commit: "buffered_append", rewriteReason: "none", committed: this.items, changed: true }
+        }
+        return {
+            commit: "tail_rewrite",
+            rewriteReason: this.classifyRewriteReason(persisted, this.items),
+            committed: this.items,
+            changed: true,
+        }
+    }
+
+    /**
+     * Write memory back as the whole collection after a tail write failed
+     * partway.
+     *
+     * Merging would read the cut file and keep it cut: an entry memory never
+     * changed still matches the baseline, so it would look settled even though
+     * its line is gone.
+     */
+    private async rewriteFromMemory(): Promise<CommitOutcome<TItem>> {
+        await this.store.replaceAll(
+            this.items.map((item, ordinal) => this.mapping.toEntity(item, ordinal)),
+            UNTRUSTED_BASELINE_HINT,
+        )
+        this.projectedPersistedRows = false
+        recordDiagnostic(DiagnosticDomain.Storage, "baseline_diverged", DiagnosticOutcome.Recovered, {
+            reason: "interrupted_write",
+            store_kind: this.storeKind,
+        })
+        return { commit: "rewrite", rewriteReason: "recovery", committed: this.items, changed: true }
+    }
+
+    /**
+     * Read the committed collection, merge local changes into it, and write
+     * the result. Used whenever memory cannot vouch for what the file holds.
+     */
+    private async commitByMerge(): Promise<CommitOutcome<TItem>> {
+        return await this.store.transaction(async (transaction): Promise<CommitOutcome<TItem>> => {
+            const entities = await transaction.query({ orderBy: [asc(this.mapping.ordinal)] })
+            const projected = this.projectReadItems(entities.map((entity) => this.mapping.toItem(entity)))
+            const committed = projected.items
+            const merged = this.mergeWithCommitted(committed)
+            if (this.isSameCommittedSequence(committed, merged)) {
+                this.projectedPersistedRows = projected.projected
+                return { commit: "noop", rewriteReason: "no_change", committed: merged, changed: false }
+            }
+            // The merge already ran against the committed state read inside this
+            // transaction, so when it only grew a tail there is nothing to rewrite.
+            // Deciding from `committed` rather than from the local baseline keeps
+            // this correct even when another writer moved ahead of us, and keeps
+            // cross-process timestamp allocation fully intact.
+            const appended = this.suffixAfterUnchangedPrefixOf(committed, merged)
+            if (appended) {
+                await transaction.insert(appended.map((item, index) => this.mapping.toEntity(item, committed.length + index)))
+                this.projectedPersistedRows = projected.projected
+                return { commit: "append", rewriteReason: "none", committed: merged, changed: true }
+            }
+            const rewriteReason = this.classifyRewriteReason(committed, merged)
+            const next = merged.map((item, ordinal) => this.mapping.toEntity(item, ordinal))
+            await transaction.replaceAll(next, writeHintAgainst(entities, next))
+            this.projectedPersistedRows = false
+            return { commit: "rewrite", rewriteReason, committed: merged, changed: true }
+        })
+    }
+
+    /**
+     * Write memory back first when an earlier tail write may have cut the
+     * collection. Operations that write relative to the baseline would
+     * otherwise build on a file that no longer matches it.
+     */
+    private async settleInterruptedWrite(): Promise<void> {
+        if (this.memoryRewriteRequired) await this.flushLocked()
+    }
+
+    /**
+     * Log a commit that took long enough to be felt.
+     *
+     * Telemetry alone leaves a local user with no way to see why their session
+     * degraded, and the collection size plus the commit shape is what separates
+     * "this history is large" from "this store stopped appending".
+     */
+    private reportSlowCommit(startedAt: number, commit: string, itemCount: number): void {
+        const durationMs = Math.round(performance.now() - startedAt)
+        if (durationMs < SLOW_COMMIT_MS) return
+        // The collection identity is deliberately absent: it derives from a user
+        // file path, and the size plus the commit shape already say whether this
+        // is a large history or a store that stopped appending.
+        Logger.warn(`[BufferedUnifyStore] slow commit: durationMs=${durationMs}, commit=${commit}, items=${itemCount}`)
+    }
+
+    /**
+     * Return the entries appended after an unchanged prefix, when there are any.
+     *
+     * Identity is the only prefix test used here: merging reuses the very
+     * objects it was given for untouched entries, so a replaced entry always
+     * breaks reference equality and correctly forces a full rewrite.
+     */
+    private projectReadItems(items: TItem[]): { items: TItem[]; projected: boolean } {
+        const projectedItems = this.normalizeReadItems?.(items) ?? items
+        const projected = projectedItems.length !== items.length || projectedItems.some((item, index) => item !== items[index])
+        return { items: projectedItems, projected }
+    }
+
+    private isSameCommittedSequence(committed: readonly TItem[], merged: readonly TItem[]): boolean {
+        return committed.length === merged.length && committed.every((item, index) => item === merged[index])
+    }
+
+    private classifyRewriteReason(committed: readonly TItem[], merged: readonly TItem[]): string {
+        if (merged.length < committed.length) return "remove"
+        if (merged.length > committed.length) return "insert_or_merge"
+        if (committed.some((item, index) => item.ts !== merged[index]?.ts)) return "reorder"
+        return "patch"
+    }
+
+    private suffixAfterUnchangedPrefixOf(committed: readonly TItem[], merged: readonly TItem[]): TItem[] | undefined {
+        if (merged.length <= committed.length) return undefined
+        for (let index = 0; index < committed.length; index++) {
+            if (merged[index] !== committed[index]) return undefined
+        }
+        return merged.slice(committed.length)
+    }
+
+    /** Index of the first entry that differs from the baseline, or undefined when none does. */
+    private firstChangedIndex(): number | undefined {
+        const shared = Math.min(this.items.length, this.persistedItems.length)
+        for (let index = 0; index < shared; index++) {
+            if (!this.isUnchangedAt(index)) return index
+        }
+        return this.items.length === this.persistedItems.length ? undefined : shared
+    }
+
+    private isUnchangedAt(index: number): boolean {
+        const item = this.items[index]
+        const baseline = this.persistedItems[index]
+        // Staging replaces whole entries, so an untouched entry is still the
+        // very object the baseline captured and needs no serialization.
+        return item === baseline || JSON.stringify(item) === JSON.stringify(baseline)
+    }
+
+    private getPureTailAdditions(): TItem[] | undefined {
+        if (this.ensureUniqueAppendTimestamp || this.items.length <= this.persistedItems.length) return undefined
+        for (let index = 0; index < this.persistedItems.length; index++) {
+            // Reference equality settles the common case without serializing: an
+            // untouched prefix still holds the very objects the baseline captured,
+            // because staging replaces whole entries instead of mutating them.
+            // Serializing every retained entry on each flush turned an append into
+            // work proportional to the entire history.
+            if (this.items[index] === this.persistedItems[index]) continue
+            if (JSON.stringify(this.items[index]) !== JSON.stringify(this.persistedItems[index])) return undefined
+        }
+        return this.items.slice(this.persistedItems.length)
+    }
+
+    private mergeWithCommitted(committedItems: TItem[]): TItem[] {
+        const baselineByTimestamp = new Map(this.persistedItems.map((item) => [item.ts, item]))
+        const baselineTimestamps = new Set(baselineByTimestamp.keys())
+        const localByTimestamp = new Map(this.items.map((item) => [item.ts, item]))
+        const removedTimestamps = new Set(
+            this.persistedItems.filter((item) => !localByTimestamp.has(item.ts)).map((item) => item.ts),
+        )
+        let merged = committedItems.filter((item) => !removedTimestamps.has(item.ts))
+        const additions: Array<{ item: TItem; localIndex: number }> = []
+
+        for (let localIndex = 0; localIndex < this.items.length; localIndex++) {
+            const localItem = this.items[localIndex]
+            const baselineItem = baselineByTimestamp.get(localItem.ts)
+            if (!baselineItem) {
+                additions.push({ item: localItem, localIndex })
+                continue
+            }
+            // Staging replaces whole entries, so an untouched entry is still the
+            // very object the baseline captured. Serializing both sides of that
+            // comparison cost a full pass over the history on every flush.
+            if (localItem === baselineItem) continue
+            if (JSON.stringify(localItem) === JSON.stringify(baselineItem)) continue
+            const committedIndex = merged.findIndex((item) => item.ts === localItem.ts)
+            if (committedIndex >= 0) merged[committedIndex] = localItem
+            else additions.push({ item: localItem, localIndex })
+        }
+
+        if (additions.length === 0) return merged
+        if (this.ensureUniqueAppendTimestamp) this.allocateUniqueCommittedTimestamps(merged, additions)
+
+        const additionTimestamps = new Set(additions.map(({ item }) => item.ts))
+        merged = merged.filter((item) => !additionTimestamps.has(item.ts))
+        const groups = new Map<string, { previous?: number; next?: number; items: TItem[] }>()
+        for (const addition of additions) {
+            const previous = findBaselineTimestamp(this.items, baselineTimestamps, addition.localIndex, -1)
+            const next = findBaselineTimestamp(this.items, baselineTimestamps, addition.localIndex, 1)
+            const key = `${previous ?? "start"}:${next ?? "end"}`
+            const group = groups.get(key) ?? { previous, next, items: [] }
+            group.items.push(addition.item)
+            groups.set(key, group)
+        }
+
+        for (const group of groups.values()) {
+            const previousIndex = group.previous === undefined ? -1 : merged.findIndex((item) => item.ts === group.previous)
+            const nextIndex = group.next === undefined ? merged.length : merged.findIndex((item) => item.ts === group.next)
+            const start = previousIndex >= 0 ? previousIndex + 1 : 0
+            const end = nextIndex >= start ? nextIndex : merged.length
+            const gap = merged.slice(start, end)
+            if (gap.some((item) => baselineTimestamps.has(item.ts))) {
+                merged.splice(end, 0, ...group.items)
+                continue
+            }
+            const byTimestamp = new Map(gap.map((item) => [item.ts, item]))
+            for (const item of group.items) byTimestamp.set(item.ts, item)
+            merged.splice(start, end - start, ...[...byTimestamp.values()].sort((left, right) => left.ts - right.ts))
+        }
+        return merged
+    }
+
+    private allocateUniqueCommittedTimestamps(
+        committed: readonly TItem[],
+        additions: Array<{ item: TItem; localIndex: number }>,
+    ): void {
+        const used = new Set(committed.map((item) => item.ts))
+        let maximum = committed.reduce((value, item) => Math.max(value, item.ts), 0)
+        for (const addition of additions) {
+            if (used.has(addition.item.ts)) {
+                let next = Math.max(addition.item.ts, maximum) + 1
+                while (used.has(next)) next += 1
+                addition.item = { ...addition.item, ts: next }
+                this.items[addition.localIndex] = addition.item
+            }
+            used.add(addition.item.ts)
+            maximum = Math.max(maximum, addition.item.ts)
+        }
+    }
+
+    private setCommittedState(items: TItem[]): void {
+        this.items = items
+        // The baseline is only ever read: it is compared against `this.items` and
+        // sliced, never written through. Every staging path replaces a whole entry
+        // (`this.items[index] = item`) or builds a new object from a spread, so no
+        // entry is mutated in place and the two arrays cannot alias into each other.
+        //
+        // Deep-cloning every entry here doubled both the load time and the resident
+        // memory of a task's message history, which for a large task meant copying
+        // tens of megabytes on open before anything could be displayed.
+        this.persistedItems = [...items]
+        this.l2Cache.clear()
+        this.l2AccessOrder = []
+        this.invalidateTimestampIndex()
+        // Seed the most recent rows: lookups concentrate on the tail of a
+        // conversation, where streaming and terminal updates land.
+        for (let index = Math.max(0, items.length - L2_MAX_SIZE); index < items.length; index++) {
+            if (items[index].ts > 0) this.addToL2(items[index].ts, items[index])
+        }
+    }
+
+    /**
+     * Mark the timestamp index for rebuilding on the next read.
+     *
+     * Sorting eagerly inside every mutation made a burst of staged updates pay
+     * one full sort each, which on a long conversation dominated streaming. The
+     * rebuild itself is unchanged and still the only writer of the index, so
+     * deferring it cannot make a reader observe a partially maintained order.
+     */
+    private invalidateTimestampIndex(): void {
+        this.timestampIndexStale = true
+    }
+
+    /**
+     * Add one timestamp to an already materialized index.
+     *
+     * A stale index is left alone: the pending rebuild reads `items`, which
+     * already holds the new entry.
+     */
+    private insertIntoTimestampIndex(timestamp: number): void {
+        if (this.timestampIndexStale || timestamp <= 0) return
+        this.sortedTimestamps.splice(this.findTimestampIndex(timestamp), 0, timestamp)
+    }
+
+    /** Restore the sorted index before any reader depends on its ordering. */
+    private ensureTimestampIndex(): void {
+        if (!this.timestampIndexStale) return
+        this.timestampIndexStale = false
+        this.rebuildTimestampIndex()
+    }
+
+    private rebuildTimestampIndex(): void {
+        this.sortedTimestamps = this.items
+            .filter((item) => item.ts > 0)
+            .map((item) => item.ts)
+            .sort((left, right) => left - right)
+    }
+
+    /**
+     * Report whether the index already holds this timestamp.
+     *
+     * findTimestampIndex() refreshes a stale index first, so a collision staged
+     * since the last read is still visible here.
+     */
+    private hasTimestamp(timestamp: number): boolean {
+        return this.sortedTimestamps[this.findTimestampIndex(timestamp)] === timestamp
+    }
+
+    private addToL2(timestamp: number, item: TItem): void {
+        const existing = this.l2AccessOrder.indexOf(timestamp)
+        if (existing >= 0) this.l2AccessOrder.splice(existing, 1)
+        while (this.l2Cache.size >= L2_MAX_SIZE && this.l2AccessOrder.length > 0) {
+            const oldest = this.l2AccessOrder.shift()
+            if (oldest !== undefined) this.l2Cache.delete(oldest)
+        }
+        this.l2Cache.set(timestamp, item)
+        this.l2AccessOrder.push(timestamp)
+    }
+
+    private touchL2(timestamp: number): void {
+        const index = this.l2AccessOrder.indexOf(timestamp)
+        if (index < 0) return
+        this.l2AccessOrder.splice(index, 1)
+        this.l2AccessOrder.push(timestamp)
+    }
+
+    private withLocallyUniqueTimestamp(item: TItem): TItem {
+        // Uniqueness is decided against the index, so a run of appends that never
+        // gets read in between must still refresh it here. Skipping this let
+        // consecutive colliding appends all keep the same timestamp.
+        this.ensureTimestampIndex()
+        // Scanning the index linearly here cost a full pass per append, and the
+        // probe loop repeated that pass on every attempt. The index is sorted,
+        // so membership is a binary search.
+        if (!this.hasTimestamp(item.ts)) return item
+        let next = Math.max(item.ts, this.sortedTimestamps.at(-1) ?? item.ts) + 1
+        while (this.hasTimestamp(next)) next += 1
+        return { ...item, ts: next }
+    }
+
+    private findLastTimestampIndex(timestamp: number): number {
+        for (let index = this.items.length - 1; index >= 0; index--) {
+            if (this.items[index].ts === timestamp) return index
+        }
+        return -1
+    }
+
+    /** Position that keeps the buffer in ascending timestamp order: before the first later row. */
+    private timestampInsertionIndex(timestamp: number): number {
+        const later = this.items.findIndex((candidate) => candidate.ts > timestamp)
+        return later >= 0 ? later : this.items.length
+    }
+
+    private assertIndex(operation: string, index: number): void {
+        if (index < 0 || index >= this.items.length) {
+            throw new Error(`BufferedUnifyStore.${operation}: index ${index} out of range [0, ${this.items.length})`)
+        }
+    }
+
+    private assertWritable(): void {
+        if (this.closing || this.closed) throw new Error("BufferedUnifyStore is closed")
+    }
+
+    private publishCommittedChange(): void {
+        this.subscriptionState.generation += 1
+        const change = { generation: this.subscriptionState.generation }
+        for (const listener of this.subscriptionState.listeners) {
+            void Promise.resolve(listener(change)).catch(() => undefined)
+        }
+    }
 }
 
 function getSubscriptionState(key: string): SubscriptionState {
-	let state = subscriptions.get(key)
-	if (!state) {
-		state = { generation: 0, listeners: new Set() }
-		subscriptions.set(key, state)
-	}
-	return state
+    let state = subscriptions.get(key)
+    if (!state) {
+        state = { generation: 0, listeners: new Set() }
+        subscriptions.set(key, state)
+    }
+    return state
 }
 
 function findBaselineTimestamp<TItem extends { ts: number }>(
-	items: readonly TItem[],
-	baseline: ReadonlySet<number>,
-	fromIndex: number,
-	direction: -1 | 1,
+    items: readonly TItem[],
+    baseline: ReadonlySet<number>,
+    fromIndex: number,
+    direction: -1 | 1,
 ): number | undefined {
-	for (let index = fromIndex + direction; index >= 0 && index < items.length; index += direction) {
-		if (baseline.has(items[index].ts)) return items[index].ts
-	}
-	return undefined
+    for (let index = fromIndex + direction; index >= 0 && index < items.length; index += direction) {
+        if (baseline.has(items[index].ts)) return items[index].ts
+    }
+    return undefined
 }
 
 function isDefined<TValue>(value: TValue | undefined): value is TValue {
-	return value !== undefined
+    return value !== undefined
 }

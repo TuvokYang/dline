@@ -1,150 +1,143 @@
 import type { ToolUse } from "@core/assistant-message"
-import { describe, expect, it, vi } from "vitest"
-import { TaskState } from "../../../TaskState"
+import { parseNewTaskAsk } from "@shared/new-task-ask"
+import { beforeEach, describe, expect, it, vi } from "vitest"
+import { NEW_TASK_FEEDBACK_CONTINUATION_MARKER } from "../../../new-task/new-task-continuation"
+import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 import type { TaskConfig } from "../../types/TaskConfig"
 import { NewTaskHandler } from "../NewTaskHandler"
 
 vi.mock("@core/prompts/i18n", () => ({
-	getPrompt: vi.fn(() => "New task confirmed"),
+    getPrompt: vi.fn(() => "New task confirmed"),
 }))
 
 vi.mock("@core/prompts/responses", () => ({
-	formatResponse: {
-		toolResult: vi.fn((text: string, images?: string[], fileContent?: string) =>
-			images || fileContent
-				? [{ type: "text", text }, ...(images ?? []).map((image) => ({ type: "image", source: image }))]
-				: text,
-		),
-	},
-}))
-
-vi.mock("@integrations/misc/extract-text", () => ({
-	processFilesIntoText: vi.fn(async (files: string[]) => `files:${files.join(",")}`),
+    formatResponse: {
+        toolResult: vi.fn((text: string, images?: string[], fileContent?: string) =>
+            images || fileContent
+                ? [{ type: "text", text }, ...(images ?? []).map((image) => ({ type: "image", source: image }))]
+                : text,
+        ),
+        newTaskDeclinedFeedback: vi.fn(
+            (feedback: string) =>
+                `The user provided feedback instead of creating a new task:\n<feedback>\n${feedback}\n</feedback>`,
+        ),
+    },
 }))
 
 vi.mock("@integrations/notifications", () => ({
-	showSystemNotification: vi.fn(),
+    showSystemNotification: vi.fn(),
 }))
 
 vi.mock("../../utils/UserFeedbackUtils", () => ({
-	sayFeedbackOnce: vi.fn(async () => undefined),
+    sayFeedbackOnce: vi.fn(async () => undefined),
+    // PDFs become native documents; every other file is inlined as text.
+    attachToolFeedbackFiles: vi.fn(async (files?: string[]) => ({
+        text: (files ?? []).filter((file) => !file.endsWith(".pdf")).join(","),
+        documents: (files ?? [])
+            .filter((file) => file.endsWith(".pdf"))
+            .map((file) => ({ type: "document", source: { type: "base64", media_type: "application/pdf", data: file } })),
+    })),
 }))
 
 interface InteractionResult {
-	actionId: "approve" | "reject"
-	text?: string
-	images?: string[]
-	files?: string[]
+    actionId: "approve" | "reject"
+    text?: string
+    images?: string[]
+    files?: string[]
 }
 
 /** Create a minimal handler configuration with one causal interaction result. */
 function createConfig(result: InteractionResult): TaskConfig {
-	return {
-		taskId: "task-new",
-		ulid: "ulid-new",
-		cwd: "/workspace",
-		mode: "act",
-		taskState: new TaskState(),
-		autoApprovalSettings: { enableNotifications: false },
-		interactions: {
-			open: vi.fn(async () => ({
-				actionId: result.actionId,
-				draft: {
-					text: result.text ?? "",
-					images: result.images ?? [],
-					files: result.files ?? [],
-				},
-			})),
-		},
-		callbacks: {
-			sayAndCreateMissingParamError: vi.fn(async () => "missing context"),
-		} as unknown as TaskConfig["callbacks"],
-	} as unknown as TaskConfig
+    return {
+        taskId: "task-new",
+        ulid: "ulid-new",
+        cwd: "/workspace",
+        mode: "act",
+        taskState: new DefaultToolHandlerState(),
+        autoApprovalSettings: { enableNotifications: false },
+        interactions: {
+            open: vi.fn(async () => ({
+                actionId: result.actionId,
+                draft: {
+                    text: result.text ?? "",
+                    images: result.images ?? [],
+                    files: result.files ?? [],
+                },
+            })),
+        },
+        callbacks: {
+            sayAndCreateMissingParamError: vi.fn(async (_tool: string, param: string) => `missing ${param}`),
+        } as unknown as TaskConfig["callbacks"],
+    } as unknown as TaskConfig
 }
 
-/** Create one complete new_task tool block with canonical identity. */
-function createBlock(context?: string): ToolUse {
-	return {
-		type: "tool_use",
-		name: "new_task",
-		dline_tid: "tid-new-task",
-		function_id: "function-new-task",
-		ts: 100,
-		params: context === undefined ? {} : { context },
-		partial: false,
-	} as ToolUse
+/** Create one new_task tool block with canonical identity. */
+function createBlock(params: { task?: string; context?: string }, partial = false): ToolUse {
+    return {
+        type: "tool_use",
+        name: "new_task",
+        dline_tid: "tid-new-task",
+        function_id: "function-new-task",
+        ts: 100,
+        params,
+        partial,
+    } as ToolUse
 }
+
+const SUCCESSOR = { task: "Finish the migration", context: "Successor task context" }
 
 describe("NewTaskHandler", () => {
-	it("streams the partial context into the new_task ask instead of a tool row", async () => {
-		const ask = vi.fn(async () => ({ response: "messageResponse" }))
-		const say = vi.fn(async () => undefined)
-		const block = { ...createBlock("Partial successor"), partial: true } as ToolUse
+    beforeEach(() => {
+        vi.clearAllMocks()
+    })
 
-		await new NewTaskHandler().handlePartialBlock(block, {
-			ask,
-			say,
-			removeClosingTag: (_block: ToolUse, _tag: string, text?: string) => text ?? "",
-		} as never)
+    it("executes an externally approved handoff without opening a second interaction", async () => {
+        const config = createConfig({ actionId: "approve" })
 
-		expect(ask).toHaveBeenCalledWith("new_task", "Partial successor", true, { existingTs: 100 })
-		expect(say).not.toHaveBeenCalled()
-	})
+        const result = await new NewTaskHandler().execute(config, createBlock(SUCCESSOR))
 
-	it("returns a successor directive for approve even when a draft is present", async () => {
-		const config = createConfig({ actionId: "approve", text: "This draft must not change the action" })
+        expect(config.interactions.open).not.toHaveBeenCalled()
+        expect(result).toEqual({
+            response: "New task confirmed",
+            postCommit: {
+                type: "start_successor_task",
+                task: SUCCESSOR.task,
+                context: SUCCESSOR.context,
+                functionId: "function-new-task",
+                dlineTid: "tid-new-task",
+            },
+        })
+    })
 
-		const result = await new NewTaskHandler().execute(config, createBlock("Successor task context"))
+    it("describes an external rejection with the continuation marker", async () => {
+        const handler = new NewTaskHandler()
+        const denial = await handler.describeDenial(createConfig({ actionId: "reject" }), createBlock(SUCCESSOR))
 
-		expect(config.interactions.open).toHaveBeenCalledWith({
-			turnId: expect.any(String),
-			interactionId: expect.any(String),
-			kind: "new_task",
-			presentation: "Successor task context",
-			existingTs: 100,
-		})
-		expect(result).toMatchObject({
-			response: "New task confirmed",
-			postCommit: {
-				type: "start_successor_task",
-				context: "Successor task context",
-				functionId: "function-new-task",
-				dlineTid: "tid-new-task",
-			},
-		})
-	})
+        expect(denial).toBe(
+            `${NEW_TASK_FEEDBACK_CONTINUATION_MARKER}\nThe user provided feedback instead of creating a new task:\n<feedback>\n\n</feedback>`,
+        )
+    })
 
-	it("returns feedback continuation for reject with text and attachments", async () => {
-		const config = createConfig({
-			actionId: "reject",
-			text: "Keep the migration constraints",
-			images: ["image-1"],
-			files: ["file-1"],
-		})
+    it.each([
+        ["task", { context: "Successor task context" }],
+        ["context", { task: "Finish the migration" }],
+    ] as const)("refuses a handoff without a %s before asking the user", async (missing, params) => {
+        const config = createConfig({ actionId: "approve" })
 
-		const result = await new NewTaskHandler().execute(config, createBlock("Initial context"))
+        const result = await new NewTaskHandler().execute(config, createBlock(params))
 
-		expect(result).not.toHaveProperty("postCommit")
-		expect(JSON.stringify(result)).toContain("The user provided feedback instead of creating a new task")
-		expect(JSON.stringify(result)).toContain("Keep the migration constraints")
-	})
+        expect(result).toBe(`missing ${missing}`)
+        expect(config.callbacks.sayAndCreateMissingParamError).toHaveBeenCalledWith("new_task", missing, undefined, 100)
+        expect(config.interactions.open).not.toHaveBeenCalled()
+    })
 
-	it("treats an empty reject as feedback instead of confirming task creation", async () => {
-		const config = createConfig({ actionId: "reject" })
+    it("streams both halves of the handoff into the partial preview", async () => {
+        const ask = vi.fn(async (_tool: string, _text: string, _partial: boolean, _options: { existingTs: number }) => undefined)
+        const uiHelpers = { removeClosingTag: (_block: ToolUse, _tag: string, text?: string) => text ?? "", ask }
 
-		const result = await new NewTaskHandler().execute(config, createBlock("Initial context"))
+        await new NewTaskHandler().handlePartialBlock(createBlock({ task: "Finish the" }, true), uiHelpers as never)
 
-		expect(result).not.toHaveProperty("postCommit")
-		expect(JSON.stringify(result)).toContain("The user provided feedback instead of creating a new task")
-	})
-
-	it("keeps the existing missing-context error path", async () => {
-		const config = createConfig({ actionId: "approve" })
-
-		const result = await new NewTaskHandler().execute(config, createBlock())
-
-		expect(result).toBe("missing context")
-		expect(config.callbacks.sayAndCreateMissingParamError).toHaveBeenCalledWith("new_task", "context", undefined, 100)
-		expect(config.interactions.open).not.toHaveBeenCalled()
-	})
+        expect(ask).toHaveBeenCalledWith("new_task", expect.any(String), true, { existingTs: 100 })
+        expect(parseNewTaskAsk(ask.mock.calls[0][1])).toEqual({ task: "Finish the", context: "" })
+    })
 })

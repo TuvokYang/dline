@@ -1,14 +1,14 @@
+import { isDeepStrictEqual } from "node:util"
 import fs from "fs"
 import { diff } from "jest-diff"
-import _ from "lodash"
 import path from "path"
 
 export function loadJson(filePath: string): any {
-	return JSON.parse(fs.readFileSync(path.resolve(filePath), "utf-8"))
+    return JSON.parse(fs.readFileSync(path.resolve(filePath), "utf-8"))
 }
 
 export function pretty(obj: any): string {
-	return JSON.stringify(obj, null, 2)
+    return JSON.stringify(obj, null, 2)
 }
 
 /**
@@ -26,36 +26,36 @@ export function pretty(obj: any): string {
  * @returns A normalized object/array/value suitable for comparison.
  */
 function normalize(obj: any, ignoreFields: string[] = [], parentPath = ""): any {
-	if (Array.isArray(obj)) {
-		// Normalize each element, then sort in a stable way
-		const normalizedArray = obj.map((item) => normalize(item, ignoreFields, parentPath))
+    if (Array.isArray(obj)) {
+        // Normalize each element, then sort in a stable way
+        const normalizedArray = obj.map((item) => normalize(item, ignoreFields, parentPath))
 
-		// Sort array by JSON stringification (works for objects & primitives)
-		return normalizedArray.sort((a, b) => {
-			const sa = JSON.stringify(a)
-			const sb = JSON.stringify(b)
-			return sa < sb ? -1 : sa > sb ? 1 : 0
-		})
-	}
-	if (obj && typeof obj === "object") {
-		const result: Record<string, any> = {}
-		for (const [k, v] of Object.entries(obj)) {
-			const currentPath = parentPath ? `${parentPath}.${k}` : k
-			if (ignoreFields.includes(currentPath) || ignoreFields.includes(k)) {
-				continue
-			}
-			result[k] = normalize(v, ignoreFields, currentPath)
-		}
-		return result
-	}
-	if (typeof obj === "string") {
-		try {
-			return normalize(JSON.parse(obj), ignoreFields, parentPath)
-		} catch {
-			return obj
-		}
-	}
-	return obj
+        // Sort array by JSON stringification (works for objects & primitives)
+        return normalizedArray.sort((a, b) => {
+            const sa = JSON.stringify(a)
+            const sb = JSON.stringify(b)
+            return sa < sb ? -1 : sa > sb ? 1 : 0
+        })
+    }
+    if (obj && typeof obj === "object") {
+        const result: Record<string, any> = {}
+        for (const [k, v] of Object.entries(obj)) {
+            const currentPath = parentPath ? `${parentPath}.${k}` : k
+            if (ignoreFields.includes(currentPath) || ignoreFields.includes(k)) {
+                continue
+            }
+            result[k] = normalize(v, ignoreFields, currentPath)
+        }
+        return result
+    }
+    if (typeof obj === "string") {
+        try {
+            return normalize(JSON.parse(obj), ignoreFields, parentPath)
+        } catch {
+            return obj
+        }
+    }
+    return obj
 }
 
 /**
@@ -90,19 +90,29 @@ function normalize(obj: any, ignoreFields: string[] = [], parentPath = ""): any 
  *   c: [{ val: "x" }, undefined]
  * }
  */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return false
+    const prototype = Object.getPrototypeOf(value)
+    return prototype === Object.prototype || prototype === null
+}
+
 function pickDeep(actual: any, filter: any): any {
-	if (_.isArray(filter)) {
-		if (!_.isArray(actual)) return actual
+    if (Array.isArray(filter)) {
+        if (!Array.isArray(actual)) return actual
 
-		// Compare arrays element by element, picking only keys from filter
-		return filter.map((f, i) => pickDeep(actual[i], f))
-	}
+        // Compare arrays element by element, picking only keys from filter.
+        return filter.map((value, index) => pickDeep(actual[index], value))
+    }
 
-	if (_.isPlainObject(filter)) {
-		return _.mapValues(filter, (v, k) => (actual && k in actual ? pickDeep(actual[k], v) : undefined))
-	}
+    if (isPlainObject(filter)) {
+        const selected: Record<string, unknown> = {}
+        for (const [key, value] of Object.entries(filter)) {
+            selected[key] = actual && key in actual ? pickDeep(actual[key], value) : undefined
+        }
+        return selected
+    }
 
-	return actual
+    return actual
 }
 
 /**
@@ -122,32 +132,32 @@ function pickDeep(actual: any, filter: any): any {
  * @returns Object with `success` (true/false) and `diffs` (array of string diffs).
  */
 export function compareResponse(
-	actual: any,
-	expected: any,
-	ignoreFields: string[] = [],
-	expectedSubset?: any,
+    actual: any,
+    expected: any,
+    ignoreFields: string[] = [],
+    expectedSubset?: any,
 ): { success: boolean; diffs: string[] } {
-	const actualToCompare = normalize(actual, ignoreFields)
-	const expectedToCompare = normalize(expected, ignoreFields)
+    const actualToCompare = normalize(actual, ignoreFields)
+    const expectedToCompare = normalize(expected, ignoreFields)
 
-	if (expectedSubset) {
-		// Extract only the subset we care about
-		const actualSubset = pickDeep(actualToCompare, expectedSubset)
-		const success = _.isEqual(actualSubset, expectedSubset)
-		if (!success) {
-			const difference = diff(expectedSubset, actualSubset, { expand: false })
-			return { success: false, diffs: [difference || "Objects differ"] }
-		}
-		return { success: true, diffs: [] }
-	}
+    if (expectedSubset) {
+        // Extract only the subset we care about
+        const actualSubset = pickDeep(actualToCompare, expectedSubset)
+        const success = isDeepStrictEqual(actualSubset, expectedSubset)
+        if (!success) {
+            const difference = diff(expectedSubset, actualSubset, { expand: false })
+            return { success: false, diffs: [difference || "Objects differ"] }
+        }
+        return { success: true, diffs: [] }
+    }
 
-	// Fallback: full comparison
-	const success = _.isEqual(actualToCompare, expectedToCompare)
-	if (!success) {
-		const difference = diff(expectedToCompare, actualToCompare, { expand: false })
-		return { success: false, diffs: [difference || "Objects differ"] }
-	}
-	return { success: true, diffs: [] }
+    // Fallback: full comparison
+    const success = isDeepStrictEqual(actualToCompare, expectedToCompare)
+    if (!success) {
+        const difference = diff(expectedToCompare, actualToCompare, { expand: false })
+        return { success: false, diffs: [difference || "Objects differ"] }
+    }
+    return { success: true, diffs: [] }
 }
 
 /**
@@ -164,17 +174,17 @@ export function compareResponse(
  * await retry(() => fetchData(), 5, 200)
  */
 export async function retry<T>(fn: () => Promise<T>, retries = 3, delayMs = 100): Promise<T> {
-	let lastError: any
-	for (let attempt = 1; attempt <= retries; attempt++) {
-		try {
-			return await fn()
-		} catch (err) {
-			lastError = err
-			if (attempt < retries) {
-				console.warn(`⚠️ Attempt ${attempt} failed, retrying in ${delayMs}ms...`)
-				await new Promise((r) => setTimeout(r, delayMs))
-			}
-		}
-	}
-	throw lastError
+    let lastError: any
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+            return await fn()
+        } catch (err) {
+            lastError = err
+            if (attempt < retries) {
+                console.warn(`⚠️ Attempt ${attempt} failed, retrying in ${delayMs}ms...`)
+                await new Promise((r) => setTimeout(r, delayMs))
+            }
+        }
+    }
+    throw lastError
 }

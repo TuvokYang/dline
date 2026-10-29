@@ -1,12 +1,12 @@
 import type { ScenarioStep } from "../export/bundle-builder"
 import {
-	ReplayEffect,
-	ReplayNotPermitted,
-	type ReplayPolicy,
-	type ReplayPort,
-	type ReplayRequest,
-	type ReplayResult,
-	resolveReplayPort,
+    ReplayEffect,
+    ReplayNotPermitted,
+    type ReplayPolicy,
+    type ReplayPort,
+    type ReplayRequest,
+    type ReplayResult,
+    resolveReplayPort,
 } from "./replay-ports"
 
 /**
@@ -36,39 +36,39 @@ import {
  * `hook`, `task`, `workspace` — that no performance domain spells.
  */
 const COMPONENT_EFFECTS: ReadonlyMap<string, ReplayEffect> = new Map([
-	["terminal", ReplayEffect.Command],
-	["terminalPool", ReplayEffect.Command],
-	["terminal_pool", ReplayEffect.Command],
-	["mcp", ReplayEffect.McpTool],
-	["provider", ReplayEffect.Network],
-	["telemetry", ReplayEffect.Network],
-	["checkpoint", ReplayEffect.FileWrite],
-	["settings", ReplayEffect.FileWrite],
-	["settingsRepository", ReplayEffect.FileWrite],
-	["settings_repository", ReplayEffect.FileWrite],
-	["fileLock", ReplayEffect.FileWrite],
-	["file_lock", ReplayEffect.FileWrite],
-	["storage", ReplayEffect.FileWrite],
-	// Domains that only read or compute. They are listed so a scenario built
-	// from this codebase's own events replays end to end instead of aborting
-	// on the first startup sample; `Inert` still reaches the port, which
-	// performs nothing.
-	["activation", ReplayEffect.Inert],
-	["capability", ReplayEffect.Inert],
-	["controller_close", ReplayEffect.Inert],
-	["hook", ReplayEffect.Inert],
-	["hook_discovery", ReplayEffect.Inert],
-	["profile", ReplayEffect.Inert],
-	["prompt_build", ReplayEffect.Inert],
-	["prompt_freshness", ReplayEffect.Inert],
-	["prompt_input_watcher", ReplayEffect.Inert],
-	["runtime", ReplayEffect.Inert],
-	["state", ReplayEffect.Inert],
-	["task", ReplayEffect.Inert],
-	["task_close", ReplayEffect.Inert],
-	["task_init", ReplayEffect.Inert],
-	["task_snapshot", ReplayEffect.Inert],
-	["workspace", ReplayEffect.Inert],
+    ["terminal", ReplayEffect.Command],
+    ["terminalPool", ReplayEffect.Command],
+    ["terminal_pool", ReplayEffect.Command],
+    ["mcp", ReplayEffect.McpTool],
+    ["provider", ReplayEffect.Network],
+    ["telemetry", ReplayEffect.Network],
+    ["checkpoint", ReplayEffect.FileWrite],
+    ["settings", ReplayEffect.FileWrite],
+    ["settingsRepository", ReplayEffect.FileWrite],
+    ["settings_repository", ReplayEffect.FileWrite],
+    ["fileLock", ReplayEffect.FileWrite],
+    ["file_lock", ReplayEffect.FileWrite],
+    ["storage", ReplayEffect.FileWrite],
+    // Domains that only read or compute. They are listed so a scenario built
+    // from this codebase's own events replays end to end instead of aborting
+    // on the first startup sample; `Inert` still reaches the port, which
+    // performs nothing.
+    ["activation", ReplayEffect.Inert],
+    ["capability", ReplayEffect.Inert],
+    ["controller_close", ReplayEffect.Inert],
+    ["hook", ReplayEffect.Inert],
+    ["hook_discovery", ReplayEffect.Inert],
+    ["profile", ReplayEffect.Inert],
+    ["prompt_build", ReplayEffect.Inert],
+    ["prompt_freshness", ReplayEffect.Inert],
+    ["prompt_input_watcher", ReplayEffect.Inert],
+    ["runtime", ReplayEffect.Inert],
+    ["state", ReplayEffect.Inert],
+    ["task", ReplayEffect.Inert],
+    ["task_close", ReplayEffect.Inert],
+    ["task_init", ReplayEffect.Inert],
+    ["task_snapshot", ReplayEffect.Inert],
+    ["workspace", ReplayEffect.Inert],
 ])
 
 /**
@@ -81,29 +81,29 @@ const COMPONENT_EFFECTS: ReadonlyMap<string, ReplayEffect> = new Map([
 const UNCLASSIFIED_EFFECT = ReplayEffect.Unknown
 
 export interface ReplayedStep {
-	readonly index: number
-	readonly component: string
-	readonly operation: string
-	readonly effect: ReplayEffect
-	readonly recordedOutcome: string
-	readonly replayedOutcome: string
-	/**
-	 * Always `true`, carried through from `ReplayResult`.
-	 *
-	 * Widening this to `boolean` would let a future change report a real
-	 * execution as an ordinary field value; the literal keeps the compiler
-	 * involved in the guarantee.
-	 */
-	readonly simulated: true
+    readonly index: number
+    readonly component: string
+    readonly operation: string
+    readonly effect: ReplayEffect
+    readonly recordedOutcome: string
+    readonly replayedOutcome: string
+    /**
+     * Always `true`, carried through from `ReplayResult`.
+     *
+     * Widening this to `boolean` would let a future change report a real
+     * execution as an ordinary field value; the literal keeps the compiler
+     * involved in the guarantee.
+     */
+    readonly simulated: true
 }
 
 export interface ScenarioReplayReport {
-	readonly steps: readonly ReplayedStep[]
-	/** Steps whose replayed outcome differed from the recorded one. */
-	readonly divergences: readonly number[]
-	readonly totalRecordedDurationMs: number
-	/** The port that handled the run, for assertions about routing. */
-	readonly port: ReplayPort
+    readonly steps: readonly ReplayedStep[]
+    /** Steps whose replayed outcome differed from the recorded one. */
+    readonly divergences: readonly number[]
+    readonly totalRecordedDurationMs: number
+    /** The port that handled the run, for assertions about routing. */
+    readonly port: ReplayPort
 }
 
 /**
@@ -115,7 +115,7 @@ export interface ScenarioReplayReport {
  * fail-closed Unknown branch.
  */
 export function classifyStepEffect(component: string): ReplayEffect {
-	return COMPONENT_EFFECTS.get(component) ?? UNCLASSIFIED_EFFECT
+    return COMPONENT_EFFECTS.get(component) ?? UNCLASSIFIED_EFFECT
 }
 
 /**
@@ -126,41 +126,41 @@ export function classifyStepEffect(component: string): ReplayEffect {
  * untrusted bug report. The caller cannot choose the implementation.
  */
 export function replayScenario(steps: readonly ScenarioStep[], policy: ReplayPolicy): ScenarioReplayReport {
-	const port = resolveReplayPort(policy)
-	const replayed: ReplayedStep[] = []
-	const divergences: number[] = []
-	let totalRecordedDurationMs = 0
+    const port = resolveReplayPort(policy)
+    const replayed: ReplayedStep[] = []
+    const divergences: number[] = []
+    let totalRecordedDurationMs = 0
 
-	for (const step of steps) {
-		const request: ReplayRequest = {
-			effect: classifyStepEffect(step.component),
-			component: step.component,
-			operation: step.operation,
-			recordedOutcome: step.outcome,
-			recordedDurationMs: step.durationMs,
-		}
+    for (const step of steps) {
+        const request: ReplayRequest = {
+            effect: classifyStepEffect(step.component),
+            component: step.component,
+            operation: step.operation,
+            recordedOutcome: step.outcome,
+            recordedDurationMs: step.durationMs,
+        }
 
-		// Fail closed: an unclassified component is refused before it reaches
-		// the port, so a port cannot be asked to act on an effect nobody
-		// reviewed.
-		if (request.effect === ReplayEffect.Unknown) {
-			throw new ReplayNotPermitted(request)
-		}
+        // Fail closed: an unclassified component is refused before it reaches
+        // the port, so a port cannot be asked to act on an effect nobody
+        // reviewed.
+        if (request.effect === ReplayEffect.Unknown) {
+            throw new ReplayNotPermitted(request)
+        }
 
-		const result: ReplayResult = port.perform(request)
-		totalRecordedDurationMs += step.durationMs ?? 0
+        const result: ReplayResult = port.perform(request)
+        totalRecordedDurationMs += step.durationMs ?? 0
 
-		if (result.outcome !== step.outcome) divergences.push(step.index)
-		replayed.push({
-			index: step.index,
-			component: step.component,
-			operation: step.operation,
-			effect: request.effect,
-			recordedOutcome: step.outcome,
-			replayedOutcome: result.outcome,
-			simulated: result.simulated,
-		})
-	}
+        if (result.outcome !== step.outcome) divergences.push(step.index)
+        replayed.push({
+            index: step.index,
+            component: step.component,
+            operation: step.operation,
+            effect: request.effect,
+            recordedOutcome: step.outcome,
+            replayedOutcome: result.outcome,
+            simulated: result.simulated,
+        })
+    }
 
-	return { steps: replayed, divergences, totalRecordedDurationMs, port }
+    return { steps: replayed, divergences, totalRecordedDurationMs, port }
 }

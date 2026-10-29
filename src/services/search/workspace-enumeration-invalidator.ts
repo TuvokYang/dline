@@ -1,113 +1,194 @@
-import chokidar, { type ChokidarOptions, type FSWatcher } from "chokidar"
+import type { ChokidarOptions } from "chokidar"
 import * as path from "path"
+import { type PathWatcher, watchPaths } from "@/services/file-watch/watchPaths"
 import { Logger } from "@/shared/services/Logger"
 
 /**
- * Watches one workspace root and reports when its file *set* changes.
+ * One watcher per workspace root, shared by everything that needs to know when
+ * the root's files change.
  *
- * The enumeration cache stores the list of paths ripgrep produced, so only
- * creation, deletion and rename can make it stale — editing a file's contents
- * cannot. Watching for exactly those events is what lets the cache TTL be long
- * enough to be useful without a newly created file staying invisible until it
- * expires.
+ * Two consumers subscribe today:
+ * - the enumeration cache, which stores the list of paths ripgrep produced, so
+ *   only creation, deletion and rename make it stale;
+ * - checkpoints, which need every change to know whether the workspace moved
+ *   since the last restore point.
  *
  * The watcher is deliberately independent of `PromptInputFileWatcher`, which
  * only observes rule/workflow/skill inputs and answers a different question.
  */
 
-/** Injected for tests; production uses chokidar. */
-export type WatchFactory = (paths: readonly string[], options: ChokidarOptions) => FSWatcher
+/** Injected for tests; production serves a workspace folder from the editor's own watch. */
+export type WatchFactory = (paths: readonly string[], options: ChokidarOptions) => PathWatcher
+
+export type WorkspaceChangeKind = "add" | "change" | "unlink" | "addDir" | "unlinkDir"
+
+export interface WorkspaceChangeListener {
+    /** A path under the root was created, modified or removed. */
+    onChange(kind: WorkspaceChangeKind, absolutePath: string): void
+    /** The watcher reported an error; changes may have been missed since. */
+    onError?(error: unknown): void
+}
 
 /**
- * Directories never worth watching.
+ * Directories no subscriber needs events from.
  *
- * Mirrors the traversal floor: these produce high-volume events (build output,
- * VCS internals) that can never change the user-visible mention candidates in a
- * way worth a re-walk.
+ * Each one is high-volume (build output, VCS internals, dependencies) and is
+ * also excluded from the checkpoint shadow repository, so a change inside it
+ * can neither alter a mention candidate worth a re-walk nor a restore point.
+ * A directory only one subscriber ignores belongs in that subscriber's filter,
+ * not here: ignoring it here would hide its changes from every subscriber.
  */
-const UNWATCHED_DIRECTORIES = new Set([".git", "node_modules", "dist", "build", "out", "tmp"])
+export const UNWATCHED_WORKSPACE_DIRECTORIES: ReadonlySet<string> = new Set([".git", "node_modules", "dist", "build", "out"])
 
-function isUnwatchedDirectory(candidate: string): boolean {
-	return candidate.split(/[\\/]/).some((segment) => UNWATCHED_DIRECTORIES.has(segment))
+/** Directories the enumeration cache never lists, beyond the shared floor. */
+const ENUMERATION_ONLY_UNWATCHED_DIRECTORIES = new Set(["tmp"])
+
+function hasSegmentIn(relativePath: string, directories: ReadonlySet<string>): boolean {
+    return relativePath.split(/[\\/]/).some((segment) => directories.has(segment))
 }
 
 interface RootWatch {
-	readonly watcher: FSWatcher
+    readonly watcher: PathWatcher
+    readonly listeners: Set<WorkspaceChangeListener>
+    /** The enumeration cache's own subscription, kept apart so eviction removes only it. */
+    enumeration?: WorkspaceChangeListener
 }
 
 const watches = new Map<string, RootWatch>()
-let watchFactory: WatchFactory = (paths, options) => chokidar.watch([...paths], options)
+let watchFactory: WatchFactory = watchPaths
 
 /** Test seam: swap the watcher implementation. */
 export function setWatchFactoryForTesting(factory: WatchFactory | undefined): void {
-	watchFactory = factory ?? ((paths, options) => chokidar.watch([...paths], options))
+    watchFactory = factory ?? watchPaths
+}
+
+/** Start the root's watcher, or return the one already running. Undefined when it cannot start. */
+function openRootWatch(root: string): RootWatch | undefined {
+    const existing = watches.get(root)
+    if (existing) return existing
+
+    let watcher: PathWatcher
+    try {
+        watcher = watchFactory([root], {
+            persistent: false,
+            ignoreInitial: true,
+            // A rename lands as unlink+add; coalescing them is the subscriber's job.
+            atomic: true,
+            ignored: (candidate: string) =>
+                hasSegmentIn(path.relative(root, path.resolve(candidate)), UNWATCHED_WORKSPACE_DIRECTORIES),
+        })
+    } catch (error) {
+        Logger.warn(`[workspace-watch] failed to watch ${root}: ${error}`)
+        return undefined
+    }
+
+    const entry: RootWatch = { watcher, listeners: new Set() }
+    watches.set(root, entry)
+    const dispatch = (kind: WorkspaceChangeKind) => (candidate: string) => {
+        const absolutePath = path.resolve(root, candidate)
+        for (const listener of [...entry.listeners]) {
+            try {
+                listener.onChange(kind, absolutePath)
+            } catch (error) {
+                Logger.warn(`[workspace-watch] listener failed for ${root}: ${error}`)
+            }
+        }
+    }
+    watcher
+        .on("add", dispatch("add"))
+        .on("change", dispatch("change"))
+        .on("unlink", dispatch("unlink"))
+        .on("addDir", dispatch("addDir"))
+        .on("unlinkDir", dispatch("unlinkDir"))
+        .on("error", (error) => {
+            Logger.warn(`[workspace-watch] watcher error for ${root}: ${error}`)
+            for (const listener of [...entry.listeners]) {
+                try {
+                    listener.onError?.(error)
+                } catch {
+                    // A listener's own failure must not stop the others from learning of the error.
+                }
+            }
+        })
+    return entry
+}
+
+/** Close a root's watcher once nothing listens to it any more. */
+async function closeIfUnused(root: string, entry: RootWatch): Promise<void> {
+    if (entry.listeners.size > 0 || watches.get(root) !== entry) return
+    watches.delete(root)
+    try {
+        await entry.watcher.close()
+    } catch (error) {
+        Logger.warn(`[workspace-watch] failed to close the watcher for ${root}: ${error}`)
+    }
 }
 
 /**
- * Ensure a root is watched, invoking `onFileSetChanged` when its contents move.
+ * Receive every change under a root until the returned function is called.
  *
- * Safe to call on every enumeration: repeat calls for a root already watched
- * are a no-op, so the watcher is created once and outlives individual walks.
+ * Returns undefined when the root cannot be watched; the subscriber must then
+ * assume any path may have changed.
  */
-export function ensureWorkspaceWatched(workspacePath: string, onFileSetChanged: () => void): void {
-	const root = path.resolve(workspacePath)
-	if (watches.has(root)) {
-		return
-	}
-
-	let watcher: FSWatcher
-	try {
-		watcher = watchFactory([root], {
-			persistent: false,
-			ignoreInitial: true,
-			// A rename lands as unlink+add; coalescing them is the caller's job.
-			atomic: true,
-			ignored: (candidate: string) => isUnwatchedDirectory(path.relative(root, path.resolve(candidate))),
-		})
-	} catch (error) {
-		// Watching is an optimisation: without it the TTL still bounds staleness,
-		// so a failure must not break the picker.
-		Logger.warn(`[file-search] failed to watch ${root} for enumeration invalidation: ${error}`)
-		return
-	}
-
-	const entry: RootWatch = { watcher }
-	watches.set(root, entry)
-
-	watcher
-		.on("add", onFileSetChanged)
-		.on("unlink", onFileSetChanged)
-		.on("addDir", onFileSetChanged)
-		.on("unlinkDir", onFileSetChanged)
-		.on("error", (error) => {
-			Logger.warn(`[file-search] enumeration watcher error for ${root}: ${error}`)
-		})
+export function subscribeWorkspaceChanges(workspacePath: string, listener: WorkspaceChangeListener): (() => void) | undefined {
+    const root = path.resolve(workspacePath)
+    const entry = openRootWatch(root)
+    if (!entry) return undefined
+    entry.listeners.add(listener)
+    let subscribed = true
+    return () => {
+        if (!subscribed) return
+        subscribed = false
+        entry.listeners.delete(listener)
+        void closeIfUnused(root, entry)
+    }
 }
 
-/** Stop watching a root; used when its cache entry is evicted for good. */
+/**
+ * Ensure a root is watched for the enumeration cache, invoking `onFileSetChanged`
+ * when its file set moves.
+ *
+ * Safe to call on every enumeration: repeat calls for a root already subscribed
+ * are a no-op, so the subscription is made once and outlives individual walks.
+ * A watcher that cannot start is not an error: the cache TTL still bounds staleness.
+ */
+export function ensureWorkspaceWatched(workspacePath: string, onFileSetChanged: () => void): void {
+    const root = path.resolve(workspacePath)
+    const entry = openRootWatch(root)
+    if (!entry || entry.enumeration) return
+    const listener: WorkspaceChangeListener = {
+        onChange: (kind, absolutePath) => {
+            // Editing a file's contents cannot change a list of file names.
+            if (kind === "change") return
+            if (hasSegmentIn(path.relative(root, absolutePath), ENUMERATION_ONLY_UNWATCHED_DIRECTORIES)) return
+            onFileSetChanged()
+        },
+    }
+    entry.enumeration = listener
+    entry.listeners.add(listener)
+}
+
+/** Drop the enumeration cache's subscription; the watcher closes once no subscriber remains. */
 export async function stopWatchingWorkspace(workspacePath: string): Promise<void> {
-	const root = path.resolve(workspacePath)
-	const entry = watches.get(root)
-	if (!entry) {
-		return
-	}
-	watches.delete(root)
-	try {
-		await entry.watcher.close()
-	} catch (error) {
-		Logger.warn(`[file-search] failed to close enumeration watcher for ${root}: ${error}`)
-	}
+    const root = path.resolve(workspacePath)
+    const entry = watches.get(root)
+    if (!entry?.enumeration) {
+        return
+    }
+    entry.listeners.delete(entry.enumeration)
+    entry.enumeration = undefined
+    await closeIfUnused(root, entry)
 }
 
 /** Test seam: drop every watcher without waiting for close to settle. */
 export function resetWorkspaceWatchersForTesting(): void {
-	for (const [, entry] of watches) {
-		void entry.watcher.close?.()
-	}
-	watches.clear()
+    for (const [, entry] of watches) {
+        void entry.watcher.close?.()
+    }
+    watches.clear()
 }
 
 /** Roots currently watched. Exposed for tests. */
 export function watchedWorkspaceRoots(): string[] {
-	return [...watches.keys()]
+    return [...watches.keys()]
 }

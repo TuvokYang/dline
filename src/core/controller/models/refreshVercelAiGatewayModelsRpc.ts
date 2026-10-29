@@ -11,9 +11,9 @@ import { refreshVercelAiGatewayModels } from "./refreshVercelAiGatewayModels"
  * @returns Response containing Vercel AI Gateway models (protobuf types)
  */
 export async function refreshVercelAiGatewayModelsRpc(
-	controller: Controller,
-	_request: EmptyRequest,
+    controller: Controller,
+    _request: EmptyRequest,
 ): Promise<OpenRouterCompatibleModelInfo> {
-	const models = await refreshVercelAiGatewayModels(controller)
-	return OpenRouterCompatibleModelInfo.create({ models: toProtobufModels(models) })
+    const models = await refreshVercelAiGatewayModels(controller)
+    return OpenRouterCompatibleModelInfo.create({ models: toProtobufModels(models) })
 }

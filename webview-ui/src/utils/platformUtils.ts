@@ -1,39 +1,39 @@
 export interface NavigatorUAData {
-	platform: string
-	brands: { brand: string; version: string }[]
+    platform: string
+    brands: { brand: string; version: string }[]
 }
 
 export const unknown = "Unknown"
 
 const platforms = {
-	windows: /win32/,
-	mac: /darwin/,
-	linux: /linux/,
+    windows: /win32/,
+    mac: /darwin/,
+    linux: /linux/,
 }
 
 export const detectOS = (platform: string) => {
-	let detectedOs = unknown
-	if (platform.match(platforms.windows)) {
-		detectedOs = "windows"
-	} else if (platform.match(platforms.mac)) {
-		detectedOs = "mac"
-	} else if (platform.match(platforms.linux)) {
-		detectedOs = "linux"
-	}
-	return detectedOs
+    let detectedOs = unknown
+    if (platform.match(platforms.windows)) {
+        detectedOs = "windows"
+    } else if (platform.match(platforms.mac)) {
+        detectedOs = "mac"
+    } else if (platform.match(platforms.linux)) {
+        detectedOs = "linux"
+    }
+    return detectedOs
 }
 
 export const detectMetaKeyChar = (platform: string) => {
-	if (platform.match(platforms.mac)) {
-		return "CMD"
-	}
-	if (platform.match(platforms.windows)) {
-		return "Win"
-	}
-	if (platform.match(platforms.linux)) {
-		return "Alt"
-	}
-	return "CMD"
+    if (platform.match(platforms.mac)) {
+        return "CMD"
+    }
+    if (platform.match(platforms.windows)) {
+        return "Win"
+    }
+    if (platform.match(platforms.linux)) {
+        return "Alt"
+    }
+    return "CMD"
 }
 
 const userAgent = navigator?.userAgent || ""
@@ -47,15 +47,15 @@ export const isSafari = !isChrome && userAgent.indexOf("Safari") >= 0
  * Defaults to 'linux' if platform cannot be determined
  */
 export function getCurrentPlatform() {
-	// Fallback to linux if platform is not available
-	switch (process?.platform) {
-		case "win32":
-			return "windows"
-		case "darwin":
-			return "mac"
-		default:
-			return "linux"
-	}
+    // Fallback to linux if platform is not available
+    switch (process?.platform) {
+        case "win32":
+            return "windows"
+        case "darwin":
+            return "mac"
+        default:
+            return "linux"
+    }
 }
 
 /**
@@ -63,5 +63,5 @@ export function getCurrentPlatform() {
  * @returns true if platform is darwin (macOS) or linux
  */
 export const isMacOSOrLinux = (): boolean => {
-	return getCurrentPlatform() !== "windows" // Non-Windows
+    return getCurrentPlatform() !== "windows" // Non-Windows
 }

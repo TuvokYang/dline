@@ -10,18 +10,18 @@ import { Controller } from ".."
  * @returns Array of updated McpServer objects
  */
 export async function updateMcpTimeout(controller: Controller, request: UpdateMcpTimeoutRequest): Promise<McpServers> {
-	try {
-		if (request.serverName && typeof request.serverName === "string" && typeof request.timeout === "number") {
-			await controller.mcpHub?.updateServerTimeoutRPC(request.serverName, request.timeout)
-			const mcpServers = await controller.getLatestMcpServersForOwner()
-			const convertedMcpServers = convertMcpServersToProtoMcpServers(mcpServers)
-			Logger.log("convertedMcpServers", convertedMcpServers)
-			return McpServers.create({ mcpServers: convertedMcpServers })
-		}
-		Logger.error("Server name and timeout are required")
-		throw new Error("Server name and timeout are required")
-	} catch (error) {
-		Logger.error(`Failed to update timeout for server ${request.serverName}:`, error)
-		throw error
-	}
+    try {
+        if (request.serverName && typeof request.serverName === "string" && typeof request.timeout === "number") {
+            await controller.mcpHub?.updateServerTimeoutRPC(request.serverName, request.timeout)
+            const mcpServers = await controller.getLatestMcpServersForOwner()
+            const convertedMcpServers = convertMcpServersToProtoMcpServers(mcpServers)
+            Logger.log("convertedMcpServers", convertedMcpServers)
+            return McpServers.create({ mcpServers: convertedMcpServers })
+        }
+        Logger.error("Server name and timeout are required")
+        throw new Error("Server name and timeout are required")
+    } catch (error) {
+        Logger.error(`Failed to update timeout for server ${request.serverName}:`, error)
+        throw error
+    }
 }

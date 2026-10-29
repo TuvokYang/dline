@@ -1,0 +1,123 @@
+/*
+ * An input entity drawn as an inline chip: in the composer, where it is an atom
+ * of the draft, and in queued entries and sent rows, where it names the same
+ * resource the draft held.
+ */
+.composer-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    max-width: 240px;
+    margin: 0 1px;
+    padding: 0 4px;
+    border-radius: 3px;
+    border: 1px solid var(--vscode-editorWidget-border, transparent);
+    background: var(--vscode-badge-background);
+    color: var(--vscode-badge-foreground);
+    font-size: 0.92em;
+    /*
+     * A fixed line box centered on the text: an inline-flex box otherwise
+     * takes its baseline from its first child, and a thumbnail has none, so
+     * an image chip rode above the text and made its line taller.
+     */
+    line-height: 1.25;
+    vertical-align: middle;
+    /*
+     * A chip is one unbreakable token. The composer and Markdown bodies wrap
+     * long words anywhere, which a chip would otherwise inherit: its badge's
+     * min-content then shrank to one letter and "PNG" broke over two lines.
+     */
+    white-space: nowrap;
+    overflow-wrap: normal;
+    word-break: normal;
+    user-select: none;
+    cursor: pointer;
+}
+
+/* Outside the composer a chip is part of readable text and only opens when it is a button. */
+.composer-chip--static {
+    user-select: text;
+    cursor: default;
+}
+
+button.composer-chip {
+    font-family: inherit;
+    text-align: start;
+}
+
+button.composer-chip:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: 1px;
+}
+
+.composer-chip--command,
+.composer-chip--mention {
+    background: color-mix(in srgb, var(--vscode-badge-foreground) 30%, transparent);
+    color: inherit;
+}
+
+.composer-chip--warning {
+    border-style: dashed;
+}
+
+.composer-chip--error {
+    border-color: var(--vscode-inputValidation-errorBorder);
+    background: var(--vscode-inputValidation-errorBackground);
+    color: var(--vscode-errorForeground);
+}
+
+.composer-chip--selected {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: 1px;
+}
+
+.composer-chip__thumbnail {
+    display: block;
+    flex: none;
+    width: 14px;
+    height: 14px;
+    object-fit: cover;
+    border-radius: 2px;
+}
+
+.composer-chip__icon {
+    flex: none;
+    font-size: 12px !important;
+}
+
+/* Only the name gives way when the chip runs out of room; it ends in an ellipsis. */
+.composer-chip__label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* An image chip shows its thumbnail and format; its name stays readable to assistive tech. */
+.composer-chip__label--hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+}
+
+.composer-chip__badge {
+    flex: none;
+    padding: 0 3px;
+    border-radius: 2px;
+    font-size: 0.8em;
+    font-weight: 600;
+    background: color-mix(in srgb, currentColor 18%, transparent);
+}
+
+.composer-chip__action {
+    flex: none;
+    font-size: 11px !important;
+    opacity: 0.6;
+    cursor: pointer;
+}
+
+.composer-chip__action:hover {
+    opacity: 1;
+}

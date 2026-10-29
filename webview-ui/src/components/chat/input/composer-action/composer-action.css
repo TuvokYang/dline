@@ -1,0 +1,114 @@
+/*
+ * The composer's single action button: send, resume, queue or cancel, one at a
+ * time. It is a bare icon like the other composer controls; the glyph tells the
+ * actions apart, so no action paints a background, border or fill behind it.
+ * The one tint is the running model's output speed, see `[data-output-speed]`.
+ * The box is exactly the glyph's pixel size (`GLYPH_PX`), so the glyph sits on
+ * the box's corner where the composer anchors it, without an inner margin.
+ */
+.composer-action {
+    position: relative;
+    /*
+     * Block-level, so a plain wrapper is exactly the button's height: an
+     * inline box sat on a text line and kept the line's descender gap below it.
+     */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--vscode-icon-foreground, var(--vscode-foreground));
+    opacity: 0.85;
+    cursor: pointer;
+    border-radius: 9999px;
+    transition:
+        background-color 400ms ease,
+        color 140ms ease,
+        opacity 140ms ease;
+}
+
+.composer-action:hover {
+    opacity: 1;
+}
+
+.composer-action:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: 1px;
+}
+
+/* Nothing to send yet: the same glyph, quiet until there is something to carry. */
+.composer-action--send.composer-action--empty,
+.composer-action--unavailable {
+    color: var(--vscode-input-placeholderForeground);
+}
+
+.composer-action--unavailable,
+.composer-action[aria-busy="true"] {
+    cursor: not-allowed;
+    opacity: 0.4;
+}
+
+/*
+ * Output speed of the streaming response, by tier (see output-speed.ts): the
+ * glyph's own lines take the tier's color, still with nothing behind them.
+ * The tints are fixed pastels rather than theme chart colors, which read as
+ * dull or brown on a dark editor background.
+ */
+.composer-action[data-output-speed] {
+    opacity: 1;
+}
+
+.composer-action[data-output-speed="slow"] {
+    color: #b4b4b4;
+}
+
+.composer-action[data-output-speed="moderate"] {
+    color: #8fdc8a;
+}
+
+.composer-action[data-output-speed="fast"] {
+    color: #ffb562;
+}
+
+.composer-action[data-output-speed="very_fast"] {
+    color: #ff8a8a;
+}
+
+.composer-action[data-output-speed][aria-busy="true"] {
+    opacity: 0.4;
+}
+
+/* Fills while the pointer rests on the queue button, then the button turns into cancel. */
+.composer-action__arming {
+    position: absolute;
+    inset: -3px;
+    pointer-events: none;
+    transform: rotate(-90deg);
+}
+
+.composer-action__arming circle {
+    fill: none;
+    stroke: var(--vscode-foreground);
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-dasharray: 100;
+    stroke-dashoffset: 100;
+    animation: composer-action-arming var(--composer-action-arming-ms, 3000ms) linear forwards;
+}
+
+@keyframes composer-action-arming {
+    to {
+        stroke-dashoffset: 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .composer-action__arming circle {
+        animation: none;
+        stroke-dashoffset: 0;
+        opacity: 0.5;
+    }
+}

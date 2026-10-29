@@ -1,7 +1,7 @@
 // English tool use index prompts — key-value pairs only, no code logic.
 
 const prompts: Record<string, string> = {
-	main: `TOOL USE
+    main: `TOOL USE
 
 You have access to a set of tools that are executed upon the user's approval.
 @PARALLEL_TOOL_POLICY@
@@ -16,11 +16,12 @@ The user may explicitly authorize command-line tools to complete a task specifie
 Command-line authorization changes only the permitted tool choice. Keep the existing task scope, risk assessment, requires_approval decision, and all separately required operation authorizations unchanged.
 
 EVERY response must include at least one tool call, except when an \`<explicit_instructions>\` block defines a different response format. Choose the proper tool for each situation:
-- General conversation or questions: qna_respond
+- Standalone conversation or questions that should hand control back to the user: qna_respond
+- Stating what you are doing and why before tool calls, answering a message the user sent during the work, or acknowledging a correction: working_respond, then continue with an actual work tool in the same turn
 - Presenting a complete implementation or design plan: make_plan (in ACT MODE, only when explicitly requested by the user)
 - Technical report or structured analysis: generate_report
 - Final task completion: attempt_completion
-- Progress announcement during execution: status_update or act_mode_respond
+- Reporting a completed phase or batch of work: phase_report
 
 @TOOL_USE_FORMATTING_SECTION@
 
@@ -29,6 +30,15 @@ EVERY response must include at least one tool call, except when an \`<explicit_i
 @TOOL_USE_EXAMPLES_SECTION@
 
 @TOOL_USE_GUIDELINES_SECTION@`,
+    subagent: `TOOL USE
+
+You have access to the tools exposed for this subagent run. Each tool descriptor is the source of truth for its parameters, behavior, and output.
+
+Tool results arrive after execution. Do not assume outcomes; dependent actions must wait for the results they depend on.
+
+EVERY response must include at least one tool call. Plain text never ends a subagent run; finish only as the subagent completion protocol specifies.
+
+Treat tool results as evidence. If a result differs from your expectation, adjust the approach rather than continuing from the assumption.`,
 }
 
 export default prompts

@@ -22,14 +22,14 @@ minWidth: "max-content",
 */
 
 interface CodeBlockProps {
-	source?: string
-	forceWrap?: boolean
+    source?: string
+    forceWrap?: boolean
 }
 
 const StyledMarkdown = styled.div<{ $forceWrap: boolean }>`
 	${({ $forceWrap }) =>
-		$forceWrap &&
-		`
+        $forceWrap &&
+        `
     pre, code {
       white-space: pre-wrap;
       word-break: break-word;
@@ -105,62 +105,62 @@ const StyledPre = styled.pre<{ theme: any }>`
 	}
 
 	${(props) =>
-		Object.keys(props.theme)
-			.map((key, _index) => {
-				return `
+        Object.keys(props.theme)
+            .map((key, _index) => {
+                return `
       & ${key} {
         color: ${props.theme[key]};
       }
     `
-			})
-			.join("")}
+            })
+            .join("")}
 `
 
 const CodeBlock = memo(({ source, forceWrap = false }: CodeBlockProps) => {
-	const [reactContent, setMarkdownSource] = useRemark({
-		remarkPlugins: [
-			() => {
-				return (tree) => {
-					visit(tree, "code", (node: any) => {
-						if (!node.lang) {
-							node.lang = "javascript"
-						} else if (node.lang.includes(".")) {
-							// if the language is a file, get the extension
-							node.lang = node.lang.split(".").slice(-1)[0]
-						}
-					})
-				}
-			},
-		],
-		rehypePlugins: [
-			rehypeHighlight as any,
-			{
-				// languages: {},
-			} as Options,
-		],
-		rehypeReactOptions: {
-			components: {
-				pre: ({ node, ...preProps }: any) => <StyledPre {...preProps} />,
-			},
-		},
-	})
+    const [reactContent, setMarkdownSource] = useRemark({
+        remarkPlugins: [
+            () => {
+                return (tree) => {
+                    visit(tree, "code", (node: any) => {
+                        if (!node.lang) {
+                            node.lang = "javascript"
+                        } else if (node.lang.includes(".")) {
+                            // if the language is a file, get the extension
+                            node.lang = node.lang.split(".").slice(-1)[0]
+                        }
+                    })
+                }
+            },
+        ],
+        rehypePlugins: [
+            rehypeHighlight as any,
+            {
+                // languages: {},
+            } as Options,
+        ],
+        rehypeReactOptions: {
+            components: {
+                pre: ({ node, ...preProps }: any) => <StyledPre {...preProps} />,
+            },
+        },
+    })
 
-	useEffect(() => {
-		setMarkdownSource(source || "")
-	}, [source, setMarkdownSource])
+    useEffect(() => {
+        setMarkdownSource(source || "")
+    }, [source, setMarkdownSource])
 
-	return (
-		<div
-			style={{
-				overflowY: forceWrap ? "visible" : "auto",
-				maxHeight: forceWrap ? "none" : "100%",
-				backgroundColor: CODE_BLOCK_BG_COLOR,
-			}}>
-			<StyledMarkdown $forceWrap={forceWrap} className="ph-no-capture markdown">
-				{reactContent}
-			</StyledMarkdown>
-		</div>
-	)
+    return (
+        <div
+            style={{
+                overflowY: forceWrap ? "visible" : "auto",
+                maxHeight: forceWrap ? "none" : "100%",
+                backgroundColor: CODE_BLOCK_BG_COLOR,
+            }}>
+            <StyledMarkdown $forceWrap={forceWrap} className="ph-no-capture markdown">
+                {reactContent}
+            </StyledMarkdown>
+        </div>
+    )
 })
 
 export default CodeBlock

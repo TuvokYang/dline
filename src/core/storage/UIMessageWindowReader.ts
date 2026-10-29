@@ -1,243 +1,230 @@
-import fs, { type FileHandle } from "node:fs/promises"
 import { normalizeStoredCheckpointMessage } from "@shared/checkpoints"
-import type { ClineMessage } from "@/shared/ExtensionMessage"
-import { readJsonl } from "./backend/jsonl/jsonl-utils"
-
-const READ_CHUNK_BYTES = 64 * 1024
-const LEGACY_ARRAY_PROBE_BYTES = 4 * 1024
-
-interface MessageRecordLocation {
-	ts: number
-	offset: number
-	length: number
-	ordinal: number
-	partial: boolean
-	conversationHistoryIndex?: number
-	interactionId?: string
-}
-
-export interface UIMessageRecoveryBoundary {
-	readonly timestamp: number
-	readonly apiIndex: number
-	readonly interactionId?: string
-}
+import type { UiMessage } from "@/shared/ExtensionMessage"
+import type { InstanceLayout } from "./instance"
+import { readLegacyUiMessages, readLegacyUiMessageWindow } from "./messages/importLegacyUiMessages"
+import { openStoredUiMessageRows } from "./messages/openUiMessageRows"
+import type { UiMessageRowStore } from "./messages/UiMessageRowStore"
 
 export interface UIMessageWindowPage {
-	messages: ClineMessage[]
-	totalCount: number
-	startIndex: number
+    messages: UiMessage[]
+    totalCount: number
+    startIndex: number
+}
+
+/** First index of a page of `pageSize` items centred on `anchor` in a sequence of `total`, clamped to the sequence. */
+export function centredPageStart(anchor: number, pageSize: number, total: number): number {
+    return Math.max(0, Math.min(anchor - Math.floor(pageSize / 2), total - pageSize))
+}
+
+/** Index of the last message carrying `timestamp`, which is the one a ts-deduplicating reader keeps. */
+export function lastIndexOfTimestamp(messages: readonly UiMessage[], timestamp: number): number | undefined {
+    for (let index = messages.length - 1; index >= 0; index--) {
+        if (messages[index].ts === timestamp) return index
+    }
+    return undefined
 }
 
 /**
- * Read-only index over one historical UI JSONL file.
+ * The page of `messages` centred on the message with `anchorTs`, located in
+ * the very sequence the page is cut from; an absent anchor yields an empty page.
+ */
+export function anchoredPage(
+    messages: readonly UiMessage[],
+    anchorTs: number,
+    count: number,
+): UIMessageWindowPage & { anchorFound: boolean } {
+    const pageSize = Math.max(0, Math.trunc(count))
+    const totalCount = messages.length
+    const anchor = lastIndexOfTimestamp(messages, anchorTs)
+    if (anchor === undefined) return { messages: [], totalCount, startIndex: 0, anchorFound: false }
+    const startIndex = centredPageStart(anchor, pageSize, totalCount)
+    return { messages: messages.slice(startIndex, startIndex + pageSize), totalCount, startIndex, anchorFound: true }
+}
+
+/** Where a window reads its messages from. */
+interface WindowSource {
+    readonly count: number
+    /** Whether row positions are the ones the task's `messages.db` gives them. */
+    readonly canonicalIndexes: boolean
+    read(start: number, end: number): Promise<UiMessage[]>
+    findByTimestamp(timestamp: number): Promise<UiMessage | undefined>
+    /** Position of the last row stored with `timestamp`, the one the chat shows for it. */
+    ordinalOfTimestamp(timestamp: number): Promise<number | undefined>
+    findLastAsk(interactionId: string): Promise<UiMessage | undefined>
+    close(): Promise<void>
+}
+
+/** Rows of `messages.db`, read one page at a time. */
+class RowSource implements WindowSource {
+    readonly canonicalIndexes = true
+
+    constructor(
+        private readonly rows: UiMessageRowStore,
+        readonly count: number,
+    ) {}
+
+    async read(start: number, end: number): Promise<UiMessage[]> {
+        return (await this.rows.readRange(start, end)).map((record) => normalizeStoredCheckpointMessage(record.message))
+    }
+
+    async ordinalOfTimestamp(timestamp: number): Promise<number | undefined> {
+        return (await this.rows.findLastByTimestamp(timestamp))?.ordinal
+    }
+
+    async findByTimestamp(timestamp: number): Promise<UiMessage | undefined> {
+        return normalizeRow((await this.rows.findLastByTimestamp(timestamp))?.message)
+    }
+
+    async findLastAsk(interactionId: string): Promise<UiMessage | undefined> {
+        return normalizeRow((await this.rows.findLastAskByInteractionId(interactionId))?.message)
+    }
+
+    close(): Promise<void> {
+        return this.rows.close()
+    }
+}
+
+/** A legacy history that has not been imported yet because the task was not opened since the upgrade. */
+class LegacySource implements WindowSource {
+    /** The import renumbers the rows, and a first-surface window holds only the latest of them. */
+    readonly canonicalIndexes = false
+
+    constructor(private readonly messages: readonly UiMessage[]) {}
+
+    get count(): number {
+        return this.messages.length
+    }
+
+    async read(start: number, end: number): Promise<UiMessage[]> {
+        return this.messages.slice(start, end)
+    }
+
+    async ordinalOfTimestamp(timestamp: number): Promise<number | undefined> {
+        return lastIndexOfTimestamp(this.messages, timestamp)
+    }
+
+    async findByTimestamp(timestamp: number): Promise<UiMessage | undefined> {
+        return this.messages.find((message) => message.ts === timestamp)
+    }
+
+    async findLastAsk(interactionId: string): Promise<UiMessage | undefined> {
+        for (let index = this.messages.length - 1; index >= 0; index--) {
+            const message = this.messages[index]
+            if (message.type === "ask" && message.interactionId === interactionId) return message
+        }
+        return undefined
+    }
+
+    async close(): Promise<void> {}
+}
+
+const LEGACY_FIRST_SURFACE_MESSAGE_COUNT = 400
+
+async function openLegacySource(instanceRoot: string): Promise<LegacySource> {
+    const window = await readLegacyUiMessageWindow(instanceRoot, LEGACY_FIRST_SURFACE_MESSAGE_COUNT)
+    if (window) return new LegacySource(window.messages)
+    const legacy = await readLegacyUiMessages(instanceRoot)
+    return new LegacySource(legacy?.messages ?? [])
+}
+
+/**
+ * Read-only window over the chat history of one instance.
  *
- * Canonical JSONL keeps only byte offsets and timestamps resident. Message bodies
- * are parsed only for the requested page. Legacy JSON arrays use an in-memory
- * compatibility fallback because they do not expose record boundaries.
+ * Rows come from `messages.db` one page at a time, so a long history is never held
+ * whole. The reader never writes: a task that still only has a legacy file is read
+ * from that file and imported later by the task's own writer. The message count is
+ * fixed when the reader opens.
  */
 export class UIMessageWindowReader {
-	private closed = false
+    private closed = false
 
-	private constructor(
-		private handle: FileHandle | undefined,
-		private records: MessageRecordLocation[],
-		private recordsByTimestamp: Map<number, MessageRecordLocation>,
-		private legacyMessages: ClineMessage[] | undefined,
-	) {}
+    private constructor(private readonly source: WindowSource) {}
 
-	static async open(filePath: string): Promise<UIMessageWindowReader> {
-		const handle = await openReadableFile(filePath)
-		if (!handle) return new UIMessageWindowReader(undefined, [], new Map(), undefined)
-		try {
-			const { size } = await handle.stat()
-			if (await isLegacyArray(handle, size)) {
-				await handle.close()
-				const messages = dedupeMessages((await readJsonl<ClineMessage>(filePath)).filter(isStoredMessage))
-				return new UIMessageWindowReader(undefined, [], new Map(), messages)
-			}
+    /** Opening never creates the instance directory or `messages.db`; absent storage reads as empty. */
+    static async open(layout: InstanceLayout): Promise<UIMessageWindowReader> {
+        const rows = await openStoredUiMessageRows(layout.root)
+        if (!rows) return new UIMessageWindowReader(await openLegacySource(layout.root))
+        try {
+            const count = await rows.count()
+            if (count > 0) return new UIMessageWindowReader(new RowSource(rows, count))
+            const legacyWindow = await readLegacyUiMessageWindow(layout.root, LEGACY_FIRST_SURFACE_MESSAGE_COUNT)
+            if (legacyWindow) {
+                await rows.close()
+                return new UIMessageWindowReader(new LegacySource(legacyWindow.messages))
+            }
+            const legacy = await readLegacyUiMessages(layout.root)
+            if (!legacy) return new UIMessageWindowReader(new RowSource(rows, 0))
+            await rows.close()
+            return new UIMessageWindowReader(new LegacySource(legacy.messages))
+        } catch (error) {
+            await rows.close().catch(() => undefined)
+            throw error
+        }
+    }
 
-			const records = await buildRecordIndex(handle, size)
-			return new UIMessageWindowReader(handle, records, new Map(records.map((record) => [record.ts, record])), undefined)
-		} catch (error) {
-			await handle.close().catch(() => undefined)
-			throw error
-		}
-	}
+    get count(): number {
+        return this.source.count
+    }
 
-	get count(): number {
-		return this.legacyMessages?.length ?? this.records.length
-	}
+    /**
+     * Whether page positions stay valid once the task's writer opens it. A
+     * legacy history is renumbered by its import, so positions read here then
+     * address other rows.
+     */
+    get canonicalIndexes(): boolean {
+        return this.source.canonicalIndexes
+    }
 
-	async getLatest(limit: number): Promise<ClineMessage[]> {
-		return (await this.getPage(-1, limit)).messages
-	}
+    async getLatest(limit: number): Promise<UiMessage[]> {
+        return (await this.getPage(-1, limit)).messages
+    }
 
-	async getPage(referenceIndex: number, count: number): Promise<UIMessageWindowPage> {
-		this.assertOpen()
-		const totalCount = this.count
-		const pageSize = Math.max(0, Math.trunc(count))
-		const startIndex =
-			referenceIndex === -1
-				? Math.max(0, totalCount - pageSize)
-				: Math.max(0, Math.min(Math.trunc(referenceIndex), totalCount))
-		const endIndex = Math.min(startIndex + pageSize, totalCount)
+    async getPage(referenceIndex: number, count: number): Promise<UIMessageWindowPage> {
+        this.assertOpen()
+        const totalCount = this.count
+        const pageSize = Math.max(0, Math.trunc(count))
+        const startIndex =
+            referenceIndex === -1
+                ? Math.max(0, totalCount - pageSize)
+                : Math.max(0, Math.min(Math.trunc(referenceIndex), totalCount))
+        const endIndex = Math.min(startIndex + pageSize, totalCount)
+        const messages = endIndex > startIndex ? await this.source.read(startIndex, endIndex) : []
+        return { messages, totalCount, startIndex }
+    }
 
-		if (this.legacyMessages) {
-			return { messages: this.legacyMessages.slice(startIndex, endIndex), totalCount, startIndex }
-		}
+    async getByTimestamp(timestamp: number): Promise<UiMessage | undefined> {
+        this.assertOpen()
+        return await this.source.findByTimestamp(timestamp)
+    }
 
-		const messages = (
-			await Promise.all(this.records.slice(startIndex, endIndex).map((record) => this.readRecord(record)))
-		).filter((message): message is ClineMessage => message !== undefined)
-		return { messages, totalCount, startIndex }
-	}
+    /** Position of the durable row with `timestamp` in the window's sequence, or undefined when none has it. */
+    async ordinalOfTimestamp(timestamp: number): Promise<number | undefined> {
+        this.assertOpen()
+        return await this.source.ordinalOfTimestamp(timestamp)
+    }
 
-	async getByTimestamp(timestamp: number): Promise<ClineMessage | undefined> {
-		this.assertOpen()
-		if (this.legacyMessages) {
-			for (let index = this.legacyMessages.length - 1; index >= 0; index--) {
-				if (this.legacyMessages[index].ts === timestamp) return this.legacyMessages[index]
-			}
-			return undefined
-		}
-		const record = this.recordsByTimestamp.get(timestamp)
-		return record ? await this.readRecord(record) : undefined
-	}
+    /**
+     * The last ask row revealed for `interactionId`, wherever it sits in the history.
+     *
+     * An interaction stays answerable after later rows push its anchor out of the
+     * latest window, so the anchor is looked up by identity rather than by page.
+     */
+    async getLastAsk(interactionId: string): Promise<UiMessage | undefined> {
+        this.assertOpen()
+        return await this.source.findLastAsk(interactionId)
+    }
 
-	/** Read only the suffix and exact interaction records needed to reconcile a snapshot. */
-	async getRecoveryMessages(boundary: UIMessageRecoveryBoundary): Promise<ClineMessage[]> {
-		this.assertOpen()
-		const matches = (message: { ts: number; conversationHistoryIndex?: number; interactionId?: string }) =>
-			message.ts >= boundary.timestamp ||
-			(message.conversationHistoryIndex !== undefined && message.conversationHistoryIndex > boundary.apiIndex) ||
-			(boundary.interactionId !== undefined && message.interactionId === boundary.interactionId)
-		if (this.legacyMessages) return this.legacyMessages.filter(matches)
-		const records = this.records.filter(matches)
-		const messages: ClineMessage[] = []
-		for (let start = 0; start < records.length; start += 200) {
-			const page = await Promise.all(records.slice(start, start + 200).map((record) => this.readRecord(record)))
-			messages.push(...page.filter((message): message is ClineMessage => message !== undefined))
-		}
-		return messages
-	}
+    async close(): Promise<void> {
+        if (this.closed) return
+        this.closed = true
+        await this.source.close()
+    }
 
-	async close(): Promise<void> {
-		if (this.closed) return
-		this.closed = true
-		const handle = this.handle
-		this.handle = undefined
-		this.records = []
-		this.recordsByTimestamp.clear()
-		this.legacyMessages = undefined
-		await handle?.close()
-	}
-
-	private async readRecord(record: MessageRecordLocation): Promise<ClineMessage | undefined> {
-		const handle = this.handle
-		if (!handle) return undefined
-		const buffer = Buffer.allocUnsafe(record.length)
-		const { bytesRead } = await handle.read(buffer, 0, record.length, record.offset)
-		if (bytesRead !== record.length) return undefined
-		return parseMessageLine(buffer.subarray(0, bytesRead))
-	}
-
-	private assertOpen(): void {
-		if (this.closed) throw new Error("UIMessageWindowReader is closed")
-	}
+    private assertOpen(): void {
+        if (this.closed) throw new Error("UIMessageWindowReader is closed")
+    }
 }
 
-async function openReadableFile(filePath: string): Promise<FileHandle | undefined> {
-	try {
-		return await fs.open(filePath, "r")
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-		return undefined
-	}
-}
-
-async function isLegacyArray(handle: FileHandle, size: number): Promise<boolean> {
-	if (size === 0) return false
-	const length = Math.min(size, LEGACY_ARRAY_PROBE_BYTES)
-	const buffer = Buffer.allocUnsafe(length)
-	const { bytesRead } = await handle.read(buffer, 0, length, 0)
-	const prefix = buffer.subarray(0, bytesRead).toString("utf8")
-	const withoutBom = prefix.charCodeAt(0) === 0xfeff ? prefix.slice(1) : prefix
-	return withoutBom.trimStart().startsWith("[")
-}
-
-async function buildRecordIndex(handle: FileHandle, size: number): Promise<MessageRecordLocation[]> {
-	const latestByTimestamp = new Map<number, MessageRecordLocation>()
-	let filePosition = 0
-	let pending = Buffer.alloc(0)
-	let pendingOffset = 0
-	let ordinal = 0
-
-	const accept = (line: Buffer, offset: number): void => {
-		const message = parseMessageLine(line)
-		if (!message) return
-		const previous = latestByTimestamp.get(message.ts)
-		// A complete row is authoritative over partial streaming snapshots. If a
-		// task stopped before completion, keep the latest partial instead.
-		if (message.partial === true && previous && !previous.partial) return
-		latestByTimestamp.set(message.ts, {
-			ts: message.ts,
-			offset,
-			length: line.length,
-			ordinal,
-			partial: message.partial === true,
-			conversationHistoryIndex: message.conversationHistoryIndex,
-			interactionId: message.interactionId,
-		})
-		ordinal += 1
-	}
-
-	while (filePosition < size) {
-		const length = Math.min(READ_CHUNK_BYTES, size - filePosition)
-		const chunk = Buffer.allocUnsafe(length)
-		const { bytesRead } = await handle.read(chunk, 0, length, filePosition)
-		if (bytesRead === 0) break
-		const current = chunk.subarray(0, bytesRead)
-		const dataOffset = pending.length > 0 ? pendingOffset : filePosition
-		const data = pending.length > 0 ? Buffer.concat([pending, current]) : current
-		let lineStart = 0
-		for (let index = 0; index < data.length; index++) {
-			if (data[index] !== 0x0a) continue
-			accept(data.subarray(lineStart, index), dataOffset + lineStart)
-			lineStart = index + 1
-		}
-		pending = Buffer.from(data.subarray(lineStart))
-		pendingOffset = dataOffset + lineStart
-		filePosition += bytesRead
-	}
-	if (pending.length > 0) accept(pending, pendingOffset)
-
-	return [...latestByTimestamp.values()].sort((left, right) => left.ordinal - right.ordinal)
-}
-
-function parseMessageLine(line: Buffer): ClineMessage | undefined {
-	const text = line.toString("utf8").trim()
-	if (!text) return undefined
-	try {
-		const value = JSON.parse(text)
-		return isStoredMessage(value) ? normalizeStoredCheckpointMessage(value) : undefined
-	} catch {
-		return undefined
-	}
-}
-
-function isStoredMessage(value: unknown): value is ClineMessage {
-	if (!value || typeof value !== "object") return false
-	const candidate = value as Partial<ClineMessage>
-	return candidate.ts !== undefined && candidate.ts > 0 && (candidate.type === "ask" || candidate.type === "say")
-}
-
-function dedupeMessages(messages: ClineMessage[]): ClineMessage[] {
-	const latestByTimestamp = new Map<number, { message: ClineMessage; ordinal: number }>()
-	for (let ordinal = 0; ordinal < messages.length; ordinal++) {
-		const message = messages[ordinal]
-		const previous = latestByTimestamp.get(message.ts)
-		if (message.partial === true && previous && previous.message.partial !== true) continue
-		latestByTimestamp.set(message.ts, { message, ordinal })
-	}
-	return [...latestByTimestamp.values()].sort((left, right) => left.ordinal - right.ordinal).map(({ message }) => message)
+function normalizeRow(message: UiMessage | undefined): UiMessage | undefined {
+    return message ? normalizeStoredCheckpointMessage(message) : undefined
 }

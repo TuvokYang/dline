@@ -11,29 +11,29 @@ import { Controller } from ".."
  * @returns WorktreeResult with success status
  */
 export async function createWorktreeInclude(
-	_controller: Controller,
-	request: CreateWorktreeIncludeRequest,
+    _controller: Controller,
+    request: CreateWorktreeIncludeRequest,
 ): Promise<WorktreeResult> {
-	const cwd = await getWorkspacePath()
-	if (!cwd) {
-		return WorktreeResult.create({
-			success: false,
-			message: "No workspace folder open",
-		})
-	}
+    const cwd = await getWorkspacePath()
+    if (!cwd) {
+        return WorktreeResult.create({
+            success: false,
+            message: "No workspace folder open",
+        })
+    }
 
-	try {
-		const filePath = path.join(cwd, ".worktreeinclude")
-		await fs.writeFile(filePath, request.content, "utf-8")
+    try {
+        const filePath = path.join(cwd, ".worktreeinclude")
+        await fs.writeFile(filePath, request.content, "utf-8")
 
-		return WorktreeResult.create({
-			success: true,
-			message: "Created .worktreeinclude file",
-		})
-	} catch (error) {
-		return WorktreeResult.create({
-			success: false,
-			message: `Failed to create .worktreeinclude: ${error instanceof Error ? error.message : String(error)}`,
-		})
-	}
+        return WorktreeResult.create({
+            success: true,
+            message: "Created .worktreeinclude file",
+        })
+    } catch (error) {
+        return WorktreeResult.create({
+            success: false,
+            message: `Failed to create .worktreeinclude: ${error instanceof Error ? error.message : String(error)}`,
+        })
+    }
 }

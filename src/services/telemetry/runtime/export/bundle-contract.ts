@@ -12,12 +12,12 @@
 
 /** Entries a default bundle always contains, in listing order. */
 export const BUNDLE_ENTRIES = {
-	manifest: "manifest.json",
-	events: "events.jsonl",
-	diagnoses: "diagnoses.json",
-	scenario: "scenario.json",
-	environment: "environment.json",
-	checksums: "checksums.json",
+    manifest: "manifest.json",
+    events: "events.jsonl",
+    diagnoses: "diagnoses.json",
+    scenario: "scenario.json",
+    environment: "environment.json",
+    checksums: "checksums.json",
 } as const
 
 export type BundleEntryName = (typeof BUNDLE_ENTRIES)[keyof typeof BUNDLE_ENTRIES]
@@ -34,7 +34,7 @@ export type BundleEntryListing = BundleEntryName | string
 
 /** Entry names in the order they are written into the archive. */
 export function defaultBundleEntryNames(): readonly BundleEntryName[] {
-	return Object.values(BUNDLE_ENTRIES)
+    return Object.values(BUNDLE_ENTRIES)
 }
 
 /**
@@ -45,66 +45,66 @@ export function defaultBundleEntryNames(): readonly BundleEntryName[] {
  * producers and are not individually policed at record time.
  */
 const FORBIDDEN_FIELD_NAMES = new Set([
-	"accesskey",
-	"accesstoken",
-	"apikey",
-	"apitoken",
-	"accesskeyid",
-	"secretkey",
-	"sessionkey",
-	"bearer",
-	"signature",
-	"apisecret",
-	"args",
-	"arguments",
-	"authorization",
-	"bearer",
-	"body",
-	"clientsecret",
-	"cmd",
-	"command",
-	"commandline",
-	"completion",
-	"content",
-	"cookie",
-	"credential",
-	"credentials",
-	"diff",
-	"directory",
-	"filecontent",
-	"filepath",
-	"folder",
-	"idtoken",
-	"input",
-	"message",
-	"output",
-	"pairingcode",
-	"params",
-	"passphrase",
-	"password",
-	"patch",
-	"path",
-	"payload",
-	"privatekey",
-	"prompt",
-	"proxyauthorization",
-	"query",
-	"refreshtoken",
-	"response",
-	"result",
-	"root",
-	"secret",
-	"secretkey",
-	"sessiontoken",
-	"setcookie",
-	"stderr",
-	"stdin",
-	"stdout",
-	"systemprompt",
-	"text",
-	"title",
-	"token",
-	"xapikey",
+    "accesskey",
+    "accesstoken",
+    "apikey",
+    "apitoken",
+    "accesskeyid",
+    "secretkey",
+    "sessionkey",
+    "bearer",
+    "signature",
+    "apisecret",
+    "args",
+    "arguments",
+    "authorization",
+    "bearer",
+    "body",
+    "clientsecret",
+    "cmd",
+    "command",
+    "commandline",
+    "completion",
+    "content",
+    "cookie",
+    "credential",
+    "credentials",
+    "diff",
+    "directory",
+    "filecontent",
+    "filepath",
+    "folder",
+    "idtoken",
+    "input",
+    "message",
+    "output",
+    "pairingcode",
+    "params",
+    "passphrase",
+    "password",
+    "patch",
+    "path",
+    "payload",
+    "privatekey",
+    "prompt",
+    "proxyauthorization",
+    "query",
+    "refreshtoken",
+    "response",
+    "result",
+    "root",
+    "secret",
+    "secretkey",
+    "sessiontoken",
+    "setcookie",
+    "stderr",
+    "stdin",
+    "stdout",
+    "systemprompt",
+    "text",
+    "title",
+    "token",
+    "xapikey",
 ])
 
 /**
@@ -116,38 +116,38 @@ const FORBIDDEN_FIELD_NAMES = new Set([
  * costs diagnostic detail, a leaked one costs a credential.
  */
 const FORBIDDEN_FIELD_FRAGMENTS: readonly string[] = [
-	"apikey",
-	"accesstoken",
-	"authtoken",
-	"authorization",
-	"clientsecret",
-	"credential",
-	"idtoken",
-	"passphrase",
-	"password",
-	"privatekey",
-	"refreshtoken",
-	"secret",
-	"sessiontoken",
-	// Absolute paths name the user, their disk layout and their projects, so
-	// they are personal data even though they are not credentials. Producers
-	// that need a correlatable location must record a fingerprint instead.
-	"directory",
-	"filepath",
-	"filename",
-	"path",
-	"workspace",
+    "apikey",
+    "accesstoken",
+    "authtoken",
+    "authorization",
+    "clientsecret",
+    "credential",
+    "idtoken",
+    "passphrase",
+    "password",
+    "privatekey",
+    "refreshtoken",
+    "secret",
+    "sessiontoken",
+    // Absolute paths name the user, their disk layout and their projects, so
+    // they are personal data even though they are not credentials. Producers
+    // that need a correlatable location must record a fingerprint instead.
+    "directory",
+    "filepath",
+    "filename",
+    "path",
+    "workspace",
 ]
 
 function normalizeFieldName(name: string): string {
-	return name.toLowerCase().replaceAll(/[-_.\s]/g, "")
+    return name.toLowerCase().replaceAll(/[-_.\s]/g, "")
 }
 
 /** True when a field name denotes content or a credential. */
 export function isForbiddenBundleField(name: string): boolean {
-	const normalized = normalizeFieldName(name)
-	if (FORBIDDEN_FIELD_NAMES.has(normalized)) return true
-	return FORBIDDEN_FIELD_FRAGMENTS.some((fragment) => normalized.includes(fragment))
+    const normalized = normalizeFieldName(name)
+    if (FORBIDDEN_FIELD_NAMES.has(normalized)) return true
+    return FORBIDDEN_FIELD_FRAGMENTS.some((fragment) => normalized.includes(fragment))
 }
 
 /**
@@ -161,17 +161,17 @@ const UNSAFE_STRUCTURAL_KEYS = new Set(["__proto__", "constructor", "prototype"]
 
 /** Markers written in place of a value the redactor refused to serialize. */
 export const REDACTION_MARKERS = {
-	circular: "[circular]",
-	depthLimit: "[depth-limit]",
-	unsupported: "[unsupported]",
-	secret: "[secret]",
-	/**
-	 * Field kept, but emptied because its name is on the denylist.
-	 *
-	 * Deleting the key would make a reader unable to tell whether the producer
-	 * never recorded the field or the exporter removed it.
-	 */
-	forbidden: "[forbidden-field]",
+    circular: "[circular]",
+    depthLimit: "[depth-limit]",
+    unsupported: "[unsupported]",
+    secret: "[secret]",
+    /**
+     * Field kept, but emptied because its name is on the denylist.
+     *
+     * Deleting the key would make a reader unable to tell whether the producer
+     * never recorded the field or the exporter removed it.
+     */
+    forbidden: "[forbidden-field]",
 } as const
 
 /** Maximum object nesting the redactor descends before bailing out. */
@@ -186,27 +186,27 @@ const MAX_REDACTION_DEPTH = 8
  * survives.
  */
 const SECRET_VALUE_PATTERNS: readonly RegExp[] = [
-	// `Authorization: Bearer <token>`, `api-key = <token>`, `password: <token>`.
-	// A separator is required so ordinary prose ("password reset email sent")
-	// keeps its diagnostic value; the optional scheme word is consumed with the
-	// value so a `Bearer` prefix cannot leave the credential itself behind.
-	// The value stops at a delimiter rather than at whitespace: a greedy `\S+`
-	// would swallow `&page=2` and destroy the surrounding diagnostic context.
-	/\b(?:authorization|api[\s_-]?key|api[\s_-]?token|access[\s_-]?key[\s_-]?id|access[\s_-]?token|refresh[\s_-]?token|id[\s_-]?token|client[\s_-]?secret|private[\s_-]?key|passphrase|password|secret|credential|cookie|pairing[\s_-]?code)\b\s*[:=]\s*(?:bearer|basic|token)?\s*[^\s,;&"'`)\]}]+/gi,
-	// A bare `Bearer <token>` header value, which carries no separator.
-	/\bbearer\s+[A-Za-z0-9._~+/-]{8,}=*/gi,
-	// The same assignment shape with a quoted value, as `.env` files and shell
-	// transcripts write it. The unquoted pattern above stops at the opening
-	// quote, so without this the credential itself would survive.
-	/\b(?:authorization|api[\s_-]?key|api[\s_-]?token|access[\s_-]?key[\s_-]?id|access[\s_-]?token|refresh[\s_-]?token|id[\s_-]?token|client[\s_-]?secret|private[\s_-]?key|passphrase|password|secret|credential|cookie|pairing[\s_-]?code)\b\s*[:=]\s*(['"`])[^'"`\n]*\1/gi,
-	// Credentials carried in a URL query, up to the next parameter.
-	/[?&](?:access_token|api_key|apikey|auth|code|id_token|key|password|refresh_token|secret|session|sig|signature|token)=[^&\s]+/gi,
-	/\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}\b/g,
-	/\bgh[pousr]_[A-Za-z0-9]{16,}\b/g,
-	/\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,
-	/\bAKIA[0-9A-Z]{16}\b/g,
-	/-----BEGIN[^-]*PRIVATE KEY-----[\s\S]*?-----END[^-]*PRIVATE KEY-----/g,
-	/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
+    // `Authorization: Bearer <token>`, `api-key = <token>`, `password: <token>`.
+    // A separator is required so ordinary prose ("password reset email sent")
+    // keeps its diagnostic value; the optional scheme word is consumed with the
+    // value so a `Bearer` prefix cannot leave the credential itself behind.
+    // The value stops at a delimiter rather than at whitespace: a greedy `\S+`
+    // would swallow `&page=2` and destroy the surrounding diagnostic context.
+    /\b(?:authorization|api[\s_-]?key|api[\s_-]?token|access[\s_-]?key[\s_-]?id|access[\s_-]?token|refresh[\s_-]?token|id[\s_-]?token|client[\s_-]?secret|private[\s_-]?key|passphrase|password|secret|credential|cookie|pairing[\s_-]?code)\b\s*[:=]\s*(?:bearer|basic|token)?\s*[^\s,;&"'`)\]}]+/gi,
+    // A bare `Bearer <token>` header value, which carries no separator.
+    /\bbearer\s+[A-Za-z0-9._~+/-]{8,}=*/gi,
+    // The same assignment shape with a quoted value, as `.env` files and shell
+    // transcripts write it. The unquoted pattern above stops at the opening
+    // quote, so without this the credential itself would survive.
+    /\b(?:authorization|api[\s_-]?key|api[\s_-]?token|access[\s_-]?key[\s_-]?id|access[\s_-]?token|refresh[\s_-]?token|id[\s_-]?token|client[\s_-]?secret|private[\s_-]?key|passphrase|password|secret|credential|cookie|pairing[\s_-]?code)\b\s*[:=]\s*(['"`])[^'"`\n]*\1/gi,
+    // Credentials carried in a URL query, up to the next parameter.
+    /[?&](?:access_token|api_key|apikey|auth|code|id_token|key|password|refresh_token|secret|session|sig|signature|token)=[^&\s]+/gi,
+    /\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}\b/g,
+    /\bgh[pousr]_[A-Za-z0-9]{16,}\b/g,
+    /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,
+    /\bAKIA[0-9A-Z]{16}\b/g,
+    /-----BEGIN[^-]*PRIVATE KEY-----[\s\S]*?-----END[^-]*PRIVATE KEY-----/g,
+    /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
 ]
 
 /**
@@ -215,78 +215,78 @@ const SECRET_VALUE_PATTERNS: readonly RegExp[] = [
  * Exported so raw artifacts can reuse the same rules as structured entries.
  */
 export function scrubSecretText(value: string): string {
-	let scrubbed = value
-	for (const pattern of SECRET_VALUE_PATTERNS) {
-		pattern.lastIndex = 0
-		scrubbed = scrubbed.replace(pattern, REDACTION_MARKERS.secret)
-	}
-	return scrubbed
+    let scrubbed = value
+    for (const pattern of SECRET_VALUE_PATTERNS) {
+        pattern.lastIndex = 0
+        scrubbed = scrubbed.replace(pattern, REDACTION_MARKERS.secret)
+    }
+    return scrubbed
 }
 
 /** True for `{}` and `Object.create(null)`, false for every other object. */
 function isPlainObject(value: object): boolean {
-	const prototype = Object.getPrototypeOf(value)
-	return prototype === null || prototype === Object.prototype
+    const prototype = Object.getPrototypeOf(value)
+    return prototype === null || prototype === Object.prototype
 }
 
 /** Non-object values, scrubbed and screened for non-JSON types. */
 function redactPrimitive(value: unknown): unknown {
-	if (typeof value === "string") return scrubSecretText(value)
-	if (typeof value === "number") return Number.isFinite(value) ? value : REDACTION_MARKERS.unsupported
-	if (typeof value === "boolean") return value
-	if (value === null) return null
-	// Functions, symbols, bigint and undefined are not representable in a
-	// bundle, and a retained function would let `toJSON` re-inject data during
-	// a later stringify.
-	return REDACTION_MARKERS.unsupported
+    if (typeof value === "string") return scrubSecretText(value)
+    if (typeof value === "number") return Number.isFinite(value) ? value : REDACTION_MARKERS.unsupported
+    if (typeof value === "boolean") return value
+    if (value === null) return null
+    // Functions, symbols, bigint and undefined are not representable in a
+    // bundle, and a retained function would let `toJSON` re-inject data during
+    // a later stringify.
+    return REDACTION_MARKERS.unsupported
 }
 
 function redactValue(value: unknown, depth: number, seen: Set<object>): unknown {
-	if (typeof value !== "object" || value === null) {
-		return redactPrimitive(value)
-	}
-	if (depth >= MAX_REDACTION_DEPTH) {
-		return REDACTION_MARKERS.depthLimit
-	}
-	if (seen.has(value)) {
-		return REDACTION_MARKERS.circular
-	}
+    if (typeof value !== "object" || value === null) {
+        return redactPrimitive(value)
+    }
+    if (depth >= MAX_REDACTION_DEPTH) {
+        return REDACTION_MARKERS.depthLimit
+    }
+    if (seen.has(value)) {
+        return REDACTION_MARKERS.circular
+    }
 
-	seen.add(value)
-	try {
-		if (Array.isArray(value)) {
-			return value.map((item) => redactValue(item, depth + 1, seen))
-		}
-		if (value instanceof Date) {
-			return Number.isFinite(value.getTime()) ? value.toISOString() : REDACTION_MARKERS.unsupported
-		}
-		if (!isPlainObject(value)) {
-			// Map, Set, typed arrays, RegExp, Promise, class instances: none are
-			// JSON round-trippable, and serializing them as `{}` would hide the
-			// fact that evidence was dropped.
-			return REDACTION_MARKERS.unsupported
-		}
+    seen.add(value)
+    try {
+        if (Array.isArray(value)) {
+            return value.map((item) => redactValue(item, depth + 1, seen))
+        }
+        if (value instanceof Date) {
+            return Number.isFinite(value.getTime()) ? value.toISOString() : REDACTION_MARKERS.unsupported
+        }
+        if (!isPlainObject(value)) {
+            // Map, Set, typed arrays, RegExp, Promise, class instances: none are
+            // JSON round-trippable, and serializing them as `{}` would hide the
+            // fact that evidence was dropped.
+            return REDACTION_MARKERS.unsupported
+        }
 
-		// A null-prototype accumulator keeps `__proto__`, `constructor` and
-		// `toJSON` keys in the source from mutating the output or surviving
-		// into a later JSON.stringify.
-		const result = Object.create(null) as Record<string, unknown>
-		for (const key of Object.keys(value)) {
-			if (UNSAFE_STRUCTURAL_KEYS.has(key)) continue
-			if (isForbiddenBundleField(key)) {
-				// Keep the key with a marker instead of deleting it. A reader
-				// otherwise cannot tell whether the producer never recorded the
-				// field or the exporter removed evidence, and that difference
-				// matters when a bundle is the only account of an incident.
-				result[key] = REDACTION_MARKERS.forbidden
-				continue
-			}
-			result[key] = redactValue((value as Record<string, unknown>)[key], depth + 1, seen)
-		}
-		return { ...result }
-	} finally {
-		seen.delete(value)
-	}
+        // A null-prototype accumulator keeps `__proto__`, `constructor` and
+        // `toJSON` keys in the source from mutating the output or surviving
+        // into a later JSON.stringify.
+        const result = Object.create(null) as Record<string, unknown>
+        for (const key of Object.keys(value)) {
+            if (UNSAFE_STRUCTURAL_KEYS.has(key)) continue
+            if (isForbiddenBundleField(key)) {
+                // Keep the key with a marker instead of deleting it. A reader
+                // otherwise cannot tell whether the producer never recorded the
+                // field or the exporter removed evidence, and that difference
+                // matters when a bundle is the only account of an incident.
+                result[key] = REDACTION_MARKERS.forbidden
+                continue
+            }
+            result[key] = redactValue((value as Record<string, unknown>)[key], depth + 1, seen)
+        }
+        return { ...result }
+    } finally {
+        seen.delete(value)
+    }
 }
 
 /**
@@ -302,21 +302,21 @@ function redactValue(value: unknown, depth: number, seen: Set<object>): unknown 
  * reader can tell dropped evidence apart from absent evidence.
  */
 export function redactBundleValue(value: unknown): unknown {
-	return redactValue(value, 0, new Set<object>())
+    return redactValue(value, 0, new Set<object>())
 }
 
 /** Bundle-level identity written into `manifest.json`. */
 export interface BundleManifest {
-	readonly schemaVersion: 1
-	readonly sessionId: string
-	readonly createdAt: number
-	readonly extensionVersion: string
-	readonly buildId?: string
-	readonly entries: readonly BundleEntryListing[]
-	readonly eventCount: number
-	readonly diagnosisCount: number
-	/** True when the user explicitly opted into extra raw artifacts. */
-	readonly includesRawArtifacts: boolean
+    readonly schemaVersion: 1
+    readonly sessionId: string
+    readonly createdAt: number
+    readonly extensionVersion: string
+    readonly buildId?: string
+    readonly entries: readonly BundleEntryListing[]
+    readonly eventCount: number
+    readonly diagnosisCount: number
+    /** True when the user explicitly opted into extra raw artifacts. */
+    readonly includesRawArtifacts: boolean
 }
 
 /** SHA-256 of every entry, keyed by entry name. */

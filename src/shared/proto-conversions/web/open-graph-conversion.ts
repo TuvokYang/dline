@@ -7,12 +7,12 @@ import { OpenGraphData as ProtoOpenGraphData } from "@shared/proto/dline/web"
  * @returns Proto OpenGraphData object
  */
 export function convertDomainOpenGraphDataToProto(ogData: DomainOpenGraphData): ProtoOpenGraphData {
-	return ProtoOpenGraphData.create({
-		title: ogData.title || "",
-		description: ogData.description || "",
-		image: ogData.image || "",
-		url: ogData.url || "",
-		siteName: ogData.siteName || "",
-		type: ogData.type || "",
-	})
+    return ProtoOpenGraphData.create({
+        title: ogData.title || "",
+        description: ogData.description || "",
+        image: ogData.image || "",
+        url: ogData.url || "",
+        siteName: ogData.siteName || "",
+        type: ogData.type || "",
+    })
 }

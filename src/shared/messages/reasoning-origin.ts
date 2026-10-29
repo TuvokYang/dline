@@ -10,7 +10,7 @@ export type ClineReasoningBlock = ClineAssistantThinkingBlock | ClineAssistantRe
  * @returns True for `thinking` and `redacted_thinking` blocks.
  */
 export function isReasoningBlock(block: ClineContent): block is ClineReasoningBlock {
-	return block.type === "thinking" || block.type === "redacted_thinking"
+    return block.type === "thinking" || block.type === "redacted_thinking"
 }
 
 /**
@@ -32,5 +32,5 @@ export function isReasoningBlock(block: ClineContent): block is ClineReasoningBl
  * @returns True when the block must not be replayed to an Anthropic Messages endpoint.
  */
 export function isForeignReasoningForAnthropic(block: ClineReasoningBlock): boolean {
-	return typeof block.provider_metadata === "object" && block.provider_metadata !== null
+    return typeof block.provider_metadata === "object" && block.provider_metadata !== null
 }

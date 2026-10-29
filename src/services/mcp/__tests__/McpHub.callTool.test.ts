@@ -18,20 +18,20 @@ import { McpHub } from "../McpHub"
 
 /** Minimal mock for MCP Client.request() */
 function createMockClient(responseOverride?: any) {
-	return {
-		request: vi.fn().mockResolvedValue(
-			responseOverride ?? {
-				content: [{ type: "text", text: "success" }],
-			},
-		),
-	}
+    return {
+        request: vi.fn().mockResolvedValue(
+            responseOverride ?? {
+                content: [{ type: "text", text: "success" }],
+            },
+        ),
+    }
 }
 
 /** Minimal mock for TelemetryService */
 function createMockTelemetryService() {
-	return {
-		captureMcpToolCall: vi.fn(),
-	}
+    return {
+        captureMcpToolCall: vi.fn(),
+    }
 }
 
 /**
@@ -44,245 +44,257 @@ function createMockTelemetryService() {
  * re-implementation.
  */
 function createMcpHub(
-	options: { client?: ReturnType<typeof createMockClient>; serverName?: string; disabled?: boolean; config?: string } = {},
+    options: { client?: ReturnType<typeof createMockClient>; serverName?: string; disabled?: boolean; config?: string } = {},
 ) {
-	const client = options.client ?? createMockClient()
-	const serverName = options.serverName ?? "test-server"
-	const telemetryService = createMockTelemetryService()
+    const client = options.client ?? createMockClient()
+    const serverName = options.serverName ?? "test-server"
+    const telemetryService = createMockTelemetryService()
 
-	const connection = {
-		server: {
-			name: serverName,
-			config: options.config ?? JSON.stringify({ type: "stdio", command: "test", timeout: 60 }),
-			status: "connected",
-			disabled: options.disabled ?? false,
-		},
-		client,
-		transport: {},
-	}
+    const connection = {
+        server: {
+            name: serverName,
+            config: options.config ?? JSON.stringify({ type: "stdio", command: "test", timeout: 60 }),
+            status: "connected",
+            disabled: options.disabled ?? false,
+        },
+        client,
+        transport: {},
+    }
 
-	const hub = Object.create(McpHub.prototype) as McpHub
-	;(hub as any).telemetryService = telemetryService
-	;(hub as any).connections = [connection]
+    const hub = Object.create(McpHub.prototype) as McpHub
+    ;(hub as any).telemetryService = telemetryService
+    ;(hub as any).connections = [connection]
 
-	return { hub, client, telemetryService, connection }
+    return { hub, client, telemetryService, connection }
 }
 
 describe("McpHub.callTool", () => {
-	let sandbox: any /* sinon.SinonSandbox → vitest */
+    let sandbox: any /* sinon.SinonSandbox → vitest */
 
-	beforeEach(() => {
-		sandbox = { mockRestore: () => {} }
-	})
+    beforeEach(() => {
+        sandbox = { mockRestore: () => {} }
+    })
 
-	afterEach(() => {
-		vi.restoreAllMocks()
-	})
+    afterEach(() => {
+        vi.restoreAllMocks()
+    })
 
-	// ── Core fix: undefined arguments → empty object ────────────────────
+    // ── Core fix: undefined arguments → empty object ────────────────────
 
-	describe("arguments fallback to empty object", () => {
-		it("should pass empty object {} when toolArguments is undefined", async () => {
-			const { hub, client } = createMcpHub()
+    describe("arguments fallback to empty object", () => {
+        it("should pass empty object {} when toolArguments is undefined", async () => {
+            const { hub, client } = createMcpHub()
 
-			await hub.callTool("test-server", "list_pages", undefined, "ulid-001")
+            await hub.callTool("test-server", "list_pages", undefined, "ulid-001")
 
-			client.request.mock.calls.length.should.equal(1)
-			const requestArgs = client.request.mock.calls[0][0]
-			requestArgs.params.arguments.should.deepEqual({})
-		})
+            client.request.mock.calls.length.should.equal(1)
+            const requestArgs = client.request.mock.calls[0][0]
+            requestArgs.params.arguments.should.deepEqual({})
+        })
 
-		it("should pass the provided arguments object when toolArguments is defined", async () => {
-			const { hub, client } = createMcpHub()
-			const args = { url: "https://example.com", verbose: true }
+        it("should pass the provided arguments object when toolArguments is defined", async () => {
+            const { hub, client } = createMcpHub()
+            const args = { url: "https://example.com", verbose: true }
 
-			await hub.callTool("test-server", "navigate_page", args, "ulid-002")
+            await hub.callTool("test-server", "navigate_page", args, "ulid-002")
 
-			client.request.mock.calls.length.should.equal(1)
-			const requestArgs = client.request.mock.calls[0][0]
-			requestArgs.params.arguments.should.deepEqual({ url: "https://example.com", verbose: true })
-		})
+            client.request.mock.calls.length.should.equal(1)
+            const requestArgs = client.request.mock.calls[0][0]
+            requestArgs.params.arguments.should.deepEqual({ url: "https://example.com", verbose: true })
+        })
 
-		it("should pass empty object {} when toolArguments is explicitly passed as undefined", async () => {
-			const { hub, client } = createMcpHub()
+        it("should pass empty object {} when toolArguments is explicitly passed as undefined", async () => {
+            const { hub, client } = createMcpHub()
 
-			await hub.callTool("test-server", "take_screenshot", undefined, "ulid-003")
+            await hub.callTool("test-server", "take_screenshot", undefined, "ulid-003")
 
-			const requestArgs = client.request.mock.calls[0][0]
-			requestArgs.params.arguments.should.deepEqual({})
-			// Ensure it's an object, not null or undefined
-			;(typeof requestArgs.params.arguments).should.equal("object")
-			;(requestArgs.params.arguments === null).should.be.false()
-		})
+            const requestArgs = client.request.mock.calls[0][0]
+            requestArgs.params.arguments.should.deepEqual({})
+            // Ensure it's an object, not null or undefined
+            ;(typeof requestArgs.params.arguments).should.equal("object")
+            ;(requestArgs.params.arguments === null).should.be.false()
+        })
 
-		it("should preserve arguments with falsy values inside the object", async () => {
-			const { hub, client } = createMcpHub()
-			const args = { enabled: false, count: 0, name: "" }
+        it("should preserve arguments with falsy values inside the object", async () => {
+            const { hub, client } = createMcpHub()
+            const args = { enabled: false, count: 0, name: "" }
 
-			await hub.callTool("test-server", "configure", args, "ulid-004")
+            await hub.callTool("test-server", "configure", args, "ulid-004")
 
-			const requestArgs = client.request.mock.calls[0][0]
-			requestArgs.params.arguments.should.deepEqual({ enabled: false, count: 0, name: "" })
-		})
+            const requestArgs = client.request.mock.calls[0][0]
+            requestArgs.params.arguments.should.deepEqual({ enabled: false, count: 0, name: "" })
+        })
 
-		it("should pass an already-empty object through unchanged", async () => {
-			const { hub, client } = createMcpHub()
+        it("should pass an already-empty object through unchanged", async () => {
+            const { hub, client } = createMcpHub()
 
-			await hub.callTool("test-server", "list_pages", {}, "ulid-005")
+            await hub.callTool("test-server", "list_pages", {}, "ulid-005")
 
-			const requestArgs = client.request.mock.calls[0][0]
-			requestArgs.params.arguments.should.deepEqual({})
-		})
-	})
+            const requestArgs = client.request.mock.calls[0][0]
+            requestArgs.params.arguments.should.deepEqual({})
+        })
+    })
 
-	// ── Request structure validation ────────────────────────────────────
+    // ── Request structure validation ────────────────────────────────────
 
-	describe("request structure", () => {
-		it("should always include method 'tools/call' in the request", async () => {
-			const { hub, client } = createMcpHub()
+    describe("request structure", () => {
+        it("should always include method 'tools/call' in the request", async () => {
+            const { hub, client } = createMcpHub()
 
-			await hub.callTool("test-server", "any_tool", undefined, "ulid-006")
+            await hub.callTool("test-server", "any_tool", undefined, "ulid-006")
 
-			const requestArgs = client.request.mock.calls[0][0]
-			requestArgs.method.should.equal("tools/call")
-		})
+            const requestArgs = client.request.mock.calls[0][0]
+            requestArgs.method.should.equal("tools/call")
+        })
 
-		it("should set the tool name in params.name", async () => {
-			const { hub, client } = createMcpHub()
+        it("should set the tool name in params.name", async () => {
+            const { hub, client } = createMcpHub()
 
-			await hub.callTool("test-server", "list_pages", undefined, "ulid-007")
+            await hub.callTool("test-server", "list_pages", undefined, "ulid-007")
 
-			const requestArgs = client.request.mock.calls[0][0]
-			requestArgs.params.name.should.equal("list_pages")
-		})
+            const requestArgs = client.request.mock.calls[0][0]
+            requestArgs.params.name.should.equal("list_pages")
+        })
 
-		it("should pass timeout in request options", async () => {
-			const { hub, client } = createMcpHub()
+        it("should pass timeout in request options", async () => {
+            const { hub, client } = createMcpHub()
 
-			await hub.callTool("test-server", "slow_tool", { query: "test" }, "ulid-008")
+            await hub.callTool("test-server", "slow_tool", { query: "test" }, "ulid-008")
 
-			const requestOptions = client.request.mock.calls[0][2]
-			requestOptions.should.have.property("timeout")
-			requestOptions.timeout.should.be.a.Number()
-			requestOptions.timeout.should.be.above(0)
-		})
-	})
+            const requestOptions = client.request.mock.calls[0][2]
+            requestOptions.should.have.property("timeout")
+            requestOptions.timeout.should.be.a.Number()
+            requestOptions.timeout.should.be.above(0)
+        })
+    })
 
-	// ── Error handling ──────────────────────────────────────────────────
+    // ── Error handling ──────────────────────────────────────────────────
 
-	describe("error handling", () => {
-		it("should throw when server connection is not found", async () => {
-			const { hub } = createMcpHub({ serverName: "existing-server" })
+    describe("error handling", () => {
+        it("should throw when server connection is not found", async () => {
+            const { hub } = createMcpHub({ serverName: "existing-server" })
 
-			let threw = false
-			try {
-				await hub.callTool("nonexistent-server", "some_tool", undefined, "ulid-009")
-			} catch (error: any) {
-				threw = true
-				error.message.should.containEql("No connection found for server: nonexistent-server")
-			}
-			threw.should.be.true()
-		})
+            let threw = false
+            try {
+                await hub.callTool("nonexistent-server", "some_tool", undefined, "ulid-009")
+            } catch (error: any) {
+                threw = true
+                error.message.should.containEql("No connection found for server: nonexistent-server")
+            }
+            threw.should.be.true()
+        })
 
-		it("should throw when server is disabled", async () => {
-			const { hub } = createMcpHub({ disabled: true })
+        it("should throw when server is disabled", async () => {
+            const { hub } = createMcpHub({ disabled: true })
 
-			let threw = false
-			try {
-				await hub.callTool("test-server", "some_tool", undefined, "ulid-010")
-			} catch (error: any) {
-				threw = true
-				error.message.should.containEql("disabled")
-			}
-			threw.should.be.true()
-		})
+            let threw = false
+            try {
+                await hub.callTool("test-server", "some_tool", undefined, "ulid-010")
+            } catch (error: any) {
+                threw = true
+                error.message.should.containEql("disabled")
+            }
+            threw.should.be.true()
+        })
 
-		it("should capture error telemetry when client.request fails", async () => {
-			const client = createMockClient()
-			client.request.mockRejectedValue(new Error("Network timeout"))
-			const { hub, telemetryService } = createMcpHub({ client })
+        it("should capture error telemetry when client.request fails", async () => {
+            const client = createMockClient()
+            client.request.mockRejectedValue(new Error("Network timeout"))
+            const { hub, telemetryService } = createMcpHub({ client })
 
-			let threw = false
-			try {
-				await hub.callTool("test-server", "failing_tool", { key: "value" }, "ulid-011")
-			} catch {
-				threw = true
-			}
+            let threw = false
+            try {
+                await hub.callTool("test-server", "failing_tool", { key: "value" }, "ulid-011")
+            } catch {
+                threw = true
+            }
 
-			threw.should.be.true()
-			;(telemetryService.captureMcpToolCall.mock.calls.length === 2).should.be.true()
+            threw.should.be.true()
+            ;(telemetryService.captureMcpToolCall.mock.calls.length === 2).should.be.true()
 
-			// First call: "started"
-			const startedCall = telemetryService.captureMcpToolCall.mock.calls[0]
-			startedCall[3].should.equal("started")
+            // First call: "started"
+            const startedCall = telemetryService.captureMcpToolCall.mock.calls[0]
+            startedCall[3].should.equal("started")
 
-			// Second call: "error"
-			const errorCall = telemetryService.captureMcpToolCall.mock.calls[1]
-			errorCall[3].should.equal("error")
-			errorCall[4].should.equal("Network timeout")
-		})
-	})
+            // Second call: "error"
+            const errorCall = telemetryService.captureMcpToolCall.mock.calls[1]
+            errorCall[3].should.equal("error")
+            errorCall[4].should.equal("mcp_transport_error")
+        })
+    })
 
-	// ── Telemetry ───────────────────────────────────────────────────────
+    // ── Telemetry ───────────────────────────────────────────────────────
 
-	describe("telemetry", () => {
-		it("should capture 'started' telemetry before request and 'success' after", async () => {
-			const { hub, telemetryService } = createMcpHub()
+    describe("telemetry", () => {
+        it("should capture 'started' telemetry before request and 'success' after", async () => {
+            const { hub, telemetryService } = createMcpHub()
 
-			await hub.callTool("test-server", "list_pages", undefined, "ulid-012")
+            await hub.callTool("test-server", "list_pages", undefined, "ulid-012")
 
-			;(telemetryService.captureMcpToolCall.mock.calls.length === 2).should.be.true()
-			telemetryService.captureMcpToolCall.mock.calls[0][3].should.equal("started")
-			telemetryService.captureMcpToolCall.mock.calls[1][3].should.equal("success")
-		})
+            ;(telemetryService.captureMcpToolCall.mock.calls.length === 2).should.be.true()
+            telemetryService.captureMcpToolCall.mock.calls[0][3].should.equal("started")
+            telemetryService.captureMcpToolCall.mock.calls[1][3].should.equal("success")
+        })
 
-		it("should report undefined for argument keys when toolArguments is undefined", async () => {
-			const { hub, telemetryService } = createMcpHub()
+        it("should classify a remote MCP error result as error telemetry", async () => {
+            const client = createMockClient({ content: [{ type: "text", text: "safe" }], isError: true })
+            const { hub, telemetryService } = createMcpHub({ client })
 
-			await hub.callTool("test-server", "list_pages", undefined, "ulid-013")
+            const result = await hub.callTool("test-server", "list_pages", undefined, "ulid-remote-error")
 
-			// Both started and success should report undefined argument keys
-			const startedArgKeys = telemetryService.captureMcpToolCall.mock.calls[0][5]
-			should(startedArgKeys).be.undefined()
+            should(result.isError).be.true()
+            const terminalCall = telemetryService.captureMcpToolCall.mock.calls[1]
+            terminalCall[3].should.equal("error")
+            terminalCall[4].should.equal("remote_tool_error")
+        })
 
-			const successArgKeys = telemetryService.captureMcpToolCall.mock.calls[1][5]
-			should(successArgKeys).be.undefined()
-		})
+        it("should report undefined for argument keys when toolArguments is undefined", async () => {
+            const { hub, telemetryService } = createMcpHub()
 
-		it("should report argument keys when toolArguments is provided", async () => {
-			const { hub, telemetryService } = createMcpHub()
+            await hub.callTool("test-server", "list_pages", undefined, "ulid-013")
 
-			await hub.callTool("test-server", "navigate", { url: "https://x.com", timeout: 5000 }, "ulid-014")
+            // Both started and success should report undefined argument keys
+            const startedArgKeys = telemetryService.captureMcpToolCall.mock.calls[0][5]
+            should(startedArgKeys).be.undefined()
 
-			const startedArgKeys = telemetryService.captureMcpToolCall.mock.calls[0][5]
-			startedArgKeys.should.deepEqual(["url", "timeout"])
-		})
-	})
+            const successArgKeys = telemetryService.captureMcpToolCall.mock.calls[1][5]
+            should(successArgKeys).be.undefined()
+        })
 
-	// ── Response handling ───────────────────────────────────────────────
+        it("should report argument keys when toolArguments is provided", async () => {
+            const { hub, telemetryService } = createMcpHub()
 
-	describe("response handling", () => {
-		it("should return content array from successful response", async () => {
-			const client = createMockClient({
-				content: [{ type: "text", text: "page list result" }],
-			})
-			const { hub } = createMcpHub({ client })
+            await hub.callTool("test-server", "navigate", { url: "https://x.com", timeout: 5000 }, "ulid-014")
 
-			const result = await hub.callTool("test-server", "list_pages", undefined, "ulid-015")
+            const startedArgKeys = telemetryService.captureMcpToolCall.mock.calls[0][5]
+            startedArgKeys.should.deepEqual(["url", "timeout"])
+        })
+    })
 
-			result.content.should.be.an.Array()
-			result.content.should.have.length(1)
-			;(result.content[0] as { type: "text"; text: string }).text.should.equal("page list result")
-		})
+    // ── Response handling ───────────────────────────────────────────────
 
-		it("should default content to empty array when response content is undefined", async () => {
-			const client = createMockClient({ content: undefined })
-			const { hub } = createMcpHub({ client })
+    describe("response handling", () => {
+        it("should return content array from successful response", async () => {
+            const client = createMockClient({
+                content: [{ type: "text", text: "page list result" }],
+            })
+            const { hub } = createMcpHub({ client })
 
-			const result = await hub.callTool("test-server", "list_pages", undefined, "ulid-016")
+            const result = await hub.callTool("test-server", "list_pages", undefined, "ulid-015")
 
-			result.content.should.be.an.Array()
-			result.content.should.have.length(0)
-		})
-	})
+            result.content.should.be.an.Array()
+            result.content.should.have.length(1)
+            ;(result.content[0] as { type: "text"; text: string }).text.should.equal("page list result")
+        })
+
+        it("should default content to empty array when response content is undefined", async () => {
+            const client = createMockClient({ content: undefined })
+            const { hub } = createMcpHub({ client })
+
+            const result = await hub.callTool("test-server", "list_pages", undefined, "ulid-016")
+
+            result.content.should.be.an.Array()
+            result.content.should.have.length(0)
+        })
+    })
 })

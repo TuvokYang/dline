@@ -5,179 +5,179 @@ import { PreToolUseHookCancellationError } from "@core/hooks/PreToolUseHookCance
 import type { TaskConfig } from "../types/TaskConfig"
 
 export interface PreToolUseHookOptions {
-	beforeTaskCancellation?: (message: string) => Promise<void> | void
+    beforeTaskCancellation?: (message: string) => Promise<void> | void
 }
 
 /**
  * Utility functions for tool hook execution.
  */
 export class ToolHookUtils {
-	/**
-	 * Runs the PreToolUse hook if enabled.
-	 *
-	 * This should be called by tool handlers after approval succeeds
-	 * but before the actual tool execution begins.
-	 *
-	 * @param config The task configuration
-	 * @param block The tool use block being executed
-	 * @param options Optional lifecycle callbacks for handlers with durable UI state
-	 * @returns Promise<boolean> - true if execution should continue, false if hook cancelled
-	 * @throws PreToolUseHookCancellationError if the hook requests cancellation
-	 */
-	static async runPreToolUseIfEnabled(
-		config: TaskConfig,
-		block: ToolUse,
-		options: PreToolUseHookOptions = {},
-	): Promise<boolean> {
-		// Check if hooks are enabled via user setting
-		const hooksEnabled = getHooksEnabledSafe(config.services.stateManager.getGlobalSettingsKey("hooksEnabled"))
+    /**
+     * Runs the PreToolUse hook if enabled.
+     *
+     * This should be called by tool handlers after approval succeeds
+     * but before the actual tool execution begins.
+     *
+     * @param config The task configuration
+     * @param block The tool use block being executed
+     * @param options Optional lifecycle callbacks for handlers with durable UI state
+     * @returns Promise<boolean> - true if execution should continue, false if hook cancelled
+     * @throws PreToolUseHookCancellationError if the hook requests cancellation
+     */
+    static async runPreToolUseIfEnabled(
+        config: TaskConfig,
+        block: ToolUse,
+        options: PreToolUseHookOptions = {},
+    ): Promise<boolean> {
+        // Check if hooks are enabled via user setting
+        const hooksEnabled = getHooksEnabledSafe(config.services.stateManager.getGlobalSettingsKey("hooksEnabled"))
 
-		if (!hooksEnabled) {
-			return true // Hooks disabled, continue execution
-		}
+        if (!hooksEnabled) {
+            return true // Hooks disabled, continue execution
+        }
 
-		if (block.name === "attempt_completion") {
-			return true // Skip this hook
-		}
+        if (block.name === "attempt_completion") {
+            return true // Skip this hook
+        }
 
-		// Import the hook executor dynamically
-		const { executeHook } = await import("@core/hooks/hook-executor")
+        // Import the hook executor dynamically
+        const { executeHook } = await import("@core/hooks/hook-executor")
 
-		// Build pending tool info for display
-		const pendingToolInfo: any = {
-			tool: block.name,
-		}
+        // Build pending tool info for display
+        const pendingToolInfo: any = {
+            tool: block.name,
+        }
 
-		// Add relevant parameters for display based on tool type
-		if (block.params.path) {
-			pendingToolInfo.path = block.params.path
-		}
-		if (block.params.command) {
-			pendingToolInfo.command = block.params.command
-		}
-		if (block.params.content && typeof block.params.content === "string") {
-			pendingToolInfo.content = block.params.content.slice(0, 200)
-		}
-		if (block.params.diff && typeof block.params.diff === "string") {
-			pendingToolInfo.diff = block.params.diff.slice(0, 200)
-		}
-		if (block.params.regex) {
-			pendingToolInfo.regex = block.params.regex
-		}
-		if (block.params.url) {
-			pendingToolInfo.url = block.params.url
-		}
-		// For MCP operations, show tool/resource identifiers
-		if (block.params.tool_name) {
-			pendingToolInfo.mcpTool = block.params.tool_name
-		}
-		if (block.params.server_name) {
-			pendingToolInfo.mcpServer = block.params.server_name
-		}
-		if (block.params.uri) {
-			pendingToolInfo.resourceUri = block.params.uri
-		}
+        // Add relevant parameters for display based on tool type
+        if (block.params.path) {
+            pendingToolInfo.path = block.params.path
+        }
+        if (block.params.command) {
+            pendingToolInfo.command = block.params.command
+        }
+        if (block.params.content && typeof block.params.content === "string") {
+            pendingToolInfo.content = block.params.content.slice(0, 200)
+        }
+        if (block.params.diff && typeof block.params.diff === "string") {
+            pendingToolInfo.diff = block.params.diff.slice(0, 200)
+        }
+        if (block.params.regex) {
+            pendingToolInfo.regex = block.params.regex
+        }
+        if (block.params.url) {
+            pendingToolInfo.url = block.params.url
+        }
+        // For MCP operations, show tool/resource identifiers
+        if (block.params.tool_name) {
+            pendingToolInfo.mcpTool = block.params.tool_name
+        }
+        if (block.params.server_name) {
+            pendingToolInfo.mcpServer = block.params.server_name
+        }
+        if (block.params.uri) {
+            pendingToolInfo.resourceUri = block.params.uri
+        }
 
-		// Execute the PreToolUse hook
-		const preToolResult = await executeHook({
-			hookName: "PreToolUse",
-			hookInput: {
-				preToolUse: {
-					toolName: block.name,
-					parameters: block.params,
-				},
-			},
-			isCancellable: true,
-			say: config.callbacks.say,
-			setActiveHookExecution: config.callbacks.setActiveHookExecution,
-			clearActiveHookExecution: config.callbacks.clearActiveHookExecution,
-			messageStateHandler: config.messageState,
-			taskId: config.taskId,
-			hooksEnabled,
-			model: getHookModelContext(config.api, config.services.stateManager),
-			toolName: block.name,
-			pendingToolInfo,
-		})
+        // Execute the PreToolUse hook
+        const preToolResult = await executeHook({
+            hookName: "PreToolUse",
+            hookInput: {
+                preToolUse: {
+                    toolName: block.name,
+                    parameters: block.params,
+                },
+            },
+            isCancellable: true,
+            say: config.callbacks.say,
+            setActiveHookExecution: config.callbacks.setActiveHookExecution,
+            clearActiveHookExecution: config.callbacks.clearActiveHookExecution,
+            messageStateHandler: config.messageState,
+            taskId: config.taskId,
+            hooksEnabled,
+            model: getHookModelContext(config.api, config.services.stateManager),
+            toolName: block.name,
+            pendingToolInfo,
+        })
 
-		// Handle cancellation from hook
-		if (preToolResult.cancel === true) {
-			const message = preToolResult.errorMessage || "PreToolUse hook requested cancellation"
+        // Handle cancellation from hook
+        if (preToolResult.cancel === true) {
+            const message = preToolResult.errorMessage || "PreToolUse hook requested cancellation"
 
-			// Clear the active hook execution state BEFORE calling cancelTask
-			// This prevents abortTask from trying to "cancel" an already-completed hook.
-			await config.callbacks.clearActiveHookExecution()
+            // Clear the active hook execution state BEFORE calling cancelTask
+            // This prevents abortTask from trying to "cancel" an already-completed hook.
+            await config.callbacks.clearActiveHookExecution()
 
-			// Durable tool presentations must reach a terminal state before task
-			// cancellation tears down message writes. UI write failures must not block cancellation.
-			try {
-				await options.beforeTaskCancellation?.(message)
-			} catch {}
+            // Durable tool presentations must reach a terminal state before task
+            // cancellation tears down message writes. UI write failures must not block cancellation.
+            try {
+                await options.beforeTaskCancellation?.(message)
+            } catch {}
 
-			// Abort the entire task (consistent with PostToolUse and other hook cancellations)
-			await config.callbacks.cancelTask()
-			throw new PreToolUseHookCancellationError(message)
-		}
+            // Abort the entire task (consistent with PostToolUse and other hook cancellations)
+            await config.callbacks.cancelTask()
+            throw new PreToolUseHookCancellationError(message)
+        }
 
-		// If task was aborted (e.g., via cancel button during hook), give durable
-		// presentations one final write opportunity before propagating cancellation.
-		if (config.taskState.abort) {
-			const message = "Task was aborted during PreToolUse hook execution"
-			try {
-				await options.beforeTaskCancellation?.(message)
-			} catch {}
-			throw new PreToolUseHookCancellationError(message)
-		}
+        // If task was aborted (e.g., via cancel button during hook), give durable
+        // presentations one final write opportunity before propagating cancellation.
+        if (config.taskState.operationSignal.aborted) {
+            const message = "Task was aborted during PreToolUse hook execution"
+            try {
+                await options.beforeTaskCancellation?.(message)
+            } catch {}
+            throw new PreToolUseHookCancellationError(message)
+        }
 
-		// Add context modification to the conversation if provided by the hook
-		if (preToolResult.contextModification) {
-			ToolHookUtils.addHookContextToConversation(config, preToolResult.contextModification, "PreToolUse")
-		}
+        // Add context modification to the conversation if provided by the hook
+        if (preToolResult.contextModification) {
+            ToolHookUtils.addHookContextToConversation(config, preToolResult.contextModification, "PreToolUse")
+        }
 
-		return true // Hook succeeded, continue execution
-	}
+        return true // Hook succeeded, continue execution
+    }
 
-	/**
-	 * Adds hook context modification to the conversation if provided.
-	 * Parses the context to extract type prefix and formats as XML.
-	 *
-	 * @param config The task configuration
-	 * @param contextModification The context string from the hook output
-	 * @param source The hook source name ("PreToolUse" or "PostToolUse")
-	 */
-	private static addHookContextToConversation(
-		config: TaskConfig,
-		contextModification: string | undefined,
-		source: string,
-	): void {
-		if (!contextModification) {
-			return
-		}
+    /**
+     * Adds hook context modification to the conversation if provided.
+     * Parses the context to extract type prefix and formats as XML.
+     *
+     * @param config The task configuration
+     * @param contextModification The context string from the hook output
+     * @param source The hook source name ("PreToolUse" or "PostToolUse")
+     */
+    private static addHookContextToConversation(
+        config: TaskConfig,
+        contextModification: string | undefined,
+        source: string,
+    ): void {
+        if (!contextModification) {
+            return
+        }
 
-		const contextText = contextModification.trim()
-		if (!contextText) {
-			return
-		}
+        const contextText = contextModification.trim()
+        if (!contextText) {
+            return
+        }
 
-		// Extract context type from first line if specified (e.g., "WORKSPACE_RULES: ...")
-		const lines = contextText.split("\n")
-		const firstLine = lines[0]
-		let contextType = "general"
-		let content = contextText
+        // Extract context type from first line if specified (e.g., "WORKSPACE_RULES: ...")
+        const lines = contextText.split("\n")
+        const firstLine = lines[0]
+        let contextType = "general"
+        let content = contextText
 
-		// Check if first line specifies a type: "TYPE: content"
-		const typeMatchRegex = /^([A-Z_]+):\s*(.*)/
-		const typeMatch = typeMatchRegex.exec(firstLine)
-		if (typeMatch) {
-			contextType = typeMatch[1].toLowerCase()
-			const remainingLines = lines.slice(1).filter((l: string) => l.trim())
-			content = typeMatch[2] ? [typeMatch[2], ...remainingLines].join("\n") : remainingLines.join("\n")
-		}
+        // Check if first line specifies a type: "TYPE: content"
+        const typeMatchRegex = /^([A-Z_]+):\s*(.*)/
+        const typeMatch = typeMatchRegex.exec(firstLine)
+        if (typeMatch) {
+            contextType = typeMatch[1].toLowerCase()
+            const remainingLines = lines.slice(1).filter((l: string) => l.trim())
+            content = typeMatch[2] ? [typeMatch[2], ...remainingLines].join("\n") : remainingLines.join("\n")
+        }
 
-		const hookContextBlock = {
-			type: "text" as const,
-			text: `<hook_context source="${source}" type="${contextType}">\n${content}\n</hook_context>`,
-		}
+        const hookContextBlock = {
+            type: "text" as const,
+            text: `<hook_context source="${source}" type="${contextType}">\n${content}\n</hook_context>`,
+        }
 
-		config.taskState.userMessageContent.push(hookContextBlock)
-	}
+        config.taskState.userMessageContent.push(hookContextBlock)
+    }
 }

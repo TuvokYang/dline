@@ -61,18 +61,21 @@ Dline 的持久化数据不在 VS Code `ExtensionContext` 中，而是写入三�
 
 | 文件 | 归属 |
 |---|---|
-| `ui_messages.jsonl` | `UIMessage`，缓冲写入的界面消息 |
-| `api_conversation_history.jsonl` | `ApiConversation`，发送给模型的对话 |
-| `snapshot.json` | `TaskSnapshotPersistence`，用于崩溃恢复的快照 |
+| `journal.db` | 任务运行时的提交记录：日志条目、命令发布与载荷；发送给模型的对话由它重建 |
+| `state.json`、`state.json.bak` | 用于重新打开和恢复任务的持久内核快照，上一版本保留为 `.bak` |
+| `messages.db` | `UIMessage`，Webview 显示的聊天投影 |
+| `activities.db` | `TaskActivityPersistence`，任务活动事件 |
+| `metrics.db` | API 速率指标和请求/响应执行数据 |
 | `context.json`、`context_history.jsonl` | 任务上下文与上下文管理记录 |
 | `settings.json` | 任务级设置覆盖 |
 | `task_metadata.json` | 任务元数据 |
-| `activities.json` | `TaskActivityPersistence`，带 schema 版本的任务活动 |
-| `<task-id>.db` | 每任务 SQLite 容器，保存 API 速率指标和请求/响应执行数据 |
+| `subagents/<subagent-id>/` | 每个子代理一个目录，布局与任务相同，包括由其他子代理派生的子代理 |
 | `artifacts/` | 任务产物（例如生成的图片），只允许任务相对路径 |
 | `tmp/` | `command-logs/`、`shell-diagnostics/`、`image-previews/`、`image-viewer/` |
 
-`tmp/command-logs/` 跨会话保留，因为聊天行和 Activities 视图会链接到这些日志。它按每个任务的总大小预算（默认 200 MiB）从最旧的日志开始清理，不按时间过期。`api_rate_metrics.jsonl` 是旧格式，会带指纹校验地导入每任务数据库。
+这些路径的唯一来源是 `src/core/storage/instance/InstanceLayout.ts`，每个数据库只有一个写入模块。
+
+`tmp/command-logs/` 跨会话保留，因为聊天行和 Activities 视图会链接到这些日志。它按每个任务的总大小预算（默认 200 MiB）从最旧的日志开始清理，不按时间过期。`api_rate_metrics.jsonl` 是旧格式，会带指纹校验地导入 `metrics.db`。
 
 删除任务必须经过任务删除协调器，由它处理锁、活动的 Controller、面板、`TaskHistory`、数据库文件和检查点。新增任务级文件时，要同时考虑删除和恢复时由谁负责。
 
@@ -112,11 +115,13 @@ Dline 的持久化数据不在 VS Code `ExtensionContext` 中，而是写入三�
 
 ## 迁移边界
 
-- **从 Cline 迁移**：启动时把旧 Cline 路径下的数据复制到空的 Dline 位置，详见[从 Cline 迁移](/zh-cn/getting-started/migration-cline-to-dline/)。
+- **Cline 数据**：Dline 不读取也不导入旧 Cline 路径。用户需要手动复制配置，详见[从 Cline 迁移](/zh-cn/getting-started/migration-cline-to-dline/)。
 - **从 VS Code 存储导出**：`exportVSCodeStorageToSharedFiles()`（`src/hosts/vscode/vscode-to-file-migration.ts`）读取旧的 `ExtensionContext` 全局状态、工作区状态和密钥，写入文件存储。全局和每个工作区分别用 `__vscodeMigrationVersion` 记录版本；文件中已有的值优先。
 - **设置迁移**：`StateManager` 用 `__settingsMigrationVersion` 把受支持的旧全局状态设置迁入设置文件，确认设置文件接管后才清理旧副本。
 - **任务历史**：`taskHistory.db` 不存在时才会导入旧的 `taskHistory.jsonl`。数据库一旦创建，后续启动不会再尝试导入。
-- **消息文件**：只有当前的 JSONL 文件不存在时，才导入旧的 JSON 消息文件。
+- **消息与活动文件**：首次打开时，旧的 `ui_messages.jsonl`（或更早的 `ui_messages.json`、`claude_messages.json`）导入 `messages.db`，`activities.json` 导入 `activities.db`。只有行已提交并读回校验后，文件才会重命名为 `<原文件名>.migrated`，因此中断的导入会在下次打开时重试。
+- **指标数据库**：旧的 `<task-id>.db` 及其 WAL 只移动一次为 `metrics.db`；已存在的 `metrics.db` 不会被覆盖。
+- **任务运行时升级**：旧版本的 `snapshot.json` 只用于把其中的待发送队列一次性导入 `state.json`；旧的完成状态不导入，因此这类任务重新打开时可能显示为已中断。旧版本任务首次继续时，只要日志中只有这次导入，其 `api_conversation_history.jsonl` 就会导入 `journal.db`，文件本身保持不变。本版本打开过的任务不能再用旧版本继续。
 
 ## 新增持久化状态
 

@@ -10,7 +10,7 @@ import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { fetch } from "@/shared/net"
 import { Logger } from "@/shared/services/Logger"
-import { ApiHandler, ApiHandlerContext } from "../"
+import { ApiHandler, ApiHandlerContext } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { convertToOpenAiMessages } from "../transform/openai-format"
 import { ApiStream } from "../transform/stream"
@@ -24,264 +24,266 @@ const QWEN_DIR = ".qwen"
 const QWEN_CREDENTIAL_FILENAME = "oauth_creds.json"
 
 interface QwenOAuthCredentials {
-	access_token: string
-	refresh_token: string
-	token_type: string
-	expiry_date: number
-	resource_url?: string
+    access_token: string
+    refresh_token: string
+    token_type: string
+    expiry_date: number
+    resource_url?: string
 }
 
 function objectToUrlEncoded(data: Record<string, string>): string {
-	return Object.keys(data)
-		.map((key) => `${encodeURIComponent(key)}=${encodeURIComponent(data[key])}`)
-		.join("&")
+    return Object.keys(data)
+        .map((key) => `${encodeURIComponent(key)}=${encodeURIComponent(data[key])}`)
+        .join("&")
 }
 
 function getQwenCachedCredentialPath(customPath?: string): string {
-	if (customPath) {
-		// Support custom path that starts with ~/ or is absolute
-		if (customPath.startsWith("~/")) {
-			return path.join(os.homedir(), customPath.slice(2))
-		}
-		return path.resolve(customPath)
-	}
-	return path.join(os.homedir(), QWEN_DIR, QWEN_CREDENTIAL_FILENAME)
+    if (customPath) {
+        // Support custom path that starts with ~/ or is absolute
+        if (customPath.startsWith("~/")) {
+            return path.join(os.homedir(), customPath.slice(2))
+        }
+        return path.resolve(customPath)
+    }
+    return path.join(os.homedir(), QWEN_DIR, QWEN_CREDENTIAL_FILENAME)
 }
 
-export class QwenCodeHandler implements ApiHandler {
-	private credentials: QwenOAuthCredentials | null = null
-	private client: OpenAI | undefined
+export class QwenCodeHandler extends ApiHandler {
+    private credentials: QwenOAuthCredentials | null = null
+    private client: OpenAI | undefined
 
-	constructor(private ctx: ApiHandlerContext) {}
+    constructor(private ctx: ApiHandlerContext) {
+        super()
+    }
 
-	private get config() {
-		return this.ctx.profile.qwenCode
-	}
-	private get apiKey() {
-		return this.ctx.profile.apiKey
-	}
-	private get modelId() {
-		return this.ctx.profile.modelId || ""
-	}
-	private get modelInfo() {
-		return this.ctx.profile.modelInfo as ModelInfo | undefined
-	}
-	private get baseUrl() {
-		return this.ctx.profile.baseUrl
-	}
+    private get config() {
+        return this.ctx.profile.qwenCode
+    }
+    private get apiKey() {
+        return this.ctx.profile.apiKey
+    }
+    private get modelId() {
+        return this.ctx.profile.modelId || ""
+    }
+    private get modelInfo() {
+        return this.ctx.profile.modelInfo as ModelInfo | undefined
+    }
+    private get baseUrl() {
+        return this.ctx.profile.baseUrl
+    }
 
-	private ensureClient(): OpenAI {
-		if (!this.client) {
-			// Create the client instance with dummy key initially
-			// The API key will be updated dynamically via ensureAuthenticated
-			const externalHeaders = buildExternalBasicHeaders()
-			this.client = new OpenAI({
-				apiKey: "dummy-key-will-be-replaced",
-				baseURL: this.baseUrl || "https://dashscope.aliyuncs.com/compatible-mode/v1",
-				defaultHeaders: externalHeaders,
-				fetch: providerFetch,
-			})
-		}
-		return this.client
-	}
+    private ensureClient(): OpenAI {
+        if (!this.client) {
+            // Create the client instance with dummy key initially
+            // The API key will be updated dynamically via ensureAuthenticated
+            const externalHeaders = buildExternalBasicHeaders()
+            this.client = new OpenAI({
+                apiKey: "dummy-key-will-be-replaced",
+                baseURL: this.baseUrl || "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                defaultHeaders: externalHeaders,
+                fetch: providerFetch,
+            })
+        }
+        return this.client
+    }
 
-	private async loadCachedQwenCredentials(): Promise<QwenOAuthCredentials> {
-		try {
-			const keyFile = getQwenCachedCredentialPath((this.config as any)?.oauthPath)
-			const credsStr = await fs.readFile(keyFile, "utf-8")
-			return JSON.parse(credsStr)
-		} catch (error) {
-			Logger.error(
-				`Error reading or parsing credentials file at ${getQwenCachedCredentialPath((this.config as any)?.oauthPath)}`,
-			)
-			throw new Error(`Failed to load Qwen OAuth credentials: ${error}`)
-		}
-	}
+    private async loadCachedQwenCredentials(): Promise<QwenOAuthCredentials> {
+        try {
+            const keyFile = getQwenCachedCredentialPath((this.config as any)?.oauthPath)
+            const credsStr = await fs.readFile(keyFile, "utf-8")
+            return JSON.parse(credsStr)
+        } catch (error) {
+            Logger.error(
+                `Error reading or parsing credentials file at ${getQwenCachedCredentialPath((this.config as any)?.oauthPath)}`,
+            )
+            throw new Error(`Failed to load Qwen OAuth credentials: ${error}`)
+        }
+    }
 
-	private async refreshAccessToken(credentials: QwenOAuthCredentials): Promise<QwenOAuthCredentials> {
-		if (!credentials.refresh_token) {
-			throw new Error("No refresh token available in credentials.")
-		}
+    private async refreshAccessToken(credentials: QwenOAuthCredentials): Promise<QwenOAuthCredentials> {
+        if (!credentials.refresh_token) {
+            throw new Error("No refresh token available in credentials.")
+        }
 
-		const bodyData = {
-			grant_type: "refresh_token",
-			refresh_token: credentials.refresh_token,
-			client_id: QWEN_OAUTH_CLIENT_ID,
-		}
+        const bodyData = {
+            grant_type: "refresh_token",
+            refresh_token: credentials.refresh_token,
+            client_id: QWEN_OAUTH_CLIENT_ID,
+        }
 
-		const response = await fetch(QWEN_OAUTH_TOKEN_ENDPOINT, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/x-www-form-urlencoded",
-				Accept: "application/json",
-			},
-			body: objectToUrlEncoded(bodyData),
-		})
+        const response = await fetch(QWEN_OAUTH_TOKEN_ENDPOINT, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+                Accept: "application/json",
+            },
+            body: objectToUrlEncoded(bodyData),
+        })
 
-		if (!response.ok) {
-			const errorText = await response.text()
-			throw new Error(`Token refresh failed: ${response.status} ${response.statusText}. Response: ${errorText}`)
-		}
+        if (!response.ok) {
+            const errorText = await response.text()
+            throw new Error(`Token refresh failed: ${response.status} ${response.statusText}. Response: ${errorText}`)
+        }
 
-		const tokenData = await response.json()
+        const tokenData = await response.json()
 
-		if (tokenData.error) {
-			throw new Error(`Token refresh failed: ${tokenData.error} - ${tokenData.error_description}`)
-		}
+        if (tokenData.error) {
+            throw new Error(`Token refresh failed: ${tokenData.error} - ${tokenData.error_description}`)
+        }
 
-		const newCredentials = {
-			...credentials,
-			access_token: tokenData.access_token,
-			token_type: tokenData.token_type,
-			refresh_token: tokenData.refresh_token || credentials.refresh_token,
-			expiry_date: Date.now() + tokenData.expires_in * 1000,
-		}
+        const newCredentials = {
+            ...credentials,
+            access_token: tokenData.access_token,
+            token_type: tokenData.token_type,
+            refresh_token: tokenData.refresh_token || credentials.refresh_token,
+            expiry_date: Date.now() + tokenData.expires_in * 1000,
+        }
 
-		const filePath = getQwenCachedCredentialPath((this.config as any)?.oauthPath)
-		await fs.writeFile(filePath, JSON.stringify(newCredentials, null, 2))
+        const filePath = getQwenCachedCredentialPath((this.config as any)?.oauthPath)
+        await fs.writeFile(filePath, JSON.stringify(newCredentials, null, 2))
 
-		return newCredentials
-	}
+        return newCredentials
+    }
 
-	private isTokenValid(credentials: QwenOAuthCredentials): boolean {
-		const TOKEN_REFRESH_BUFFER_MS = 30 * 1000 // 30s buffer
-		if (!credentials.expiry_date) {
-			return false
-		}
-		return Date.now() < credentials.expiry_date - TOKEN_REFRESH_BUFFER_MS
-	}
+    private isTokenValid(credentials: QwenOAuthCredentials): boolean {
+        const TOKEN_REFRESH_BUFFER_MS = 30 * 1000 // 30s buffer
+        if (!credentials.expiry_date) {
+            return false
+        }
+        return Date.now() < credentials.expiry_date - TOKEN_REFRESH_BUFFER_MS
+    }
 
-	private async ensureAuthenticated(): Promise<void> {
-		if (!this.credentials) {
-			this.credentials = await this.loadCachedQwenCredentials()
-		}
+    private async ensureAuthenticated(): Promise<void> {
+        if (!this.credentials) {
+            this.credentials = await this.loadCachedQwenCredentials()
+        }
 
-		if (!this.isTokenValid(this.credentials)) {
-			this.credentials = await this.refreshAccessToken(this.credentials)
-		}
+        if (!this.isTokenValid(this.credentials)) {
+            this.credentials = await this.refreshAccessToken(this.credentials)
+        }
 
-		// After authentication, update the apiKey and baseURL on the existing client
-		const client = this.ensureClient()
-		client.apiKey = this.credentials.access_token
-		client.baseURL = this.getBaseUrl(this.credentials)
-	}
+        // After authentication, update the apiKey and baseURL on the existing client
+        const client = this.ensureClient()
+        client.apiKey = this.credentials.access_token
+        client.baseURL = this.getBaseUrl(this.credentials)
+    }
 
-	private getBaseUrl(creds: QwenOAuthCredentials): string {
-		let baseUrl = creds.resource_url || "https://dashscope.aliyuncs.com/compatible-mode/v1"
-		if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
-			baseUrl = `https://${baseUrl}`
-		}
-		return baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`
-	}
+    private getBaseUrl(creds: QwenOAuthCredentials): string {
+        let baseUrl = creds.resource_url || "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+            baseUrl = `https://${baseUrl}`
+        }
+        return baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`
+    }
 
-	private async callApiWithRetry<T>(apiCall: () => Promise<T>): Promise<T> {
-		try {
-			return await apiCall()
-		} catch (error: any) {
-			if (error.status === 401) {
-				// Token expired, refresh and retry
-				this.credentials = await this.refreshAccessToken(this.credentials!)
-				const client = this.ensureClient()
-				client.apiKey = this.credentials.access_token
-				client.baseURL = this.getBaseUrl(this.credentials)
-				return await apiCall()
-			}
-			throw error
-		}
-	}
+    private async callApiWithRetry<T>(apiCall: () => Promise<T>): Promise<T> {
+        try {
+            return await apiCall()
+        } catch (error: any) {
+            if (error.status === 401) {
+                // Token expired, refresh and retry
+                this.credentials = await this.refreshAccessToken(this.credentials!)
+                const client = this.ensureClient()
+                client.apiKey = this.credentials.access_token
+                client.baseURL = this.getBaseUrl(this.credentials)
+                return await apiCall()
+            }
+            throw error
+        }
+    }
 
-	@withRetry()
-	async *createMessage(systemPrompt: string, messages: ClineStorageMessage[], tools?: OpenAITool[]): ApiStream {
-		await this.ensureAuthenticated()
-		const client = this.ensureClient()
-		const model = this.getModel()
+    @withRetry()
+    async *createMessage(systemPrompt: string, messages: ClineStorageMessage[], tools?: OpenAITool[]): ApiStream {
+        await this.ensureAuthenticated()
+        const client = this.ensureClient()
+        const model = this.getModel()
 
-		const systemMessage: OpenAI.Chat.ChatCompletionSystemMessageParam = {
-			role: "system",
-			content: systemPrompt,
-		}
+        const systemMessage: OpenAI.Chat.ChatCompletionSystemMessageParam = {
+            role: "system",
+            content: systemPrompt,
+        }
 
-		const convertedMessages = [systemMessage, ...convertToOpenAiMessages(messages)]
+        const convertedMessages = [systemMessage, ...convertToOpenAiMessages(messages)]
 
-		const requestOptions: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
-			model: model.id,
-			temperature: 0,
-			messages: convertedMessages,
-			stream: true,
-			stream_options: { include_usage: true },
-			max_completion_tokens: model.info.capabilities?.maxTokens,
-			...getOpenAIToolParams(tools),
-		}
+        const requestOptions: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
+            model: model.id,
+            temperature: 0,
+            messages: convertedMessages,
+            stream: true,
+            stream_options: { include_usage: true },
+            max_completion_tokens: model.info.capabilities?.maxTokens,
+            ...getOpenAIToolParams(tools),
+        }
 
-		const stream = await this.callApiWithRetry(() => client.chat.completions.create(requestOptions))
+        const stream = await this.callApiWithRetry(() => client.chat.completions.create(requestOptions))
 
-		const toolCallProcessor = new ToolCallProcessor()
-		let fullContent = ""
+        const toolCallProcessor = new ToolCallProcessor()
+        let fullContent = ""
 
-		for await (const apiChunk of stream) {
-			const delta = apiChunk.choices[0]?.delta ?? {}
+        for await (const apiChunk of stream) {
+            const delta = apiChunk.choices[0]?.delta ?? {}
 
-			if (delta.content) {
-				let newText = delta.content
-				if (newText.startsWith(fullContent)) {
-					newText = newText.substring(fullContent.length)
-				}
-				fullContent = delta.content
+            if (delta.content) {
+                let newText = delta.content
+                if (newText.startsWith(fullContent)) {
+                    newText = newText.substring(fullContent.length)
+                }
+                fullContent = delta.content
 
-				if (newText) {
-					// Check for thinking blocks
-					if (newText.includes("<think>") || newText.includes("</think>")) {
-						// Simple parsing for thinking blocks
-						const parts = newText.split(/<\/?think>/g)
-						for (let i = 0; i < parts.length; i++) {
-							if (parts[i]) {
-								if (i % 2 === 0) {
-									// Outside thinking block
-									yield {
-										type: "text",
-										text: parts[i],
-									}
-								} else {
-									// Inside thinking block
-									yield {
-										type: "reasoning",
-										reasoning: parts[i],
-									}
-								}
-							}
-						}
-					} else {
-						yield {
-							type: "text",
-							text: newText,
-						}
-					}
-				}
-			}
+                if (newText) {
+                    // Check for thinking blocks
+                    if (newText.includes("<think>") || newText.includes("</think>")) {
+                        // Simple parsing for thinking blocks
+                        const parts = newText.split(/<\/?think>/g)
+                        for (let i = 0; i < parts.length; i++) {
+                            if (parts[i]) {
+                                if (i % 2 === 0) {
+                                    // Outside thinking block
+                                    yield {
+                                        type: "text",
+                                        text: parts[i],
+                                    }
+                                } else {
+                                    // Inside thinking block
+                                    yield {
+                                        type: "reasoning",
+                                        reasoning: parts[i],
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        yield {
+                            type: "text",
+                            text: newText,
+                        }
+                    }
+                }
+            }
 
-			if (delta?.tool_calls) {
-				yield* toolCallProcessor.processToolCallDeltas(delta.tool_calls)
-			}
+            if (delta?.tool_calls) {
+                yield* toolCallProcessor.processToolCallDeltas(delta.tool_calls)
+            }
 
-			// Handle reasoning content (o1-style)
-			if ("reasoning_content" in delta && delta.reasoning_content) {
-				yield {
-					type: "reasoning",
-					reasoning: (delta.reasoning_content as string | undefined) || "",
-				}
-			}
+            // Handle reasoning content (o1-style)
+            if ("reasoning_content" in delta && delta.reasoning_content) {
+                yield {
+                    type: "reasoning",
+                    reasoning: (delta.reasoning_content as string | undefined) || "",
+                }
+            }
 
-			if (apiChunk.usage) {
-				yield {
-					type: "usage",
-					inputTokens: apiChunk.usage.prompt_tokens || 0,
-					outputTokens: apiChunk.usage.completion_tokens || 0,
-				}
-			}
-		}
-	}
+            if (apiChunk.usage) {
+                yield {
+                    type: "usage",
+                    inputTokens: apiChunk.usage.prompt_tokens || 0,
+                    outputTokens: apiChunk.usage.completion_tokens || 0,
+                }
+            }
+        }
+    }
 
-	getModel(): { id: string; info: ModelInfo } {
-		return resolveRuntimeModel(this.ctx.profile, { models: qwenCodeModels, defaultModelId: qwenCodeDefaultModelId })
-	}
+    getModel(): { id: string; info: ModelInfo } {
+        return resolveRuntimeModel(this.ctx.profile, { models: qwenCodeModels, defaultModelId: qwenCodeDefaultModelId })
+    }
 }

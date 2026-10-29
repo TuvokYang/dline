@@ -6,8 +6,8 @@
 const noop = async () => {}
 
 export const HostRegistryInfo = {
-	init: noop,
-	get: () => ({ platform: "test", version: "0.0.0", remoteName: null }),
+    init: noop,
+    get: () => ({ platform: "test", version: "0.0.0", remoteName: null }),
 }
 
 export const ExtensionRegistryInfo = { version: "0.0.0-test" }

@@ -9,5 +9,5 @@ import type { ModelInfo } from "@shared/providers/types"
 import { ModelRegistry } from "./ModelRegistry"
 
 export function findCatalogModel(providerId: string, modelId: string): ModelInfo | undefined {
-	return ModelRegistry.getInstance().getProviderModels(providerId)?.models[modelId]
+    return ModelRegistry.getInstance().getProviderModels(providerId)?.models[modelId]
 }

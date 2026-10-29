@@ -1,199 +1,127 @@
-import { ClineMessage } from "@shared/ExtensionMessage"
-import { type Dispatch, type SetStateAction, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { UiMessage } from "@shared/ExtensionMessage"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import type { InteractionDraft } from "../../../../task-interaction/types"
+import { stageLegacyAttachments } from "../../input/semantic-composer/resource-staging"
+import { segmentsForRecalledDraft } from "../../input/semantic-composer/restore"
+import type { SemanticComposerEditorHandle } from "../../input/semantic-composer/SemanticComposerEditor"
+import { useComposerDraft } from "../../input/semantic-composer/useComposerDraft"
 import { ChatState } from "../types/chatTypes"
-
-const INPUT_HISTORY_MERGE_INTERVAL_MS = 750
-const INPUT_HISTORY_LIMIT = 100
-
-type InputEditKind = "insert" | "delete" | "replace"
-
-interface InputHistory {
-	past: string[]
-	future: string[]
-	lastEditAt?: number
-	lastEditKind?: InputEditKind
-}
-
-function getInputEditKind(previousValue: string, nextValue: string): InputEditKind {
-	if (nextValue.length > previousValue.length) return "insert"
-	if (nextValue.length < previousValue.length) return "delete"
-	return "replace"
-}
-
-function useInputHistory() {
-	const [inputValue, setInputValueState] = useState("")
-	const inputValueRef = useRef(inputValue)
-	const historyRef = useRef<InputHistory>({ past: [], future: [] })
-
-	const setInputValue = useCallback<Dispatch<SetStateAction<string>>>((valueOrUpdater) => {
-		const previousValue = inputValueRef.current
-		const nextValue = typeof valueOrUpdater === "function" ? valueOrUpdater(previousValue) : valueOrUpdater
-		if (nextValue === previousValue) return
-
-		const history = historyRef.current
-		const now = Date.now()
-		const editKind = getInputEditKind(previousValue, nextValue)
-		const canMerge =
-			editKind !== "replace" &&
-			history.lastEditKind === editKind &&
-			history.lastEditAt !== undefined &&
-			now - history.lastEditAt <= INPUT_HISTORY_MERGE_INTERVAL_MS
-
-		if (!canMerge) {
-			history.past.push(previousValue)
-			if (history.past.length > INPUT_HISTORY_LIMIT) {
-				history.past.splice(0, history.past.length - INPUT_HISTORY_LIMIT)
-			}
-		}
-		history.future = []
-		history.lastEditAt = now
-		history.lastEditKind = editKind
-		inputValueRef.current = nextValue
-		setInputValueState(nextValue)
-	}, [])
-
-	const restoreHistoryValue = useCallback((source: "past" | "future"): string | undefined => {
-		const history = historyRef.current
-		const sourceStack = history[source]
-		const nextValue = sourceStack.pop()
-		if (nextValue === undefined) return undefined
-
-		const destinationStack = source === "past" ? history.future : history.past
-		destinationStack.push(inputValueRef.current)
-		inputValueRef.current = nextValue
-		history.lastEditAt = undefined
-		history.lastEditKind = undefined
-		setInputValueState(nextValue)
-		return nextValue
-	}, [])
-
-	const undoInputValue = useCallback(() => restoreHistoryValue("past"), [restoreHistoryValue])
-	const redoInputValue = useCallback(() => restoreHistoryValue("future"), [restoreHistoryValue])
-	const resetInputValue = useCallback((value = "") => {
-		inputValueRef.current = value
-		historyRef.current = { past: [], future: [] }
-		setInputValueState(value)
-	}, [])
-
-	return { inputValue, setInputValue, undoInputValue, redoInputValue, resetInputValue }
-}
 
 /**
  * Custom hook for managing chat state
  * Handles input values, selection states, and UI state
  */
-export function useChatState(messages: ClineMessage[], taskId?: string): ChatState {
-	// Input and selection state
-	const { inputValue, setInputValue, undoInputValue, redoInputValue, resetInputValue } = useInputHistory()
-	const [activeQuote, setActiveQuote] = useState<string | null>(null)
-	const [isTextAreaFocused, setIsTextAreaFocused] = useState(false)
-	const [selectedImages, setSelectedImages] = useState<string[]>([])
-	const [selectedFiles, setSelectedFiles] = useState<string[]>([])
+export function useChatState(messages: UiMessage[], taskId?: string): ChatState {
+    // The composer draft owns text, entities, resources and undo history (WS-041).
+    const composer = useComposerDraft()
+    const [activeQuote, setActiveQuote] = useState<string | null>(null)
+    const [isTextAreaFocused, setIsTextAreaFocused] = useState(false)
 
-	// UI state
-	const [sendingDisabled, setSendingDisabled] = useState(false)
-	const [enableButtons, setEnableButtons] = useState<boolean>(false)
-	const [primaryButtonText, setPrimaryButtonText] = useState<string | undefined>("Approve")
-	const [secondaryButtonText, setSecondaryButtonText] = useState<string | undefined>("Reject")
-	const [expandedRows, setExpandedRows] = useState<Record<number, boolean>>({})
+    // UI state
+    const [sendingDisabled, setSendingDisabled] = useState(false)
+    const [enableButtons, setEnableButtons] = useState<boolean>(false)
+    const [primaryButtonText, setPrimaryButtonText] = useState<string | undefined>("Approve")
+    const [secondaryButtonText, setSecondaryButtonText] = useState<string | undefined>("Reject")
+    const [expandedRows, setExpandedRows] = useState<Record<number, boolean>>({})
+    // Fold ids are not message timestamps, so fold expansion has a key space of its own.
+    const [expandedFolds, setExpandedFolds] = useState<Record<string, boolean>>({})
 
-	// Refs
-	const textAreaRef = useRef<HTMLTextAreaElement>(null)
-	const draftOwnerTaskIdRef = useRef(taskId)
+    // Refs
+    const composerRef = useRef<SemanticComposerEditorHandle>(null)
+    const draftOwnerTaskIdRef = useRef(taskId)
 
-	// Message positions are presentation-only and never determine task interaction state.
-	const lastMessage = useMemo(() => messages.at(-1), [messages])
-	const secondLastMessage = useMemo(() => messages.at(-2), [messages])
+    // Message positions are presentation-only and never determine task interaction state.
+    const lastMessage = useMemo(() => messages.at(-1), [messages])
+    const secondLastMessage = useMemo(() => messages.at(-2), [messages])
 
-	const clearExpandedRows = useCallback(() => {
-		setExpandedRows({})
-	}, [])
+    const clearExpandedRows = useCallback(() => {
+        setExpandedRows({})
+        setExpandedFolds({})
+    }, [])
 
-	// Reset state when starting new conversation
-	const resetState = useCallback(() => {
-		resetInputValue()
-		setActiveQuote(null)
-		setSelectedImages([])
-		setSelectedFiles([])
-		setSendingDisabled(false)
-	}, [resetInputValue])
+    // Reset state when starting new conversation
+    const { clear: clearComposer, load: loadComposer } = composer
+    const resetState = useCallback(() => {
+        clearComposer()
+        setActiveQuote(null)
+        setSendingDisabled(false)
+    }, [clearComposer])
 
-	const restoreDraft = useCallback(
-		(draft: InteractionDraft) => {
-			resetInputValue(draft.text)
-			setActiveQuote(draft.activeQuote ?? null)
-			setSelectedImages([...draft.images])
-			setSelectedFiles([...draft.files])
-			setSendingDisabled(false)
-		},
-		[resetInputValue],
-	)
+    const { engine } = composer
+    const restoreDraft = useCallback(
+        (draft: InteractionDraft) => {
+            // Only entities the document confirmed come back live; everything else
+            // comes back held, so no edit can complete it into a command (WS-041 AC-09).
+            const { draftId } = loadComposer(segmentsForRecalledDraft(draft.text, draft.semanticInput))
+            setActiveQuote(draft.activeQuote ?? null)
+            setSendingDisabled(false)
+            // Flat attachments come back as resources staged at the end of the
+            // draft that recalled them, never of the draft it replaced.
+            if (draft.images.length > 0 || draft.files.length > 0) {
+                void stageLegacyAttachments(engine, draftId, draft.images, draft.files)
+            }
+        },
+        [engine, loadComposer],
+    )
 
-	// Handle focus change
-	const handleFocusChange = useCallback((isFocused: boolean) => {
-		setIsTextAreaFocused(isFocused)
-	}, [])
+    // Handle focus change
+    const handleFocusChange = useCallback((isFocused: boolean) => {
+        setIsTextAreaFocused(isFocused)
+    }, [])
 
-	// Settle draft ownership before paint so a newly interactive composer cannot
-	// accept text that a later passive ownership reset would clear.
-	useLayoutEffect(() => {
-		if (draftOwnerTaskIdRef.current !== taskId) {
-			const preservesSubmittedWelcomeHistory =
-				draftOwnerTaskIdRef.current === undefined && taskId !== undefined && sendingDisabled
-			draftOwnerTaskIdRef.current = taskId
-			if (preservesSubmittedWelcomeHistory) {
-				setActiveQuote(null)
-				setSelectedImages([])
-				setSelectedFiles([])
-				setSendingDisabled(false)
-			} else {
-				resetState()
-			}
-		}
-	}, [resetState, sendingDisabled, taskId])
+    // Settle draft ownership before paint so a newly interactive composer cannot
+    // accept text that a later passive ownership reset would clear.
+    useLayoutEffect(() => {
+        if (draftOwnerTaskIdRef.current !== taskId) {
+            const preservesSubmittedWelcomeHistory =
+                draftOwnerTaskIdRef.current === undefined && taskId !== undefined && sendingDisabled
+            draftOwnerTaskIdRef.current = taskId
+            if (preservesSubmittedWelcomeHistory) {
+                setActiveQuote(null)
+                setSendingDisabled(false)
+            } else {
+                resetState()
+            }
+        }
+    }, [resetState, sendingDisabled, taskId])
 
-	useEffect(() => {
-		clearExpandedRows()
-	}, [clearExpandedRows, taskId])
+    useEffect(() => {
+        clearExpandedRows()
+    }, [clearExpandedRows, taskId])
 
-	return {
-		// State values
-		inputValue,
-		setInputValue,
-		undoInputValue,
-		redoInputValue,
-		resetInputValue,
-		activeQuote,
-		setActiveQuote,
-		isTextAreaFocused,
-		setIsTextAreaFocused,
-		selectedImages,
-		setSelectedImages,
-		selectedFiles,
-		setSelectedFiles,
-		sendingDisabled,
-		setSendingDisabled,
-		enableButtons,
-		setEnableButtons,
-		primaryButtonText,
-		setPrimaryButtonText,
-		secondaryButtonText,
-		setSecondaryButtonText,
-		expandedRows,
-		setExpandedRows,
+    return {
+        // State values
+        composer,
+        inputValue: composer.flatText,
+        setInputValue: composer.setText,
+        activeQuote,
+        setActiveQuote,
+        isTextAreaFocused,
+        setIsTextAreaFocused,
+        sendingDisabled,
+        setSendingDisabled,
+        enableButtons,
+        setEnableButtons,
+        primaryButtonText,
+        setPrimaryButtonText,
+        secondaryButtonText,
+        setSecondaryButtonText,
+        expandedRows,
+        setExpandedRows,
+        expandedFolds,
+        setExpandedFolds,
 
-		// Refs
-		textAreaRef,
+        // Refs
+        composerRef,
 
-		// Derived values
-		lastMessage,
-		secondLastMessage,
+        // Derived values
+        lastMessage,
+        secondLastMessage,
 
-		// Handlers
-		handleFocusChange,
-		clearExpandedRows,
-		resetState,
-		restoreDraft,
-	}
+        // Handlers
+        handleFocusChange,
+        clearExpandedRows,
+        resetState,
+        restoreDraft,
+    }
 }

@@ -1,5 +1,6 @@
 import { ExecuteCommandInTerminalRequest, ExecuteCommandInTerminalResponse } from "@shared/proto/dline/host/workspace"
 import * as vscode from "vscode"
+import { ExtensionRegistryInfo } from "@/registry"
 import { Logger } from "@/shared/services/Logger"
 
 /**
@@ -8,34 +9,34 @@ import { Logger } from "@/shared/services/Logger"
  * @returns Response indicating success
  */
 export async function executeCommandInTerminal(
-	request: ExecuteCommandInTerminalRequest,
+    request: ExecuteCommandInTerminalRequest,
 ): Promise<ExecuteCommandInTerminalResponse> {
-	try {
-		// Create terminal with fixed options
-		const terminalOptions: vscode.TerminalOptions = {
-			name: "Dline",
-			iconPath: new vscode.ThemeIcon("dline-icon"),
-			env: {
-				DLINE_ACTIVE: "true",
-			},
-		}
+    try {
+        // Create terminal with fixed options
+        const terminalOptions: vscode.TerminalOptions = {
+            name: ExtensionRegistryInfo.displayName,
+            iconPath: new vscode.ThemeIcon(ExtensionRegistryInfo.productIconId),
+            env: {
+                DLINE_ACTIVE: "true",
+            },
+        }
 
-		// Create a new terminal
-		const terminal = vscode.window.createTerminal(terminalOptions)
+        // Create a new terminal
+        const terminal = vscode.window.createTerminal(terminalOptions)
 
-		// Show the terminal to the user
-		terminal.show()
+        // Show the terminal to the user
+        terminal.show()
 
-		// Send the command to the terminal
-		terminal.sendText(request.command, true)
+        // Send the command to the terminal
+        terminal.sendText(request.command, true)
 
-		return ExecuteCommandInTerminalResponse.create({
-			success: true,
-		})
-	} catch (error) {
-		Logger.error("Error executing command in terminal:", error)
-		return ExecuteCommandInTerminalResponse.create({
-			success: false,
-		})
-	}
+        return ExecuteCommandInTerminalResponse.create({
+            success: true,
+        })
+    } catch (error) {
+        Logger.error("Error executing command in terminal:", error)
+        return ExecuteCommandInTerminalResponse.create({
+            success: false,
+        })
+    }
 }

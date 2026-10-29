@@ -15,15 +15,15 @@ import { Logger } from "@/shared/services/Logger"
 
 /** The ignore facts a ripgrep invocation needs, satisfied by IgnoreController. */
 export interface RipgrepScanRules {
-	/** Raw scan rules in `.gitignore` syntax, or undefined when none apply. */
-	getIgnoreContent(permission: "scan"): string | undefined
-	/**
-	 * Scan rules stated by the workspace, without repository or built-in pruning.
-	 *
-	 * Optional so a caller that only knows the combined rules still satisfies the
-	 * interface; a deliberate descent needs this narrower set.
-	 */
-	getAgentScanContent?(): string | undefined
+    /** Raw scan rules in `.gitignore` syntax, or undefined when none apply. */
+    getIgnoreContent(permission: "scan"): string | undefined
+    /**
+     * Scan rules stated by the workspace, without repository or built-in pruning.
+     *
+     * Optional so a caller that only knows the combined rules still satisfies the
+     * interface; a deliberate descent needs this narrower set.
+     */
+    getAgentScanContent?(): string | undefined
 }
 
 /**
@@ -37,15 +37,15 @@ export type RipgrepRuleScope = "all" | "agent-only"
 
 /** A materialised ignore file plus the arguments that activate it. */
 export interface RipgrepIgnoreFile {
-	/** Arguments to spread into the ripgrep invocation; empty when no rules apply. */
-	readonly args: readonly string[]
-	/** Remove the temporary file. Safe to call when nothing was written. */
-	dispose(): Promise<void>
+    /** Arguments to spread into the ripgrep invocation; empty when no rules apply. */
+    readonly args: readonly string[]
+    /** Remove the temporary file. Safe to call when nothing was written. */
+    dispose(): Promise<void>
 }
 
 const NO_IGNORE_FILE: RipgrepIgnoreFile = {
-	args: [],
-	dispose: async () => {},
+    args: [],
+    dispose: async () => {},
 }
 
 /**
@@ -57,39 +57,39 @@ const NO_IGNORE_FILE: RipgrepIgnoreFile = {
  * the process has exited.
  */
 export async function createRipgrepIgnoreFile(
-	rules: RipgrepScanRules | undefined,
-	scope: RipgrepRuleScope = "all",
+    rules: RipgrepScanRules | undefined,
+    scope: RipgrepRuleScope = "all",
 ): Promise<RipgrepIgnoreFile> {
-	// Searching walks the tree, so it follows the scan rules rather than the read
-	// rules: whether a path may be traversed is a different question from whether
-	// its contents may be opened.
-	//
-	// An agent-only scope keeps the workspace's own restrictions and drops the
-	// pruning, so naming an ignored path can widen what is walked but never what
-	// is permitted.
-	const content = scope === "agent-only" ? rules?.getAgentScanContent?.() : rules?.getIgnoreContent("scan")
-	if (!content) {
-		return NO_IGNORE_FILE
-	}
+    // Searching walks the tree, so it follows the scan rules rather than the read
+    // rules: whether a path may be traversed is a different question from whether
+    // its contents may be opened.
+    //
+    // An agent-only scope keeps the workspace's own restrictions and drops the
+    // pruning, so naming an ignored path can widen what is walked but never what
+    // is permitted.
+    const content = scope === "agent-only" ? rules?.getAgentScanContent?.() : rules?.getIgnoreContent("scan")
+    if (!content) {
+        return NO_IGNORE_FILE
+    }
 
-	const fileName = `.agentignore-rg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-	const filePath = path.join(os.tmpdir(), fileName)
+    const fileName = `.agentignore-rg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const filePath = path.join(os.tmpdir(), fileName)
 
-	try {
-		await fs.writeFile(filePath, content, "utf8")
-	} catch (error) {
-		Logger.error("Failed to write the agent ignore file for rg:", error)
-		return NO_IGNORE_FILE
-	}
+    try {
+        await fs.writeFile(filePath, content, "utf8")
+    } catch (error) {
+        Logger.error("Failed to write the agent ignore file for rg:", error)
+        return NO_IGNORE_FILE
+    }
 
-	return {
-		args: ["--ignore-file", filePath],
-		dispose: async () => {
-			try {
-				await fs.unlink(filePath)
-			} catch {
-				// A leftover file in the OS temp directory is not worth surfacing.
-			}
-		},
-	}
+    return {
+        args: ["--ignore-file", filePath],
+        dispose: async () => {
+            try {
+                await fs.unlink(filePath)
+            } catch {
+                // A leftover file in the OS temp directory is not worth surfacing.
+            }
+        },
+    }
 }

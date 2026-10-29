@@ -6,10 +6,10 @@
  * Messages API accepts.
  */
 export const ANTHROPIC_THINKING_DISPLAY_SELECTOR_OPTIONS = [
-	{ value: "none", label: "None" },
-	{ value: "summarized", label: "Summarized" },
-	{ value: "omitted", label: "Omitted" },
+    { value: "none", label: "None" },
+    { value: "summarized", label: "Summarized" },
+    { value: "omitted", label: "Omitted" },
 ] as const
 
 export const ANTHROPIC_THINKING_DISPLAY_DESCRIPTION =
-	"None leaves the choice to Anthropic. Summarized returns thinking normally; Omitted redacts it while keeping multi-turn continuity."
+    "None leaves the choice to Anthropic. Summarized returns thinking normally; Omitted redacts it while keeping multi-turn continuity."

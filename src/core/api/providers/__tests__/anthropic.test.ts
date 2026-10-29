@@ -9,1209 +9,1209 @@ import type { ApiRequestOptions } from "../../index"
 import { ANTHROPIC_FAST_MODE_BETA, AnthropicHandler } from "../anthropic"
 
 describe("AnthropicHandler", () => {
-	afterEach(() => {
-		vi.restoreAllMocks()
-	})
-
-	const createAsyncIterable = (data: readonly unknown[] = []) => ({
-		[Symbol.asyncIterator]: async function* () {
-			yield* data
-		},
-	})
-
-	it.each([
-		{
-			modelId: "claude-sonnet-4-6",
-			thinking: undefined,
-			reasoning: { effort: "max" },
-			expected: undefined,
-		},
-		{
-			modelId: "claude-opus-5-custom",
-			thinking: { supported: false },
-			reasoning: { enableThinking: true, effort: "high" },
-			expected: undefined,
-		},
-		{
-			modelId: "opaque-default",
-			thinking: { supported: true, mode: "effort", defaultEnabled: true, effortLevels: ["low"] },
-			reasoning: {},
-			expected: { type: "adaptive" },
-		},
-		{
-			modelId: "claude-opus-5-custom",
-			thinking: { supported: true, mode: "effort", canDisable: false, effortLevels: ["high"] },
-			reasoning: { enableThinking: false, effort: "none" },
-			expected: { type: "adaptive" },
-		},
-		{
-			modelId: "opaque-effort",
-			thinking: { supported: true, mode: "effort", effortLevels: ["low"] },
-			reasoning: { enableThinking: true, effort: "high" },
-			expected: { type: "adaptive" },
-		},
-		{
-			modelId: "opaque-minimum",
-			thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 101 },
-			reasoning: { enableThinking: true, thinkingBudget: 3 },
-			expected: { type: "enabled", budget_tokens: 17 },
-		},
-		{
-			modelId: "opaque-invalid-minimum",
-			thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 11 },
-			reasoning: { enableThinking: true, thinkingBudget: 30 },
-			expected: undefined,
-		},
-		{
-			modelId: "opaque-effort-with-stale-budget",
-			thinking: { supported: true, mode: "effort", defaultEnabled: true, effortLevels: ["high"] },
-			reasoning: { thinkingBudget: 3 },
-			expected: { type: "adaptive" },
-		},
-		{
-			modelId: "opaque-effort-disabled-by-default",
-			thinking: { supported: true, mode: "effort", defaultEnabled: false, effortLevels: ["low"] },
-			reasoning: { thinkingBudget: 23 },
-			expected: undefined,
-		},
-		{
-			modelId: "opaque-effort-with-illegal-preference",
-			thinking: { supported: true, mode: "effort", effortLevels: ["low"] },
-			reasoning: { effort: "stale-level" },
-			expected: undefined,
-		},
-		{
-			modelId: "opaque-budget",
-			thinking: undefined,
-			reasoning: { enableThinking: true, thinkingBudget: 2_048 },
-			expected: undefined,
-		},
-	])("uses effective thinking declarations for $modelId", async ({ modelId, thinking, reasoning, expected }) => {
-		const handler = new AnthropicHandler({
-			profile: ApiProfile.create({
-				provider: "anthropic",
-				apiKey: "test-api-key",
-				modelId,
-				modelInfo: {
-					id: modelId,
-					capabilities: { supportsReasoning: true, thinking: thinking as ThinkingConfig | undefined },
-				},
-				anthropic: { reasoning },
-			}),
-			mode: "act",
-		})
-		const create = vi.fn().mockResolvedValue(createAsyncIterable())
-		vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({ messages: { create } })
-		for await (const _chunk of handler.createMessage("system", [{ role: "user", content: "hello" }])) {
-		}
-		const body = create.mock.calls[0]?.[0]
-		expect(body?.model).to.equal(modelId)
-		expect(body?.thinking).to.deep.equal(expected)
-		expect(body?.output_config).to.equal(undefined)
-	})
-
-	it.each([
-		{ preference: "minimal", expected: "low" },
-		{ preference: "ultra", expected: "max" },
-	])("encodes legacy $preference only through declared Anthropic effort levels", async ({ preference, expected }) => {
-		const handler = new AnthropicHandler({
-			profile: ApiProfile.create({
-				provider: "anthropic",
-				apiKey: "test-api-key",
-				modelId: "opaque-alias-model",
-				modelInfo: {
-					id: "opaque-alias-model",
-					capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["low", "max"] } },
-				},
-				anthropic: { reasoning: { enableThinking: true, effort: preference } },
-			}),
-			mode: "act",
-		})
-		const create = vi.fn().mockResolvedValue(createAsyncIterable())
-		vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({ messages: { create } })
-		for await (const _chunk of handler.createMessage("system", [{ role: "user", content: "hello" }])) {
-		}
-		expect(create.mock.calls[0]?.[0]?.output_config).to.deep.equal({ effort: expected })
-	})
-
-	it.each([
-		{ declared: undefined, expected: "any" },
-		{ declared: true, expected: "any" },
-		{ declared: false, expected: "auto" },
-	])("uses forced-tool declaration $declared instead of a misleading name", async ({ declared, expected }) => {
-		const handler = new AnthropicHandler({
-			profile: ApiProfile.create({
-				provider: "anthropic",
-				apiKey: "test-api-key",
-				modelId: "claude-opus-5-custom",
-				modelInfo: {
-					id: "claude-opus-5-custom",
-					capabilities: { supportsPromptCache: true, supportsForcedToolUse: declared, thinking: { supported: false } },
-				},
-			}),
-			mode: "act",
-		})
-		const create = vi.fn().mockResolvedValue(createAsyncIterable())
-		vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({ messages: { create } })
-		for await (const _chunk of handler.createMessage(
-			"system",
-			[{ role: "user", content: "hello" }],
-			[{ name: "read_file", description: "Read", input_schema: { type: "object", properties: {} } }],
-		)) {
-		}
-		expect(create.mock.calls[0]?.[0]?.tool_choice).to.deep.equal({ type: expected })
-	})
-
-	it.each([
-		{ supportsPromptCache: true, serverTools: [ServerTool.WEB_FETCH], replayed: true },
-		{ supportsPromptCache: false, serverTools: [ServerTool.WEB_FETCH], replayed: true },
-		{ supportsPromptCache: true, serverTools: [], replayed: false },
-	])("replays a stored hosted fetch only while the request declares it (cache $supportsPromptCache, replayed $replayed)", async ({
-		supportsPromptCache,
-		serverTools,
-		replayed,
-	}) => {
-		const handler = new AnthropicHandler({
-			profile: ApiProfile.create({
-				provider: "anthropic",
-				apiKey: "test-api-key",
-				modelId: "claude-opus-5-custom",
-				modelInfo: { id: "claude-opus-5-custom", capabilities: { supportsPromptCache, thinking: { supported: false } } },
-			}),
-			mode: "act",
-		})
-		const call = { type: "server_tool_use", id: "srv_fetch", name: "web_fetch", input: { url: "https://example.com" } }
-		const result = { type: "web_fetch_tool_result", tool_use_id: "srv_fetch", content: { type: "web_fetch_result" } }
-		const create = vi.fn().mockResolvedValue(createAsyncIterable())
-		vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({ messages: { create } })
-		for await (const _chunk of handler.createMessage(
-			"system",
-			[
-				{ role: "user", content: "Read the page" },
-				{
-					role: "assistant",
-					content: [
-						{ type: "hosted_tool", protocol: "anthropic_messages", blocks: [call, result] },
-						{ type: "text", text: "The page says hello" },
-					],
-				},
-				{ role: "user", content: "What did it say?" },
-			],
-			undefined,
-			{ serverTools },
-		)) {
-		}
-
-		const assistantContent = create.mock.calls[0]?.[0]?.messages?.[1]?.content as Array<{ type: string }>
-		expect(assistantContent.map((block) => block.type)).to.deep.equal(
-			replayed ? ["server_tool_use", "web_fetch_tool_result", "text"] : ["text"],
-		)
-	})
-
-	describe("getModel", () => {
-		it("should merge provider overrides into registry model metadata", () => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					apiKey: "test-api-key",
-					modelId: "claude-opus-4-7",
-					anthropic: {
-						capabilities: {
-							maxTokens: 12_345,
-							supportsPromptCache: false,
-						},
-						pricing: {
-							inputPrice: 0.5,
-						},
-					},
-				}),
-				mode: "act",
-			})
-
-			const result = handler.getModel()
-
-			result.id.should.equal("claude-opus-4-7")
-			result.info.id.should.equal("claude-opus-4-7")
-			// Long context defaults to on, resolving to the 1M tier.
-			should(result.info.capabilities?.contextWindow).equal(1_000_000)
-			should(result.info.capabilities?.maxTokens).equal(12_345)
-			should(result.info.capabilities?.supportsPromptCache).equal(false)
-			should(result.info.pricing?.inputPrice).equal(0.5)
-		})
-
-		it("should preserve a custom model id when profile modelInfo is missing", () => {
-			const customModelId = "custom-claude-compatible-model"
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					apiKey: "test-api-key",
-					modelId: customModelId,
-					anthropic: {
-						customModelEnabled: true,
-						capabilities: {
-							maxTokens: 12_345,
-							contextWindow: 67_890,
-							supportsImages: false,
-							supportsPromptCache: false,
-							supportsReasoning: false,
-						},
-						pricing: {
-							inputPrice: 0.5,
-							outputPrice: 1.5,
-						},
-					},
-				}),
-				mode: "act",
-			})
-
-			const result = handler.getModel()
-
-			result.id.should.equal(customModelId)
-			result.info.id.should.equal(customModelId)
-			should(result.info.capabilities?.maxTokens).equal(12_345)
-			should(result.info.capabilities?.supportsPromptCache).equal(false)
-		})
-
-		it("only reports the known hosted web search tool as supported", () => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({ provider: "anthropic", modelId: "claude-sonnet-4-6" }),
-				mode: "act",
-			})
-
-			expect(handler.supportsServerTool(ServerTool.WEB_SEARCH)).to.equal(true)
-			expect(handler.supportsServerTool(ServerTool.SERVER_TOOL_UNSPECIFIED)).to.equal(false)
-		})
-
-		it("projects the fixed Anthropic transport into custom model metadata", () => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					modelId: "custom-anthropic-model",
-					anthropic: {
-						customModelEnabled: true,
-						capabilities: { supportsTools: true, tools: [ServerTool.WEB_SEARCH] },
-					},
-				}),
-				mode: "act",
-			})
-
-			expect(handler.getModel().info.apiFormats?.[0]).to.equal(ApiFormat.ANTHROPIC_CHAT)
-			// A profile records switches, not capabilities. A free-form model id has
-			// no registry entry, so it cannot gain a hosted declaration this way.
-			expect(handler.getModel().info.capabilities?.tools).to.equal(undefined)
-		})
-
-		it("reports the transport it will speak so routing does not guess from metadata", () => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({ provider: "anthropic", modelId: "custom-anthropic-model" }),
-				mode: "act",
-			})
-
-			expect(handler.getSelectedApiFormat()).to.equal(ApiFormat.ANTHROPIC_CHAT)
-		})
-	})
-
-	describe("createMessage", () => {
-		it("disables SDK retries so Dline owns the retry policy", () => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					apiKey: "test-api-key",
-					modelId: "claude-sonnet-4-6",
-				}),
-				mode: "act",
-			})
-
-			const client = (handler as unknown as { ensureClient: () => { maxRetries: number } }).ensureClient()
-
-			expect(client.maxRetries).to.equal(0)
-		})
-
-		it("projects hosted web search exactly once and removes the local Anthropic tool", async () => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					apiKey: "test-api-key",
-					modelId: "claude-sonnet-4-6",
-				}),
-				mode: "act",
-			})
-			const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
-			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
-				messages: { create: standardCreate },
-				beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
-			})
-
-			for await (const _chunk of handler.createMessage(
-				"system prompt",
-				[{ role: "user", content: "Search" }],
-				[
-					{
-						name: "web_search",
-						description: "Local search",
-						input_schema: { type: "object", properties: {} },
-					},
-					{
-						name: "read_file",
-						description: "Read",
-						input_schema: { type: "object", properties: {} },
-					},
-				],
-				{ serverTools: [ServerTool.WEB_SEARCH] },
-			)) {
-			}
-
-			expect(standardCreate.mock.calls[0]?.[0]?.tools).to.deep.equal([
-				{
-					name: "read_file",
-					description: "Read",
-					input_schema: { type: "object", properties: {} },
-				},
-				{ type: "web_search_20260318", name: "web_search", allowed_callers: ["direct"] },
-			])
-			// `any` admits only client tools, so forcing it would make the hosted declaration unreachable.
-			expect(standardCreate.mock.calls[0]?.[0]?.tool_choice).to.deep.equal({ type: "auto" })
-			expect(handler.supportsServerTool(ServerTool.WEB_SEARCH)).to.equal(true)
-		})
-
-		// A model that accepts forcing keeps it, so giving the hosted-tool rule a
-		// wider reach than it needs would let the model answer in prose where a
-		// tool call is required. Every catalog model is adaptive now, so this
-		// declares a budget-mode one rather than asserting on a model that would
-		// refuse forcing for its own unrelated reason.
-		it("still forces a tool choice when the request carries no hosted server tools", async () => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					apiKey: "test-api-key",
-					modelId: "claude-budget-mode-model",
-					anthropic: {
-						customModelEnabled: true,
-						capabilities: { supportsTools: true, thinking: { supported: true, mode: "budget", maxBudget: 8_192 } },
-					},
-				}),
-				mode: "act",
-			})
-			const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
-			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
-				messages: { create: standardCreate },
-				beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
-			})
-
-			for await (const _chunk of handler.createMessage(
-				"system prompt",
-				[{ role: "user", content: "Read" }],
-				[
-					{
-						name: "read_file",
-						description: "Read",
-						input_schema: { type: "object", properties: {} },
-					},
-				],
-			)) {
-			}
-
-			expect(standardCreate.mock.calls[0]?.[0]?.tools).to.deep.equal([
-				{
-					name: "read_file",
-					description: "Read",
-					input_schema: { type: "object", properties: {} },
-				},
-			])
-			expect(standardCreate.mock.calls[0]?.[0]?.tool_choice).to.deep.equal({ type: "any" })
-		})
-
-		// Adaptive thinking is effectively always on, and thinking cannot be
-		// combined with forced tool use, so upstream answers
-		// `tool_choice: type "tool" and "any" are not supported for this model`
-		// instead of degrading to an automatic choice.
-		it("never forces a tool choice on an adaptive-thinking model", async () => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					apiKey: "test-api-key",
-					modelId: "claude-opus-5-5",
-				}),
-				mode: "act",
-			})
-			const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
-			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
-				messages: { create: standardCreate },
-				beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
-			})
-
-			for await (const _chunk of handler.createMessage(
-				"system prompt",
-				[{ role: "user", content: "Read" }],
-				[
-					{
-						name: "read_file",
-						description: "Read",
-						input_schema: { type: "object", properties: {} },
-					},
-				],
-			)) {
-			}
-
-			expect(standardCreate.mock.calls[0]?.[0]?.model).to.equal("claude-opus-5-5")
-			expect(standardCreate.mock.calls[0]?.[0]?.tool_choice).to.deep.equal({ type: "auto" })
-		})
-
-		it("never forces a tool choice on Fable 5.1, which rejects forced tool use", async () => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					apiKey: "test-api-key",
-					modelId: "claude-fable-5-1",
-				}),
-				mode: "act",
-			})
-			const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
-			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
-				messages: { create: standardCreate },
-				beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
-			})
-
-			for await (const _chunk of handler.createMessage(
-				"system prompt",
-				[{ role: "user", content: "Read" }],
-				[
-					{
-						name: "read_file",
-						description: "Read",
-						input_schema: { type: "object", properties: {} },
-					},
-				],
-			)) {
-			}
-
-			expect(standardCreate.mock.calls[0]?.[0]?.model).to.equal("claude-fable-5-1")
-			expect(standardCreate.mock.calls[0]?.[0]?.tool_choice).to.deep.equal({ type: "auto" })
-		})
-
-		it("does not force hosted Web Search when no local Anthropic functions are present", async () => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					apiKey: "test-api-key",
-					modelId: "claude-sonnet-4-6",
-				}),
-				mode: "act",
-			})
-			const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
-			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
-				messages: { create: standardCreate },
-				beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
-			})
-
-			for await (const _chunk of handler.createMessage(
-				"system prompt",
-				[{ role: "user", content: "Answer without searching unless needed" }],
-				undefined,
-				{ serverTools: [ServerTool.WEB_SEARCH] },
-			)) {
-			}
-
-			expect(standardCreate.mock.calls[0]?.[0]?.tools).to.deep.equal([
-				{ type: "web_search_20260318", name: "web_search", allowed_callers: ["direct"] },
-			])
-			should(standardCreate.mock.calls[0]?.[0]?.tool_choice).equal(undefined)
-		})
-
-		it("should route fast mode requests through the beta messages API", async () => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({ provider: "anthropic", apiKey: "test-api-key", modelId: "claude-opus-5:fast" }),
-				mode: "act",
-			})
-
-			const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
-			const betaCreate = vi.fn().mockImplementation(function (this: { _client?: object }, _params: unknown) {
-				should.exist(this._client)
-				return Promise.resolve(createAsyncIterable())
-			})
-
-			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
-				messages: {
-					create: standardCreate,
-				},
-				beta: {
-					messages: {
-						_client: {},
-						create: betaCreate,
-					},
-				},
-			})
-
-			for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
-			}
-
-			const callArgs = betaCreate.mock.calls[0]?.[0] as Record<string, unknown> | undefined
-			expect(callArgs?.model).to.equal("claude-opus-5")
-			expect(callArgs?.betas).to.deep.equal([ANTHROPIC_FAST_MODE_BETA])
-			expect(callArgs?.speed).to.equal("fast")
-			expect(callArgs?.stream).to.equal(true)
-		})
-
-		it("should keep the native model id for Opus 4.8 fast mode", async () => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					apiKey: "test-api-key",
-					modelId: "claude-opus-4-8:fast",
-					anthropic: { enableLongContext: true },
-				}),
-				mode: "act",
-			})
-
-			const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
-			const betaCreate = vi.fn().mockImplementation(function (this: { _client?: object }, _params: unknown) {
-				should.exist(this._client)
-				return Promise.resolve(createAsyncIterable())
-			})
-
-			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
-				messages: {
-					create: standardCreate,
-				},
-				beta: {
-					messages: {
-						_client: {},
-						create: betaCreate,
-					},
-				},
-			})
-
-			for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
-			}
-
-			const callArgs = betaCreate.mock.calls[0]?.[0] as Record<string, unknown> | undefined
-			expect(callArgs?.model).to.equal("claude-opus-4-8")
-			expect(callArgs?.betas).to.deep.equal([ANTHROPIC_FAST_MODE_BETA])
-			expect(callArgs?.speed).to.equal("fast")
-			expect(callArgs?.stream).to.equal(true)
-		})
-
-		it("should keep the Claude Opus 5 model id without a legacy long-context suffix or beta header", async () => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					apiKey: "test-api-key",
-					modelId: "claude-opus-5",
-					anthropic: {
-						enableLongContext: true,
-						reasoning: { effort: "high" },
-						capabilities: {
-							contextWindow: 1_250_000,
-							contextWindowTiers: [
-								{ id: "standard", contextWindow: 200_000, label: "200K" },
-								{ id: "long", contextWindow: 1_000_000, label: "1M", apiModelSuffix: ":1m" },
-							],
-						},
-					},
-				}),
-				mode: "act",
-			})
-			const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
-			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
-				messages: { create: standardCreate },
-				beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
-			})
-
-			for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
-			}
-
-			const requestBody = standardCreate.mock.calls[0]?.[0] as Record<string, unknown> | undefined
-			expect(requestBody?.model).to.equal("claude-opus-5")
-			expect(handler.getModel().info.capabilities?.contextWindow).to.equal(1_250_000)
-			expect(handler.getModel().info.capabilities?.contextWindowTiers).to.equal(undefined)
-			expect(requestBody?.thinking).to.deep.equal({ type: "adaptive" })
-			should(standardCreate.mock.calls[0]?.[1]).equal(undefined)
-		})
-
-		it("should ignore stale context tiers on official native-1M models", async () => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					apiKey: "test-api-key",
-					modelId: "claude-opus-4-7",
-					anthropic: {
-						enableLongContext: false,
-						capabilities: {
-							contextWindowTiers: [
-								{ id: "standard", contextWindow: 160_000, label: "160K" },
-								{ id: "long", contextWindow: 1_500_000, label: "1.5M", apiModelSuffix: ":1m" },
-							],
-						},
-					},
-				}),
-				mode: "act",
-			})
-			const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
-			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
-				messages: { create: standardCreate },
-				beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
-			})
-
-			for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
-			}
-
-			const requestBody = standardCreate.mock.calls[0]?.[0] as Record<string, unknown> | undefined
-			expect(requestBody?.model).to.equal("claude-opus-4-7")
-			expect(handler.getModel().info.capabilities?.contextWindow).to.equal(1_000_000)
-			expect(handler.getModel().info.capabilities?.contextWindowTiers).to.equal(undefined)
-			should(standardCreate.mock.calls[0]?.[1]).equal(undefined)
-		})
-
-		it("should append an explicitly configured custom long-context suffix at the API boundary", async () => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					apiKey: "test-api-key",
-					modelId: "vendor-tiered",
-					anthropic: {
-						customModelEnabled: true,
-						enableLongContext: true,
-						reasoning: { effort: "high" },
-						capabilities: {
-							supportsReasoning: true,
-							thinking: {
-								supported: true,
-								mode: "effort",
-								effortLevels: ["none", "low", "medium", "high"],
-							},
-							contextWindowTiers: [
-								{ id: "standard", contextWindow: 200_000, label: "200K" },
-								{ id: "long", contextWindow: 1_500_000, label: "1.5M", apiModelSuffix: ":1m" },
-							],
-						},
-					},
-				}),
-				mode: "act",
-			})
-
-			const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
-
-			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
-				messages: {
-					create: standardCreate,
-				},
-				beta: {
-					messages: {
-						_client: {},
-						create: vi.fn().mockResolvedValue(createAsyncIterable()),
-					},
-				},
-			})
-
-			for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
-			}
-
-			const requestBody = standardCreate.mock.calls[0][0] as { model: string; thinking: { type: string } }
-			const requestOptions = standardCreate.mock.calls[0][1] as { headers: Record<string, string> } | undefined
-			requestBody.model.should.equal("vendor-tiered:1m")
-			expect(handler.getModel().info.capabilities?.contextWindow).to.equal(1_500_000)
-			requestBody.thinking.should.deepEqual({ type: "adaptive" })
-			// The suffix still selects the long-context model, but Anthropic retired the
-			// context-1m beta on 2026-04-30, so no beta header accompanies it any more.
-			should(requestOptions).equal(undefined)
-		})
-
-		it.each([
-			"claude-opus-5",
-			"claude-sonnet-5",
-		])("should send explicit disabled thinking when %s is configured with none", async (modelId) => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					apiKey: "test-api-key",
-					modelId,
-					anthropic: { reasoning: { enableThinking: false, effort: "none" } },
-				}),
-				mode: "act",
-			})
-			const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
-			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
-				messages: { create: standardCreate },
-				beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
-			})
-
-			for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
-			}
-
-			const requestBody = standardCreate.mock.calls[0]?.[0] as Record<string, unknown> | undefined
-			expect(requestBody?.thinking).to.deep.equal({ type: "disabled" })
-			expect(requestBody?.output_config).to.equal(undefined)
-		})
-
-		it.each([
-			"claude-fable-5",
-			"claude-opus-5-5",
-			"claude-sonnet-5-5",
-		])("should keep %s adaptive thinking enabled when a stale profile requests none", async (modelId) => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					apiKey: "test-api-key",
-					modelId,
-					anthropic: { reasoning: { enableThinking: false, effort: "none" } },
-				}),
-				mode: "act",
-			})
-			const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
-			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
-				messages: { create: standardCreate },
-				beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
-			})
-
-			for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
-			}
-
-			const requestBody = standardCreate.mock.calls[0]?.[0] as Record<string, unknown> | undefined
-			expect(requestBody?.thinking).to.deep.equal({ type: "adaptive" })
-			expect(requestBody?.output_config).to.equal(undefined)
-		})
-
-		it.each([
-			{ configured: "omitted", expected: "omitted" },
-			{ configured: "summarized", expected: "summarized" },
-		])("should send thinking display $expected when the profile selects it", async ({ configured, expected }) => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					apiKey: "test-api-key",
-					modelId: "claude-fable-5",
-					anthropic: { reasoning: { display: configured } },
-				}),
-				mode: "act",
-			})
-			const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
-			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
-				messages: { create: standardCreate },
-				beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
-			})
-
-			for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
-			}
-
-			const requestBody = standardCreate.mock.calls[0]?.[0] as Record<string, unknown> | undefined
-			expect(requestBody?.thinking).to.deep.equal({ type: "adaptive", display: expected })
-		})
-
-		it.each([
-			{ display: undefined },
-			{ display: "" },
-			{ display: "none" },
-		])("should omit thinking display when the profile stores $display", async ({ display }) => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					apiKey: "test-api-key",
-					modelId: "claude-fable-5",
-					anthropic: { reasoning: { display } },
-				}),
-				mode: "act",
-			})
-			const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
-			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
-				messages: { create: standardCreate },
-				beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
-			})
-
-			for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
-			}
-
-			const requestBody = standardCreate.mock.calls[0]?.[0] as Record<string, unknown> | undefined
-			expect(requestBody?.thinking).to.deep.equal({ type: "adaptive" })
-		})
-
-		it("should send thinking display alongside a manual thinking budget", async () => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					apiKey: "test-api-key",
-					modelId: "claude-sonnet-4-5",
-					modelInfo: {
-						id: "claude-sonnet-4-5",
-						capabilities: {
-							supportsReasoning: true,
-							thinking: { supported: true, mode: "budget", maxBudget: 8_192 },
-						},
-					},
-					anthropic: { reasoning: { enableThinking: true, thinkingBudget: 2_048, display: "omitted" } },
-				}),
-				mode: "act",
-			})
-			const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
-			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
-				messages: { create: standardCreate },
-				beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
-			})
-
-			for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
-			}
-
-			const requestBody = standardCreate.mock.calls[0]?.[0] as Record<string, unknown> | undefined
-			expect(requestBody?.thinking).to.deep.equal({ type: "enabled", budget_tokens: 2_048, display: "omitted" })
-		})
-
-		it("should not attach a display to an explicitly disabled thinking config", async () => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					apiKey: "test-api-key",
-					modelId: "claude-opus-5",
-					anthropic: { reasoning: { enableThinking: false, effort: "none", display: "omitted" } },
-				}),
-				mode: "act",
-			})
-			const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
-			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
-				messages: { create: standardCreate },
-				beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
-			})
-
-			for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
-			}
-
-			const requestBody = standardCreate.mock.calls[0]?.[0] as Record<string, unknown> | undefined
-			expect(requestBody?.thinking).to.deep.equal({ type: "disabled" })
-		})
-
-		it("should use adaptive thinking and output_config for Claude Opus adaptive models", async () => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					apiKey: "test-api-key",
-					modelId: "claude-opus-4-7",
-					anthropic: { reasoning: { effort: "xhigh" } },
-				}),
-				mode: "act",
-			})
-
-			const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
-
-			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
-				messages: {
-					create: standardCreate,
-				},
-				beta: {
-					messages: {
-						_client: {},
-						create: vi.fn().mockResolvedValue(createAsyncIterable()),
-					},
-				},
-			})
-
-			for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
-			}
-
-			const requestBody = standardCreate.mock.calls[0][0] as {
-				thinking: { type: string }
-				output_config: { effort: string }
-				temperature?: unknown
-			}
-			requestBody.should.have.property("thinking")
-			requestBody.thinking.should.deepEqual({ type: "adaptive" })
-			requestBody.should.have.property("output_config")
-			requestBody.output_config.should.deepEqual({ effort: "xhigh" })
-			should(requestBody.temperature).equal(undefined)
-		})
-
-		it("should use adaptive thinking and max effort for Claude Sonnet 4.6", async () => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					apiKey: "test-api-key",
-					modelId: "claude-sonnet-4-6",
-					modelInfo: anthropicModels["claude-sonnet-4-6"],
-					anthropic: { reasoning: { effort: "max" } },
-				}),
-				mode: "act",
-			})
-			const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
-			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
-				messages: { create: standardCreate },
-				beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
-			})
-
-			for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
-			}
-
-			const requestBody = standardCreate.mock.calls[0]?.[0] as Record<string, unknown> | undefined
-			expect(requestBody?.thinking).to.deep.equal({ type: "adaptive" })
-			expect(requestBody?.output_config).to.deep.equal({ effort: "max" })
-		})
-
-		it("should migrate legacy xhigh to max when the selected Anthropic model does not support xhigh", async () => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					apiKey: "test-api-key",
-					modelId: "claude-sonnet-4-6",
-					anthropic: { reasoning: { effort: "xhigh" } },
-				}),
-				mode: "act",
-			})
-			const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
-			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
-				messages: { create: standardCreate },
-				beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
-			})
-
-			for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
-			}
-
-			const requestBody = standardCreate.mock.calls[0]?.[0] as Record<string, unknown> | undefined
-			expect(requestBody?.output_config).to.deep.equal({ effort: "max" })
-		})
-
-		it("should use provider overrides for registry model request max tokens", async () => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					apiKey: "test-api-key",
-					modelId: "claude-opus-4-7",
-					anthropic: {
-						capabilities: {
-							maxTokens: 12_345,
-							supportsPromptCache: false,
-						},
-					},
-				}),
-				mode: "act",
-			})
-			const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
-
-			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
-				messages: {
-					create: standardCreate,
-				},
-				beta: {
-					messages: {
-						_client: {},
-						create: vi.fn().mockResolvedValue(createAsyncIterable()),
-					},
-				},
-			})
-
-			for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
-			}
-
-			const requestBody = standardCreate.mock.calls[0]?.[0] as { max_tokens?: unknown } | undefined
-			expect(requestBody?.max_tokens).to.equal(12_345)
-		})
-
-		it("uses the request-scoped compaction cap for Anthropic Messages", async () => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					apiKey: "test-api-key",
-					modelId: "claude-opus-4-7",
-					anthropic: { capabilities: { maxTokens: 12_345, supportsPromptCache: false } },
-				}),
-				mode: "act",
-			})
-			const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
-			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
-				messages: { create: standardCreate },
-				beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
-			})
-
-			const requestOptions: ApiRequestOptions = {
-				generation: { purpose: "compaction", maxOutputTokens: 30_000 },
-			}
-			for await (const _chunk of handler.createMessage(
-				"system prompt",
-				[{ role: "user", content: "Hello" }],
-				undefined,
-				requestOptions,
-			)) {
-			}
-
-			const requestBody = standardCreate.mock.calls[0]?.[0] as { max_tokens?: unknown } | undefined
-			expect(requestBody?.max_tokens).to.equal(30_000)
-		})
-
-		it("should send the custom model id in Anthropic requests", async () => {
-			const customModelId = "custom-claude-compatible-model"
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					apiKey: "test-api-key",
-					modelId: customModelId,
-					anthropic: {
-						customModelEnabled: true,
-						capabilities: {
-							maxTokens: 12_345,
-							contextWindow: 67_890,
-							supportsImages: false,
-							supportsPromptCache: false,
-							supportsReasoning: false,
-						},
-						pricing: {
-							inputPrice: 0.5,
-							outputPrice: 1.5,
-						},
-					},
-				}),
-				mode: "act",
-			})
-
-			const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
-
-			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
-				messages: {
-					create: standardCreate,
-				},
-				beta: {
-					messages: {
-						_client: {},
-						create: vi.fn().mockResolvedValue(createAsyncIterable()),
-					},
-				},
-			})
-
-			for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
-			}
-
-			const requestBody = standardCreate.mock.calls[0]?.[0] as { model?: unknown; max_tokens?: unknown } | undefined
-			expect(requestBody?.model).to.equal(customModelId)
-			expect(requestBody?.max_tokens).to.equal(12_345)
-		})
-	})
-
-	describe("claude code billing attribution", () => {
-		const BILLING_PREFIX = "x-anthropic-billing-header:"
-
-		type SystemBlock = { type?: string; text?: string; cache_control?: unknown }
-
-		// `ApiProfile.create` takes an exact-shape generic, so a helper that
-		// forwards a caller-supplied literal has to build the profile first and
-		// then attach the nested config.
-		type AnthropicConfig = NonNullable<ApiProfile["anthropic"]>
-
-		let lastRequestOptions: { headers?: Record<string, string> } | undefined
-
-		const runWithProfileConfig = async (
-			anthropic: Partial<AnthropicConfig>,
-			modelId = "claude-sonnet-4-6",
-		): Promise<SystemBlock[]> => {
-			const profile = ApiProfile.create({ provider: "anthropic", apiKey: "test-api-key", modelId })
-			profile.anthropic = { ...ApiProfile.create({}).anthropic, ...anthropic } as AnthropicConfig
-			const handler = new AnthropicHandler({ profile, mode: "act" })
-			const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
-			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
-				messages: { create: standardCreate },
-				beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
-			})
-
-			for await (const _chunk of handler.createMessage("system prompt", [
-				{ role: "user", content: "Hello, world! This is a test message" },
-			])) {
-			}
-
-			lastRequestOptions = standardCreate.mock.calls[0]?.[1] as { headers?: Record<string, string> } | undefined
-			return (standardCreate.mock.calls[0]?.[0] as { system?: SystemBlock[] })?.system ?? []
-		}
-
-		it("omits the attribution block when the toggle is absent", async () => {
-			const system = await runWithProfileConfig({})
-
-			expect(system).to.deep.equal([{ text: "system prompt", type: "text", cache_control: { type: "ephemeral" } }])
-		})
-
-		it("omits the attribution block when the toggle is explicitly off", async () => {
-			const system = await runWithProfileConfig({ claudeCodeIdentity: { enabled: false } })
-
-			expect(system).to.deep.equal([{ text: "system prompt", type: "text", cache_control: { type: "ephemeral" } }])
-		})
-
-		it("prepends the attribution block when the toggle is on", async () => {
-			const system = await runWithProfileConfig({
-				claudeCodeIdentity: { enabled: true, clientVersionOverride: "2.1.280" },
-			})
-
-			expect(system).to.have.length(2)
-			expect(system[0]?.type).to.equal("text")
-			expect(system[0]?.text).to.match(
-				/^x-anthropic-billing-header: cc_version=2\.1\.280\.[0-9a-f]{3}; cc_entrypoint=cli;$/,
-			)
-			// The cache breakpoint must stay on the system prompt, so the block
-			// itself carries no cache_control.
-			expect(system[0]).to.not.have.property("cache_control")
-			expect(system[1]).to.deep.equal({ text: "system prompt", type: "text", cache_control: { type: "ephemeral" } })
-		})
-
-		it("applies the entrypoint override", async () => {
-			const system = await runWithProfileConfig({
-				claudeCodeIdentity: { enabled: true, clientVersionOverride: "2.1.181", entrypointOverride: "claude-vscode" },
-			})
-
-			expect(system[0]?.text).to.contain("; cc_entrypoint=claude-vscode;")
-		})
-
-		it("prepends the attribution block on the uncached branch too", async () => {
-			// supportsPromptCache=false selects the second request-body branch,
-			// which builds its own system array.
-			const system = await runWithProfileConfig({
-				capabilities: { supportsPromptCache: false },
-				claudeCodeIdentity: { enabled: true, clientVersionOverride: "2.1.280" },
-			})
-
-			expect(system).to.have.length(2)
-			expect(system[0]?.text).to.contain(BILLING_PREFIX)
-			expect(system[1]).to.deep.equal({ text: "system prompt", type: "text" })
-		})
-
-		it("keeps the uncached branch unchanged when the toggle is off", async () => {
-			const system = await runWithProfileConfig({ capabilities: { supportsPromptCache: false } })
-
-			expect(system).to.deep.equal([{ text: "system prompt", type: "text" }])
-		})
-
-		it("sends no request options at all when the toggle is off", async () => {
-			// Not merely "no identity header": the whole options argument stays
-			// absent, so a disabled toggle leaves the request byte-identical to
-			// one built before this feature existed and the client default
-			// User-Agent survives.
-			await runWithProfileConfig({})
-
-			should(lastRequestOptions).equal(undefined)
-		})
-
-		it("declares the Claude Code user agent when the toggle is on", async () => {
-			await runWithProfileConfig({ claudeCodeIdentity: { enabled: true, clientVersionOverride: "2.1.280" } })
-
-			expect(lastRequestOptions?.headers?.["User-Agent"]).to.equal("claude-cli/2.1.280 (external, cli)")
-			expect(lastRequestOptions?.headers?.["X-App"]).to.equal("cli")
-			expect(lastRequestOptions?.headers?.["X-Stainless-Lang"]).to.equal("js")
-		})
-
-		it("keeps the user agent version identical to the attribution cc_version", async () => {
-			// Upstream compares the two; sub2api rewrites the block to match the
-			// user agent precisely because a mismatch marks a third-party client.
-			const system = await runWithProfileConfig({
-				claudeCodeIdentity: { enabled: true, clientVersionOverride: "2.1.280" },
-			})
-
-			const declaredVersion = /^claude-cli\/(\d+\.\d+\.\d+) /.exec(lastRequestOptions?.headers?.["User-Agent"] ?? "")?.[1]
-			const attributedVersion = /cc_version=(\d+\.\d+\.\d+)\./.exec(system[0]?.text ?? "")?.[1]
-			expect(declaredVersion).to.equal("2.1.280")
-			expect(attributedVersion).to.equal(declaredVersion)
-		})
-
-		it("sends the fingerprint headers as one coherent client identity", async () => {
-			// Upstream rejects a partial identity, so the headers ship together
-			// or not at all.
-			await runWithProfileConfig({ claudeCodeIdentity: { enabled: true, clientVersionOverride: "2.1.280" } })
-
-			should(lastRequestOptions?.headers).deepEqual({
-				"User-Agent": "claude-cli/2.1.280 (external, cli)",
-				...CLAUDE_CODE_FINGERPRINT_HEADERS,
-			})
-			// Captured together from one Claude Code release, so a bare CLI bump
-			// that leaves the SDK version behind is itself a detectable mismatch.
-			expect(lastRequestOptions?.headers?.["X-Stainless-Package-Version"]).to.equal(CLAUDE_CODE_SDK_VERSION)
-		})
-	})
+    afterEach(() => {
+        vi.restoreAllMocks()
+    })
+
+    const createAsyncIterable = (data: readonly unknown[] = []) => ({
+        [Symbol.asyncIterator]: async function* () {
+            yield* data
+        },
+    })
+
+    it.each([
+        {
+            modelId: "claude-sonnet-4-6",
+            thinking: undefined,
+            reasoning: { effort: "max" },
+            expected: undefined,
+        },
+        {
+            modelId: "claude-opus-5-custom",
+            thinking: { supported: false },
+            reasoning: { enableThinking: true, effort: "high" },
+            expected: undefined,
+        },
+        {
+            modelId: "opaque-default",
+            thinking: { supported: true, mode: "effort", defaultEnabled: true, effortLevels: ["low"] },
+            reasoning: {},
+            expected: { type: "adaptive" },
+        },
+        {
+            modelId: "claude-opus-5-custom",
+            thinking: { supported: true, mode: "effort", canDisable: false, effortLevels: ["high"] },
+            reasoning: { enableThinking: false, effort: "none" },
+            expected: { type: "adaptive" },
+        },
+        {
+            modelId: "opaque-effort",
+            thinking: { supported: true, mode: "effort", effortLevels: ["low"] },
+            reasoning: { enableThinking: true, effort: "high" },
+            expected: { type: "adaptive" },
+        },
+        {
+            modelId: "opaque-minimum",
+            thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 101 },
+            reasoning: { enableThinking: true, thinkingBudget: 3 },
+            expected: { type: "enabled", budget_tokens: 17 },
+        },
+        {
+            modelId: "opaque-invalid-minimum",
+            thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 11 },
+            reasoning: { enableThinking: true, thinkingBudget: 30 },
+            expected: undefined,
+        },
+        {
+            modelId: "opaque-effort-with-stale-budget",
+            thinking: { supported: true, mode: "effort", defaultEnabled: true, effortLevels: ["high"] },
+            reasoning: { thinkingBudget: 3 },
+            expected: { type: "adaptive" },
+        },
+        {
+            modelId: "opaque-effort-disabled-by-default",
+            thinking: { supported: true, mode: "effort", defaultEnabled: false, effortLevels: ["low"] },
+            reasoning: { thinkingBudget: 23 },
+            expected: undefined,
+        },
+        {
+            modelId: "opaque-effort-with-illegal-preference",
+            thinking: { supported: true, mode: "effort", effortLevels: ["low"] },
+            reasoning: { effort: "stale-level" },
+            expected: undefined,
+        },
+        {
+            modelId: "opaque-budget",
+            thinking: undefined,
+            reasoning: { enableThinking: true, thinkingBudget: 2_048 },
+            expected: undefined,
+        },
+    ])("uses effective thinking declarations for $modelId", async ({ modelId, thinking, reasoning, expected }) => {
+        const handler = new AnthropicHandler({
+            profile: ApiProfile.create({
+                provider: "anthropic",
+                apiKey: "test-api-key",
+                modelId,
+                modelInfo: {
+                    id: modelId,
+                    capabilities: { supportsReasoning: true, thinking: thinking as ThinkingConfig | undefined },
+                },
+                anthropic: { reasoning },
+            }),
+            mode: "act",
+        })
+        const create = vi.fn().mockResolvedValue(createAsyncIterable())
+        vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({ messages: { create } })
+        for await (const _chunk of handler.createMessage("system", [{ role: "user", content: "hello" }])) {
+        }
+        const body = create.mock.calls[0]?.[0]
+        expect(body?.model).to.equal(modelId)
+        expect(body?.thinking).to.deep.equal(expected)
+        expect(body?.output_config).to.equal(undefined)
+    })
+
+    it.each([
+        { preference: "minimal", expected: "low" },
+        { preference: "ultra", expected: "max" },
+    ])("encodes legacy $preference only through declared Anthropic effort levels", async ({ preference, expected }) => {
+        const handler = new AnthropicHandler({
+            profile: ApiProfile.create({
+                provider: "anthropic",
+                apiKey: "test-api-key",
+                modelId: "opaque-alias-model",
+                modelInfo: {
+                    id: "opaque-alias-model",
+                    capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["low", "max"] } },
+                },
+                anthropic: { reasoning: { enableThinking: true, effort: preference } },
+            }),
+            mode: "act",
+        })
+        const create = vi.fn().mockResolvedValue(createAsyncIterable())
+        vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({ messages: { create } })
+        for await (const _chunk of handler.createMessage("system", [{ role: "user", content: "hello" }])) {
+        }
+        expect(create.mock.calls[0]?.[0]?.output_config).to.deep.equal({ effort: expected })
+    })
+
+    it.each([
+        { declared: undefined, expected: "any" },
+        { declared: true, expected: "any" },
+        { declared: false, expected: "auto" },
+    ])("uses forced-tool declaration $declared instead of a misleading name", async ({ declared, expected }) => {
+        const handler = new AnthropicHandler({
+            profile: ApiProfile.create({
+                provider: "anthropic",
+                apiKey: "test-api-key",
+                modelId: "claude-opus-5-custom",
+                modelInfo: {
+                    id: "claude-opus-5-custom",
+                    capabilities: { supportsPromptCache: true, supportsForcedToolUse: declared, thinking: { supported: false } },
+                },
+            }),
+            mode: "act",
+        })
+        const create = vi.fn().mockResolvedValue(createAsyncIterable())
+        vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({ messages: { create } })
+        for await (const _chunk of handler.createMessage(
+            "system",
+            [{ role: "user", content: "hello" }],
+            [{ name: "read_file", description: "Read", input_schema: { type: "object", properties: {} } }],
+        )) {
+        }
+        expect(create.mock.calls[0]?.[0]?.tool_choice).to.deep.equal({ type: expected })
+    })
+
+    it.each([
+        { supportsPromptCache: true, serverTools: [ServerTool.WEB_FETCH], replayed: true },
+        { supportsPromptCache: false, serverTools: [ServerTool.WEB_FETCH], replayed: true },
+        { supportsPromptCache: true, serverTools: [], replayed: false },
+    ])("replays a stored hosted fetch only while the request declares it (cache $supportsPromptCache, replayed $replayed)", async ({
+        supportsPromptCache,
+        serverTools,
+        replayed,
+    }) => {
+        const handler = new AnthropicHandler({
+            profile: ApiProfile.create({
+                provider: "anthropic",
+                apiKey: "test-api-key",
+                modelId: "claude-opus-5-custom",
+                modelInfo: { id: "claude-opus-5-custom", capabilities: { supportsPromptCache, thinking: { supported: false } } },
+            }),
+            mode: "act",
+        })
+        const call = { type: "server_tool_use", id: "srv_fetch", name: "web_fetch", input: { url: "https://example.com" } }
+        const result = { type: "web_fetch_tool_result", tool_use_id: "srv_fetch", content: { type: "web_fetch_result" } }
+        const create = vi.fn().mockResolvedValue(createAsyncIterable())
+        vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({ messages: { create } })
+        for await (const _chunk of handler.createMessage(
+            "system",
+            [
+                { role: "user", content: "Read the page" },
+                {
+                    role: "assistant",
+                    content: [
+                        { type: "hosted_tool", protocol: "anthropic_messages", blocks: [call, result] },
+                        { type: "text", text: "The page says hello" },
+                    ],
+                },
+                { role: "user", content: "What did it say?" },
+            ],
+            undefined,
+            { serverTools },
+        )) {
+        }
+
+        const assistantContent = create.mock.calls[0]?.[0]?.messages?.[1]?.content as Array<{ type: string }>
+        expect(assistantContent.map((block) => block.type)).to.deep.equal(
+            replayed ? ["server_tool_use", "web_fetch_tool_result", "text"] : ["text"],
+        )
+    })
+
+    describe("getModel", () => {
+        it("should merge provider overrides into registry model metadata", () => {
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({
+                    provider: "anthropic",
+                    apiKey: "test-api-key",
+                    modelId: "claude-opus-4-7",
+                    anthropic: {
+                        capabilities: {
+                            maxTokens: 12_345,
+                            supportsPromptCache: false,
+                        },
+                        pricing: {
+                            inputPrice: 0.5,
+                        },
+                    },
+                }),
+                mode: "act",
+            })
+
+            const result = handler.getModel()
+
+            result.id.should.equal("claude-opus-4-7")
+            result.info.id.should.equal("claude-opus-4-7")
+            // Long context defaults to on, resolving to the 1M tier.
+            should(result.info.capabilities?.contextWindow).equal(1_000_000)
+            should(result.info.capabilities?.maxTokens).equal(12_345)
+            should(result.info.capabilities?.supportsPromptCache).equal(false)
+            should(result.info.pricing?.inputPrice).equal(0.5)
+        })
+
+        it("should preserve a custom model id when profile modelInfo is missing", () => {
+            const customModelId = "custom-claude-compatible-model"
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({
+                    provider: "anthropic",
+                    apiKey: "test-api-key",
+                    modelId: customModelId,
+                    anthropic: {
+                        customModelEnabled: true,
+                        capabilities: {
+                            maxTokens: 12_345,
+                            contextWindow: 67_890,
+                            supportsImages: false,
+                            supportsPromptCache: false,
+                            supportsReasoning: false,
+                        },
+                        pricing: {
+                            inputPrice: 0.5,
+                            outputPrice: 1.5,
+                        },
+                    },
+                }),
+                mode: "act",
+            })
+
+            const result = handler.getModel()
+
+            result.id.should.equal(customModelId)
+            result.info.id.should.equal(customModelId)
+            should(result.info.capabilities?.maxTokens).equal(12_345)
+            should(result.info.capabilities?.supportsPromptCache).equal(false)
+        })
+
+        it("only reports the known hosted web search tool as supported", () => {
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({ provider: "anthropic", modelId: "claude-sonnet-4-6" }),
+                mode: "act",
+            })
+
+            expect(handler.supportsServerTool(ServerTool.WEB_SEARCH)).to.equal(true)
+            expect(handler.supportsServerTool(ServerTool.SERVER_TOOL_UNSPECIFIED)).to.equal(false)
+        })
+
+        it("projects the fixed Anthropic transport into custom model metadata", () => {
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({
+                    provider: "anthropic",
+                    modelId: "custom-anthropic-model",
+                    anthropic: {
+                        customModelEnabled: true,
+                        capabilities: { supportsTools: true, tools: [ServerTool.WEB_SEARCH] },
+                    },
+                }),
+                mode: "act",
+            })
+
+            expect(handler.getModel().info.apiFormats?.[0]).to.equal(ApiFormat.ANTHROPIC_CHAT)
+            // A profile records switches, not capabilities. A free-form model id has
+            // no registry entry, so it cannot gain a hosted declaration this way.
+            expect(handler.getModel().info.capabilities?.tools).to.equal(undefined)
+        })
+
+        it("reports the transport it will speak so routing does not guess from metadata", () => {
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({ provider: "anthropic", modelId: "custom-anthropic-model" }),
+                mode: "act",
+            })
+
+            expect(handler.getSelectedApiFormat()).to.equal(ApiFormat.ANTHROPIC_CHAT)
+        })
+    })
+
+    describe("createMessage", () => {
+        it("disables SDK retries so Dline owns the retry policy", () => {
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({
+                    provider: "anthropic",
+                    apiKey: "test-api-key",
+                    modelId: "claude-sonnet-4-6",
+                }),
+                mode: "act",
+            })
+
+            const client = (handler as unknown as { ensureClient: () => { maxRetries: number } }).ensureClient()
+
+            expect(client.maxRetries).to.equal(0)
+        })
+
+        it("projects hosted web search exactly once and removes the local Anthropic tool", async () => {
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({
+                    provider: "anthropic",
+                    apiKey: "test-api-key",
+                    modelId: "claude-sonnet-4-6",
+                }),
+                mode: "act",
+            })
+            const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
+            vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+                messages: { create: standardCreate },
+                beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
+            })
+
+            for await (const _chunk of handler.createMessage(
+                "system prompt",
+                [{ role: "user", content: "Search" }],
+                [
+                    {
+                        name: "web_search",
+                        description: "Local search",
+                        input_schema: { type: "object", properties: {} },
+                    },
+                    {
+                        name: "read_file",
+                        description: "Read",
+                        input_schema: { type: "object", properties: {} },
+                    },
+                ],
+                { serverTools: [ServerTool.WEB_SEARCH] },
+            )) {
+            }
+
+            expect(standardCreate.mock.calls[0]?.[0]?.tools).to.deep.equal([
+                {
+                    name: "read_file",
+                    description: "Read",
+                    input_schema: { type: "object", properties: {} },
+                },
+                { type: "web_search_20260318", name: "web_search", allowed_callers: ["direct"] },
+            ])
+            // `any` admits only client tools, so forcing it would make the hosted declaration unreachable.
+            expect(standardCreate.mock.calls[0]?.[0]?.tool_choice).to.deep.equal({ type: "auto" })
+            expect(handler.supportsServerTool(ServerTool.WEB_SEARCH)).to.equal(true)
+        })
+
+        // A model that accepts forcing keeps it, so giving the hosted-tool rule a
+        // wider reach than it needs would let the model answer in prose where a
+        // tool call is required. Every catalog model is adaptive now, so this
+        // declares a budget-mode one rather than asserting on a model that would
+        // refuse forcing for its own unrelated reason.
+        it("still forces a tool choice when the request carries no hosted server tools", async () => {
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({
+                    provider: "anthropic",
+                    apiKey: "test-api-key",
+                    modelId: "claude-budget-mode-model",
+                    anthropic: {
+                        customModelEnabled: true,
+                        capabilities: { supportsTools: true, thinking: { supported: true, mode: "budget", maxBudget: 8_192 } },
+                    },
+                }),
+                mode: "act",
+            })
+            const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
+            vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+                messages: { create: standardCreate },
+                beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
+            })
+
+            for await (const _chunk of handler.createMessage(
+                "system prompt",
+                [{ role: "user", content: "Read" }],
+                [
+                    {
+                        name: "read_file",
+                        description: "Read",
+                        input_schema: { type: "object", properties: {} },
+                    },
+                ],
+            )) {
+            }
+
+            expect(standardCreate.mock.calls[0]?.[0]?.tools).to.deep.equal([
+                {
+                    name: "read_file",
+                    description: "Read",
+                    input_schema: { type: "object", properties: {} },
+                },
+            ])
+            expect(standardCreate.mock.calls[0]?.[0]?.tool_choice).to.deep.equal({ type: "any" })
+        })
+
+        // Adaptive thinking is effectively always on, and thinking cannot be
+        // combined with forced tool use, so upstream answers
+        // `tool_choice: type "tool" and "any" are not supported for this model`
+        // instead of degrading to an automatic choice.
+        it("never forces a tool choice on an adaptive-thinking model", async () => {
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({
+                    provider: "anthropic",
+                    apiKey: "test-api-key",
+                    modelId: "claude-opus-5-5",
+                }),
+                mode: "act",
+            })
+            const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
+            vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+                messages: { create: standardCreate },
+                beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
+            })
+
+            for await (const _chunk of handler.createMessage(
+                "system prompt",
+                [{ role: "user", content: "Read" }],
+                [
+                    {
+                        name: "read_file",
+                        description: "Read",
+                        input_schema: { type: "object", properties: {} },
+                    },
+                ],
+            )) {
+            }
+
+            expect(standardCreate.mock.calls[0]?.[0]?.model).to.equal("claude-opus-5-5")
+            expect(standardCreate.mock.calls[0]?.[0]?.tool_choice).to.deep.equal({ type: "auto" })
+        })
+
+        it("never forces a tool choice on Fable 5.1, which rejects forced tool use", async () => {
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({
+                    provider: "anthropic",
+                    apiKey: "test-api-key",
+                    modelId: "claude-fable-5-1",
+                }),
+                mode: "act",
+            })
+            const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
+            vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+                messages: { create: standardCreate },
+                beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
+            })
+
+            for await (const _chunk of handler.createMessage(
+                "system prompt",
+                [{ role: "user", content: "Read" }],
+                [
+                    {
+                        name: "read_file",
+                        description: "Read",
+                        input_schema: { type: "object", properties: {} },
+                    },
+                ],
+            )) {
+            }
+
+            expect(standardCreate.mock.calls[0]?.[0]?.model).to.equal("claude-fable-5-1")
+            expect(standardCreate.mock.calls[0]?.[0]?.tool_choice).to.deep.equal({ type: "auto" })
+        })
+
+        it("does not force hosted Web Search when no local Anthropic functions are present", async () => {
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({
+                    provider: "anthropic",
+                    apiKey: "test-api-key",
+                    modelId: "claude-sonnet-4-6",
+                }),
+                mode: "act",
+            })
+            const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
+            vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+                messages: { create: standardCreate },
+                beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
+            })
+
+            for await (const _chunk of handler.createMessage(
+                "system prompt",
+                [{ role: "user", content: "Answer without searching unless needed" }],
+                undefined,
+                { serverTools: [ServerTool.WEB_SEARCH] },
+            )) {
+            }
+
+            expect(standardCreate.mock.calls[0]?.[0]?.tools).to.deep.equal([
+                { type: "web_search_20260318", name: "web_search", allowed_callers: ["direct"] },
+            ])
+            should(standardCreate.mock.calls[0]?.[0]?.tool_choice).equal(undefined)
+        })
+
+        it("should route fast mode requests through the beta messages API", async () => {
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({ provider: "anthropic", apiKey: "test-api-key", modelId: "claude-opus-5:fast" }),
+                mode: "act",
+            })
+
+            const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
+            const betaCreate = vi.fn().mockImplementation(function (this: { _client?: object }, _params: unknown) {
+                should.exist(this._client)
+                return Promise.resolve(createAsyncIterable())
+            })
+
+            vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+                messages: {
+                    create: standardCreate,
+                },
+                beta: {
+                    messages: {
+                        _client: {},
+                        create: betaCreate,
+                    },
+                },
+            })
+
+            for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
+            }
+
+            const callArgs = betaCreate.mock.calls[0]?.[0] as Record<string, unknown> | undefined
+            expect(callArgs?.model).to.equal("claude-opus-5")
+            expect(callArgs?.betas).to.deep.equal([ANTHROPIC_FAST_MODE_BETA])
+            expect(callArgs?.speed).to.equal("fast")
+            expect(callArgs?.stream).to.equal(true)
+        })
+
+        it("should keep the native model id for Opus 4.8 fast mode", async () => {
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({
+                    provider: "anthropic",
+                    apiKey: "test-api-key",
+                    modelId: "claude-opus-4-8:fast",
+                    anthropic: { enableLongContext: true },
+                }),
+                mode: "act",
+            })
+
+            const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
+            const betaCreate = vi.fn().mockImplementation(function (this: { _client?: object }, _params: unknown) {
+                should.exist(this._client)
+                return Promise.resolve(createAsyncIterable())
+            })
+
+            vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+                messages: {
+                    create: standardCreate,
+                },
+                beta: {
+                    messages: {
+                        _client: {},
+                        create: betaCreate,
+                    },
+                },
+            })
+
+            for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
+            }
+
+            const callArgs = betaCreate.mock.calls[0]?.[0] as Record<string, unknown> | undefined
+            expect(callArgs?.model).to.equal("claude-opus-4-8")
+            expect(callArgs?.betas).to.deep.equal([ANTHROPIC_FAST_MODE_BETA])
+            expect(callArgs?.speed).to.equal("fast")
+            expect(callArgs?.stream).to.equal(true)
+        })
+
+        it("should keep the Claude Opus 5 model id without a legacy long-context suffix or beta header", async () => {
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({
+                    provider: "anthropic",
+                    apiKey: "test-api-key",
+                    modelId: "claude-opus-5",
+                    anthropic: {
+                        enableLongContext: true,
+                        reasoning: { effort: "high" },
+                        capabilities: {
+                            contextWindow: 1_250_000,
+                            contextWindowTiers: [
+                                { id: "standard", contextWindow: 200_000, label: "200K" },
+                                { id: "long", contextWindow: 1_000_000, label: "1M", apiModelSuffix: ":1m" },
+                            ],
+                        },
+                    },
+                }),
+                mode: "act",
+            })
+            const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
+            vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+                messages: { create: standardCreate },
+                beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
+            })
+
+            for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
+            }
+
+            const requestBody = standardCreate.mock.calls[0]?.[0] as Record<string, unknown> | undefined
+            expect(requestBody?.model).to.equal("claude-opus-5")
+            expect(handler.getModel().info.capabilities?.contextWindow).to.equal(1_250_000)
+            expect(handler.getModel().info.capabilities?.contextWindowTiers).to.equal(undefined)
+            expect(requestBody?.thinking).to.deep.equal({ type: "adaptive" })
+            should(standardCreate.mock.calls[0]?.[1]).equal(undefined)
+        })
+
+        it("should ignore stale context tiers on official native-1M models", async () => {
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({
+                    provider: "anthropic",
+                    apiKey: "test-api-key",
+                    modelId: "claude-opus-4-7",
+                    anthropic: {
+                        enableLongContext: false,
+                        capabilities: {
+                            contextWindowTiers: [
+                                { id: "standard", contextWindow: 160_000, label: "160K" },
+                                { id: "long", contextWindow: 1_500_000, label: "1.5M", apiModelSuffix: ":1m" },
+                            ],
+                        },
+                    },
+                }),
+                mode: "act",
+            })
+            const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
+            vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+                messages: { create: standardCreate },
+                beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
+            })
+
+            for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
+            }
+
+            const requestBody = standardCreate.mock.calls[0]?.[0] as Record<string, unknown> | undefined
+            expect(requestBody?.model).to.equal("claude-opus-4-7")
+            expect(handler.getModel().info.capabilities?.contextWindow).to.equal(1_000_000)
+            expect(handler.getModel().info.capabilities?.contextWindowTiers).to.equal(undefined)
+            should(standardCreate.mock.calls[0]?.[1]).equal(undefined)
+        })
+
+        it("should append an explicitly configured custom long-context suffix at the API boundary", async () => {
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({
+                    provider: "anthropic",
+                    apiKey: "test-api-key",
+                    modelId: "vendor-tiered",
+                    anthropic: {
+                        customModelEnabled: true,
+                        enableLongContext: true,
+                        reasoning: { effort: "high" },
+                        capabilities: {
+                            supportsReasoning: true,
+                            thinking: {
+                                supported: true,
+                                mode: "effort",
+                                effortLevels: ["none", "low", "medium", "high"],
+                            },
+                            contextWindowTiers: [
+                                { id: "standard", contextWindow: 200_000, label: "200K" },
+                                { id: "long", contextWindow: 1_500_000, label: "1.5M", apiModelSuffix: ":1m" },
+                            ],
+                        },
+                    },
+                }),
+                mode: "act",
+            })
+
+            const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
+
+            vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+                messages: {
+                    create: standardCreate,
+                },
+                beta: {
+                    messages: {
+                        _client: {},
+                        create: vi.fn().mockResolvedValue(createAsyncIterable()),
+                    },
+                },
+            })
+
+            for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
+            }
+
+            const requestBody = standardCreate.mock.calls[0][0] as { model: string; thinking: { type: string } }
+            const requestOptions = standardCreate.mock.calls[0][1] as { headers: Record<string, string> } | undefined
+            requestBody.model.should.equal("vendor-tiered:1m")
+            expect(handler.getModel().info.capabilities?.contextWindow).to.equal(1_500_000)
+            requestBody.thinking.should.deepEqual({ type: "adaptive" })
+            // The suffix still selects the long-context model, but Anthropic retired the
+            // context-1m beta on 2026-04-30, so no beta header accompanies it any more.
+            should(requestOptions).equal(undefined)
+        })
+
+        it.each([
+            "claude-opus-5",
+            "claude-sonnet-5",
+        ])("should send explicit disabled thinking when %s is configured with none", async (modelId) => {
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({
+                    provider: "anthropic",
+                    apiKey: "test-api-key",
+                    modelId,
+                    anthropic: { reasoning: { enableThinking: false, effort: "none" } },
+                }),
+                mode: "act",
+            })
+            const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
+            vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+                messages: { create: standardCreate },
+                beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
+            })
+
+            for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
+            }
+
+            const requestBody = standardCreate.mock.calls[0]?.[0] as Record<string, unknown> | undefined
+            expect(requestBody?.thinking).to.deep.equal({ type: "disabled" })
+            expect(requestBody?.output_config).to.equal(undefined)
+        })
+
+        it.each([
+            "claude-fable-5",
+            "claude-opus-5-5",
+            "claude-sonnet-5-5",
+        ])("should keep %s adaptive thinking enabled when a stale profile requests none", async (modelId) => {
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({
+                    provider: "anthropic",
+                    apiKey: "test-api-key",
+                    modelId,
+                    anthropic: { reasoning: { enableThinking: false, effort: "none" } },
+                }),
+                mode: "act",
+            })
+            const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
+            vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+                messages: { create: standardCreate },
+                beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
+            })
+
+            for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
+            }
+
+            const requestBody = standardCreate.mock.calls[0]?.[0] as Record<string, unknown> | undefined
+            expect(requestBody?.thinking).to.deep.equal({ type: "adaptive" })
+            expect(requestBody?.output_config).to.equal(undefined)
+        })
+
+        it.each([
+            { configured: "omitted", expected: "omitted" },
+            { configured: "summarized", expected: "summarized" },
+        ])("should send thinking display $expected when the profile selects it", async ({ configured, expected }) => {
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({
+                    provider: "anthropic",
+                    apiKey: "test-api-key",
+                    modelId: "claude-fable-5",
+                    anthropic: { reasoning: { display: configured } },
+                }),
+                mode: "act",
+            })
+            const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
+            vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+                messages: { create: standardCreate },
+                beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
+            })
+
+            for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
+            }
+
+            const requestBody = standardCreate.mock.calls[0]?.[0] as Record<string, unknown> | undefined
+            expect(requestBody?.thinking).to.deep.equal({ type: "adaptive", display: expected })
+        })
+
+        it.each([
+            { display: undefined },
+            { display: "" },
+            { display: "none" },
+        ])("should omit thinking display when the profile stores $display", async ({ display }) => {
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({
+                    provider: "anthropic",
+                    apiKey: "test-api-key",
+                    modelId: "claude-fable-5",
+                    anthropic: { reasoning: { display } },
+                }),
+                mode: "act",
+            })
+            const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
+            vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+                messages: { create: standardCreate },
+                beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
+            })
+
+            for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
+            }
+
+            const requestBody = standardCreate.mock.calls[0]?.[0] as Record<string, unknown> | undefined
+            expect(requestBody?.thinking).to.deep.equal({ type: "adaptive" })
+        })
+
+        it("should send thinking display alongside a manual thinking budget", async () => {
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({
+                    provider: "anthropic",
+                    apiKey: "test-api-key",
+                    modelId: "claude-sonnet-4-5",
+                    modelInfo: {
+                        id: "claude-sonnet-4-5",
+                        capabilities: {
+                            supportsReasoning: true,
+                            thinking: { supported: true, mode: "budget", maxBudget: 8_192 },
+                        },
+                    },
+                    anthropic: { reasoning: { enableThinking: true, thinkingBudget: 2_048, display: "omitted" } },
+                }),
+                mode: "act",
+            })
+            const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
+            vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+                messages: { create: standardCreate },
+                beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
+            })
+
+            for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
+            }
+
+            const requestBody = standardCreate.mock.calls[0]?.[0] as Record<string, unknown> | undefined
+            expect(requestBody?.thinking).to.deep.equal({ type: "enabled", budget_tokens: 2_048, display: "omitted" })
+        })
+
+        it("should not attach a display to an explicitly disabled thinking config", async () => {
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({
+                    provider: "anthropic",
+                    apiKey: "test-api-key",
+                    modelId: "claude-opus-5",
+                    anthropic: { reasoning: { enableThinking: false, effort: "none", display: "omitted" } },
+                }),
+                mode: "act",
+            })
+            const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
+            vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+                messages: { create: standardCreate },
+                beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
+            })
+
+            for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
+            }
+
+            const requestBody = standardCreate.mock.calls[0]?.[0] as Record<string, unknown> | undefined
+            expect(requestBody?.thinking).to.deep.equal({ type: "disabled" })
+        })
+
+        it("should use adaptive thinking and output_config for Claude Opus adaptive models", async () => {
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({
+                    provider: "anthropic",
+                    apiKey: "test-api-key",
+                    modelId: "claude-opus-4-7",
+                    anthropic: { reasoning: { effort: "xhigh" } },
+                }),
+                mode: "act",
+            })
+
+            const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
+
+            vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+                messages: {
+                    create: standardCreate,
+                },
+                beta: {
+                    messages: {
+                        _client: {},
+                        create: vi.fn().mockResolvedValue(createAsyncIterable()),
+                    },
+                },
+            })
+
+            for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
+            }
+
+            const requestBody = standardCreate.mock.calls[0][0] as {
+                thinking: { type: string }
+                output_config: { effort: string }
+                temperature?: unknown
+            }
+            requestBody.should.have.property("thinking")
+            requestBody.thinking.should.deepEqual({ type: "adaptive" })
+            requestBody.should.have.property("output_config")
+            requestBody.output_config.should.deepEqual({ effort: "xhigh" })
+            should(requestBody.temperature).equal(undefined)
+        })
+
+        it("should use adaptive thinking and max effort for Claude Sonnet 4.6", async () => {
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({
+                    provider: "anthropic",
+                    apiKey: "test-api-key",
+                    modelId: "claude-sonnet-4-6",
+                    modelInfo: anthropicModels["claude-sonnet-4-6"],
+                    anthropic: { reasoning: { effort: "max" } },
+                }),
+                mode: "act",
+            })
+            const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
+            vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+                messages: { create: standardCreate },
+                beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
+            })
+
+            for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
+            }
+
+            const requestBody = standardCreate.mock.calls[0]?.[0] as Record<string, unknown> | undefined
+            expect(requestBody?.thinking).to.deep.equal({ type: "adaptive" })
+            expect(requestBody?.output_config).to.deep.equal({ effort: "max" })
+        })
+
+        it("should migrate legacy xhigh to max when the selected Anthropic model does not support xhigh", async () => {
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({
+                    provider: "anthropic",
+                    apiKey: "test-api-key",
+                    modelId: "claude-sonnet-4-6",
+                    anthropic: { reasoning: { effort: "xhigh" } },
+                }),
+                mode: "act",
+            })
+            const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
+            vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+                messages: { create: standardCreate },
+                beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
+            })
+
+            for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
+            }
+
+            const requestBody = standardCreate.mock.calls[0]?.[0] as Record<string, unknown> | undefined
+            expect(requestBody?.output_config).to.deep.equal({ effort: "max" })
+        })
+
+        it("should use provider overrides for registry model request max tokens", async () => {
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({
+                    provider: "anthropic",
+                    apiKey: "test-api-key",
+                    modelId: "claude-opus-4-7",
+                    anthropic: {
+                        capabilities: {
+                            maxTokens: 12_345,
+                            supportsPromptCache: false,
+                        },
+                    },
+                }),
+                mode: "act",
+            })
+            const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
+
+            vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+                messages: {
+                    create: standardCreate,
+                },
+                beta: {
+                    messages: {
+                        _client: {},
+                        create: vi.fn().mockResolvedValue(createAsyncIterable()),
+                    },
+                },
+            })
+
+            for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
+            }
+
+            const requestBody = standardCreate.mock.calls[0]?.[0] as { max_tokens?: unknown } | undefined
+            expect(requestBody?.max_tokens).to.equal(12_345)
+        })
+
+        it("uses the request-scoped compaction cap for Anthropic Messages", async () => {
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({
+                    provider: "anthropic",
+                    apiKey: "test-api-key",
+                    modelId: "claude-opus-4-7",
+                    anthropic: { capabilities: { maxTokens: 12_345, supportsPromptCache: false } },
+                }),
+                mode: "act",
+            })
+            const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
+            vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+                messages: { create: standardCreate },
+                beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
+            })
+
+            const requestOptions: ApiRequestOptions = {
+                generation: { purpose: "compaction", maxOutputTokens: 30_000 },
+            }
+            for await (const _chunk of handler.createMessage(
+                "system prompt",
+                [{ role: "user", content: "Hello" }],
+                undefined,
+                requestOptions,
+            )) {
+            }
+
+            const requestBody = standardCreate.mock.calls[0]?.[0] as { max_tokens?: unknown } | undefined
+            expect(requestBody?.max_tokens).to.equal(30_000)
+        })
+
+        it("should send the custom model id in Anthropic requests", async () => {
+            const customModelId = "custom-claude-compatible-model"
+            const handler = new AnthropicHandler({
+                profile: ApiProfile.create({
+                    provider: "anthropic",
+                    apiKey: "test-api-key",
+                    modelId: customModelId,
+                    anthropic: {
+                        customModelEnabled: true,
+                        capabilities: {
+                            maxTokens: 12_345,
+                            contextWindow: 67_890,
+                            supportsImages: false,
+                            supportsPromptCache: false,
+                            supportsReasoning: false,
+                        },
+                        pricing: {
+                            inputPrice: 0.5,
+                            outputPrice: 1.5,
+                        },
+                    },
+                }),
+                mode: "act",
+            })
+
+            const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
+
+            vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+                messages: {
+                    create: standardCreate,
+                },
+                beta: {
+                    messages: {
+                        _client: {},
+                        create: vi.fn().mockResolvedValue(createAsyncIterable()),
+                    },
+                },
+            })
+
+            for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
+            }
+
+            const requestBody = standardCreate.mock.calls[0]?.[0] as { model?: unknown; max_tokens?: unknown } | undefined
+            expect(requestBody?.model).to.equal(customModelId)
+            expect(requestBody?.max_tokens).to.equal(12_345)
+        })
+    })
+
+    describe("claude code billing attribution", () => {
+        const BILLING_PREFIX = "x-anthropic-billing-header:"
+
+        type SystemBlock = { type?: string; text?: string; cache_control?: unknown }
+
+        // `ApiProfile.create` takes an exact-shape generic, so a helper that
+        // forwards a caller-supplied literal has to build the profile first and
+        // then attach the nested config.
+        type AnthropicConfig = NonNullable<ApiProfile["anthropic"]>
+
+        let lastRequestOptions: { headers?: Record<string, string> } | undefined
+
+        const runWithProfileConfig = async (
+            anthropic: Partial<AnthropicConfig>,
+            modelId = "claude-sonnet-4-6",
+        ): Promise<SystemBlock[]> => {
+            const profile = ApiProfile.create({ provider: "anthropic", apiKey: "test-api-key", modelId })
+            profile.anthropic = { ...ApiProfile.create({}).anthropic, ...anthropic } as AnthropicConfig
+            const handler = new AnthropicHandler({ profile, mode: "act" })
+            const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
+            vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+                messages: { create: standardCreate },
+                beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
+            })
+
+            for await (const _chunk of handler.createMessage("system prompt", [
+                { role: "user", content: "Hello, world! This is a test message" },
+            ])) {
+            }
+
+            lastRequestOptions = standardCreate.mock.calls[0]?.[1] as { headers?: Record<string, string> } | undefined
+            return (standardCreate.mock.calls[0]?.[0] as { system?: SystemBlock[] })?.system ?? []
+        }
+
+        it("omits the attribution block when the toggle is absent", async () => {
+            const system = await runWithProfileConfig({})
+
+            expect(system).to.deep.equal([{ text: "system prompt", type: "text", cache_control: { type: "ephemeral" } }])
+        })
+
+        it("omits the attribution block when the toggle is explicitly off", async () => {
+            const system = await runWithProfileConfig({ claudeCodeIdentity: { enabled: false } })
+
+            expect(system).to.deep.equal([{ text: "system prompt", type: "text", cache_control: { type: "ephemeral" } }])
+        })
+
+        it("prepends the attribution block when the toggle is on", async () => {
+            const system = await runWithProfileConfig({
+                claudeCodeIdentity: { enabled: true, clientVersionOverride: "2.1.280" },
+            })
+
+            expect(system).to.have.length(2)
+            expect(system[0]?.type).to.equal("text")
+            expect(system[0]?.text).to.match(
+                /^x-anthropic-billing-header: cc_version=2\.1\.280\.[0-9a-f]{3}; cc_entrypoint=cli;$/,
+            )
+            // The cache breakpoint must stay on the system prompt, so the block
+            // itself carries no cache_control.
+            expect(system[0]).to.not.have.property("cache_control")
+            expect(system[1]).to.deep.equal({ text: "system prompt", type: "text", cache_control: { type: "ephemeral" } })
+        })
+
+        it("applies the entrypoint override", async () => {
+            const system = await runWithProfileConfig({
+                claudeCodeIdentity: { enabled: true, clientVersionOverride: "2.1.181", entrypointOverride: "claude-vscode" },
+            })
+
+            expect(system[0]?.text).to.contain("; cc_entrypoint=claude-vscode;")
+        })
+
+        it("prepends the attribution block on the uncached branch too", async () => {
+            // supportsPromptCache=false selects the second request-body branch,
+            // which builds its own system array.
+            const system = await runWithProfileConfig({
+                capabilities: { supportsPromptCache: false },
+                claudeCodeIdentity: { enabled: true, clientVersionOverride: "2.1.280" },
+            })
+
+            expect(system).to.have.length(2)
+            expect(system[0]?.text).to.contain(BILLING_PREFIX)
+            expect(system[1]).to.deep.equal({ text: "system prompt", type: "text" })
+        })
+
+        it("keeps the uncached branch unchanged when the toggle is off", async () => {
+            const system = await runWithProfileConfig({ capabilities: { supportsPromptCache: false } })
+
+            expect(system).to.deep.equal([{ text: "system prompt", type: "text" }])
+        })
+
+        it("sends no request options at all when the toggle is off", async () => {
+            // Not merely "no identity header": the whole options argument stays
+            // absent, so a disabled toggle leaves the request byte-identical to
+            // one built before this feature existed and the client default
+            // User-Agent survives.
+            await runWithProfileConfig({})
+
+            should(lastRequestOptions).equal(undefined)
+        })
+
+        it("declares the Claude Code user agent when the toggle is on", async () => {
+            await runWithProfileConfig({ claudeCodeIdentity: { enabled: true, clientVersionOverride: "2.1.280" } })
+
+            expect(lastRequestOptions?.headers?.["User-Agent"]).to.equal("claude-cli/2.1.280 (external, cli)")
+            expect(lastRequestOptions?.headers?.["X-App"]).to.equal("cli")
+            expect(lastRequestOptions?.headers?.["X-Stainless-Lang"]).to.equal("js")
+        })
+
+        it("keeps the user agent version identical to the attribution cc_version", async () => {
+            // Upstream compares the two; sub2api rewrites the block to match the
+            // user agent precisely because a mismatch marks a third-party client.
+            const system = await runWithProfileConfig({
+                claudeCodeIdentity: { enabled: true, clientVersionOverride: "2.1.280" },
+            })
+
+            const declaredVersion = /^claude-cli\/(\d+\.\d+\.\d+) /.exec(lastRequestOptions?.headers?.["User-Agent"] ?? "")?.[1]
+            const attributedVersion = /cc_version=(\d+\.\d+\.\d+)\./.exec(system[0]?.text ?? "")?.[1]
+            expect(declaredVersion).to.equal("2.1.280")
+            expect(attributedVersion).to.equal(declaredVersion)
+        })
+
+        it("sends the fingerprint headers as one coherent client identity", async () => {
+            // Upstream rejects a partial identity, so the headers ship together
+            // or not at all.
+            await runWithProfileConfig({ claudeCodeIdentity: { enabled: true, clientVersionOverride: "2.1.280" } })
+
+            should(lastRequestOptions?.headers).deepEqual({
+                "User-Agent": "claude-cli/2.1.280 (external, cli)",
+                ...CLAUDE_CODE_FINGERPRINT_HEADERS,
+            })
+            // Captured together from one Claude Code release, so a bare CLI bump
+            // that leaves the SDK version behind is itself a detectable mismatch.
+            expect(lastRequestOptions?.headers?.["X-Stainless-Package-Version"]).to.equal(CLAUDE_CODE_SDK_VERSION)
+        })
+    })
 })

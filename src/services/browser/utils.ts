@@ -6,20 +6,20 @@ import { launch } from "puppeteer-core"
 import { getDlinePuppeteerDir } from "@/core/storage/disk"
 
 interface PCRStats {
-	puppeteer: { launch: typeof launch }
-	executablePath: string
+    puppeteer: { launch: typeof launch }
+    executablePath: string
 }
 
 export async function ensureChromiumExists(): Promise<PCRStats> {
-	const puppeteerDir = getDlinePuppeteerDir()
-	const dirExists = await fileExistsAtPath(puppeteerDir)
-	if (!dirExists) {
-		await fs.mkdir(puppeteerDir, { recursive: true })
-	}
-	// if chromium doesn't exist, this will download it to path.join(puppeteerDir, ".chromium-browser-snapshots")
-	// if it does exist it will return the path to existing chromium
-	const stats: PCRStats = await PCR({
-		downloadPath: puppeteerDir,
-	})
-	return stats
+    const puppeteerDir = getDlinePuppeteerDir()
+    const dirExists = await fileExistsAtPath(puppeteerDir)
+    if (!dirExists) {
+        await fs.mkdir(puppeteerDir, { recursive: true })
+    }
+    // if chromium doesn't exist, this will download it to path.join(puppeteerDir, ".chromium-browser-snapshots")
+    // if it does exist it will return the path to existing chromium
+    const stats: PCRStats = await PCR({
+        downloadPath: puppeteerDir,
+    })
+    return stats
 }

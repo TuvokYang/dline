@@ -1,25 +1,26 @@
 # Security Policy
 
+This repository policy is the authority for reporting Dline vulnerabilities. The [documentation security page](https://docs.dline.cc/security/) provides the same workflow with additional reporting guidance.
+
 ## Supported Versions
 
-We actively patch only the most recent minor release of Dline. Older versions receive fixes at our discretion.
+Identify the affected version or commit in every report. Maintainers assess affected versions and remediation based on impact and feasibility; this policy does not promise a response or release timeline.
 
-## Reporting a Vulnerability
+## Report a Vulnerability Privately
 
-We appreciate your efforts to responsibly disclose your findings and will make every effort to acknowledge your contributions.
+Do not open a public issue for a suspected vulnerability.
 
-To report a security issue, please submit your report through our [Bugcrowd Vulnerability Disclosure Program](https://bugcrowd.com/engagements/clinebot-vdp-ess). Bugcrowd will manage communication and triage on our behalf.
+Submit a report through [GitHub Private Vulnerability Reporting](https://github.com/TuvokYang/dline/security/advisories/new). The report is not opened as a public issue.
 
-When reporting, please include:
+Dline does not currently publish a security-reporting email address. If the private form is temporarily unavailable, do not disclose vulnerability details through a public channel or send them to an unverified address.
 
-- A short summary of the issue
-- Steps to reproduce or a proof of concept
-- Any logs, stack traces, or screenshots that might help us understand the problem
+Include the affected version, impact, reproduction steps or proof of concept, and any relevant logs or screenshots. Remove API keys, access tokens, private source code, prompts, and user data unless they are essential to the report and you have agreed on a secure transfer method with the maintainers.
 
-Please keep the details private until a resolution has been reached.
+The vulnerability form is only for security reports. Dline does not currently publish a dedicated private channel for privacy requests; see the [Dline Privacy Policy](https://docs.dline.cc/privacy/) for the controls and current limitation.
 
-## Escalation
 
-If you are unable to submit through Bugcrowd, you may send an email to security@dline.bot.
+## Disclosure and Response
 
-Thank you for helping us keep Dline users safe.
+Please keep vulnerability details private until the maintainers have investigated and coordinated any fix or disclosure. Maintainers use the private report to assess severity, affected versions, and remediation options; no acknowledgement or resolution time is guaranteed.
+
+Thank you for helping protect Dline users.

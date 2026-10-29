@@ -9,7 +9,7 @@ import { Controller } from ".."
  * @returns Empty response
  */
 export async function refreshRemoteConfig(controller: Controller, _: EmptyRequest): Promise<Empty> {
-	await fetchRemoteConfig(controller)
+    await fetchRemoteConfig(controller)
 
-	return Empty.create()
+    return Empty.create()
 }

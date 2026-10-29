@@ -10,7 +10,7 @@
  * 3. Add the indicator to the Virtuoso Footer component
  */
 
-import { ClineMessage } from "@shared/ExtensionMessage"
+import { UiMessage } from "@shared/ExtensionMessage"
 import { useEffect, useRef, useState } from "react"
 
 // Idle timeout in milliseconds before showing indicator
@@ -20,97 +20,97 @@ const IDLE_TIMEOUT_MS = 3000
  * Hook that detects when the DOM has been idle for IDLE_TIMEOUT_MS
  * Uses MutationObserver to track actual content changes
  */
-export function useIdleIndicator(scrollContainerRef: React.RefObject<HTMLDivElement>, clineMessages: ClineMessage[]): boolean {
-	const [showIdleIndicator, setShowIdleIndicator] = useState(false)
-	const idleTimerRef = useRef<NodeJS.Timeout | null>(null)
-	const timerStartTimeRef = useRef<number | null>(null)
+export function useIdleIndicator(scrollContainerRef: React.RefObject<HTMLDivElement>, clineMessages: UiMessage[]): boolean {
+    const [showIdleIndicator, setShowIdleIndicator] = useState(false)
+    const idleTimerRef = useRef<NodeJS.Timeout | null>(null)
+    const timerStartTimeRef = useRef<number | null>(null)
 
-	useEffect(() => {
-		const container = scrollContainerRef.current
-		if (!container) {
-			return
-		}
+    useEffect(() => {
+        const container = scrollContainerRef.current
+        if (!container) {
+            return
+        }
 
-		// Check if task is complete
-		const isTaskComplete = clineMessages.some(
-			(msg) => msg.ask === "completion_result" || msg.say === "completion_result" || msg.ask === "make_plan",
-		)
+        // Check if task is complete
+        const isTaskComplete = clineMessages.some(
+            (msg) => msg.ask === "completion_result" || msg.say === "completion_result" || msg.ask === "make_plan",
+        )
 
-		if (isTaskComplete) {
-			// Don't show indicator if task is complete
-			setShowIdleIndicator(false)
-			timerStartTimeRef.current = null
-			return
-		}
+        if (isTaskComplete) {
+            // Don't show indicator if task is complete
+            setShowIdleIndicator(false)
+            timerStartTimeRef.current = null
+            return
+        }
 
-		console.log("[IdleIndicator] Setting up MutationObserver")
+        console.log("[IdleIndicator] Setting up MutationObserver")
 
-		const resetIdleTimer = () => {
-			// Clear existing timer
-			if (idleTimerRef.current) {
-				clearTimeout(idleTimerRef.current)
-			}
+        const resetIdleTimer = () => {
+            // Clear existing timer
+            if (idleTimerRef.current) {
+                clearTimeout(idleTimerRef.current)
+            }
 
-			// Hide indicator immediately when new content arrives
-			setShowIdleIndicator(false)
+            // Hide indicator immediately when new content arrives
+            setShowIdleIndicator(false)
 
-			// Record start time if this is the first mutation
-			if (!timerStartTimeRef.current) {
-				timerStartTimeRef.current = Date.now()
-			}
+            // Record start time if this is the first mutation
+            if (!timerStartTimeRef.current) {
+                timerStartTimeRef.current = Date.now()
+            }
 
-			// Calculate elapsed and remaining time
-			const elapsed = Date.now() - timerStartTimeRef.current
-			const remaining = Math.max(0, IDLE_TIMEOUT_MS - elapsed)
+            // Calculate elapsed and remaining time
+            const elapsed = Date.now() - timerStartTimeRef.current
+            const remaining = Math.max(0, IDLE_TIMEOUT_MS - elapsed)
 
-			console.log(
-				`[IdleIndicator] DOM mutation detected, restarting timer. Elapsed: ${elapsed}ms, Remaining: ${remaining}ms`,
-			)
+            console.log(
+                `[IdleIndicator] DOM mutation detected, restarting timer. Elapsed: ${elapsed}ms, Remaining: ${remaining}ms`,
+            )
 
-			// Start new timer for remaining duration
-			idleTimerRef.current = setTimeout(() => {
-				console.log("[IdleIndicator] DOM idle for 3s, showing indicator")
-				setShowIdleIndicator(true)
-			}, remaining)
-		}
+            // Start new timer for remaining duration
+            idleTimerRef.current = setTimeout(() => {
+                console.log("[IdleIndicator] DOM idle for 3s, showing indicator")
+                setShowIdleIndicator(true)
+            }, remaining)
+        }
 
-		// Observe changes to the chat container
-		const observer = new MutationObserver((mutations) => {
-			// Only reset timer if there are actual content changes
-			const hasContentChange = mutations.some((mutation) => {
-				return (
-					mutation.type === "childList" ||
-					mutation.type === "characterData" ||
-					(mutation.type === "attributes" && mutation.attributeName !== "style")
-				)
-			})
+        // Observe changes to the chat container
+        const observer = new MutationObserver((mutations) => {
+            // Only reset timer if there are actual content changes
+            const hasContentChange = mutations.some((mutation) => {
+                return (
+                    mutation.type === "childList" ||
+                    mutation.type === "characterData" ||
+                    (mutation.type === "attributes" && mutation.attributeName !== "style")
+                )
+            })
 
-			if (hasContentChange) {
-				resetIdleTimer()
-			}
-		})
+            if (hasContentChange) {
+                resetIdleTimer()
+            }
+        })
 
-		observer.observe(container, {
-			childList: true,
-			subtree: true,
-			characterData: true,
-			attributes: true,
-		})
+        observer.observe(container, {
+            childList: true,
+            subtree: true,
+            characterData: true,
+            attributes: true,
+        })
 
-		// Start initial timer
-		resetIdleTimer()
+        // Start initial timer
+        resetIdleTimer()
 
-		return () => {
-			console.log("[IdleIndicator] Cleaning up MutationObserver")
-			observer.disconnect()
-			if (idleTimerRef.current) {
-				clearTimeout(idleTimerRef.current)
-			}
-			timerStartTimeRef.current = null
-		}
-	}, [scrollContainerRef, clineMessages])
+        return () => {
+            console.log("[IdleIndicator] Cleaning up MutationObserver")
+            observer.disconnect()
+            if (idleTimerRef.current) {
+                clearTimeout(idleTimerRef.current)
+            }
+            timerStartTimeRef.current = null
+        }
+    }, [scrollContainerRef, clineMessages])
 
-	return showIdleIndicator
+    return showIdleIndicator
 }
 
 /**

@@ -14,41 +14,40 @@ import { sendChatButtonClickedEvent } from "../ui/subscribeToChatButtonClicked"
  * @returns An empty response
  */
 export async function resetState(controller: Controller, request: ResetStateRequest): Promise<Empty> {
-	try {
-		if (request.global) {
-			HostProvider.window.showMessage({
-				type: ShowMessageType.INFORMATION,
-				message: "Resetting global state...",
-			})
-			await resetGlobalState()
-		} else {
-			HostProvider.window.showMessage({
-				type: ShowMessageType.INFORMATION,
-				message: "Resetting workspace state...",
-			})
-			await resetWorkspaceState()
-		}
+    try {
+        // Closed through the controller's lifecycle lane, which also stops the lock
+        // heartbeat, releases the task lock and clears the task's settings; disposing
+        // the session directly left the lock held until this window closed.
+        await controller.clearTask({ suppressPostState: true, closeReason: "state_reset" })
+        if (request.global) {
+            HostProvider.window.showMessage({
+                type: ShowMessageType.INFORMATION,
+                message: "Resetting global state...",
+            })
+            await resetGlobalState()
+        } else {
+            HostProvider.window.showMessage({
+                type: ShowMessageType.INFORMATION,
+                message: "Resetting workspace state...",
+            })
+            await resetWorkspaceState()
+        }
 
-		if (controller.task) {
-			controller.task.terminate()
-			controller.task = undefined
-		}
+        HostProvider.window.showMessage({
+            type: ShowMessageType.INFORMATION,
+            message: "State reset",
+        })
+        await controller.postStateToWebview()
 
-		HostProvider.window.showMessage({
-			type: ShowMessageType.INFORMATION,
-			message: "State reset",
-		})
-		await controller.postStateToWebview()
+        await sendChatButtonClickedEvent(controller)
 
-		await sendChatButtonClickedEvent(controller)
-
-		return Empty.create()
-	} catch (error) {
-		Logger.error("Error resetting state:", error)
-		HostProvider.window.showMessage({
-			type: ShowMessageType.ERROR,
-			message: `Failed to reset state: ${error instanceof Error ? error.message : String(error)}`,
-		})
-		throw error
-	}
+        return Empty.create()
+    } catch (error) {
+        Logger.error("Error resetting state:", error)
+        HostProvider.window.showMessage({
+            type: ShowMessageType.ERROR,
+            message: `Failed to reset state: ${error instanceof Error ? error.message : String(error)}`,
+        })
+        throw error
+    }
 }

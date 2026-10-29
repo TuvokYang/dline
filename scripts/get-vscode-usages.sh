@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -eu
 
-FILES=$(git ls-files src|grep -v test|grep -v vscode|grep -v extension.ts|grep -v evals|grep -v standalone|grep -v /dev/)
+FILES=$(git ls-files src|grep -v test|grep -v vscode|grep -v extension.ts|grep -v standalone|grep -v /dev/)
 DEST_DIR=dist-standalone
 SDK_DEST=$DEST_DIR/vscode-sdk-uses.txt
 CSS_DEST=$DEST_DIR/vscode-css-uses.txt

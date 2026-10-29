@@ -1,221 +1,326 @@
-import type { ProviderAttemptObserver } from "@shared/provider-attempt-observer"
+import {
+    bindProviderAttemptScope,
+    observeProviderCall,
+    type ProviderAttemptIdentity,
+    type ProviderAttemptObserver,
+    type ProviderTelemetryRole,
+    providerTelemetryRoleForSubagent,
+    withProviderAttemptIdentity,
+} from "@shared/provider-attempt-observer"
 import { describe, expect, it, vi } from "vitest"
-import { BlockPhase } from "../BlockPhaseMachine"
-import { Task } from "../index"
+import type { BlockPhase } from "../kernel"
+import type { ApiRequestRoundScopeInput } from "../performance/api-request-round-lifecycle"
+import type { ApiRequestRoundHandle } from "../performance/api-request-round-tracker"
 import type { ApiRequestRoundUsage } from "../performance/api-request-round-types"
 import type { ProviderRequestRoundAdmission } from "../performance/provider-request-round-port"
-import { TaskPhase } from "../TaskPhase"
+import { TaskProviderRequestRoundOwner } from "../performance/TaskProviderRequestRoundOwner"
+import type { UsageToolCall } from "../telemetry/UsageToolCalls"
 
 interface ProviderExecutionBlock {
-	readonly dlineTid: string
-	readonly phase: BlockPhase
+    readonly blockId: string
+    readonly phase: BlockPhase
+    readonly invocationRef?: string
 }
 
-interface ProviderExecutionHarness {
-	readonly activeProviderExecutionTurns: Map<
-		ProviderRequestRoundAdmission,
-		{ turnId: string; toolCount: number; turnEndInteractionIds: readonly string[] }
-	>
-	readonly turnEndProviderExecutions: Map<
-		string,
-		{ turnId: string; toolCount: number; admission: ProviderRequestRoundAdmission }
-	>
-	readonly taskController: { getBlocks(): readonly ProviderExecutionBlock[] }
-	readonly taskRuntime: {
-		getState(): {
-			phase: TaskPhase
-			turn?: { turnId: string; blocks: readonly ProviderExecutionBlock[] }
-		}
-	}
-	readonly taskState: { abort: boolean }
+function attemptHandle(input: ApiRequestRoundScopeInput, providerAttempt = 0): ApiRequestRoundHandle {
+    return {
+        roundId: `${input.logicalRequestId}:provider:${providerAttempt}`,
+        logicalRequestId: input.logicalRequestId,
+        apiIndex: input.apiIndex,
+        taskAttempt: input.taskAttempt,
+        providerAttempt,
+        role: input.role ?? "task",
+        policyGeneration: input.policyGeneration ?? 0,
+        startedAtMs: 1,
+        startedMonotonicMs: 1,
+    }
 }
 
-interface RoundAdmissionHarness {
-	readonly ordinaryProviderRequestRounds: Map<number, ProviderRequestRoundAdmission>
-	readonly apiRequestRoundLifecycle: {
-		createObserver(input: { logicalRequestId: string; apiIndex: number; taskAttempt: number }): ProviderAttemptObserver
-		attachExactUsage(logicalRequestId: string, usage: ApiRequestRoundUsage): void
-	}
-	nextAuxiliaryProviderRoundApiIndex: number
+async function drain(stream: AsyncIterable<unknown>): Promise<void> {
+    for await (const _ of stream) {
+        // Drain the observed send.
+    }
 }
 
-const admitOrdinaryProviderRequestRound = Reflect.get(Task.prototype, "admitOrdinaryProviderRequestRound") as (
-	this: RoundAdmissionHarness,
-	apiIndex: number,
-	taskAttempt: number,
-) => ProviderRequestRoundAdmission
+async function* observedSend(): AsyncGenerator<never> {
+    await observeProviderCall(async () => undefined)
+}
 
-const completeProviderExecutionTurn = Reflect.get(Task.prototype, "completeProviderExecutionTurn") as (
-	this: ProviderExecutionHarness,
-	admission?: ProviderRequestRoundAdmission,
-) => void
-
-const completeProviderExecutionAtAwaitingUser = Reflect.get(Task.prototype, "completeProviderExecutionAtAwaitingUser") as (
-	this: ProviderExecutionHarness,
-	turnId: string,
-	interactionId: string,
-) => void
+async function* identifiedSend(identity: ProviderAttemptIdentity): AsyncGenerator<never> {
+    await withProviderAttemptIdentity(identity, () => observeProviderCall(async () => undefined))
+}
 
 function createAdmission(): ProviderRequestRoundAdmission {
-	return {
-		bindAttempt: (stream) => stream,
-		attachExactUsage: vi.fn(),
-		completeProviderOnly: vi.fn(),
-		completeTools: vi.fn(),
-		completeTurnEndAwaitingUser: vi.fn(),
-	}
+    return {
+        createAttemptObserver: () => ({ beginAttempt: () => undefined, finishAttempt: () => undefined }),
+        attachExactUsage: vi.fn(),
+        completeProviderOnly: vi.fn(),
+        completeTools: vi.fn(),
+        completeTurnEndAwaitingUser: vi.fn(),
+    }
 }
 
-function createProviderExecutionHarness(
-	blocks: readonly ProviderExecutionBlock[],
-	options: { readonly abort?: boolean; readonly phase?: TaskPhase; readonly turnId?: string } = {},
-): ProviderExecutionHarness {
-	const turnId = options.turnId ?? "turn:parallel"
-	return Object.assign(Object.create(Task.prototype), {
-		activeProviderExecutionTurns: new Map(),
-		turnEndProviderExecutions: new Map(),
-		taskController: { getBlocks: () => blocks },
-		taskRuntime: {
-			getState: () => ({ phase: options.phase ?? TaskPhase.BETWEEN_TURNS, turn: { turnId, blocks } }),
-		},
-		taskState: { abort: options.abort ?? false },
-	}) as ProviderExecutionHarness
+function createOwner(
+    blocks: readonly ProviderExecutionBlock[] = [],
+    options: {
+        readonly cancelling?: boolean
+        readonly resolveExecutionToolCalls?: () => Promise<readonly UsageToolCall[]>
+    } = {},
+): TaskProviderRequestRoundOwner {
+    return new TaskProviderRequestRoundOwner({
+        lifecycle: {
+            createObserver: vi.fn((input) => ({
+                beginAttempt: () => attemptHandle(input),
+                finishAttempt: () => undefined,
+            })),
+            attachExactUsage: vi.fn(),
+            finalizeTokens: vi.fn(),
+            completeProviderOnly: vi.fn(),
+            completeTools: vi.fn(),
+            completeTurnEndAwaitingUser: vi.fn(),
+        },
+        readExecutionBlocks: () => blocks,
+        isExecutionCancelling: () => options.cancelling ?? false,
+        resolveExecutionToolCalls: options.resolveExecutionToolCalls,
+    })
 }
 
 describe("Task Provider request round admission", () => {
-	it("creates a new logical request for task attempt zero and reuses it only for recursive retries", () => {
-		const observedScopes: Array<{ logicalRequestId: string; apiIndex: number; taskAttempt: number }> = []
-		const attachedUsage: Array<{ logicalRequestId: string; usage: ApiRequestRoundUsage }> = []
-		const observer: ProviderAttemptObserver<number> = {
-			beginAttempt: () => 1,
-			finishAttempt: () => undefined,
-		}
-		const harness = Object.assign(Object.create(Task.prototype), {
-			ordinaryProviderRequestRounds: new Map<number, ProviderRequestRoundAdmission>(),
-			nextAuxiliaryProviderRoundApiIndex: 0,
-			apiRequestRoundLifecycle: {
-				createObserver: vi.fn((input) => {
-					observedScopes.push(input)
-					return observer
-				}),
-				attachExactUsage: vi.fn((logicalRequestId, usage) => {
-					attachedUsage.push({ logicalRequestId, usage })
-				}),
-			},
-		}) as RoundAdmissionHarness
-		const emptyStream = (async function* () {})()
+    it("creates a new logical request for task attempt zero and attaches usage by its exact terminal handle", async () => {
+        const observedScopes: ApiRequestRoundScopeInput[] = []
+        const attachedUsage: Array<{ handle: ApiRequestRoundHandle; usage: ApiRequestRoundUsage }> = []
+        const finalizedHandles: ApiRequestRoundHandle[] = []
+        let providerAttempt = 0
+        const owner = new TaskProviderRequestRoundOwner({
+            lifecycle: {
+                createObserver: vi.fn((input) => {
+                    observedScopes.push(input)
+                    const observer: ProviderAttemptObserver<ApiRequestRoundHandle> = {
+                        beginAttempt: () => attemptHandle(input, providerAttempt++),
+                        finishAttempt: () => undefined,
+                    }
+                    return observer
+                }),
+                attachExactUsage: vi.fn((handle, usage) => {
+                    attachedUsage.push({ handle, usage })
+                }),
+                finalizeTokens: vi.fn((handle) => {
+                    finalizedHandles.push(handle)
+                }),
+                completeProviderOnly: vi.fn(),
+                completeTools: vi.fn(),
+                completeTurnEndAwaitingUser: vi.fn(),
+            },
+            readExecutionBlocks: () => [],
+            isExecutionCancelling: () => false,
+        })
+        const first = owner.admitOrdinary(7, 0)
+        const retry = owner.admitOrdinary(7, 1)
+        expect(retry).toBe(first)
+        await drain(bindProviderAttemptScope(observedSend(), first.createAttemptObserver(0)))
+        await drain(bindProviderAttemptScope(observedSend(), retry.createAttemptObserver(1)))
 
-		const first = admitOrdinaryProviderRequestRound.call(harness, 7, 0)
-		const retry = admitOrdinaryProviderRequestRound.call(harness, 7, 1)
-		expect(retry).toBe(first)
-		first.bindAttempt(emptyStream, 0)
-		retry.bindAttempt(emptyStream, 1)
+        const restored = owner.admitOrdinary(7, 0)
+        expect(restored).not.toBe(first)
+        await drain(bindProviderAttemptScope(observedSend(), restored.createAttemptObserver(0)))
 
-		const restored = admitOrdinaryProviderRequestRound.call(harness, 7, 0)
-		expect(restored).not.toBe(first)
-		restored.bindAttempt(emptyStream, 0)
+        const [firstScope, retryScope, restoredScope] = observedScopes
+        expect(firstScope).toMatchObject({ apiIndex: 7, taskAttempt: 0 })
+        expect(retryScope).toMatchObject({ apiIndex: 7, taskAttempt: 1 })
+        expect(retryScope?.logicalRequestId).toBe(firstScope?.logicalRequestId)
+        expect(restoredScope).toMatchObject({ apiIndex: 7, taskAttempt: 0 })
+        expect(restoredScope?.logicalRequestId).not.toBe(firstScope?.logicalRequestId)
 
-		const [firstScope, retryScope, restoredScope] = observedScopes
-		expect(firstScope).toMatchObject({ apiIndex: 7, taskAttempt: 0 })
-		expect(retryScope).toMatchObject({ apiIndex: 7, taskAttempt: 1 })
-		expect(retryScope?.logicalRequestId).toBe(firstScope?.logicalRequestId)
-		expect(restoredScope).toMatchObject({ apiIndex: 7, taskAttempt: 0 })
-		expect(restoredScope?.logicalRequestId).not.toBe(firstScope?.logicalRequestId)
+        const usage: ApiRequestRoundUsage = {
+            inputTokens: 100,
+            outputTokens: 20,
+            cacheReadTokens: 0,
+            cacheUsageReported: true,
+        }
+        owner.attachOrdinaryExactUsage(7, usage)
+        expect(attachedUsage).toEqual([
+            { handle: expect.objectContaining({ logicalRequestId: restoredScope?.logicalRequestId }), usage },
+        ])
+        // The wrapper's single accumulated usage also closes that same send's finalization window.
+        expect(finalizedHandles).toEqual([attachedUsage[0]?.handle])
+    })
 
-		const usage: ApiRequestRoundUsage = {
-			inputTokens: 100,
-			outputTokens: 20,
-			cacheReadTokens: 0,
-			cacheUsageReported: true,
-		}
-		harness.ordinaryProviderRequestRounds.get(7)?.attachExactUsage(usage)
-		expect(attachedUsage).toEqual([{ logicalRequestId: restoredScope?.logicalRequestId, usage }])
-	})
+    it("freezes the contract model identity from the Profile selection mode and never forwards the raw wire model", async () => {
+        const observedIdentities: Array<ProviderAttemptIdentity | undefined> = []
+        const owner = new TaskProviderRequestRoundOwner({
+            lifecycle: {
+                createObserver: vi.fn((input) => ({
+                    beginAttempt: (identity: ProviderAttemptIdentity | undefined) => {
+                        observedIdentities.push(identity)
+                        return attemptHandle(input)
+                    },
+                    finishAttempt: () => undefined,
+                })),
+                attachExactUsage: vi.fn(),
+                finalizeTokens: vi.fn(),
+                completeProviderOnly: vi.fn(),
+                completeTools: vi.fn(),
+                completeTurnEndAwaitingUser: vi.fn(),
+            },
+            readExecutionBlocks: () => [],
+            isExecutionCancelling: () => false,
+        })
+        const sends: ProviderAttemptIdentity[] = [
+            { provider: "openai", modelId: "GPT-4o", thinking: "level:high" },
+            { provider: "openai", modelId: "Secret Tuned/Model", thinking: "state:default", customModel: true },
+            { provider: "ollama", modelId: "C:\\models\\llama.gguf", thinking: "state:off", customModel: true },
+        ]
 
-	it("completes a Provider-only execution when no tool turn was registered", () => {
-		const admission = createAdmission()
-		const harness = createProviderExecutionHarness([])
+        const admission = owner.admit({ source: "task" })
+        for (const [index, identity] of sends.entries()) {
+            await drain(bindProviderAttemptScope(identifiedSend(identity), admission.createAttemptObserver(index)))
+        }
 
-		completeProviderExecutionTurn.call(harness, admission)
+        expect(observedIdentities.map((identity) => identity?.modelId)).toEqual([
+            "catalog:gpt-4o",
+            "custom:secret_tuned/model",
+            "state:private",
+        ])
+        expect(observedIdentities.map((identity) => identity?.thinking)).toEqual(["level:high", "state:default", "state:off"])
+        expect(observedIdentities.some((identity) => identity?.modelId.includes("llama.gguf"))).toBe(false)
+    })
 
-		expect(admission.completeProviderOnly).toHaveBeenCalledOnce()
-		expect(admission.completeTools).not.toHaveBeenCalled()
-	})
+    it("passes the frozen five-role catalog into every attempt scope and recognizes reviewer subagents", () => {
+        const observedRoles: string[] = []
+        const owner = new TaskProviderRequestRoundOwner({
+            lifecycle: {
+                createObserver: vi.fn((input) => {
+                    observedRoles.push(input.role ?? "missing")
+                    return { beginAttempt: () => attemptHandle(input), finishAttempt: () => undefined }
+                }),
+                attachExactUsage: vi.fn(),
+                finalizeTokens: vi.fn(),
+                completeProviderOnly: vi.fn(),
+                completeTools: vi.fn(),
+                completeTurnEndAwaitingUser: vi.fn(),
+            },
+            readExecutionBlocks: () => [],
+            isExecutionCancelling: () => false,
+        })
+        const sources: ProviderTelemetryRole[] = ["task", "subagent", "compaction", "reviewer", "other"]
 
-	it("summarizes every terminal block in an all-settled parallel tool turn", () => {
-		const admission = createAdmission()
-		const blocks = [
-			{ dlineTid: "completed", phase: BlockPhase.COMPLETED },
-			{ dlineTid: "failed", phase: BlockPhase.REJECTED },
-			{ dlineTid: "skipped", phase: BlockPhase.SKIPPED },
-			{ dlineTid: "cancelled", phase: BlockPhase.CANCELLED },
-		]
-		const harness = createProviderExecutionHarness(blocks)
-		harness.activeProviderExecutionTurns.set(admission, {
-			turnId: "turn:parallel",
-			toolCount: 4,
-			turnEndInteractionIds: [],
-		})
+        for (const source of sources) owner.admit({ source }).createAttemptObserver(0)
 
-		completeProviderExecutionTurn.call(harness, admission)
+        expect(observedRoles).toEqual(sources)
+        expect(providerTelemetryRoleForSubagent("reviewer-opus")).toBe("reviewer")
+        expect(providerTelemetryRoleForSubagent("code_reviewer")).toBe("reviewer")
+        expect(providerTelemetryRoleForSubagent("web-researcher")).toBe("subagent")
+    })
 
-		expect(admission.completeTools).toHaveBeenCalledWith({
-			toolCount: 4,
-			completedToolCount: 1,
-			failedToolCount: 1,
-			cancelledToolCount: 2,
-		})
-		expect(harness.activeProviderExecutionTurns.has(admission)).toBe(false)
-	})
+    it("completes a Provider-only execution when no tool turn was registered", () => {
+        const admission = createAdmission()
+        const owner = createOwner()
 
-	it("leaves Task-aborted executions for lifecycle abort instead of writing tools-settled", () => {
-		const admission = createAdmission()
-		const harness = createProviderExecutionHarness([{ dlineTid: "tool", phase: BlockPhase.EXECUTING }], {
-			abort: true,
-		})
-		harness.activeProviderExecutionTurns.set(admission, {
-			turnId: "turn:parallel",
-			toolCount: 1,
-			turnEndInteractionIds: ["interaction-1"],
-		})
-		harness.turnEndProviderExecutions.set("interaction-1", {
-			turnId: "turn:parallel",
-			toolCount: 1,
-			admission,
-		})
+        owner.completeTurn(admission)
 
-		completeProviderExecutionTurn.call(harness, admission)
+        expect(admission.completeProviderOnly).toHaveBeenCalledOnce()
+        expect(admission.completeTools).not.toHaveBeenCalled()
+    })
 
-		expect(admission.completeProviderOnly).not.toHaveBeenCalled()
-		expect(admission.completeTools).not.toHaveBeenCalled()
-		expect(harness.activeProviderExecutionTurns.has(admission)).toBe(false)
-		expect(harness.turnEndProviderExecutions.has("interaction-1")).toBe(false)
-	})
+    it("summarizes every terminal block in an all-settled parallel tool turn", () => {
+        const admission = createAdmission()
+        const owner = createOwner([
+            { blockId: "completed", phase: "completed" },
+            { blockId: "failed", phase: "rejected" },
+            { blockId: "skipped", phase: "skipped" },
+            { blockId: "cancelled", phase: "cancelled" },
+        ])
+        owner.registerExecution(admission, {
+            turnId: "turn:parallel",
+            toolCount: 4,
+            turnEndInteractions: [],
+        })
 
-	it("terminals TURN-END at the durable awaiting-user boundary without counting later user wait", () => {
-		const admission = createAdmission()
-		const blocks = [
-			{ dlineTid: "regular", phase: BlockPhase.COMPLETED },
-			{ dlineTid: "interaction-1", phase: BlockPhase.AWAITING_APPROVAL },
-			{ dlineTid: "later", phase: BlockPhase.STREAMING },
-		]
-		const harness = createProviderExecutionHarness(blocks, { turnId: "turn:turn-end" })
-		harness.turnEndProviderExecutions.set("interaction-1", {
-			turnId: "turn:turn-end",
-			toolCount: 3,
-			admission,
-		})
+        owner.completeTurn(admission)
 
-		completeProviderExecutionAtAwaitingUser.call(harness, "turn:turn-end", "interaction-1")
-		completeProviderExecutionAtAwaitingUser.call(harness, "turn:turn-end", "interaction-1")
+        expect(admission.completeTools).toHaveBeenCalledWith({
+            toolCount: 4,
+            completedToolCount: 1,
+            failedToolCount: 1,
+            cancelledToolCount: 2,
+        })
+    })
 
-		expect(admission.completeTurnEndAwaitingUser).toHaveBeenCalledOnce()
-		expect(admission.completeTurnEndAwaitingUser).toHaveBeenCalledWith({
-			toolCount: 3,
-			completedToolCount: 2,
-			failedToolCount: 0,
-			cancelledToolCount: 1,
-		})
-		expect(harness.turnEndProviderExecutions.has("interaction-1")).toBe(false)
-	})
+    it("waits for name-safe tool resolution and forwards one call per settled block", async () => {
+        const admission = createAdmission()
+        const toolCalls: readonly UsageToolCall[] = [
+            { outcome: "completed", toolName: "read_file" },
+            { outcome: "failed", toolName: "execute_command" },
+            { outcome: "cancelled" },
+        ]
+        const owner = createOwner(
+            [
+                { blockId: "read", phase: "completed", invocationRef: "invocation:read" },
+                { blockId: "exec", phase: "failed", invocationRef: "invocation:exec" },
+                { blockId: "pending", phase: "pending", invocationRef: "invocation:private" },
+            ],
+            { resolveExecutionToolCalls: async () => toolCalls },
+        )
+        owner.registerExecution(admission, {
+            turnId: "turn:named-tools",
+            toolCount: 3,
+            turnEndInteractions: [],
+        })
+
+        owner.completeTurn(admission)
+        expect(admission.completeTools).not.toHaveBeenCalled()
+        await owner.waitForCompletions()
+
+        expect(admission.completeTools).toHaveBeenCalledWith(
+            {
+                toolCount: 3,
+                completedToolCount: 1,
+                failedToolCount: 1,
+                cancelledToolCount: 1,
+            },
+            toolCalls,
+        )
+    })
+
+    it("leaves Task-aborted executions for lifecycle abort instead of writing tools-settled", () => {
+        const admission = createAdmission()
+        const owner = createOwner([{ blockId: "tool", phase: "executing" }], { cancelling: true })
+        owner.registerExecution(admission, {
+            turnId: "turn:parallel",
+            toolCount: 1,
+            turnEndInteractions: [{ interactionId: "interaction-1", blockId: "tool" }],
+        })
+
+        owner.completeTurn(admission)
+        owner.completeAtAwaitingUser("turn:parallel", "interaction-1")
+
+        expect(admission.completeProviderOnly).not.toHaveBeenCalled()
+        expect(admission.completeTools).not.toHaveBeenCalled()
+        expect(admission.completeTurnEndAwaitingUser).not.toHaveBeenCalled()
+    })
+
+    it("terminals TURN-END at the durable awaiting-user boundary without counting later user wait", () => {
+        const admission = createAdmission()
+        const owner = createOwner([
+            { blockId: "regular", phase: "completed" },
+            { blockId: "turn-end", phase: "awaiting_approval" },
+            { blockId: "later", phase: "pending" },
+        ])
+        owner.registerExecution(admission, {
+            turnId: "turn:turn-end",
+            toolCount: 3,
+            turnEndInteractions: [{ interactionId: "interaction-1", blockId: "turn-end" }],
+        })
+
+        owner.completeAtAwaitingUser("turn:turn-end", "interaction-1")
+        owner.completeAtAwaitingUser("turn:turn-end", "interaction-1")
+
+        expect(admission.completeTurnEndAwaitingUser).toHaveBeenCalledOnce()
+        expect(admission.completeTurnEndAwaitingUser).toHaveBeenCalledWith({
+            toolCount: 3,
+            completedToolCount: 2,
+            failedToolCount: 0,
+            cancelledToolCount: 1,
+        })
+    })
 })

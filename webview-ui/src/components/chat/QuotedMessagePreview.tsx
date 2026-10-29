@@ -64,26 +64,26 @@ const ReplyIcon = styled.span`
 `
 
 interface QuotedMessagePreviewProps {
-	text: string
-	onDismiss: () => void
-	isFocused?: boolean
+    text: string
+    onDismiss: () => void
+    isFocused?: boolean
 }
 
 const QuotedMessagePreview: React.FC<QuotedMessagePreviewProps> = ({ text, onDismiss, isFocused }) => {
-	const _cardClassName = `reply-card ${isFocused ? "reply-card--focused" : ""}`
+    const _cardClassName = `reply-card ${isFocused ? "reply-card--focused" : ""}`
 
-	return (
-		<PreviewContainer>
-			{/* Removed Label */}
-			<ContentRow>
-				<ReplyIcon className="codicon codicon-reply" />
-				<TextContainer title={text}>{text}</TextContainer>
-				<DismissButton appearance="icon" aria-label="Dismiss quote" onClick={onDismiss}>
-					<span className="codicon codicon-close" />
-				</DismissButton>
-			</ContentRow>
-		</PreviewContainer>
-	)
+    return (
+        <PreviewContainer>
+            {/* Removed Label */}
+            <ContentRow>
+                <ReplyIcon className="codicon codicon-reply" />
+                <TextContainer title={text}>{text}</TextContainer>
+                <DismissButton appearance="icon" aria-label="Dismiss quote" onClick={onDismiss}>
+                    <span className="codicon codicon-close" />
+                </DismissButton>
+            </ContentRow>
+        </PreviewContainer>
+    )
 }
 
 export default QuotedMessagePreview

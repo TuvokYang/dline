@@ -21,76 +21,76 @@ const ANTHROPIC_VERSION = "2023-06-01"
 
 /** Resolves the client version declared to upstream for a listing request. */
 export interface ClaudeCodeListingClientVersionSource {
-	resolve(signal?: AbortSignal): Promise<{ readonly version: string }>
+    resolve(signal?: AbortSignal): Promise<{ readonly version: string }>
 }
 
 export class ClaudeCodeModelSource extends AnthropicModelSource {
-	override readonly providerId = "claude-code"
-	override readonly providerName = "Claude Code"
-	override readonly billingMode = "subscription"
-	/** The listing supplements the built-in catalog, which owns aliases and pricing. */
-	override readonly reconciliation: ProviderModelReconciliationMode = "overlay-remote"
-	/** A subscription authenticates with an OAuth token rather than an API key. */
-	override readonly requiresApiKey = false
-	override readonly preferredDefaultModelId = claudeCodeDefaultModelId
+    override readonly providerId = "claude-code"
+    override readonly providerName = "Claude Code"
+    override readonly billingMode = "subscription"
+    /** The listing supplements the built-in catalog, which owns aliases and pricing. */
+    override readonly reconciliation: ProviderModelReconciliationMode = "overlay-remote"
+    /** A subscription authenticates with an OAuth token rather than an API key. */
+    override readonly requiresApiKey = false
+    override readonly preferredDefaultModelId = claudeCodeDefaultModelId
 
-	constructor(
-		private readonly sessionRegistry = getClaudeCodeProfileSessionRegistry(),
-		private readonly clientVersionSource: ClaudeCodeListingClientVersionSource = getClaudeCodeClientVersionResolver(),
-	) {
-		super()
-	}
+    constructor(
+        private readonly sessionRegistry = getClaudeCodeProfileSessionRegistry(),
+        private readonly clientVersionSource: ClaudeCodeListingClientVersionSource = getClaudeCodeClientVersionResolver(),
+    ) {
+        super()
+    }
 
-	override async fetchModels(context: ProviderRemoteContext): Promise<Record<string, ModelInfo>> {
-		const profileId = context.profileId?.trim()
-		if (!profileId) {
-			Logger.debug("[ClaudeCodeModelSource] Listing skipped: Profile identity is missing")
-			return {}
-		}
+    override async fetchModels(context: ProviderRemoteContext): Promise<Record<string, ModelInfo>> {
+        const profileId = context.profileId?.trim()
+        if (!profileId) {
+            Logger.debug("[ClaudeCodeModelSource] Listing skipped: Profile identity is missing")
+            return {}
+        }
 
-		let accessToken: string
-		try {
-			accessToken = await this.sessionRegistry.getAccessToken(profileId)
-		} catch (error) {
-			// A signed-out Profile is an expected state for a settings refresh,
-			// not a listing failure worth surfacing as an error.
-			Logger.debug(`[ClaudeCodeModelSource] Listing skipped: ${error instanceof Error ? error.message : String(error)}`)
-			return {}
-		}
+        let accessToken: string
+        try {
+            accessToken = await this.sessionRegistry.getAccessToken(profileId)
+        } catch (error) {
+            // A signed-out Profile is an expected state for a settings refresh,
+            // not a listing failure worth surfacing as an error.
+            Logger.debug(`[ClaudeCodeModelSource] Listing skipped: ${error instanceof Error ? error.message : String(error)}`)
+            return {}
+        }
 
-		const { version } = await this.clientVersionSource.resolve(context.signal)
+        const { version } = await this.clientVersionSource.resolve(context.signal)
 
-		for (let attempt = 0; attempt < 2; attempt++) {
-			try {
-				const listed = await super.fetchModels({
-					...context,
-					profileId,
-					apiKey: accessToken,
-					vendorCredentials: { clientVersion: version },
-				})
-				return offeredModelsOnly(listed)
-			} catch (error) {
-				const unauthorized = error instanceof Error && /status 401\b/.test(error.message)
-				if (!unauthorized || attempt > 0) throw error
-				// The stored token can be revoked before it expires, so one
-				// refresh separates a stale credential from a real rejection.
-				Logger.debug("[ClaudeCodeModelSource] Listing received 401; refreshing the Profile OAuth credential")
-				accessToken = (await this.sessionRegistry.forceRefresh(profileId)).access_token
-			}
-		}
-		return {}
-	}
+        for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+                const listed = await super.fetchModels({
+                    ...context,
+                    profileId,
+                    apiKey: accessToken,
+                    vendorCredentials: { clientVersion: version },
+                })
+                return offeredModelsOnly(listed)
+            } catch (error) {
+                const unauthorized = error instanceof Error && /status 401\b/.test(error.message)
+                if (!unauthorized || attempt > 0) throw error
+                // The stored token can be revoked before it expires, so one
+                // refresh separates a stale credential from a real rejection.
+                Logger.debug("[ClaudeCodeModelSource] Listing received 401; refreshing the Profile OAuth credential")
+                accessToken = (await this.sessionRegistry.forceRefresh(profileId)).access_token
+            }
+        }
+        return {}
+    }
 
-	protected override buildHeaders(context: ProviderRemoteContext): Record<string, string> {
-		const clientVersion = context.vendorCredentials?.clientVersion
-		return {
-			...(clientVersion ? buildClaudeCodeClientHeaders(clientVersion) : {}),
-			Accept: "application/json",
-			"anthropic-version": ANTHROPIC_VERSION,
-			"anthropic-beta": CLAUDE_CODE_OAUTH_BETA,
-			...(context.apiKey ? { Authorization: `Bearer ${context.apiKey}` } : {}),
-		}
-	}
+    protected override buildHeaders(context: ProviderRemoteContext): Record<string, string> {
+        const clientVersion = context.vendorCredentials?.clientVersion
+        return {
+            ...(clientVersion ? buildClaudeCodeClientHeaders(clientVersion) : {}),
+            Accept: "application/json",
+            "anthropic-version": ANTHROPIC_VERSION,
+            "anthropic-beta": CLAUDE_CODE_OAUTH_BETA,
+            ...(context.apiKey ? { Authorization: `Bearer ${context.apiKey}` } : {}),
+        }
+    }
 }
 
 /**
@@ -101,7 +101,7 @@ export class ClaudeCodeModelSource extends AnthropicModelSource {
  * refresh must not re-add them; the listing only refreshes metadata here.
  */
 function offeredModelsOnly(listed: Record<string, ModelInfo>): Record<string, ModelInfo> {
-	return Object.fromEntries(Object.entries(listed).filter(([modelId]) => modelId in claudeCodeModels))
+    return Object.fromEntries(Object.entries(listed).filter(([modelId]) => modelId in claudeCodeModels))
 }
 
 export const claudeCodeModelSource = new ClaudeCodeModelSource()

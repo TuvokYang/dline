@@ -7,7 +7,7 @@ import crypto from "crypto"
  * @returns SHA-256 hash with an explicit algorithm prefix.
  */
 export function hashPromptContent(content: string): string {
-	return `sha256:${hashPromptContentHex(content)}`
+    return `sha256:${hashPromptContentHex(content)}`
 }
 
 /**
@@ -21,5 +21,5 @@ export function hashPromptContent(content: string): string {
  * @returns 64-character lowercase SHA-256 hex digest.
  */
 export function hashPromptContentHex(content: string): string {
-	return crypto.createHash("sha256").update(content, "utf8").digest("hex")
+    return crypto.createHash("sha256").update(content, "utf8").digest("hex")
 }

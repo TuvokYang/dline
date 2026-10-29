@@ -1,0 +1,30 @@
+/* The semantic composer: a multi-line textbox whose inline chips are atoms of the draft. */
+.semantic-composer {
+    position: relative;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    overflow-y: auto;
+    outline: none;
+    cursor: text;
+}
+
+/* The hint gives way as soon as the box is focused, as a native field's placeholder does once typing starts. */
+.semantic-composer[data-empty="true"]:not(:focus)::before {
+    content: attr(data-placeholder);
+    position: absolute;
+    pointer-events: none;
+    color: var(--vscode-input-placeholderForeground);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: calc(100% - 16px);
+}
+
+.semantic-composer .mention-context-textarea-highlight {
+    border-radius: 3px;
+}
+
+.semantic-composer .composer-held-candidate {
+    text-decoration: underline dotted;
+    text-underline-offset: 3px;
+}

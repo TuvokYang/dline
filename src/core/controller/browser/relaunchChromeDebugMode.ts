@@ -9,16 +9,16 @@ import { Controller } from "../index"
  * @returns The browser relaunch result as a string message
  */
 export async function relaunchChromeDebugMode(controller: Controller, _: EmptyRequest): Promise<StringMessage> {
-	try {
-		const browserSession = new BrowserSession(controller.stateManager)
+    try {
+        const browserSession = new BrowserSession(controller.stateManager)
 
-		// Relaunch Chrome in debug mode
-		await browserSession.relaunchChromeDebugMode(controller)
+        // Relaunch Chrome in debug mode
+        await browserSession.relaunchChromeDebugMode(controller)
 
-		// The actual result will be sent via the ProtoBus in the BrowserSession.relaunchChromeDebugMode method
-		// Here we just return a message as a placeholder
-		return { value: "Chrome relaunch initiated" }
-	} catch (error) {
-		throw new Error(`Error relaunching Chrome: ${error instanceof Error ? error.message : globalThis.String(error)}`)
-	}
+        // The actual result will be sent via the ProtoBus in the BrowserSession.relaunchChromeDebugMode method
+        // Here we just return a message as a placeholder
+        return { value: "Chrome relaunch initiated" }
+    } catch (error) {
+        throw new Error(`Error relaunching Chrome: ${error instanceof Error ? error.message : globalThis.String(error)}`)
+    }
 }

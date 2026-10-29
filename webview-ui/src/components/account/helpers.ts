@@ -2,31 +2,31 @@ import type { UsageTransaction as ClineAccountUsageTransaction } from "@shared/C
 import type { UsageTransaction as ProtoUsageTransaction, UserOrganization } from "@shared/proto/dline/account"
 
 export const getMainRole = (roles?: string[]) => {
-	if (!roles) {
-		return undefined
-	}
+    if (!roles) {
+        return undefined
+    }
 
-	if (roles.includes("owner")) {
-		return "Owner"
-	}
-	if (roles.includes("admin")) {
-		return "Admin"
-	}
+    if (roles.includes("owner")) {
+        return "Owner"
+    }
+    if (roles.includes("admin")) {
+        return "Admin"
+    }
 
-	return "Member"
+    return "Member"
 }
 
 export const getClineUris = (base: string, type: "dashboard" | "credits", route?: "account" | "organization") => {
-	const dashboard = new URL("dashboard", base)
+    const dashboard = new URL("dashboard", base)
 
-	if (type === "dashboard") {
-		return dashboard
-	}
+    if (type === "dashboard") {
+        return dashboard
+    }
 
-	const credits = new URL(`/${route ?? "account"}`, dashboard)
-	credits.searchParams.set("tab", "credits")
-	credits.searchParams.set("redirect", "true")
-	return credits
+    const credits = new URL(`/${route ?? "account"}`, dashboard)
+    credits.searchParams.set("tab", "credits")
+    credits.searchParams.set("redirect", "true")
+    return credits
 }
 
 /**
@@ -34,24 +34,24 @@ export const getClineUris = (base: string, type: "dashboard" | "credits", route?
  * by adding the missing id and metadata fields
  */
 export function convertProtoUsageTransaction(protoTransaction: ProtoUsageTransaction): ClineAccountUsageTransaction {
-	return {
-		...protoTransaction,
-		id: protoTransaction.generationId, // Use generationId as the id
-		metadata: {
-			additionalProp1: "",
-			additionalProp2: "",
-			additionalProp3: "",
-		},
-	}
+    return {
+        ...protoTransaction,
+        id: protoTransaction.generationId, // Use generationId as the id
+        metadata: {
+            additionalProp1: "",
+            additionalProp2: "",
+            additionalProp3: "",
+        },
+    }
 }
 
 /**
  * Converts an array of protobuf UsageTransactions to ClineAccount UsageTransactions
  */
 export function convertProtoUsageTransactions(protoTransactions: ProtoUsageTransaction[]): ClineAccountUsageTransaction[] {
-	return protoTransactions.map(convertProtoUsageTransaction)
+    return protoTransactions.map(convertProtoUsageTransaction)
 }
 
 export const isAdminOrOwner = (activeOrg: UserOrganization): boolean => {
-	return activeOrg.roles.findIndex((role) => role === "admin" || role === "owner") > -1
+    return activeOrg.roles.findIndex((role) => role === "admin" || role === "owner") > -1
 }

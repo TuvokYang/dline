@@ -10,18 +10,18 @@ import type { Controller } from "../index"
  * @returns Empty response
  */
 export async function authenticateMcpServer(controller: Controller, request: StringRequest): Promise<Empty> {
-	try {
-		const serverName = request.value
-		if (!serverName) {
-			throw new Error("Server name is required")
-		}
+    try {
+        const serverName = request.value
+        if (!serverName) {
+            throw new Error("Server name is required")
+        }
 
-		// Call the McpHub method to initiate OAuth
-		await controller.mcpHub?.initiateOAuth(serverName)
+        // Call the McpHub method to initiate OAuth
+        await controller.mcpHub?.initiateOAuth(serverName)
 
-		return Empty.create()
-	} catch (error) {
-		Logger.error(`Failed to initiate OAuth for MCP server:`, error)
-		throw error
-	}
+        return Empty.create()
+    } catch (error) {
+        Logger.error(`Failed to initiate OAuth for MCP server:`, error)
+        throw error
+    }
 }

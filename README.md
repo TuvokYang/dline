@@ -46,7 +46,7 @@ The generated `.vsix` is written to the repository root. See [CONTRIBUTING.md](C
 
 **Requirements**: VS Code 1.134.0 or newer.
 
-**Migrating from Cline**: on first launch, existing Cline data (settings, MCP configuration, rules, and workflows) is copied into the Dline directory. The original data is neither modified nor deleted, so both extensions can coexist. Task history is no longer migrated: Dline's task index and per-task runtime state are no longer compatible with Cline, so imported entries could not be opened or resumed and are left in place.
+**Migrating from Cline**: Dline does not automatically read, copy, modify, or delete Cline data. If you want to reuse selected settings, MCP configuration, rules, or workflows, follow the [manual migration guide](https://docs.dline.cc/getting-started/migration-cline-to-dline/). Cline task history is not compatible with Dline and cannot be imported.
 
 ## Quick Start
 
@@ -181,7 +181,9 @@ A Git-based checkpoint is created after every tool execution, so file changes ca
 
 - API keys and credentials are stored only in the local key store; they are never written into profile configuration or task history.
 - Code, prompts, and conversation content are sent only to the providers you configure in your profiles.
-- Usage reporting and error reporting require separate consent and are off by default; runtime telemetry starts only after you enable them.
+- Usage reporting and error reporting are separate settings. Both are on by default, and each can be turned off on its own in Settings → About.
+- While usage reporting is on, Dline sends per-minute request, token, cache, and cost counts, including request and token counts per provider and model for rankings, to its telemetry service at `otel.dline.cc`. Prompts, code, file paths, and account identity are not included, and turning usage reporting off deletes counts that have not been sent.
+- While error reporting is on, Dline sends failure events such as provider API errors and terminal hangs, with their severity and short codes, to `otel.dline.cc`. Error messages, stack traces, prompts, code, file paths, and Task, workspace, or account identity are not included, and turning error reporting off deletes diagnostics that have not been sent.
 - When troubleshooting, a diagnostic bundle can be exported to the local machine in one click. The ZIP contains no code, prompts, or credentials.
 
 ## Relationship to Cline

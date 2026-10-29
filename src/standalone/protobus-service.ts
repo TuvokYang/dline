@@ -11,44 +11,44 @@ import { getPackageDefinition, log } from "./utils"
 export const PROTOBUS_PORT = 26040
 
 export function startProtobusService(controller: Controller): Promise<string> {
-	return new Promise((resolve, reject) => {
-		const server = new grpc.Server()
+    return new Promise((resolve, reject) => {
+        const server = new grpc.Server()
 
-		// Set up health check.
-		const healthImpl = new health.HealthImplementation({ "": "SERVING" })
-		healthImpl.addToServer(server)
+        // Set up health check.
+        const healthImpl = new health.HealthImplementation({ "": "SERVING" })
+        healthImpl.addToServer(server)
 
-		// Add all the handlers for the ProtoBus services to the server.
-		addProtobusServices(server, controller, wrapHandler, wrapStreamingResponseHandler)
+        // Add all the handlers for the ProtoBus services to the server.
+        addProtobusServices(server, controller, wrapHandler, wrapStreamingResponseHandler)
 
-		// Create reflection service with protobus service names
-		const packageDefinition = getPackageDefinition()
-		const reflection = new ReflectionService(packageDefinition, {
-			services: getProtobusServiceNames(packageDefinition),
-		})
-		reflection.addToServer(server)
+        // Create reflection service with protobus service names
+        const packageDefinition = getPackageDefinition()
+        const reflection = new ReflectionService(packageDefinition, {
+            services: getProtobusServiceNames(packageDefinition),
+        })
+        reflection.addToServer(server)
 
-		// Start the server.
-		const host = process.env.PROTOBUS_ADDRESS || `127.0.0.1:${PROTOBUS_PORT}`
-		server.bindAsync(host, grpc.ServerCredentials.createInsecure(), (err) => {
-			if (err) {
-				log(`Could not start ProtoBus service: Failed to bind to ${host}, port may be unavailable. ${err.message}`)
-				reject(new Error(`Failed to bind ProtoBus to ${host}: ${err.message}`))
-				return
-			}
-			server.start()
-			log(`ProtoBus gRPC server listening on ${host}`)
-			resolve(host)
-		})
-	})
+        // Start the server.
+        const host = process.env.PROTOBUS_ADDRESS || `127.0.0.1:${PROTOBUS_PORT}`
+        server.bindAsync(host, grpc.ServerCredentials.createInsecure(), (err) => {
+            if (err) {
+                log(`Could not start ProtoBus service: Failed to bind to ${host}, port may be unavailable. ${err.message}`)
+                reject(new Error(`Failed to bind ProtoBus to ${host}: ${err.message}`))
+                return
+            }
+            server.start()
+            log(`ProtoBus gRPC server listening on ${host}`)
+            resolve(host)
+        })
+    })
 }
 
 function getProtobusServiceNames(packageDefinition: { [x: string]: any }): string[] {
-	// Filter service names to only include cline services
-	const protobusServiceNames = Object.keys(packageDefinition).filter(
-		(name) => name.startsWith("cline.") || name.startsWith("grpc.health"),
-	)
-	return protobusServiceNames
+    // Filter service names to only include Dline services.
+    const protobusServiceNames = Object.keys(packageDefinition).filter(
+        (name) => name.startsWith("dline.") || name.startsWith("grpc.health"),
+    )
+    return protobusServiceNames
 }
 
 /**
@@ -63,53 +63,53 @@ function getProtobusServiceNames(packageDefinition: { [x: string]: any }): strin
  * @returns A gRPC-compatible callback-style handler function
  */
 function wrapHandler<TRequest, TResponse>(
-	handler: GrpcHandler<TRequest, TResponse>,
-	controller: Controller,
+    handler: GrpcHandler<TRequest, TResponse>,
+    controller: Controller,
 ): grpc.handleUnaryCall<TRequest, TResponse> {
-	return async (call: grpc.ServerUnaryCall<TRequest, TResponse>, callback: grpc.sendUnaryData<TResponse>) => {
-		try {
-			log(`ProtoBus request: ${call.getPath()}`)
-			const result = await handler(controller, call.request)
-			callback(null, result)
-		} catch (err: any) {
-			log(`ProtoBus handler error: ${call.getPath()}\n${err.stack}`)
-			callback({
-				code: grpc.status.INTERNAL,
-				message: err.message || "Internal error",
-			} as grpc.ServiceError)
-		}
-	}
+    return async (call: grpc.ServerUnaryCall<TRequest, TResponse>, callback: grpc.sendUnaryData<TResponse>) => {
+        try {
+            log(`ProtoBus request: ${call.getPath()}`)
+            const result = await handler(controller, call.request)
+            callback(null, result)
+        } catch (err: any) {
+            log(`ProtoBus handler error: ${call.getPath()}\n${err.stack}`)
+            callback({
+                code: grpc.status.INTERNAL,
+                message: err.message || "Internal error",
+            } as grpc.ServiceError)
+        }
+    }
 }
 
 function wrapStreamingResponseHandler<TRequest, TResponse>(
-	handler: GrpcStreamingResponseHandler<TRequest, TResponse>,
-	controller: Controller,
+    handler: GrpcStreamingResponseHandler<TRequest, TResponse>,
+    controller: Controller,
 ): grpc.handleServerStreamingCall<TRequest, TResponse> {
-	return async (call: grpc.ServerWritableStream<TRequest, TResponse>) => {
-		try {
-			const requestId = call.metadata.get("request-id").pop()?.toString()
-			log(`ProtoBus gRPC streaming request: ${call.getPath()}`)
+    return async (call: grpc.ServerWritableStream<TRequest, TResponse>) => {
+        try {
+            const requestId = call.metadata.get("request-id").pop()?.toString()
+            log(`ProtoBus gRPC streaming request: ${call.getPath()}`)
 
-			const responseHandler: StreamingResponseHandler<TResponse> = (response, isLast, _sequenceNumber) => {
-				try {
-					call.write(response) // Use a bound version of call.write to maintain proper 'this' context
+            const responseHandler: StreamingResponseHandler<TResponse> = (response, isLast, _sequenceNumber) => {
+                try {
+                    call.write(response) // Use a bound version of call.write to maintain proper 'this' context
 
-					if (isLast === true) {
-						log(`Closing ProtoBus stream for ${requestId}`)
-						call.end()
-					}
-					return Promise.resolve()
-				} catch (error) {
-					return Promise.reject(error)
-				}
-			}
-			await handler(controller, call.request, responseHandler, requestId)
-		} catch (err: any) {
-			log(`ProtoBus handler error: ${call.getPath()}\n${err.stack}`)
-			call.destroy({
-				code: grpc.status.INTERNAL,
-				message: err.message || "Internal error",
-			} as grpc.ServiceError)
-		}
-	}
+                    if (isLast === true) {
+                        log(`Closing ProtoBus stream for ${requestId}`)
+                        call.end()
+                    }
+                    return Promise.resolve()
+                } catch (error) {
+                    return Promise.reject(error)
+                }
+            }
+            await handler(controller, call.request, responseHandler, requestId)
+        } catch (err: any) {
+            log(`ProtoBus handler error: ${call.getPath()}\n${err.stack}`)
+            call.destroy({
+                code: grpc.status.INTERNAL,
+                message: err.message || "Internal error",
+            } as grpc.ServiceError)
+        }
+    }
 }

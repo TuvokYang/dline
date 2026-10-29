@@ -1,26 +1,38 @@
 // English prompts — key-value pairs only, no code logic.
+
+// Shared by both subagent tools so the delegation limits have one wording.
+const SUBAGENT_USAGE_LIMITS =
+    "Delegate only work large enough to justify a separate context, such as multi-file research, an independent review, or parallel investigation; read a few files, run a search, or inspect a definition yourself. Every result returns into your context, so weigh your remaining context before delegating: when Context Window Usage in environment_details exceeds 85% or fewer than 50K tokens remain, avoid starting new subagents and continue with direct tool calls."
+
 const prompts: Record<string, string> = {
-	description:
-		"Run up to @MAX_SUBAGENTS_PER_BATCH@ subagents from one call. Describe each one as an item in the subagents array; items run concurrently up to the configured subagent limit and the rest wait their turn, so a wide batch is accepted in full rather than trimmed. Each subagent returns a comprehensive research result with tool and token stats. Use this to preserve the main task's context window by delegating self-contained research. Keep each delegated research boundary independent from the main task's modification boundary: provide only the context needed for investigation, and do not treat files explored or reported by a subagent as authorized write scope. Using one item is valid.",
-	singleDescription:
-		"Run one focused default or named subagent. Omit agent_name or use 'default' for the built-in readonly research subagent; use an advertised YAML name for a configured agent. Use this to preserve the main task's context window through self-contained research. Keep the delegated research boundary independent from the main task's modification boundary, and do not infer write authorization from files the subagent explores or reports.",
-	agentNameInstruction: "Optional advertised subagent name. Omit or use 'default' for the built-in default profile.",
-	taskInstruction: "Focused task for the subagent.",
-	contextInstruction:
-		"Relevant context, constraints, and expected result for the subagent. Include enough context for independent research, but do not use this field to expand or redefine the main task's modification boundary.",
-	subagentsInstruction:
-		"The subagents to run, 1 to @MAX_SUBAGENTS_PER_BATCH@ items. Each item is configured independently and needs at least task and context.",
-	itemAgentNameInstruction:
-		"Optional advertised subagent name for this item. Omit or use 'default' for the built-in default profile.",
-	itemTaskInstruction: "Focused task for this subagent.",
-	itemContextInstruction:
-		"Relevant context, constraints, and expected result for this subagent. Include enough context for independent research, but do not use this field to expand or redefine the main task's modification boundary.",
-	itemProfileInstruction:
-		"Optional API Profile for this item. Naming one binds this subagent to it; if that Profile is unavailable or not enabled for subagents, this item fails instead of quietly running on another one. Omit to use the agent's configured Profile, or the parent Act Profile.",
-	itemTimeoutInstruction:
-		"Optional positive integer timeout in seconds for this item. Omit to use the call's shared timeout. Timing starts when the item begins executing, not when the batch is submitted.",
-	backgroundInstruction: "Optional boolean. Set true to run in background. Defaults to false.",
-	timeoutInstruction:
-		"Optional positive integer timeout in seconds, applied to every item that does not set its own. Defaults to @SUBAGENT_TIMEOUT_SECONDS@.",
+    description: `Run up to @MAX_SUBAGENTS_PER_BATCH@ subagents from one call. Describe each one as an item in the subagents array; items run concurrently up to the configured subagent limit and the rest wait their turn, so a wide batch is accepted in full rather than trimmed. Each subagent returns a comprehensive research result with tool and token stats. Use this to preserve the main task's context window by delegating self-contained research. ${SUBAGENT_USAGE_LIMITS} Keep each delegated research boundary independent from the main task's modification boundary: provide only the context needed for investigation, and do not treat files explored or reported by a subagent as authorized write scope. Using one item is valid.`,
+    singleDescription: `Run one focused default or named subagent. Omit agent_name or use 'default' for the built-in readonly research subagent; use an advertised YAML name for a configured agent. Use this to preserve the main task's context window through self-contained research. ${SUBAGENT_USAGE_LIMITS} Keep the delegated research boundary independent from the main task's modification boundary, and do not infer write authorization from files the subagent explores or reports.`,
+    agentNameInstruction: "Optional advertised subagent name. Omit or use 'default' for the built-in default profile.",
+    taskInstruction: "Focused task for the subagent.",
+    contextInstruction:
+        "Relevant context, constraints, and expected result for the subagent. Include enough context for independent research, but do not use this field to expand or redefine the main task's modification boundary.",
+    subagentsInstruction:
+        "The subagents to run, 1 to @MAX_SUBAGENTS_PER_BATCH@ items. Each item is configured independently and needs at least task and context.",
+    itemAgentNameInstruction:
+        "Optional advertised subagent name for this item. Omit or use 'default' for the built-in default profile.",
+    itemTaskInstruction: "Focused task for this subagent.",
+    itemContextInstruction:
+        "Relevant context, constraints, and expected result for this subagent. Include enough context for independent research, but do not use this field to expand or redefine the main task's modification boundary.",
+    itemProfileInstruction:
+        "Optional API Profile for this item. Naming one binds this subagent to it; if that Profile is unavailable or not enabled for subagents, this item fails instead of quietly running on another one. Omit to use the agent's configured Profile, or the parent Act Profile.",
+    itemTimeoutInstruction:
+        "Optional positive integer timeout in seconds for this item. Omit to use the call's shared timeout. Timing starts when the item begins executing, not when the batch is submitted.",
+    backgroundInstruction: "Optional boolean. Set true to run in background. Defaults to false.",
+    timeoutInstruction:
+        "Optional positive integer timeout in seconds, applied to every item that does not set its own. Defaults to @SUBAGENT_TIMEOUT_SECONDS@.",
+    // Injected into every subagent request. The figure limits only the final
+    // attempt_completion result, so the wording must not read as a limit on the
+    // subagent's own tool calls, which its own context window bounds.
+    contextBudgetFinalResult:
+        "# Context Budget\nYour final output, the attempt_completion result returned to the main task, may use about @FINAL_RESULT_TOKENS@ tokens. This limit applies only to that final output; it does not limit your own tool calls or their results while you work, which only your own context window bounds.",
+    contextBudgetMainTaskShare:
+        "The limit is your share of what the main task can take in as tool results on its current turn: @ROUND_BUDGET_TOKENS@ tokens in total, @ROUND_USED_TOKENS@ already taken, and the rest split among @WORKING_CONSUMERS@ subagent(s) and tool call(s) still working. Your share shrinks as other subagents return, so read this section again right before you write the final output.",
+    contextBudgetHeldWhole:
+        "The main task is out of room: your final output will be held whole and delivered after the main task compacts its context.",
 }
 export default prompts

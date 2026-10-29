@@ -1,16 +1,16 @@
 import prettyBytes from "pretty-bytes"
 
 export function formatLargeNumber(num: number): string {
-	if (num >= 1e9) {
-		return `${(num / 1e9).toFixed(1)}b`
-	}
-	if (num >= 1e6) {
-		return `${(num / 1e6).toFixed(1)}m`
-	}
-	if (num >= 1e3) {
-		return `${(num / 1e3).toFixed(1)}k`
-	}
-	return num.toString()
+    if (num >= 1e9) {
+        return `${(num / 1e9).toFixed(1)}b`
+    }
+    if (num >= 1e6) {
+        return `${(num / 1e6).toFixed(1)}m`
+    }
+    if (num >= 1e3) {
+        return `${(num / 1e3).toFixed(1)}k`
+    }
+    return num.toString()
 }
 
 /**
@@ -18,25 +18,25 @@ export function formatLargeNumber(num: number): string {
  * `950`, `12.3K`, `4.56M`, `1.25B`.
  */
 export function formatTokenMetric(tokens: number): string {
-	if (tokens >= 1_000_000_000) {
-		return `${(tokens / 1_000_000_000).toFixed(2)}B`
-	}
-	if (tokens >= 1_000_000) {
-		return `${(tokens / 1_000_000).toFixed(2)}M`
-	}
-	if (tokens >= 1_000) {
-		return `${(tokens / 1_000).toFixed(1)}K`
-	}
-	return tokens.toString()
+    if (tokens >= 1_000_000_000) {
+        return `${(tokens / 1_000_000_000).toFixed(2)}B`
+    }
+    if (tokens >= 1_000_000) {
+        return `${(tokens / 1_000_000).toFixed(2)}M`
+    }
+    if (tokens >= 1_000) {
+        return `${(tokens / 1_000).toFixed(1)}K`
+    }
+    return tokens.toString()
 }
 
 // Helper to format cents as dollars with 2 decimal places
 export function formatDollars(cents?: number): string {
-	if (cents === undefined) {
-		return ""
-	}
+    if (cents === undefined) {
+        return ""
+    }
 
-	return (cents / 100).toFixed(2)
+    return (cents / 100).toFixed(2)
 }
 
 /**
@@ -54,40 +54,40 @@ export function formatDollars(cents?: number): string {
  * formatCreditsBalance(12345) // returns 1.2345 (credits)
  */
 export function formatCreditsBalance(microcredits: number): number {
-	return microcredits / 10000
+    return microcredits / 10000
 }
 
 export function formatTimestamp(timestamp: string): string {
-	const date = new Date(timestamp)
+    const date = new Date(timestamp)
 
-	const dateFormatter = new Intl.DateTimeFormat("en-US", {
-		month: "2-digit",
-		day: "2-digit",
-		year: "2-digit",
-		hour: "numeric",
-		minute: "2-digit",
-		hour12: true,
-	})
+    const dateFormatter = new Intl.DateTimeFormat("en-US", {
+        month: "2-digit",
+        day: "2-digit",
+        year: "2-digit",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+    })
 
-	return dateFormatter.format(date)
+    return dateFormatter.format(date)
 }
 
 export function formatSize(bytes?: number) {
-	if (bytes === undefined) {
-		return "--kb"
-	}
+    if (bytes === undefined) {
+        return "--kb"
+    }
 
-	return prettyBytes(bytes)
+    return prettyBytes(bytes)
 }
 export function formatSeconds(seconds?: number): string {
-	if (seconds === undefined) {
-		return "--:--"
-	}
+    if (seconds === undefined) {
+        return "--:--"
+    }
 
-	const mins = Math.floor(seconds / 60)
-	const secs = Math.floor(seconds % 60)
-		.toString()
-		.padStart(2, "0")
+    const mins = Math.floor(seconds / 60)
+    const secs = Math.floor(seconds % 60)
+        .toString()
+        .padStart(2, "0")
 
-	return `${mins}:${secs}`
+    return `${mins}:${secs}`
 }

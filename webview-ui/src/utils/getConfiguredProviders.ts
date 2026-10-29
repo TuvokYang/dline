@@ -19,84 +19,84 @@ const ALWAYS_AVAILABLE: ApiProvider[] = ["cline", "openai-codex", "claude-code",
  * @returns true if the profile has sufficient credentials configured
  */
 function isProfileConfigured(profile: ApiProfile): boolean {
-	switch (profile.provider) {
-		// Providers requiring only apiKey
-		case "anthropic":
-		case "openrouter":
-		case "gemini":
-		case "deepseek":
-		case "xai":
-		case "qwen":
-		case "doubao":
-		case "mistral":
-		case "requesty":
-		case "fireworks":
-		case "together":
-		case "moonshot":
-		case "nebius":
-		case "asksage":
-		case "sambanova":
-		case "cerebras":
-		case "zai":
-		case "groq":
-		case "huggingface":
-		case "baseten":
-		case "minimax":
-		case "hicap":
-		case "huawei-cloud-maas":
-		case "vercel-ai-gateway":
-		case "aihubmix":
-		case "nousResearch":
-		case "qwen-code":
-		case "wandb":
-			return !!profile.apiKey
+    switch (profile.provider) {
+        // Providers requiring only apiKey
+        case "anthropic":
+        case "openrouter":
+        case "gemini":
+        case "deepseek":
+        case "xai":
+        case "qwen":
+        case "doubao":
+        case "mistral":
+        case "requesty":
+        case "fireworks":
+        case "together":
+        case "moonshot":
+        case "nebius":
+        case "asksage":
+        case "sambanova":
+        case "cerebras":
+        case "zai":
+        case "groq":
+        case "huggingface":
+        case "baseten":
+        case "minimax":
+        case "hicap":
+        case "huawei-cloud-maas":
+        case "vercel-ai-gateway":
+        case "aihubmix":
+        case "nousResearch":
+        case "qwen-code":
+        case "wandb":
+            return !!profile.apiKey
 
-		// Bedrock: requires awsRegion in oneof bedrock config
-		case "bedrock":
-			return !!profile.bedrock?.awsRegion
+        // Bedrock: requires awsRegion in oneof bedrock config
+        case "bedrock":
+            return !!profile.bedrock?.awsRegion
 
-		// Vertex: requires projectId and region in oneof vertex config
-		case "vertex":
-			return !!(profile.vertex?.vertexProjectId && profile.vertex?.vertexRegion)
+        // Vertex: requires projectId and region in oneof vertex config
+        case "vertex":
+            return !!(profile.vertex?.vertexProjectId && profile.vertex?.vertexRegion)
 
-		// SAP AI Core: requires baseUrl + clientId + clientSecret + tokenUrl
-		case "sapaicore":
-			return !!(
-				profile.baseUrl &&
-				profile.sapaicore?.clientId &&
-				profile.sapaicore?.clientSecret &&
-				profile.sapaicore?.tokenUrl
-			)
+        // SAP AI Core: requires baseUrl + clientId + clientSecret + tokenUrl
+        case "sapaicore":
+            return !!(
+                profile.baseUrl &&
+                profile.sapaicore?.clientId &&
+                profile.sapaicore?.clientSecret &&
+                profile.sapaicore?.tokenUrl
+            )
 
-		// Dify: requires baseUrl and apiKey
-		case "dify":
-			return !!(profile.baseUrl && profile.apiKey)
+        // Dify: requires baseUrl and apiKey
+        case "dify":
+            return !!(profile.baseUrl && profile.apiKey)
 
-		// OpenAI Compatible: requires (baseUrl + apiKey) or modelId
-		case "openai":
-			return !!(profile.baseUrl && profile.apiKey) || !!profile.modelId
+        // OpenAI Compatible: requires (baseUrl + apiKey) or modelId
+        case "openai":
+            return !!(profile.baseUrl && profile.apiKey) || !!profile.modelId
 
-		// Local providers: check baseUrl or modelId (no apiKey needed)
-		case "ollama":
-		case "lmstudio":
-			return !!(profile.baseUrl || profile.modelId)
+        // Local providers: check baseUrl or modelId (no apiKey needed)
+        case "ollama":
+        case "lmstudio":
+            return !!(profile.baseUrl || profile.modelId)
 
-		// LiteLLM: check baseUrl, apiKey, or modelId
-		case "litellm":
-			return !!(profile.baseUrl || profile.apiKey || profile.modelId)
+        // LiteLLM: check baseUrl, apiKey, or modelId
+        case "litellm":
+            return !!(profile.baseUrl || profile.apiKey || profile.modelId)
 
-		// Claude Code: a subscription OAuth session, not a stored credential field
-		case "claude-code":
-			return true
+        // Claude Code: a subscription OAuth session, not a stored credential field
+        case "claude-code":
+            return true
 
-		// OCA: requires baseUrl
-		case "oca":
-			return !!profile.baseUrl
+        // OCA: requires baseUrl
+        case "oca":
+            return !!profile.baseUrl
 
-		// Unknown provider — fall back to apiKey check
-		default:
-			return !!profile.apiKey
-	}
+        // Unknown provider — fall back to apiKey check
+        default:
+            return !!profile.apiKey
+    }
 }
 
 /**
@@ -113,26 +113,26 @@ function isProfileConfigured(profile: ApiProfile): boolean {
  * @returns Deduplicated list of configured ApiProvider values
  */
 export function getConfiguredProviders(
-	remoteConfig: Partial<RemoteConfigFields> | undefined,
-	_apiConfiguration: unknown,
-	profiles: ApiProfile[] = [],
+    remoteConfig: Partial<RemoteConfigFields> | undefined,
+    _apiConfiguration: unknown,
+    profiles: ApiProfile[] = [],
 ): ApiProvider[] {
-	if (remoteConfig?.remoteConfiguredProviders?.length) {
-		return remoteConfig.remoteConfiguredProviders as ApiProvider[]
-	}
+    if (remoteConfig?.remoteConfiguredProviders?.length) {
+        return remoteConfig.remoteConfiguredProviders as ApiProvider[]
+    }
 
-	const configured = new Set<ApiProvider>(ALWAYS_AVAILABLE)
+    const configured = new Set<ApiProvider>(ALWAYS_AVAILABLE)
 
-	for (const profile of profiles) {
-		if (!profile.enabled) {
-			continue
-		}
-		if (isProfileConfigured(profile)) {
-			configured.add(profile.provider as ApiProvider)
-		}
-	}
+    for (const profile of profiles) {
+        if (!profile.enabled) {
+            continue
+        }
+        if (isProfileConfigured(profile)) {
+            configured.add(profile.provider as ApiProvider)
+        }
+    }
 
-	return [...configured]
+    return [...configured]
 }
 
 /**
@@ -140,5 +140,5 @@ export function getConfiguredProviders(
  * Uses the canonical provider list as source of truth.
  */
 export function getProviderLabel(provider: ApiProvider): string {
-	return resolveProviderLabel(provider)
+    return resolveProviderLabel(provider)
 }

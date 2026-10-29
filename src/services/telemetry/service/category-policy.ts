@@ -9,29 +9,29 @@ import { TELEMETRY_CATEGORIES, type TelemetryCategory } from "../events/catalog"
  * required withdrawing reporting entirely.
  */
 export class TelemetryCategoryPolicy {
-	private readonly disabled = new Set<TelemetryCategory>()
+    private readonly disabled = new Set<TelemetryCategory>()
 
-	/**
-	 * Categories default to enabled.
-	 *
-	 * A category that has never been configured is one nobody has asked to
-	 * silence, so treating the unknown case as "off" would quietly drop events
-	 * whenever a new category is introduced.
-	 */
-	isEnabled(category: TelemetryCategory): boolean {
-		return !this.disabled.has(category)
-	}
+    /**
+     * Categories default to enabled.
+     *
+     * A category that has never been configured is one nobody has asked to
+     * silence, so treating the unknown case as "off" would quietly drop events
+     * whenever a new category is introduced.
+     */
+    isEnabled(category: TelemetryCategory): boolean {
+        return !this.disabled.has(category)
+    }
 
-	setEnabled(category: TelemetryCategory, enabled: boolean): void {
-		if (enabled) {
-			this.disabled.delete(category)
-		} else {
-			this.disabled.add(category)
-		}
-	}
+    setEnabled(category: TelemetryCategory, enabled: boolean): void {
+        if (enabled) {
+            this.disabled.delete(category)
+        } else {
+            this.disabled.add(category)
+        }
+    }
 
-	/** Every category this policy knows about. */
-	categories(): readonly TelemetryCategory[] {
-		return TELEMETRY_CATEGORIES
-	}
+    /** Every category this policy knows about. */
+    categories(): readonly TelemetryCategory[] {
+        return TELEMETRY_CATEGORIES
+    }
 }

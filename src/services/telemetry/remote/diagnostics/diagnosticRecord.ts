@@ -1,0 +1,409 @@
+import { USAGE_ERROR_CLASSES } from "@/core/task/telemetry/UsageSettlement"
+import { DlineDefaultTool } from "@/shared/tools"
+import { isRemoteDiagnosticEvent } from "../../events/event-routes"
+import type { JournalTelemetrySignal } from "../../providers/capabilities"
+import { isUsageModelId, projectUsageModelId } from "../contracts/modelIdentity"
+import { buildOtlpResource, encodeOtlpLogs, isSpanId, isTraceId } from "../contracts/otlpProduction"
+import { USAGE_ROLES, type UsageHostEditor, type UsageReleaseChannel } from "../contracts/usageBodySchema"
+
+export type DiagnosticChannel = "error" | "runtime"
+export type DiagnosticSeverity = "warn" | "error" | "fatal"
+export type DiagnosticAttributeValue = string | number | boolean
+
+/**
+ * One aggregated error or runtime record (otel contract v2.1 §3.3): every event of
+ * one interval with the same name, severity, fingerprint, class, provider and
+ * model, counted once with its first and last time. The attributes are those of
+ * the first occurrence and use only the catalog keys.
+ */
+export interface DiagnosticRecord {
+    readonly name: string
+    readonly channel: DiagnosticChannel
+    readonly severity: DiagnosticSeverity
+    /** First occurrence, epoch milliseconds; sent as `timeUnixNano`. */
+    readonly firstSeenMs: number
+    /** Last occurrence, epoch milliseconds; sent as `dline.last_seen_ms`. */
+    readonly lastSeenMs: number
+    readonly occurrences: number
+    readonly attributes: Readonly<Record<string, DiagnosticAttributeValue>>
+    /** Trace context of the first occurrence, lowercase hex, when the event happened inside a span. */
+    readonly traceId?: string
+    readonly spanId?: string
+}
+
+/** The event name shape of §3.1. */
+const EVENT_NAME = /^[A-Za-z0-9_.:/-]{1,160}$/
+/**
+ * A string value leaves only as a short token: an error code, a provider, a
+ * status. Whitespace, slashes, colons and `@` are excluded, so free text,
+ * paths, URLs and e-mail addresses never qualify. The model is the exception:
+ * it travels as the Usage projection (usage-contract §3.1), which already
+ * withholds paths, URLs and addresses.
+ */
+const TOKEN_VALUE = /^[A-Za-z0-9_.+-]{1,64}$/
+/** A client-generated correlation id (`attemptObservationId`, `logicalRequestId`), never user text. */
+const CORRELATION_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/
+const MAX_PROVIDER_LENGTH = 32
+const FINGERPRINT = /^[0-9a-f]{16}$/
+const PHASES = ["connect", "stream", "parse", "tool", "other"] as const
+/** v2.1 §3.5: an `area.operation` call site of at most 64 characters. */
+const SITE = /^(?=.{1,64}$)[a-z0-9_]+(\.[a-z0-9_]+){1,3}$/
+const FAILURE_STAGES = ["validation", "authorization", "routing", "execution", "remote"] as const
+/** Only Dline's own tool ids qualify; an MCP tool's name is user content and never leaves. */
+const BUILT_IN_TOOLS: readonly string[] = Object.values(DlineDefaultTool).filter((id) => /^[a-z0-9_]{1,64}$/.test(id))
+const FINGERPRINT_VERSIONS: readonly number[] = [2, 3]
+
+type AttributeKind =
+    | "token"
+    | "int"
+    | "attempt"
+    | "bool"
+    | "apiFormat"
+    | "fingerprintVersion"
+    | "modelId"
+    | readonly string[]
+    | RegExp
+
+/**
+ * `ApiFormat` enum names, which the request observation carries, in the
+ * vocabulary of §3.2 (`anthropic`, `openai-responses`). A value already in that
+ * vocabulary passes through; `unknown` says nothing and is left out.
+ */
+const API_FORMATS: Readonly<Record<string, string>> = {
+    ANTHROPIC_CHAT: "anthropic",
+    GEMINI_CHAT: "gemini",
+    OPENAI_CHAT: "openai-chat",
+    R1_CHAT: "r1",
+    OPENAI_RESPONSES: "openai-responses",
+    OPENAI_RESPONSES_WEBSOCKET_MODE: "openai-responses-websocket",
+}
+const API_FORMAT_VALUE = /^[a-z0-9-]{1,64}$/
+
+/**
+ * The attribute catalog of §3.2, apart from the three keys the record itself
+ * owns (`dline.channel`, `dline.occurrences`, `dline.last_seen_ms`). Each key
+ * lists the property names it is read from, in order: the canonical pipeline
+ * still carries older aliases such as `dline.exception.fingerprint`, which §3.2
+ * forbids sending, so their values travel under the catalog key and the alias
+ * itself never leaves.
+ */
+const CATALOG: readonly { readonly key: string; readonly kind: AttributeKind; readonly sources: readonly string[] }[] = [
+    { key: "error.class", kind: USAGE_ERROR_CLASSES, sources: ["error.class"] },
+    // Catalog failure events carry their reason code under their own field names.
+    {
+        key: "error.code",
+        kind: "token",
+        sources: [
+            "error.code",
+            "dline.exception.code",
+            "error_code",
+            "failure_code",
+            "stage",
+            "reason",
+            "mentionType",
+            "cancel_reason",
+        ],
+    },
+    { key: "error.type", kind: "token", sources: ["error.type", "exception.type", "error_type", "errorType"] },
+    {
+        key: "error.fingerprint",
+        kind: FINGERPRINT,
+        sources: ["error.fingerprint", "dline.exception.fingerprint", "error_fingerprint"],
+    },
+    {
+        key: "error.fingerprint_version",
+        kind: "fingerprintVersion",
+        sources: ["error.fingerprint_version", "dline.exception.fingerprint_version"],
+    },
+    { key: "error.site", kind: SITE, sources: ["error.site"] },
+    { key: "tool.name", kind: BUILT_IN_TOOLS, sources: ["tool.name", "tool_name"] },
+    { key: "failure.stage", kind: FAILURE_STAGES, sources: ["failure.stage", "failure_stage"] },
+    {
+        key: "http.status",
+        kind: "int",
+        sources: ["http.status", "http.response.status_code", "dline.exception.status", "error_status"],
+    },
+    { key: "provider", kind: "token", sources: ["provider"] },
+    { key: "model", kind: "modelId", sources: ["model"] },
+    { key: "model.custom", kind: "bool", sources: ["model.custom"] },
+    { key: "api.format", kind: "apiFormat", sources: ["api.format", "api_format"] },
+    { key: "phase", kind: PHASES, sources: ["phase"] },
+    { key: "retry.attempt", kind: "attempt", sources: ["retry.attempt"] },
+    { key: "retryable", kind: "bool", sources: ["retryable"] },
+    { key: "duration_ms", kind: "int", sources: ["duration_ms"] },
+    // The usage-telemetry-contract §4 correlation keys, under their wire names (TADR §6.3).
+    { key: "dline.role", kind: USAGE_ROLES, sources: ["dline.role"] },
+    { key: "dline.attempt_observation_id", kind: CORRELATION_ID, sources: ["dline.attempt_observation_id"] },
+    { key: "dline.logical_request_id", kind: CORRELATION_ID, sources: ["dline.logical_request_id"] },
+]
+
+/**
+ * Metrics whose breach carries `perf.*` (v2.1 §3.5). A ratio is sent as an
+ * integer per mille, since the catalog only takes integers.
+ */
+const PERF_METRIC_SCALE: Readonly<Record<string, number>> = {
+    "runtime.cpu_utilization_ratio": 1000,
+    "runtime.event_loop_delay_ms": 1,
+    "runtime.heap_growth_bytes": 1,
+}
+const PERF_KINDS = ["fixed_budget", "dynamic_baseline"] as const
+const PERF_KEYS = ["perf.metric", "perf.kind", "perf.value", "perf.limit"] as const
+
+/**
+ * Value rules the production spans share with Logs (TADR §5.3: the span
+ * allowlist is the log allowlist plus a `gen_ai.*` subset).
+ */
+export const diagnosticValue = {
+    token: (value: unknown): value is string => typeof value === "string" && TOKEN_VALUE.test(value),
+    correlationId: (value: unknown): value is string => typeof value === "string" && CORRELATION_ID.test(value),
+    builtInTool: (value: unknown): value is string => typeof value === "string" && BUILT_IN_TOOLS.includes(value),
+    failureStage: (value: unknown): value is string =>
+        typeof value === "string" && (FAILURE_STAGES as readonly string[]).includes(value),
+    role: (value: unknown): value is string => typeof value === "string" && (USAGE_ROLES as readonly string[]).includes(value),
+} as const
+
+/** Every attribute key a record may carry on the wire. */
+export const DIAGNOSTIC_ATTRIBUTE_KEYS: readonly string[] = [
+    "dline.channel",
+    "dline.occurrences",
+    "dline.first_seen_ms",
+    "dline.last_seen_ms",
+    ...CATALOG.map((entry) => entry.key),
+    ...PERF_KEYS,
+]
+
+/**
+ * Turn one canonical signal into a remote record, or undefined when it must not
+ * leave: only error and runtime events at warn or above that the route table
+ * declares remote are sent.
+ */
+export function toDiagnosticRecord(signal: JournalTelemetrySignal, now: number): DiagnosticRecord | undefined {
+    if (signal.kind !== "event") return undefined
+    if (signal.channel !== "error" && signal.channel !== "runtime") return undefined
+    if (signal.severity !== "warn" && signal.severity !== "error" && signal.severity !== "fatal") return undefined
+    if (!EVENT_NAME.test(signal.name) || !isRemoteDiagnosticEvent(signal.name)) return undefined
+    // One failed MCP call also terminates its enclosing use_mcp_tool execution.
+    // Keep both local spans, but send only the MCP-owned terminal failure remotely.
+    if (
+        signal.name === "tool.execution.failed" &&
+        signal.properties?.tool_name === DlineDefaultTool.MCP_USE &&
+        signal.properties?.failure_stage === "remote" &&
+        signal.properties?.failure_code === "remote_tool_error"
+    )
+        return undefined
+    return {
+        name: signal.name,
+        channel: signal.channel,
+        severity: signal.severity,
+        firstSeenMs: now,
+        lastSeenMs: now,
+        occurrences: 1,
+        attributes: { ...catalogAttributes(withNormalizedModel(signal.properties)), ...perfAttributes(signal.properties) },
+        ...traceContext(signal.properties),
+    }
+}
+
+/**
+ * The span the event happened in, as the pipeline captured it when the event was
+ * logged (`captureSpanLogProperties`); an event outside any span has none.
+ */
+function traceContext(properties: Readonly<Record<string, unknown>> | undefined): { traceId?: string; spanId?: string } {
+    const traceId = properties?.runtime_trace_id
+    const spanId = properties?.runtime_span_id
+    return isTraceId(traceId) && isSpanId(spanId) ? { traceId, spanId } : {}
+}
+
+/** The breached metric, its budget kind and the scaled value and limit, only for a catalog metric. */
+function perfAttributes(properties: Readonly<Record<string, unknown>> | undefined): Record<string, DiagnosticAttributeValue> {
+    const metric = properties?.metric
+    if (typeof metric !== "string") return {}
+    const scale = PERF_METRIC_SCALE[metric]
+    if (scale === undefined) return {}
+    const attributes: Record<string, DiagnosticAttributeValue> = { "perf.metric": metric }
+    if (PERF_KINDS.includes(properties?.kind as (typeof PERF_KINDS)[number])) attributes["perf.kind"] = properties?.kind as string
+    const value = scaledNonNegative(properties?.value, scale)
+    if (value !== undefined) attributes["perf.value"] = value
+    const limit = scaledNonNegative(properties?.limit, scale)
+    if (limit !== undefined) attributes["perf.limit"] = limit
+    return attributes
+}
+
+function scaledNonNegative(value: unknown, scale: number): number | undefined {
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return undefined
+    const scaled = Math.round(value * scale)
+    return Number.isSafeInteger(scaled) ? scaled : undefined
+}
+
+/**
+ * Report a provider event's provider and model the way usage does: the model is
+ * the usage-contract §3.1 projection of the wire ID, so a Logs record, a Usage
+ * fact and a span of the same send name it identically. Only a model marked
+ * custom lands in the `custom:` namespace, which already says what
+ * `model.custom` would, so that key travels only when the event set it. A value
+ * that already is a projection passes through unchanged. Catalog events name
+ * the model `modelId`.
+ */
+function withNormalizedModel(
+    properties: Readonly<Record<string, unknown>> | undefined,
+): Readonly<Record<string, unknown>> | undefined {
+    if (!properties) return properties
+    const provider = firstNonEmptyString(properties.provider)
+    const normalized = provider ? { ...properties, provider: diagnosticProviderId(provider) } : properties
+    const model = firstNonEmptyString(properties.model, properties.modelId)
+    if (!model) return normalized
+    const customModel = properties["model.custom"] === true
+    return { ...normalized, model: isUsageModelId(model) ? model : projectUsageModelId(model, { customModel }) }
+}
+
+/** A provider ID in the wire vocabulary: lowercase, `[a-z0-9_-]`, at most 32 characters. */
+export function diagnosticProviderId(provider: string): string {
+    return provider
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, "_")
+        .slice(0, MAX_PROVIDER_LENGTH)
+}
+
+function firstNonEmptyString(...values: readonly unknown[]): string | undefined {
+    return values.find((value): value is string => typeof value === "string" && value.length > 0)
+}
+
+/** Keep only catalog keys, each read from its first source holding a value of the right kind. */
+function catalogAttributes(properties: Readonly<Record<string, unknown>> | undefined): Record<string, DiagnosticAttributeValue> {
+    const attributes: Record<string, DiagnosticAttributeValue> = {}
+    if (!properties) return attributes
+    for (const { key, kind, sources } of CATALOG) {
+        for (const source of sources) {
+            const value = acceptValue(kind, properties[source])
+            if (value === undefined) continue
+            attributes[key] = value
+            break
+        }
+    }
+    return attributes
+}
+
+function acceptValue(kind: AttributeKind, value: unknown): DiagnosticAttributeValue | undefined {
+    if (kind === "bool") return typeof value === "boolean" ? value : undefined
+    if (kind === "fingerprintVersion")
+        return typeof value === "number" && FINGERPRINT_VERSIONS.includes(value) ? value : undefined
+    if (kind === "int" || kind === "attempt") {
+        if (typeof value !== "number" || !Number.isFinite(value)) return undefined
+        const rounded = Math.round(value)
+        // Attempts count from 1 (§3.2).
+        const minimum = kind === "attempt" ? 1 : 0
+        return Number.isSafeInteger(rounded) && rounded >= minimum ? rounded : undefined
+    }
+    if (typeof value !== "string") return undefined
+    if (kind === "token") return TOKEN_VALUE.test(value) ? value : undefined
+    if (kind === "modelId") return isUsageModelId(value) ? value : undefined
+    if (kind === "apiFormat")
+        return API_FORMATS[value] ?? (API_FORMAT_VALUE.test(value) && value !== "unknown" ? value : undefined)
+    if (kind instanceof RegExp) return kind.test(value) ? value : undefined
+    return kind.includes(value) ? value : undefined
+}
+
+/** Records with the same key within one interval are merged into one. */
+export function diagnosticKey(record: DiagnosticRecord): string {
+    const { attributes } = record
+    return JSON.stringify([
+        record.name,
+        record.severity,
+        attributes["error.fingerprint"] ?? null,
+        attributes["error.fingerprint_version"] ?? null,
+        attributes["error.class"] ?? null,
+        attributes.provider ?? null,
+        attributes.model ?? null,
+        attributes["tool.name"] ?? null,
+    ])
+}
+
+/** Fold a later occurrence into a record: counts add, the first time and attributes stay. */
+export function mergeDiagnostic(first: DiagnosticRecord, later: DiagnosticRecord): DiagnosticRecord {
+    return {
+        ...first,
+        firstSeenMs: Math.min(first.firstSeenMs, later.firstSeenMs),
+        lastSeenMs: Math.max(first.lastSeenMs, later.lastSeenMs),
+        occurrences: Math.min(Number.MAX_SAFE_INTEGER, first.occurrences + later.occurrences),
+    }
+}
+
+/**
+ * Merge incoming records into pending ones by key. `admit` decides whether a
+ * record with a new key may join; a refused record is counted in `refused`.
+ */
+export function aggregateDiagnostics(
+    pending: readonly DiagnosticRecord[],
+    incoming: readonly DiagnosticRecord[],
+    admit: (record: DiagnosticRecord) => boolean = () => true,
+): { readonly records: DiagnosticRecord[]; readonly refused: number } {
+    const byKey = new Map(pending.map((record) => [diagnosticKey(record), record]))
+    let refused = 0
+    for (const record of incoming) {
+        const key = diagnosticKey(record)
+        const existing = byKey.get(key)
+        if (existing) byKey.set(key, mergeDiagnostic(existing, record))
+        else if (admit(record)) byKey.set(key, record)
+        else refused++
+    }
+    return { records: [...byKey.values()], refused }
+}
+
+/** What the resource of every request says about this client; nothing that identifies a device or a user. */
+export interface DiagnosticResource {
+    readonly clientVersion: string
+    /** `process.platform`; projected to the semconv `os.type`. */
+    readonly platform: string
+    /** `process.arch`; projected to the semconv `host.arch`. */
+    readonly arch?: string
+    /** Never under `dline.channel`, which separates error from runtime events. */
+    readonly releaseChannel?: UsageReleaseChannel
+    readonly hostEditor?: UsageHostEditor
+    /** A development build; sent only when true, since a missing `dline.is_dev` means false (§3.5). */
+    readonly isDev?: boolean
+}
+
+/**
+ * Encode records as one production OTLP/JSON logs request (TADR §2.4, §6).
+ * `droppedRecords` counts records discarded locally since the previous request,
+ * by the device limits or the backlog bound.
+ */
+export function encodeDiagnosticLogs(
+    records: readonly DiagnosticRecord[],
+    resource: DiagnosticResource,
+    droppedRecords: number,
+    exportedAtMs: number = Date.now(),
+): string {
+    const body = encodeOtlpLogs(
+        diagnosticOtlpResource(resource, droppedRecords),
+        records.map((record) => ({
+            eventName: record.name,
+            severity: record.severity,
+            channel: record.channel,
+            occurrences: record.occurrences,
+            firstSeenMs: record.firstSeenMs,
+            lastSeenMs: record.lastSeenMs,
+            ...(record.traceId && record.spanId ? { traceId: record.traceId, spanId: record.spanId } : {}),
+            attributes: record.attributes,
+        })),
+        exportedAtMs,
+    )
+    return JSON.stringify(body)
+}
+
+/** The allowlisted Resource of every production OTLP request of this client (TADR §3.1). */
+export function diagnosticOtlpResource(
+    resource: DiagnosticResource,
+    droppedRecords: number,
+): ReturnType<typeof buildOtlpResource> {
+    return buildOtlpResource({
+        clientVersion: resource.clientVersion,
+        platform: resource.platform,
+        arch: resource.arch ?? "",
+        environment: resource.isDev ? "development" : "production",
+        ...(resource.releaseChannel ? { releaseChannel: resource.releaseChannel } : {}),
+        ...(resource.hostEditor ? { hostEditor: resource.hostEditor } : {}),
+        isDev: resource.isDev === true,
+        droppedRecords,
+    })
+}

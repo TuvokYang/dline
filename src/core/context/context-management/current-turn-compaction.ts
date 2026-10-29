@@ -1,4 +1,3 @@
-import { hasManualCompactionCommand } from "@core/slash-commands"
 import type { ClineContent } from "@/shared/messages/content"
 import { shouldCompactProjectedUsage } from "./context-window-utils"
 
@@ -6,20 +5,20 @@ const TOKEN_ESTIMATE_CHARS = 4
 const COMPACTION_FIT_TARGET_RATIO = 0.8
 
 export interface CurrentTurnCompactionInput {
-	triggerTokens: number
-	previousTokens: number
-	userContent: ClineContent[]
+    triggerTokens: number
+    previousTokens: number
+    userContent: ClineContent[]
 }
 
 export interface DeferredTurnRestoreInput {
-	hasDeferredTurn: boolean
-	didCompleteSummarization: boolean
-	fittingCompactionRequired: boolean
+    hasDeferredTurn: boolean
+    didCompleteSummarization: boolean
+    fittingCompactionRequired: boolean
 }
 
 export interface CompactionFitInput {
-	contextTokens: number
-	contextWindow: number
+    contextTokens: number
+    contextWindow: number
 }
 
 /**
@@ -29,8 +28,8 @@ export interface CompactionFitInput {
  * @returns Conservative token estimate based on text length.
  */
 export function estimateCurrentTokens(userContent: ClineContent[]): number {
-	const textLength = userContent.reduce((total, block) => total + getBlockText(block).length, 0)
-	return Math.ceil(textLength / TOKEN_ESTIMATE_CHARS)
+    const textLength = userContent.reduce((total, block) => total + getBlockText(block).length, 0)
+    return Math.ceil(textLength / TOKEN_ESTIMATE_CHARS)
 }
 
 /**
@@ -40,33 +39,7 @@ export function estimateCurrentTokens(userContent: ClineContent[]): number {
  * @returns True when a tool_result block is present in the pending content.
  */
 export function hasToolResult(userContent: ClineContent[]): boolean {
-	return userContent.some((block) => block.type === "tool_result")
-}
-
-/**
- * Detect an explicit manual compaction command in current-turn text, including nested tool-result feedback.
- *
- * @param userContent Pending current-turn content.
- * @returns True when user-authored tagged content requests /compact or /smol.
- */
-export function hasManualCompactionIntent(
-	userContent: ClineContent[],
-	isTrustedUserFeedback: (block: Extract<ClineContent, { type: "tool_result" }>) => boolean = () => false,
-): boolean {
-	return userContent.some((block) => {
-		if (block.type === "text") {
-			return hasManualCompactionCommand(block.text)
-		}
-		if (block.type !== "tool_result" || !isTrustedUserFeedback(block)) {
-			return false
-		}
-		if (typeof block.content === "string") {
-			return hasManualCompactionCommand(block.content)
-		}
-		return block.content?.some((contentBlock) =>
-			contentBlock.type === "text" ? hasManualCompactionCommand(contentBlock.text) : false,
-		)
-	})
+    return userContent.some((block) => block.type === "tool_result")
 }
 
 /**
@@ -76,7 +49,7 @@ export function hasManualCompactionIntent(
  * @returns Non-tool-result blocks that the summary must account for.
  */
 export function getCompactionUserText(userContent: ClineContent[]): ClineContent[] {
-	return userContent.filter((block) => block.type !== "tool_result")
+    return userContent.filter((block) => block.type !== "tool_result")
 }
 
 /**
@@ -88,19 +61,19 @@ export function getCompactionUserText(userContent: ClineContent[]): ClineContent
  * @returns First-pass user text, or prior summary plus user text for an iterative pass.
  */
 export function projectCompactionRequestContent(
-	currentContent: ClineContent[],
-	deferredContent: ClineContent[] | undefined,
-	fittingCompactionRequired: boolean,
+    currentContent: ClineContent[],
+    deferredContent: ClineContent[] | undefined,
+    fittingCompactionRequired: boolean,
 ): ClineContent[] {
-	if (!deferredContent) {
-		return currentContent
-	}
+    if (!deferredContent) {
+        return currentContent
+    }
 
-	if (!fittingCompactionRequired) {
-		return getCompactionUserText(deferredContent)
-	}
+    if (!fittingCompactionRequired) {
+        return getCompactionUserText(deferredContent)
+    }
 
-	return [...currentContent, ...projectCompletedCompactionResult(deferredContent)]
+    return [...currentContent, ...projectCompletedCompactionResult(deferredContent)]
 }
 
 /**
@@ -110,15 +83,15 @@ export function projectCompactionRequestContent(
  * @returns True when pending tool results would push the next request over the compaction trigger.
  */
 export function shouldDeferCurrentTurn(input: CurrentTurnCompactionInput): boolean {
-	if (!hasToolResult(input.userContent)) {
-		return false
-	}
+    if (!hasToolResult(input.userContent)) {
+        return false
+    }
 
-	if (shouldCompactProjectedUsage(input.previousTokens, input.triggerTokens)) {
-		return true
-	}
+    if (shouldCompactProjectedUsage(input.previousTokens, input.triggerTokens)) {
+        return true
+    }
 
-	return shouldCompactProjectedUsage(input.previousTokens + estimateCurrentTokens(input.userContent), input.triggerTokens)
+    return shouldCompactProjectedUsage(input.previousTokens + estimateCurrentTokens(input.userContent), input.triggerTokens)
 }
 
 /**
@@ -128,15 +101,15 @@ export function shouldDeferCurrentTurn(input: CurrentTurnCompactionInput): boole
  * @returns True only after the final summarize_task pass has completed.
  */
 export function shouldRestoreDeferredTurn(input: DeferredTurnRestoreInput): boolean {
-	return input.hasDeferredTurn && input.didCompleteSummarization && !input.fittingCompactionRequired
+    return input.hasDeferredTurn && input.didCompleteSummarization && !input.fittingCompactionRequired
 }
 
 /** Continue iterative compaction until actual request usage is strictly below 80%. */
 export function shouldContinueCompactionFitting(input: CompactionFitInput): boolean {
-	if (!Number.isFinite(input.contextTokens) || !Number.isFinite(input.contextWindow) || input.contextWindow <= 0) {
-		return false
-	}
-	return input.contextTokens >= input.contextWindow * COMPACTION_FIT_TARGET_RATIO
+    if (!Number.isFinite(input.contextTokens) || !Number.isFinite(input.contextWindow) || input.contextWindow <= 0) {
+        return false
+    }
+    return input.contextTokens >= input.contextWindow * COMPACTION_FIT_TARGET_RATIO
 }
 
 /**
@@ -147,18 +120,18 @@ export function shouldContinueCompactionFitting(input: CompactionFitInput): bool
  * @returns Orphan-safe summary content followed by the optional user continuation.
  */
 export function projectCompletedCompactionResult(
-	userContent: ClineContent[],
-	continuationContent: ClineContent[] = [],
+    userContent: ClineContent[],
+    continuationContent: ClineContent[] = [],
 ): ClineContent[] {
-	const projected = userContent.flatMap((block) => {
-		if (block.type !== "tool_result") {
-			return [block]
-		}
+    const projected = userContent.flatMap((block) => {
+        if (block.type !== "tool_result") {
+            return [block]
+        }
 
-		const text = getBlockText(block)
-		return text.length > 0 ? [{ type: "text" as const, text }] : []
-	})
-	return [...projected, ...continuationContent]
+        const text = getBlockText(block)
+        return text.length > 0 ? [{ type: "text" as const, text }] : []
+    })
+    return [...projected, ...continuationContent]
 }
 
 /**
@@ -168,27 +141,27 @@ export function projectCompletedCompactionResult(
  * @returns Extracted text, or an empty string for non-text blocks.
  */
 function getBlockText(block: ClineContent): string {
-	if (block.type === "text") {
-		return block.text
-	}
+    if (block.type === "text") {
+        return block.text
+    }
 
-	if (block.type === "agents_instructions") {
-		return block.content
-	}
+    if (block.type === "agents_instructions") {
+        return block.content
+    }
 
-	if (block.type === "attached_document") {
-		return block.fallback_text
-	}
+    if (block.type === "attached_document") {
+        return block.fallback_text
+    }
 
-	if (block.type === "tool_result") {
-		if (typeof block.content === "string") {
-			return block.content
-		}
+    if (block.type === "tool_result") {
+        if (typeof block.content === "string") {
+            return block.content
+        }
 
-		if (Array.isArray(block.content)) {
-			return block.content.map((contentBlock) => (contentBlock.type === "text" ? contentBlock.text : "")).join("\n")
-		}
-	}
+        if (Array.isArray(block.content)) {
+            return block.content.map((contentBlock) => (contentBlock.type === "text" ? contentBlock.text : "")).join("\n")
+        }
+    }
 
-	return ""
+    return ""
 }

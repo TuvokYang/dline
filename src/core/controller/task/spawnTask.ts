@@ -16,11 +16,11 @@ import { Controller } from ".."
  * @returns SpawnTaskResponse with the child taskId
  */
 export async function spawnTask(controller: Controller, request: SpawnTaskRequest): Promise<SpawnTaskResponse> {
-	const orchestrator = OrchestratorController.getInstance()
+    const orchestrator = OrchestratorController.getInstance()
 
-	// Register the spawn relationship. The panel and task initialization
-	// are handled by the caller (SpawnTaskHandler or webview).
-	orchestrator.spawnTask(request.task, controller, request.parentTaskId)
+    // Register the spawn relationship. The panel and task initialization
+    // are handled by the caller (SpawnTaskHandler or webview).
+    orchestrator.spawnTask(request.task, controller, request.parentTaskId)
 
-	return SpawnTaskResponse.create({ taskId: request.task })
+    return SpawnTaskResponse.create({ taskId: request.task })
 }

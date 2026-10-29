@@ -20,7 +20,7 @@
  * @returns {SidebarLink[]}
  */
 export function linksOf(entry) {
-	return entry.type === "group" ? entry.entries.flatMap(linksOf) : [entry]
+    return entry.type === "group" ? entry.entries.flatMap(linksOf) : [entry]
 }
 
 /**
@@ -35,26 +35,26 @@ export function linksOf(entry) {
  * @returns {{ tabs: SectionTab[], sidebar: SidebarEntry[], pagination: RouteData["pagination"] }}
  */
 export function selectSection({ sidebar, pagination }) {
-	const sections = sidebar.filter(
-		/** @returns {entry is SidebarGroup} */ (entry) => entry.type === "group" && linksOf(entry).length > 0,
-	)
-	const current = sections.findIndex((section) => linksOf(section).some((link) => link.isCurrent))
-	const tabs = sections.map((section, index) => ({
-		label: section.label,
-		href: linksOf(section)[0].href,
-		isCurrent: index === current,
-	}))
-	if (current === -1) {
-		return { tabs, sidebar, pagination }
-	}
-	const foreignHrefs = new Set(
-		sections.flatMap((section, index) => (index === current ? [] : linksOf(section).map((link) => link.href))),
-	)
-	/** @param {SidebarLink | undefined} link */
-	const withinSection = (link) => (link && foreignHrefs.has(link.href) ? undefined : link)
-	return {
-		tabs,
-		sidebar: sections[current].entries,
-		pagination: { prev: withinSection(pagination.prev), next: withinSection(pagination.next) },
-	}
+    const sections = sidebar.filter(
+        /** @returns {entry is SidebarGroup} */ (entry) => entry.type === "group" && linksOf(entry).length > 0,
+    )
+    const current = sections.findIndex((section) => linksOf(section).some((link) => link.isCurrent))
+    const tabs = sections.map((section, index) => ({
+        label: section.label,
+        href: linksOf(section)[0].href,
+        isCurrent: index === current,
+    }))
+    if (current === -1) {
+        return { tabs, sidebar, pagination }
+    }
+    const foreignHrefs = new Set(
+        sections.flatMap((section, index) => (index === current ? [] : linksOf(section).map((link) => link.href))),
+    )
+    /** @param {SidebarLink | undefined} link */
+    const withinSection = (link) => (link && foreignHrefs.has(link.href) ? undefined : link)
+    return {
+        tabs,
+        sidebar: sections[current].entries,
+        pagination: { prev: withinSection(pagination.prev), next: withinSection(pagination.next) },
+    }
 }

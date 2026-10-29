@@ -1,9 +1,9 @@
 import { type CheckpointReferenceSet, readCheckpointReferenceSet } from "@shared/checkpoints"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 
 /** Return true when a persisted row represents a completed task boundary. */
-function isCompletionMessage(message: ClineMessage): boolean {
-	return message.say === "completion_result" || message.ask === "completion_result"
+function isCompletionMessage(message: UiMessage): boolean {
+    return message.say === "completion_result" || message.ask === "completion_result"
 }
 
 /**
@@ -16,27 +16,22 @@ function isCompletionMessage(message: ClineMessage): boolean {
  * checkpoint hash.
  */
 export function resolveCompletionDiffBaseReferences(
-	messages: readonly ClineMessage[],
-	messageIndex: number,
+    messages: readonly UiMessage[],
+    messageIndex: number,
 ): CheckpointReferenceSet | undefined {
-	for (let index = messageIndex - 1; index >= 0; index--) {
-		const message = messages[index]
-		const references = message && isCompletionMessage(message) ? readCheckpointReferenceSet(message) : undefined
-		if (references) {
-			return references
-		}
-	}
+    for (let index = messageIndex - 1; index >= 0; index--) {
+        const message = messages[index]
+        const references = message && isCompletionMessage(message) ? readCheckpointReferenceSet(message) : undefined
+        if (references) {
+            return references
+        }
+    }
 
-	for (const message of messages) {
-		if (message.say === "checkpoint_created") {
-			const references = readCheckpointReferenceSet(message)
-			if (references) return references
-		}
-	}
-	return undefined
-}
-
-/** Compatibility helper for callers that still operate on one workspace. */
-export function resolveCompletionDiffBaseHash(messages: readonly ClineMessage[], messageIndex: number): string | undefined {
-	return resolveCompletionDiffBaseReferences(messages, messageIndex)?.hashes.find(Boolean)
+    for (const message of messages) {
+        if (message.say === "checkpoint_created") {
+            const references = readCheckpointReferenceSet(message)
+            if (references) return references
+        }
+    }
+    return undefined
 }

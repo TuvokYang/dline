@@ -1,173 +1,120 @@
 <div align="center">
 
-<img src="assets/icons/icon.png" width="96" alt="Dline" />
+<img src="assets/icons/icon.png" width="96" alt="Dline robot mark" />
 
 # Dline
 
-**An autonomous coding agent inside VS Code**
+English · [中文](README_zh.md)
 
-Reads and writes files, runs commands, drives a browser, and calls MCP tools — with your approval at every step.
+**Independent coding agent for task-scoped work in separate VS Code panels**
 
-English · [中文](README_zh.md) · [Docs](https://docs.dline.cc/) · [Changelog](docs/changelog/CHANGELOG_en.md)
+Bring your own model provider, preserve each task's state across reloads, and configure tool approvals by action type.
+
+[Documentation](https://docs.dline.cc/) · [Privacy](https://docs.dline.cc/privacy/) · [Security](https://docs.dline.cc/security/) · [Changelog](docs/changelog/CHANGELOG_en.md)
 
 </div>
 
-<p align="center"><img src="assets/docs/marketplace/r1-hero.gif" width="1200" alt="Dline completing a coding task end to end" /></p>
+> **Independent project notice:** Dline is independently maintained community software. It is based on the Apache-2.0 licensed Cline project, but it is not an official Cline release, is not published by Cline Bot Inc., and is not affiliated with or endorsed by Cline Bot Inc.
 
+<p align="center"><img src="assets/docs/marketplace/r1-hero.gif" width="1200" alt="Dline completing a coding task with reviewable tool activity" /></p>
 
-## Why Dline
+## What Dline Is Built For
 
-- **Parallel tasks, fully isolated** — run several tasks in one workspace at the same time; each has its own model, capability toggles, checkpoints, and execution state.
-- **Pick a model per task** — a lightweight model for research, a stronger one for implementation. Profiles bind to tasks, not to a single global setting.
-- **Long tasks keep going** — when context nears its limit, compaction runs in passes, and a mid-way failure resumes instead of restarting.
-- **Observable and controllable** — the activity panel shows the running tool, subagent timelines, API rate, and context usage in real time; file edits and commands always wait for your confirmation.
-- **Fine-grained permissions** — `.agentignore` limits what the agent can reach along four dimensions: read, write, execute, and visibility.
+Dline is designed for development work that needs more than a single chat response:
 
-Dline is a community fork of [Cline](https://github.com/cline/cline). It keeps the original interaction model while rewriting the task runtime, state storage, prompt architecture, context management, and terminal execution, and it runs daily in real production projects.
+- **Task-scoped model Profiles** keep each task bound to its own provider, endpoint, model, and reasoning settings.
+- **Separate task state** keeps mode, conversation, approvals, capability toggles, Activities, checkpoints, and recovery state attached to the owning task.
+- **Configurable approvals** classify tool actions by type: trusted reads and safe commands can run automatically, while edits and higher-impact operations can remain reviewable.
+- **Recoverable long-running work** persists task state, Activities, message history, and command output so interrupted work can be inspected and resumed.
+- **Scoped capabilities** let rules, skills, workflows, subagents, and MCP server toggles resolve through global, workspace, and task scope.
 
-## Quick Start
+## Start a Task
 
-1. After installing, click the Dline icon in the activity bar to open the sidebar.
-2. Open **API Configuration** in settings and create a profile: choose a provider, enter an API key, and select a model.
-3. Describe your task in the input box, choose **Plan** (plan first, then execute) or **Act** (execute directly), and send.
+1. Install Dline and open the Dline icon in the VS Code activity bar.
+2. Open **API Configuration**, create a Profile, choose a provider and model, and add the credentials required by that provider.
+3. Start a task in **Plan** mode when you want investigation and an agreed approach, or in **Act** mode when the task is ready for implementation.
+4. Review requested tool access. You can approve one operation, reject it, or configure narrow auto-approval rules for operations you trust.
 
-Dline asks for confirmation before reading or writing files, running commands, or calling external tools. Low-risk operations can be auto-approved in settings.
+**Requirement:** VS Code 1.134.0 or newer.
 
-<p align="center"><img src="assets/docs/marketplace/r2-quick-start.gif" width="1200" alt="Configuring a profile and starting the first task" /></p>
+<p align="center"><img src="assets/docs/marketplace/r2-quick-start.gif" width="1200" alt="Creating a Dline API Profile and starting a task" /></p>
 
+## Control and Separate Task State
 
-**Requirements**: VS Code 1.134.0 or newer.
+### Per-task execution state
 
-**Migrating from Cline**: on first launch, existing Cline data (settings, MCP configuration, rules, and workflows) is copied into the Dline directory. The original data is neither modified nor deleted, so both extensions can coexist. Task history is no longer migrated: Dline's task index and per-task runtime state are no longer compatible with Cline, so imported entries could not be opened or resumed and are left in place.
+Every task owns its selected Profile, mode, capability settings, message history, Activities, checkpoints, queued input, and recovery state. Changing one task does not silently change another running task. Separate panels share the same workspace files by default; use worktrees when tasks also need filesystem isolation.
 
-## Core Capabilities
+### Explicit access boundaries
 
-### Parallel tasks and task isolation
-
-A single workspace runs multiple tasks at once, fully isolated from each other:
-
-- **Independent profiles** — each task binds its own model and endpoint; switching one task's profile never affects the others.
-- **Independent capability toggles** — skills, workflows, MCP servers, and browser access are enabled per task and saved with it.
-- **Independent checkpoints** — file ownership is arbitrated per task, so rolling back one task never touches files another task changed.
-- **Independent execution state** — cancellation, resume, and approval each form their own chain without cross-talk.
-
-Parallel tasks share one machine, so code search and state persistence run under explicit budgets and scheduling; a repository-wide search does not slow down other tasks or the UI.
-
-<p align="center"><img src="assets/docs/marketplace/r3-parallel-tasks.gif" width="1200" alt="Two tasks running in parallel with different models" /></p>
-
-
-### Multiple profiles and model providers
-
-Manage several API keys and endpoints at once, and bind them per task, per subagent, or for image generation. API keys live in a dedicated key store, decoupled from profile configuration.
-
-The main task and its subagents do not have to use the same model. Prepare profiles for code discovery, in-depth review, or web research, then bind each named subagent to the appropriate configuration. Enable a profile and check **Subagents** in **API Configuration** to make it selectable in subagent settings. For image generation, configure an image source and image model on that API Profile, reusing its image service or binding a separate Image Profile.
-
-Supports 30+ providers and local runtimes, including OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, AWS Bedrock, Vertex AI, Qwen, GLM, Ollama, and LM Studio. When a model speaks several protocols, you can choose between OpenAI Chat, OpenAI Responses, and Anthropic Chat formats.
-
-### Three scopes for rules, skills, workflows, and MCP
-
-Rules, skills, workflows, MCP servers, and browser access resolve across **global / workspace / task** scopes, each layer overriding the one above:
-
-| Scope | Use case |
-|---|---|
-| Global | Personal preferences shared across all projects |
-| Workspace | Team conventions for the current project, versioned with the code |
-| Task | Temporarily enabled or disabled for this task only |
-
-Task-level settings persist with the task and are restored on resume without polluting workspace configuration. Skills, workflows, and MCP tools load on demand instead of consuming context upfront.
-
-<p align="center"><img src="assets/docs/marketplace/r6-capability-scopes.gif" width="1200" alt="Adjusting task-scoped workflows, skills, rules, and MCP servers with a stale Prompt Cache warning" /></p>
-
-
-### Long tasks and automatic compaction
-
-When context approaches or exceeds the window, Dline compacts the conversation in passes: each pass summarizes only a range that is safe to fold, carries the cumulative summary into the next pass, and repeats until enough context is free to continue. Compaction runs under a budget with failure replay, so a mid-way error resumes instead of starting over.
-
-<p align="center"><img src="assets/docs/marketplace/r8-compaction.gif" width="1200" alt="Task continues after automatic compaction" /></p>
-
-
-### Live activity panel
-
-The **Work** tab shows the conversation and tool output; the **Activities** tab shows the running tool, subagent call timelines and metrics, API rate and context usage charts, and the full retry sequence for failures. What the agent is doing and how much context it has spent are visible at a glance.
-
-<p align="center"><img src="assets/docs/marketplace/r4-activity-panel.gif" width="1200" alt="Activity panel showing tool execution and context usage" /></p>
-
-
-### Subagents and task orchestration
-
-Delegate code investigation to subagents and bring back findings instead of the entire reading history. The shipped `default` configuration provides read-only research, background execution, timeouts, and automatic retry of recoverable failures. `use_subagents` runs one to five default subagents per batch.
-
-Named subagents define their role, `profile`, tool allowlist, and visible skills in YAML under `.agents/subagents/`. For example, bind `code-researcher` to a fast discovery profile and `architecture-reviewer` to an in-depth reasoning profile while the main task keeps its implementation profile. A valid explicit binding uses the subagent's own model and Thinking settings. Omitting `profile` inherits the parent task's **Act Profile**, even when the parent is currently in Plan mode.
-
-Combine tools by role: expose `web_search` / `web_fetch` to a web researcher, Skill loading and MCP tools to a specialist, or `generate_image` to an image agent. Search routing and image sources are configured on the bound API Profile. Image agents require an explicit valid profile; a separate Image Profile is linked through that API Profile, not selected by arbitrary credential switching at call time. Tool allowlists do not replace each tool's permission and approval policies.
-
-Call different named agents separately with `use_subagent`. The batch `use_subagents` entry runs only the default configuration, without a different profile per item. To advance implementation as an independent peer task, use `spawn_task` with a Plan or Act starting mode. See the [subagent guide](https://docs.dline.cc/features/subagents/) for configuration examples and permission boundaries.
-
-<p align="center"><img src="assets/docs/marketplace/r5-subagents.gif" width="1200" alt="Several subagents researching in parallel" /></p>
-
-
-### Code understanding, editing, and terminal control
-
-- **Semantic code tools** — beyond the usual read, write, search, and command tools, Dline offers LSP-backed reference lookup, semantic rename, and cross-file batch replacement.
-- **Terminal control** — commands take a working directory, an execution timeout, and a background handoff duration; long-running commands move to the background with their output preserved and can be terminated at any time. On Windows, PowerShell selection and UTF-8 encoding are handled automatically.
-- **Warm terminals** — terminal instances are started ahead of time, so a command takes a ready terminal instead of waiting for shell startup.
-- **Terminal environment** — declare environment variables, startup scripts, and pre-commands per platform and shell in `.agents/bashrc.yml` (for example, activating a conda environment), versioned with the project.
-
-### Access permissions
-
-`.agentignore` uses `.gitignore` syntax and removes permissions per dimension instead of merely hiding paths:
+Dline separates its project-tool access into read, write, execute, and visibility permissions. A workspace `.agentignore` file can remove one or more permissions with `.gitignore`-style patterns:
 
 ```gitignore
-secrets/          # remove every permission
-vendor/ -w        # read-only, writes rejected
-generated/ -s     # hidden from listings and search, still readable by exact path
+secrets/          # no access
+vendor/ -w        # readable, not writable
+generated/ -s     # hidden from listing and search
 scripts/ext/ -x   # cannot be used as a command working directory
-logs/ -r          # not readable, other permissions kept
+logs/ -r          # not readable
 ```
 
-<p align="center"><img src="assets/docs/marketplace/r7-agentignore.png" width="1200" alt=".agentignore rejecting a write to a read-only directory" /></p>
+Auto-approval does not bypass `.agentignore`, workspace boundaries, host restrictions, or tool-specific safety checks. `.agentignore` governs Dline's own tools; it is not an operating-system sandbox.
 
+### Observable work
 
-### Checkpoints and task history
+The **Work** view shows the conversation and tool results. The **Activities** view retains command and subagent runs, including output, attempts, cancellation, interruption, API rate, and context usage. Completed and interrupted Activities remain available with the task.
 
-A Git-based checkpoint is created after every tool execution, so file changes can be compared or rolled back at any time. Task history is searchable and resumable; you can keep typing while a task runs — messages queue and arrive at a safe boundary.
+## Models and External Capabilities
 
-<p align="center"><img src="assets/docs/marketplace/r9-checkpoints.png" width="1200" alt="Comparing and restoring a checkpoint" /></p>
+Dline supports hosted and local model providers through user-created API Profiles. The provider and model used by one task do not have to match another task or its subagents.
 
+Optional capabilities include:
 
-### Web search, image generation, and rich rendering
+- local or provider-hosted web search and page retrieval;
+- MCP servers configured by you or your workspace;
+- browser automation governed by the current approval settings;
+- image generation through a configured image source;
+- named research subagents and independent peer tasks;
+- LSP-backed references and rename operations;
+- bounded foreground and background terminal commands.
 
-- **Web search and fetch** — routed automatically by the current model's capabilities: hosted execution when the provider offers it, local execution otherwise. Each profile can also be pinned to local only, hosted only, or off.
-- **Image generation** — reuse the current OpenAI profile, use the provider's hosted image capability, or bind a standalone OpenAI / Gemini image profile; count, size, quality, format, and background are configurable, and existing images can be edited further.
-- **Rich rendering** — ` ```latex ` blocks in the conversation are typeset as formulas, and ` ```mermaid ` blocks render as diagrams that open as SVG in the editor on click.
+Availability, billing, data handling, and retention for a model provider or external service are governed by that service. Review its terms before adding credentials or sending data.
 
-<p align="center"><img src="assets/docs/marketplace/r10-rich-rendering.png" width="1200" alt="LaTeX formulas and Mermaid diagrams rendered in the conversation" /></p>
+## Local Data and Network Requests
 
+Dline stores settings, credentials, task history, messages, activities, checkpoints, and recovery data on your machine under Dline-owned storage roots. Credentials are kept in dedicated credential stores rather than task messages or Profile documents.
 
-## Configuration Directories
+When you submit a task, the prompt, selected context, and tool results needed for that request are sent to the model provider configured in the task's Profile. MCP servers, web services, image providers, browser targets, and other tools receive requests according to the current approval and auto-approval policy.
+
+Dline also has separate **usage reporting** and **error reporting** controls. Both are enabled by default in the current build, honor VS Code's telemetry setting, and can be turned off independently in **Settings → About**. The public [Privacy Policy](https://docs.dline.cc/privacy/) describes the data categories, purposes, destinations, retention boundaries, controls, and current privacy-request limitation. The [telemetry reference](https://docs.dline.cc/troubleshooting/telemetry/) documents the current reporting schema and local diagnostic behavior.
+
+## Configuration Locations
 
 | Path | Purpose |
 |---|---|
-| `.agents/rules/` | Project rules injected into the system prompt |
-| `.agents/workflows/` | Reusable multi-step procedures |
-| `.agents/skills/` | Task-specific methods and best practices |
-| `.agents/subagents/` | Subagent definitions (YAML) |
-| `.agents/mcp/` | Workspace-level MCP server descriptors (YAML / JSON) |
+| `.agents/rules/` | Project rules added to Dline's task context |
+| `.agents/workflows/` | Reusable ordered procedures |
+| `.agents/skills/` | Task-specific methods and verification guidance |
+| `.agents/subagents/` | Named subagent definitions |
+| `.agents/mcp/` | Workspace MCP server descriptors |
 | `.agents/bashrc.yml` | Terminal environment configuration |
-| `.agentignore` | Agent access permission rules |
+| `.agentignore` | Read, write, execute, and visibility restrictions |
 
-`AGENTS.md`, `.clinerules/`, `.cursor/rules/`, `.cursorrules`, `.windsurfrules`, and `.claude/skills/` are also recognized, so existing projects work without migration.
+Dline can also read selected compatibility formats such as `AGENTS.md`, `.clinerules/`, `.cursor/rules/`, `.cursorrules`, `.windsurfrules`, and `.claude/skills/`. Compatibility does not imply affiliation with the projects that introduced those formats.
 
-## Privacy and Data
+## Migration from Cline
 
-- API keys and credentials are stored only in the local key store; they are never written into profile configuration or task history.
-- Code, prompts, and conversation content are sent only to the providers you configure in your profiles.
-- Usage reporting and error reporting require separate consent and are off by default; runtime telemetry starts only after you enable them.
-- When troubleshooting, a diagnostic bundle can be exported to the local machine in one click. The ZIP contains no code, prompts, or credentials.
+Dline does not automatically read, copy, modify, or delete Cline data. To reuse selected settings, MCP configuration, rules, or workflows, follow the [manual migration guide](https://docs.dline.cc/getting-started/migration-cline-to-dline/). Cline task history is not compatible with Dline and cannot be imported.
 
-## Relationship to Cline
+## Support, Security, and Privacy
 
-Dline is built on the Apache-2.0 licensed [Cline](https://github.com/cline/cline) project and retains the original copyright, license, and attribution notices. Dline is not the official Cline release and is not published by Cline Bot Inc.; the Cline name is used only to describe project origin and compatibility. Dline-specific changes are maintained by the Dline maintainers.
+- Product questions and bug reports: [Dline issues](https://github.com/TuvokYang/Dline/issues)
+- Security reports: [Report a Security Vulnerability](https://docs.dline.cc/security/)
+- Privacy terms and request limitations: [Dline Privacy Policy](https://docs.dline.cc/privacy/)
+- Documentation: [docs.dline.cc](https://docs.dline.cc/)
+
+## Open-source Origin
+
+Dline is a derivative work of the Apache-2.0 licensed [Cline](https://github.com/cline/cline) project. Dline retains applicable upstream copyright, license, and attribution notices. References to Cline describe source origin, compatibility, or migration only; they do not claim sponsorship, endorsement, or an official relationship.
 
 ## License
 

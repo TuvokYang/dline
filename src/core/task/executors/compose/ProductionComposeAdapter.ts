@@ -1,0 +1,458 @@
+import { estimateContextValueBreakdown } from "@core/context/context-management/context-window-projection"
+import type { ClineStorageMessage } from "@shared/messages/content"
+import { mistakeLimit, type TaskState, type TurnContinuationReason } from "../../kernel"
+import type { ConversationJournal, JournalWatermark } from "../../stores"
+import type { TaskPayloadStore } from "../../stores/contracts"
+import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
+import type {
+    EnvironmentDetailsEnvelope,
+    LifecycleCommand,
+    ProviderDraftEnvelope,
+    ProviderFinalEnvelope,
+    ProviderTurnEnding,
+    TurnContinuationEnvelope,
+    UserInputEnvelope,
+} from "../../stores/payload/TaskPayloadEnvelopes"
+import type { ComposePort, ComposeRoundInput, ComposeRoundResult } from "./ComposeCommandExecutor"
+import { type RetainedBatchReceipt, RetainedInputJournalBatch } from "./RetainedInputJournalBatch"
+import type { RetainedInputPresentationCommit, RetainedInputPresentationPort } from "./RetainedInputPresentationPort"
+import { materializeToolTerminalManifest, type ToolDenialPort } from "./ToolTerminalManifestMaterializer"
+
+/** Why a round opened only to carry out lifecycle commands, such as a bare `/compact`, settled without a request. */
+export const LIFECYCLE_ROUND_SETTLED = "lifecycle_round_settled"
+
+/**
+ * Renders the dynamic environment block for one provider round.
+ *
+ * The compose domain owns the round, so it decides when a snapshot is taken;
+ * what goes into the snapshot belongs to the host-side projection.
+ */
+export interface ComposeEnvironmentPort {
+    render(input: { readonly turnId?: string; readonly signal: AbortSignal }): Promise<string | undefined>
+}
+
+/**
+ * Renders what a kernel-opened round tells the model.
+ *
+ * The kernel decides that a round continues; it cannot know how to say so,
+ * because the wording belongs to the prompt profile in use. Declaring a port
+ * keeps that wording out of the compose domain and out of the kernel.
+ */
+export interface ComposeContinuationPort {
+    render(input: TurnContinuationInput): string | undefined
+}
+
+/** What a kernel-opened round knows about the response that caused it. */
+export interface TurnContinuationInput {
+    readonly reason: TurnContinuationReason
+    readonly previousResponse: PreviousResponseObservation
+    /** Responses without a tool call in a row, including the previous one. */
+    readonly toollessStreak: number
+    /** Streak at which the kernel stops continuing and hands the task back to the user. */
+    readonly toollessLimit: number
+}
+
+/**
+ * The response that ended without a tool call, as the conversation shows it.
+ *
+ * `not_journaled` is evidence in itself: a response with no content leaves no
+ * assistant message behind. `unobserved` means the assembly cannot read the
+ * conversation, so nothing may be concluded about the response.
+ *
+ * `ending` is the provider's own account of how the response stopped, when the
+ * journal holds one; it separates a response cut off by its output limit from
+ * one that simply ended without a call.
+ */
+export type PreviousResponseObservation =
+    | { readonly kind: "journaled"; readonly message: ClineStorageMessage; readonly ending?: ProviderTurnEnding }
+    | { readonly kind: "not_journaled"; readonly ending?: ProviderTurnEnding }
+    | { readonly kind: "unobserved" }
+
+/**
+ * The provider conversation by journal entry, as provider requests materialize it.
+ *
+ * Compose measures how much the conversation grew since the last draft from
+ * the same view a request is built from, so the measure describes what the
+ * next request will actually carry.
+ */
+export interface ComposeConversationPort {
+    entries(): Promise<
+        readonly {
+            readonly entry: { readonly watermark: JournalWatermark; readonly payloadRef?: string }
+            readonly messages: readonly ClineStorageMessage[]
+        }[]
+    >
+}
+
+/**
+ * Holds a round until any compaction owed to it has finished.
+ *
+ * Context pressure is only measurable once a request settles, but the round
+ * that needs the smaller context is the next one. Compose is where every round
+ * begins - a user submission and a kernel continuation both arrive here - so
+ * this is the only point that can order the summary before the request that
+ * should carry it.
+ */
+export interface ComposeCompactionBarrierPort {
+    /**
+     * Carry out what the round owes before it is drafted.
+     *
+     * @param input.signal The round's own signal; a stopped round stops waiting.
+     * @param input.lifecycle Commands the round's admitted inputs carry, in order.
+     */
+    settleBeforeRound(input: {
+        readonly signal: AbortSignal
+        readonly lifecycle: readonly LifecycleCommand[]
+        /** Text tokens added after the last provider-reported pressure sample. */
+        readonly pendingContextTokens?: number
+    }): Promise<RoundReadiness>
+}
+
+/**
+ * Whether a round may be drafted once the barrier settled.
+ *
+ * `withdrawn` gives the round up as the user's own decision; `failed` stops it
+ * because what it owed did not happen, so the user is offered a retry.
+ * `presentation` is the failure as the user should read it.
+ */
+export type RoundReadiness =
+    | { readonly kind: "ready" }
+    | { readonly kind: "withdrawn"; readonly reason: string }
+    | { readonly kind: "failed"; readonly reason: string; readonly presentation?: string }
+
+/**
+ * Measures the complete request a round is about to draft, before it is drafted.
+ *
+ * Only the request with its system prompt, tools, history, this round's input
+ * and its environment says whether it fits, so the decision is made here
+ * rather than from the last request's usage alone. The environment comes back
+ * because a request close to the limit carries a warning in it.
+ */
+export interface ComposeContextWindowGuardPort {
+    admit(input: { readonly signal: AbortSignal; readonly environment?: string }): Promise<ContextWindowAdmission>
+}
+
+/** Whether the measured request may be drafted, and the environment it carries if so. */
+export type ContextWindowAdmission =
+    | { readonly kind: "ready"; readonly environment?: string }
+    | { readonly kind: "withdrawn"; readonly reason: string }
+    | { readonly kind: "failed"; readonly reason: string; readonly presentation?: string }
+
+export interface ProductionComposeAdapterOptions {
+    readonly payloads: TaskPayloadStore
+    readonly journal: ConversationJournal
+    readonly readState: () => Readonly<TaskState>
+    readonly environment?: ComposeEnvironmentPort
+    /** Explains a continued round to the model; absent in headless assemblies. */
+    readonly continuation?: ComposeContinuationPort
+    /** Condenses the conversation before this round is drafted, when one is owed. */
+    readonly compactionBarrier?: ComposeCompactionBarrierPort
+    /** Measures the round's complete request once its inputs are journaled; absent admits every round. */
+    readonly contextWindowGuard?: ComposeContextWindowGuardPort
+    /** Projects the selected user-authored batch without model-only guidance. */
+    readonly retainedInputPresentation?: RetainedInputPresentationPort
+    /** Measures conversation growth between drafts; without it only tool results count as growth. */
+    readonly conversation?: ComposeConversationPort
+    /** Words a user's refusal as the refused tool does; absent, refusals keep the generic wording. */
+    readonly toolDenial?: ToolDenialPort
+}
+
+/** Materializes admitted intake entries into one immutable provider draft. */
+export class ProductionComposeAdapter implements ComposePort {
+    private readonly retainedBatches: RetainedInputJournalBatch
+    /** Journal position the last draft of this session fixed, which the last request carried. */
+    private draftedThrough: JournalWatermark | undefined
+
+    constructor(private readonly options: ProductionComposeAdapterOptions) {
+        this.retainedBatches = new RetainedInputJournalBatch(options.payloads, options.journal)
+    }
+
+    async preparePresentation(input: ComposeRoundInput): Promise<RetainedInputPresentationCommit | undefined> {
+        if (!input.queueDelivery || !this.options.retainedInputPresentation) return undefined
+        const entries = this.admittedEntries(input).filter((entry) => entry.queue !== undefined)
+        if (entries.length === 0) return undefined
+        return this.options.retainedInputPresentation.prepare({
+            deliveryId: input.queueDelivery.deliveryId,
+            mode: "steering",
+            entries,
+        })
+    }
+
+    async rollbackRetainedQueue(input: ComposeRoundInput): Promise<"released"> {
+        if (!input.queueDelivery) return "released"
+        const evidence = await this.retainedBatches.inspect(input.queueDelivery.deliveryId)
+        if (evidence.kind === "absent" || evidence.kind === "retracted") return "released"
+        await this.retainedBatches.retract({
+            deliveryId: evidence.receipt.deliveryId,
+            entries: evidence.receipt.entries,
+        })
+        return "released"
+    }
+
+    async compose(input: ComposeRoundInput): Promise<ComposeRoundResult> {
+        if (input.signal.aborted) throw input.signal.reason
+        const admitted = [...this.admittedEntries(input), ...(input.respondedQueue?.entries ?? [])]
+        const inputs = await this.userInputsOf(admitted)
+        const lifecycle = inputs.flatMap((payload) => (payload.lifecycle ? [payload.lifecycle] : []))
+        // Canonicalize the completed turn before compaction reads it. Landing the
+        // summary first and appending this manifest afterwards would reintroduce the
+        // very tool results the summary replaced.
+        const terminalTokens = input.toolTerminals
+            ? await materializeToolTerminalManifest({
+                  manifest: input.toolTerminals,
+                  payloads: this.options.payloads,
+                  journal: this.options.journal,
+                  denial: this.options.toolDenial,
+              })
+            : 0
+        const pendingContextTokens = (await this.growthSinceLastDraft()) ?? terminalTokens
+        // Before the conversation is drafted, so the draft below describes what
+        // compaction left behind rather than the request that was too large.
+        const readiness = (await this.options.compactionBarrier?.settleBeforeRound({
+            signal: input.signal,
+            lifecycle,
+            pendingContextTokens,
+        })) ?? { kind: "ready" }
+        if (input.signal.aborted) throw input.signal.reason
+        if (readiness.kind === "withdrawn") return { withdrawn: { reason: readiness.reason } }
+        if (readiness.kind === "failed") {
+            const { reason, presentation } = readiness
+            return { failed: { reason, ...(presentation === undefined ? {} : { presentation }) } }
+        }
+        // The barrier carried the commands out; a round that held nothing else
+        // has nothing to ask, and sending it would make an empty request.
+        if (this.options.compactionBarrier && lifecycle.length > 0 && carriesOnlyCommands(input, admitted.length, inputs)) {
+            return { withdrawn: { reason: LIFECYCLE_ROUND_SETTLED, carriedOut: true } }
+        }
+        // Read again: the compaction advanced the revision this round is keyed by.
+        const state = this.options.readState()
+        const entries = this.admittedEntries(input)
+
+        await this.appendContinuation(input, state)
+        // Tool feedback carries its model text in the paired result. These original
+        // refs carry admission metadata only: never append their text a second time.
+        const inputPayloadRefs: string[] = [...(input.respondedQueue?.entries.map((entry) => entry.payloadRef) ?? [])]
+        const retainedEntries = entries.filter((entry) => entry.queue !== undefined)
+        const ordinaryEntries = entries.filter((entry) => entry.queue === undefined)
+        inputPayloadRefs.push(...entries.map((entry) => entry.payloadRef))
+        for (const entry of ordinaryEntries) {
+            if (input.signal.aborted) throw input.signal.reason
+            await this.options.journal.append({
+                operationId: `intake:${entry.source}:${entry.entryId}`,
+                payloadRef: entry.payloadRef,
+                source: "intake",
+                causation: { generation: state.generation, turnId: input.turnId },
+            })
+        }
+        let queueReceipt: RetainedBatchReceipt | undefined
+        if (input.queueDelivery) {
+            if (retainedEntries.length === 0) throw new Error("RetainedDeliveryMissingEntries")
+            queueReceipt = await this.retainedBatches.stage({
+                deliveryId: input.queueDelivery.deliveryId,
+                entries: retainedEntries.map(({ entryId, payloadRef }) => ({ entryId, payloadRef })),
+                generation: input.queueDelivery.generation,
+                turnId: input.turnId,
+                signal: input.signal,
+            })
+        }
+        if (input.signal.aborted) throw input.signal.reason
+        const rendered = await this.options.environment?.render({ turnId: input.turnId, signal: input.signal })
+        const admission = (await this.options.contextWindowGuard?.admit({
+            signal: input.signal,
+            ...(rendered ? { environment: rendered } : {}),
+        })) ?? { kind: "ready" as const, environment: rendered }
+        if (input.signal.aborted) throw input.signal.reason
+        if (admission.kind === "withdrawn") return { withdrawn: { reason: admission.reason } }
+        if (admission.kind === "failed") {
+            const { reason, presentation } = admission
+            return { failed: { reason, ...(presentation === undefined ? {} : { presentation }) } }
+        }
+        await this.appendEnvironment(input, admission.environment, state.revision, state.generation)
+        // Only the position: the conversation through it is fixed, so recording
+        // every visible payload would only grow the draft with the conversation.
+        const envelope: ProviderDraftEnvelope = {
+            kind: "provider_draft",
+            admittedEntryIds: input.admittedEntryIds,
+            ...(input.continuation === undefined ? {} : { continuation: input.continuation }),
+            inputPayloadRefs,
+            journalThrough: this.options.journal.watermark(),
+            turnId: input.turnId,
+        }
+        for (const payloadRef of envelope.inputPayloadRefs) {
+            decodeTaskPayload(await this.options.payloads.read(payloadRef))
+        }
+        const draftRef = await this.options.payloads.put(encodeTaskPayload(envelope))
+        this.draftedThrough = envelope.journalThrough
+        return {
+            draftRef,
+            ...(queueReceipt === undefined
+                ? {}
+                : {
+                      queueJournalReceipt: {
+                          deliveryId: queueReceipt.deliveryId,
+                          entries: queueReceipt.entries,
+                          journalWatermark: queueReceipt.watermark,
+                      },
+                  }),
+        }
+    }
+
+    /**
+     * Tokens the conversation gained after the position the last draft fixed.
+     *
+     * Provider usage measures the request that draft became, but counts the
+     * model's answer only by its output tokens, which say nothing about how
+     * large that answer is once it is replayed as input - a reply written into
+     * tool arguments is the clearest case. Everything journaled since the draft
+     * (the answer, its tool results, anything else the round produced) is what
+     * the next request carries on top of the measured one, which is the same
+     * difference main estimates between the next candidate and the last one.
+     * Undefined until this session has drafted a round to measure from.
+     */
+    private async growthSinceLastDraft(): Promise<number | undefined> {
+        const through = this.draftedThrough
+        const conversation = this.options.conversation
+        if (!through || !conversation) return undefined
+        const added = (await conversation.entries())
+            .filter(({ entry }) => entry.watermark.seq > through.seq)
+            .flatMap((item) => [...item.messages])
+        return added.length === 0 ? 0 : estimateContextValueBreakdown(added).totalTokens
+    }
+
+    /**
+     * The response the kernel continued after, read from the conversation's tail.
+     *
+     * Only the very last message counts: when it is not an assistant message the
+     * response left nothing in the journal, and an older assistant message would
+     * describe a different response.
+     */
+    private async observePreviousResponse(): Promise<PreviousResponseObservation> {
+        const conversation = this.options.conversation
+        if (!conversation) return { kind: "unobserved" }
+        const tail = (await conversation.entries()).at(-1)
+        const ending = await this.endingOf(tail?.entry.payloadRef)
+        const withEnding = ending === undefined ? {} : { ending }
+        const last = tail?.messages.at(-1)
+        return last?.role === "assistant"
+            ? { kind: "journaled", message: last, ...withEnding }
+            : { kind: "not_journaled", ...withEnding }
+    }
+
+    /**
+     * How the journaled reply at `payloadRef` ended, if it is a reply that recorded it.
+     *
+     * The ending only refines the continuation's wording, so a payload that
+     * cannot be read leaves the continuation as it was rather than failing the round.
+     */
+    private async endingOf(payloadRef: string | undefined): Promise<ProviderTurnEnding | undefined> {
+        if (payloadRef === undefined) return undefined
+        try {
+            const payload = decodeTaskPayload<ProviderFinalEnvelope>(await this.options.payloads.read(payloadRef))
+            return payload.kind === "provider_final" ? payload.ending : undefined
+        } catch {
+            return undefined
+        }
+    }
+
+    private admittedEntries(input: ComposeRoundInput) {
+        const state = this.options.readState()
+        const entries = [...state.intake.queued, ...state.intake.background, ...state.intake.coTask].filter((entry) =>
+            input.admittedEntryIds.includes(entry.entryId),
+        )
+        if (entries.length !== input.admittedEntryIds.length) throw new Error("AdmittedIntakeEntryMissing")
+        return [...entries].sort(
+            (left, right) => input.admittedEntryIds.indexOf(left.entryId) - input.admittedEntryIds.indexOf(right.entryId),
+        )
+    }
+
+    /**
+     * The user inputs this round admitted, in admission order.
+     *
+     * Lifecycle commands are read from these rather than handed over at
+     * admission, so only an input the kernel accepted and this round admitted
+     * can carry one out.
+     */
+    private async userInputsOf(entries: readonly { readonly payloadRef: string }[]): Promise<UserInputEnvelope[]> {
+        const inputs: UserInputEnvelope[] = []
+        for (const entry of entries) {
+            const payload = decodeTaskPayload<UserInputEnvelope>(await this.options.payloads.read(entry.payloadRef))
+            if (payload.kind === "user_input") inputs.push(payload)
+        }
+        return inputs
+    }
+
+    /**
+     * Journal why this round was opened, before the round's other content.
+     *
+     * A continued round has no submission of its own, so without this entry the
+     * next request repeats the previous one verbatim and the model has no reason
+     * to answer differently.
+     */
+    private async appendContinuation(input: ComposeRoundInput, state: Readonly<TaskState>): Promise<void> {
+        if (!input.continuation) return
+        const continuation = this.options.continuation
+        if (!continuation) return
+        const text = continuation.render({
+            reason: input.continuation,
+            previousResponse: await this.observePreviousResponse(),
+            toollessStreak: state.flow.textOnlyTurnStreak ?? 0,
+            toollessLimit: mistakeLimit(state),
+        })
+        if (!text) return
+        const generation = state.generation
+        if (input.signal.aborted) throw input.signal.reason
+        const envelope: TurnContinuationEnvelope = { kind: "turn_continuation", reason: input.continuation, text }
+        await this.options.journal.append({
+            operationId: `continuation:${input.continuation}:${generation}:${input.turnId ?? "no_turn"}`,
+            payloadRef: await this.options.payloads.put(encodeTaskPayload(envelope)),
+            source: "system",
+            causation: { generation, turnId: input.turnId },
+        })
+    }
+
+    /**
+     * Journal the environment after the round's inputs so replay keeps the
+     * legacy order: user content first, then the snapshot describing the
+     * workspace at the moment the round was composed.
+     */
+    private async appendEnvironment(
+        input: ComposeRoundInput,
+        text: string | undefined,
+        revision: number,
+        generation: number,
+    ): Promise<void> {
+        if (!text) return
+        if (input.signal.aborted) throw input.signal.reason
+        const envelope: EnvironmentDetailsEnvelope = { kind: "environment_details", text }
+        await this.options.journal.append({
+            operationId: `environment:${revision}`,
+            payloadRef: await this.options.payloads.put(encodeTaskPayload(envelope)),
+            source: "system",
+            causation: { generation, turnId: input.turnId },
+        })
+    }
+}
+
+/**
+ * Whether a round holds nothing but the lifecycle commands its inputs named.
+ *
+ * Such a round was opened to carry those commands out - a bare `/compact` -
+ * and once they ran there is nothing to ask the model. A round the kernel
+ * continued, a tool round's results, a dialog's answer, a delivered queue
+ * batch or an input carrying resume context always holds something else and
+ * never settles here.
+ */
+function carriesOnlyCommands(input: ComposeRoundInput, admitted: number, inputs: readonly UserInputEnvelope[]): boolean {
+    if (input.continuation || input.toolTerminals || input.respondedQueue || input.queueDelivery) return false
+    // An admitted entry that is not user input is content of its own.
+    if (inputs.length !== admitted) return false
+    return inputs.every(
+        (payload) =>
+            payload.lifecycle !== undefined &&
+            !(payload.admittedText ?? "").trim() &&
+            !(payload.context ?? "").trim() &&
+            !payload.admittedParts?.some((part) => part.kind === "resource") &&
+            !payload.images?.length &&
+            !payload.files?.length,
+    )
+}

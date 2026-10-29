@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package dline;
+
+import "dline/common.proto";
+
+option go_package = "github.com/dline/grpc-go/dline";
+option java_multiple_files = true;
+option java_package = "bot.dline.proto";
+
+service SupportService {
+  rpc getStatus(EmptyRequest) returns (SupportStatus);
+  rpc checkNow(EmptyRequest) returns (SupportStatus);
+  // Local only: seals capture and deletes the ticket; nothing is revoked remotely.
+  rpc deleteAndRevoke(EmptyRequest) returns (Empty);
+}
+
+// Server-maintained outcome of the reported Issue.
+message SupportResolution {
+  // none | investigating | fixed | wont_fix | duplicate | not_reproducible
+  string state = 1;
+  optional string fixed_in_version = 2;
+  // Plain text from the maintainers, at most 500 characters.
+  optional string summary = 3;
+}
+
+// Safe projection only. The authorization code, issue tokens and any Issue
+// identity are never projected: OTel links the Issue and never returns it.
+message SupportStatus {
+  reserved 6;
+  reserved "issue";
+
+  bool present = 1;
+  string public_code = 2;
+  // awaiting_issue | pending_approval | approved | revoked | expired
+  string state = 3;
+  int64 authorization_expires_at = 4;
+  optional int64 capture_expires_at = 5;
+  // unlinked | open | closed
+  string issue_state = 7;
+  optional SupportResolution resolution = 8;
+}

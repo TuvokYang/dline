@@ -3,22 +3,22 @@
  * Used by parseSlashCommands to locate and load content.
  */
 export type SkillMeta = {
-	name: string
-	path: string
-	enabled: boolean
-	source: "project" | "global" | "remote"
+    name: string
+    path: string
+    enabled: boolean
+    source: "project" | "global" | "remote"
 }
 
 export type WorkflowMeta = {
-	name: string
-	path: string
-	enabled: boolean
+    name: string
+    path: string
+    enabled: boolean
 }
 
 export type RuleMeta = {
-	name: string
-	path: string
-	enabled: boolean
+    name: string
+    path: string
+    enabled: boolean
 }
 
 /**
@@ -27,15 +27,15 @@ export type RuleMeta = {
  * NOT persisted — generated fresh by refreshRules() on each call.
  */
 export type SlashContext = {
-	skill: Record<string, SkillMeta>
-	workflow: Record<string, WorkflowMeta>
-	rule: Record<string, RuleMeta>
+    skill: Record<string, SkillMeta>
+    workflow: Record<string, WorkflowMeta>
+    rule: Record<string, RuleMeta>
 }
 
 /** Default descriptions for XML desc attribute, by command type. */
 export const SLASH_TYPE_DESC: Record<string, string> = {
-	skill: "Specialized instructions for a specific task",
-	workflow: "A sequence of steps for a specific operation",
-	rule: "Project-level rules and conventions",
-	mcp: "Prompt from an MCP server",
+    skill: "Specialized instructions for a specific task",
+    workflow: "A sequence of steps for a specific operation",
+    rule: "Project-level rules and conventions",
+    mcp: "Prompt from an MCP server",
 }

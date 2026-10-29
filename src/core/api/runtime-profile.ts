@@ -13,23 +13,23 @@ import { getProfileModelInfo } from "./model-info"
  * bypass current provider and model capabilities.
  */
 export function applyTaskRuntimeOverrides(profile: ApiProfile, configuration: ApiConfiguration, mode: Mode): ApiProfile {
-	const reasoningOverride = mode === "plan" ? configuration.planModeReasoningOverride : configuration.actModeReasoningOverride
-	const serviceTierOverride =
-		mode === "plan" ? configuration.planModeServiceTierOverride : configuration.actModeServiceTierOverride
+    const reasoningOverride = mode === "plan" ? configuration.planModeReasoningOverride : configuration.actModeReasoningOverride
+    const serviceTierOverride =
+        mode === "plan" ? configuration.planModeServiceTierOverride : configuration.actModeServiceTierOverride
 
-	let runtimeProfile = { ...profile }
-	if (reasoningOverride) {
-		const modelInfo = getProfileModelInfo(profile)
-		const validation = validateTaskReasoningOverride(reasoningOverride, resolveTaskThinkingConfig(modelInfo.capabilities))
-		if (!validation.valid) throw new Error(validation.message)
-		runtimeProfile = applyTaskReasoningOverride(runtimeProfile, validation.override)
-	}
+    let runtimeProfile = { ...profile }
+    if (reasoningOverride) {
+        const modelInfo = getProfileModelInfo(profile)
+        const validation = validateTaskReasoningOverride(reasoningOverride, resolveTaskThinkingConfig(modelInfo.capabilities))
+        if (!validation.valid) throw new Error(validation.message)
+        runtimeProfile = applyTaskReasoningOverride(runtimeProfile, validation.override)
+    }
 
-	if (serviceTierOverride) {
-		const validation = validateTaskServiceTierOverride(serviceTierOverride, profile.provider)
-		if (!validation.valid) throw new Error(validation.message)
-		runtimeProfile = applyTaskServiceTierOverride(runtimeProfile, validation.override)
-	}
+    if (serviceTierOverride) {
+        const validation = validateTaskServiceTierOverride(serviceTierOverride, profile.provider)
+        if (!validation.valid) throw new Error(validation.message)
+        runtimeProfile = applyTaskServiceTierOverride(runtimeProfile, validation.override)
+    }
 
-	return runtimeProfile
+    return runtimeProfile
 }

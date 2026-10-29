@@ -1,0 +1,104 @@
+---
+title: VS Code Commands
+description: Run Dline from the VS Code Command Palette, editor menus, and keyboard shortcuts, and use the recovery commands when task history or the Dline view goes wrong.
+---
+
+import { Aside, Steps } from "@astrojs/starlight/components"
+
+Dline registers its actions as VS Code commands. Open the Command Palette with `Ctrl+Shift+P` (`Cmd+Shift+P` on macOS) and type `Dline` to list them. Most commands are also reachable from a menu or a shortcut, listed below.
+
+## Panel commands
+
+The buttons in the Dline panel title bar are commands too. They have no `Dline:` prefix in the Command Palette.
+
+| Command | What it does |
+|---|---|
+| **New Task** | Opens a new editor tab with a fresh Dline task. The sidebar and other open tabs keep their tasks |
+| **MCP Servers** | Opens MCP server management in the sidebar |
+| **History** | Opens the task history in the sidebar |
+| **Settings** | Opens Dline settings in the sidebar |
+
+## Working with code
+
+| Command | Where to find it | What it does |
+|---|---|---|
+| **Dline: Add to Dline** | Editor context menu with a selection, `Ctrl+'` (`Cmd+'`) with a selection, the Quick Fix menu | Adds the selected code, and any diagnostics in that range, to the Dline input |
+| **Dline: Add to Dline** (terminal) | Terminal context menu | Adds the current terminal selection to the input as terminal output. Nothing happens when nothing is selected |
+| **Dline: Jump to Chat Input** | `Ctrl+'` (`Cmd+'`) without a selection | Shows the Dline sidebar and focuses its input |
+| **Dline: Explain with Dline** | Quick Fix menu (`Ctrl+.`) | Asks Dline to explain the selected code |
+| **Dline: Improve with Dline** | Quick Fix menu | Asks Dline to suggest improvements to the selected code |
+| **Fix with Dline** | Quick Fix menu, only when the range has diagnostics | Asks Dline to fix the reported problems in the range |
+
+When you invoke a code action from the Quick Fix menu without a selection that covers the cursor, Dline sends the code under the cursor plus three lines above and below.
+
+## Source control
+
+| Command | Where to find it | What it does |
+|---|---|---|
+| **Dline: Generate Commit Message with Dline** | Source Control title bar, `Ctrl+G` (`Cmd+G`) | Writes a commit message for the current Git changes into the commit input |
+| **Dline: Generate Commit Message with Dline - Stop** | Same button while a message is being generated | Stops the generation |
+
+Both commands require Git to be enabled in VS Code and the active source control provider to be Git.
+
+## Jupyter notebooks
+
+| Command | Where to find it | What it does |
+|---|---|---|
+| **Dline: Generate Jupyter Cell with Dline** | Notebook toolbar | Asks for a prompt, then has Dline insert a new cell near the current one |
+| **Dline: Explain Jupyter Cell with Dline** | Cell title bar | Explains the current cell |
+| **Dline: Improve Jupyter Cell with Dline** | Cell title bar | Asks for a prompt, then has Dline improve the current cell |
+
+These commands need an open `.ipynb` notebook. See [Jupyter Notebooks](/features/jupyter-notebooks/) for the context they send.
+
+## Review comments
+
+`/explain-changes` places its explanations as comment threads in the diff view. Each thread offers **Reply**, which asks Dline a follow-up question about that code, and **Dline: Add to Dline Chat**, which copies the thread into the Dline input. **Reply** is not listed in the Command Palette.
+
+## Recovery commands
+
+### Dline: Reconstruct Task History
+
+Use this command when the task history list is missing tasks, or when **Workspace Only** hides tasks that belong to the current workspace. It rebuilds the history index from the task folders under `<documents-root>/tasks/` (`<documents-root>` defaults to `dline` inside your system Documents folder and can be overridden with `DLINE_DOCS_DIR`).
+
+<Steps>
+
+1. Open the Command Palette and run **Dline: Reconstruct Task History**.
+2. Confirm the warning with **Yes, Reconstruct**.
+3. Read the result message: how many tasks were added, kept, and removed.
+
+</Steps>
+
+The rebuild changes the index as follows:
+
+- An entry whose task folder still exists is kept unchanged, including its workspace, favorite flag, and completion state.
+- A task folder without an entry is added. Its title, time, and token usage come from the task's messages, and its workspace comes from the working directory recorded in the task's first request, so the **Workspace Only** filter includes it again.
+- An entry whose task folder no longer exists is removed.
+- A task folder without any messages is skipped.
+
+<Aside type="caution">
+The history index is shared by every Dline window. Run the command in one window; the other windows pick up the result automatically.
+</Aside>
+
+A task added this way has no workspace when its first request named only the primary folder of a multi-root workspace, or when the request cannot be read. Such a task is listed in the full history but not under **Workspace Only**. Favorites and completion state of added tasks are not recoverable from the folder.
+
+### Dline: Recover UI Messages from API History
+
+Use this command when a task's chat view is empty or damaged but its conversation with the model is intact. Open the task in the sidebar first: the command rebuilds the chat rows of that task from the conversation, and reports an error when no task is open.
+
+Before replacing anything, it saves the current chat rows to `ui_messages.backup.<timestamp>.json` in the task folder. If the recovered messages do not appear, reopen the task. The rebuilt rows approximate the original view: tool rows and usage figures are reconstructed from the conversation and may differ from what was shown before.
+
+### Dline: Reload Dline View
+
+Use this command when a visible Dline view stops rendering. It reloads every visible Dline view without restarting VS Code. If no Dline view is visible, it says so; show the view first, or run **Developer: Reload Window**.
+
+## Other commands
+
+**Dline: Open Walkthrough** opens the Dline getting-started walkthrough in VS Code.
+
+Commands that only exist in development builds are not covered here.
+
+## Related pages
+
+- [Task Management](/core-workflows/task-management/)
+- [Using Slash Commands](/core-workflows/using-commands/)
+- [Jupyter Notebooks](/features/jupyter-notebooks/)

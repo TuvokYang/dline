@@ -12,10 +12,12 @@ Use this skill for user-facing guides, feature pages, architecture documents, tr
 - User conversation and progress updates use Chinese unless the user requests another language.
 - Files under `.agents/` use English.
 - Documentation under `docs/` must provide Chinese and English deliverables for the same scope.
-- Root documentation follows the established pairing, such as `README.md` (English, the default) and `README_zh.md` (Chinese).
-- Release notes follow the established pairing: `CHANGELOG.md` and `docs/changelog/CHANGELOG_en.md`.
-- Before creating a new documentation pair, inspect neighboring files and `docs/docs.json` for the local naming and navigation convention. Preserve an existing convention rather than mass-renaming historical files.
-- If the target area has no discoverable bilingual naming convention, ask the user before inventing a new public URL structure.
+- Root documentation follows the established pairing, such as `README.md` (English, the default) and `README_zh.md` (Chinese). Marketplace and in-extension readers see `README.marketplace.md`, which packaging copies over `README.md`; update it when the change affects that listing and run `src/__tests__/marketplace-readme-refs.test.ts`.
+- Release notes follow the established pairing: `CHANGELOG.md` (Chinese) and `docs/changelog/CHANGELOG_en.md` (English).
+- User-visible changes integrated into `dev` are recorded in the paired `Unreleased` sections. Follow repository-and-release for the changelog lifecycle and load dev-version-bump when freezing those entries into a version; routine Insiders updates do not bump package versions or What's New.
+- The What's New dialog source follows the same pairing: `docs/whats-new/WHATS_NEW.md` (Chinese) and `docs/whats-new/WHATS_NEW_en.md` (English, the edition the dialog renders). Every version update adds a `## X.Y.Z` section to both; load dev-version-bump for the section rules, because the webview build rejects any other Markdown.
+- The docs site is Astro Starlight. Every site page is a pair with the same slug: English at `docs/src/content/docs/<slug>.mdx` (served at the site root) and Chinese at `docs/src/content/docs/zh-cn/<slug>.mdx` (served under `/zh-cn/`), as declared in `docs/src/data/locales.mjs`. `npm run docs:check` fails when either edition is missing.
+- Ask the user before inventing a new public URL structure only for documentation outside the site content tree.
 
 Bilingual pages must remain behaviorally equivalent. They may use natural phrasing for each language, but must not describe different features, limits, defaults, or support status.
 
@@ -35,7 +37,7 @@ Before writing, read:
 
 - the relevant implementation and tests;
 - current UI labels, settings, commands, and error states;
-- `docs/docs.json` navigation, redirects, and page metadata;
+- `docs/src/data/navigation.mjs` (sidebar and `unlistedSlugs`), `docs/src/data/redirects.mjs`, `docs/src/data/sections.mjs`, and page frontmatter;
 - related documentation and cross-links;
 - the current package scripts and platform behavior for command examples;
 - existing visual assets and their actual dimensions/content.
@@ -88,17 +90,18 @@ For user-visible features, include the applicable details:
 
 Do not hide a limitation behind promotional language. If behavior is not verified, label it as unverified or omit it.
 
-## 6. Use MDX components only when they help
+## 6. Use Starlight components only when they help
 
-Follow patterns already present in the current docs site.
+Follow patterns already present in the current docs site. Import components explicitly from `@astrojs/starlight/components`; the content check rejects unimported components and Mintlify-only components or frontmatter keys (`sidebarTitle`, `icon`, `iconType`, `mode`, `api`, `openapi`).
 
-- Use `<Frame>` for screenshots or embedded media when the target section uses that component.
-- Use `<Card>` and `<Columns>` for navigation choices, not for ordinary paragraphs.
-- Use `<Tip>`, `<Note>`, or `<Info>` for secondary context, caveats, and non-blocking guidance.
-- Provide descriptive alt text and captions that explain why an image matters.
+- `Aside` for secondary context, caveats, and non-blocking guidance.
+- `Steps` for ordered procedures.
+- `Tabs`/`TabItem` for alternatives such as platforms or shells.
+- `CardGrid`/`LinkCard` for navigation choices, not for ordinary paragraphs.
+- Embed images as `![descriptive alt](@docs-assets/<dir>/<file>)`; the alias serves the repository's `assets/docs/`. Root-relative image paths are rejected. Regenerate UI captures with the demo specs (`npm run e2e:demo`) and Marketplace media with `npm run demo:media` instead of hand-editing them.
 - Keep code fences copyable and label the correct language or shell.
 
-Do not add components merely for visual decoration. Verify that every referenced asset exists and is packaged or hosted by the documented path.
+Do not add components merely for visual decoration. Verify that every referenced asset exists.
 
 ## 7. Keep commands safe and current
 
@@ -117,7 +120,9 @@ Prefer placeholders such as `<repository>`, `<path>`, `<token>`, and `<version>`
 
 After writing both language versions:
 
-- update `docs/docs.json` only when navigation, redirects, or metadata actually changed;
+- add every new page slug exactly once to `sidebar` in `docs/src/data/navigation.mjs`, under the right section group, or to `unlistedSlugs`;
+- when renaming or removing a page, add a base-free entry to `docs/src/data/redirects.mjs` that points at the final current page, with no redirect chains and no redirect that shadows an existing page;
+- write internal links as base-free root-relative paths that end with `/` (no relative paths, no `.md`/`.mdx` targets, no site base); English pages link only English pages and Chinese pages link only `/zh-cn/...` pages;
 - link to current pages rather than removed legacy routes;
 - verify inbound and outbound links for renamed pages;
 - avoid duplicate pages that explain the same contract differently;
@@ -128,12 +133,13 @@ After writing both language versions:
 Verify at least:
 
 - Chinese and English files cover the same behavior and sections;
-- headings, frontmatter, links, anchors, code fences, and MDX syntax are valid;
+- headings, frontmatter (`title` and `description` are required), links, anchors, code fences, and MDX syntax are valid;
+- English pages contain no CJK text outside code;
 - commands and UI labels match current source;
 - referenced paths and assets exist;
 - examples do not expose secrets or destructive defaults;
 - no stale product names remain outside intentional migration context;
-- the docs build or the project's available documentation validation passes.
+- `npm run docs:check` passes while iterating and `npm run docs:verify` (tests, content check, build, and dist check) passes before completion. Install the docs site dependencies first with `npm ci` in `docs/`; preview with `npm run docs`.
 
 For substantial user-facing docs, request an independent review for technical accuracy and language parity.
 

@@ -1,0 +1,173 @@
+syntax = "proto3";
+
+package dline;
+
+option go_package = "github.com/dline/grpc-go/dline";
+option java_multiple_files = true;
+option java_package = "bot.dline.proto";
+
+// The semantic input document: the single truth for one chat submission.
+//
+// Ordered nodes are the authority for send order. raw_text exists for
+// accessibility, history display and legacy mirroring, and is never re-parsed
+// to discover additional commands or mentions. Schema version 1 only grows
+// additively for every shape a released build wrote, so those documents stay
+// readable. Released builds never wrote a resource reference (field 7), so a
+// reference without the owner and metadata below is rejected, not migrated.
+message SemanticInputDocument {
+  int32 schema_version = 1;
+  string parser_version = 2;
+  string catalog_revision = 3;
+  string document_id = 4;
+  string raw_text = 5;
+  repeated SemanticInputNode nodes = 6;
+  repeated SemanticResourceRef resources = 7;
+}
+
+// One ordered node. Exactly one payload is set.
+message SemanticInputNode {
+  oneof node {
+    TextInputNode text = 1;
+    SlashCommandInputNode slash_command = 2;
+    MentionInputNode mention = 3;
+    ImageInputNode image = 4;
+    FileInputNode file = 5;
+    LiteralInputNode literal = 6;
+  }
+}
+
+message TextInputNode {
+  string text = 1;
+}
+
+// Where a span of input came from. UNSPECIFIED is the wire default and is
+// rejected on decode, so a missing source never claims to be typed.
+enum InputSource {
+  INPUT_SOURCE_UNSPECIFIED = 0;
+  INPUT_SOURCE_TYPED = 1;
+  INPUT_SOURCE_PASTED = 2;
+  INPUT_SOURCE_APP_ACTION = 3;
+  INPUT_SOURCE_EDITOR_SELECTION = 4;
+  INPUT_SOURCE_MODEL_PREFILL = 5;
+  INPUT_SOURCE_RESTORED = 6;
+}
+
+// Opaque text: a command or mention shape inside it never activates.
+message LiteralInputNode {
+  string text = 1;
+  InputSource source = 2;
+}
+
+// How a semantic entity stands at submission time.
+enum SemanticEntityState {
+  SEMANTIC_ENTITY_STATE_RECOGNIZED = 0;
+  SEMANTIC_ENTITY_STATE_PARTIAL = 1;
+  SEMANTIC_ENTITY_STATE_UNRESOLVED = 2;
+  SEMANTIC_ENTITY_STATE_INVALID = 3;
+  SEMANTIC_ENTITY_STATE_DISABLED = 4;
+  SEMANTIC_ENTITY_STATE_STALE = 5;
+  SEMANTIC_ENTITY_STATE_LITERAL = 6;
+}
+
+// Where a slash command comes from.
+enum SlashCommandNamespace {
+  SLASH_COMMAND_NAMESPACE_CMD = 0;
+  SLASH_COMMAND_NAMESPACE_WORKFLOW = 1;
+  SLASH_COMMAND_NAMESPACE_SKILL = 2;
+  SLASH_COMMAND_NAMESPACE_MCP = 3;
+}
+
+// Whether the command composes with later commands or closes the sequence.
+enum SlashCommandComposition {
+  SLASH_COMMAND_COMPOSITION_COMPOSABLE = 0;
+  SLASH_COMMAND_COMPOSITION_LIFECYCLE_BARRIER = 1;
+}
+
+enum MentionKind {
+  MENTION_KIND_FILE = 0;
+  MENTION_KIND_FOLDER = 1;
+  MENTION_KIND_URL = 2;
+  MENTION_KIND_PROBLEMS = 3;
+  MENTION_KIND_TERMINAL = 4;
+  MENTION_KIND_GIT_CHANGES = 5;
+  MENTION_KIND_GIT_COMMIT = 6;
+}
+
+// When a mention's content is captured.
+enum MentionCapturePolicy {
+  MENTION_CAPTURE_POLICY_SNAPSHOT_AT_SUBMIT = 0;
+  MENTION_CAPTURE_POLICY_RESOLVE_AT_EXECUTE = 1;
+}
+
+// How a file node entered the document.
+enum FileNodeOrigin {
+  FILE_NODE_ORIGIN_PASTED_TEXT = 0;
+  FILE_NODE_ORIGIN_PASTED_FILE = 1;
+  FILE_NODE_ORIGIN_UPLOADED_FILE = 2;
+}
+
+message SlashCommandInputNode {
+  string entity_id = 1;
+  string command_id = 2; // Catalog descriptor identity, e.g. "command.compact"
+  string source_text = 3;
+  string canonical_name = 4;
+  SlashCommandNamespace namespace = 5;
+  SlashCommandComposition composition_mode = 6;
+  SemanticEntityState state = 7;
+}
+
+message MentionInputNode {
+  string entity_id = 1;
+  MentionKind mention_kind = 2;
+  string source_text = 3;
+  string canonical_ref = 4;
+  optional string workspace_hint = 5;
+  optional MentionCapturePolicy capture_policy = 6;
+  SemanticEntityState state = 7;
+}
+
+message ImageInputNode {
+  string entity_id = 1;
+  string resource_id = 2;
+  string display_name = 3;
+  optional string alt_text = 4;
+}
+
+message FileInputNode {
+  string entity_id = 1;
+  string resource_id = 2;
+  FileNodeOrigin file_origin = 3;
+  string display_name = 4;
+  optional int32 line_count = 5;
+}
+
+// Who holds a resource's bytes: a composer draft before its task exists, or a task.
+message InputResourceOwner {
+  oneof owner {
+    string draft_id = 1;
+    string task_id = 2;
+  }
+}
+
+// A reference to an owned input resource. The hash freezes which content this
+// submission agreed to; the document never carries a path or payload. The
+// owner and generation are claims that Core verifies against its own record.
+message SemanticResourceRef {
+  string resource_id = 1;
+  string expected_content_hash = 2;
+  string media_type = 3;
+  int64 byte_length = 4;
+  InputResourceOwner owner = 5;
+  int32 generation = 6;
+}
+
+// A machine-readable problem with semantic input, located at the document and,
+// when local, the entity or resource it concerns. The message is English and
+// already free of file contents, paths and credentials.
+message SemanticInputDiagnostic {
+  string code = 1;
+  string message = 2;
+  string document_id = 3;
+  optional string entity_id = 4;
+  optional string resource_id = 5;
+}

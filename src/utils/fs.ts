@@ -13,26 +13,26 @@ const IS_WINDOWS = /^win/.test(process.platform)
  * @returns A promise that resolves to an array of newly created directories.
  */
 export async function createDirectoriesForFile(filePath: string): Promise<string[]> {
-	const newDirectories: string[] = []
-	const normalizedFilePath = path.normalize(filePath) // Normalize path for cross-platform compatibility
-	const directoryPath = path.dirname(normalizedFilePath)
+    const newDirectories: string[] = []
+    const normalizedFilePath = path.normalize(filePath) // Normalize path for cross-platform compatibility
+    const directoryPath = path.dirname(normalizedFilePath)
 
-	let currentPath = directoryPath
-	const dirsToCreate: string[] = []
+    let currentPath = directoryPath
+    const dirsToCreate: string[] = []
 
-	// Traverse up the directory tree and collect missing directories
-	while (!(await fileExistsAtPath(currentPath))) {
-		dirsToCreate.push(currentPath)
-		currentPath = path.dirname(currentPath)
-	}
+    // Traverse up the directory tree and collect missing directories
+    while (!(await fileExistsAtPath(currentPath))) {
+        dirsToCreate.push(currentPath)
+        currentPath = path.dirname(currentPath)
+    }
 
-	// Create directories from the topmost missing one down to the target directory
-	for (let i = dirsToCreate.length - 1; i >= 0; i--) {
-		await fs.mkdir(dirsToCreate[i])
-		newDirectories.push(dirsToCreate[i])
-	}
+    // Create directories from the topmost missing one down to the target directory
+    for (let i = dirsToCreate.length - 1; i >= 0; i--) {
+        await fs.mkdir(dirsToCreate[i])
+        newDirectories.push(dirsToCreate[i])
+    }
 
-	return newDirectories
+    return newDirectories
 }
 
 /**
@@ -42,12 +42,12 @@ export async function createDirectoriesForFile(filePath: string): Promise<string
  * @returns A promise that resolves to true if the path exists, false otherwise.
  */
 export async function fileExistsAtPath(filePath: string): Promise<boolean> {
-	try {
-		await fs.access(filePath)
-		return true
-	} catch {
-		return false
-	}
+    try {
+        await fs.access(filePath)
+        return true
+    } catch {
+        return false
+    }
 }
 
 /**
@@ -56,12 +56,12 @@ export async function fileExistsAtPath(filePath: string): Promise<boolean> {
  * @returns A promise that resolves to true if the path is a directory, false otherwise.
  */
 export async function isDirectory(filePath: string): Promise<boolean> {
-	try {
-		const stats = await fs.stat(filePath)
-		return stats.isDirectory()
-	} catch {
-		return false
-	}
+    try {
+        const stats = await fs.stat(filePath)
+        return stats.isDirectory()
+    } catch {
+        return false
+    }
 }
 
 /**
@@ -70,13 +70,13 @@ export async function isDirectory(filePath: string): Promise<boolean> {
  * @returns Promise<number> - Size of the file in KB, or 0 if file doesn't exist
  */
 export async function getFileSizeInKB(filePath: string): Promise<number> {
-	try {
-		const stats = await fs.stat(filePath)
-		const fileSizeInKB = stats.size / 1000 // Convert bytes to KB (decimal) - matches OS file size display
-		return fileSizeInKB
-	} catch {
-		return 0
-	}
+    try {
+        const stats = await fs.stat(filePath)
+        const fileSizeInKB = stats.size / 1000 // Convert bytes to KB (decimal) - matches OS file size display
+        return fileSizeInKB
+    } catch {
+        return 0
+    }
 }
 
 /**
@@ -87,22 +87,22 @@ export async function getFileSizeInKB(filePath: string): Promise<number> {
  * @returns A promise that resolves when the file is written
  */
 export async function writeFile(
-	filePath: string,
-	content: string | Uint8Array,
-	encoding: BufferEncoding = "utf8",
+    filePath: string,
+    content: string | Uint8Array,
+    encoding: BufferEncoding = "utf8",
 ): Promise<void> {
-	if (content instanceof Uint8Array) {
-		await fs.writeFile(filePath, content)
-	} else {
-		await fs.writeFile(filePath, content, encoding)
-	}
+    if (content instanceof Uint8Array) {
+        await fs.writeFile(filePath, content)
+    } else {
+        await fs.writeFile(filePath, content, encoding)
+    }
 }
 
 // Common OS-generated files that would appear in an otherwise clean directory
 const OS_GENERATED_FILES = [
-	".DS_Store", // macOS Finder
-	"Thumbs.db", // Windows Explorer thumbnails
-	"desktop.ini", // Windows folder settings
+    ".DS_Store", // macOS Finder
+    "Thumbs.db", // Windows Explorer thumbnails
+    "desktop.ini", // Windows folder settings
 ]
 
 /**
@@ -114,50 +114,50 @@ const OS_GENERATED_FILES = [
  * @throws Error if the directory cannot be read.
  */
 export const readDirectory = async (directoryPath: string, excludedPaths: string[][] = []) => {
-	try {
-		const filePaths = await fs
-			.readdir(directoryPath, { withFileTypes: true, recursive: true })
-			.then((entries) => entries.filter((entry) => !OS_GENERATED_FILES.includes(entry.name)))
-			.then((entries) => entries.filter((entry) => entry.isFile()))
-			.then((files) =>
-				files.map((file) => {
-					const resolvedPath = workspaceResolver.resolveWorkspacePath(
-						file.parentPath,
-						file.name,
-						"Utils.fs.readDirectory",
-					)
-					return typeof resolvedPath === "string" ? resolvedPath : resolvedPath.absolutePath
-				}),
-			)
-			.then((filePaths) =>
-				filePaths.filter((filePath) => {
-					if (excludedPaths.length === 0) {
-						return true
-					}
+    try {
+        const filePaths = await fs
+            .readdir(directoryPath, { withFileTypes: true, recursive: true })
+            .then((entries) => entries.filter((entry) => !OS_GENERATED_FILES.includes(entry.name)))
+            .then((entries) => entries.filter((entry) => entry.isFile()))
+            .then((files) =>
+                files.map((file) => {
+                    const resolvedPath = workspaceResolver.resolveWorkspacePath(
+                        file.parentPath,
+                        file.name,
+                        "Utils.fs.readDirectory",
+                    )
+                    return typeof resolvedPath === "string" ? resolvedPath : resolvedPath.absolutePath
+                }),
+            )
+            .then((filePaths) =>
+                filePaths.filter((filePath) => {
+                    if (excludedPaths.length === 0) {
+                        return true
+                    }
 
-					for (const excludedPathList of excludedPaths) {
-						const pathToSearchFor = path.sep + excludedPathList.join(path.sep) + path.sep
-						if (filePath.includes(pathToSearchFor)) {
-							return false
-						}
-					}
+                    for (const excludedPathList of excludedPaths) {
+                        const pathToSearchFor = path.sep + excludedPathList.join(path.sep) + path.sep
+                        if (filePath.includes(pathToSearchFor)) {
+                            return false
+                        }
+                    }
 
-					return true
-				}),
-			)
+                    return true
+                }),
+            )
 
-		return filePaths
-	} catch {
-		throw new Error(`Error reading directory at ${directoryPath}`)
-	}
+        return filePaths
+    } catch {
+        throw new Error(`Error reading directory at ${directoryPath}`)
+    }
 }
 
 export async function getBinaryLocation(name: string): Promise<string> {
-	const binName = IS_WINDOWS ? `${name}.exe` : name
-	const location = await HostProvider.get().getBinaryLocation(binName)
+    const binName = IS_WINDOWS ? `${name}.exe` : name
+    const location = await HostProvider.get().getBinaryLocation(binName)
 
-	if (!(await fileExistsAtPath(location))) {
-		throw new Error(`Could not find binary ${name} at: ${location}`)
-	}
-	return location
+    if (!(await fileExistsAtPath(location))) {
+        throw new Error(`Could not find binary ${name} at: ${location}`)
+    }
+    return location
 }

@@ -32,9 +32,9 @@ export const CLAUDE_CODE_SDK_VERSION = "0.112.1"
 
 /** The host facts the Stainless platform headers describe. */
 export interface ClaudeCodeHostPlatform {
-	readonly platform: string
-	readonly arch: string
-	readonly nodeVersion: string
+    readonly platform: string
+    readonly arch: string
+    readonly nodeVersion: string
 }
 
 /**
@@ -44,24 +44,24 @@ export interface ClaudeCodeHostPlatform {
  * (`win32`, `darwin`) would itself be a signature no genuine client produces.
  */
 export function stainlessOs(rawPlatform: string): string {
-	const platform = rawPlatform.toLowerCase()
-	if (platform.includes("ios")) return "iOS"
-	switch (platform) {
-		case "darwin":
-			return "MacOS"
-		case "win32":
-			return "Windows"
-		case "linux":
-			return "Linux"
-		case "freebsd":
-			return "FreeBSD"
-		case "openbsd":
-			return "OpenBSD"
-		case "android":
-			return "Android"
-		default:
-			return platform ? `Other:${platform}` : "Unknown"
-	}
+    const platform = rawPlatform.toLowerCase()
+    if (platform.includes("ios")) return "iOS"
+    switch (platform) {
+        case "darwin":
+            return "MacOS"
+        case "win32":
+            return "Windows"
+        case "linux":
+            return "Linux"
+        case "freebsd":
+            return "FreeBSD"
+        case "openbsd":
+            return "OpenBSD"
+        case "android":
+            return "Android"
+        default:
+            return platform ? `Other:${platform}` : "Unknown"
+    }
 }
 
 /**
@@ -70,25 +70,25 @@ export function stainlessOs(rawPlatform: string): string {
  * `ia32` is deliberately `other:ia32` there, so it is not folded into `x32`.
  */
 export function stainlessArch(arch: string): string {
-	switch (arch) {
-		case "x32":
-		case "arm":
-			return arch
-		case "x64":
-		case "x86_64":
-			return "x64"
-		case "arm64":
-		case "aarch64":
-			return "arm64"
-		default:
-			return arch ? `other:${arch}` : "unknown"
-	}
+    switch (arch) {
+        case "x32":
+        case "arm":
+            return arch
+        case "x64":
+        case "x86_64":
+            return "x64"
+        case "arm64":
+        case "aarch64":
+            return "arm64"
+        default:
+            return arch ? `other:${arch}` : "unknown"
+    }
 }
 
 const currentHostPlatform: ClaudeCodeHostPlatform = {
-	platform: process.platform,
-	arch: process.arch,
-	nodeVersion: process.version,
+    platform: process.platform,
+    arch: process.arch,
+    nodeVersion: process.version,
 }
 
 /**
@@ -100,18 +100,18 @@ const currentHostPlatform: ClaudeCodeHostPlatform = {
  * on its own, which is exactly the behaviour a genuine client shows.
  */
 export function buildClaudeCodeFingerprintHeaders(
-	host: ClaudeCodeHostPlatform = currentHostPlatform,
+    host: ClaudeCodeHostPlatform = currentHostPlatform,
 ): Readonly<Record<string, string>> {
-	return Object.freeze({
-		"X-Stainless-Lang": "js",
-		"X-Stainless-Package-Version": CLAUDE_CODE_SDK_VERSION,
-		"X-Stainless-OS": stainlessOs(host.platform),
-		"X-Stainless-Arch": stainlessArch(host.arch),
-		"X-Stainless-Runtime": "node",
-		"X-Stainless-Runtime-Version": host.nodeVersion,
-		"X-App": "cli",
-		"Anthropic-Dangerous-Direct-Browser-Access": "true",
-	})
+    return Object.freeze({
+        "X-Stainless-Lang": "js",
+        "X-Stainless-Package-Version": CLAUDE_CODE_SDK_VERSION,
+        "X-Stainless-OS": stainlessOs(host.platform),
+        "X-Stainless-Arch": stainlessArch(host.arch),
+        "X-Stainless-Runtime": "node",
+        "X-Stainless-Runtime-Version": host.nodeVersion,
+        "X-App": "cli",
+        "Anthropic-Dangerous-Direct-Browser-Access": "true",
+    })
 }
 
 /** Fingerprint of the machine this extension host runs on. */
@@ -129,18 +129,18 @@ export const CLAUDE_CODE_FINGERPRINT_HEADERS: Readonly<Record<string, string>> =
  * skip the disguise rather than declare a malformed one.
  */
 export function buildClaudeCodeUserAgent(clientVersion: string, entrypointSuffix?: string): string {
-	const version = clientVersion.trim()
-	if (!version) {
-		throw new Error("Claude Code user agent requires a resolved client version")
-	}
-	const suffix = entrypointSuffix?.trim() || CLAUDE_CODE_DEFAULT_UA_SUFFIX
-	return `claude-cli/${version} ${suffix}`
+    const version = clientVersion.trim()
+    if (!version) {
+        throw new Error("Claude Code user agent requires a resolved client version")
+    }
+    const suffix = entrypointSuffix?.trim() || CLAUDE_CODE_DEFAULT_UA_SUFFIX
+    return `claude-cli/${version} ${suffix}`
 }
 
 /** Returns the complete header set declared to upstream for one request. */
 export function buildClaudeCodeClientHeaders(clientVersion: string, entrypointSuffix?: string): Record<string, string> {
-	return {
-		"User-Agent": buildClaudeCodeUserAgent(clientVersion, entrypointSuffix),
-		...CLAUDE_CODE_FINGERPRINT_HEADERS,
-	}
+    return {
+        "User-Agent": buildClaudeCodeUserAgent(clientVersion, entrypointSuffix),
+        ...CLAUDE_CODE_FINGERPRINT_HEADERS,
+    }
 }

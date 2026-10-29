@@ -11,25 +11,25 @@ import type { Controller } from "../index"
  * @returns An array of McpServer objects
  */
 export async function addRemoteMcpServer(controller: Controller, request: AddRemoteMcpServerRequest): Promise<McpServers> {
-	try {
-		// Validate required fields
-		if (!request.serverName) {
-			throw new Error("Server name is required")
-		}
-		if (!request.serverUrl) {
-			throw new Error("Server URL is required")
-		}
+    try {
+        // Validate required fields
+        if (!request.serverName) {
+            throw new Error("Server name is required")
+        }
+        if (!request.serverUrl) {
+            throw new Error("Server URL is required")
+        }
 
-		// Call the McpHub method to add the remote server
-		await controller.mcpHub?.addRemoteServer(request.serverName, request.serverUrl, request.transportType)
-		const servers = await controller.getLatestMcpServersForOwner()
+        // Call the McpHub method to add the remote server
+        await controller.mcpHub?.addRemoteServer(request.serverName, request.serverUrl, request.transportType)
+        const servers = await controller.getLatestMcpServersForOwner()
 
-		const protoServers = convertMcpServersToProtoMcpServers(servers)
+        const protoServers = convertMcpServersToProtoMcpServers(servers)
 
-		return McpServers.create({ mcpServers: protoServers })
-	} catch (error) {
-		Logger.error(`Failed to add remote MCP server ${request.serverName}:`, error)
+        return McpServers.create({ mcpServers: protoServers })
+    } catch (error) {
+        Logger.error(`Failed to add remote MCP server ${request.serverName}:`, error)
 
-		throw error
-	}
+        throw error
+    }
 }

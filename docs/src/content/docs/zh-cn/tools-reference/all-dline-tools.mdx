@@ -54,8 +54,8 @@ import { Aside } from "@astrojs/starlight/components"
 | `ask_followup_question` | 向用户提出一个必须回答的问题 | Standard、Lite |
 | `qna_respond` | 回答用户的提问 | Standard、Lite |
 | `make_plan` | 提交完整的实施或设计计划 | Standard、Lite |
-| `act_mode_respond` | 在 Act 模式下发布进度说明 | Standard、Lite；仅 Act 模式 |
-| `status_update` | 发布进度通告 | Standard、Lite |
+| `working_respond` | 说明下一次工具调用要做什么、为什么，回复排队或执行中收到的用户消息，或确认用户的纠正，然后继续工作。不结束当前轮次，之后必须跟一个实际工作的工具。Plan 和 Act 模式使用同一个工具；以旧名 `act_mode_respond` 发起的调用仍会执行它 | Standard、Lite |
+| `phase_report` | 汇报一个已完成的阶段：完成了什么、验证结果、下一阶段。不结束当前轮次；设置 `requires_acknowledgment` 时会等待用户确认或停止。Plan 和 Act 模式均可用；以旧名 `status_update` 发起的调用仍会执行它 | Standard、Lite |
 | `generate_report` | 提交结构化报告供用户审阅 | Standard、Lite |
 | `attempt_completion` | 提交任务的最终结果 | Standard、Lite |
 | `change_todo_list` | 请求用户批准替换当前的待办清单 | 仅 Standard；开启 **Focus Chain** |

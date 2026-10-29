@@ -54,12 +54,10 @@ further defined and clarified by project maintainers.
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported by contacting the project team at hi@cline.bot. All complaints
-will be reviewed and investigated and will result in a response that
-is deemed necessary and appropriate to the circumstances. The project team is
-obligated to maintain confidentiality with regard to the reporter of an incident.
-Further details of specific enforcement policies may be posted separately.
+For conduct that occurs in GitHub-hosted project spaces, use GitHub's content
+reporting tools. Do not include sensitive personal information in a public issue.
+Dline does not currently publish a separate confidential conduct-reporting
+channel.
 
 Project maintainers who do not follow or enforce the Code of Conduct in good
 faith may face temporary or permanent repercussions as determined by other

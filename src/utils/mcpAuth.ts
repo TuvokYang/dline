@@ -8,7 +8,7 @@ import crypto from "crypto"
  * @returns A SHA-256 hash string.
  */
 export const getServerAuthHash = (serverName: string, serverUrl: string): string => {
-	return crypto.createHash("sha256").update(`${serverName}:${serverUrl}`).digest("hex")
+    return crypto.createHash("sha256").update(`${serverName}:${serverUrl}`).digest("hex")
 }
 
 /**
@@ -18,6 +18,6 @@ export const getServerAuthHash = (serverName: string, serverUrl: string): string
  * @returns The callback path string (e.g., /mcp-auth/callback/<hash>).
  */
 export const getMcpServerCallbackPath = (serverName: string, serverUrl: string): string => {
-	const hash = getServerAuthHash(serverName, serverUrl)
-	return `/mcp-auth/callback/${hash}`
+    const hash = getServerAuthHash(serverName, serverUrl)
+    return `/mcp-auth/callback/${hash}`
 }

@@ -14,27 +14,27 @@ import type { Controller } from ".."
  * Uses layered ModelInfo (proto/dline/models.proto) with capabilities + pricing nesting.
  */
 export async function getAvailableModels(_controller: Controller): Promise<AvailableModelsResponse> {
-	const registry = ModelRegistry.getInstance()
+    const registry = ModelRegistry.getInstance()
 
-	if (!registry.isInitialized) {
-		await registry.initialize()
-	}
-	await registry.waitForDeferredProviders()
+    if (!registry.isInitialized) {
+        await registry.initialize()
+    }
+    await registry.waitForDeferredProviders()
 
-	const allModels = registry.getAllModels()
+    const allModels = registry.getAllModels()
 
-	const providers: ProviderModelGroup[] = allModels.map((group) =>
-		ProviderModelGroup.create({
-			provider: group.provider,
-			providerName: group.providerName,
-			defaultModelId: group.defaultModelId,
-			models: group.models.map((model) => ModelInfo.create(model)),
-			defaultImageModelId: group.defaultImageModelId,
-			imageModels: (group.imageModels ?? []).map((model) => ImageModelInfo.create(model)),
-		}),
-	)
+    const providers: ProviderModelGroup[] = allModels.map((group) =>
+        ProviderModelGroup.create({
+            provider: group.provider,
+            providerName: group.providerName,
+            defaultModelId: group.defaultModelId,
+            models: group.models.map((model) => ModelInfo.create(model)),
+            defaultImageModelId: group.defaultImageModelId,
+            imageModels: (group.imageModels ?? []).map((model) => ImageModelInfo.create(model)),
+        }),
+    )
 
-	return AvailableModelsResponse.create({
-		providers,
-	})
+    return AvailableModelsResponse.create({
+        providers,
+    })
 }

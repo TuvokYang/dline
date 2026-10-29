@@ -13,10 +13,10 @@ import { Channel, createChannel } from "nice-grpc"
 export type GrpcHandler<TRequest, TResponse> = (controller: Controller, req: TRequest) => Promise<TResponse>
 
 export type GrpcStreamingResponseHandler<TRequest, TResponse> = (
-	controller: Controller,
-	req: TRequest,
-	streamResponseHandler: StreamingResponseWriter<TResponse>,
-	requestId?: string,
+    controller: Controller,
+    req: TRequest,
+    streamResponseHandler: StreamingResponseWriter<TResponse>,
+    requestId?: string,
 ) => Promise<void>
 
 /**
@@ -27,13 +27,13 @@ export type GrpcStreamingResponseHandler<TRequest, TResponse> = (
  * @template TResponse - The type of the response object
  */
 export type GrpcHandlerWrapper = <TRequest, TResponse>(
-	handler: GrpcHandler<TRequest, TResponse>,
-	controller: Controller,
+    handler: GrpcHandler<TRequest, TResponse>,
+    controller: Controller,
 ) => grpc.handleUnaryCall<TRequest, TResponse>
 
 export type GrpcStreamingResponseHandlerWrapper = <TRequest, TResponse>(
-	handler: GrpcStreamingResponseHandler<TRequest, TResponse>,
-	controller: Controller,
+    handler: GrpcStreamingResponseHandler<TRequest, TResponse>,
+    controller: Controller,
 ) => grpc.handleServerStreamingCall<TRequest, TResponse>
 
 export type StreamingResponseWriter<TResponse> = (response: TResponse, isLast?: boolean, sequenceNumber?: number) => Promise<void>
@@ -48,41 +48,41 @@ export type StreamingResponseWriter<TResponse> = (response: TResponse, isLast?: 
  * @template TClient - The specific gRPC client type (e.g., niceGrpc.host.DiffServiceClient)
  */
 export abstract class BaseGrpcClient<TClient> {
-	private client: TClient | null = null
-	private channel: Channel | null = null
-	protected address: string
+    private client: TClient | null = null
+    private channel: Channel | null = null
+    protected address: string
 
-	constructor(address: string) {
-		this.address = address
-	}
+    constructor(address: string) {
+        this.address = address
+    }
 
-	protected abstract createClient(channel: Channel): TClient
+    protected abstract createClient(channel: Channel): TClient
 
-	protected getClient(): TClient {
-		if (!this.client || !this.channel) {
-			const channelOptions = { "grpc.enable_http_proxy": 0 }
-			this.channel = createChannel(this.address, undefined, channelOptions)
-			this.client = this.createClient(this.channel)
-		}
-		return this.client
-	}
+    protected getClient(): TClient {
+        if (!this.client || !this.channel) {
+            const channelOptions = { "grpc.enable_http_proxy": 0 }
+            this.channel = createChannel(this.address, undefined, channelOptions)
+            this.client = this.createClient(this.channel)
+        }
+        return this.client
+    }
 
-	protected destroyClient(): void {
-		this.channel?.close()
-		this.client = null
-		this.channel = null
-	}
+    protected destroyClient(): void {
+        this.channel?.close()
+        this.client = null
+        this.channel = null
+    }
 
-	protected async makeRequest<T>(requestFn: (client: TClient) => Promise<T>): Promise<T> {
-		const client = this.getClient()
+    protected async makeRequest<T>(requestFn: (client: TClient) => Promise<T>): Promise<T> {
+        const client = this.getClient()
 
-		try {
-			return await requestFn(client)
-		} catch (error: any) {
-			if (error?.code === "UNAVAILABLE") {
-				this.destroyClient()
-			}
-			throw error
-		}
-	}
+        try {
+            return await requestFn(client)
+        } catch (error: any) {
+            if (error?.code === "UNAVAILABLE") {
+                this.destroyClient()
+            }
+            throw error
+        }
+    }
 }

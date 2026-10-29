@@ -8,11 +8,11 @@ import type { Controller } from "../index"
  * Bypasses the debounced persistence and forces immediate writes
  */
 export async function flushPendingState(controller: Controller, _request: EmptyRequest): Promise<Empty> {
-	try {
-		await controller.stateManager.flushPendingState()
-		return Empty.create({})
-	} catch (error) {
-		Logger.error("[flushPendingState] Error flushing pending state:", error)
-		throw error
-	}
+    try {
+        await controller.stateManager.flushPendingState()
+        return Empty.create({})
+    } catch (error) {
+        Logger.error("[flushPendingState] Error flushing pending state:", error)
+        throw error
+    }
 }

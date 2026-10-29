@@ -9,8 +9,8 @@ process.stdin.resume()
 const keepAlive = setInterval(() => {}, 1_000)
 
 const stop = () => {
-	clearInterval(keepAlive)
-	process.exit(0)
+    clearInterval(keepAlive)
+    process.exit(0)
 }
 
 process.once("SIGINT", stop)

@@ -19,15 +19,15 @@ export const CLAUDE_CODE_OAUTH_BETA = "oauth-2025-04-20"
  * the set vary per turn, and that variation is itself observable.
  */
 export const CLAUDE_CODE_CLIENT_BETAS: readonly string[] = [
-	"claude-code-20250219",
-	CLAUDE_CODE_OAUTH_BETA,
-	"interleaved-thinking-2025-05-14",
-	"prompt-caching-scope-2026-01-05",
-	"effort-2025-11-24",
-	"context-management-2025-06-27",
-	"thinking-binding-controls-2026-08-01",
-	"mid-conversation-output-config-2026-07-01",
-	"extended-cache-ttl-2025-04-11",
+    "claude-code-20250219",
+    CLAUDE_CODE_OAUTH_BETA,
+    "interleaved-thinking-2025-05-14",
+    "prompt-caching-scope-2026-01-05",
+    "effort-2025-11-24",
+    "context-management-2025-06-27",
+    "thinking-binding-controls-2026-08-01",
+    "mid-conversation-output-config-2026-07-01",
+    "extended-cache-ttl-2025-04-11",
 ]
 
 /**
@@ -39,10 +39,10 @@ export const CLAUDE_CODE_CLIENT_BETAS: readonly string[] = [
  * from the model catalog — a subscription cannot buy that window.
  */
 export function buildClaudeCodeBetas(): string[] {
-	return [...CLAUDE_CODE_CLIENT_BETAS]
+    return [...CLAUDE_CODE_CLIENT_BETAS]
 }
 
 /** Renders the beta set as the `anthropic-beta` header value. */
 export function buildClaudeCodeBetaHeader(): string {
-	return buildClaudeCodeBetas().join(",")
+    return buildClaudeCodeBetas().join(",")
 }

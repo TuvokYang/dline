@@ -1,130 +1,112 @@
-import { DEFAULT_CHAT_INPUT_SEND_SHORTCUT, getChatInputSendShortcutLabel } from "@shared/ChatInputSendShortcut"
-import { mentionRegex, mentionRegexGlobal } from "@shared/context-mentions"
-import type { ClineAsk } from "@shared/ExtensionMessage"
-import { EmptyRequest, StringRequest } from "@shared/proto/dline/common"
-import {
-	FileSearchRequest,
-	FileSearchType,
-	RefreshedDlineToggles,
-	RelativePathsRequest,
-	StageAttachmentRequest,
-} from "@shared/proto/dline/file"
-import { type SlashCommand } from "@shared/slashCommands"
+import { DEFAULT_CHAT_INPUT_SEND_SHORTCUT } from "@shared/ChatInputSendShortcut"
+import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
 import { Mode } from "@shared/storage/types"
 import { AtSignIcon, PlusIcon } from "lucide-react"
 import type React from "react"
-import { forwardRef, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
-import { flushSync } from "react-dom"
-import DynamicTextArea from "react-textarea-autosize"
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react"
 import styled from "styled-components"
 import ContextMenu from "@/components/chat/ContextMenu"
 import { CHAT_CONSTANTS } from "@/components/chat/chat-view/constants"
 import { ModeSwitchDialog } from "@/components/chat/mode-switch/ModeSwitchDialog"
-import { type ModeSwitchDraft, shouldAttachModeSwitchDraft, useModeSwitch } from "@/components/chat/mode-switch/useModeSwitch"
+import type { TransitionDraftComposer } from "@/components/chat/mode-switch/transitionDraft"
+import { useModeSwitch } from "@/components/chat/mode-switch/useModeSwitch"
 import SlashCommandMenu from "@/components/chat/SlashCommandMenu"
 import ModelSwitcher from "@/components/chat/task-header/ModelSwitcher"
-import Thumbnails from "@/components/common/Thumbnails"
-import { getModeSpecificFields, normalizeApiConfiguration } from "@/components/settings/utils/providerUtils"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { usePlatform } from "@/context/PlatformContext"
-import { useTaskCapabilityToggles } from "@/hooks/useTaskCapabilityToggles"
 import { cn } from "@/lib/utils"
-import { FileServiceClient, SlashServiceClient } from "@/services/grpc-client"
-import { shouldSendChatInput } from "@/utils/chat-input-shortcut"
-import {
-	classifyTransferFiles,
-	isDocumentAttachmentUri,
-	parseAttachableFileUris,
-	readResourceUris,
-} from "@/utils/composer-transfer"
-import {
-	ContextMenuOptionType,
-	getContextMenuOptionIndex,
-	getContextMenuOptions,
-	insertMention,
-	insertMentionDirectly,
-	removeMention,
-	type SearchResult,
-	shouldShowContextMenu,
-} from "@/utils/context-mentions"
+import { composerShortcutLabels, isSteerShortcut, shouldSendChatInput } from "@/utils/chat-input-shortcut"
 import { useMetaKeyDetection, useShortcut } from "@/utils/hooks"
 import { isSafari } from "@/utils/platformUtils"
-import {
-	getMatchingSlashCommands,
-	insertSlashCommand,
-	removeSlashCommand,
-	sectionToPrefix,
-	shouldShowSlashCommandsMenu,
-	slashCommandDeleteRegex,
-	slashCommandRegexGlobal,
-	validateSlashCommand,
-} from "@/utils/slash-commands"
 import ClineRulesToggleModal from "../agent-capabilities/ClineRulesToggleModal"
-import { CHAT_INPUT_MIN_ROWS, CHAT_INPUT_PADDING_Y_PX, chatInputMaxRows } from "./chat-input-height"
+import {
+    CHAT_INPUT_LINE_HEIGHT,
+    CHAT_INPUT_MAX_HEIGHT_RATIO,
+    CHAT_INPUT_MIN_ROWS,
+    CHAT_INPUT_PADDING_Y_PX,
+} from "./chat-input-height"
 import { ChatInputRuntimeControls } from "./input/ChatInputRuntimeControls"
+import { ComposerActionButton } from "./input/composer-action/ComposerActionButton"
+import type { ComposerSubmitKind } from "./input/composer-action/composer-action"
+import type { InputQueuePanelMode } from "./input/InputQueuePanel"
+import type { ChipAction } from "./input/semantic-composer/dom"
+import { composerHighlights } from "./input/semantic-composer/highlights"
+import {
+    type ComposerAtom,
+    type ComposerSegment,
+    contentLength,
+    flatTextOf,
+    resourceAtomsOf,
+    selectionRange,
+} from "./input/semantic-composer/model"
+import { type ComposerProjection, projectComposerDocument } from "./input/semantic-composer/projection"
+import { openResource, retryResource } from "./input/semantic-composer/resource-staging"
+import { SemanticComposerEditor, type SemanticComposerEditorHandle } from "./input/semantic-composer/SemanticComposerEditor"
+import { type ComposerSendDraft, captureComposerSend, describeSendBlock } from "./input/semantic-composer/send-draft"
+import type { ComposerDraft } from "./input/semantic-composer/useComposerDraft"
+import { useComposerMenus } from "./input/useComposerMenus"
+import { useComposerResourceInput } from "./input/useComposerResourceInput"
 import ServersToggleModal from "./ServersToggleModal"
 import { UsageBar } from "./UsageBar"
 
 const { MAX_IMAGES_AND_FILES_PER_MESSAGE } = CHAT_CONSTANTS
 
 /**
- * Above this length (~20K characters) the composer stops re-scanning the whole text for @mentions and
- * /commands on every keystroke, so pasting 100KB+ stays responsive. There is no limit on input length.
+ * Above this length (~20K characters) the composer stops re-lexing the draft on every keystroke for
+ * highlights, so pasting 100KB+ stays responsive. Sending still lexes it once; there is no input limit.
  */
 const MAX_HIGHLIGHTED_INPUT_LENGTH = 20_000
+/** Highlights only need entity ranges, so their projection does not take the draft's document identity. */
+const HIGHLIGHT_DOCUMENT_ID = "composer-highlight"
+const TRANSIENT_NOTICE_MS = 3000
+/** What a mode switch carries when the draft cannot travel with it; the draft then stays in the composer. */
+const EMPTY_SEND_DRAFT: ComposerSendDraft = { segments: [], text: "", images: [], files: [] }
 
-const getImageDimensions = (dataUrl: string): Promise<{ width: number; height: number }> => {
-	return new Promise((resolve, reject) => {
-		const img = new Image()
-		img.onload = () => {
-			if (img.naturalWidth > 7500 || img.naturalHeight > 7500) {
-				reject(new Error("Image dimensions exceed maximum allowed size of 7500px."))
-			} else {
-				resolve({ width: img.naturalWidth, height: img.naturalHeight })
-			}
-		}
-		img.onerror = (err) => {
-			console.error("Failed to load image for dimension check:", err)
-			reject(new Error("Failed to load image to check dimensions."))
-		}
-		img.src = dataUrl
-	})
-}
-
-// Set to "File" option by default
-const DEFAULT_CONTEXT_MENU_OPTION = getContextMenuOptionIndex(ContextMenuOptionType.File)
-
-interface ChatTextAreaProps {
-	inputValue: string
-	activeQuote: string | null
-	setInputValue: (value: string) => void
-	undoInputValue: () => string | undefined
-	redoInputValue: () => string | undefined
-	sendingDisabled: boolean
-	placeholderText: string
-	selectedFiles: string[]
-	selectedImages: string[]
-	setSelectedImages: React.Dispatch<React.SetStateAction<string[]>>
-	setSelectedFiles: React.Dispatch<React.SetStateAction<string[]>>
-	onSend: (draft: ModeSwitchDraft) => void
-	onSendBlocked?: (draft: ModeSwitchDraft) => void
-	onSelectFilesAndImages: () => void
-	shouldDisableFilesAndImages: boolean
-	clineAsk?: ClineAsk
-	onHeightChange?: (height: number) => void
-	onFocusChange?: (isFocused: boolean) => void
-}
-
-interface GitCommit {
-	type: ContextMenuOptionType.Git
-	value: string
-	label: string
-	description: string
-}
+const COMPOSER_PADDING_Y = 2 * CHAT_INPUT_PADDING_Y_PX
+const COMPOSER_MIN_HEIGHT = `calc(${CHAT_INPUT_MIN_ROWS} * ${CHAT_INPUT_LINE_HEIGHT} + ${COMPOSER_PADDING_Y}px)`
+const COMPOSER_MAX_HEIGHT = `calc(${CHAT_INPUT_MAX_HEIGHT_RATIO} * (${CHAT_INPUT_MIN_ROWS} * ${CHAT_INPUT_LINE_HEIGHT} + ${COMPOSER_PADDING_Y}px))`
 
 const PLAN_MODE_COLOR = "var(--vscode-activityWarningBadge-background)"
-const ACT_MODE_COLOR = "var(--vscode-focusBorder)"
+
+type TransientNotice = "rejected_files" | "oversized_images" | "refused_text" | "attachment_limit"
+
+const TRANSIENT_NOTICE_TEXT: Record<TransientNotice, string> = {
+    rejected_files: "File too large: PDF up to 50MB, other files up to 20MB",
+    oversized_images: "Image dimensions exceed 7500px",
+    refused_text: "Text this long is attached as a file, but no attachment can be added here",
+    attachment_limit: `A message can carry up to ${MAX_IMAGES_AND_FILES_PER_MESSAGE} attachments; the rest were left out`,
+}
+
+interface ChatTextAreaProps {
+    /** The draft this composer edits; the chat view owns it. */
+    composer: ComposerDraft
+    sendingDisabled: boolean
+    placeholderText: string
+    onSend: (draft: ComposerSendDraft) => void
+    /**
+     * Hands a draft to the queue in the given mode: a send made while sending is
+     * disabled waits as `queued`, the steer shortcut as `steering`. Absent when
+     * nothing can take it.
+     */
+    onSendBlocked?: (draft: ComposerSendDraft, mode: InputQueuePanelMode) => void
+    /** Whether a blocked send will be delivered later, so the action button offers to queue it. */
+    queueAvailable?: boolean
+    /** Stops the running task; absent while the task offers no cancel. */
+    onCancelTask?: () => Promise<void>
+    /** What a send does to the task, shown by the action button; `send` when omitted. */
+    submitKind?: ComposerSubmitKind
+    /** The model's output rate while a response streams, which tints the action button. */
+    outputTokensPerSecond?: number
+    /** True when the current interaction cannot take attachments at all. */
+    attachmentsDisabled: boolean
+    /** Whether the active model reads images natively, so the file dialog offers them. */
+    imagesAllowed: boolean
+    onHeightChange?: (height: number) => void
+    onFocusChange?: (isFocused: boolean) => void
+    /** The catalog every submission of this view is composed against. */
+    semanticCatalog: InputSemanticCatalog
+}
 
 const SwitchContainer = styled.div<{ disabled: boolean }>`
 	display: flex;
@@ -142,12 +124,12 @@ const SwitchContainer = styled.div<{ disabled: boolean }>`
 `
 
 const Slider = styled.div.withConfig({
-	shouldForwardProp: (prop) => !["isAct", "isPlan"].includes(prop),
+    shouldForwardProp: (prop) => !["isAct", "isPlan"].includes(prop),
 })<{ isAct: boolean; isPlan?: boolean }>`
 	position: absolute;
 	height: 100%;
 	width: 50%;
-	background-color: ${(props) => (props.isPlan ? PLAN_MODE_COLOR : ACT_MODE_COLOR)};
+	background-color: ${(props) => (props.isPlan ? PLAN_MODE_COLOR : "var(--vscode-focusBorder)")};
 	transition: transform 0.2s ease;
 	transform: translateX(${(props) => (props.isAct ? "100%" : "0%")});
 `
@@ -173,1801 +155,536 @@ const ButtonContainer = styled.div`
 	width: 100%;
 `
 
-const _ModelContainer = styled.div`
-	position: relative;
-	display: flex;
-	flex: 1;
-	min-width: 0;
-`
-
-const _ModelButtonWrapper = styled.div`
-	display: inline-flex; // Make it shrink to content
-	min-width: 0; // Allow shrinking
-	max-width: 100%; // Don't overflow parent
-`
-
-const _ModelDisplayButton = styled.a<{ isActive?: boolean; disabled?: boolean }>`
-	padding: 0px 0px;
-	height: 20px;
-	width: 100%;
-	min-width: 0;
-	cursor: ${(props) => (props.disabled ? "not-allowed" : "pointer")};
-	text-decoration: ${(props) => (props.isActive ? "underline" : "none")};
-	color: ${(props) => (props.isActive ? "var(--vscode-foreground)" : "var(--vscode-descriptionForeground)")};
-	display: flex;
-	align-items: center;
-	font-size: 10px;
-	outline: none;
-	user-select: none;
-	opacity: ${(props) => (props.disabled ? 0.5 : 1)};
-	pointer-events: ${(props) => (props.disabled ? "none" : "auto")};
-
-	&:hover,
-	&:focus {
-		color: ${(props) => (props.disabled ? "var(--vscode-descriptionForeground)" : "var(--vscode-foreground)")};
-		text-decoration: ${(props) => (props.disabled ? "none" : "underline")};
-		outline: none;
-	}
-
-	&:active {
-		color: ${(props) => (props.disabled ? "var(--vscode-descriptionForeground)" : "var(--vscode-foreground)")};
-		text-decoration: ${(props) => (props.disabled ? "none" : "underline")};
-		outline: none;
-	}
-
-	&:focus-visible {
-		outline: none;
-	}
-`
-
-const _ModelButtonContent = styled.div`
-	width: 100%;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-`
-
-const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
-	(
-		{
-			inputValue,
-			setInputValue,
-			undoInputValue,
-			redoInputValue,
-			sendingDisabled,
-			placeholderText,
-			selectedFiles,
-			selectedImages,
-			setSelectedImages,
-			setSelectedFiles,
-			onSend,
-			onSendBlocked,
-			onSelectFilesAndImages,
-			shouldDisableFilesAndImages,
-			clineAsk,
-			onHeightChange,
-			onFocusChange,
-		},
-		ref,
-	) => {
-		const {
-			mode,
-			modeSwitch,
-			stateRevision,
-			apiConfiguration,
-			openRouterModels,
-			platform,
-			chatInputSendShortcut,
-			localWorkflowToggles,
-			globalWorkflowToggles,
-			remoteWorkflowToggles,
-			remoteConfigSettings,
-			navigateToSettings,
-			mcpServers,
-			localSkillsToggles,
-			globalSkillsToggles,
-			remoteSkillsToggles,
-			currentTaskItem,
-			setLocalWorkflowToggles,
-			setGlobalWorkflowToggles,
-			setLocalSkillsToggles,
-			setGlobalSkillsToggles,
-		} = useExtensionState()
-		const { snapshot: scopedCapabilityToggles, reconcile: reconcileCapabilityToggles } = useTaskCapabilityToggles()
-		const effectiveLocalWorkflowToggles = scopedCapabilityToggles?.localWorkflowToggles ?? localWorkflowToggles
-		const effectiveGlobalWorkflowToggles = scopedCapabilityToggles?.globalWorkflowToggles ?? globalWorkflowToggles
-		const effectiveRemoteWorkflowToggles = scopedCapabilityToggles?.remoteWorkflowToggles ?? remoteWorkflowToggles
-		const effectiveLocalSkillsToggles = scopedCapabilityToggles?.localSkillsToggles ?? localSkillsToggles
-		const effectiveGlobalSkillsToggles = scopedCapabilityToggles?.globalSkillsToggles ?? globalSkillsToggles
-		const effectiveRemoteSkillsToggles = scopedCapabilityToggles?.remoteSkillsToggles ?? remoteSkillsToggles
-		const effectiveMcpServers = useMemo(
-			() =>
-				scopedCapabilityToggles
-					? mcpServers.filter((server) => scopedCapabilityToggles.mcpServers[server.name] === true)
-					: mcpServers,
-			[mcpServers, scopedCapabilityToggles],
-		)
-		const [isTextAreaFocused, setIsTextAreaFocused] = useState(false)
-		const [isDraggingOver, setIsDraggingOver] = useState(false)
-		const [gitCommits, setGitCommits] = useState<GitCommit[]>([])
-		const [showSlashCommandsMenu, setShowSlashCommandsMenu] = useState(false)
-		const [selectedSlashCommandsIndex, setSelectedSlashCommandsIndex] = useState(0)
-		const [slashCommandsQuery, setSlashCommandsQuery] = useState("")
-		const [workflowDescriptions, setWorkflowDescriptions] = useState<Record<string, string>>({})
-		const [availableSkillCommands, setAvailableSkillCommands] = useState<SlashCommand[] | undefined>(undefined)
-		const slashCommandsMenuContainerRef = useRef<HTMLDivElement>(null)
-
-		const refreshSlashCommandMetadata = useCallback(async () => {
-			const response = await SlashServiceClient.getAvailableSlashCommands(EmptyRequest.create({}))
-			const descriptions: Record<string, string> = {}
-			const skills: SlashCommand[] = []
-			for (const command of response.commands) {
-				if (command.section === "workflow" && command.description) {
-					descriptions[command.name] = command.description
-				} else if (command.section === "skill") {
-					skills.push({
-						name: command.name,
-						description: command.description || undefined,
-						section: "skill",
-					})
-				}
-			}
-			setWorkflowDescriptions(descriptions)
-			setAvailableSkillCommands(skills)
-		}, [])
-
-		// Fetch names and descriptions parsed by the extension host.
-		useEffect(() => {
-			void refreshSlashCommandMetadata().catch(() => {})
-		}, [refreshSlashCommandMetadata])
-
-		// Refresh workflow toggles when the slash command menu opens,
-		// so newly added workflow files are discovered immediately.
-		useEffect(() => {
-			if (!showSlashCommandsMenu) {
-				return
-			}
-
-			FileServiceClient.refreshRules({} as EmptyRequest)
-				.then(async (response: RefreshedDlineToggles) => {
-					void reconcileCapabilityToggles({
-						...(response.localWorkflowToggles?.toggles && {
-							localWorkflowToggles: response.localWorkflowToggles.toggles,
-						}),
-						...(response.globalWorkflowToggles?.toggles && {
-							globalWorkflowToggles: response.globalWorkflowToggles.toggles,
-						}),
-						...(response.localSkillsToggles?.toggles && {
-							localSkillsToggles: response.localSkillsToggles.toggles,
-						}),
-						...(response.globalSkillsToggles?.toggles && {
-							globalSkillsToggles: response.globalSkillsToggles.toggles,
-						}),
-					})
-					if (response.localWorkflowToggles?.toggles) {
-						setLocalWorkflowToggles(response.localWorkflowToggles.toggles)
-					}
-					if (response.globalWorkflowToggles?.toggles) {
-						setGlobalWorkflowToggles(response.globalWorkflowToggles.toggles)
-					}
-					if (response.localSkillsToggles?.toggles) {
-						setLocalSkillsToggles(response.localSkillsToggles.toggles)
-					}
-					if (response.globalSkillsToggles?.toggles) {
-						setGlobalSkillsToggles(response.globalSkillsToggles.toggles)
-					}
-					await refreshSlashCommandMetadata()
-				})
-				.catch(() => {})
-		}, [
-			showSlashCommandsMenu,
-			setLocalWorkflowToggles,
-			setGlobalWorkflowToggles,
-			setLocalSkillsToggles,
-			setGlobalSkillsToggles,
-			reconcileCapabilityToggles,
-			refreshSlashCommandMetadata,
-		])
-
-		const [thumbnailsHeight, setThumbnailsHeight] = useState(0)
-		const [textAreaBaseHeight, setTextAreaBaseHeight] = useState<number | undefined>(undefined)
-		const [textAreaRowHeight, setTextAreaRowHeight] = useState<number | undefined>(undefined)
-		const [showContextMenu, setShowContextMenu] = useState(false)
-		const [cursorPosition, setCursorPosition] = useState(0)
-		const [searchQuery, setSearchQuery] = useState("")
-		const textAreaRef = useRef<HTMLTextAreaElement | null>(null)
-		const [isMouseDownOnMenu, setIsMouseDownOnMenu] = useState(false)
-		const highlightLayerRef = useRef<HTMLDivElement>(null)
-		const [selectedMenuIndex, setSelectedMenuIndex] = useState(-1)
-		const [selectedType, setSelectedType] = useState<ContextMenuOptionType | null>(null)
-		const [justDeletedSpaceAfterMention, setJustDeletedSpaceAfterMention] = useState(false)
-		const [justDeletedSpaceAfterSlashCommand, setJustDeletedSpaceAfterSlashCommand] = useState(false)
-		const [intendedCursorPosition, setIntendedCursorPosition] = useState<number | null>(null)
-		const contextMenuContainerRef = useRef<HTMLDivElement>(null)
-
-		const [shownTooltipMode, setShownTooltipMode] = useState<Mode | null>(null)
-		const [pendingInsertions, setPendingInsertions] = useState<string[]>([])
-		const _shiftHoldTimerRef = useRef<NodeJS.Timeout | null>(null)
-		const [showUnsupportedFileError, setShowUnsupportedFileError] = useState(false)
-		const unsupportedFileTimerRef = useRef<NodeJS.Timeout | null>(null)
-		const [showDimensionError, setShowDimensionError] = useState(false)
-		const dimensionErrorTimerRef = useRef<NodeJS.Timeout | null>(null)
-
-		const [fileSearchResults, setFileSearchResults] = useState<SearchResult[]>([])
-		const [searchLoading, setSearchLoading] = useState(false)
-		const [, metaKeyChar] = useMetaKeyDetection(platform)
-
-		// Fetch git commits when Git is selected or when typing a hash
-		useEffect(() => {
-			if (selectedType === ContextMenuOptionType.Git || /^[a-f0-9]+$/i.test(searchQuery)) {
-				FileServiceClient.searchCommits(StringRequest.create({ value: searchQuery || "" }))
-					.then((response) => {
-						if (response.commits) {
-							const commits: GitCommit[] = response.commits.map(
-								(commit: { hash: string; shortHash: string; subject: string; author: string; date: string }) => ({
-									type: ContextMenuOptionType.Git,
-									value: commit.hash,
-									label: commit.subject,
-									description: `${commit.shortHash} by ${commit.author} on ${commit.date}`,
-								}),
-							)
-							setGitCommits(commits)
-						}
-					})
-					.catch((error) => {
-						console.error("Error searching commits:", error)
-					})
-			}
-		}, [selectedType, searchQuery])
-
-		const queryItems = useMemo(() => {
-			return [
-				{ type: ContextMenuOptionType.Problems, value: "problems" },
-				{ type: ContextMenuOptionType.Terminal, value: "terminal" },
-				...gitCommits,
-			]
-		}, [gitCommits])
-
-		useEffect(() => {
-			const handleClickOutside = (event: MouseEvent) => {
-				if (contextMenuContainerRef.current && !contextMenuContainerRef.current.contains(event.target as Node)) {
-					setShowContextMenu(false)
-				}
-			}
-
-			if (showContextMenu) {
-				document.addEventListener("mousedown", handleClickOutside)
-			}
-
-			return () => {
-				document.removeEventListener("mousedown", handleClickOutside)
-			}
-		}, [showContextMenu])
-
-		useEffect(() => {
-			const handleClickOutsideSlashMenu = (event: MouseEvent) => {
-				if (
-					slashCommandsMenuContainerRef.current &&
-					!slashCommandsMenuContainerRef.current.contains(event.target as Node)
-				) {
-					setShowSlashCommandsMenu(false)
-				}
-			}
-
-			if (showSlashCommandsMenu) {
-				document.addEventListener("mousedown", handleClickOutsideSlashMenu)
-			}
-
-			return () => {
-				document.removeEventListener("mousedown", handleClickOutsideSlashMenu)
-			}
-		}, [showSlashCommandsMenu])
-
-		const handleMentionSelect = useCallback(
-			(type: ContextMenuOptionType, value?: string) => {
-				if (type === ContextMenuOptionType.NoResults) {
-					return
-				}
-
-				if (
-					type === ContextMenuOptionType.File ||
-					type === ContextMenuOptionType.Folder ||
-					type === ContextMenuOptionType.Git
-				) {
-					if (!value) {
-						setSelectedType(type)
-						setSearchQuery("")
-						setSelectedMenuIndex(0)
-
-						// Trigger search with the selected type
-						if (type === ContextMenuOptionType.File || type === ContextMenuOptionType.Folder) {
-							setSearchLoading(true)
-
-							// Map ContextMenuOptionType to FileSearchType enum
-							let searchType: FileSearchType | undefined
-							if (type === ContextMenuOptionType.File) {
-								searchType = FileSearchType.FILE
-							} else if (type === ContextMenuOptionType.Folder) {
-								searchType = FileSearchType.FOLDER
-							}
-
-							const myToken = ++latestSearchTokenRef.current
-							FileServiceClient.searchFiles(
-								FileSearchRequest.create({
-									query: "",
-									mentionsRequestId: String(myToken),
-									selectedType: searchType,
-								}),
-							)
-								.then((results) => {
-									if (myToken !== latestSearchTokenRef.current) {
-										// Stale response — a newer search has been issued.
-										return
-									}
-									setFileSearchResults((results.results || []) as SearchResult[])
-									setSearchLoading(false)
-								})
-								.catch((error) => {
-									if (myToken !== latestSearchTokenRef.current) {
-										return
-									}
-									console.error("Error searching files:", error)
-									setFileSearchResults([])
-									setSearchLoading(false)
-								})
-						}
-						return
-					}
-				}
-
-				setShowContextMenu(false)
-				setSelectedType(null)
-				const queryLength = searchQuery.length
-				setSearchQuery("")
-
-				if (textAreaRef.current) {
-					let insertValue = value || ""
-					if (type === ContextMenuOptionType.URL) {
-						insertValue = value || ""
-					} else if (type === ContextMenuOptionType.File || type === ContextMenuOptionType.Folder) {
-						insertValue = value || ""
-					} else if (type === ContextMenuOptionType.Problems) {
-						insertValue = "problems"
-					} else if (type === ContextMenuOptionType.Terminal) {
-						insertValue = "terminal"
-					} else if (type === ContextMenuOptionType.Git) {
-						insertValue = value || ""
-					}
-
-					const { newValue, mentionIndex } = insertMention(
-						textAreaRef.current.value,
-						cursorPosition,
-						insertValue,
-						queryLength,
-					)
-
-					setInputValue(newValue)
-					const newCursorPosition = newValue.indexOf(" ", mentionIndex + insertValue.length) + 1
-					setCursorPosition(newCursorPosition)
-					setIntendedCursorPosition(newCursorPosition)
-				}
-			},
-			[setInputValue, cursorPosition, searchQuery],
-		)
-
-		const handleSlashCommandsSelect = useCallback(
-			(command: SlashCommand) => {
-				setShowSlashCommandsMenu(false)
-				const queryLength = slashCommandsQuery.length
-				setSlashCommandsQuery("")
-
-				// Build prefixed name for insertion: "cmd:newtask", "workflow:xxx", "skills:xxx", "mcp:xxx"
-				const prefix = sectionToPrefix(command.section)
-				const fullName = prefix ? `${prefix}:${command.name}` : command.name
-
-				if (textAreaRef.current) {
-					const { newValue, commandIndex } = insertSlashCommand(
-						textAreaRef.current.value,
-						fullName,
-						queryLength,
-						cursorPosition,
-					)
-					const newCursorPosition = newValue.indexOf(" ", commandIndex + 1 + fullName.length) + 1
-
-					setInputValue(newValue)
-					setCursorPosition(newCursorPosition)
-					setIntendedCursorPosition(newCursorPosition)
-
-					setTimeout(() => {
-						if (textAreaRef.current) {
-							textAreaRef.current.blur()
-							textAreaRef.current.focus()
-						}
-					}, 0)
-				}
-			},
-			[setInputValue, slashCommandsQuery, cursorPosition],
-		)
-		const handleKeyDown = useCallback(
-			(event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-				// Safari does not support InputEvent.isComposing (always false), so we need to fallback to keyCode === 229 for it
-				const isComposing = isSafari ? event.nativeEvent.keyCode === 229 : (event.nativeEvent?.isComposing ?? false)
-				const isSelectAllShortcut =
-					(event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "a"
-				if (isSelectAllShortcut) {
-					event.preventDefault()
-					event.stopPropagation()
-					const textArea = event.currentTarget
-					textArea.setSelectionRange(0, textArea.value.length)
-					setCursorPosition(0)
-					return
-				}
-
-				const normalizedKey = event.key.toLowerCase()
-				const hasHistoryModifier = (event.metaKey || event.ctrlKey) && !event.altKey
-				const isUndoShortcut = hasHistoryModifier && !event.shiftKey && normalizedKey === "z"
-				const isRedoShortcut =
-					hasHistoryModifier &&
-					((!event.shiftKey && normalizedKey === "y") || (event.shiftKey && normalizedKey === "z"))
-				if (!isComposing && (isUndoShortcut || isRedoShortcut)) {
-					event.preventDefault()
-					event.stopPropagation()
-					const restoredValue = isUndoShortcut ? undoInputValue() : redoInputValue()
-					if (restoredValue !== undefined) {
-						setShowContextMenu(false)
-						setShowSlashCommandsMenu(false)
-						setCursorPosition(restoredValue.length)
-						setIntendedCursorPosition(restoredValue.length)
-					}
-					return
-				}
-
-				if (showSlashCommandsMenu) {
-					if (event.key === "Escape") {
-						setShowSlashCommandsMenu(false)
-						setSlashCommandsQuery("")
-						return
-					}
-
-					if (event.key === "ArrowUp" || event.key === "ArrowDown") {
-						event.preventDefault()
-						setSelectedSlashCommandsIndex((prevIndex) => {
-							const direction = event.key === "ArrowUp" ? -1 : 1
-							// Get commands with workflow toggles
-							const allCommands = getMatchingSlashCommands(
-								slashCommandsQuery,
-								effectiveLocalWorkflowToggles,
-								effectiveGlobalWorkflowToggles,
-								effectiveRemoteWorkflowToggles,
-								remoteConfigSettings?.remoteGlobalWorkflows,
-								effectiveMcpServers,
-								effectiveLocalSkillsToggles,
-								effectiveGlobalSkillsToggles,
-								remoteConfigSettings?.remoteGlobalSkills,
-								effectiveRemoteSkillsToggles,
-								undefined,
-								availableSkillCommands,
-							)
-
-							if (allCommands.length === 0) {
-								return prevIndex
-							}
-
-							// Calculate total command count
-							const totalCommandCount = allCommands.length
-
-							// Create wraparound navigation - moves from last item to first and vice versa
-							const newIndex = (prevIndex + direction + totalCommandCount) % totalCommandCount
-							return newIndex
-						})
-						return
-					}
-
-					if ((event.key === "Enter" || event.key === "Tab") && selectedSlashCommandsIndex !== -1) {
-						event.preventDefault()
-						const commands = getMatchingSlashCommands(
-							slashCommandsQuery,
-							effectiveLocalWorkflowToggles,
-							effectiveGlobalWorkflowToggles,
-							effectiveRemoteWorkflowToggles,
-							remoteConfigSettings?.remoteGlobalWorkflows,
-							effectiveMcpServers,
-							effectiveLocalSkillsToggles,
-							effectiveGlobalSkillsToggles,
-							remoteConfigSettings?.remoteGlobalSkills,
-							effectiveRemoteSkillsToggles,
-							undefined,
-							availableSkillCommands,
-						)
-						if (commands.length > 0) {
-							handleSlashCommandsSelect(commands[selectedSlashCommandsIndex])
-						}
-						return
-					}
-				}
-				if (showContextMenu) {
-					if (event.key === "Escape") {
-						setShowContextMenu(false)
-						setSelectedType(null)
-						setSelectedMenuIndex(DEFAULT_CONTEXT_MENU_OPTION)
-						setSearchQuery("")
-						return
-					}
-
-					if (event.key === "ArrowUp" || event.key === "ArrowDown") {
-						event.preventDefault()
-						setSelectedMenuIndex((prevIndex) => {
-							const direction = event.key === "ArrowUp" ? -1 : 1
-							const options = getContextMenuOptions(searchQuery, selectedType, queryItems, fileSearchResults)
-							const optionsLength = options.length
-
-							if (optionsLength === 0) {
-								return prevIndex
-							}
-
-							// Find selectable options (non-URL types)
-							const selectableOptions = options.filter(
-								(option) =>
-									option.type !== ContextMenuOptionType.URL && option.type !== ContextMenuOptionType.NoResults,
-							)
-
-							if (selectableOptions.length === 0) {
-								return -1 // No selectable options
-							}
-
-							// Find the index of the next selectable option
-							const currentSelectableIndex = selectableOptions.indexOf(options[prevIndex])
-
-							const newSelectableIndex =
-								(currentSelectableIndex + direction + selectableOptions.length) % selectableOptions.length
-
-							// Find the index of the selected option in the original options array
-							return options.indexOf(selectableOptions[newSelectableIndex])
-						})
-						return
-					}
-					if ((event.key === "Enter" || event.key === "Tab") && selectedMenuIndex !== -1) {
-						event.preventDefault()
-						const selectedOption = getContextMenuOptions(searchQuery, selectedType, queryItems, fileSearchResults)[
-							selectedMenuIndex
-						]
-						if (
-							selectedOption &&
-							selectedOption.type !== ContextMenuOptionType.URL &&
-							selectedOption.type !== ContextMenuOptionType.NoResults
-						) {
-							// Use label if it contains workspace prefix, otherwise use value
-							const mentionValue = selectedOption.label?.includes(":") ? selectedOption.label : selectedOption.value
-							handleMentionSelect(selectedOption.type, mentionValue)
-						}
-						return
-					}
-				}
-
-				if (shouldSendChatInput(event, chatInputSendShortcut ?? DEFAULT_CHAT_INPUT_SEND_SHORTCUT, isComposing)) {
-					event.preventDefault()
-
-					const capturedDraft = {
-						text: event.currentTarget.value,
-						images: [...selectedImages],
-						files: [...selectedFiles],
-					}
-					if (!sendingDisabled) {
-						setIsTextAreaFocused(false)
-						onSend(capturedDraft)
-					} else {
-						onSendBlocked?.(capturedDraft)
-					}
-				}
-
-				if (event.key === "Backspace" && !isComposing) {
-					const charBeforeCursor = inputValue[cursorPosition - 1]
-					const charAfterCursor = inputValue[cursorPosition + 1]
-
-					const charBeforeIsWhitespace =
-						charBeforeCursor === " " || charBeforeCursor === "\n" || charBeforeCursor === "\r\n"
-					const charAfterIsWhitespace =
-						charAfterCursor === " " || charAfterCursor === "\n" || charAfterCursor === "\r\n"
-
-					// Check if we're right after a space that follows a mention or slash command
-					if (
-						charBeforeIsWhitespace &&
-						inputValue.slice(0, cursorPosition - 1).match(new RegExp(`${mentionRegex.source}$`))
-					) {
-						// File mention handling
-						const newCursorPosition = cursorPosition - 1
-						if (!charAfterIsWhitespace) {
-							event.preventDefault()
-							textAreaRef.current?.setSelectionRange(newCursorPosition, newCursorPosition)
-							setCursorPosition(newCursorPosition)
-						}
-						setCursorPosition(newCursorPosition)
-						setJustDeletedSpaceAfterMention(true)
-						setJustDeletedSpaceAfterSlashCommand(false)
-					} else if (charBeforeIsWhitespace && inputValue.slice(0, cursorPosition - 1).match(slashCommandDeleteRegex)) {
-						// New slash command handling
-						const newCursorPosition = cursorPosition - 1
-						if (!charAfterIsWhitespace) {
-							event.preventDefault()
-							textAreaRef.current?.setSelectionRange(newCursorPosition, newCursorPosition)
-							setCursorPosition(newCursorPosition)
-						}
-						setCursorPosition(newCursorPosition)
-						setJustDeletedSpaceAfterSlashCommand(true)
-						setJustDeletedSpaceAfterMention(false)
-					}
-					// Handle the second backspace press for mentions or slash commands
-					else if (justDeletedSpaceAfterMention) {
-						const { newText, newPosition } = removeMention(inputValue, cursorPosition)
-						if (newText !== inputValue) {
-							event.preventDefault()
-							setInputValue(newText)
-							setIntendedCursorPosition(newPosition)
-						}
-						setJustDeletedSpaceAfterMention(false)
-						setShowContextMenu(false)
-					} else if (justDeletedSpaceAfterSlashCommand) {
-						// New slash command deletion
-						const { newText, newPosition } = removeSlashCommand(inputValue, cursorPosition)
-						if (newText !== inputValue) {
-							event.preventDefault()
-							setInputValue(newText)
-							setIntendedCursorPosition(newPosition)
-						}
-						setJustDeletedSpaceAfterSlashCommand(false)
-						setShowSlashCommandsMenu(false)
-					}
-					// Default case - reset flags if none of the above apply
-					else {
-						setJustDeletedSpaceAfterMention(false)
-						setJustDeletedSpaceAfterSlashCommand(false)
-					}
-				}
-			},
-			[
-				onSend,
-				onSendBlocked,
-				showContextMenu,
-				searchQuery,
-				selectedMenuIndex,
-				handleMentionSelect,
-				selectedType,
-				inputValue,
-				cursorPosition,
-				setInputValue,
-				undoInputValue,
-				redoInputValue,
-				justDeletedSpaceAfterMention,
-				queryItems,
-				fileSearchResults,
-				showSlashCommandsMenu,
-				selectedSlashCommandsIndex,
-				slashCommandsQuery,
-				handleSlashCommandsSelect,
-				sendingDisabled,
-				selectedImages,
-				selectedFiles,
-				chatInputSendShortcut,
-				effectiveMcpServers,
-				remoteConfigSettings?.remoteGlobalSkills,
-				effectiveRemoteSkillsToggles,
-				effectiveRemoteWorkflowToggles,
-				effectiveLocalWorkflowToggles,
-				effectiveGlobalWorkflowToggles,
-				remoteConfigSettings?.remoteGlobalWorkflows,
-				effectiveLocalSkillsToggles,
-				justDeletedSpaceAfterSlashCommand,
-				effectiveGlobalSkillsToggles,
-				availableSkillCommands,
-			],
-		)
-
-		// Effect to set cursor position after state updates
-		useLayoutEffect(() => {
-			if (intendedCursorPosition !== null && textAreaRef.current) {
-				textAreaRef.current.setSelectionRange(intendedCursorPosition, intendedCursorPosition)
-				setIntendedCursorPosition(null) // Reset the state after applying
-			}
-		}, [intendedCursorPosition])
-
-		useEffect(() => {
-			if (pendingInsertions.length === 0 || !textAreaRef.current) {
-				return
-			}
-
-			const path = pendingInsertions[0]
-			const currentTextArea = textAreaRef.current
-			const currentValue = currentTextArea.value
-			const currentCursorPos =
-				intendedCursorPosition ??
-				(currentTextArea.selectionStart >= 0 ? currentTextArea.selectionStart : currentValue.length)
-
-			const { newValue, mentionIndex } = insertMentionDirectly(currentValue, currentCursorPos, path)
-
-			setInputValue(newValue)
-
-			const newCursorPosition = mentionIndex + path.length + 2
-			setIntendedCursorPosition(newCursorPosition)
-
-			setPendingInsertions((prev) => prev.slice(1))
-		}, [pendingInsertions, setInputValue, intendedCursorPosition])
-
-		const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-
-		// Monotonic token; every searchFiles dispatch bumps it, and resolve
-		// handlers drop their result when the token they captured at fire time
-		// is no longer the latest. Prevents stale results from a cancelled or
-		// superseded picker (e.g. "Add File" still in flight when user picks
-		// "Add Folder") from clobbering fresh state.
-		const latestSearchTokenRef = useRef(0)
-
-		const handleInputChange = useCallback(
-			(e: React.ChangeEvent<HTMLTextAreaElement>) => {
-				const newValue = e.target.value
-				const newCursorPosition = e.target.selectionStart
-				// A backend turn-end render can arrive in the same frame as a DOM input
-				// event. Commit the controlled value before that external render can
-				// reconcile the textarea from the preceding character and drop the key.
-				flushSync(() => {
-					setInputValue(newValue)
-					setCursorPosition(newCursorPosition)
-				})
-				let showMenu = shouldShowContextMenu(newValue, newCursorPosition)
-				const showSlashCommandsMenu = shouldShowSlashCommandsMenu(newValue, newCursorPosition)
-
-				// we do not allow both menus to be shown at the same time
-				// the slash commands menu has precedence bc its a narrower component
-				if (showSlashCommandsMenu) {
-					showMenu = false
-				}
-
-				setShowSlashCommandsMenu(showSlashCommandsMenu)
-				setShowContextMenu(showMenu)
-
-				if (showSlashCommandsMenu) {
-					// Find the slash nearest to cursor (before cursor position)
-					const beforeCursor = newValue.slice(0, newCursorPosition)
-					const slashIndex = beforeCursor.lastIndexOf("/")
-					const query = newValue.slice(slashIndex + 1, newCursorPosition)
-					setSlashCommandsQuery(query)
-					setSelectedSlashCommandsIndex(0)
-				} else {
-					setSlashCommandsQuery("")
-					setSelectedSlashCommandsIndex(0)
-				}
-
-				if (showMenu) {
-					const lastAtIndex = newValue.lastIndexOf("@", newCursorPosition - 1)
-					const query = newValue.slice(lastAtIndex + 1, newCursorPosition)
-					setSearchQuery(query)
-
-					if (query.length > 0) {
-						setSelectedMenuIndex(0)
-
-						// Clear any existing timeout
-						if (searchTimeoutRef.current) {
-							clearTimeout(searchTimeoutRef.current)
-						}
-
-						setSearchLoading(true)
-
-						const searchType =
-							selectedType === ContextMenuOptionType.File
-								? FileSearchType.FILE
-								: selectedType === ContextMenuOptionType.Folder
-									? FileSearchType.FOLDER
-									: undefined
-
-						// Parse workspace hint from query (e.g., "@frontend:/filename")
-						let workspaceHint: string | undefined
-						let searchQuery = query
-						const workspaceHintMatch = query.match(/^([\w-]+):\/(.*)$/)
-						if (workspaceHintMatch) {
-							workspaceHint = workspaceHintMatch[1]
-							searchQuery = workspaceHintMatch[2]
-						}
-
-						// Set a timeout to debounce the search requests
-						searchTimeoutRef.current = setTimeout(() => {
-							const myToken = ++latestSearchTokenRef.current
-							FileServiceClient.searchFiles(
-								FileSearchRequest.create({
-									query: searchQuery,
-									mentionsRequestId: String(myToken),
-									selectedType: searchType,
-									workspaceHint: workspaceHint,
-								}),
-							)
-								.then((results) => {
-									if (myToken !== latestSearchTokenRef.current) {
-										// Stale response — a newer search has been issued.
-										return
-									}
-									setFileSearchResults((results.results || []) as SearchResult[])
-									setSearchLoading(false)
-								})
-								.catch((error) => {
-									if (myToken !== latestSearchTokenRef.current) {
-										return
-									}
-									console.error("Error searching files:", error)
-									setFileSearchResults([])
-									setSearchLoading(false)
-								})
-						}, 200) // 200ms debounce
-					} else {
-						setSelectedMenuIndex(DEFAULT_CONTEXT_MENU_OPTION)
-					}
-				} else {
-					setSearchQuery("")
-					setSelectedMenuIndex(-1)
-					setFileSearchResults([])
-				}
-			},
-			[setInputValue, selectedType],
-		)
-
-		useEffect(() => {
-			if (!showContextMenu) {
-				setSelectedType(null)
-			}
-		}, [showContextMenu])
-
-		const handleBlur = useCallback(() => {
-			// Only hide the context menu if the user didn't click on it
-			if (!isMouseDownOnMenu) {
-				setShowContextMenu(false)
-				setShowSlashCommandsMenu(false)
-			}
-			setIsTextAreaFocused(false)
-			onFocusChange?.(false) // Call prop on blur
-		}, [isMouseDownOnMenu, onFocusChange])
-
-		const showDimensionErrorMessage = useCallback(() => {
-			setShowDimensionError(true)
-			if (dimensionErrorTimerRef.current) {
-				clearTimeout(dimensionErrorTimerRef.current)
-			}
-			dimensionErrorTimerRef.current = setTimeout(() => {
-				setShowDimensionError(false)
-				dimensionErrorTimerRef.current = null
-			}, 3000)
-		}, [])
-
-		/** Adds host paths of attached files, respecting the per-message attachment limit. */
-		const appendAttachmentPaths = useCallback(
-			(paths: string[]) => {
-				if (paths.length === 0) {
-					return
-				}
-				setSelectedFiles((previous) => {
-					const availableSlots = MAX_IMAGES_AND_FILES_PER_MESSAGE - selectedImages.length - previous.length
-					const added = paths.filter((filePath) => !previous.includes(filePath)).slice(0, Math.max(0, availableSlots))
-					return added.length > 0 ? [...previous, ...added] : previous
-				})
-			},
-			[selectedImages.length, setSelectedFiles],
-		)
-
-		/** Attaches files the host can read by URI (Explorer drops, Linux file-manager URIs). */
-		const attachFileUris = useCallback(
-			async (uris: string[]) => {
-				try {
-					const response = await FileServiceClient.resolveAttachmentUris(RelativePathsRequest.create({ uris }))
-					appendAttachmentPaths(response.values)
-				} catch (error) {
-					console.error("Error resolving dropped attachments:", error)
-				}
-			},
-			[appendAttachmentPaths],
-		)
-
-		/** Sends files that only exist as bytes in the Webview to the host, which stages them as attachments. */
-		const stageAttachmentFiles = useCallback(
-			async (files: File[]) => {
-				const stagedPaths: string[] = []
-				for (const file of files) {
-					try {
-						const data = new Uint8Array(await file.arrayBuffer())
-						const response = await FileServiceClient.stageAttachment(
-							StageAttachmentRequest.create({ fileName: file.name, data }),
-						)
-						if (response.value) {
-							stagedPaths.push(response.value)
-						}
-					} catch (error) {
-						console.error(`Error attaching ${file.name}:`, error)
-					}
-				}
-				appendAttachmentPaths(stagedPaths)
-			},
-			[appendAttachmentPaths],
-		)
-
-		const handlePaste = useCallback(
-			async (e: React.ClipboardEvent) => {
-				const items = e.clipboardData.items
-
-				// Files copied in a file manager arrive as clipboard files (images keep the image path below).
-				const pastedFiles = classifyTransferFiles(Array.from(e.clipboardData.files ?? []))
-				if (pastedFiles.attachments.length > 0 || (pastedFiles.rejected.length > 0 && pastedFiles.images.length === 0)) {
-					if (pastedFiles.rejected.length > 0) {
-						showUnsupportedFileErrorMessage()
-					}
-					if (pastedFiles.attachments.length > 0) {
-						e.preventDefault()
-						if (!shouldDisableFilesAndImages) {
-							await stageAttachmentFiles(pastedFiles.attachments)
-						}
-						if (pastedFiles.images.length === 0) {
-							return
-						}
-					}
-				}
-
-				const pastedText = e.clipboardData.getData("text")
-				// Linux file managers copy files as file:// URIs in the text payload.
-				const pastedFileUris = parseAttachableFileUris(pastedText)
-				if (pastedFileUris.length > 0) {
-					e.preventDefault()
-					if (!shouldDisableFilesAndImages) {
-						await attachFileUris(pastedFileUris)
-					}
-					return
-				}
-				// Check if the pasted content is a URL, add space after so user can easily delete if they don't want it
-				const urlRegex = /^\S+:\/\/\S+$/
-				if (urlRegex.test(pastedText.trim())) {
-					e.preventDefault()
-					const trimmedUrl = pastedText.trim()
-					const newValue = `${inputValue.slice(0, cursorPosition) + trimmedUrl} ${inputValue.slice(cursorPosition)}`
-					setInputValue(newValue)
-					const newCursorPosition = cursorPosition + trimmedUrl.length + 1
-					setCursorPosition(newCursorPosition)
-					setIntendedCursorPosition(newCursorPosition)
-					setShowContextMenu(false)
-
-					// Scroll to new cursor position without losing focus
-					setTimeout(() => {
-						if (textAreaRef.current) {
-							textAreaRef.current.setSelectionRange(newCursorPosition, newCursorPosition)
-							textAreaRef.current.scrollTop = textAreaRef.current.scrollHeight
-						}
-					}, 0)
-					// NOTE: callbacks dont utilize return function to cleanup, but it's fine since this timeout immediately executes and will be cleaned up by the browser (no chance component unmounts before it executes)
-
-					return
-				}
-
-				const acceptedTypes = ["png", "jpeg", "webp"] // supported by anthropic and openrouter (jpg is just a file extension but the image will be recognized as jpeg)
-				const imageItems = Array.from(items).filter((item) => {
-					const [type, subtype] = item.type.split("/")
-					return type === "image" && acceptedTypes.includes(subtype)
-				})
-				if (!shouldDisableFilesAndImages && imageItems.length > 0) {
-					e.preventDefault()
-					const imagePromises = imageItems.map((item) => {
-						return new Promise<string | null>((resolve) => {
-							const blob = item.getAsFile()
-							if (!blob) {
-								resolve(null)
-								return
-							}
-							const reader = new FileReader()
-							reader.onloadend = async () => {
-								if (reader.error) {
-									console.error("Error reading file:", reader.error)
-									resolve(null)
-								} else {
-									const result = reader.result
-									if (typeof result === "string") {
-										try {
-											await getImageDimensions(result)
-											resolve(result)
-										} catch (error) {
-											console.warn((error as Error).message)
-											showDimensionErrorMessage()
-											resolve(null)
-										}
-									} else {
-										resolve(null)
-									}
-								}
-							}
-							reader.readAsDataURL(blob)
-						})
-					})
-					const imageDataArray = await Promise.all(imagePromises)
-					const dataUrls = imageDataArray.filter((dataUrl): dataUrl is string => dataUrl !== null)
-					//.map((dataUrl) => dataUrl.split(",")[1]) // strip the mime type prefix, sharp doesn't need it
-					if (dataUrls.length > 0) {
-						const filesAndImagesLength = selectedImages.length + selectedFiles.length
-						const availableSlots = MAX_IMAGES_AND_FILES_PER_MESSAGE - filesAndImagesLength
-
-						if (availableSlots > 0) {
-							const imagesToAdd = Math.min(dataUrls.length, availableSlots)
-							setSelectedImages((prevImages) => [...prevImages, ...dataUrls.slice(0, imagesToAdd)])
-						}
-					} else {
-						console.warn("No valid images were processed")
-					}
-				}
-			},
-			[
-				shouldDisableFilesAndImages,
-				setSelectedImages,
-				selectedImages,
-				selectedFiles,
-				cursorPosition,
-				setInputValue,
-				inputValue,
-				showDimensionErrorMessage,
-				stageAttachmentFiles,
-				attachFileUris,
-			],
-		)
-
-		const handleThumbnailsHeightChange = useCallback((height: number) => {
-			setThumbnailsHeight(height)
-		}, [])
-
-		useEffect(() => {
-			if (selectedImages.length === 0 && selectedFiles.length === 0) {
-				setThumbnailsHeight(0)
-			}
-		}, [selectedImages, selectedFiles])
-
-		const handleMenuMouseDown = useCallback(() => {
-			setIsMouseDownOnMenu(true)
-		}, [])
-
-		/** Keeps the highlight overlay scrolled with the textarea; scrolling never needs a re-highlight. */
-		const syncHighlightScroll = useCallback(() => {
-			if (!textAreaRef.current || !highlightLayerRef.current) {
-				return
-			}
-			highlightLayerRef.current.scrollTop = textAreaRef.current.scrollTop
-			highlightLayerRef.current.scrollLeft = textAreaRef.current.scrollLeft
-		}, [])
-
-		const updateHighlights = useCallback(() => {
-			if (!textAreaRef.current || !highlightLayerRef.current) {
-				return
-			}
-
-			let processedText = textAreaRef.current.value
-				.replace(/\n$/, "\n\n")
-				.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c] || c)
-
-			// Very large pastes skip the per-keystroke mention and command scans so typing stays responsive;
-			// the overlay still mirrors the text so layout and scrolling stay aligned.
-			if (processedText.length > MAX_HIGHLIGHTED_INPUT_LENGTH) {
-				highlightLayerRef.current.innerHTML = processedText
-				syncHighlightScroll()
-				return
-			}
-
-			// highlight @mentions
-			processedText = processedText.replace(
-				mentionRegexGlobal,
-				'<mark class="mention-context-textarea-highlight">$&</mark>',
-			)
-
-			// Highlight only the FIRST valid /slash-command in the text
-			// Only one slash command is processed per message, so we only highlight the first one
-			slashCommandRegexGlobal.lastIndex = 0
-			let hasHighlightedSlashCommand = false
-			processedText = processedText.replace(slashCommandRegexGlobal, (match, prefix, command) => {
-				// Only highlight the first valid slash command
-				if (hasHighlightedSlashCommand) {
-					return match
-				}
-
-				// Extract just the command name (without the slash)
-				const commandName = command.substring(1)
-				const isValidCommand = validateSlashCommand(
-					commandName,
-					effectiveLocalWorkflowToggles,
-					effectiveGlobalWorkflowToggles,
-					effectiveRemoteWorkflowToggles,
-					remoteConfigSettings?.remoteGlobalWorkflows,
-					effectiveMcpServers,
-					effectiveLocalSkillsToggles,
-					effectiveGlobalSkillsToggles,
-					remoteConfigSettings?.remoteGlobalSkills,
-					effectiveRemoteSkillsToggles,
-					undefined,
-					availableSkillCommands,
-				)
-
-				if (isValidCommand) {
-					hasHighlightedSlashCommand = true
-					// Keep the prefix (whitespace or empty) and wrap the command in highlight
-					return `${prefix}<mark class="mention-context-textarea-highlight">${command}</mark>`
-				}
-				return match
-			})
-
-			highlightLayerRef.current.innerHTML = processedText
-			syncHighlightScroll()
-		}, [
-			syncHighlightScroll,
-			effectiveLocalWorkflowToggles,
-			effectiveGlobalWorkflowToggles,
-			effectiveRemoteWorkflowToggles,
-			effectiveMcpServers,
-			effectiveLocalSkillsToggles,
-			effectiveGlobalSkillsToggles,
-			effectiveRemoteSkillsToggles,
-			remoteConfigSettings,
-			availableSkillCommands,
-		])
-
-		useLayoutEffect(() => {
-			updateHighlights()
-		}, [updateHighlights])
-
-		const updateCursorPosition = useCallback(() => {
-			if (textAreaRef.current) {
-				setCursorPosition(textAreaRef.current.selectionStart)
-			}
-		}, [])
-
-		const handleKeyUp = useCallback(
-			(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-				if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)) {
-					updateCursorPosition()
-				}
-			},
-			[updateCursorPosition],
-		)
-
-		const attachDraft = shouldAttachModeSwitchDraft(clineAsk)
-		const modeSwitchFlow = useModeSwitch({
-			mode,
-			stateRevision,
-			modeSwitch,
-			draft: { text: inputValue, images: selectedImages, files: selectedFiles },
-			attachDraft,
-			submitDraftAfterSwitch: currentTaskItem !== undefined,
-			onSend: (capturedDraft) => onSend(capturedDraft),
-			clearDraft: () => {
-				setInputValue("")
-				setSelectedImages([])
-				setSelectedFiles([])
-			},
-		})
-
-		/** Request the opposite mode through the backend transaction. */
-		const onModeToggle = useCallback(() => {
-			const targetMode: Mode = mode === "plan" ? "act" : "plan"
-			void modeSwitchFlow.requestSwitch(targetMode).finally(() => textAreaRef.current?.focus())
-		}, [mode, modeSwitchFlow.requestSwitch])
-
-		useShortcut(usePlatform().togglePlanActKeys, onModeToggle, { disableTextInputs: false }) // important that we don't disable the text input here
-
-		const handleContextButtonClick = useCallback(() => {
-			// Focus the textarea first
-			textAreaRef.current?.focus()
-
-			// If input is empty, just insert @
-			if (!inputValue.trim()) {
-				const event = {
-					target: {
-						value: "@",
-						selectionStart: 1,
-					},
-				} as React.ChangeEvent<HTMLTextAreaElement>
-				handleInputChange(event)
-				updateHighlights()
-				return
-			}
-
-			// If input ends with space or is empty, just append @
-			if (inputValue.endsWith(" ")) {
-				const event = {
-					target: {
-						value: `${inputValue}@`,
-						selectionStart: inputValue.length + 1,
-					},
-				} as React.ChangeEvent<HTMLTextAreaElement>
-				handleInputChange(event)
-				updateHighlights()
-				return
-			}
-
-			// Otherwise add space then @
-			const event = {
-				target: {
-					value: `${inputValue} @`,
-					selectionStart: inputValue.length + 2,
-				},
-			} as React.ChangeEvent<HTMLTextAreaElement>
-			handleInputChange(event)
-			updateHighlights()
-		}, [inputValue, handleInputChange, updateHighlights])
-
-		const handleModelButtonClick = () => {
-			navigateToSettings("api-config")
-		}
-
-		// Get model display name
-		const _modelDisplayName = useMemo(() => {
-			const { selectedProvider, selectedModelId } = normalizeApiConfiguration(apiConfiguration, mode)
-			const {
-				vsCodeLmModelSelector,
-				togetherModelId,
-				lmStudioModelId,
-				ollamaModelId,
-				liteLlmModelId,
-				requestyModelId,
-				vercelAiGatewayModelId,
-			} = getModeSpecificFields(apiConfiguration, mode)
-			const unknownModel = "unknown"
-
-			if (!apiConfiguration) {
-				return unknownModel
-			}
-			switch (selectedProvider) {
-				case "cline":
-					return `${selectedProvider}:${selectedModelId}`
-				case "openai":
-					return `openai-compat:${selectedModelId}`
-				case "vscode-lm":
-					return `vscode-lm:${vsCodeLmModelSelector ? `${vsCodeLmModelSelector.vendor ?? ""}/${vsCodeLmModelSelector.family ?? ""}` : unknownModel}`
-				case "together":
-					return `${selectedProvider}:${togetherModelId}`
-				case "lmstudio":
-					return `${selectedProvider}:${lmStudioModelId}`
-				case "ollama":
-					return `${selectedProvider}:${ollamaModelId}`
-				case "litellm":
-					return `${selectedProvider}:${liteLlmModelId}`
-				case "requesty":
-					return `${selectedProvider}:${requestyModelId}`
-				case "vercel-ai-gateway":
-					return `${selectedProvider}:${vercelAiGatewayModelId || selectedModelId}`
-				default:
-					return `${selectedProvider}:${selectedModelId}`
-			}
-		}, [apiConfiguration, mode])
-
-		// Function to show error message for unsupported files for drag and drop
-		const showUnsupportedFileErrorMessage = () => {
-			// Show error message for unsupported files
-			setShowUnsupportedFileError(true)
-
-			// Clear any existing timer
-			if (unsupportedFileTimerRef.current) {
-				clearTimeout(unsupportedFileTimerRef.current)
-			}
-
-			// Set timer to hide error after 3 seconds
-			unsupportedFileTimerRef.current = setTimeout(() => {
-				setShowUnsupportedFileError(false)
-				unsupportedFileTimerRef.current = null
-			}, 3000)
-		}
-
-		const handleDragEnter = (e: React.DragEvent) => {
-			e.preventDefault()
-			// File names and types are not reliable until drop, so supported types are checked in onDrop.
-			setIsDraggingOver(true)
-		}
-		/**
-		 * Handles the drag over event to allow dropping.
-		 * Prevents the default behavior to enable drop.
-		 *
-		 * @param {React.DragEvent} e - The drag event.
-		 */
-		const onDragOver = (e: React.DragEvent) => {
-			e.preventDefault()
-			// Ensure state remains true if dragging continues over the element
-			if (!isDraggingOver) {
-				setIsDraggingOver(true)
-			}
-		}
-
-		const handleDragLeave = (e: React.DragEvent) => {
-			e.preventDefault()
-			// Check if the related target is still within the drop zone; prevents flickering
-			const dropZone = e.currentTarget as HTMLElement
-			if (!dropZone.contains(e.relatedTarget as Node)) {
-				setIsDraggingOver(false)
-				// Don't clear the error message here, let it time out naturally
-			}
-		}
-
-		// Effect to detect when drag operation ends outside the component
-		useEffect(() => {
-			const handleGlobalDragEnd = () => {
-				// This will be triggered when the drag operation ends anywhere
-				setIsDraggingOver(false)
-				// Don't clear error message, let it time out naturally
-			}
-
-			document.addEventListener("dragend", handleGlobalDragEnd)
-
-			return () => {
-				document.removeEventListener("dragend", handleGlobalDragEnd)
-			}
-		}, [])
-
-		/**
-		 * Handles the drop event for files and text.
-		 * Processes dropped images and text, updating the state accordingly.
-		 *
-		 * @param {React.DragEvent} e - The drop event.
-		 */
-		const onDrop = async (e: React.DragEvent) => {
-			e.preventDefault()
-			setIsDraggingOver(false) // Reset state on drop
-
-			// Clear any error message when something is actually dropped
-			setShowUnsupportedFileError(false)
-			if (unsupportedFileTimerRef.current) {
-				clearTimeout(unsupportedFileTimerRef.current)
-				unsupportedFileTimerRef.current = null
-			}
-
-			// --- 1. VS Code Explorer drop: binary documents are attached, everything else is mentioned ---
-			const resourceUris = readResourceUris(e.dataTransfer)
-			const documentUris = resourceUris.filter(isDocumentAttachmentUri)
-			const validUris = resourceUris.filter((uri) => !isDocumentAttachmentUri(uri))
-			if (documentUris.length > 0 && !shouldDisableFilesAndImages) {
-				void attachFileUris(documentUris)
-			}
-
-			if (validUris.length > 0) {
-				setPendingInsertions([])
-				let initialCursorPos = inputValue.length
-				if (textAreaRef.current) {
-					initialCursorPos = textAreaRef.current.selectionStart
-				}
-				setIntendedCursorPosition(initialCursorPos)
-
-				FileServiceClient.getRelativePaths(RelativePathsRequest.create({ uris: validUris }))
-					.then((response) => {
-						if (response.paths.length > 0) {
-							setPendingInsertions((prev) => [...prev, ...response.paths])
-						}
-					})
-					.catch((error) => {
-						console.error("Error getting relative paths:", error)
-					})
-				return
-			}
-
-			if (resourceUris.length > 0) {
-				return
-			}
-
-			// --- 2. OS file-manager drop: files arrive as bytes without a host path ---
-			const droppedFiles = classifyTransferFiles(Array.from(e.dataTransfer.files))
-			if (droppedFiles.rejected.length > 0) {
-				showUnsupportedFileErrorMessage()
-			}
-			const hasDroppedFiles =
-				droppedFiles.images.length + droppedFiles.attachments.length + droppedFiles.rejected.length > 0
-			if (!hasDroppedFiles) {
-				// --- 3. Text drop; Linux file managers may send files as file:// URIs only ---
-				const text = e.dataTransfer.getData("text")
-				const droppedFileUris = parseAttachableFileUris(text)
-				if (droppedFileUris.length > 0) {
-					if (!shouldDisableFilesAndImages) {
-						void attachFileUris(droppedFileUris)
-					}
-				} else if (text) {
-					handleTextDrop(text)
-				}
-				return
-			}
-
-			if (shouldDisableFilesAndImages) {
-				return
-			}
-			if (droppedFiles.attachments.length > 0) {
-				void stageAttachmentFiles(droppedFiles.attachments)
-			}
-			const imageFiles = droppedFiles.images
-			if (imageFiles.length === 0) {
-				return
-			}
-
-			const imageDataArray = await readImageFiles(imageFiles)
-			const dataUrls = imageDataArray.filter((dataUrl): dataUrl is string => dataUrl !== null)
-
-			if (dataUrls.length > 0) {
-				const filesAndImagesLength = selectedImages.length + selectedFiles.length
-				const availableSlots = MAX_IMAGES_AND_FILES_PER_MESSAGE - filesAndImagesLength
-
-				if (availableSlots > 0) {
-					const imagesToAdd = Math.min(dataUrls.length, availableSlots)
-					setSelectedImages((prevImages) => [...prevImages, ...dataUrls.slice(0, imagesToAdd)])
-				}
-			} else {
-				console.warn("No valid images were processed")
-			}
-		}
-
-		/**
-		 * Handles the drop event for text.
-		 * Inserts the dropped text at the current cursor position.
-		 *
-		 * @param {string} text - The dropped text.
-		 */
-		const handleTextDrop = (text: string) => {
-			const newValue = inputValue.slice(0, cursorPosition) + text + inputValue.slice(cursorPosition)
-			setInputValue(newValue)
-			const newCursorPosition = cursorPosition + text.length
-			setCursorPosition(newCursorPosition)
-			setIntendedCursorPosition(newCursorPosition)
-		}
-
-		/**
-		 * Reads image files and returns their data URLs.
-		 * Uses FileReader to read the files as data URLs.
-		 *
-		 * @param {File[]} imageFiles - The image files to read.
-		 * @returns {Promise<(string | null)[]>} - A promise that resolves to an array of data URLs or null values.
-		 */
-		const readImageFiles = (imageFiles: File[]): Promise<(string | null)[]> => {
-			return Promise.all(
-				imageFiles.map(
-					(file) =>
-						new Promise<string | null>((resolve) => {
-							const reader = new FileReader()
-							reader.onloadend = async () => {
-								// Make async
-								if (reader.error) {
-									console.error("Error reading file:", reader.error)
-									resolve(null)
-								} else {
-									const result = reader.result
-									if (typeof result === "string") {
-										try {
-											await getImageDimensions(result) // Check dimensions
-											resolve(result)
-										} catch (error) {
-											console.warn((error as Error).message)
-											showDimensionErrorMessage() // Show error to user
-											resolve(null) // Don't add this image
-										}
-									} else {
-										resolve(null)
-									}
-								}
-							}
-							reader.readAsDataURL(file)
-						}),
-				),
-			)
-		}
-		// Replace Meta with the platform specific key and uppercase the command letter.
-		const togglePlanActKeys = usePlatform()
-			.togglePlanActKeys.replace("Meta", metaKeyChar)
-			.replace(/.$/, (match) => match.toUpperCase())
-
-		return (
-			<div>
-				<div
-					className="relative flex transition-colors ease-in-out duration-100 px-3.5 py-2.5"
-					onDragEnter={handleDragEnter}
-					onDragLeave={handleDragLeave}
-					onDragOver={onDragOver}
-					onDrop={onDrop}>
-					{showDimensionError && (
-						<div className="absolute inset-2.5 bg-[rgba(var(--vscode-errorForeground-rgb),0.1)] border-2 border-error rounded-xs flex items-center justify-center z-10 pointer-events-none">
-							<span className="text-error font-bold text-xs text-center">Image dimensions exceed 7500px</span>
-						</div>
-					)}
-					{showUnsupportedFileError && (
-						<div className="absolute inset-2.5 bg-[rgba(var(--vscode-errorForeground-rgb),0.1)] border-2 border-error rounded-xs flex items-center justify-center z-10 pointer-events-none">
-							<span className="text-error font-bold text-xs">
-								File too large: PDF up to 50MB, other files up to 20MB
-							</span>
-						</div>
-					)}
-					{showSlashCommandsMenu && (
-						<div ref={slashCommandsMenuContainerRef}>
-							<SlashCommandMenu
-								availableSkillCommands={availableSkillCommands}
-								globalSkillsToggles={effectiveGlobalSkillsToggles}
-								globalWorkflowToggles={effectiveGlobalWorkflowToggles}
-								localSkillsToggles={effectiveLocalSkillsToggles}
-								localWorkflowToggles={effectiveLocalWorkflowToggles}
-								mcpServers={effectiveMcpServers}
-								onMouseDown={handleMenuMouseDown}
-								onSelect={handleSlashCommandsSelect}
-								query={slashCommandsQuery}
-								remoteSkills={remoteConfigSettings?.remoteGlobalSkills}
-								remoteSkillsToggles={effectiveRemoteSkillsToggles}
-								remoteWorkflows={remoteConfigSettings?.remoteGlobalWorkflows}
-								remoteWorkflowToggles={effectiveRemoteWorkflowToggles}
-								selectedIndex={selectedSlashCommandsIndex}
-								setSelectedIndex={setSelectedSlashCommandsIndex}
-								workflowDescriptions={workflowDescriptions}
-							/>
-						</div>
-					)}
-
-					{showContextMenu && (
-						<div ref={contextMenuContainerRef}>
-							<ContextMenu
-								dynamicSearchResults={fileSearchResults}
-								isLoading={searchLoading}
-								onMouseDown={handleMenuMouseDown}
-								onSelect={handleMentionSelect}
-								queryItems={queryItems}
-								searchQuery={searchQuery}
-								selectedIndex={selectedMenuIndex}
-								selectedType={selectedType}
-								setSelectedIndex={setSelectedMenuIndex}
-							/>
-						</div>
-					)}
-					<div
-						className={cn(
-							"absolute bottom-2.5 top-2.5 whitespace-pre-wrap wrap-break-word rounded-xs overflow-hidden bg-input-background",
-							isTextAreaFocused ? "left-3.5 right-3.5" : "left-3.5 right-3.5 border border-input-border",
-						)}
-						ref={highlightLayerRef}
-						style={{
-							position: "absolute",
-							pointerEvents: "none",
-							whiteSpace: "pre-wrap",
-							wordWrap: "break-word",
-							color: "transparent",
-							overflow: "hidden",
-							// Reserve the same scrollbar gutter as the textarea so both wrap text identically.
-							scrollbarWidth: "thin",
-							scrollbarGutter: "stable",
-							fontFamily: "var(--vscode-font-family)",
-							fontSize: "var(--vscode-editor-font-size)",
-							lineHeight: "var(--vscode-editor-line-height)",
-							borderRadius: 2,
-							borderLeft: isTextAreaFocused ? 0 : undefined,
-							borderRight: isTextAreaFocused ? 0 : undefined,
-							borderTop: isTextAreaFocused ? 0 : undefined,
-							borderBottom: isTextAreaFocused ? 0 : undefined,
-							padding: `${CHAT_INPUT_PADDING_Y_PX}px 28px ${CHAT_INPUT_PADDING_Y_PX + thumbnailsHeight}px 9px`,
-						}}
-					/>
-					<DynamicTextArea
-						data-testid="chat-input"
-						maxRows={chatInputMaxRows(textAreaRowHeight)}
-						minRows={CHAT_INPUT_MIN_ROWS}
-						onBlur={handleBlur}
-						onChange={(e) => {
-							handleInputChange(e)
-							updateHighlights()
-						}}
-						onFocus={() => {
-							setIsTextAreaFocused(true)
-							onFocusChange?.(true) // Call prop on focus
-						}}
-						onHeightChange={(height, { rowHeight }) => {
-							if (textAreaBaseHeight === undefined || height < textAreaBaseHeight) {
-								setTextAreaBaseHeight(height)
-							}
-							setTextAreaRowHeight(rowHeight)
-							onHeightChange?.(height)
-						}}
-						onKeyDown={handleKeyDown}
-						onKeyUp={handleKeyUp}
-						onMouseUp={updateCursorPosition}
-						onPaste={handlePaste}
-						onScroll={syncHighlightScroll}
-						onSelect={updateCursorPosition}
-						placeholder={showUnsupportedFileError || showDimensionError ? "" : placeholderText}
-						ref={(el) => {
-							if (typeof ref === "function") {
-								ref(el)
-							} else if (ref) {
-								ref.current = el
-							}
-							textAreaRef.current = el
-						}}
-						style={{
-							width: "100%",
-							boxSizing: "border-box",
-							backgroundColor: "transparent",
-							color: "var(--vscode-input-foreground)",
-							//border: "1px solid var(--vscode-input-border)",
-							borderRadius: 2,
-							fontFamily: "var(--vscode-font-family)",
-							fontSize: "var(--vscode-editor-font-size)",
-							lineHeight: "var(--vscode-editor-line-height)",
-							resize: "none",
-							overflowX: "hidden",
-							overflowY: "auto",
-							// A visible scrollbar shows that long input continues beyond the visible rows.
-							scrollbarWidth: "thin",
-							scrollbarGutter: "stable",
-							// The standard scrollbar properties bypass the webview's ::-webkit-scrollbar theme,
-							// so the colors must be set here or the track renders as an untinted system gutter.
-							scrollbarColor: "var(--vscode-scrollbarSlider-background) transparent",
-							// Since we have maxRows
-							// borderTop: "9px solid transparent",
-							borderLeft: 0,
-							borderRight: 0,
-							borderTop: 0,
-							borderBottom: `${thumbnailsHeight}px solid transparent`,
-							borderColor: "transparent",
-							// borderRight: "54px solid transparent",
-							// borderLeft: "9px solid transparent", // NOTE: react-textarea-autosize doesn't calculate correct height when using borderLeft/borderRight so we need to use horizontal padding instead
-							// Instead of using boxShadow, we use a div with a border to better replicate the behavior when the textarea is focused
-							// boxShadow: "0px 0px 0px 1px var(--vscode-input-border)",
-							padding: `${CHAT_INPUT_PADDING_Y_PX}px 28px ${CHAT_INPUT_PADDING_Y_PX}px 9px`,
-							cursor: "text",
-							flex: 1,
-							zIndex: 1,
-							outline:
-								isDraggingOver && !showUnsupportedFileError // Only show drag outline if not showing error
-									? "2px dashed var(--vscode-focusBorder)"
-									: isTextAreaFocused
-										? `1px solid ${mode === "plan" ? PLAN_MODE_COLOR : "var(--vscode-focusBorder)"}`
-										: "none",
-							outlineOffset: isDraggingOver && !showUnsupportedFileError ? "1px" : "0px", // Add offset for drag-over outline
-						}}
-						value={inputValue}
-					/>
-					{!inputValue && selectedImages.length === 0 && selectedFiles.length === 0 && (
-						<div className="text-xs absolute bottom-5 left-6.5 right-16 text-(--vscode-input-placeholderForeground)/50 whitespace-nowrap overflow-hidden text-ellipsis pointer-events-none z-1">
-							Type @ for context, / for slash commands & workflows, hold shift to drag in files/images
-						</div>
-					)}
-					{(selectedImages.length > 0 || selectedFiles.length > 0) && (
-						<Thumbnails
-							files={selectedFiles}
-							images={selectedImages}
-							onHeightChange={handleThumbnailsHeightChange}
-							setFiles={setSelectedFiles}
-							setImages={setSelectedImages}
-							style={{
-								position: "absolute",
-								paddingTop: 4,
-								bottom: 14,
-								left: 22,
-								right: 47, // (54 + 9) + 4 extra padding
-								zIndex: 2,
-							}}
-						/>
-					)}
-					<div
-						className="absolute flex items-end bottom-4.5 right-5 z-10 h-8 text-xs"
-						style={{ height: textAreaBaseHeight }}>
-						<div className="flex flex-row items-center">
-							<button
-								aria-disabled={sendingDisabled}
-								aria-label="Send message"
-								className={cn(
-									"input-icon-button codicon codicon-send h-5 w-5 appearance-none border-0 bg-transparent p-0 text-sm text-inherit",
-									{ disabled: sendingDisabled },
-								)}
-								data-testid="send-button"
-								onClick={() => {
-									const capturedDraft = {
-										text: textAreaRef.current?.value ?? inputValue,
-										images: [...selectedImages],
-										files: [...selectedFiles],
-									}
-									if (!sendingDisabled) {
-										setIsTextAreaFocused(false)
-										onSend(capturedDraft)
-									} else {
-										onSendBlocked?.(capturedDraft)
-									}
-								}}
-								title={`Send message (${getChatInputSendShortcutLabel(chatInputSendShortcut)})`}
-								type="button"
-							/>
-						</div>
-					</div>
-				</div>
-				<div className="flex items-center -mt-0.5 px-3 pb-2 gap-2">
-					<ButtonGroup className="ease-in-out h-5 z-10 flex items-center min-w-0">
-						<Tooltip>
-							<TooltipContent>Add Context</TooltipContent>
-							<TooltipTrigger asChild>
-								<button
-									aria-label="Add Context"
-									className="chat-input-control-outline inline-flex size-[18.5px] shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 text-foreground shadow-none transition-colors duration-150 hover:bg-toolbar-hover focus-visible:bg-toolbar-hover"
-									data-testid="context-button"
-									onClick={handleContextButtonClick}
-									type="button">
-									<ButtonContainer>
-										<AtSignIcon size={12} />
-									</ButtonContainer>
-								</button>
-							</TooltipTrigger>
-						</Tooltip>
-
-						<Tooltip>
-							<TooltipContent>Add Files & Images</TooltipContent>
-							<TooltipTrigger asChild>
-								<button
-									aria-label="Add Files & Images"
-									className="chat-input-control-outline inline-flex size-[18.5px] shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 text-foreground shadow-none transition-colors duration-150 hover:bg-toolbar-hover focus-visible:bg-toolbar-hover disabled:cursor-not-allowed disabled:opacity-50"
-									data-testid="files-button"
-									disabled={shouldDisableFilesAndImages}
-									onClick={() => {
-										if (!shouldDisableFilesAndImages) {
-											onSelectFilesAndImages()
-										}
-									}}
-									type="button">
-									<ButtonContainer>
-										<PlusIcon size={13} />
-									</ButtonContainer>
-								</button>
-							</TooltipTrigger>
-						</Tooltip>
-
-						<ServersToggleModal />
-
-						<ClineRulesToggleModal />
-
-						<ChatInputRuntimeControls profileControl={<ModelSwitcher onOpenSettings={handleModelButtonClick} />} />
-
-						<UsageBar />
-					</ButtonGroup>
-					{/* Tooltip for Plan/Act toggle remains outside the conditional rendering */}
-					<div className="ml-auto shrink-0">
-						<ModeSwitchDialog
-							onCancel={modeSwitchFlow.cancelSwitch}
-							onConfirm={modeSwitchFlow.confirmSwitch}
-							onRetry={() => {
-								if (modeSwitch?.targetMode) void modeSwitchFlow.requestSwitch(modeSwitch.targetMode)
-							}}
-							state={modeSwitch ?? { phase: "idle" }}
-						/>
-						<Tooltip>
-							<TooltipContent
-								className="text-xs px-2 flex flex-col gap-1"
-								hidden={shownTooltipMode === null}
-								side="top">
-								{`In ${shownTooltipMode === "act" ? "Act" : "Plan"}  mode, Dline will ${shownTooltipMode === "act" ? "complete the task immediately" : "gather information to architect a plan"}`}
-								<p className="text-description/80 text-xs mb-0">
-									Toggle w/ <kbd className="text-muted-foreground mx-1">{togglePlanActKeys}</kbd>
-								</p>
-							</TooltipContent>
-							<TooltipTrigger>
-								<SwitchContainer
-									data-testid="mode-switch"
-									disabled={modeSwitchFlow.isSwitchPending}
-									onClick={onModeToggle}>
-									<Slider
-										isAct={modeSwitchFlow.displayMode === "act"}
-										isPlan={modeSwitchFlow.displayMode === "plan"}
-									/>
-									{["Plan", "Act"].map((m) => (
-										<div
-											aria-checked={modeSwitchFlow.displayMode === m.toLowerCase()}
-											className={cn(
-												"pt-0.5 pb-px px-2 z-10 text-xs w-1/2 text-center bg-transparent",
-												modeSwitchFlow.displayMode === m.toLowerCase()
-													? "text-white"
-													: "text-input-foreground",
-											)}
-											key={m}
-											onMouseLeave={() => setShownTooltipMode(null)}
-											onMouseOver={() => setShownTooltipMode(m.toLowerCase() === "plan" ? "plan" : "act")}
-											role="switch">
-											{modeSwitchFlow.statusText && m.toLowerCase() === modeSwitchFlow.displayMode
-												? modeSwitchFlow.statusText
-												: m}
-										</div>
-									))}
-								</SwitchContainer>
-							</TooltipTrigger>
-						</Tooltip>
-					</div>
-				</div>
-			</div>
-		)
-	},
+/** A notice that hides itself after a few seconds; showing it again restarts the timer. */
+function useTransientNotice(): [TransientNotice | undefined, (notice: TransientNotice) => void, () => void] {
+    const [notice, setNotice] = useState<TransientNotice>()
+    const timerRef = useRef<ReturnType<typeof setTimeout>>()
+    const clear = useCallback(() => {
+        if (timerRef.current) clearTimeout(timerRef.current)
+        timerRef.current = undefined
+        setNotice(undefined)
+    }, [])
+    const show = useCallback((next: TransientNotice) => {
+        if (timerRef.current) clearTimeout(timerRef.current)
+        setNotice(next)
+        timerRef.current = setTimeout(() => {
+            timerRef.current = undefined
+            setNotice(undefined)
+        }, TRANSIENT_NOTICE_MS)
+    }, [])
+    useEffect(() => () => timerRef.current && clearTimeout(timerRef.current), [])
+    return [notice, show, clear]
+}
+
+/**
+ * The chat composer: a semantic editor whose commands, mentions and attachments
+ * are atoms of the draft, plus the controls around it.
+ *
+ * This component only wires parts together. The draft and its history live in
+ * the engine the chat view owns; menus, attachment input and the send snapshot
+ * each have their own module, so none of them reads or writes the DOM text.
+ */
+const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>(
+    (
+        {
+            composer,
+            sendingDisabled,
+            placeholderText,
+            onSend,
+            onSendBlocked,
+            queueAvailable = true,
+            onCancelTask,
+            submitKind,
+            outputTokensPerSecond,
+            attachmentsDisabled,
+            imagesAllowed,
+            onHeightChange,
+            onFocusChange,
+            semanticCatalog,
+        },
+        ref,
+    ) => {
+        const {
+            mode,
+            modeSwitch,
+            stateRevision,
+            platform,
+            chatInputSendShortcut,
+            navigateToSettings,
+            currentTaskItem,
+            taskLockStatus,
+        } = useExtensionState()
+        const { engine, draftId, documentId } = composer
+        const segments = composer.state.segments
+        const editorRef = useRef<SemanticComposerEditorHandle>(null)
+        const handle = useMemo<SemanticComposerEditorHandle>(
+            () => ({
+                focus: () => editorRef.current?.focus(),
+                blur: () => editorRef.current?.blur(),
+                get element() {
+                    return editorRef.current?.element ?? null
+                },
+                offsetAtPoint: (x, y) => editorRef.current?.offsetAtPoint(x, y),
+                revealCaret: () => editorRef.current?.revealCaret(),
+            }),
+            [],
+        )
+        useImperativeHandle(ref, () => handle, [handle])
+
+        const [isFocused, setIsFocused] = useState(false)
+        const [isDraggingOver, setIsDraggingOver] = useState(false)
+        const [shownTooltipMode, setShownTooltipMode] = useState<Mode | null>(null)
+        const [transientNotice, showTransientNotice, clearTransientNotice] = useTransientNotice()
+        // The draft owns why its last send was refused, so a refusal reported by
+        // another send path (the queue, an interaction option) is explained here too.
+        const { sendRefusal, reportSendRefusal } = composer
+        const [, metaKeyChar] = useMetaKeyDetection(platform)
+
+        // --- highlights, read from the same projection a send uses ---
+        const projectionCacheRef = useRef<{ segments: readonly ComposerSegment[]; projection: ComposerProjection }>()
+        const projectionOf = useCallback(
+            (next: readonly ComposerSegment[]): ComposerProjection | undefined => {
+                if (flatTextOf(next).length > MAX_HIGHLIGHTED_INPUT_LENGTH) return undefined
+                const cached = projectionCacheRef.current
+                if (cached?.segments === next) return cached.projection
+                const projection = projectComposerDocument(next, { catalog: semanticCatalog, documentId: HIGHLIGHT_DOCUMENT_ID })
+                projectionCacheRef.current = { segments: next, projection }
+                return projection
+            },
+            [semanticCatalog],
+        )
+        // A new catalog revision re-reads every entity, so the cache must not outlive it.
+        useEffect(() => {
+            projectionCacheRef.current = undefined
+        }, [semanticCatalog])
+        const decorate = useCallback(
+            (next: readonly ComposerSegment[]) => composerHighlights(projectionOf(next), semanticCatalog).decorations,
+            [projectionOf, semanticCatalog],
+        )
+        const { heldCandidates } = useMemo(
+            () => composerHighlights(projectionOf(segments), semanticCatalog),
+            [projectionOf, segments, semanticCatalog],
+        )
+
+        // --- attachments ---
+        const resourceCount = useMemo(() => resourceAtomsOf(segments).length, [segments])
+        const freeSlots = MAX_IMAGES_AND_FILES_PER_MESSAGE - resourceCount
+        const attachmentsEnabled = !attachmentsDisabled && freeSlots > 0
+        const menus = useComposerMenus({ engine, catalog: semanticCatalog, onPicked: handle.focus })
+        const resourceInput = useComposerResourceInput({
+            engine,
+            draftId,
+            catalog: semanticCatalog,
+            attachmentsEnabled,
+            freeSlots,
+            imagesAllowed,
+            onRejectedFiles: () => showTransientNotice("rejected_files"),
+            onOversizedImages: () => showTransientNotice("oversized_images"),
+            onRefusedText: () => showTransientNotice("refused_text"),
+            onAttachmentLimit: () => showTransientNotice("attachment_limit"),
+        })
+        const handleChipAction = useCallback(
+            (atom: ComposerAtom, action: ChipAction) => {
+                if (atom.kind !== "resource") return
+                if (action === "open") void openResource(draftId, atom)
+                else if (action === "retry") retryResource(engine, atom.entityId)
+            },
+            [draftId, engine],
+        )
+
+        // --- sending ---
+        const trySend = useCallback(() => {
+            // Nothing can take a send while sending is disabled and no queue is
+            // attached; the draft stays, and the user is told why.
+            if (sendingDisabled && (!onSendBlocked || !queueAvailable || submitKind === "resume")) {
+                if (contentLength(engine.getState().segments) > 0) reportSendRefusal("input_not_ready")
+                return
+            }
+            const capture = captureComposerSend(engine.getState().segments, { catalog: semanticCatalog, documentId })
+            if (!capture.ok) {
+                reportSendRefusal(capture.block)
+                return
+            }
+            if (contentLength(engine.getState().segments) === 0 && submitKind !== "resume") return
+            if (sendingDisabled) {
+                onSendBlocked?.(capture.draft, "queued")
+                return
+            }
+            setIsFocused(false)
+            onSend(capture.draft)
+        }, [
+            documentId,
+            engine,
+            onSend,
+            onSendBlocked,
+            queueAvailable,
+            reportSendRefusal,
+            semanticCatalog,
+            sendingDisabled,
+            submitKind,
+        ])
+
+        /**
+         * Hand the draft to the queue as steering input, as the steer shortcut
+         * asks, even while the task would take a send now. With nothing running
+         * to steer, the draft simply goes out.
+         */
+        const trySteer = useCallback(() => {
+            const draftSegments = engine.getState().segments
+            if (contentLength(draftSegments) === 0) return
+            const capture = captureComposerSend(draftSegments, { catalog: semanticCatalog, documentId })
+            if (!capture.ok) {
+                reportSendRefusal(capture.block)
+                return
+            }
+            if (onSendBlocked && queueAvailable) {
+                onSendBlocked(capture.draft, "steering")
+                return
+            }
+            if (sendingDisabled) {
+                reportSendRefusal("input_not_ready")
+                return
+            }
+            setIsFocused(false)
+            onSend(capture.draft)
+        }, [documentId, engine, onSend, onSendBlocked, queueAvailable, reportSendRefusal, semanticCatalog, sendingDisabled])
+
+        const handleKeyDown = useCallback(
+            (event: React.KeyboardEvent<HTMLDivElement>) => {
+                // Safari reports InputEvent.isComposing as false throughout, so keyCode 229 identifies composition there.
+                const isComposing = isSafari ? event.nativeEvent.keyCode === 229 : (event.nativeEvent?.isComposing ?? false)
+                if (isSteerShortcut(event, isComposing)) {
+                    event.preventDefault()
+                    trySteer()
+                    return
+                }
+                if (menus.handleKeyDown(event, isComposing)) return
+                if (shouldSendChatInput(event, chatInputSendShortcut ?? DEFAULT_CHAT_INPUT_SEND_SHORTCUT, isComposing)) {
+                    event.preventDefault()
+                    trySend()
+                }
+            },
+            [chatInputSendShortcut, menus, trySend, trySteer],
+        )
+
+        // --- mode switch ---
+        // A switch carries the whole composed draft, resources included, as their
+        // document nodes. A draft still staging a resource cannot be captured and
+        // stays in the composer instead of travelling with the switch.
+        const modeSwitchDraft = useMemo(() => {
+            const capture = captureComposerSend(segments, { catalog: semanticCatalog, documentId })
+            return capture.ok ? capture.draft : EMPTY_SEND_DRAFT
+        }, [documentId, segments, semanticCatalog])
+        // Segments are immutable, so a composer still holding the very segments a
+        // switch captured holds that draft unedited; any edit or send replaced them.
+        const transitionComposer = useMemo<TransitionDraftComposer<ComposerSendDraft>>(
+            () => ({
+                holds: (captured) => captured.segments === engine.getState().segments,
+                retire: composer.retire,
+            }),
+            [composer.retire, engine],
+        )
+        const modeSwitchFlow = useModeSwitch({
+            mode,
+            stateRevision,
+            modeSwitch,
+            draft: modeSwitchDraft,
+            submitDraftAfterSwitch: currentTaskItem !== undefined,
+            onSend: (capturedDraft) => onSend(capturedDraft),
+            composer: transitionComposer,
+        })
+        const onModeToggle = useCallback(() => {
+            const targetMode: Mode = mode === "plan" ? "act" : "plan"
+            void modeSwitchFlow.requestSwitch(targetMode).finally(() => handle.focus())
+        }, [handle, mode, modeSwitchFlow.requestSwitch])
+        useShortcut(usePlatform().togglePlanActKeys, onModeToggle, { disableTextInputs: false }) // important that we don't disable the text input here
+
+        /** Start a mention at the caret, as if the user had typed the at-sign there. */
+        const handleContextButtonClick = useCallback(() => {
+            // Read the caret before focusing: focusing may move the browser's caret before the editor restores it.
+            const { start, end } = selectionRange(engine.getState().selection)
+            handle.focus()
+            const before = flatTextOf(engine.getState().segments)[start - 1]
+            const text = before === undefined || /\s/.test(before) ? "@" : " @"
+            engine.apply({ type: "insert_text", text, source: "typed", range: { start, end } })
+        }, [engine, handle])
+
+        // --- drag and drop ---
+        const handleDragLeave = (event: React.DragEvent) => {
+            event.preventDefault()
+            // Leaving into a child is still inside the drop zone; only a real exit ends the highlight.
+            if (!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node)) setIsDraggingOver(false)
+        }
+        const handleDrop = (event: React.DragEvent) => {
+            setIsDraggingOver(false)
+            clearTransientNotice()
+            resourceInput.handleDrop(event, editorRef.current?.offsetAtPoint(event.clientX, event.clientY))
+        }
+        // A drag that ends outside the composer never sends dragleave here.
+        useEffect(() => {
+            const handleGlobalDragEnd = () => setIsDraggingOver(false)
+            document.addEventListener("dragend", handleGlobalDragEnd)
+            return () => document.removeEventListener("dragend", handleGlobalDragEnd)
+        }, [])
+
+        // Replace Meta with the platform specific key and uppercase the command letter.
+        const togglePlanActKeys = usePlatform()
+            .togglePlanActKeys.replace("Meta", metaKeyChar)
+            .replace(/.$/, (match) => match.toUpperCase())
+
+        const notice: { testId: string; text: string } | undefined = sendRefusal
+            ? {
+                  testId: "composer-send-blocked-notice",
+                  text: describeSendBlock(sendRefusal, { taskReadOnly: taskLockStatus?.isLocked === true }),
+              }
+            : heldCandidates.length > 0
+              ? {
+                    testId: "pasted-candidate-notice",
+                    text: `Pasted ${heldCandidates.join(", ")} will be sent as plain text. Pick it from the menu to run it.`,
+                }
+              : undefined
+
+        return (
+            <div>
+                {/* In the flow between the controls above and the input, so it never covers the auto-approve bar and wraps instead of being cut off. */}
+                {notice && (
+                    <div
+                        aria-live="polite"
+                        className="px-4 pt-1.5 text-xs leading-snug break-words text-(--vscode-editorWarning-foreground)"
+                        data-testid={notice.testId}
+                        role="status">
+                        {notice.text}
+                    </div>
+                )}
+                <div
+                    className="relative flex transition-colors ease-in-out duration-100 px-3.5 py-2.5"
+                    onDragEnter={(event) => {
+                        event.preventDefault()
+                        // File names and types are unreliable until the drop, so they are checked there.
+                        setIsDraggingOver(true)
+                    }}
+                    onDragLeave={handleDragLeave}
+                    onDragOver={(event) => {
+                        event.preventDefault()
+                        if (!isDraggingOver) setIsDraggingOver(true)
+                    }}
+                    onDrop={handleDrop}>
+                    {transientNotice && (
+                        <div className="absolute inset-2.5 bg-[rgba(var(--vscode-errorForeground-rgb),0.1)] border-2 border-error rounded-xs flex items-center justify-center z-10 pointer-events-none">
+                            <span className="text-error font-bold text-xs text-center">
+                                {TRANSIENT_NOTICE_TEXT[transientNotice]}
+                            </span>
+                        </div>
+                    )}
+                    {menus.slash.open && (
+                        <div ref={menus.slash.containerRef}>
+                            <SlashCommandMenu
+                                entries={[...menus.slash.entries]}
+                                onMouseDown={menus.onMenuMouseDown}
+                                onSelect={menus.slash.select}
+                                selectedIndex={menus.slash.selectedIndex}
+                                setSelectedIndex={menus.slash.setSelectedIndex}
+                            />
+                        </div>
+                    )}
+                    {menus.mention.open && (
+                        <div ref={menus.mention.containerRef}>
+                            <ContextMenu
+                                dynamicSearchResults={menus.mention.results}
+                                isLoading={menus.mention.loading}
+                                onMouseDown={menus.onMenuMouseDown}
+                                onSelect={menus.mention.select}
+                                queryItems={menus.mention.queryItems}
+                                searchQuery={menus.mention.searchQuery}
+                                selectedIndex={menus.mention.selectedIndex}
+                                selectedType={menus.mention.selectedType}
+                                setSelectedIndex={menus.mention.setSelectedIndex}
+                            />
+                        </div>
+                    )}
+                    <SemanticComposerEditor
+                        ariaLabel="Message input"
+                        className={cn("rounded-xs bg-input-background", !isFocused && "border border-input-border")}
+                        composerId={draftId}
+                        decorate={decorate}
+                        engine={engine}
+                        onBlur={() => {
+                            menus.onEditorBlur()
+                            setIsFocused(false)
+                            onFocusChange?.(false)
+                        }}
+                        onChipAction={handleChipAction}
+                        onFocus={() => {
+                            setIsFocused(true)
+                            onFocusChange?.(true)
+                        }}
+                        onHeightChange={onHeightChange}
+                        onKeyDown={handleKeyDown}
+                        onPaste={resourceInput.handlePaste}
+                        onPasteText={resourceInput.handlePastedText}
+                        placeholder={transientNotice ? "" : placeholderText}
+                        ref={editorRef}
+                        style={{
+                            width: "100%",
+                            boxSizing: "border-box",
+                            color: "var(--vscode-input-foreground)",
+                            fontFamily: "var(--vscode-font-family)",
+                            fontSize: "var(--vscode-editor-font-size)",
+                            lineHeight: CHAT_INPUT_LINE_HEIGHT,
+                            minHeight: COMPOSER_MIN_HEIGHT,
+                            maxHeight: COMPOSER_MAX_HEIGHT,
+                            overflowX: "hidden",
+                            overflowY: "auto",
+                            // A visible scrollbar shows that long input continues beyond the visible rows.
+                            scrollbarWidth: "thin",
+                            scrollbarGutter: "stable",
+                            // The standard scrollbar properties bypass the webview's ::-webkit-scrollbar theme,
+                            // so the colors must be set here or the track renders as an untinted system gutter.
+                            scrollbarColor: "var(--vscode-scrollbarSlider-background) transparent",
+                            padding: `${CHAT_INPUT_PADDING_Y_PX}px 28px ${CHAT_INPUT_PADDING_Y_PX}px 9px`,
+                            flex: 1,
+                            zIndex: 1,
+                            outline:
+                                isDraggingOver && !transientNotice
+                                    ? "2px dashed var(--vscode-focusBorder)"
+                                    : isFocused
+                                      ? `1px solid ${mode === "plan" ? PLAN_MODE_COLOR : "var(--vscode-focusBorder)"}`
+                                      : "none",
+                            outlineOffset: isDraggingOver && !transientNotice ? "1px" : "0px",
+                        }}
+                        testId="chat-input"
+                    />
+                    {segments.length === 0 && (
+                        <div className="text-xs absolute bottom-5 left-6.5 right-16 text-(--vscode-input-placeholderForeground)/50 whitespace-nowrap overflow-hidden text-ellipsis pointer-events-none z-1">
+                            Type @ for context, / for slash commands & workflows, hold shift to drag in files/images
+                        </div>
+                    )}
+                    <div
+                        className="absolute flex items-end bottom-[13px] right-4 z-10 text-xs"
+                        style={{ height: COMPOSER_MIN_HEIGHT }}>
+                        <ComposerActionButton
+                            onCancel={onCancelTask}
+                            onSend={trySend}
+                            outputTokensPerSecond={outputTokensPerSecond}
+                            shortcuts={composerShortcutLabels(chatInputSendShortcut)}
+                            state={{
+                                canSend: !sendingDisabled,
+                                submitKind,
+                                canQueue: Boolean(onSendBlocked) && queueAvailable,
+                                canCancel: Boolean(onCancelTask),
+                                hasContent: segments.length > 0,
+                            }}
+                        />
+                    </div>
+                </div>
+                <div className="flex items-center -mt-0.5 px-3 pb-2 gap-2">
+                    <ButtonGroup className="ease-in-out h-5 z-10 flex items-center min-w-0">
+                        <Tooltip>
+                            <TooltipContent>Add Context</TooltipContent>
+                            <TooltipTrigger asChild>
+                                <button
+                                    aria-label="Add Context"
+                                    className="chat-input-control-outline inline-flex size-[18.5px] shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 text-foreground shadow-none transition-colors duration-150 hover:bg-toolbar-hover focus-visible:bg-toolbar-hover"
+                                    data-testid="context-button"
+                                    onClick={handleContextButtonClick}
+                                    // Keep the editor's caret: a button that takes focus first would move it.
+                                    onMouseDown={(event) => event.preventDefault()}
+                                    type="button">
+                                    <ButtonContainer>
+                                        <AtSignIcon size={12} />
+                                    </ButtonContainer>
+                                </button>
+                            </TooltipTrigger>
+                        </Tooltip>
+
+                        <Tooltip>
+                            <TooltipContent>Add Files & Images</TooltipContent>
+                            <TooltipTrigger asChild>
+                                <button
+                                    aria-label="Add Files & Images"
+                                    className="chat-input-control-outline inline-flex size-[18.5px] shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 text-foreground shadow-none transition-colors duration-150 hover:bg-toolbar-hover focus-visible:bg-toolbar-hover disabled:cursor-not-allowed disabled:opacity-50"
+                                    data-testid="files-button"
+                                    disabled={!attachmentsEnabled}
+                                    onClick={resourceInput.selectResources}
+                                    type="button">
+                                    <ButtonContainer>
+                                        <PlusIcon size={13} />
+                                    </ButtonContainer>
+                                </button>
+                            </TooltipTrigger>
+                        </Tooltip>
+
+                        <ServersToggleModal />
+
+                        <ClineRulesToggleModal />
+
+                        <ChatInputRuntimeControls
+                            profileControl={
+                                <ModelSwitcher
+                                    draft={modeSwitchDraft}
+                                    draftComposer={transitionComposer}
+                                    onOpenSettings={() => navigateToSettings("api-config")}
+                                />
+                            }
+                        />
+
+                        <UsageBar />
+                    </ButtonGroup>
+                    {/* Tooltip for Plan/Act toggle remains outside the conditional rendering */}
+                    <div className="ml-auto shrink-0">
+                        <ModeSwitchDialog
+                            onCancel={modeSwitchFlow.cancelSwitch}
+                            onConfirm={modeSwitchFlow.confirmSwitch}
+                            onRetry={() => {
+                                if (modeSwitch?.targetMode) void modeSwitchFlow.requestSwitch(modeSwitch.targetMode)
+                            }}
+                            state={modeSwitch ?? { phase: "idle" }}
+                        />
+                        <Tooltip>
+                            <TooltipContent
+                                className="text-xs px-2 flex flex-col gap-1"
+                                hidden={shownTooltipMode === null}
+                                side="top">
+                                {`In ${shownTooltipMode === "act" ? "Act" : "Plan"}  mode, Dline will ${shownTooltipMode === "act" ? "complete the task immediately" : "gather information to architect a plan"}`}
+                                <p className="text-description/80 text-xs mb-0">
+                                    Toggle w/ <kbd className="text-muted-foreground mx-1">{togglePlanActKeys}</kbd>
+                                </p>
+                            </TooltipContent>
+                            <TooltipTrigger>
+                                <SwitchContainer
+                                    data-testid="mode-switch"
+                                    disabled={modeSwitchFlow.isSwitchPending}
+                                    onClick={onModeToggle}>
+                                    <Slider
+                                        isAct={modeSwitchFlow.displayMode === "act"}
+                                        isPlan={modeSwitchFlow.displayMode === "plan"}
+                                    />
+                                    {["Plan", "Act"].map((m) => (
+                                        <div
+                                            aria-checked={modeSwitchFlow.displayMode === m.toLowerCase()}
+                                            className={cn(
+                                                "pt-0.5 pb-px px-2 z-10 text-xs w-1/2 text-center bg-transparent",
+                                                modeSwitchFlow.displayMode === m.toLowerCase()
+                                                    ? "text-white"
+                                                    : "text-input-foreground",
+                                            )}
+                                            key={m}
+                                            onMouseLeave={() => setShownTooltipMode(null)}
+                                            onMouseOver={() => setShownTooltipMode(m.toLowerCase() === "plan" ? "plan" : "act")}
+                                            role="switch">
+                                            {modeSwitchFlow.statusText && m.toLowerCase() === modeSwitchFlow.displayMode
+                                                ? modeSwitchFlow.statusText
+                                                : m}
+                                        </div>
+                                    ))}
+                                </SwitchContainer>
+                            </TooltipTrigger>
+                        </Tooltip>
+                    </div>
+                </div>
+            </div>
+        )
+    },
 )
 
 export default ChatTextArea

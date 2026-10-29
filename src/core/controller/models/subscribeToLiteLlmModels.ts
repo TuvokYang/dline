@@ -17,34 +17,34 @@ const controllerSubscriptions = new Map<Controller, Set<StreamingResponseHandler
  * @param requestId The ID of the request (passed by the gRPC handler)
  */
 export async function subscribeToLiteLlmModels(
-	_controller: Controller,
-	_request: EmptyRequest,
-	responseStream: StreamingResponseHandler<OpenRouterCompatibleModelInfo>,
-	requestId?: string,
+    _controller: Controller,
+    _request: EmptyRequest,
+    responseStream: StreamingResponseHandler<OpenRouterCompatibleModelInfo>,
+    requestId?: string,
 ): Promise<void> {
-	// Add this subscription under the owning controller
-	let subs = controllerSubscriptions.get(_controller)
-	if (!subs) {
-		subs = new Set()
-		controllerSubscriptions.set(_controller, subs)
-	}
-	subs.add(responseStream)
+    // Add this subscription under the owning controller
+    let subs = controllerSubscriptions.get(_controller)
+    if (!subs) {
+        subs = new Set()
+        controllerSubscriptions.set(_controller, subs)
+    }
+    subs.add(responseStream)
 
-	// Register cleanup when the connection is closed
-	const cleanup = () => {
-		const set = controllerSubscriptions.get(_controller)
-		if (set) {
-			set.delete(responseStream)
-			if (set.size === 0) {
-				controllerSubscriptions.delete(_controller)
-			}
-		}
-	}
+    // Register cleanup when the connection is closed
+    const cleanup = () => {
+        const set = controllerSubscriptions.get(_controller)
+        if (set) {
+            set.delete(responseStream)
+            if (set.size === 0) {
+                controllerSubscriptions.delete(_controller)
+            }
+        }
+    }
 
-	// Register the cleanup function with the request registry if we have a requestId
-	if (requestId) {
-		getRequestRegistry().registerRequest(requestId, cleanup, { type: "liteLlmModels_subscription" }, responseStream)
-	}
+    // Register the cleanup function with the request registry if we have a requestId
+    if (requestId) {
+        getRequestRegistry().registerRequest(requestId, cleanup, { type: "liteLlmModels_subscription" }, responseStream)
+    }
 }
 
 /**
@@ -52,25 +52,25 @@ export async function subscribeToLiteLlmModels(
  * @param models The LiteLLM models to send
  */
 export async function sendLiteLlmModelsEvent(models: OpenRouterCompatibleModelInfo): Promise<void> {
-	// Send the event to all active subscribers across every controller
-	const promises: Promise<void>[] = []
-	for (const [, subs] of controllerSubscriptions) {
-		for (const responseStream of subs) {
-			promises.push(
-				responseStream(models, false).catch((error) => {
-					Logger.error("Error sending LiteLLM models event:", error)
-					// Remove the dead stream from whichever controller owns it
-					for (const [ctrl, set] of controllerSubscriptions) {
-						if (set.delete(responseStream)) {
-							if (set.size === 0) controllerSubscriptions.delete(ctrl)
-							break
-						}
-					}
-				}),
-			)
-		}
-	}
-	await Promise.all(promises)
+    // Send the event to all active subscribers across every controller
+    const promises: Promise<void>[] = []
+    for (const [, subs] of controllerSubscriptions) {
+        for (const responseStream of subs) {
+            promises.push(
+                responseStream(models, false).catch((error) => {
+                    Logger.error("Error sending LiteLLM models event:", error)
+                    // Remove the dead stream from whichever controller owns it
+                    for (const [ctrl, set] of controllerSubscriptions) {
+                        if (set.delete(responseStream)) {
+                            if (set.size === 0) controllerSubscriptions.delete(ctrl)
+                            break
+                        }
+                    }
+                }),
+            )
+        }
+    }
+    await Promise.all(promises)
 }
 
 /**
@@ -79,5 +79,5 @@ export async function sendLiteLlmModelsEvent(models: OpenRouterCompatibleModelIn
  * accumulating in the global subscription set.
  */
 export function cleanupLiteLlmSubscriptions(controller: Controller): void {
-	controllerSubscriptions.delete(controller)
+    controllerSubscriptions.delete(controller)
 }

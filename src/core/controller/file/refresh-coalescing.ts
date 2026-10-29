@@ -20,22 +20,22 @@ import type { Controller } from "../index"
 const inFlightScansByController = new WeakMap<Controller, Map<string, Promise<unknown>>>()
 
 export function coalesceCapabilityScan<T>(controller: Controller, scanKey: string, scan: () => Promise<T>): Promise<T> {
-	let scansByKey = inFlightScansByController.get(controller)
-	if (!scansByKey) {
-		scansByKey = new Map()
-		inFlightScansByController.set(controller, scansByKey)
-	}
+    let scansByKey = inFlightScansByController.get(controller)
+    if (!scansByKey) {
+        scansByKey = new Map()
+        inFlightScansByController.set(controller, scansByKey)
+    }
 
-	const existing = scansByKey.get(scanKey) as Promise<T> | undefined
-	if (existing) {
-		return existing
-	}
+    const existing = scansByKey.get(scanKey) as Promise<T> | undefined
+    if (existing) {
+        return existing
+    }
 
-	const pending = scan().finally(() => {
-		if (scansByKey.get(scanKey) === pending) {
-			scansByKey.delete(scanKey)
-		}
-	})
-	scansByKey.set(scanKey, pending)
-	return pending
+    const pending = scan().finally(() => {
+        if (scansByKey.get(scanKey) === pending) {
+            scansByKey.delete(scanKey)
+        }
+    })
+    scansByKey.set(scanKey, pending)
+    return pending
 }

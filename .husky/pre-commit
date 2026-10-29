@@ -1,1 +1,1 @@
-lint-staged
+lint-staged --no-stash --concurrent false --max-arg-length 8000

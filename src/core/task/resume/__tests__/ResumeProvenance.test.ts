@@ -1,39 +1,48 @@
 import { describe, expect, it } from "vitest"
 import {
-	createMissingToolResultMessage,
-	createResumeContinuationText,
-	createResumeInteractionPresentation,
+    createMissingToolResultMessage,
+    createResumeInteractionPresentation,
+    createResumeSubmissionContext,
 } from "../ResumeProvenance"
 
 describe("ResumeProvenance", () => {
-	it("presents session restoration without inventing a missing prior tool result", () => {
-		const presentation = createResumeInteractionPresentation()
+    it("presents session restoration without inventing a missing prior tool result", () => {
+        const presentation = createResumeInteractionPresentation()
 
-		expect(presentation).toContain("session was closed")
-		expect(presentation).toContain("has now been restored")
-		expect(presentation).not.toContain("tool call result is missing")
-		expect(presentation).not.toContain("outcome is unknown")
-		expect(presentation).not.toContain("abnormal")
-		expect(presentation).not.toContain("assume the tool use was not successful")
-	})
+        expect(presentation).toContain("session was closed")
+        expect(presentation).toContain("has now been restored")
+        expect(presentation).not.toContain("tool call result is missing")
+        expect(presentation).not.toContain("outcome is unknown")
+        expect(presentation).not.toContain("abnormal")
+        expect(presentation).not.toContain("assume the tool use was not successful")
+    })
 
-	it("projects missing tool results as unknown and requires observable verification before retry", () => {
-		const message = createMissingToolResultMessage("replace_in_file")
+    it("projects missing tool results as unknown and requires observable verification before retry", () => {
+        const message = createMissingToolResultMessage("replace_in_file")
 
-		expect(message).toContain("replace_in_file")
-		expect(message).toContain("result is missing")
-		expect(message).toContain("outcome is unknown")
-		expect(message).toContain("inspect its observable state")
-		expect(message).toContain("before retrying")
-		expect(message).not.toContain("may have been abnormal")
-	})
+        expect(message).toContain("replace_in_file")
+        expect(message).toContain("result is missing")
+        expect(message).toContain("outcome is unknown")
+        expect(message).toContain("inspect its observable state")
+        expect(message).toContain("before retrying")
+        expect(message).not.toContain("may have been abnormal")
+    })
 
-	it("includes the same restoration provenance in model continuation without losing user draft text", () => {
-		const continuation = createResumeContinuationText("Continue with the focused test.")
+    // Replaces the former `createResumeContinuationText` case. That helper merged
+    // provenance into the user's text, but it had no production caller, so no
+    // request ever carried the restoration fact. Provenance is now submission
+    // context the materializer appends, which keeps the chat row the user's own
+    // words, so the contract under test is which dialog kinds have provenance.
+    it("states restoration only for a resumed session", () => {
+        const resumed = createResumeSubmissionContext("resume")
 
-		expect(continuation).toContain("session was closed")
-		expect(continuation).not.toContain("tool call result is missing")
-		expect(continuation).not.toContain("outcome is unknown")
-		expect(continuation).toContain("Continue with the focused test.")
-	})
+        expect(resumed).toContain("session was closed")
+        expect(resumed).not.toContain("tool call result is missing")
+        expect(resumed).not.toContain("outcome is unknown")
+    })
+
+    it("claims nothing when a retry happens inside the live session", () => {
+        expect(createResumeSubmissionContext("error_retry")).toBeUndefined()
+        expect(createResumeSubmissionContext("background_wakeup")).toBeUndefined()
+    })
 })

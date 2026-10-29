@@ -16,63 +16,68 @@ import { capabilityWriteContext } from "./capability-write-context"
  * @returns The updated Cline rule toggles
  */
 export async function toggleClineRule(controller: Controller, request: ToggleClineRuleRequest): Promise<ToggleClineRules> {
-	const { scope, rulePath, enabled } = request
+    const { scope, rulePath, enabled } = request
 
-	if (!rulePath || typeof enabled !== "boolean" || scope === undefined) {
-		Logger.error("toggleClineRule: Missing or invalid parameters", {
-			rulePath,
-			scope,
-			enabled: typeof enabled === "boolean" ? enabled : `Invalid: ${typeof enabled}`,
-		})
-		throw new Error("Missing or invalid parameters for toggleClineRule")
-	}
+    if (!rulePath || typeof enabled !== "boolean" || scope === undefined) {
+        Logger.error("toggleClineRule: Missing or invalid parameters", {
+            rulePath,
+            scope,
+            enabled: typeof enabled === "boolean" ? enabled : `Invalid: ${typeof enabled}`,
+        })
+        throw new Error("Missing or invalid parameters for toggleClineRule")
+    }
 
-	// Handle the three different scopes
-	let localToggles = mergeScopedToggles(readScopedToggles(controller.stateManager, "rules"))
-	switch (scope) {
-		case RuleScope.GLOBAL: {
-			await setGlobalCapabilityEnabled(controller.stateManager, "globalClineRulesToggles", rulePath, enabled)
-			break
-		}
-		case RuleScope.LOCAL: {
-			// The rule's origin is local, but the preference is stored in the scope
-			// the editor is currently in: task overrides workspace, workspace
-			// overrides global. Only the changed path is recorded, so every other
-			// rule keeps inheriting.
-			localToggles = (await setCapabilityEnabled(
-				controller.stateManager,
-				"rules",
-				capabilityWriteContext(controller),
-				capabilityResourceId(rulePath),
-				enabled,
-			)) as Record<string, boolean>
-			break
-		}
-		case RuleScope.REMOTE: {
-			const toggles = controller.stateManager.getGlobalStateKey("remoteRulesToggles")
-			toggles[rulePath] = enabled
-			controller.stateManager.setGlobalState("remoteRulesToggles", toggles)
-			break
-		}
-		default:
-			throw new Error(`Invalid scope: ${scope}`)
-	}
+    // Handle the three different scopes
+    let localToggles = mergeScopedToggles(readScopedToggles(controller.stateManager, "rules"))
+    switch (scope) {
+        case RuleScope.GLOBAL: {
+            await setGlobalCapabilityEnabled(controller.stateManager, "globalClineRulesToggles", rulePath, enabled)
+            break
+        }
+        case RuleScope.LOCAL: {
+            // The rule's origin is local, but the preference is stored in the scope
+            // the editor is currently in: task overrides workspace, workspace
+            // overrides global. Only the changed path is recorded, so every other
+            // rule keeps inheriting.
+            localToggles = (await setCapabilityEnabled(
+                controller.stateManager,
+                "rules",
+                capabilityWriteContext(controller),
+                capabilityResourceId(rulePath),
+                enabled,
+            )) as Record<string, boolean>
+            break
+        }
+        case RuleScope.REMOTE: {
+            const toggles = controller.stateManager.getGlobalStateKey("remoteRulesToggles")
+            toggles[rulePath] = enabled
+            controller.stateManager.setGlobalState("remoteRulesToggles", toggles)
+            break
+        }
+        default:
+            throw new Error(`Invalid scope: ${scope}`)
+    }
 
-	// Track rule toggle telemetry with current task context
-	if (controller.task?.ulid) {
-		// Extract just the filename for privacy (no full paths)
-		const ruleFileName = getWorkspaceBasename(rulePath, "Controller.toggleClineRule")
-		const isGlobal = scope === RuleScope.GLOBAL
-		telemetryService.captureClineRuleToggled(controller.task.ulid, ruleFileName, enabled, isGlobal)
-	}
+    // Track rule toggle telemetry with current task context
+    if (controller.task?.owners.identity.taskIncarnationId) {
+        // Extract just the filename for privacy (no full paths)
+        const ruleFileName = getWorkspaceBasename(rulePath, "Controller.toggleClineRule")
+        const isGlobal = scope === RuleScope.GLOBAL
+        telemetryService.captureClineRuleToggled(
+            controller.task.owners.identity.taskIncarnationId,
+            ruleFileName,
+            enabled,
+            isGlobal,
+        )
+    }
 
-	// Get the current state to return in the response
-	const globalToggles = controller.stateManager.getGlobalSettingsKey("globalClineRulesToggles")
-	const remoteToggles = controller.stateManager.getGlobalStateKey("remoteRulesToggles")
+    // Get the current state to return in the response
+    const globalToggles = controller.stateManager.getGlobalSettingsKey("globalClineRulesToggles")
+    const remoteToggles = controller.stateManager.getGlobalStateKey("remoteRulesToggles")
 
-	return ToggleClineRules.create({
-		globalClineRulesToggles: { toggles: globalToggles },
-		localClineRulesToggles: { toggles: localToggles },
-		remoteRulesToggles: { toggles: remoteToggles },
-	})
+    return ToggleClineRules.create({
+        globalClineRulesToggles: { toggles: globalToggles },
+        localClineRulesToggles: { toggles: localToggles },
+        remoteRulesToggles: { toggles: remoteToggles },
+    })
 }

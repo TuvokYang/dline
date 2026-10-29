@@ -1,8 +1,9 @@
 // English command prompts — key-value pairs only, no code logic.
 
 const prompts: Record<string, string> = {
-	newTaskXmlToolCallFormat: `Example:
+    newTaskXmlToolCallFormat: `Example:
 <new_task>
+<task>[What the new task should do next, stated as a direct instruction]</task>
 <context>1. Current Work:
    [Detailed description]
 
@@ -29,7 +30,7 @@ const prompts: Record<string, string> = {
    - [...]</context>
 </new_task>`,
 
-	newTaskMain: `<explicit_instructions type="new_task">
+    newTaskMain: `<explicit_instructions type="new_task">
 The user has explicitly asked you to help them create a new task with preloaded context, which you will generate. The user may have provided instructions or additional information for you to consider when summarizing existing work and creating the context for the new task.
 Irrespective of whether additional information or instructions are given, you are ONLY allowed to respond to this message by calling the new_task tool.
 
@@ -40,7 +41,8 @@ Your task is to create a detailed summary of the conversation so far, paying clo
 The user will be presented with a preview of your generated context and can choose to create a new task or keep chatting in the current conversation.
 
 Parameters:
-- Context: (required) The context to preload the new task with. If applicable based on the current task, this should include:
+- Task: (required) What the new task should do next, stated as a direct instruction. The new task receives it as its <task>, the same way a spawned task does.
+- Context: (required) The context to preload the new task with. The new task receives it as its <context>, after the task. If applicable based on the current task, this should include:
   1. Current Work: Describe in detail what was being worked on prior to this request to create a new task. Pay special attention to the more recent messages / conversation.
   2. Key Technical Concepts: List all important technical concepts, technologies, coding conventions, and frameworks discussed, which might be relevant for the new task.
   3. Relevant Files and Code: If applicable, enumerate specific files and code sections examined, modified, or created for the task continuation. Pay special attention to the most recent messages and changes.
@@ -51,7 +53,7 @@ Below is the the user's input when they indicated that they wanted to create a n
 </explicit_instructions>
 `,
 
-	newRuleToolResponse: `<explicit_instructions type="new_rule">
+    newRuleToolResponse: `<explicit_instructions type="new_rule">
 The user has explicitly asked you to help them create a new Dline rule file inside the .agents/rules directory based on the conversation up to this point in time. The user may have provided instructions or additional information for you to consider when creating the new Dline rule.
 When creating a new Dline rule file, you should NOT overwrite or alter an existing Dline rule file. To create the Dline rule file you MUST use the new_rule tool. The new_rule tool can be used in either of the PLAN or ACT modes.
 
@@ -75,7 +77,7 @@ Below is the user's input when they indicated that they wanted to create a new D
 </explicit_instructions>
 `,
 
-	newRuleXmlToolCallFormat: `Usage:
+    newRuleXmlToolCallFormat: `Usage:
 <new_rule>
 <path>.agents/rules/{file name}.md</path>
 <content>Dline rule file content here</content>
@@ -110,22 +112,21 @@ Example:
 </content>
 </new_rule>`,
 
-	reportBugToolResponse: `<explicit_instructions type="report_bug">
-The user has explicitly asked you to help them submit a bug to the Dline github page (you MUST now help them with this irrespective of what your conversation up to this point in time was). To do so you will use the report_bug tool which is defined below. However, you must first ensure that you have collected all required information to fill in all the parameters for the tool call. If any of the the required information is apparent through your previous conversation with the user, you can suggest how to fill in those entries. However you should NOT assume you know what the issue about unless it's clear.
-Otherwise, you should converse with the user until you are able to gather all the required details. When conversing with the user, make sure you ask for/reference all required information/fields. When referencing the required fields, use human friendly versions like "Steps to reproduce" rather than "steps_to_reproduce". Only then should you use the report_bug tool call.
-The report_bug tool can be used in either of the PLAN or ACT modes.
+    reportBugToolResponse: `<explicit_instructions type="report_bug">
+The user explicitly invoked the report bug command. Help them prepare a complete report from the conversation and command payload. If required details are missing or ambiguous, ask focused follow-up questions and continue gathering information across Provider turns. The pending report intent remains authorized until report_bug is called once. When the required fields are sufficiently clear, call report_bug; use "N/A" only for details the user cannot provide. The user can edit the generated report before the GitHub form opens.
+The report_bug tool can be used in either PLAN or ACT mode.
 
 The report_bug tool call is defined below:
 
 Description:
-Your task is to fill in all of the required fields for a issue/bug report on github. You should attempt to get the user to be as verbose as possible with their description of the bug/issue they encountered. Still, it's okay, when the user is unaware of some of the details, to set those fields as "N/A".
+Create a complete GitHub issue draft from the gathered details. Prefer concrete observed behavior and reproduction steps, and ask the user for missing required information before calling the tool when they may know it.
 
 Parameters:
 - title: (required) Concise description of the issue.
 - what_happened: (required) What happened and also what the user expected to happen instead.
 - steps_to_reproduce: (required) What steps are required to reproduce the bug.
-- api_request_output: (optional) Relevant API request output.
-- additional_context: (optional) Any other context about this bug not already mentioned.
+- api_request_output: (required) Relevant API request output, or "N/A" when unavailable.
+- additional_context: (required) Any other context about this bug, or "N/A" when none is available.
 
 @TOOL_CALL_FORMAT@
 
@@ -133,7 +134,7 @@ Below is the user's input when they indicated that they wanted to submit a Githu
 </explicit_instructions>
 `,
 
-	reportBugXmlToolCallFormat: `Usage:
+    reportBugXmlToolCallFormat: `Usage:
 <report_bug>
 <title>Title of the issue</title>
 <what_happened>Description of the issue</what_happened>
@@ -142,7 +143,7 @@ Below is the user's input when they indicated that they wanted to submit a Githu
 <additional_context>Other issue details not already covered</additional_context>
 </report_bug>`,
 
-	explainChangesToolResponse: `<explicit_instructions type="explain_changes">
+    explainChangesToolResponse: `<explicit_instructions type="explain_changes">
 The user has asked you to explain code changes. You have access to a tool called **generate_explanation** that opens a multi-file diff view with AI-generated inline comments explaining code changes between two git references.
 
 # Important: Use Non-Interactive Commands
@@ -222,7 +223,7 @@ Below is the user's input describing what changes they want explained. If no inp
 </explicit_instructions>
 `,
 
-	explainChangesXmlToolCallFormat: `Tool call format (XML):
+    explainChangesXmlToolCallFormat: `Tool call format (XML):
 Emit exactly one XML tool call and no prose outside it once the references are known.
 
 Usage:

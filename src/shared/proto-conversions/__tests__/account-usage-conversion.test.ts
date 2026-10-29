@@ -9,86 +9,86 @@ import { accountUsageToProto, protoToAccountUsage } from "../account-usage-conve
  * the count into `0`, which is the case these tests pin down.
  */
 function protoUsage(overrides: Partial<ProtoAccountUsage> = {}): ProtoAccountUsage {
-	return {
-		profileId: "profile-a",
-		providerId: "anthropic",
-		currency: "USD",
-		quotas: [],
-		resetCredits: [],
-		resetCreditsAvailableCount: 0,
-		...overrides,
-	} as ProtoAccountUsage
+    return {
+        profileId: "profile-a",
+        providerId: "anthropic",
+        currency: "USD",
+        quotas: [],
+        resetCredits: [],
+        resetCreditsAvailableCount: 0,
+        ...overrides,
+    } as ProtoAccountUsage
 }
 
 describe("account usage reset-credit presence", () => {
-	it("reports no reset-credit capability when the provider sends the empty encoding", () => {
-		const usage = protoToAccountUsage(protoUsage())
+    it("reports no reset-credit capability when the provider sends the empty encoding", () => {
+        const usage = protoToAccountUsage(protoUsage())
 
-		// The UI treats `undefined` as "this provider has no reset cards" and hides
-		// the whole section. Proto3 cannot express that, so the conversion must.
-		expect(usage?.resetCredits).toBeUndefined()
-		expect(usage?.resetCreditsAvailableCount).toBeUndefined()
-	})
+        // The UI treats `undefined` as "this provider has no reset cards" and hides
+        // the whole section. Proto3 cannot express that, so the conversion must.
+        expect(usage?.resetCredits).toBeUndefined()
+        expect(usage?.resetCreditsAvailableCount).toBeUndefined()
+    })
 
-	it("keeps a positive available count even when the credit list is not itemised", () => {
-		const usage = protoToAccountUsage(protoUsage({ resetCreditsAvailableCount: 2 }))
+    it("keeps a positive available count even when the credit list is not itemised", () => {
+        const usage = protoToAccountUsage(protoUsage({ resetCreditsAvailableCount: 2 }))
 
-		expect(usage?.resetCreditsAvailableCount).toBe(2)
-	})
+        expect(usage?.resetCreditsAvailableCount).toBe(2)
+    })
 
-	it("keeps an itemised credit list even when the count is absent", () => {
-		const usage = protoToAccountUsage(
-			protoUsage({ resetCredits: [{ id: "credit-a", expiresAt: "2030-03-25T00:00:00.000Z" }] as never }),
-		)
+    it("keeps an itemised credit list even when the count is absent", () => {
+        const usage = protoToAccountUsage(
+            protoUsage({ resetCredits: [{ id: "credit-a", expiresAt: "2030-03-25T00:00:00.000Z" }] as never }),
+        )
 
-		expect(usage?.resetCredits).toEqual([{ id: "credit-a", grantedAt: undefined, expiresAt: "2030-03-25T00:00:00.000Z" }])
-	})
+        expect(usage?.resetCredits).toEqual([{ id: "credit-a", grantedAt: undefined, expiresAt: "2030-03-25T00:00:00.000Z" }])
+    })
 
-	it("drops credit entries that carry no identity", () => {
-		const usage = protoToAccountUsage(
-			protoUsage({ resetCredits: [{ id: "" }, { id: "credit-b" }] as never, resetCreditsAvailableCount: 1 }),
-		)
+    it("drops credit entries that carry no identity", () => {
+        const usage = protoToAccountUsage(
+            protoUsage({ resetCredits: [{ id: "" }, { id: "credit-b" }] as never, resetCreditsAvailableCount: 1 }),
+        )
 
-		expect(usage?.resetCredits?.map((credit) => credit.id)).toEqual(["credit-b"])
-	})
+        expect(usage?.resetCredits?.map((credit) => credit.id)).toEqual(["credit-b"])
+    })
 
-	it("round-trips a supported provider without inventing or losing capability", () => {
-		const decoded = protoToAccountUsage(
-			protoUsage({ resetCredits: [{ id: "credit-a" }] as never, resetCreditsAvailableCount: 1 }),
-		)
-		const reencoded = accountUsageToProto(decoded)
+    it("round-trips a supported provider without inventing or losing capability", () => {
+        const decoded = protoToAccountUsage(
+            protoUsage({ resetCredits: [{ id: "credit-a" }] as never, resetCreditsAvailableCount: 1 }),
+        )
+        const reencoded = accountUsageToProto(decoded)
 
-		expect(reencoded?.resetCreditsAvailableCount).toBe(1)
-		expect(reencoded?.resetCredits).toHaveLength(1)
-		expect(protoToAccountUsage(reencoded)?.resetCreditsAvailableCount).toBe(1)
-	})
+        expect(reencoded?.resetCreditsAvailableCount).toBe(1)
+        expect(reencoded?.resetCredits).toHaveLength(1)
+        expect(protoToAccountUsage(reencoded)?.resetCreditsAvailableCount).toBe(1)
+    })
 
-	it("keeps an unsupported provider unsupported across a full round trip", () => {
-		const reencoded = accountUsageToProto(protoToAccountUsage(protoUsage()))
+    it("keeps an unsupported provider unsupported across a full round trip", () => {
+        const reencoded = accountUsageToProto(protoToAccountUsage(protoUsage()))
 
-		// A round trip must not promote the empty encoding into a visible section.
-		expect(protoToAccountUsage(reencoded)?.resetCreditsAvailableCount).toBeUndefined()
-	})
+        // A round trip must not promote the empty encoding into a visible section.
+        expect(protoToAccountUsage(reencoded)?.resetCreditsAvailableCount).toBeUndefined()
+    })
 })
 
 describe("account usage snapshot fields", () => {
-	it("carries the read time across the transport so surfaces can state the snapshot age", () => {
-		const decoded = protoToAccountUsage(accountUsageToProto({ currency: "USD", retrievedAt: "2026-09-23T12:00:00.000Z" }))
+    it("carries the read time across the transport so surfaces can state the snapshot age", () => {
+        const decoded = protoToAccountUsage(accountUsageToProto({ currency: "USD", retrievedAt: "2026-09-23T12:00:00.000Z" }))
 
-		expect(decoded?.retrievedAt).toBe("2026-09-23T12:00:00.000Z")
-	})
+        expect(decoded?.retrievedAt).toBe("2026-09-23T12:00:00.000Z")
+    })
 
-	it("carries a provider's short window label, and leaves an absent one absent", () => {
-		const decoded = protoToAccountUsage(
-			accountUsageToProto({
-				currency: "USD",
-				quotas: [
-					{ type: "weekly", label: "This week", shortLabel: "week", used: 10, limit: 100 },
-					{ type: "monthly", label: "Monthly", used: 10, limit: 100 },
-				],
-			}),
-		)
+    it("carries a provider's short window label, and leaves an absent one absent", () => {
+        const decoded = protoToAccountUsage(
+            accountUsageToProto({
+                currency: "USD",
+                quotas: [
+                    { type: "weekly", label: "This week", shortLabel: "week", used: 10, limit: 100 },
+                    { type: "monthly", label: "Monthly", used: 10, limit: 100 },
+                ],
+            }),
+        )
 
-		expect(decoded?.quotas?.map((quota) => quota.shortLabel)).toEqual(["week", undefined])
-	})
+        expect(decoded?.quotas?.map((quota) => quota.shortLabel)).toEqual(["week", undefined])
+    })
 })

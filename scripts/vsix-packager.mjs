@@ -22,13 +22,13 @@ const PACKAGE_SECRET_ALLOWLIST = ["sendgrid"]
  *   the same extension ID (`Microsoft.VisualStudio.Code.PreRelease`).
  */
 function normalizeOptions({ cwd, mode, packagePath = null, preRelease = false }) {
-	if (!cwd) {
-		throw new Error("VSIX packaging requires a working directory.")
-	}
-	if (!SUPPORTED_MODES.has(mode)) {
-		throw new Error(`Unsupported VSIX packaging mode '${mode ?? ""}'.`)
-	}
-	return { cwd, mode, packagePath, preRelease: preRelease === true }
+    if (!cwd) {
+        throw new Error("VSIX packaging requires a working directory.")
+    }
+    if (!SUPPORTED_MODES.has(mode)) {
+        throw new Error(`Unsupported VSIX packaging mode '${mode ?? ""}'.`)
+    }
+    return { cwd, mode, packagePath, preRelease: preRelease === true }
 }
 
 /**
@@ -42,36 +42,36 @@ function normalizeOptions({ cwd, mode, packagePath = null, preRelease = false })
  * @returns {Promise<{ packagePath: string|null }>}
  */
 export async function packageVsix(options) {
-	const normalized = normalizeOptions(options)
-	execFileSync(process.execPath, [__filename, WORKER_ARGUMENT, JSON.stringify(normalized)], {
-		cwd: normalized.cwd,
-		stdio: "inherit",
-	})
-	return { packagePath: normalized.packagePath }
+    const normalized = normalizeOptions(options)
+    execFileSync(process.execPath, [__filename, WORKER_ARGUMENT, JSON.stringify(normalized)], {
+        cwd: normalized.cwd,
+        stdio: "inherit",
+    })
+    return { packagePath: normalized.packagePath }
 }
 
 /** @param {{ cwd: string, mode: "build-and-pack"|"pack-only", packagePath: string|null, preRelease: boolean }} options */
 async function runWorker(options) {
-	const packageOptions = {
-		cwd: options.cwd,
-		dependencies: false,
-		allowPackageSecrets: PACKAGE_SECRET_ALLOWLIST,
-		preRelease: options.preRelease,
-	}
-	if (options.packagePath) {
-		packageOptions.packagePath = options.packagePath
-	}
+    const packageOptions = {
+        cwd: options.cwd,
+        dependencies: false,
+        allowPackageSecrets: PACKAGE_SECRET_ALLOWLIST,
+        preRelease: options.preRelease,
+    }
+    if (options.packagePath) {
+        packageOptions.packagePath = options.packagePath
+    }
 
-	if (options.mode === BUILD_AND_PACK) {
-		await createVSIX(packageOptions)
-	} else {
-		await packVSIX(packageOptions)
-	}
+    if (options.mode === BUILD_AND_PACK) {
+        await createVSIX(packageOptions)
+    } else {
+        await packVSIX(packageOptions)
+    }
 }
 
 const invokedAsWorker =
-	process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename) && process.argv[2] === WORKER_ARGUMENT
+    process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename) && process.argv[2] === WORKER_ARGUMENT
 if (invokedAsWorker) {
-	const options = normalizeOptions(JSON.parse(process.argv[3] ?? "{}"))
-	await runWorker(options)
+    const options = normalizeOptions(JSON.parse(process.argv[3] ?? "{}"))
+    await runWorker(options)
 }

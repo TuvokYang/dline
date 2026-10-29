@@ -1,16 +1,19 @@
 import type { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
 import { CLINE_MCP_TOOL_IDENTIFIER } from "@/shared/mcp"
-import { ClineDefaultTool } from "@/shared/tools"
+import { Logger } from "@/shared/services/Logger"
+import { DlineDefaultTool } from "@/shared/tools"
 import { prepareRegisteredToolAdmission, type ToolAdmissionSnapshot } from "../executors/tool/ToolAdmissionRegistry"
+import type { ToolApprovalPresentation, ToolPreflightResult, ToolSideEffect } from "../executors/tool/ToolPreflight"
+import { rejectToolCall } from "../executors/tool/ToolPreflight"
 import {
-	rejectToolCall,
-	type ToolApprovalPresentation,
-	type ToolPreflightResult,
-	type ToolSideEffect,
-} from "../executors/tool/ToolPreflight"
+    authorizeExplicitToolExecution,
+    explicitToolRefusalMessage,
+    findHandlerlessExplicitRefusal,
+} from "../explicit-instructions/explicit-tool-gate"
+import type { ExplicitInstructionFailureCode } from "../explicit-instructions/types"
+import { ToolExecutionObservation } from "../observability/tool-execution-observation"
 import { AccessMcpResourceHandler } from "./handlers/AccessMcpResourceHandler"
-import { ActModeRespondHandler } from "./handlers/ActModeRespondHandler"
 import { ApplyPatchHandler } from "./handlers/ApplyPatchHandler"
 import { AskFollowupQuestionToolHandler } from "./handlers/AskFollowupQuestionToolHandler"
 import { AttemptCompletionHandler } from "./handlers/AttemptCompletionHandler"
@@ -27,6 +30,7 @@ import { LoadCapabilityHandler } from "./handlers/LoadCapabilityHandler"
 import { LoadMcpDocumentationHandler } from "./handlers/LoadMcpDocumentationHandler"
 import { MakePlanHandler } from "./handlers/MakePlanHandler"
 import { NewTaskHandler } from "./handlers/NewTaskHandler"
+import { PhaseReportHandler } from "./handlers/PhaseReportHandler"
 import { QnaRespondHandler } from "./handlers/QnaRespondHandler"
 import { ReadFileToolHandler } from "./handlers/ReadFileToolHandler"
 import { RenameSymbolHandler } from "./handlers/RenameSymbolHandler"
@@ -34,30 +38,36 @@ import { ReplaceTextHandler } from "./handlers/ReplaceTextHandler"
 import { ReportBugHandler } from "./handlers/ReportBugHandler"
 import { SearchFilesToolHandler } from "./handlers/SearchFilesToolHandler"
 import { SpawnTaskHandler } from "./handlers/SpawnTaskHandler"
-import { StatusUpdateHandler } from "./handlers/StatusUpdateHandler"
 import { restoreSubagentActivityRetry, UseSubagentsToolHandler, UseSubagentToolHandler } from "./handlers/SubagentToolHandler"
 import { UseMcpToolHandler } from "./handlers/UseMcpToolHandler"
 import { WebFetchToolHandler } from "./handlers/WebFetchToolHandler"
 import { WebSearchToolHandler } from "./handlers/WebSearchToolHandler"
+import { WorkingRespondHandler } from "./handlers/WorkingRespondHandler"
 import { WriteToFileToolHandler } from "./handlers/WriteToFileToolHandler"
+import { applyToolCallSideEffects, resolveToolCallSideEffects } from "./ToolCallSideEffects"
 import type { ToolHandlerResult } from "./ToolExecutionResult"
 import { ToolValidator } from "./ToolValidator"
 import type { TaskConfig } from "./types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "./types/UIHelpers"
 
 export interface IToolHandler {
-	readonly name: ClineDefaultTool
-	execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult>
-	getDescription(block: ToolUse): string
+    readonly name: DlineDefaultTool
+    execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult>
+    getDescription(block: ToolUse): string
 }
 
 export interface IPartialBlockHandler {
-	handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void>
+    handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void>
 }
 
 /** A handler that owns the typed payload shown before its side effect is admitted. */
 export interface IApprovalPresentingToolHandler extends IToolHandler {
-	getApprovalPresentation(block: ToolUse, notify: boolean): ToolApprovalPresentation
+    getApprovalPresentation(block: ToolUse, notify: boolean): ToolApprovalPresentation
+}
+
+/** A handler whose own durable interaction is the only manual confirmation for its external effect. */
+export interface IInteractionOwningToolHandler extends IToolHandler {
+    readonly ownsInteractionConfirmation: true
 }
 
 /**
@@ -67,7 +77,7 @@ export interface IApprovalPresentingToolHandler extends IToolHandler {
  * whether its target survived unchanged, so it may extend that wording.
  */
 export interface IDenialDescribingToolHandler extends IToolHandler {
-	describeDenial(config: TaskConfig, block: ToolUse): Promise<string>
+    describeDenial(config: TaskConfig, block: ToolUse): Promise<string>
 }
 
 /**
@@ -82,20 +92,37 @@ export interface IDenialDescribingToolHandler extends IToolHandler {
  * one would retitle a sibling that is still awaiting its own answer.
  */
 export interface IDenialPresentingToolHandler extends IToolHandler {
-	presentDenial(config: TaskConfig, block: ToolUse): Promise<void>
+    presentDenial(config: TaskConfig, block: ToolUse): Promise<void>
 }
 
 export type ToolHandlerPreparationResult =
-	| { outcome: "prepared"; presentation: ToolApprovalPresentation }
-	| { outcome: "rejected"; message: string }
+    | { outcome: "prepared"; presentation: ToolApprovalPresentation }
+    | { outcome: "rejected"; message: string }
 
 export interface IPreparableToolHandler extends IToolHandler {
-	prepare(config: TaskConfig, block: ToolUse): Promise<ToolHandlerPreparationResult>
-	discardPrepared(block: ToolUse): void
+    prepare(config: TaskConfig, block: ToolUse): Promise<ToolHandlerPreparationResult>
+    discardPrepared(block: ToolUse): void
 }
 
 export interface IFullyManagedTool extends IToolHandler, IPartialBlockHandler {
-	// Legacy marker name retained for compatibility; partial methods are presentation-only.
+    // Legacy marker name retained for compatibility; partial methods are presentation-only.
+}
+
+const WORKSPACE_MUTATION_TOOLS = new Set<DlineDefaultTool>([
+    DlineDefaultTool.FILE_NEW,
+    DlineDefaultTool.FILE_EDIT,
+    DlineDefaultTool.NEW_RULE,
+    DlineDefaultTool.APPLY_PATCH,
+    DlineDefaultTool.REPLACE_TEXT,
+    DlineDefaultTool.RENAME,
+])
+
+/** Whether this invocation may mutate workspace files rather than only previewing an edit. */
+function mayMutateWorkspace(block: ToolUse): boolean {
+    const tool = block.name as DlineDefaultTool
+    if (!WORKSPACE_MUTATION_TOOLS.has(tool)) return false
+    if (tool !== DlineDefaultTool.REPLACE_TEXT && tool !== DlineDefaultTool.RENAME) return true
+    return block.params.dry_run !== "true"
 }
 
 /**
@@ -103,38 +130,38 @@ export interface IFullyManagedTool extends IToolHandler, IPartialBlockHandler {
  * This provides proper typing for tools that share the same implementation logic.
  */
 export class SharedToolHandler implements IFullyManagedTool {
-	constructor(
-		public readonly name: ClineDefaultTool,
-		private baseHandler: IFullyManagedTool,
-	) {}
+    constructor(
+        public readonly name: DlineDefaultTool,
+        private baseHandler: IFullyManagedTool,
+    ) {}
 
-	getDescription(block: ToolUse): string {
-		return this.baseHandler.getDescription(block)
-	}
+    getDescription(block: ToolUse): string {
+        return this.baseHandler.getDescription(block)
+    }
 
-	async execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
-		return this.baseHandler.execute(config, block)
-	}
+    async execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
+        return this.baseHandler.execute(config, block)
+    }
 
-	async describeDenial(config: TaskConfig, block: ToolUse): Promise<string> {
-		return describeToolDenial(this.baseHandler, config, block)
-	}
+    async describeDenial(config: TaskConfig, block: ToolUse): Promise<string> {
+        return describeToolDenial(this.baseHandler, config, block)
+    }
 
-	async presentDenial(config: TaskConfig, block: ToolUse): Promise<void> {
-		await presentToolDenial(this.baseHandler, config, block)
-	}
+    async presentDenial(config: TaskConfig, block: ToolUse): Promise<void> {
+        await presentToolDenial(this.baseHandler, config, block)
+    }
 
-	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
-		return this.baseHandler.handlePartialBlock(block, uiHelpers)
-	}
+    async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
+        return this.baseHandler.handlePartialBlock(block, uiHelpers)
+    }
 }
 
 /** Resolve the denial wording a handler reports, falling back to the generic denial. */
 export async function describeToolDenial(handler: IToolHandler | undefined, config: TaskConfig, block: ToolUse): Promise<string> {
-	if (handler && "describeDenial" in handler) {
-		return (handler as IDenialDescribingToolHandler).describeDenial(config, block)
-	}
-	return formatResponse.toolDenied()
+    if (handler && "describeDenial" in handler) {
+        return (handler as IDenialDescribingToolHandler).describeDenial(config, block)
+    }
+    return formatResponse.toolDenied()
 }
 
 /**
@@ -145,9 +172,24 @@ export async function describeToolDenial(handler: IToolHandler | undefined, conf
  * missing one.
  */
 export async function presentToolDenial(handler: IToolHandler | undefined, config: TaskConfig, block: ToolUse): Promise<void> {
-	if (handler && "presentDenial" in handler) {
-		await (handler as IDenialPresentingToolHandler).presentDenial(config, block)
-	}
+    if (handler && "presentDenial" in handler) {
+        await (handler as IDenialPresentingToolHandler).presentDenial(config, block)
+        return
+    }
+    await withdrawUnsettledCard(config, block)
+}
+
+/**
+ * Remove the card a refused call drew while it streamed.
+ *
+ * The call never ran and the generic denial row reports the refusal, so a card
+ * still marked partial would otherwise keep spinning beside it forever. A card
+ * its handler already settled is left alone.
+ */
+async function withdrawUnsettledCard(config: TaskConfig, block: ToolUse): Promise<void> {
+    const card = config.messageState?.clineMessages.find((message) => message.ts === block.ts)
+    if (card?.partial !== true) return
+    await config.messageState.removeMessagesByTs([block.ts])
 }
 
 /**
@@ -155,161 +197,247 @@ export async function presentToolDenial(handler: IToolHandler | undefined, confi
  * Falls back to legacy switch for unregistered tools.
  */
 export class ToolExecutorCoordinator {
-	private handlers = new Map<string, IToolHandler>()
-	private readonly preparedHandlers = new Map<string, { handler: IPreparableToolHandler; block: ToolUse }>()
+    private handlers = new Map<string, IToolHandler>()
+    private readonly preparedHandlers = new Map<string, { handler: IPreparableToolHandler; block: ToolUse }>()
 
-	private readonly toolHandlersMap: Record<ClineDefaultTool, (v: ToolValidator) => IToolHandler | undefined> = {
-		[ClineDefaultTool.ASK]: (_v: ToolValidator) => new AskFollowupQuestionToolHandler(),
-		[ClineDefaultTool.ATTEMPT]: (_v: ToolValidator) => new AttemptCompletionHandler(),
-		[ClineDefaultTool.BASH]: (_v: ToolValidator) => new ExecuteCommandToolHandler(),
-		[ClineDefaultTool.KILL_COMMAND]: (_v: ToolValidator) => new ExecuteCommandToolHandler(ClineDefaultTool.KILL_COMMAND),
-		[ClineDefaultTool.FILE_EDIT]: (v: ToolValidator) =>
-			new SharedToolHandler(ClineDefaultTool.FILE_EDIT, new WriteToFileToolHandler(v)),
-		[ClineDefaultTool.FILE_READ]: (v: ToolValidator) => new ReadFileToolHandler(v),
-		[ClineDefaultTool.FILE_NEW]: (v: ToolValidator) => new WriteToFileToolHandler(v),
-		[ClineDefaultTool.SEARCH]: (v: ToolValidator) => new SearchFilesToolHandler(v),
-		[ClineDefaultTool.LIST_FILES]: (v: ToolValidator) => new ListFilesToolHandler(v),
-		[ClineDefaultTool.LIST_CODE_DEF]: (v: ToolValidator) => new ListCodeDefinitionNamesToolHandler(v),
-		[ClineDefaultTool.BROWSER]: (_v: ToolValidator) => new BrowserToolHandler(),
-		[ClineDefaultTool.MCP_USE]: (_v: ToolValidator) => new UseMcpToolHandler(),
-		[ClineDefaultTool.MCP_ACCESS]: (_v: ToolValidator) => new AccessMcpResourceHandler(),
-		[ClineDefaultTool.MCP_DOCS]: (_v: ToolValidator) => new LoadMcpDocumentationHandler(),
-		[ClineDefaultTool.LOAD_MCP]: (_v: ToolValidator) => new LoadCapabilityHandler(ClineDefaultTool.LOAD_MCP, "mcp"),
-		[ClineDefaultTool.LOAD_SKILL]: (_v: ToolValidator) => new LoadCapabilityHandler(ClineDefaultTool.LOAD_SKILL, "skill"),
-		[ClineDefaultTool.LOAD_WORKFLOW]: (_v: ToolValidator) =>
-			new LoadCapabilityHandler(ClineDefaultTool.LOAD_WORKFLOW, "workflow"),
-		[ClineDefaultTool.NEW_TASK]: (_v: ToolValidator) => new NewTaskHandler(),
-		[ClineDefaultTool.MAKE_PLAN]: (_v: ToolValidator) => new MakePlanHandler(),
-		[ClineDefaultTool.ACT_MODE]: (_v: ToolValidator) => new ActModeRespondHandler(),
-		[ClineDefaultTool.QNA_RESPOND]: (_v: ToolValidator) => new QnaRespondHandler(),
-		[ClineDefaultTool.TODO]: (_v: ToolValidator) => undefined,
-		[ClineDefaultTool.WEB_FETCH]: (_v: ToolValidator) => new WebFetchToolHandler(),
-		[ClineDefaultTool.WEB_SEARCH]: (_v: ToolValidator) => new WebSearchToolHandler(),
-		[ClineDefaultTool.CONDENSE]: (_v: ToolValidator) => undefined,
-		// Compaction summaries arrive as explicit-instruction text owned by ContextCompactionSession, never as a tool call.
-		[ClineDefaultTool.SUMMARIZE_TASK]: (_v: ToolValidator) => undefined,
-		[ClineDefaultTool.REPORT_BUG]: (_v: ToolValidator) => new ReportBugHandler(),
-		[ClineDefaultTool.NEW_RULE]: (v: ToolValidator) =>
-			new SharedToolHandler(ClineDefaultTool.NEW_RULE, new WriteToFileToolHandler(v)),
-		[ClineDefaultTool.APPLY_PATCH]: (_v: ToolValidator) => new ApplyPatchHandler(_v),
-		[ClineDefaultTool.GENERATE_EXPLANATION]: (_v: ToolValidator) => new GenerateExplanationToolHandler(),
-		[ClineDefaultTool.GENERATE_IMAGE]: (_v: ToolValidator) => new GenerateImageToolHandler(),
-		[ClineDefaultTool.USE_SUBAGENT]: (_v: ToolValidator) => new UseSubagentToolHandler(),
-		[ClineDefaultTool.USE_SUBAGENTS]: (_v: ToolValidator) => new UseSubagentsToolHandler(),
-		[ClineDefaultTool.SPAWN_TASK]: (_v: ToolValidator) => new SpawnTaskHandler(),
-		[ClineDefaultTool.GENERATE_REPORT]: (_v: ToolValidator) => new GenerateReportHandler(),
-		[ClineDefaultTool.CHANGE_TODO_LIST]: (_v: ToolValidator) => new FocusChainHandler(),
-		[ClineDefaultTool.FIND_REFERENCES]: (_v: ToolValidator) => new FindReferencesHandler(),
-		[ClineDefaultTool.RENAME]: (_v: ToolValidator) => new RenameSymbolHandler(),
-		[ClineDefaultTool.REPLACE_TEXT]: (_v: ToolValidator) => new ReplaceTextHandler(),
-		[ClineDefaultTool.STATUS_UPDATE]: (_v: ToolValidator) => new StatusUpdateHandler(),
-	}
+    private readonly toolHandlersMap: Record<DlineDefaultTool, (v: ToolValidator) => IToolHandler | undefined> = {
+        [DlineDefaultTool.ASK]: (_v: ToolValidator) => new AskFollowupQuestionToolHandler(),
+        [DlineDefaultTool.ATTEMPT]: (_v: ToolValidator) => new AttemptCompletionHandler(),
+        [DlineDefaultTool.BASH]: (_v: ToolValidator) => new ExecuteCommandToolHandler(),
+        [DlineDefaultTool.KILL_COMMAND]: (_v: ToolValidator) => new ExecuteCommandToolHandler(DlineDefaultTool.KILL_COMMAND),
+        [DlineDefaultTool.FILE_EDIT]: (v: ToolValidator) =>
+            new SharedToolHandler(DlineDefaultTool.FILE_EDIT, new WriteToFileToolHandler(v)),
+        [DlineDefaultTool.FILE_READ]: (v: ToolValidator) => new ReadFileToolHandler(v),
+        [DlineDefaultTool.FILE_NEW]: (v: ToolValidator) => new WriteToFileToolHandler(v),
+        [DlineDefaultTool.SEARCH]: (v: ToolValidator) => new SearchFilesToolHandler(v),
+        [DlineDefaultTool.LIST_FILES]: (v: ToolValidator) => new ListFilesToolHandler(v),
+        [DlineDefaultTool.LIST_CODE_DEF]: (v: ToolValidator) => new ListCodeDefinitionNamesToolHandler(v),
+        [DlineDefaultTool.BROWSER]: (_v: ToolValidator) => new BrowserToolHandler(),
+        [DlineDefaultTool.MCP_USE]: (_v: ToolValidator) => new UseMcpToolHandler(),
+        [DlineDefaultTool.MCP_ACCESS]: (_v: ToolValidator) => new AccessMcpResourceHandler(),
+        [DlineDefaultTool.MCP_DOCS]: (_v: ToolValidator) => new LoadMcpDocumentationHandler(),
+        [DlineDefaultTool.LOAD_MCP]: (_v: ToolValidator) => new LoadCapabilityHandler(DlineDefaultTool.LOAD_MCP, "mcp"),
+        [DlineDefaultTool.LOAD_SKILL]: (_v: ToolValidator) => new LoadCapabilityHandler(DlineDefaultTool.LOAD_SKILL, "skill"),
+        [DlineDefaultTool.LOAD_WORKFLOW]: (_v: ToolValidator) =>
+            new LoadCapabilityHandler(DlineDefaultTool.LOAD_WORKFLOW, "workflow"),
+        [DlineDefaultTool.NEW_TASK]: (_v: ToolValidator) => new NewTaskHandler(),
+        [DlineDefaultTool.MAKE_PLAN]: (_v: ToolValidator) => new MakePlanHandler(),
+        [DlineDefaultTool.WORKING_RESPOND]: (_v: ToolValidator) => new WorkingRespondHandler(),
+        // Former name; canonicalToolName() routes recorded calls to working_respond.
+        [DlineDefaultTool.LEGACY_ACT_MODE_RESPOND]: (_v: ToolValidator) => undefined,
+        [DlineDefaultTool.QNA_RESPOND]: (_v: ToolValidator) => new QnaRespondHandler(),
+        [DlineDefaultTool.TODO]: (_v: ToolValidator) => undefined,
+        [DlineDefaultTool.WEB_FETCH]: (_v: ToolValidator) => new WebFetchToolHandler(),
+        [DlineDefaultTool.WEB_SEARCH]: (_v: ToolValidator) => new WebSearchToolHandler(),
+        [DlineDefaultTool.CONDENSE]: (_v: ToolValidator) => undefined,
+        // Compaction summaries arrive as explicit-instruction text owned by ContextCompactionSession, never as a tool call.
+        [DlineDefaultTool.SUMMARIZE_TASK]: (_v: ToolValidator) => undefined,
+        [DlineDefaultTool.REPORT_BUG]: (_v: ToolValidator) => new ReportBugHandler(),
+        [DlineDefaultTool.NEW_RULE]: (v: ToolValidator) =>
+            new SharedToolHandler(DlineDefaultTool.NEW_RULE, new WriteToFileToolHandler(v)),
+        [DlineDefaultTool.APPLY_PATCH]: (_v: ToolValidator) => new ApplyPatchHandler(_v),
+        [DlineDefaultTool.GENERATE_EXPLANATION]: (_v: ToolValidator) => new GenerateExplanationToolHandler(),
+        [DlineDefaultTool.GENERATE_IMAGE]: (_v: ToolValidator) => new GenerateImageToolHandler(),
+        [DlineDefaultTool.USE_SUBAGENT]: (_v: ToolValidator) => new UseSubagentToolHandler(),
+        [DlineDefaultTool.USE_SUBAGENTS]: (_v: ToolValidator) => new UseSubagentsToolHandler(),
+        [DlineDefaultTool.SPAWN_TASK]: (_v: ToolValidator) => new SpawnTaskHandler(),
+        [DlineDefaultTool.GENERATE_REPORT]: (_v: ToolValidator) => new GenerateReportHandler(),
+        [DlineDefaultTool.CHANGE_TODO_LIST]: (_v: ToolValidator) => new FocusChainHandler(),
+        [DlineDefaultTool.FIND_REFERENCES]: (_v: ToolValidator) => new FindReferencesHandler(),
+        [DlineDefaultTool.RENAME]: (_v: ToolValidator) => new RenameSymbolHandler(),
+        [DlineDefaultTool.REPLACE_TEXT]: (_v: ToolValidator) => new ReplaceTextHandler(),
+        [DlineDefaultTool.PHASE_REPORT]: (_v: ToolValidator) => new PhaseReportHandler(),
+        // Former name; canonicalToolName() routes recorded calls to phase_report.
+        [DlineDefaultTool.LEGACY_STATUS_UPDATE]: (_v: ToolValidator) => undefined,
+    }
 
-	/**
-	 * Register a tool handler
-	 */
-	register(handler: IToolHandler): void {
-		this.handlers.set(handler.name, handler)
-	}
+    /**
+     * Register a tool handler
+     */
+    register(handler: IToolHandler): void {
+        this.handlers.set(handler.name, handler)
+    }
 
-	async restoreSubagentRetry(config: TaskConfig, activityId: string): Promise<boolean> {
-		return restoreSubagentActivityRetry(config, activityId)
-	}
+    async restoreSubagentRetry(config: TaskConfig, activityId: string): Promise<boolean> {
+        return restoreSubagentActivityRetry(config, activityId)
+    }
 
-	registerByName(toolName: ClineDefaultTool, validator: ToolValidator): void {
-		const handler = this.toolHandlersMap[toolName]?.(validator)
-		if (handler) {
-			this.register(handler)
-		}
-	}
+    registerByName(toolName: DlineDefaultTool, validator: ToolValidator): void {
+        const handler = this.toolHandlersMap[toolName]?.(validator)
+        if (handler) {
+            this.register(handler)
+        }
+    }
 
-	/**
-	 * Check if a handler is registered for the given tool
-	 */
-	has(toolName: string): boolean {
-		return this.getHandler(toolName) !== undefined
-	}
+    /**
+     * Check if a handler is registered for the given tool
+     */
+    has(toolName: string): boolean {
+        return this.getHandler(toolName) !== undefined
+    }
 
-	/**
-	 * Get a handler for the given tool name
-	 */
-	getHandler(toolName: string): IToolHandler | undefined {
-		const staticHandler = this.handlers.get(this.canonicalToolName(toolName))
-		if (staticHandler) {
-			return staticHandler
-		}
+    /** Whether this tool opens its own durable confirmation before any external effect. */
+    ownsInteractionConfirmation(toolName: string): boolean {
+        const handler = this.getHandler(toolName)
+        return Boolean(handler && "ownsInteractionConfirmation" in handler && handler.ownsInteractionConfirmation === true)
+    }
 
-		return undefined
-	}
+    /**
+     * Get a handler for the given tool name
+     */
+    getHandler(toolName: string): IToolHandler | undefined {
+        const staticHandler = this.handlers.get(this.canonicalToolName(toolName))
+        if (staticHandler) {
+            return staticHandler
+        }
 
-	/** Prepare one registry-owned admission without starting the handler. */
-	prepareAdmission<T>(
-		block: ToolUse,
-		snapshot: ToolAdmissionSnapshot,
-		run: ToolSideEffect<T>,
-		snapshotProvider?: () => ToolAdmissionSnapshot,
-	): ToolPreflightResult<T> {
-		const canonicalToolName = this.canonicalToolName(block.name)
-		const handler = this.handlers.get(canonicalToolName)
-		if (!handler) {
-			return rejectToolCall({
-				reason: "unsupported_tool",
-				message: `No handler registered for tool: ${block.name}`,
-			})
-		}
-		const presentation =
-			"getApprovalPresentation" in handler
-				? (handler as IApprovalPresentingToolHandler).getApprovalPresentation(
-						block,
-						snapshot.settings.enableNotifications,
-					)
-				: undefined
-		return prepareRegisteredToolAdmission({
-			canonicalToolName: canonicalToolName as ClineDefaultTool,
-			block,
-			description: handler.getDescription(block),
-			snapshot,
-			snapshotProvider,
-			presentation,
-			run,
-		})
-	}
+        return undefined
+    }
 
-	async prepareExecution(config: TaskConfig, block: ToolUse): Promise<ToolHandlerPreparationResult | undefined> {
-		const handler = this.getHandler(block.name)
-		if (!handler || !("prepare" in handler) || !("discardPrepared" in handler)) return undefined
-		const preparation = await (handler as IPreparableToolHandler).prepare(config, block)
-		if (preparation.outcome === "prepared" && block.dline_tid) {
-			this.preparedHandlers.set(block.dline_tid, { handler: handler as IPreparableToolHandler, block })
-		}
-		return preparation
-	}
+    /** Present one incomplete tool block without admitting or executing it. */
+    async presentPartial(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
+        const handler = this.getHandler(block.name)
+        if (!handler || !("handlePartialBlock" in handler)) return
+        await (handler as IPartialBlockHandler).handlePartialBlock(block, uiHelpers)
+    }
 
-	discardPreparedExecution(dlineTid: string): void {
-		const prepared = this.preparedHandlers.get(dlineTid)
-		if (!prepared) return
-		this.preparedHandlers.delete(dlineTid)
-		prepared.handler.discardPrepared(prepared.block)
-	}
+    /** Prepare one registry-owned admission without starting the handler. */
+    prepareAdmission<T>(
+        block: ToolUse,
+        snapshot: ToolAdmissionSnapshot,
+        run: ToolSideEffect<T>,
+        snapshotProvider?: () => ToolAdmissionSnapshot,
+    ): ToolPreflightResult<T> {
+        const canonicalToolName = this.canonicalToolName(block.name)
+        const handler = this.handlers.get(canonicalToolName)
+        if (!handler) {
+            return rejectToolCall({
+                reason: "unsupported_tool",
+                message: `No handler registered for tool: ${block.name}`,
+            })
+        }
+        const presentation =
+            "getApprovalPresentation" in handler
+                ? (handler as IApprovalPresentingToolHandler).getApprovalPresentation(
+                      block,
+                      snapshot.settings.enableNotifications,
+                  )
+                : undefined
+        const observedRun = snapshot.inheritsApproval
+            ? () =>
+                  new ToolExecutionObservation({
+                      taskId: snapshot.taskId,
+                      toolName: canonicalToolName,
+                      turnId: "",
+                      native: false,
+                      scope: "subagent",
+                      parent: "ambient",
+                  }).run(run)
+            : run
+        return prepareRegisteredToolAdmission({
+            canonicalToolName: canonicalToolName as DlineDefaultTool,
+            block,
+            description: handler.getDescription(block),
+            snapshot,
+            snapshotProvider,
+            presentation,
+            run: observedRun,
+        })
+    }
 
-	/** Registered names exposed for exhaustive admission coverage tests. */
-	getRegisteredToolNames(): string[] {
-		return Array.from(this.handlers.keys())
-	}
+    async prepareExecution(config: TaskConfig, block: ToolUse): Promise<ToolHandlerPreparationResult | undefined> {
+        const handler = this.getHandler(block.name)
+        if (!handler || !("prepare" in handler) || !("discardPrepared" in handler)) return undefined
+        const preparation = await (handler as IPreparableToolHandler).prepare(config, block)
+        if (preparation.outcome === "prepared" && block.dline_tid) {
+            this.preparedHandlers.set(block.dline_tid, { handler: handler as IPreparableToolHandler, block })
+        }
+        return preparation
+    }
 
-	private canonicalToolName(toolName: string): string {
-		return toolName.includes(CLINE_MCP_TOOL_IDENTIFIER) ? ClineDefaultTool.MCP_USE : toolName
-	}
+    discardPreparedExecution(dlineTid: string): void {
+        const prepared = this.preparedHandlers.get(dlineTid)
+        if (!prepared) return
+        this.preparedHandlers.delete(dlineTid)
+        prepared.handler.discardPrepared(prepared.block)
+    }
 
-	/**
-	 * Execute a tool through its registered handler
-	 */
-	async execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
-		const handler = this.getHandler(block.name)
-		if (!handler) {
-			throw new Error(`No handler registered for tool: ${block.name}`)
-		}
-		if (block.dline_tid) this.preparedHandlers.delete(block.dline_tid)
-		return handler.execute(config, block)
-	}
+    /** Registered names exposed for exhaustive admission coverage tests. */
+    getRegisteredToolNames(): string[] {
+        return Array.from(this.handlers.keys())
+    }
+
+    private canonicalToolName(toolName: string): string {
+        if (toolName.includes(CLINE_MCP_TOOL_IDENTIFIER)) return DlineDefaultTool.MCP_USE
+        // act_mode_respond was renamed to working_respond; calls recorded under the old name
+        // (history replay, restored turns, XML output) keep the same non-blocking behavior.
+        if (toolName === DlineDefaultTool.LEGACY_ACT_MODE_RESPOND) return DlineDefaultTool.WORKING_RESPOND
+        // status_update was renamed to phase_report in the same way.
+        if (toolName === DlineDefaultTool.LEGACY_STATUS_UPDATE) return DlineDefaultTool.PHASE_REPORT
+        return toolName
+    }
+
+    /**
+     * Execute a tool through its registered handler
+     */
+    async execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
+        const handler = this.getHandler(block.name)
+        if (!handler) {
+            const refusal = findHandlerlessExplicitRefusal(block.name, config.explicitInstructions)
+            if (refusal) return formatResponse.toolError(explicitToolRefusalMessage(block.name, refusal))
+            throw new Error(`No handler registered for tool: ${block.name}`)
+        }
+        if (block.dline_tid) this.preparedHandlers.delete(block.dline_tid)
+        const authorized = this.authorize(config, handler.name)
+        if (!authorized.ok) {
+            // The code is what the model reads back, so it can tell a missing grant
+            // from a spent one instead of retrying a call that can never run.
+            return formatResponse.toolError(explicitToolRefusalMessage(block.name, authorized.code))
+        }
+        // The request is already on the provider wire. A file mutation enters the
+        // checkpoint sequence after the admitted round baseline and settles before
+        // a later round may inspect workspace changes.
+        let settleMutation: (() => void) | undefined
+        if (mayMutateWorkspace(block)) {
+            try {
+                settleMutation = await authorized.config.callbacks.beginWorkspaceMutation?.()
+            } catch (error) {
+                // Checkpoints are a side feature. A failed ticket loses restore
+                // coverage, but must not turn an admitted file tool into a deadlock.
+                Logger.warn("[ToolExecutorCoordinator] Workspace mutation ticket failed; continuing tool execution", error)
+            }
+        }
+        // Effects that ride on a call without belonging to any tool. The surface
+        // decides which of them it has, so a task with no checklist and no
+        // workspace history runs the same tools without supplying either.
+        const effects = resolveToolCallSideEffects(config)
+        let result: ToolHandlerResult
+        try {
+            result = await handler.execute(authorized.config, block)
+        } finally {
+            settleMutation?.()
+        }
+        await applyToolCallSideEffects(effects, block)
+        return result
+    }
+
+    /**
+     * Consume the turn's one-shot authority for an explicit-only tool.
+     *
+     * The gate runs once per invocation so a handler that requires explicit
+     * authorization sees exactly one consumed authorization. A refusal stops the
+     * call here, before the handler or any of its effects: an explicit-only tool
+     * the user never asked for must not run on the strength of the model alone.
+     */
+    private authorize(
+        config: TaskConfig,
+        tool: DlineDefaultTool,
+    ):
+        | { readonly ok: true; readonly config: TaskConfig }
+        | { readonly ok: false; readonly code: ExplicitInstructionFailureCode } {
+        const gated = authorizeExplicitToolExecution(tool, config.explicitInstructions)
+        if (!gated.ok) return { ok: false, code: gated.code }
+        if (!gated.authorization) return { ok: true, config }
+        return { ok: true, config: { ...config, explicitInstructionAuthorization: gated.authorization } }
+    }
 }

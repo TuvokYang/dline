@@ -34,12 +34,12 @@ export { RUNTIME_SCOPE_NAME, RUNTIME_SCOPE_VERSION } from "@/services/telemetry/
 const DLINE_PREFIX = "dline."
 
 export const RUNTIME_ATTRIBUTE_KEYS = {
-	sequence: `${DLINE_PREFIX}sequence`,
-	eventId: `${DLINE_PREFIX}event_id`,
-	monotonicMs: `${DLINE_PREFIX}monotonic_ms`,
-	taskId: `${DLINE_PREFIX}task_id`,
-	controllerId: `${DLINE_PREFIX}controller_id`,
-	workspaceId: `${DLINE_PREFIX}workspace_id`,
+    sequence: `${DLINE_PREFIX}sequence`,
+    eventId: `${DLINE_PREFIX}event_id`,
+    monotonicMs: `${DLINE_PREFIX}monotonic_ms`,
+    taskId: `${DLINE_PREFIX}task_id`,
+    controllerId: `${DLINE_PREFIX}controller_id`,
+    workspaceId: `${DLINE_PREFIX}workspace_id`,
 } as const
 
 /**
@@ -52,38 +52,38 @@ export const RUNTIME_ATTRIBUTE_KEYS = {
  * invariant breach to FATAL because it reports a defect in our own assumptions.
  */
 export function toSeverityNumber(priority: RuntimeEventPriority): SeverityNumber {
-	switch (priority) {
-		case RuntimeEventPriority.Debug:
-			return SeverityNumber.DEBUG
-		case RuntimeEventPriority.Info:
-			return SeverityNumber.INFO
-		case RuntimeEventPriority.Performance:
-			return SeverityNumber.INFO
-		case RuntimeEventPriority.PerformanceAnomaly:
-			return SeverityNumber.WARN
-		case RuntimeEventPriority.Error:
-			return SeverityNumber.ERROR
-		case RuntimeEventPriority.Invariant:
-			return SeverityNumber.FATAL
-	}
+    switch (priority) {
+        case RuntimeEventPriority.Debug:
+            return SeverityNumber.DEBUG
+        case RuntimeEventPriority.Info:
+            return SeverityNumber.INFO
+        case RuntimeEventPriority.Performance:
+            return SeverityNumber.INFO
+        case RuntimeEventPriority.PerformanceAnomaly:
+            return SeverityNumber.WARN
+        case RuntimeEventPriority.Error:
+            return SeverityNumber.ERROR
+        case RuntimeEventPriority.Invariant:
+            return SeverityNumber.FATAL
+    }
 }
 
 /** Human-readable counterpart of {@link toSeverityNumber}. */
 export function toSeverityText(priority: RuntimeEventPriority): string {
-	switch (priority) {
-		case RuntimeEventPriority.Debug:
-			return "DEBUG"
-		case RuntimeEventPriority.Info:
-			return "INFO"
-		case RuntimeEventPriority.Performance:
-			return "INFO"
-		case RuntimeEventPriority.PerformanceAnomaly:
-			return "WARN"
-		case RuntimeEventPriority.Error:
-			return "ERROR"
-		case RuntimeEventPriority.Invariant:
-			return "FATAL"
-	}
+    switch (priority) {
+        case RuntimeEventPriority.Debug:
+            return "DEBUG"
+        case RuntimeEventPriority.Info:
+            return "INFO"
+        case RuntimeEventPriority.Performance:
+            return "INFO"
+        case RuntimeEventPriority.PerformanceAnomaly:
+            return "WARN"
+        case RuntimeEventPriority.Error:
+            return "ERROR"
+        case RuntimeEventPriority.Invariant:
+            return "FATAL"
+    }
 }
 
 /**
@@ -93,16 +93,16 @@ export function toSeverityText(priority: RuntimeEventPriority): string {
  * translated but still has to decide what to shed first.
  */
 export function fromSeverityNumber(severity: SeverityNumber): RuntimeEventPriority {
-	if (severity >= SeverityNumber.FATAL) return RuntimeEventPriority.Invariant
-	if (severity >= SeverityNumber.ERROR) return RuntimeEventPriority.Error
-	if (severity >= SeverityNumber.WARN) return RuntimeEventPriority.PerformanceAnomaly
-	if (severity >= SeverityNumber.INFO) return RuntimeEventPriority.Info
-	return RuntimeEventPriority.Debug
+    if (severity >= SeverityNumber.FATAL) return RuntimeEventPriority.Invariant
+    if (severity >= SeverityNumber.ERROR) return RuntimeEventPriority.Error
+    if (severity >= SeverityNumber.WARN) return RuntimeEventPriority.PerformanceAnomaly
+    if (severity >= SeverityNumber.INFO) return RuntimeEventPriority.Info
+    return RuntimeEventPriority.Debug
 }
 
 /** Milliseconds since the epoch expressed as OTLP nanoseconds. */
 export function toUnixNano(timestampMs: number): bigint {
-	return BigInt(Math.trunc(timestampMs)) * 1_000_000n
+    return BigInt(Math.trunc(timestampMs)) * 1_000_000n
 }
 
 /**
@@ -113,27 +113,27 @@ export function toUnixNano(timestampMs: number): bigint {
  * corrupt them.
  */
 export interface OtlpLogRecord {
-	readonly timeUnixNano: string
-	readonly observedTimeUnixNano: string
-	readonly traceId?: string
-	readonly spanId?: string
-	readonly flags?: number
-	readonly severityNumber: number
-	readonly severityText: string
-	readonly body: { readonly stringValue: string }
-	readonly attributes: readonly OtlpKeyValue[]
+    readonly timeUnixNano: string
+    readonly observedTimeUnixNano: string
+    readonly traceId?: string
+    readonly spanId?: string
+    readonly flags?: number
+    readonly severityNumber: number
+    readonly severityText: string
+    readonly body: { readonly stringValue: string }
+    readonly attributes: readonly OtlpKeyValue[]
 }
 
 export interface OtlpKeyValue {
-	readonly key: string
-	readonly value: OtlpAnyValue
+    readonly key: string
+    readonly value: OtlpAnyValue
 }
 
 export type OtlpAnyValue =
-	| { readonly stringValue: string }
-	| { readonly intValue: string }
-	| { readonly doubleValue: number }
-	| { readonly boolValue: boolean }
+    | { readonly stringValue: string }
+    | { readonly intValue: string }
+    | { readonly doubleValue: number }
+    | { readonly boolValue: boolean }
 
 /**
  * Boxes a scalar into the OTLP `AnyValue` union.
@@ -142,9 +142,9 @@ export type OtlpAnyValue =
  * protobuf type is 64-bit and JSON numbers are not.
  */
 export function toAnyValue(value: string | number | boolean): OtlpAnyValue {
-	if (typeof value === "boolean") return { boolValue: value }
-	if (typeof value === "string") return { stringValue: value }
-	return Number.isInteger(value) ? { intValue: String(value) } : { doubleValue: value }
+    if (typeof value === "boolean") return { boolValue: value }
+    if (typeof value === "string") return { stringValue: value }
+    return Number.isInteger(value) ? { intValue: String(value) } : { doubleValue: value }
 }
 
 /**
@@ -155,23 +155,23 @@ export function toAnyValue(value: string | number | boolean): OtlpAnyValue {
  * every payload and misrepresent it as an event-level dimension.
  */
 export function toLogAttributes(event: RuntimeTelemetryEvent): LogAttributes {
-	const attributes: Record<string, AnyValue> = {
-		...event.attributes,
-		[RUNTIME_ATTRIBUTE_KEYS.sequence]: event.sequence,
-		[RUNTIME_ATTRIBUTE_KEYS.eventId]: event.eventId,
-		[RUNTIME_ATTRIBUTE_KEYS.monotonicMs]: event.monotonicMs,
-	}
+    const attributes: Record<string, AnyValue> = {
+        ...event.attributes,
+        [RUNTIME_ATTRIBUTE_KEYS.sequence]: event.sequence,
+        [RUNTIME_ATTRIBUTE_KEYS.eventId]: event.eventId,
+        [RUNTIME_ATTRIBUTE_KEYS.monotonicMs]: event.monotonicMs,
+    }
 
-	const { taskId, controllerId, workspaceId } = event.context
-	if (taskId !== undefined) {
-		attributes[RUNTIME_ATTRIBUTE_KEYS.taskId] = RuntimeContentPolicy.forEvents().apply({ taskId }).attributes.taskId
-	}
-	if (controllerId !== undefined) attributes[RUNTIME_ATTRIBUTE_KEYS.controllerId] = TELEMETRY_MASK_VALUE
-	if (workspaceId !== undefined) attributes[RUNTIME_ATTRIBUTE_KEYS.workspaceId] = TELEMETRY_MASK_VALUE
+    const { taskId, controllerId, workspaceId } = event.context
+    if (taskId !== undefined) {
+        attributes[RUNTIME_ATTRIBUTE_KEYS.taskId] = RuntimeContentPolicy.forEvents().apply({ taskId }).attributes.taskId
+    }
+    if (controllerId !== undefined) attributes[RUNTIME_ATTRIBUTE_KEYS.controllerId] = TELEMETRY_MASK_VALUE
+    if (workspaceId !== undefined) attributes[RUNTIME_ATTRIBUTE_KEYS.workspaceId] = TELEMETRY_MASK_VALUE
 
-	if (event.error) Object.assign(attributes, exceptionAttributes(event.error))
+    if (event.error) Object.assign(attributes, exceptionAttributes(event.error))
 
-	return attributes
+    return attributes
 }
 
 /**
@@ -181,25 +181,25 @@ export function toLogAttributes(event: RuntimeTelemetryEvent): LogAttributes {
  * it admits them; there is no separate observation step that could drift.
  */
 export function isWarningEvent(event: RuntimeTelemetryEvent): boolean {
-	return event.attributes.logger_level === "warn" || event.attributes.message_level === "warning"
+    return event.attributes.logger_level === "warn" || event.attributes.message_level === "warning"
 }
 
 export function toOtlpLogRecord(event: RuntimeTelemetryEvent): OtlpLogRecord {
-	const unixNano = toUnixNano(event.timestamp).toString()
-	const attributes = toLogAttributes(event)
+    const unixNano = toUnixNano(event.timestamp).toString()
+    const attributes = toLogAttributes(event)
 
-	return {
-		timeUnixNano: unixNano,
-		observedTimeUnixNano: unixNano,
-		...(event.traceContext
-			? { traceId: event.traceContext.traceId, spanId: event.traceContext.spanId, flags: event.traceContext.traceFlags }
-			: {}),
-		severityNumber: isWarningEvent(event) ? SeverityNumber.WARN : toSeverityNumber(event.priority),
-		severityText: isWarningEvent(event) ? "WARN" : toSeverityText(event.priority),
-		body: { stringValue: event.name },
-		attributes: Object.entries(attributes).map(([key, value]) => ({
-			key,
-			value: toAnyValue(value as string | number | boolean),
-		})),
-	}
+    return {
+        timeUnixNano: unixNano,
+        observedTimeUnixNano: unixNano,
+        ...(event.traceContext
+            ? { traceId: event.traceContext.traceId, spanId: event.traceContext.spanId, flags: event.traceContext.traceFlags }
+            : {}),
+        severityNumber: isWarningEvent(event) ? SeverityNumber.WARN : toSeverityNumber(event.priority),
+        severityText: isWarningEvent(event) ? "WARN" : toSeverityText(event.priority),
+        body: { stringValue: event.name },
+        attributes: Object.entries(attributes).map(([key, value]) => ({
+            key,
+            value: toAnyValue(value as string | number | boolean),
+        })),
+    }
 }

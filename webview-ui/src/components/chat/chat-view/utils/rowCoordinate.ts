@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 
 /**
  * Origin for the row coordinate reported to the virtual list.
@@ -13,20 +13,26 @@ export const ROW_INDEX_BASE = 1_000_000
  * needed to recognise it again after the loaded window moves.
  */
 export interface RowCoordinate {
-	firstItemIndex: number
-	identities: string[]
+    firstItemIndex: number
+    identities: string[]
 }
 
-/**
- * Identify a row by the messages it is built from.
- *
- * Grouping can merge several messages into one row and regroup them when
- * neighbouring history arrives, so the full membership is what distinguishes
- * "the same row again" from "a row that now covers different messages". Using
- * only the first and last message would report a regrouped row as unchanged.
- */
-export function rowIdentity(row: ClineMessage | ClineMessage[]): string {
-	return Array.isArray(row) ? row.map((message) => message.ts).join(",") : String(row.ts)
+/** Identify a virtual row by its stable logical owner, falling back to membership for ordinary groups. */
+export function rowIdentity(row: UiMessage | UiMessage[]): string {
+    if (!Array.isArray(row)) return String(row.ts)
+    const group = row as UiMessage[] & {
+        _activityFoldId?: string
+        _toolGroupId?: string
+        _explorationRunId?: string
+        _browserSessionId?: string
+    }
+    return (
+        group._activityFoldId ??
+        group._explorationRunId ??
+        group._toolGroupId ??
+        group._browserSessionId ??
+        row.map((message) => message.ts).join(",")
+    )
 }
 
 /**
@@ -59,35 +65,35 @@ const AMBIGUOUS = -1
  * @returns Rows inserted ahead of the known rows, or null when unrecognisable.
  */
 export function leadingRowShift(previous: readonly string[], next: readonly string[]): number | null {
-	if (previous.length === 0 || next.length === 0) return null
+    if (previous.length === 0 || next.length === 0) return null
 
-	const positions = new Map<string, number>()
-	for (const [index, identity] of next.entries()) {
-		// A duplicate identity cannot locate anything. Marking it rather than
-		// keeping the first occurrence stops an ambiguous match from being
-		// counted as agreement.
-		if (positions.has(identity)) positions.set(identity, AMBIGUOUS)
-		else positions.set(identity, index)
-	}
+    const positions = new Map<string, number>()
+    for (const [index, identity] of next.entries()) {
+        // A duplicate identity cannot locate anything. Marking it rather than
+        // keeping the first occurrence stops an ambiguous match from being
+        // counted as agreement.
+        if (positions.has(identity)) positions.set(identity, AMBIGUOUS)
+        else positions.set(identity, index)
+    }
 
-	const shiftCounts = new Map<number, number>()
-	for (const [previousIndex, identity] of previous.entries()) {
-		const nextIndex = positions.get(identity)
-		if (nextIndex === undefined || nextIndex === AMBIGUOUS) continue
-		const shift = nextIndex - previousIndex
-		shiftCounts.set(shift, (shiftCounts.get(shift) ?? 0) + 1)
-	}
+    const shiftCounts = new Map<number, number>()
+    for (const [previousIndex, identity] of previous.entries()) {
+        const nextIndex = positions.get(identity)
+        if (nextIndex === undefined || nextIndex === AMBIGUOUS) continue
+        const shift = nextIndex - previousIndex
+        shiftCounts.set(shift, (shiftCounts.get(shift) ?? 0) + 1)
+    }
 
-	let bestShift: number | null = null
-	let bestCount = 0
-	for (const [shift, count] of shiftCounts) {
-		if (count > bestCount) {
-			bestShift = shift
-			bestCount = count
-		}
-	}
+    let bestShift: number | null = null
+    let bestCount = 0
+    for (const [shift, count] of shiftCounts) {
+        if (count > bestCount) {
+            bestShift = shift
+            bestCount = count
+        }
+    }
 
-	return bestCount >= MIN_AGREEING_ROWS ? bestShift : null
+    return bestCount >= MIN_AGREEING_ROWS ? bestShift : null
 }
 
 /**
@@ -102,9 +108,9 @@ export function leadingRowShift(previous: readonly string[], next: readonly stri
  * @param rows Rows being rendered now, in display order.
  * @returns Coordinate describing the rows now on screen.
  */
-export function advanceRowCoordinate(previous: RowCoordinate, rows: readonly (ClineMessage | ClineMessage[])[]): RowCoordinate {
-	const identities = rows.map(rowIdentity)
-	const shift = leadingRowShift(previous.identities, identities)
-	const firstItemIndex = shift === null ? previous.firstItemIndex : previous.firstItemIndex - shift
-	return { firstItemIndex, identities }
+export function advanceRowCoordinate(previous: RowCoordinate, rows: readonly (UiMessage | UiMessage[])[]): RowCoordinate {
+    const identities = rows.map(rowIdentity)
+    const shift = leadingRowShift(previous.identities, identities)
+    const firstItemIndex = shift === null ? previous.firstItemIndex : previous.firstItemIndex - shift
+    return { firstItemIndex, identities }
 }

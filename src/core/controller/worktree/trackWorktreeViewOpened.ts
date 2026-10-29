@@ -10,7 +10,7 @@ import { Controller } from ".."
  * @returns Empty response
  */
 export async function trackWorktreeViewOpened(_controller: Controller, request: TrackWorktreeViewOpenedRequest): Promise<Empty> {
-	const source = request.source === "home_page" ? "home_page" : "menu_bar"
-	telemetryService.captureWorktreeViewOpened(source)
-	return Empty.create({})
+    const source = request.source === "home_page" ? "home_page" : "menu_bar"
+    telemetryService.captureWorktreeViewOpened(source)
+    return Empty.create({})
 }

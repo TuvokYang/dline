@@ -1,68 +1,50 @@
 ---
 title: 从 Cline 迁移
-description: Dline 启动时如何把 Cline 的设置、全局能力文件和部分缓存复制到 Dline 的存储位置，以及哪些内容不会迁移。
+description: 手动把 Cline 的设置、MCP 配置、规则和工作流复制到 Dline 的文件夹，以及哪些内容无法带过来。
 ---
 
 import { Aside } from "@astrojs/starlight/components"
 
-如果你之前用过 Cline，Dline 启动时会检查旧的 Cline 数据，并把可迁移的内容复制到 Dline 自己的存储位置。迁移只做复制，不会修改或删除任何 Cline 文件。
+Dline 不会自动导入 Cline 的数据。它从空的 Dline 文件夹开始，不会读取、修改或删除任何 Cline 文件。如果想保留 Cline 的配置，请按下文手动复制到 Dline 的文件夹。
 
-## 何时运行
+## 开始之前
 
-- 每次扩展启动时都会检查一次。只有至少一项内容满足“源有内容、目标不存在或为空”时才会真正迁移。
-- 迁移期间会显示通知 **Dline: Migrating legacy Cline data...**，进度文字为 **Copying data into empty Dline locations...**。
-- 至少复制成功一项后，会显示 **Dline: Data migrated - …**，列出已处理的项目。
-- 每一步单独执行。某一步失败时，Dline 记录错误并继续下一步，不会阻止扩展启动。
+1. 关闭所有 VS Code 窗口，避免复制期间 Cline 或 Dline 正在写入文件。
+2. 找到本机上的对应文件夹。`<Documents>` 指操作系统的“文档”目录。
 
-## 迁移内容
+| 文件夹 | Cline | Dline |
+|---|---|---|
+| 数据根目录：设置、全局状态、密钥 | `~/.cline/data/` | `~/.dline/data/`；设置了 `DLINE_DIR` 时为 `<DLINE_DIR>/data/` |
+| 文档根目录：规则、工作流、技能、hooks、MCP | `<Documents>/Cline/` | `<Documents>/dline/`；设置了 `DLINE_DOCS_DIR` 时为该变量指定的目录 |
+| Endpoint 配置 | `~/.cline/endpoints.json` | `~/.dline/endpoints.json` |
 
-下表按执行顺序列出。`<Documents>` 指操作系统的“文档”目录，`<documents-root>` 指 Dline 文档根目录，默认是 `<Documents>/dline`。
+这些变量的作用见[配置](/zh-cn/getting-started/config/)。
 
-| 顺序 | 来源 | 目标 | 条件 |
-|---|---|---|---|
-| 1 | `~/.cline/data/` | `~/.dline/data/` | 目标不存在或为空 |
-| 2 | `~/.cline/endpoints.json` | `~/.dline/endpoints.json` | 目标文件不存在 |
-| 3 | `<Documents>/Cline/settings/cline_mcp_settings.json` | `<documents-root>/settings/mcp_settings.json` | 目标文件不存在 |
-| 4 | `<Documents>/Cline/` 的其余内容，不含顶层 `tasks/` | `<documents-root>/` | 执行这一步时文档根目录不存在或为空 |
-| 5 | 旧扩展存储中的 `checkpoints/` | `<documents-root>/checkpoints/` | 目标不存在或为空 |
-| 6 | 旧扩展存储中的 `puppeteer/` | `~/.dline/puppeteer/` | 目标不存在或为空 |
-| 7 | 旧扩展存储中的 `cache/sync-queue.json` | `~/.dline/cache/sync-queue.json` | 目标文件不存在 |
-
-“旧扩展存储”是 VS Code 为扩展 `saoudrizwan.claude-dev` 或 `cline.cline` 分配的全局存储目录，与 Dline 的全局存储目录位于同一个父目录下。第 5–7 步各自使用第一个包含对应内容的旧目录。
-
-判断“为空”时，会忽略 `.DS_Store`、`Thumbs.db` 和 `desktop.ini`。第 1、6、7 步的目标固定位于 `~/.dline` 下，设置 `DLINE_DIR` 不会改变迁移目标。
-
-## 不会迁移的内容
-
-**任务历史不会迁移。** `<Documents>/Cline/tasks/` 和旧扩展存储中的任务记录都会留在原处。Dline 用 SQLite 索引任务，并为每个任务保存 Cline 任务目录中没有的运行状态，因此旧任务无法在 Dline 中打开或恢复。
-
-迁移也不会合并数据：目标位置已经有内容时，这一项直接跳过，已有的 Dline 数据不会被覆盖。
-
-## 跳过迁移
-
-满足以下任一条件时，整个迁移不会运行：
-
-| 环境变量 | 效果 |
-|---|---|
-| `DLINE_SKIP_MIGRATION=1` | 跳过迁移 |
-| `DLINE_HOME_DIR` 已设置 | 使用自定义路径，跳过迁移 |
-| `DLINE_DOCS_DIR` 已设置 | 使用自定义路径，跳过迁移 |
-
-这些变量的含义见[配置](/zh-cn/getting-started/config/)。
-
-## 迁移后检查
-
-1. 打开服务商设置，确认原有配置还在。
-2. 打开 MCP 服务器设置，确认服务器列表还在。参见 [MCP 概览](/zh-cn/mcp/mcp-overview/)。
-3. 检查全局规则和工作流是否能在 Dline 中看到。
-
-## 故障排查
-
-<Aside type="caution" title="规则或工作流没有迁移过来">
-第 4 步只在文档根目录仍为空时执行。如果第 3 步已经复制了 MCP 设置文件，或者你之前运行过 Dline，文档根目录就不再为空，`<Documents>/Cline/` 的其余内容会被跳过。这时需要手动把需要的文件复制到 `<documents-root>` 下对应的目录。
+<Aside type="caution">
+只在 Dline 的目标文件夹不存在或为空时复制。把 Cline 文件合并进 Dline 已经用过的文件夹，可能覆盖 Dline 的设置、Profile 或凭据，事后也无法区分哪些来自 Cline。
 </Aside>
 
-- **手动复制时的目录名**：Dline 的全局目录名是小写的：`rules/`、`workflows/`、`skills/`、`hooks/`、`mcp/`。自动迁移会保留原目录名。在区分大小写的文件系统上，如果旧目录名的大小写不同（例如 `Rules`），需要改成对应的小写名称。
-- **MCP 设置文件名不同**：Cline 使用 `cline_mcp_settings.json`，Dline 使用 `mcp_settings.json`。手动复制时要改名。
-- **迁移没有运行**：检查是否设置了上表中的环境变量，并确认目标位置确实不存在或为空。
-- **想继续使用 Cline**：迁移不会改动 Cline 的文件，原有数据仍保留在原位置。
+## 可以复制的内容
+
+| 内容 | 复制来源 | 复制目标 |
+|---|---|---|
+| 设置、全局状态和已保存的凭据 | `~/.cline/data/` 中的全部内容 | Dline 数据根目录 |
+| Endpoint 配置 | `~/.cline/endpoints.json` | `~/.dline/endpoints.json` |
+| MCP 服务器 | `<Documents>/Cline/settings/cline_mcp_settings.json` | Dline 文档根目录下的 `settings/mcp_settings.json`（注意文件名不同） |
+| 全局规则、工作流、技能和 hooks | `<Documents>/Cline/` 中对应的目录 | Dline 文档根目录中对应的目录 |
+
+Dline 的全局目录名是小写的：`rules/`、`workflows/`、`skills/`、`hooks/`、`mcp/`。在区分大小写的文件系统上，如果 Cline 目录名的大小写不同（例如 `Rules`），需要改成对应的小写名称。
+
+## 无法带过来的内容
+
+- **任务历史。** 不要复制 `<Documents>/Cline/tasks/` 或 Cline 扩展存储中的任务记录。Dline 用 SQLite 索引任务，并保存 Cline 任务目录中没有的每任务运行时状态，因此 Cline 任务无法在 Dline 中打开或恢复。
+- **Checkpoint、浏览器数据和缓存。** 它们属于 Cline 任务，Dline 会按需重新生成。
+
+## 复制之后
+
+1. 启动 VS Code 并打开 Dline。
+2. 打开服务商设置，确认原有配置都在。
+3. 打开 MCP 服务器设置，确认服务器都已列出。参见 [MCP 概览](/zh-cn/mcp/mcp-overview/)。
+4. 检查全局规则和工作流在 Dline 中可见。
+
+Cline 的文件仍保留在原位置，你可以同时继续使用 Cline。

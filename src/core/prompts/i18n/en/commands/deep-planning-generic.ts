@@ -1,10 +1,10 @@
 // English deep-planning generic variant prompts — key-value pairs only.
 
 const prompts: Record<string, string> = {
-	liteTaskProgressTaskLine:
-		" The task must include a <task_progress> list that breaks down the implementation into trackable steps.",
-	liteTaskProgressHeading: "**Task Progress Format:**\n",
-	liteTaskProgressContext: `You absolutely must include the task_progress contents in context when creating the new task. When providing it, do not wrap it in XML tags- instead provide it like this:
+    liteTaskProgressTaskLine:
+        " The task must include a <task_progress> list that breaks down the implementation into trackable steps.",
+    liteTaskProgressHeading: "**Task Progress Format:**\n",
+    liteTaskProgressContext: `You absolutely must include the task_progress contents in context when creating the new task. When providing it, do not wrap it in XML tags- instead provide it like this:
 
 
 task_progress Items:
@@ -15,7 +15,7 @@ task_progress Items:
 
 
 `,
-	powershellCommands: `# Discover project structure and file types
+    powershellCommands: `# Discover project structure and file types
 Get-ChildItem -Recurse -Include "*.py","*.js","*.ts","*.java","*.cpp","*.go" | Select-Object -First 30 | Select-Object FullName
 
 # Find all class and function definitions
@@ -30,7 +30,7 @@ Get-ChildItem -Recurse -Include "requirements*.txt","package.json","Cargo.toml",
 # Identify technical debt and TODOs
 Get-ChildItem -Recurse -Include "*.py","*.js","*.ts","*.java","*.cpp","*.go" | Select-String -Pattern "TODO|FIXME|XXX|HACK|NOTE"`,
 
-	bashCommands: `# Discover project structure and file types
+    bashCommands: `# Discover project structure and file types
 find . -type f -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.java" -o -name "*.cpp" -o -name "*.go" | head -30 | cat
 
 # Find all class and function definitions
@@ -45,7 +45,7 @@ find . -name "requirements*.txt" -o -name "package.json" -o -name "Cargo.toml" -
 # Identify technical debt and TODOs
 grep -r "TODO\\|FIXME\\|XXX\\|HACK\\|NOTE" --include="*.py" --include="*.js" --include="*.ts" --include="*.java" --include="*.cpp" --include="*.go" . | cat`,
 
-	powershellNavCommands: `# Read Overview section
+    powershellNavCommands: `# Read Overview section
 $content = Get-Content implementation_plan.md; $start = ($content | Select-String -Pattern '\\[Overview\\]').LineNumber; $end = ($content | Select-String -Pattern '\\[Types\\]').LineNumber; $content[($start-1)..($end-2)]
 
 # Read Types section
@@ -69,39 +69,24 @@ $content = Get-Content implementation_plan.md; $start = ($content | Select-Strin
 # Read Implementation Order section
 $content = Get-Content implementation_plan.md; $start = ($content | Select-String -Pattern '\\[Implementation Order\\]').LineNumber; $content[($start-1)..($content.Length-1)]`,
 
-	focusChainIntro: `**Task Progress Parameter:**
+    focusChainIntro: `**Task Progress Parameter:**
 When creating the new task, you must include a task_progress parameter that breaks down the implementation into trackable steps. This parameter should be included inside the tool call, but not located inside of other content/argument blocks. This should follow the standard Markdown checklist format with "- [ ]" for incomplete items.`,
 
-	nativeNewTaskInstructions: `
-**new_task Tool Definition:**
-
-When you are ready to create the implementation task, you must call the new_task tool with the following structure:
-
-\`\`\`json
-{
-  "name": "new_task",
-  "arguments": {
-    "context": "Your detailed context here following the 5-point structure..."
-  }
-}
-\`\`\`
-
-The context parameter should include all five sections as described above.`,
-
-	xmlNewTaskInstructions: `
+    xmlNewTaskInstructions: `
 **new_task Tool Definition:**
 
 When you are ready to create the implementation task, you must call the new_task tool with the following structure:
 
 \`\`\`xml
 <new_task>
+<task>Implement the plan in implementation_plan.md</task>
 <context>Your detailed context here following the 5-point structure...</context>
 </new_task>
 \`\`\`
 
-\tThe context parameter should include all five sections as described above.`,
+\tThe task parameter states what the new task should do; the context parameter should include all five sections as described above.`,
 
-	bashNavCommands: `# Read Overview section
+    bashNavCommands: `# Read Overview section
 sed -n '/\\[Overview\\]/,/\\[Types\\]/p' implementation_plan.md | head -n 1 | cat
 
 # Read Types section  
@@ -125,7 +110,7 @@ sed -n '/\\[Testing\\]/,/\\[Implementation Order\\]/p' implementation_plan.md | 
 # Read Implementation Order section
 sed -n '/\\[Implementation Order\\]/,$p' implementation_plan.md | cat`,
 
-	main: `<explicit_instructions type="deep-planning">
+    main: `<explicit_instructions type="deep-planning">
 Your task is to create a comprehensive implementation plan before writing any code. This process has four distinct steps that must be completed in order.
 
 Your behavior should be methodical and thorough - take time to understand the codebase completely before making any recommendations. The quality of your investigation directly impacts the success of the implementation.

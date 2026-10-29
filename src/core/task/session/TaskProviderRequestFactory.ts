@@ -1,0 +1,259 @@
+import { randomUUID } from "node:crypto"
+import type { ToolUse } from "@core/assistant-message"
+import { readSystemPromptComposition } from "@core/prompts/generators/system-prompt-composition"
+import { ToolPromptGenerator } from "@core/prompts/generators/ToolPromptGenerator"
+import { resolveFrozenPromptRuntime } from "@core/prompts/system-prompt-cache/FrozenPromptRuntime"
+import type { StateManager } from "@core/storage/StateManager"
+import { DEFAULT_API_PROVIDER } from "@shared/api"
+import { ServerTool } from "@shared/proto/dline/models/metadata"
+import { startPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
+import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
+import type { JournalConversationView } from "../executors/provider/service/JournalConversationView"
+import type { ProviderJournalMessageMaterializer } from "../executors/provider/service/ProviderJournalMessageMaterializer"
+import type {
+    PreparedProviderRequest,
+    ProviderRequestFactory,
+    ProviderRequestFrame,
+    ProviderRequestFramePort,
+    ProviderRequestScope,
+} from "../executors/provider/service/ProviderRequest"
+import type { ProductionToolHandlerRuntime } from "../executors/tool/production/ProductionToolHandlerRuntime"
+import { planProductionTool } from "../executors/tool/production/ProductionToolPlanner"
+import type { ToolAdmissionSnapshot } from "../executors/tool/ToolAdmissionRegistry"
+import type { TaskTurnAuthority } from "../explicit-instructions/TurnAuthority"
+import { deriveNewTaskFeedbackContinuationFromConversation } from "../new-task/new-task-continuation"
+import type { TaskPromptContextOwner } from "../prompt/TaskPromptContextOwner"
+import type { TaskPromptLifecycle } from "../prompt/TaskPromptLifecycle"
+import { createRequestApiScope, type NativeToolCallsPredicate } from "../RequestApiScope"
+import { deriveReportBugContinuationFromEntries } from "../report-bug/report-bug-continuation"
+import type { ProviderDraftEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
+import type { TaskStateManager } from "../TaskStateManager"
+import type { TaskApiHandlerOwner } from "./TaskApiHandlerOwner"
+
+interface RequestFrameCandidate {
+    readonly frame: ProviderRequestFrame
+    readonly api: ReturnType<TaskApiHandlerOwner["current"]>
+    readonly mode: TaskStateManager["mode"]
+    readonly customPrompt: string | undefined
+    readonly webToolsEnabled: boolean
+    readonly imageGenerationEnabled: boolean
+}
+
+export interface TaskProviderRequestFactoryOptions {
+    readonly taskId: string
+    readonly stateManager: StateManager
+    readonly settings: TaskStateManager
+    readonly api: TaskApiHandlerOwner
+    readonly promptContext: TaskPromptContextOwner
+    readonly prompt: TaskPromptLifecycle
+    /** The task's conversation, held in memory and read through the draft's position. */
+    readonly conversation: JournalConversationView
+    /** Reads the one-shot authority the round's admitted inputs carry. */
+    readonly messages: ProviderJournalMessageMaterializer
+    readonly authority: TaskTurnAuthority
+    readonly tools: ProductionToolHandlerRuntime
+    readonly readAdmissionSnapshot: (block: ToolUse) => ToolAdmissionSnapshot
+    /** The same predicate the prompt and tool execution use, so all three route Web tools alike. */
+    readonly usesNativeToolCalls: NativeToolCallsPredicate
+}
+
+/** Freezes one provider request from task-scoped owners and durable journal content. */
+export class TaskProviderRequestFactory implements ProviderRequestFactory, ProviderRequestFramePort {
+    private frameCandidate: RequestFrameCandidate | undefined
+
+    constructor(private readonly options: TaskProviderRequestFactoryOptions) {}
+
+    async prepare(draft: ProviderDraftEnvelope, signal: AbortSignal): Promise<PreparedProviderRequest> {
+        // Spans split the round's preparation so a stalled event loop between the
+        // guard and the request can be attributed to the rebuild, the frame, or the
+        // conversation read rather than to the provider stream.
+        const span = startPerfPhase(PerfDomain.TurnPrepare, "request_prepare", { taskId: this.options.taskId })
+        try {
+            return await this.prepareRequest(draft, signal)
+        } finally {
+            span.stop()
+        }
+    }
+
+    private async prepareRequest(draft: ProviderDraftEnvelope, signal: AbortSignal): Promise<PreparedProviderRequest> {
+        // A request serves the Profile as it is persisted now: the Catalog, its
+        // secret, or the model's window may have changed since the handler was built.
+        if (signal.aborted) throw signal.reason
+        await this.rebuildApi()
+        const frame = await this.requestFrame(signal)
+        const [messages, entries] = await Promise.all([this.conversationOf(draft), this.conversationEntriesOf(draft)])
+        const turnId = draft.turnId ?? randomUUID()
+        // Authority is derived from durable admitted input and trusted continuation
+        // evidence, so a recovered turn grants what the user still intends and no
+        // rendered prompt text can mint access. New Task feedback re-authorizes its
+        // paired handoff; an unfinished report intent re-authorizes report_bug until
+        // the durable conversation records that tool call.
+        const newTaskContinuation = deriveNewTaskFeedbackContinuationFromConversation(messages)
+        const reportBugContinuation = deriveReportBugContinuationFromEntries(entries)
+        const authority = this.options.authority.grant(turnId, [
+            ...(await this.options.messages.collectAuthority(draft.inputPayloadRefs)),
+            ...(newTaskContinuation ? [newTaskContinuation] : []),
+            ...(reportBugContinuation ? [reportBugContinuation] : []),
+        ])
+        return {
+            ...frame,
+            messages,
+            turnId,
+            ...(authority === undefined ? {} : { authority }),
+            modelInfo: {
+                modelId: frame.api.getModel().id,
+                providerId: frame.api.getProviderId?.() ?? DEFAULT_API_PROVIDER,
+                mode: this.options.settings.mode,
+            },
+            // Every Profile, Mode or configuration change ends in a handler rebuild,
+            // so handler identity is what tells whether this projection still applies.
+            isCurrent: () => this.options.api.current() === frame.api,
+            planTool: async (tool: ToolUse) =>
+                planProductionTool(this.options.tools.coordinator, tool, this.options.readAdmissionSnapshot(tool)),
+        }
+    }
+
+    private async rebuildApi(): Promise<void> {
+        const span = startPerfPhase(PerfDomain.TurnPrepare, "api_rebuild", { taskId: this.options.taskId })
+        try {
+            await this.options.api.rebuild({ validateCredentials: true })
+        } finally {
+            span.stop()
+        }
+    }
+
+    /**
+     * The frame this request is sent with: the guard's preview when its inputs
+     * still hold, otherwise a fresh build. `reused` records which one happened,
+     * because a discarded preview means the prompt was built twice this round.
+     */
+    private async requestFrame(signal: AbortSignal): Promise<ProviderRequestFrame> {
+        const candidate = this.takeFrameCandidate()
+        const span = startPerfPhase(PerfDomain.TurnPrepare, "frame_build", {
+            taskId: this.options.taskId,
+            reused: candidate !== undefined,
+        })
+        try {
+            return candidate ?? (await this.buildFrame(signal, false))
+        } finally {
+            span.stop()
+        }
+    }
+
+    /** The conversation the draft was composed with. */
+    private conversationOf(draft: ProviderDraftEnvelope) {
+        if (draft.journalThrough) return this.options.conversation.providerMessages(draft.journalThrough)
+        return this.options.conversation.providerMessages()
+    }
+
+    private conversationEntriesOf(draft: ProviderDraftEnvelope) {
+        if (draft.journalThrough) return this.options.conversation.entries(draft.journalThrough)
+        return this.options.conversation.entries()
+    }
+
+    /**
+     * The frame the last ordinary request was sent with.
+     *
+     * Resolved as a preview so a pending prompt refresh is left for the next
+     * ordinary round: a refresh consumed here would move the prefix between the
+     * compaction and the request it exists to serve. A scope resolves the frame
+     * the task will use once it adopts that handler and Mode instead.
+     */
+    async frame(signal: AbortSignal, scope?: ProviderRequestScope): Promise<ProviderRequestFrame> {
+        if (scope) return this.buildFrame(signal, true, scope)
+        const before = this.frameInputs()
+        const pendingRefresh = this.options.prompt.getPendingRefreshReason()
+        const frame = await this.buildFrame(signal, true)
+        const after = this.frameInputs()
+        if (
+            !pendingRefresh &&
+            !this.options.prompt.getPendingRefreshReason() &&
+            this.sameFrameInputs(before, after) &&
+            frame.api === after.api
+        ) {
+            this.frameCandidate = { frame, ...after }
+        } else {
+            this.frameCandidate = undefined
+        }
+        return frame
+    }
+
+    private takeFrameCandidate(): ProviderRequestFrame | undefined {
+        const candidate = this.frameCandidate
+        this.frameCandidate = undefined
+        if (!candidate || this.options.prompt.getPendingRefreshReason()) return undefined
+        return this.sameFrameInputs(candidate, this.frameInputs()) ? candidate.frame : undefined
+    }
+
+    private frameInputs(): Omit<RequestFrameCandidate, "frame"> {
+        return {
+            api: this.options.api.current(),
+            mode: this.options.settings.mode,
+            customPrompt: this.options.stateManager.getGlobalSettingsKey("customPrompt"),
+            webToolsEnabled: this.options.stateManager.getGlobalSettingsKey("clineWebToolsEnabled") === true,
+            imageGenerationEnabled: this.options.stateManager.getCanonicalSettingsKey("imageGenerationEnabled") === true,
+        }
+    }
+
+    private sameFrameInputs(left: Omit<RequestFrameCandidate, "frame">, right: Omit<RequestFrameCandidate, "frame">): boolean {
+        return (
+            left.api === right.api &&
+            left.mode === right.mode &&
+            left.customPrompt === right.customPrompt &&
+            left.webToolsEnabled === right.webToolsEnabled &&
+            left.imageGenerationEnabled === right.imageGenerationEnabled
+        )
+    }
+
+    private async buildFrame(signal: AbortSignal, preview: boolean, scope?: ProviderRequestScope): Promise<ProviderRequestFrame> {
+        if (signal.aborted) throw signal.reason
+        const api = scope?.api ?? this.options.api.current()
+        const requestScope = createRequestApiScope(
+            api,
+            scope?.mode ?? this.options.settings.mode,
+            this.options.stateManager.getGlobalSettingsKey("customPrompt"),
+            this.options.stateManager.getGlobalSettingsKey("clineWebToolsEnabled") === true,
+            undefined,
+            this.options.stateManager.getCanonicalSettingsKey("imageGenerationEnabled") === true,
+            this.options.usesNativeToolCalls,
+        )
+        const context = await this.options.promptContext.build(
+            requestScope.providerInfo,
+            requestScope.webToolsEnabled,
+            requestScope.webSearchRoutingPlan,
+        )
+        const frozen = await this.options.prompt.resolvePrompt(context, preview)
+        const runtime = resolveFrozenPromptRuntime(frozen, context)
+        const selectedTools = new ToolPromptGenerator().generateToolsForRequest(
+            context.promptProfile,
+            context,
+            this.options.prompt.getLastTools(),
+        )
+        const tools = selectedTools ? [...selectedTools] : undefined
+        const serverTools = Object.freeze([
+            ...new Set([...runtime.webSearchRoutingPlan.serverTools, ...requestScope.hostedImageGenerationPlan.serverTools]),
+        ])
+        const systemPromptComposition = readSystemPromptComposition(frozen.composition)
+        return {
+            api,
+            systemPrompt: frozen.text,
+            tools,
+            options: { serverTools, taskNamespace: this.options.taskId, retryOwner: "task" },
+            nativeTools: Boolean(tools?.length),
+            serverToolContext: {
+                webSearchRoutingPlan: runtime.webSearchRoutingPlan,
+                providerId: api.getProviderId?.() ?? DEFAULT_API_PROVIDER,
+                imageGeneration: {
+                    enabled: serverTools.includes(ServerTool.IMAGE_GENERATION),
+                    providerId: api.getProviderId?.() ?? DEFAULT_API_PROVIDER,
+                    modelId: api.getModel().id,
+                },
+            },
+            // The frozen prompt already resolved the setting against provider
+            // capability; scheduling must agree with what the model was told.
+            mode: runtime.parallelToolsEnabled ? "parallel" : "serial",
+            profile: context.promptProfile,
+            ...(systemPromptComposition ? { systemPromptComposition } : {}),
+        }
+    }
+}

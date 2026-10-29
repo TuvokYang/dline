@@ -7,8 +7,8 @@ export const ANTHROPIC_FAST_MODE_BETA = "fast-mode-2026-02-01"
 
 type AnthropicMessagesStream = AsyncIterable<AnthropicMessagesStreamEvent>
 type BetaCreate = (
-	params: AnthropicMessagesRequestBody,
-	options?: { headers: Record<string, string> },
+    params: AnthropicMessagesRequestBody,
+    options?: { headers: Record<string, string> },
 ) => Promise<AnthropicMessagesStream>
 
 /**
@@ -19,12 +19,12 @@ type BetaCreate = (
  * retry stays with the provider.
  */
 export interface AnthropicMessagesTransport {
-	open(body: AnthropicMessagesRequestBody, headers: Record<string, string>): Promise<AnthropicMessagesStream>
+    open(body: AnthropicMessagesRequestBody, headers: Record<string, string>): Promise<AnthropicMessagesStream>
 }
 
 /** Per-request headers stay off the client defaults: the identity version is resolved for each request. */
 function requestOptions(headers: Record<string, string>): { headers: Record<string, string> } | undefined {
-	return Object.keys(headers).length > 0 ? { headers } : undefined
+    return Object.keys(headers).length > 0 ? { headers } : undefined
 }
 
 /**
@@ -34,24 +34,24 @@ function requestOptions(headers: Record<string, string>): { headers: Record<stri
  * same per-request identity headers, so the declared client identity does not depend on the selected speed.
  */
 export class ApiKeyAnthropicTransport implements AnthropicMessagesTransport {
-	constructor(
-		private readonly client: Anthropic,
-		private readonly fastMode: boolean,
-	) {}
+    constructor(
+        private readonly client: Anthropic,
+        private readonly fastMode: boolean,
+    ) {}
 
-	open(body: AnthropicMessagesRequestBody, headers: Record<string, string>): Promise<AnthropicMessagesStream> {
-		if (this.fastMode) {
-			return (this.client.beta.messages.create as unknown as BetaCreate)(
-				{
-					...body,
-					betas: [ANTHROPIC_FAST_MODE_BETA],
-					speed: "fast",
-				},
-				requestOptions(headers),
-			)
-		}
-		return this.client.messages.create(body, requestOptions(headers)) as Promise<AnthropicMessagesStream>
-	}
+    open(body: AnthropicMessagesRequestBody, headers: Record<string, string>): Promise<AnthropicMessagesStream> {
+        if (this.fastMode) {
+            return (this.client.beta.messages.create as unknown as BetaCreate)(
+                {
+                    ...body,
+                    betas: [ANTHROPIC_FAST_MODE_BETA],
+                    speed: "fast",
+                },
+                requestOptions(headers),
+            )
+        }
+        return this.client.messages.create(body, requestOptions(headers)) as Promise<AnthropicMessagesStream>
+    }
 }
 
 /**
@@ -61,7 +61,7 @@ export class ApiKeyAnthropicTransport implements AnthropicMessagesTransport {
  * so refreshing would hide the real reason behind an unrelated failure.
  */
 function isUnauthorized(error: unknown): boolean {
-	return typeof error === "object" && error !== null && (error as { status?: unknown }).status === 401
+    return typeof error === "object" && error !== null && (error as { status?: unknown }).status === 401
 }
 
 /**
@@ -76,25 +76,25 @@ function isUnauthorized(error: unknown): boolean {
  * The renewed client then serves every later continuation instead of the rejected credential.
  */
 export class ClaudeCodeSubscriptionTransport implements AnthropicMessagesTransport {
-	constructor(
-		private client: Anthropic,
-		private readonly renewClient: () => Promise<Anthropic>,
-	) {}
+    constructor(
+        private client: Anthropic,
+        private readonly renewClient: () => Promise<Anthropic>,
+    ) {}
 
-	async open(body: AnthropicMessagesRequestBody, headers: Record<string, string>): Promise<AnthropicMessagesStream> {
-		try {
-			return await this.post(body, headers)
-		} catch (error) {
-			if (!isUnauthorized(error)) throw error
-			this.client = await this.renewClient()
-			return this.post(body, headers)
-		}
-	}
+    async open(body: AnthropicMessagesRequestBody, headers: Record<string, string>): Promise<AnthropicMessagesStream> {
+        try {
+            return await this.post(body, headers)
+        } catch (error) {
+            if (!isUnauthorized(error)) throw error
+            this.client = await this.renewClient()
+            return this.post(body, headers)
+        }
+    }
 
-	private post(body: AnthropicMessagesRequestBody, headers: Record<string, string>): Promise<AnthropicMessagesStream> {
-		return (this.client.beta.messages.create as unknown as BetaCreate)(
-			{ ...body, betas: buildClaudeCodeBetas() },
-			{ headers },
-		)
-	}
+    private post(body: AnthropicMessagesRequestBody, headers: Record<string, string>): Promise<AnthropicMessagesStream> {
+        return (this.client.beta.messages.create as unknown as BetaCreate)(
+            { ...body, betas: buildClaudeCodeBetas() },
+            { headers },
+        )
+    }
 }

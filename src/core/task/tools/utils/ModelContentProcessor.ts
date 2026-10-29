@@ -17,19 +17,19 @@ const ESCAPED_CHARACTER_EXTENSIONS = [".xml"] as const
  * @returns The processed content
  */
 export function applyModelContentFixes(text: string, modelId?: string, filePath?: string): string {
-	if (modelId?.includes("claude")) {
-		return text
-	}
+    if (modelId?.includes("claude")) {
+        return text
+    }
 
-	const usesEscapedCharacters = ESCAPED_CHARACTER_EXTENSIONS.some((ext) => filePath?.toLowerCase().endsWith(ext))
+    const usesEscapedCharacters = ESCAPED_CHARACTER_EXTENSIONS.some((ext) => filePath?.toLowerCase().endsWith(ext))
 
-	let processed = text
+    let processed = text
 
-	if (!usesEscapedCharacters) {
-		processed = fixModelHtmlEscaping(processed)
-	}
+    if (!usesEscapedCharacters) {
+        processed = fixModelHtmlEscaping(processed)
+    }
 
-	processed = removeInvalidChars(processed)
+    processed = removeInvalidChars(processed)
 
-	return processed
+    return processed
 }

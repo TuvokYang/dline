@@ -1,38 +1,37 @@
 export type {
-	EventTelemetryCapability,
-	JournalTelemetryCapability,
-	MetricTelemetryCapability,
-	TelemetryChannel,
-	TelemetryProviderBase,
-	TelemetryProviderCapability,
-	TelemetryProviderRegistration,
-	TelemetrySeverity,
-	TelemetrySinkDescriptor,
-	TraceTelemetryCapability,
+    EventTelemetryCapability,
+    JournalTelemetryCapability,
+    MetricTelemetryCapability,
+    TelemetryChannel,
+    TelemetryProviderBase,
+    TelemetryProviderCapability,
+    TelemetryProviderRegistration,
+    TelemetrySeverity,
+    TelemetrySinkDescriptor,
+    TraceTelemetryCapability,
 } from "./providers/capabilities"
 export type {
-	ITelemetryProvider,
-	TelemetrySettings,
+    ITelemetryProvider,
+    TelemetrySettings,
 } from "./providers/ITelemetryProvider"
 export { adaptLegacyTelemetryProvider } from "./providers/LegacyTelemetryProviderAdapter"
-export { PostHogTelemetryProvider } from "./providers/posthog/PostHogTelemetryProvider"
 export {
-	type TelemetryProviderConfig,
-	TelemetryProviderFactory,
-	type TelemetryProviderType,
+    type TelemetryProviderConfig,
+    TelemetryProviderFactory,
+    type TelemetryProviderType,
 } from "./TelemetryProviderFactory"
 // Export terminal type definitions for type-safe telemetry
 export type {
-	StandaloneOutputMethod,
-	TerminalOutputMethod,
-	TerminalType,
-	VscodeOutputMethod,
+    StandaloneOutputMethod,
+    TerminalOutputMethod,
+    TerminalType,
+    VscodeOutputMethod,
 } from "./TelemetryService"
 // Export the enums and types for terminal telemetry
 export {
-	TerminalHangStage,
-	TerminalOutputFailureReason,
-	TerminalUserInterventionAction,
+    TerminalHangStage,
+    TerminalOutputFailureReason,
+    TerminalUserInterventionAction,
 } from "./TelemetryService"
 
 import { Logger } from "@/shared/services/Logger"
@@ -73,23 +72,23 @@ let _shutDown = false
  * so late calls are inert rather than resurrecting the singleton.
  */
 export function getTelemetryServiceSync(): TelemetryService {
-	if (!_telemetryServiceInstance) {
-		const service = new TelemetryService([], TelemetryService.initialMetadata(), {
-			deferProviders: !_shutDown,
-		})
-		_telemetryServiceInstance = service
-		installObservabilityPipeline({
-			recordHistogram: (name, value, attributes, description) =>
-				service.recordHistogram(name, value, attributes, description, "runtime"),
-			recordGauge: (name, value, attributes, description) =>
-				service.recordGauge(name, value, attributes, description, "runtime"),
-			startSpan: (options) => service.startSpan(options, "runtime"),
-		})
-		if (!_shutDown) {
-			_providerAttachment = attachDeferredDependencies(service)
-		}
-	}
-	return _telemetryServiceInstance
+    if (!_telemetryServiceInstance) {
+        const service = new TelemetryService([], TelemetryService.initialMetadata(), {
+            deferProviders: !_shutDown,
+        })
+        _telemetryServiceInstance = service
+        installObservabilityPipeline({
+            recordHistogram: (name, value, attributes, description) =>
+                service.recordHistogram(name, value, attributes, description, "runtime"),
+            recordGauge: (name, value, attributes, description) =>
+                service.recordGauge(name, value, attributes, description, "runtime"),
+            startSpan: (options) => service.startSpan(options, "runtime"),
+        })
+        if (!_shutDown) {
+            _providerAttachment = attachDeferredDependencies(service)
+        }
+    }
+    return _telemetryServiceInstance
 }
 
 /**
@@ -100,9 +99,9 @@ export function getTelemetryServiceSync(): TelemetryService {
  * `getProviders()` off the proxy, which may still be mid-attachment.
  */
 export async function getTelemetryService(): Promise<TelemetryService> {
-	const service = getTelemetryServiceSync()
-	await _providerAttachment
-	return service
+    const service = getTelemetryServiceSync()
+    await _providerAttachment
+    return service
 }
 
 /**
@@ -114,12 +113,12 @@ export async function getTelemetryService(): Promise<TelemetryService> {
  * accumulating against a buffer bound that will never be relieved.
  */
 async function attachDeferredDependencies(service: TelemetryService): Promise<void> {
-	try {
-		await service.attachProviders()
-	} catch (error) {
-		Logger.error("[TelemetryService] Failed to attach telemetry providers:", error)
-		service.releasePendingSignals()
-	}
+    try {
+        await service.attachProviders()
+    } catch (error) {
+        Logger.error("[TelemetryService] Failed to attach telemetry providers:", error)
+        service.releasePendingSignals()
+    }
 }
 
 /**
@@ -130,23 +129,23 @@ async function attachDeferredDependencies(service: TelemetryService): Promise<vo
  * sockets and timers with nothing to close them.
  */
 export async function disposeTelemetryService(): Promise<void> {
-	// Set before the awaits so a call arriving mid-shutdown cannot start a new
-	// attachment that would outlive this one.
-	_shutDown = true
-	installObservabilityPipeline(undefined)
+    // Set before the awaits so a call arriving mid-shutdown cannot start a new
+    // attachment that would outlive this one.
+    _shutDown = true
+    installObservabilityPipeline(undefined)
 
-	const service = _telemetryServiceInstance
-	if (!service) {
-		return
-	}
+    const service = _telemetryServiceInstance
+    if (!service) {
+        return
+    }
 
-	const attachment = _providerAttachment
-	_telemetryServiceInstance = null
-	_providerAttachment = null
+    const attachment = _providerAttachment
+    _telemetryServiceInstance = null
+    _providerAttachment = null
 
-	// Attachment already swallows its own failures; this only joins it.
-	await attachment
-	await service.dispose()
+    // Attachment already swallows its own failures; this only joins it.
+    await attachment
+    await service.dispose()
 }
 
 /**
@@ -156,10 +155,10 @@ export async function disposeTelemetryService(): Promise<void> {
  * reference without closing providers.
  */
 export function resetTelemetryService(): void {
-	_telemetryServiceInstance = null
-	_providerAttachment = null
-	installObservabilityPipeline(undefined)
-	_shutDown = false
+    _telemetryServiceInstance = null
+    _providerAttachment = null
+    installObservabilityPipeline(undefined)
+    _shutDown = false
 }
 
 /**
@@ -171,9 +170,9 @@ export function resetTelemetryService(): void {
  * and keep their real return types.
  */
 export const telemetryService = new Proxy({} as TelemetryService, {
-	get(_target, prop, _receiver) {
-		const service = getTelemetryServiceSync()
-		const value = Reflect.get(service, prop, service)
-		return typeof value === "function" ? value.bind(service) : value
-	},
+    get(_target, prop, _receiver) {
+        const service = getTelemetryServiceSync()
+        const value = Reflect.get(service, prop, service)
+        return typeof value === "function" ? value.bind(service) : value
+    },
 })

@@ -1,68 +1,50 @@
 ---
 title: Migrating from Cline
-description: How Dline copies Cline settings, global capability files, and some caches into Dline storage at startup, and what is not migrated.
+description: Copy your Cline settings, MCP configuration, rules, and workflows into Dline's folders by hand, and what cannot be carried over.
 ---
 
 import { Aside } from "@astrojs/starlight/components"
 
-If you used Cline before, Dline checks for legacy Cline data at startup and copies what it can into Dline's own storage locations. Migration only copies; it never modifies or deletes Cline files.
+Dline does not import Cline data on its own. It starts with empty Dline folders and never reads, modifies, or deletes Cline files. If you want to keep your Cline configuration, copy it into Dline's folders by hand as described below.
 
-## When it runs
+## Before you start
 
-- The check runs every time the extension starts. Data is copied only when at least one item has a source with content and a target that is missing or empty.
-- While migrating, Dline shows the notification **Dline: Migrating legacy Cline data...** with the progress text **Copying data into empty Dline locations...**.
-- When at least one item was copied, Dline shows **Dline: Data migrated - …** listing what was processed.
-- Each step runs on its own. If one step fails, Dline logs the error and continues with the next step; extension startup is not blocked.
+1. Close every VS Code window, so neither Cline nor Dline is writing its files while you copy.
+2. Find the folders on your machine. `<Documents>` is the operating system's Documents directory.
 
-## What is migrated
-
-The table lists the steps in execution order. `<Documents>` is the operating system's Documents directory, and `<documents-root>` is the Dline documents root, which defaults to `<Documents>/dline`.
-
-| Order | Source | Target | Condition |
-|---|---|---|---|
-| 1 | `~/.cline/data/` | `~/.dline/data/` | Target is missing or empty |
-| 2 | `~/.cline/endpoints.json` | `~/.dline/endpoints.json` | Target file does not exist |
-| 3 | `<Documents>/Cline/settings/cline_mcp_settings.json` | `<documents-root>/settings/mcp_settings.json` | Target file does not exist |
-| 4 | The rest of `<Documents>/Cline/`, excluding the top-level `tasks/` | `<documents-root>/` | The documents root is missing or empty when this step runs |
-| 5 | `checkpoints/` in legacy extension storage | `<documents-root>/checkpoints/` | Target is missing or empty |
-| 6 | `puppeteer/` in legacy extension storage | `~/.dline/puppeteer/` | Target is missing or empty |
-| 7 | `cache/sync-queue.json` in legacy extension storage | `~/.dline/cache/sync-queue.json` | Target file does not exist |
-
-"Legacy extension storage" is the global storage directory VS Code assigns to the `saoudrizwan.claude-dev` or `cline.cline` extension, located in the same parent directory as Dline's global storage. Steps 5–7 each use the first legacy directory that contains the corresponding item.
-
-When deciding whether a directory is empty, Dline ignores `.DS_Store`, `Thumbs.db`, and `desktop.ini`. The targets of steps 1, 6, and 7 are always under `~/.dline`; setting `DLINE_DIR` does not change where migration writes.
-
-## What is not migrated
-
-**Task history is not migrated.** Both `<Documents>/Cline/tasks/` and task records in legacy extension storage stay where they are. Dline indexes tasks in SQLite and keeps per-task runtime state that a Cline task directory does not contain, so legacy tasks cannot be opened or resumed in Dline.
-
-Migration never merges data either: when a target already has content, that item is skipped and existing Dline data is not overwritten.
-
-## Skipping migration
-
-Migration does not run at all when any of these is true:
-
-| Environment variable | Effect |
-|---|---|
-| `DLINE_SKIP_MIGRATION=1` | Skips migration |
-| `DLINE_HOME_DIR` is set | Custom paths are in use; migration is skipped |
-| `DLINE_DOCS_DIR` is set | Custom paths are in use; migration is skipped |
+| Folder | Cline | Dline |
+|---|---|---|
+| Data root: settings, global state, secrets | `~/.cline/data/` | `~/.dline/data/`, or `<DLINE_DIR>/data/` when `DLINE_DIR` is set |
+| Documents root: rules, workflows, skills, hooks, MCP | `<Documents>/Cline/` | `<Documents>/dline/`, or the folder in `DLINE_DOCS_DIR` when it is set |
+| Endpoint configuration | `~/.cline/endpoints.json` | `~/.dline/endpoints.json` |
 
 See [Configuration](/getting-started/config/) for what these variables control.
 
-## After migration
-
-1. Open the provider settings and confirm your existing configuration is there.
-2. Open the MCP server settings and confirm your servers are listed. See [MCP overview](/mcp/mcp-overview/).
-3. Check that your global rules and workflows are visible in Dline.
-
-## Troubleshooting
-
-<Aside type="caution" title="Rules or workflows were not migrated">
-Step 4 runs only while the documents root is still empty. If step 3 has already copied the MCP settings file, or you have run Dline before, the documents root is no longer empty and the rest of `<Documents>/Cline/` is skipped. Copy the files you need into the matching folders under `<documents-root>` by hand.
+<Aside type="caution">
+Copy into a Dline folder only while it is missing or empty. Merging Cline files into a folder that Dline has already used can overwrite Dline settings, profiles, or credentials, and Dline cannot tell the two apart afterwards.
 </Aside>
 
-- **Folder names when copying by hand**: Dline's global folder names are lowercase: `rules/`, `workflows/`, `skills/`, `hooks/`, `mcp/`. Automatic migration keeps the original folder names. On a case-sensitive file system, rename a legacy folder whose casing differs (for example `Rules`) to the matching lowercase name.
-- **The MCP settings file has a different name**: Cline uses `cline_mcp_settings.json`, while Dline uses `mcp_settings.json`. Rename the file when copying it by hand.
-- **Migration did not run**: check whether any variable in the table above is set, and confirm that the target location is really missing or empty.
-- **Keep using Cline**: migration does not touch Cline's files, so your original data stays in place.
+## What you can copy
+
+| What | Copy from | Copy to |
+|---|---|---|
+| Settings, global state, and stored credentials | the contents of `~/.cline/data/` | the Dline data root |
+| Endpoint configuration | `~/.cline/endpoints.json` | `~/.dline/endpoints.json` |
+| MCP servers | `<Documents>/Cline/settings/cline_mcp_settings.json` | `settings/mcp_settings.json` in the Dline documents root (note the new file name) |
+| Global rules, workflows, skills, and hooks | the matching folders in `<Documents>/Cline/` | the matching folders in the Dline documents root |
+
+Dline's global folder names are lowercase: `rules/`, `workflows/`, `skills/`, `hooks/`, `mcp/`. On a case-sensitive file system, rename a Cline folder whose casing differs, such as `Rules`, to the lowercase name.
+
+## What cannot be carried over
+
+- **Task history.** Do not copy `<Documents>/Cline/tasks/` or the task records in Cline's extension storage. Dline indexes tasks in SQLite and keeps per-task runtime state that a Cline task directory does not contain, so Cline tasks cannot be opened or resumed in Dline.
+- **Checkpoints, browser data, and caches.** They belong to Cline tasks and are rebuilt by Dline as needed.
+
+## After copying
+
+1. Start VS Code and open Dline.
+2. Open the provider settings and confirm your configuration is there.
+3. Open the MCP server settings and confirm your servers are listed. See [MCP overview](/mcp/mcp-overview/).
+4. Check that your global rules and workflows are visible in Dline.
+
+Your Cline files stay where they are, so you can keep using Cline next to Dline.

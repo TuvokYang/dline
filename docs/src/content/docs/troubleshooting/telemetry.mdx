@@ -1,47 +1,241 @@
 ---
-title: Telemetry and Diagnostics
-description: Learn how Dline asks for consent for usage data and error reports, where the data goes by default, what is masked, and how to export a diagnostic bundle.
+title: Telemetry and Issue Diagnostics
+description: Understand Dline's reporting levels, data purposes, identity separation, local retention, usage and error diagnostics delivery to otel.dline.cc, and the planned Issue authorization flow.
 ---
 
 import { Aside } from "@astrojs/starlight/components"
 
-Dline asks for consent to "usage data" and "error reports" separately. Neither kind of data is sent without your consent.
-
-## Consent settings
-
-**Settings → About** has two independent options:
-
-- **Allow usage reporting** for usage data;
-- **Allow error reporting** for error reports.
-
-Both are unchecked by default. Only an explicit check counts as consent; while an option is unchecked (including when it was never set), that category is neither collected nor sent. Your organization's remote configuration can turn telemetry off, but cannot turn it on for you.
-
-When VS Code's own telemetry setting (`telemetry.telemetryLevel`) is off, Dline does not send telemetry to remote endpoints either.
-
-## Where the data goes
-
-- By default, consented data is sent in OpenTelemetry format (OTLP over HTTP/protobuf) to `http://127.0.0.1:4318` on **your own machine**. The data is received only if you run an OTLP collector locally.
-- Your organization can point it at a different OTLP endpoint through remote configuration.
-- With consent, Dline also writes local session journals in JSONL format for diagnostics.
+Dline asks for consent to product usage reporting and error/runtime diagnostics separately. The two checkboxes define the effective reporting level, but they remain independent permissions.
 
 <Aside>
-By default, Dline does not send telemetry to any fixed external service.
+Usage delivery and error diagnostics delivery to `otel.dline.cc` are active as described below. The unified journal migration, the `issue_diagnostic` and `development` profiles, and Issue diagnostics authorization described as planned on this page are not active in the current build.
 </Aside>
 
-## What is masked
+For the policy governing personal information and user choices, see the [Dline Privacy Policy](/privacy/).
 
-Before sending, Dline masks:
+## Reporting levels
 
-- prompts, commands, and command output;
-- credentials;
-- identity-related fields.
+Open **Settings → About** to find **Allow usage reporting** and **Allow error reporting**. Both are checked by default. Unchecking either one stores `disabled` and denies that channel at once; an `unset` value also denies it.
 
-What is kept includes provider and model names, numeric values such as token usage, and other length-limited structured fields.
+| Effective level | Usage | Errors | Data and purpose |
+|---|---:|---:|---|
+| **Level 0: Off** | Off | Off | No consent-gated usage or diagnostic signals enter telemetry journals or OTLP sinks. A small local process ledger remains for crash recovery. |
+| **Level 1: Usage** | On | Off | Content-free product events and aggregate measurements for adoption, compatibility, request/tool trends, token/cache/cost totals, and regressions. |
+| **Level 2: Diagnostics** | Off | On | Crash, exception, health, and lifecycle signals. It also enables manual export of a local diagnostic bundle. |
+| **Level 3: Usage + Diagnostics** | On | On | The union of Levels 1 and 2. It does not authorize prompts, files, commands, model responses, or raw artifacts. |
+
+Current organization policy has one telemetry-disable switch. It can force both channels off but cannot turn either on. VS Code's `telemetry.telemetryLevel` can further restrict remote delivery; it never expands Dline consent.
+
+Account identity is a separate channel governed by usage consent. It is not attached to ordinary usage, error, runtime, or metric records.
+
+## Data categories and purposes
+
+Usage reporting can contain bounded dimensions and numbers such as versions, host and operating-system type, provider/model/API format, Task/turn/tool/MCP/Subagent outcomes, duration, throughput, retries, token/cache/cost totals, and feature counts. It does not contain the conversation or Task body and cannot reconstruct them.
+
+Diagnostics can contain exception type and safe code, severity, Extension Host/Controller/Task/API/Tool/Subagent/MCP lifecycle reasons, CPU/memory/event-loop/queue numbers, and previous-process interruption evidence. Native abort and `SIGKILL` do not guarantee a recoverable stack trace.
+
+The separate `account` channel emits an `account.identified` record containing the account ID only. Display name, email, organization, and membership are not copied into ordinary telemetry. The channel is enabled by usage consent and delivered only to sinks that explicitly declare account support.
+
+## Current destinations
+
+- Canonical Event, Metric, and Trace records can be written as local OTLP-shaped JSONL.
+- The default network sink is the local OTLP/HTTP endpoint `http://127.0.0.1:4318`.
+- The default loopback sink accepts `usage`, `account`, `error`, and `runtime`; account records remain separate from ordinary records.
+- An organization-configured OTLP endpoint currently accepts consented `usage` Event and Metric signals only. It is not an account, error/runtime, or Trace sink.
+- While usage reporting is on (the default), aggregated usage counts are sent to `https://otel.dline.cc` as described in the usage delivery section below, and while error reporting is on, aggregated error and runtime diagnostics as described in the diagnostics delivery section. No other channel is sent there, and no other destination falls back to it.
 
 <Aside type="caution">
-Consented events include an anonymous installation identifier (`distinct_id`) that tells installations apart and is not masked. Do not assume telemetry contains no identifier at all.
+A non-loopback endpoint sends data outside your machine. Review its retention, access-control, and legal policies before enabling reporting.
 </Aside>
 
-## Exporting a diagnostic bundle
+## Device and account identity
 
-With **Allow error reporting** checked, **Settings → About** shows **Export diagnostic bundle**. It creates a ZIP file locally, redacts it again before writing, and does not upload it. When you run into a problem, you can review the bundle before deciding whether to attach it to an issue.
+`distinct_id` is now a device/installation identifier only. It is initialized from a stored device ID, machine ID, or locally generated UUID and is not changed by sign-in, sign-out, or account switching.
+
+Ordinary OpenTelemetry events can carry this stable device `distinct_id`. Account ID is emitted separately as `account.identified` and is never used as `distinct_id`, aliased to it, or inherited by ordinary Event/Metric attributes. The current organization usage OTLP sink does not opt into the account channel.
+
+Usage delivery to `otel.dline.cc` excludes both `distinct_id` and account identity; the service only sees a pseudonymous device principal described below. The planned diagnostic profiles exclude both as well. Any future account telemetry destination requires an explicit account-capable sink and its own documented retention and access policy.
+
+## Current local storage and limits
+
+All journal files are below the Dline data root in `telemetry/sessions/`.
+
+| Artifact | Current behavior |
+|---|---|
+| Process session ledger | At most 20 small JSON records containing bounded process/session, active-operation, health, and termination metadata. |
+| Canonical OTLP journals | Per process session, `usage`, `metrics`, and `traces` files each retain a newest tail up to 4 MiB. Account identity is not written through this journal capability. |
+| Runtime compatibility journal | While error reporting is enabled, one unprefixed runtime file retains a newest tail up to 1 MiB. |
+| Diagnostic ZIP | Created only by a manual export and never uploaded automatically. |
+
+Current cleanup is file-based, not session-based. When the error-reporting lifecycle starts, it scans every `.jsonl` in the shared directory, protects only the active unprefixed runtime file, keeps up to eight other eligible files, and removes eligible files older than 3 days. Prefixed files are counted independently and usage-only sessions do not start this cleanup. Therefore canonical journals do not currently have a reliable global cross-session byte ceiling.
+
+Exporter queues remain bounded in memory when no Collector exists, and the OTLP exporters do not create a disk retry spool. Only usage and diagnostics delivery to `otel.dline.cc` keep bounded disk queues, described below.
+
+Enabling error reporting also creates an owner-only legacy pairing credential in local secret storage. No current transport sends or consumes it. Planned Issue diagnostics must migrate or discard it and cannot treat it as Issue authorization without a new explicit user action.
+
+## One telemetry mechanism target
+
+The target is one canonical mechanism:
+
+- normal signals and authoritative usage settlement enter one admission boundary through typed ingress ports;
+- one consent/profile resolver, channel/severity catalog, canonicalization boundary, and content policy govern admitted data;
+- sink-specific policy may only reduce fields or density;
+- one provider registry owns local, loopback, `otel.dline.cc`, account-capable, and test sinks;
+- one local journal owner replaces duplicate production writing only after parity is proven;
+- Issue diagnostics is a temporary profile overlay, not another recorder;
+- the process ledger remains a crash capsule outside the telemetry stream.
+
+The migration must first reproduce the current byte limits, file-selection cleanup, ordering, crash evidence, cancellation, bundle export, and restart recovery. Only then may production stop duplicate runtime-journal writes. Changing grouping, retention count, active-file protection, age, or byte budgets is a separate storage-policy decision; this work does not authorize deleting or shrinking existing telemetry files.
+
+## Privacy filtering
+
+Canonical policy blocks or masks prompts, model output, messages, source and file content, patches/diffs, paths, commands, terminal input/output, MCP arguments/results, credentials, and identity fields supplied to ordinary events or metrics. It retains bounded operational fields such as versions, provider/model names, enums, counts, durations, token/cache/cost numbers, outcomes, and safe fingerprints.
+
+Development mode can retain extra local correlation fields. Development mode is not remote authorization.
+
+## Diagnostic bundles and current `/reportbug`
+
+**Export diagnostic bundle** writes a redacted ZIP locally while error reporting is enabled. Review it before attaching it anywhere.
+
+The current `/reportbug` handler requires `api_request_output` and `additional_context`. The values appear in Dline's approval preview. After approval, `api_request_output` is placed in the prefilled GitHub Issue `logs` field and passed through the browser URL. GitHub receives the Issue only after you review the browser form and press submit, so you can edit or remove the field first. This does not authorize `otel.dline.cc` or upload journals or ZIP files.
+
+## Usage delivery to `otel.dline.cc`
+
+Dline sends usage counts to `https://otel.dline.cc` only while every condition holds:
+
+- **Allow usage reporting** is checked. It is on by default; unchecking it in **Settings → About** stops delivery and deletes unsent counts.
+- Organization policy has not disabled telemetry.
+- VS Code's `telemetry.telemetryLevel` is `all`. `error`, `crash`, `off`, or a level that cannot be read stops delivery.
+- The service has not refused this device.
+- The run is not an automated test. Development builds send too, and their batches carry `is_dev=true`.
+
+### What is sent
+
+Each settled provider request is counted once, including cancelled and failed requests, and each start of the extension is counted once. Dline adds the counts up per minute and records nothing for a minute without requests or extension starts. A batch covers up to 60 such minutes, which need not be contiguous, and is one JSON document (`schema_version: 2`) of at most 32 KiB:
+
+| Section | Content |
+|---|---|
+| `client` | Client version, operating-system type, architecture, editor version, editor family (`vscode`, `cursor`, `vscodium`, `windsurf`, or `other`), release channel (`stable` or `insiders`), and whether this is a development build |
+| `window` | Start and end of the minutes covered, the number of minutes with activity, and how many minutes were dropped locally before this batch |
+| `sessions_started` | Number of extension starts |
+| `purposes` | Per purpose (`task`, `subagent`, `compaction`, or `other`): completed, cancelled, and failed requests; fresh input, output, cache-read, and cache-write tokens; request duration as count, sum, minimum, and maximum |
+| `models` | Per provider and model: `custom: true` for a custom model; requests (total, failed, cancelled); token totals including reasoning tokens; request duration, time to first output, and output time as histograms with bounds of 250 ms to 120 s (the last two for streaming requests only); and the busiest minute of the batch by requests and by output tokens |
+| `providers` | Only providers with failed or retried requests: failures by class (`rate_limited`, `overloaded`, `timeout`, `auth`, `network`, `invalid_request`, or `other`), automatic retries, and the time waited before them |
+
+A provider is named by the Profile's provider ID and a model by its model ID, lowercased with any other character than letters, digits, `_`, `.`, and `-` replaced by `_`, and cut to 32 characters for a provider and 64 for a model. A model is custom only when the Profile has **Use custom model ID** checked with the ID typed in, or when **Custom** is selected in the Bedrock model list. A custom model is still reported by its model ID and only marked as custom, so a typed ID is sent too, for example the region and AWS account ID in a Bedrock inference profile ARN. A model picked from the list is never custom, whichever provider or endpoint serves it and whether or not Dline's built-in catalog lists it. Timings describe the last attempt of a request, after any retries. A batch lists at most 8 models and 8 providers: beyond that the seven with the most requests (models) or the most failures and retries (providers) are kept and the rest are summed under `_other`, which is never marked custom, so the totals do not change.
+
+API format, Task or workspace identity, `distinct_id`, account ID, prompts, responses, file contents, paths, commands, and error text are not sent. In the current build this delivery is a dedicated path that can carry only this catalog; moving it behind the canonical admission boundary remains part of the target above.
+
+### Device identity and transport
+
+On the first send, Dline creates a random device secret in `secrets/otel/device.json` below the Dline data root, with owner-only permissions, and exchanges it for a short-lived access token. The service sees a pseudonymous device principal shared by every Dline window that uses the same data root.
+
+Requests go only to the fixed HTTPS origin through Dline's proxy-aware transport, with redirects rejected and a bounded timeout. Every request names telemetry contract version 2 in the `x-dline-contract` header. The `DLINE_OTEL_ENDPOINT` environment variable accepts only a loopback origin for local contract testing; any other value is ignored.
+
+### Send timing and waits
+
+Usage and diagnostics follow the same rules, each on its own and remembered across windows and restarts:
+
+- A new batch starts at most every 10 minutes for usage and every 5 minutes for diagnostics. When the service names a later time for the next batch, Dline waits for it, up to 7 days.
+- When the service answers with a rate limit or a telemetry pause (HTTP 429), that channel sends nothing, retries included, until the wait ends: the time the service asks for, otherwise one minute doubling with each further limit up to 30 minutes, plus up to 10% random spread, never longer than 7 days. The refused batch is kept unchanged and is sent first once the wait ends, with the same request ID and bytes, because an earlier timed-out attempt may already have been stored. Data gathered during the wait forms a separate batch. A wait does not count as an attempt, and its time does not count toward the 24-hour limit below. The other channel keeps sending.
+- A batch whose outcome is unknown (a timeout, a network error, HTTP 408 or 5xx) is sent again with the same request ID and bytes, so it is not counted twice. The wait starts at 30 seconds and doubles up to 30 minutes; the batch is abandoned after 12 attempts or 24 hours.
+- A batch rejected as invalid (HTTP 422) is dropped and never retried, and so is a usage batch that is too large (HTTP 413). Every request names the client version in a `User-Agent: Dline/<version>` header. A batch the service acknowledges without storing it (`ignored_version`) is dropped like any acknowledged batch and is not sent again.
+
+### Local queue
+
+The queue lives in `telemetry/remote/usage/` below the Dline data root:
+
+| Artifact | Purpose |
+|---|---|
+| `observations/` | Per-process files that record settled requests before they are grouped |
+| `outbox.json` | The sender lease, the send timing and wait state, pending minutes, and the request awaiting an answer |
+| `inflight/` | The exact bytes of a request whose outcome is unknown |
+
+Only one Dline window sends at a time, and windows take turns: a window sends for at most 10 minutes and then hands the lease to the window that has waited longest, including a window of another Dline version. A window that keeps the lease more than 90 seconds past its turn is taken over, and its unanswered request is sent again with the same bytes. Every batch is checked locally against the request rules of the telemetry contract before it is stored; a batch that fails is dropped. At most 60 pending minutes are kept and older minutes are dropped. Dropped minutes are reported as a count in the next batch.
+
+### Turning usage delivery off
+
+When any condition above stops delivery, Dline aborts the current send and deletes unsent observations, pending minutes, and stored request bodies. Unchecking **Allow usage reporting** also deletes the local usage access token; the device secret is kept so that opting in again does not register a new device. Error diagnostics delivery and its token are unaffected. Data already accepted by the service is not deleted.
+
+The service's retention, access, and deletion policy must be published before this delivery reaches production releases.
+
+## Error diagnostics delivery to `otel.dline.cc`
+
+Dline sends error and runtime diagnostics to `https://otel.dline.cc/v1/logs` only while every condition holds:
+
+- **Allow error reporting** is checked. It is on by default; unchecking it in **Settings → About** stops delivery at once and deletes unsent diagnostics.
+- Organization policy has not disabled error reporting.
+- VS Code's `telemetry.telemetryLevel` is not `off`. At `error` only error and fatal records are sent, and at `crash` only fatal records; a level that cannot be read stops delivery.
+- The service has not refused this device or the diagnostics stream.
+- The run is not an automated test.
+
+### What is sent
+
+Log records follow the OTLP/JSON format, and every request carries `X-Dline-Contract: 5`. Under the same conditions, Dline also sends delta metrics to `/v1/metrics`, closing one window every 60 seconds and sending one window per request, and spans for tasks (`dline.task`), tool executions (`dline.tool.execute`), and provider requests (`gen_ai.client.operation`) to `/v1/traces`. Metrics and spans use the same attribute rules and resource as log records and wait in their own queues; one device keeps at most 300 spans per UTC hour and 1,200 per UTC day, and a request holds at most 200 spans and 128 KiB.
+
+A log record is created only for an event listed below, and only at warning severity or worse:
+
+| Event | Channel | Severity |
+|---|---|---|
+| `task.browser_error`, `user.extension_storage_error`, `workspace.init_error` | `error` | error |
+| `user.auth_failed`, `task.diff_edit_failed`, `task.terminal_output_failure`, `task.terminal_hang`, `task.mention_failed` | `error` | warning |
+| `api.request.failed`, `tool.execution.failed`, `subagent.run.failed`, `mcp.tools.call.failed`, `extension.error` | `error` | As rated by the runtime diagnostics pipeline |
+| `runtime.cpu_utilization_ratio.breach`, `runtime.event_loop_delay_ms.breach`, `runtime.heap_growth_bytes.breach`, `runtime.previous_session_reconciled`, `task.tool.interrupted_inferred` | `runtime` | As rated by the runtime diagnostics pipeline |
+
+Every other event stays on this device, including `task.error`, which repeats a failure already reported above. A failed provider request is reported once, as `api.request.failed`; earlier builds also sent it as `task.provider_api_error`. A message Dline logs as a warning, and an expected cancellation such as a stopped request or a withdrawn review, is recorded locally as `extension.warning` and is not sent. A failure that Dline logs only as a warning is reported at warning severity, not error.
+
+Events with the same name, severity, error fingerprint and fingerprint version, error class, provider, model, and tool are merged into one record while they wait. A record carries the event name, its channel (`error` or `runtime`), its severity, the time of the first occurrence, the number of occurrences (`dline.occurrences`), and the time of the last one (`dline.last_seen_ms`).
+
+Its other attributes come only from this fixed list:
+
+- `error.class`, `error.code`, `error.type`, `http.status`, `provider`, `model`, `model.custom`, `api.format`, `phase` (`connect`, `stream`, `parse`, `tool`, or `other`), `retry.attempt`, `retryable`, and `duration_ms`.
+- `error.fingerprint` (16 hexadecimal digits) and `error.fingerprint_version` (`2` or `3`). Version 3 groups a failure by the place where it was caught when one is recorded, and by its source location otherwise.
+- `error.site`, the place where a failure was caught, from a fixed list: `ripgrep.search`, `task_history.update`, or `mcp.connect`.
+- `tool.name`, only for one of Dline's built-in tools. The name of an MCP tool is never sent.
+- `failure.stage`: `validation`, `authorization`, `routing`, `execution`, or `remote`.
+- For a performance budget breach, `perf.metric`, `perf.kind` (`fixed_budget` or `dynamic_baseline`), `perf.value`, and `perf.limit`. The CPU utilization ratio is sent in thousandths, so `0.92` becomes `920`.
+
+A text value is kept only as a short token of letters, digits, `_`, `.`, `+`, and `-` (at most 64 characters), and a number only as a non-negative integer. A value outside an attribute's list is left out. Older attribute names still used inside Dline are read into these keys; every other attribute is left out. A failure names its model the same way as usage delivery, and `model.custom` is `true` only for a custom model as defined above.
+
+The request resource names only the client version, the operating-system type and CPU architecture, the release channel
+
+Error messages, stack traces, prompts, responses, file contents, paths, URLs, commands, Task or workspace identity, `distinct_id`, and account ID are not sent.
+
+### Device identity, queue, and limits
+
+Diagnostics use the same pseudonymous device secret as usage delivery but exchange it for their own `production` access token, so each consent controls only its own token. The queue is `telemetry/remote/diagnostics/outbox.json` below the Dline data root and is shared by every Dline window. Queues that earlier builds left, such as `outbox-v2.json` from early 0.11 builds or a queue written under an earlier telemetry contract, are deleted without being sent; the device keeps only metadata recording what was discarded and how much:
+
+- Windows write gathered records to the queue every 5 seconds. One window at a time checks the queue about every 20 seconds and starts a new batch at most every 5 minutes, as described in **Send timing and waits** above.
+- One device keeps at most 50 new records per UTC hour and 200 per UTC day; a repeat of a kept record still merges into it. At most 1,000 records wait. Records beyond these limits are dropped and counted in `dline.dropped_records`.
+- A request holds at most 100 records and at most 128 KiB. When the service answers that a request is too large (HTTP 413), its first half is sent again at once under a new request ID and the rest returns to the queue. Records of a request rejected as invalid (HTTP 422) are dropped and counted.
+- When the service refuses the diagnostics stream, every window stops sending for 30 minutes before trying again.
+
+### Turning error diagnostics off
+
+Unchecking **Allow error reporting**, a host telemetry level of `off`, or an organization policy that disables error reporting deletes the unsent diagnostics and the local `production` access token. The hourly and daily limits and any wait the service asked for stay in effect, so turning reporting off and on again does not send sooner. Usage delivery and its token are unaffected, and the device secret is kept. Data already accepted by the service is not deleted.
+
+### Planned profiles
+
+| Profile | Authorization | Data |
+|---|---|---|
+| `issue_diagnostic` | Error reporting plus an active per-Issue grant | A higher-frequency view of the same diagnostic categories |
+| `development` | Matching consent plus valid development enrollment | Development-only streams unavailable to ordinary users |
+
+Both are planned sinks inside the same mechanism and are not active in the current build.
+
+## Planned Issue diagnostics flow
+
+1. You open `/reportbug` or **Settings → Support & Diagnostics**. An ordinary Issue does not require remote diagnostics.
+2. Only after **Request detailed diagnostic authorization** does the host create a one-time pairing secret and public support code.
+3. Pairing secret, support code, and consent marker are handled by deterministic host code and are not added to model conversation context. The support code alone cannot retrieve diagnostics.
+4. You review and submit the GitHub Issue. Raw API output, journals, and ZIP files are not attached automatically.
+5. You provide the Issue URL or number and explicitly request one authorization check. There is no background polling or automatic retry loop.
+6. After a maintainer approves a time-bounded grant, Dline exchanges the host-held secret for an Issue token. The UI shows server-provided expiry and a local stop action. The support service associates the Issue and account context with the pseudonymous machine principal.
+7. Only the Issue `error`/`runtime` stream starts. Usage remains independent. Denied, expired, malformed, or out-of-contract authorization leaves the Issue stream off and does not change the base production profile.
+8. Expiry, **Stop Issue diagnostics on this device**, disabling error reporting, host/organization restriction, or server kill switch stops local capture and sends, aborts in-flight Issue requests, and deletes the local Issue token, pairing secret, and unsent Issue outbox.
+
+The service currently has no client revoke endpoint. A local stop does not revoke the server grant, which remains valid until server expiry, and does not delete data already uploaded.
+
+<Aside type="caution">
+Issue diagnostics is not a raw-log mode. Prompts, code, command text, model output, MCP payloads, credentials, stable user/Task/workspace identity, and raw artifacts remain prohibited.
+</Aside>

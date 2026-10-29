@@ -20,14 +20,18 @@ export const TASK_TEMP_DIRECTORY_NAME = "tmp"
 
 /** Sections of the task-owned temporary root, each with one owner. */
 export const TaskTempSection = {
-	/** Complete command output retained for one command activity. */
-	CommandLogs: "command-logs",
-	/** Shell startup/pre/post command failure diagnostics, consumed then deleted. */
-	ShellDiagnostics: "shell-diagnostics",
-	/** Provider partial image previews. */
-	ImagePreviews: "image-previews",
-	/** Images materialized for the editor image viewer. */
-	ImageViewer: "image-viewer",
+    /** Complete command output retained for one command activity. */
+    CommandLogs: "command-logs",
+    /** Shell startup/pre/post command failure diagnostics, consumed then deleted. */
+    ShellDiagnostics: "shell-diagnostics",
+    /** Provider partial image previews. */
+    ImagePreviews: "image-previews",
+    /** Images materialized for the editor image viewer. */
+    ImageViewer: "image-viewer",
+    /** Authoritative copies of the resources one task's input carried. */
+    InputResources: "input-resources",
+    /** Read-only exports of the provider conversation, rebuilt each time one is opened. */
+    ConversationExport: "conversation-export",
 } as const
 
 export type TaskTempSection = (typeof TaskTempSection)[keyof typeof TaskTempSection]
@@ -42,42 +46,42 @@ export type TaskTempSection = (typeof TaskTempSection)[keyof typeof TaskTempSect
  * old the task is.
  */
 export interface TaskCommandLogRetentionPolicy {
-	readonly maxTotalBytes: number
+    readonly maxTotalBytes: number
 }
 
 export const DEFAULT_COMMAND_LOG_RETENTION: TaskCommandLogRetentionPolicy = {
-	maxTotalBytes: 200 * 1024 * 1024,
+    maxTotalBytes: 200 * 1024 * 1024,
 }
 
 export interface TaskTempPruneResult {
-	readonly deletedCount: number
-	readonly freedBytes: number
+    readonly deletedCount: number
+    readonly freedBytes: number
 }
 
 const FILE_STEM_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 const TASK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 interface TempFileInfo {
-	readonly path: string
-	readonly size: number
-	readonly mtime: number
+    readonly path: string
+    readonly size: number
+    readonly mtime: number
 }
 
 function assertTaskId(taskId: string): void {
-	if (!TASK_ID_PATTERN.test(taskId)) {
-		throw new Error(`Invalid task identity for task temp storage: ${taskId}`)
-	}
+    if (!TASK_ID_PATTERN.test(taskId)) {
+        throw new Error(`Invalid task identity for task temp storage: ${taskId}`)
+    }
 }
 
 /** Absolute path of the task-owned temporary root. */
 export function getTaskTempDirectory(taskId: string): string {
-	assertTaskId(taskId)
-	return path.join(getDlineDocumentsPathSync(), "tasks", taskId, TASK_TEMP_DIRECTORY_NAME)
+    assertTaskId(taskId)
+    return path.join(getDlineDocumentsPathSync(), "tasks", taskId, TASK_TEMP_DIRECTORY_NAME)
 }
 
 /** Absolute path of one section inside the task-owned temporary root. */
 export function getTaskTempSectionDirectory(taskId: string, section: TaskTempSection): string {
-	return path.join(getTaskTempDirectory(taskId), section)
+    return path.join(getTaskTempDirectory(taskId), section)
 }
 
 /**
@@ -86,10 +90,10 @@ export function getTaskTempSectionDirectory(taskId: string, section: TaskTempSec
  * Used by owners that receive the task directory instead of the task identity.
  */
 export function getTaskTempSectionDirectoryFor(taskDirectory: string, section: TaskTempSection): string {
-	if (!path.isAbsolute(taskDirectory)) {
-		throw new Error(`Task temp storage requires an absolute task directory: ${taskDirectory}`)
-	}
-	return path.join(path.resolve(taskDirectory), TASK_TEMP_DIRECTORY_NAME, section)
+    if (!path.isAbsolute(taskDirectory)) {
+        throw new Error(`Task temp storage requires an absolute task directory: ${taskDirectory}`)
+    }
+    return path.join(path.resolve(taskDirectory), TASK_TEMP_DIRECTORY_NAME, section)
 }
 
 /**
@@ -99,13 +103,13 @@ export function getTaskTempSectionDirectoryFor(taskDirectory: string, section: T
  * resolving the path, so the directory cannot be created asynchronously.
  */
 export function ensureTaskTempSectionSync(taskId: string, section: TaskTempSection): string {
-	const directory = getTaskTempSectionDirectory(taskId, section)
-	try {
-		fs.mkdirSync(directory, { recursive: true })
-	} catch (error) {
-		throw new Error(`Failed to create task temp directory: ${directory}`, { cause: error })
-	}
-	return directory
+    const directory = getTaskTempSectionDirectory(taskId, section)
+    try {
+        fs.mkdirSync(directory, { recursive: true })
+    } catch (error) {
+        throw new Error(`Failed to create task temp directory: ${directory}`, { cause: error })
+    }
+    return directory
 }
 
 /**
@@ -115,26 +119,69 @@ export function ensureTaskTempSectionSync(taskId: string, section: TaskTempSecti
  * The section directory exists when this returns.
  */
 export function resolveTaskTempLogPath(taskId: string, section: TaskTempSection, stableStem: string): string {
-	if (!FILE_STEM_PATTERN.test(stableStem)) {
-		throw new Error(`Invalid task temp file stem: ${stableStem}`)
-	}
+    if (!FILE_STEM_PATTERN.test(stableStem)) {
+        throw new Error(`Invalid task temp file stem: ${stableStem}`)
+    }
 
-	const directory = ensureTaskTempSectionSync(taskId, section)
-	const filePath = path.join(directory, `${stableStem}.log`)
-	if (path.dirname(path.resolve(filePath)) !== path.resolve(directory)) {
-		throw new Error(`Task temp file escapes its section: ${stableStem}`)
-	}
-	return filePath
+    const directory = ensureTaskTempSectionSync(taskId, section)
+    const filePath = path.join(directory, `${stableStem}.log`)
+    if (path.dirname(path.resolve(filePath)) !== path.resolve(directory)) {
+        throw new Error(`Task temp file escapes its section: ${stableStem}`)
+    }
+    return filePath
+}
+
+/**
+ * Resolve a deterministic path from a stable identity and extension.
+ *
+ * Input resources keep the extension their content implies, so the editor opens
+ * them with the language the user pasted. The caller owns uniqueness.
+ */
+export function resolveTaskTempFilePath(taskId: string, section: TaskTempSection, stableStem: string, extension: string): string {
+    if (!FILE_STEM_PATTERN.test(stableStem)) {
+        throw new Error(`Invalid task temp file stem: ${stableStem}`)
+    }
+    if (!/^[A-Za-z0-9]{1,16}$/.test(extension)) {
+        throw new Error(`Invalid task temp file extension: ${extension}`)
+    }
+
+    const directory = ensureTaskTempSectionSync(taskId, section)
+    const filePath = path.join(directory, `${stableStem}.${extension}`)
+    if (path.dirname(path.resolve(filePath)) !== path.resolve(directory)) {
+        throw new Error(`Task temp file escapes its section: ${stableStem}`)
+    }
+    return filePath
+}
+
+/**
+ * Resolve the directory of one stable entry inside a task temp section.
+ *
+ * Owners that keep several files per identity (an input resource keeps its
+ * content beside its record) address the entry by identity rather than
+ * building a path. The directory is not created here; its owner decides when
+ * an entry exists.
+ */
+export function getTaskTempEntryDirectory(taskId: string, section: TaskTempSection, stableStem: string): string {
+    if (!FILE_STEM_PATTERN.test(stableStem)) {
+        throw new Error(`Invalid task temp entry stem: ${stableStem}`)
+    }
+
+    const sectionDirectory = getTaskTempSectionDirectory(taskId, section)
+    const entryDirectory = path.join(sectionDirectory, stableStem)
+    if (path.dirname(path.resolve(entryDirectory)) !== path.resolve(sectionDirectory)) {
+        throw new Error(`Task temp entry escapes its section: ${stableStem}`)
+    }
+    return entryDirectory
 }
 
 /** Return whether an absolute path belongs to the task-owned temporary root. */
 export function isTaskTempPath(taskId: string, absolutePath: string): boolean {
-	if (!path.isAbsolute(absolutePath)) return false
-	const relativePath = path.relative(getTaskTempDirectory(taskId), path.resolve(absolutePath))
-	return (
-		relativePath === "" ||
-		(!relativePath.startsWith(`..${path.sep}`) && relativePath !== ".." && !path.isAbsolute(relativePath))
-	)
+    if (!path.isAbsolute(absolutePath)) return false
+    const relativePath = path.relative(getTaskTempDirectory(taskId), path.resolve(absolutePath))
+    return (
+        relativePath === "" ||
+        (!relativePath.startsWith(`..${path.sep}`) && relativePath !== ".." && !path.isAbsolute(relativePath))
+    )
 }
 
 /**
@@ -148,68 +195,68 @@ export function isTaskTempPath(taskId: string, absolutePath: string): boolean {
  * file another process still owns is skipped rather than failing the caller.
  */
 export async function pruneTaskCommandLogs(
-	taskId: string,
-	policy: TaskCommandLogRetentionPolicy = DEFAULT_COMMAND_LOG_RETENTION,
+    taskId: string,
+    policy: TaskCommandLogRetentionPolicy = DEFAULT_COMMAND_LOG_RETENTION,
 ): Promise<TaskTempPruneResult> {
-	const directory = getTaskTempSectionDirectory(taskId, TaskTempSection.CommandLogs)
-	const files = await readDirectoryEntries(directory)
-	if (files.length === 0) {
-		return { deletedCount: 0, freedBytes: 0 }
-	}
+    const directory = getTaskTempSectionDirectory(taskId, TaskTempSection.CommandLogs)
+    const files = await readDirectoryEntries(directory)
+    if (files.length === 0) {
+        return { deletedCount: 0, freedBytes: 0 }
+    }
 
-	const fileInfos = await readFileInfos(directory, files)
-	let totalSize = fileInfos.reduce((sum, file) => sum + file.size, 0)
-	if (totalSize <= policy.maxTotalBytes) {
-		return { deletedCount: 0, freedBytes: 0 }
-	}
+    const fileInfos = await readFileInfos(directory, files)
+    let totalSize = fileInfos.reduce((sum, file) => sum + file.size, 0)
+    if (totalSize <= policy.maxTotalBytes) {
+        return { deletedCount: 0, freedBytes: 0 }
+    }
 
-	let deletedCount = 0
-	let freedBytes = 0
-	const oldestFirst = [...fileInfos].sort((left, right) => left.mtime - right.mtime)
-	for (const fileInfo of oldestFirst) {
-		if (totalSize <= policy.maxTotalBytes) break
-		if (await tryDelete(fileInfo.path)) {
-			totalSize -= fileInfo.size
-			deletedCount++
-			freedBytes += fileInfo.size
-		}
-	}
+    let deletedCount = 0
+    let freedBytes = 0
+    const oldestFirst = [...fileInfos].sort((left, right) => left.mtime - right.mtime)
+    for (const fileInfo of oldestFirst) {
+        if (totalSize <= policy.maxTotalBytes) break
+        if (await tryDelete(fileInfo.path)) {
+            totalSize -= fileInfo.size
+            deletedCount++
+            freedBytes += fileInfo.size
+        }
+    }
 
-	return { deletedCount, freedBytes }
+    return { deletedCount, freedBytes }
 }
 
 async function readDirectoryEntries(directory: string): Promise<string[]> {
-	try {
-		return await fsPromises.readdir(directory)
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-			return []
-		}
-		throw error
-	}
+    try {
+        return await fsPromises.readdir(directory)
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+            return []
+        }
+        throw error
+    }
 }
 
 async function readFileInfos(directory: string, files: readonly string[]): Promise<TempFileInfo[]> {
-	const fileInfos: TempFileInfo[] = []
-	for (const file of files) {
-		const filePath = path.join(directory, file)
-		try {
-			const stats = await fsPromises.stat(filePath)
-			if (stats.isFile()) {
-				fileInfos.push({ path: filePath, size: stats.size, mtime: stats.mtimeMs })
-			}
-		} catch {
-			// Another window may have removed the file after enumeration.
-		}
-	}
-	return fileInfos
+    const fileInfos: TempFileInfo[] = []
+    for (const file of files) {
+        const filePath = path.join(directory, file)
+        try {
+            const stats = await fsPromises.stat(filePath)
+            if (stats.isFile()) {
+                fileInfos.push({ path: filePath, size: stats.size, mtime: stats.mtimeMs })
+            }
+        } catch {
+            // Another window may have removed the file after enumeration.
+        }
+    }
+    return fileInfos
 }
 
 async function tryDelete(filePath: string): Promise<boolean> {
-	try {
-		await fsPromises.unlink(filePath)
-		return true
-	} catch {
-		return false
-	}
+    try {
+        await fsPromises.unlink(filePath)
+        return true
+    } catch {
+        return false
+    }
 }

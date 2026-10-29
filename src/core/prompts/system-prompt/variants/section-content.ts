@@ -1,8 +1,9 @@
 import { getPrompt } from "../../i18n"
+import type { SystemSectionId } from "../templates/system-template-registry"
 import { createLiteActVsPlan, createStandardActVsPlan } from "./act-vs-plan-content"
 import { createLiteObjective, createStandardObjective } from "./objective-content"
 import type { SystemSectionContentConfig } from "./section-content-config"
-import type { SystemSectionSet } from "./section-preparation"
+import type { SystemSectionBodies, SystemSectionSet } from "./section-preparation"
 import { createLiteSectionSet, createStandardSectionSet } from "./section-preparation"
 import { createLiteToolUse, createStandardToolUse } from "./tool-use-content"
 
@@ -20,36 +21,58 @@ const SHARED_FEEDBACK = getPrompt("feedback", "main")
 const SHARED_USER_INSTRUCTIONS = getPrompt("userInstructions", "main")
 const SHARED_TASK_PROGRESS = getPrompt("taskProgress", "standardFused")
 const LITE_AGENT_ROLE = getPrompt("variants.lite", "agentRole")
+const SUBAGENT_TOOL_USE = getPrompt("toolUseIndex", "subagent")
+
+/**
+ * Sections that describe the main task's conversation with the user: modes, turn-ending
+ * communication tools, and the TODO list. A subagent has none of those tools and reports
+ * only to its parent, so these sections would direct it to tools it cannot call.
+ */
+const MAIN_TASK_SECTIONS: readonly SystemSectionId[] = ["act-vs-plan", "user-communication", "task-progress"]
+
+/** Scopes the section bodies to the run: a subagent run drops main-task sections and uses tool-agnostic tool guidance. */
+function scopeSectionsToRun(config: SystemSectionContentConfig, bodies: SystemSectionBodies): SystemSectionBodies {
+    if (!config.subagentRun) {
+        return bodies
+    }
+    const scoped: Partial<Record<SystemSectionId, string>> = { ...bodies, "tool-use": SUBAGENT_TOOL_USE }
+    for (const sectionId of MAIN_TASK_SECTIONS) {
+        delete scoped[sectionId]
+    }
+    return scoped
+}
 
 export function createStandardSystemSections(config: SystemSectionContentConfig): SystemSectionSet {
-	return createStandardSectionSet({
-		"agent-role": STANDARD_AGENT_ROLE,
-		"user-authority": SHARED_USER_AUTHORITY,
-		objective: createStandardObjective(config),
-		"act-vs-plan": createStandardActVsPlan(),
-		"user-communication": SHARED_USER_COMMUNICATION,
-		"tool-use": createStandardToolUse(config),
-		"task-progress": config.focusChainEnabled ? SHARED_TASK_PROGRESS : "",
-		capabilities: STANDARD_CAPABILITIES,
-		execution: STANDARD_EXECUTION,
-		"system-info": SHARED_SYSTEM_INFO,
-		feedback: SHARED_FEEDBACK,
-		"user-instructions": config.userInstructionsEnabled ? SHARED_USER_INSTRUCTIONS : "",
-	})
+    const bodies = scopeSectionsToRun(config, {
+        "agent-role": STANDARD_AGENT_ROLE,
+        "user-authority": SHARED_USER_AUTHORITY,
+        objective: createStandardObjective(config),
+        "act-vs-plan": createStandardActVsPlan(config),
+        "user-communication": SHARED_USER_COMMUNICATION,
+        "tool-use": createStandardToolUse(config),
+        "task-progress": config.focusChainEnabled ? SHARED_TASK_PROGRESS : "",
+        capabilities: STANDARD_CAPABILITIES,
+        execution: STANDARD_EXECUTION,
+        "system-info": SHARED_SYSTEM_INFO,
+        feedback: SHARED_FEEDBACK,
+        "user-instructions": config.userInstructionsEnabled ? SHARED_USER_INSTRUCTIONS : "",
+    })
+    return createStandardSectionSet(bodies)
 }
 
 export function createLiteSystemSections(config: SystemSectionContentConfig): SystemSectionSet {
-	return createLiteSectionSet({
-		"agent-role": LITE_AGENT_ROLE,
-		"user-authority": SHARED_USER_AUTHORITY,
-		objective: createLiteObjective(),
-		"act-vs-plan": createLiteActVsPlan(config),
-		"user-communication": SHARED_USER_COMMUNICATION,
-		"tool-use": createLiteToolUse(config),
-		capabilities: LITE_CAPABILITIES,
-		execution: LITE_EXECUTION,
-		"system-info": SHARED_SYSTEM_INFO,
-		feedback: SHARED_FEEDBACK,
-		"user-instructions": config.userInstructionsEnabled ? SHARED_USER_INSTRUCTIONS : "",
-	})
+    const bodies = scopeSectionsToRun(config, {
+        "agent-role": LITE_AGENT_ROLE,
+        "user-authority": SHARED_USER_AUTHORITY,
+        objective: createLiteObjective(),
+        "act-vs-plan": createLiteActVsPlan(config),
+        "user-communication": SHARED_USER_COMMUNICATION,
+        "tool-use": createLiteToolUse(config),
+        capabilities: LITE_CAPABILITIES,
+        execution: LITE_EXECUTION,
+        "system-info": SHARED_SYSTEM_INFO,
+        feedback: SHARED_FEEDBACK,
+        "user-instructions": config.userInstructionsEnabled ? SHARED_USER_INSTRUCTIONS : "",
+    })
+    return createLiteSectionSet(bodies)
 }

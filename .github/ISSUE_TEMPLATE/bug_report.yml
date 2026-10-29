@@ -5,25 +5,15 @@ body:
   - type: markdown
     attributes:
       value: |
-        **Important:** All bug reports must be reproducible using Claude Sonnet 4.5. Cline uses complex prompts so less capable models may not work as expected.
-  - type: dropdown
-    id: plugin-type
-    attributes:
-      label: Plugin Type
-      description: Which plugin are you reporting a bug for?
-      options:
-        - VSCode Extension
-        - JetBrains Plugin
-        - CLI
-      default: 0
-    validations:
-      required: true
+        **Security:** Do not disclose a suspected vulnerability here. Use [GitHub Private Vulnerability Reporting](https://github.com/TuvokYang/dline/security/advisories/new).
+
+        For product bugs, include the Dline version and the Profile/provider/model that reproduces the behavior. No specific model is required.
   - type: input
-    id: cline-version
+    id: dline-version
     attributes:
-      label: Cline Version
-      description: What version of Cline are you using? (You can find this at the bottom of the Settings view)
-      placeholder: 'e.g., 1.2.3'
+      label: Dline Version
+      description: What version of Dline are you using? Include the commit suffix when shown.
+      placeholder: 'e.g., 0.11.1-abcdef123'
     validations:
       required: true
   - type: checkboxes
@@ -31,7 +21,7 @@ body:
     attributes:
       label: Beta version
       options:
-        - label: I am using a beta version of Cline
+        - label: I am using a pre-release or Insiders version of Dline
   - type: textarea
     id: what-happened
     attributes:
@@ -56,7 +46,7 @@ body:
     attributes:
       label: Provider/Model
       description: What provider and model were you using when the issue occurred?
-      placeholder: 'e.g., cline:anthropic/claude-sonnet-4.5, gemini:gemini-2.5-pro-exp-03-25'
+      placeholder: 'e.g., anthropic:claude-sonnet-4.5, openai-compatible:my-model'
     validations:
       required: false
   - type: textarea
@@ -72,5 +62,19 @@ body:
         CPU: Intel Core i7-11700K
         GPU: NVIDIA GeForce RTX 3070
         RAM: 32GB DDR4
+    validations:
+      required: false
+  - type: checkboxes
+    id: telemetry-consent
+    attributes:
+      label: Diagnostic telemetry consent
+      description: Only for a report that Dline opened with temporary diagnostic telemetry. Leave it unchecked otherwise.
+      options:
+        - label: I consent to temporary high-density telemetry
+  - type: input
+    id: telemetry-support-code
+    attributes:
+      label: Dline telemetry support code
+      description: Filled in by Dline for temporary diagnostic telemetry. It is not a secret and only links this issue to that authorization.
     validations:
       required: false

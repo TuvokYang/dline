@@ -9,9 +9,9 @@ import { Controller } from ".."
  * @returns Empty response
  */
 export async function openMcpSettings(controller: Controller, _request: EmptyRequest): Promise<Empty> {
-	const mcpSettingsFilePath = await controller.mcpHub?.getMcpSettingsFilePath()
-	if (mcpSettingsFilePath) {
-		await openFileIntegration(mcpSettingsFilePath)
-	}
-	return Empty.create()
+    const mcpSettingsFilePath = await controller.mcpHub?.getMcpSettingsFilePath()
+    if (mcpSettingsFilePath) {
+        await openFileIntegration(mcpSettingsFilePath)
+    }
+    return Empty.create()
 }

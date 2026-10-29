@@ -6,13 +6,13 @@ import { logOpenAiCodexOAuthFailure, requireOpenAiCodexProfile } from "./openAiC
 
 /** Signs out one explicit OpenAI Codex Profile. */
 export async function signOutOpenAiCodexProfile(controller: Controller, request: OpenAiCodexProfileRequest): Promise<Empty> {
-	const profile = await requireOpenAiCodexProfile(request.profileId)
-	try {
-		await openAiCodexOAuthManager.clearCredentials(profile.id)
-		await controller.postStateToWebview()
-		return Empty.create({})
-	} catch (error) {
-		logOpenAiCodexOAuthFailure("sign out", error)
-		throw new Error("OpenAI Codex sign-out could not be completed.")
-	}
+    const profile = await requireOpenAiCodexProfile(request.profileId)
+    try {
+        await openAiCodexOAuthManager.clearCredentials(profile.id)
+        await controller.postStateToWebview()
+        return Empty.create({})
+    } catch (error) {
+        logOpenAiCodexOAuthFailure("sign out", error)
+        throw new Error("OpenAI Codex sign-out could not be completed.")
+    }
 }

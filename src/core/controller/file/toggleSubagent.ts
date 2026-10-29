@@ -13,31 +13,31 @@ import { capabilityWriteContext } from "./capability-write-context"
  * @returns The updated subagent toggles
  */
 export async function toggleSubagent(controller: Controller, request: ToggleSubagentRequest): Promise<SubagentToggles> {
-	const { subagentPath, isGlobal, enabled } = request
+    const { subagentPath, isGlobal, enabled } = request
 
-	if (!subagentPath || typeof enabled !== "boolean") {
-		Logger.error("toggleSubagent: Missing or invalid parameters", { subagentPath, enabled })
-		throw new Error("Missing or invalid parameters for toggleSubagent")
-	}
+    if (!subagentPath || typeof enabled !== "boolean") {
+        Logger.error("toggleSubagent: Missing or invalid parameters", { subagentPath, enabled })
+        throw new Error("Missing or invalid parameters for toggleSubagent")
+    }
 
-	let globalToggles: Record<string, boolean> = {}
-	let localToggles: Record<string, boolean> = {}
+    let globalToggles: Record<string, boolean> = {}
+    let localToggles: Record<string, boolean> = {}
 
-	if (isGlobal) {
-		globalToggles = await setGlobalCapabilityEnabled(controller.stateManager, "globalSubagentsToggles", subagentPath, enabled)
-	} else {
-		// Local origin, but the preference lands in the scope the editor is in.
-		localToggles = (await setCapabilityEnabled(
-			controller.stateManager,
-			"subagents",
-			capabilityWriteContext(controller),
-			capabilityResourceId(subagentPath),
-			enabled,
-		)) as Record<string, boolean>
-	}
+    if (isGlobal) {
+        globalToggles = await setGlobalCapabilityEnabled(controller.stateManager, "globalSubagentsToggles", subagentPath, enabled)
+    } else {
+        // Local origin, but the preference lands in the scope the editor is in.
+        localToggles = (await setCapabilityEnabled(
+            controller.stateManager,
+            "subagents",
+            capabilityWriteContext(controller),
+            capabilityResourceId(subagentPath),
+            enabled,
+        )) as Record<string, boolean>
+    }
 
-	return SubagentToggles.create({
-		globalSubagentsToggles: globalToggles,
-		localSubagentsToggles: localToggles,
-	})
+    return SubagentToggles.create({
+        globalSubagentsToggles: globalToggles,
+        localSubagentsToggles: localToggles,
+    })
 }

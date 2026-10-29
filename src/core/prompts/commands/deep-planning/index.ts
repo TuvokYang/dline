@@ -8,9 +8,9 @@ import { DEEP_PLANNING_VARIANTS } from "./variants"
 
 const commandGenerator = new CommandPromptGenerator(englishTemplateStore)
 const LITE_TASK_PROGRESS_FRAGMENTS = [
-	commandGenerator.generate("deepPlanningGeneric.liteTaskProgressTaskLine", {}).text,
-	commandGenerator.generate("deepPlanningGeneric.liteTaskProgressHeading", {}).text,
-	commandGenerator.generate("deepPlanningGeneric.liteTaskProgressContext", {}).text,
+    commandGenerator.generate("deepPlanningGeneric.liteTaskProgressTaskLine", {}).text,
+    commandGenerator.generate("deepPlanningGeneric.liteTaskProgressHeading", {}).text,
+    commandGenerator.generate("deepPlanningGeneric.liteTaskProgressContext", {}).text,
 ] as const
 
 /**
@@ -22,55 +22,55 @@ const LITE_TASK_PROGRESS_FRAGMENTS = [
  * @returns The deep-planning prompt with shell, focus-chain, and transport values applied.
  */
 export function getDeepPlanningPrompt(
-	promptProfile: PromptProfile,
-	focusChainSettings?: { enabled: boolean },
-	_providerInfo?: ApiProviderInfo,
-	_enableNativeToolCalls?: boolean,
+    promptProfile: PromptProfile,
+    focusChainSettings?: { enabled: boolean },
+    _providerInfo?: ApiProviderInfo,
+    _enableNativeToolCalls?: boolean,
 ): string {
-	const requiredProfile = requirePromptProfile(promptProfile)
-	const variant = DEEP_PLANNING_VARIANTS.find((candidate) => candidate.id === requiredProfile)
-	if (!variant) {
-		throw new Error(`Missing deep-planning variant for profile '${requiredProfile}'`)
-	}
-	const isPowerShell = detectPowerShell(getShell())
-	if (variant.id === PromptProfile.Standard) {
-		return commandGenerator.generate("deepPlanning5Step.main", {
-			FOCUS_CHAIN_NOTE: focusChainSettings?.enabled
-				? commandGenerator.generate("deepPlanning5Step.focusChainNote", {}).text
-				: "",
-			SHELL_COMMANDS: commandGenerator.generate(
-				isPowerShell ? "deepPlanning5Step.powershellCommands" : "deepPlanning5Step.bashCommands",
-				{},
-			).text,
-			FOCUS_CHAIN_TASK_PROGRESS_LINE: focusChainSettings?.enabled
-				? commandGenerator.generate("deepPlanning5Step.focusChainTaskProgressLine", {}).text
-				: "",
-			FOCUS_CHAIN_TASK_NOTE: focusChainSettings?.enabled
-				? commandGenerator.generate("deepPlanning5Step.focusChainTaskNote", {}).text
-				: "",
-			FOCUS_CHAIN_TASK_PROGRESS: focusChainSettings?.enabled
-				? commandGenerator.generate("deepPlanning5Step.focusChainTaskProgress", {}).text
-				: "",
-			TOOL_DEFINITION: commandGenerator.generate("deepPlanning5Step.xmlToolDef", {}).text,
-		}).text
-	}
+    const requiredProfile = requirePromptProfile(promptProfile)
+    const variant = DEEP_PLANNING_VARIANTS.find((candidate) => candidate.id === requiredProfile)
+    if (!variant) {
+        throw new Error(`Missing deep-planning variant for profile '${requiredProfile}'`)
+    }
+    const isPowerShell = detectPowerShell(getShell())
+    if (variant.id === PromptProfile.Standard) {
+        return commandGenerator.generate("deepPlanning5Step.main", {
+            FOCUS_CHAIN_NOTE: focusChainSettings?.enabled
+                ? commandGenerator.generate("deepPlanning5Step.focusChainNote", {}).text
+                : "",
+            SHELL_COMMANDS: commandGenerator.generate(
+                isPowerShell ? "deepPlanning5Step.powershellCommands" : "deepPlanning5Step.bashCommands",
+                {},
+            ).text,
+            FOCUS_CHAIN_TASK_PROGRESS_LINE: focusChainSettings?.enabled
+                ? commandGenerator.generate("deepPlanning5Step.focusChainTaskProgressLine", {}).text
+                : "",
+            FOCUS_CHAIN_TASK_NOTE: focusChainSettings?.enabled
+                ? commandGenerator.generate("deepPlanning5Step.focusChainTaskNote", {}).text
+                : "",
+            FOCUS_CHAIN_TASK_PROGRESS: focusChainSettings?.enabled
+                ? commandGenerator.generate("deepPlanning5Step.focusChainTaskProgress", {}).text
+                : "",
+            TOOL_DEFINITION: commandGenerator.generate("deepPlanning5Step.xmlToolDef", {}).text,
+        }).text
+    }
 
-	const shellCommands = commandGenerator.generate(
-		isPowerShell ? "deepPlanningGeneric.powershellCommands" : "deepPlanningGeneric.bashCommands",
-		{},
-	).text
-	const navCommands = commandGenerator.generate(
-		isPowerShell ? "deepPlanningGeneric.powershellNavCommands" : "deepPlanningGeneric.bashNavCommands",
-		{},
-	).text
+    const shellCommands = commandGenerator.generate(
+        isPowerShell ? "deepPlanningGeneric.powershellCommands" : "deepPlanningGeneric.bashCommands",
+        {},
+    ).text
+    const navCommands = commandGenerator.generate(
+        isPowerShell ? "deepPlanningGeneric.powershellNavCommands" : "deepPlanningGeneric.bashNavCommands",
+        {},
+    ).text
 
-	const rendered = commandGenerator.generate("deepPlanningGeneric.main", {
-		SHELL_COMMANDS: shellCommands,
-		NAV_COMMANDS: navCommands,
-		FOCUS_CHAIN_PARAM: "",
-		NEW_TASK_INSTRUCTIONS: commandGenerator.generate("deepPlanningGeneric.xmlNewTaskInstructions", {}).text,
-	}).text
-	return withoutPromptFragments(rendered, LITE_TASK_PROGRESS_FRAGMENTS)
+    const rendered = commandGenerator.generate("deepPlanningGeneric.main", {
+        SHELL_COMMANDS: shellCommands,
+        NAV_COMMANDS: navCommands,
+        FOCUS_CHAIN_PARAM: "",
+        NEW_TASK_INSTRUCTIONS: commandGenerator.generate("deepPlanningGeneric.xmlNewTaskInstructions", {}).text,
+    }).text
+    return withoutPromptFragments(rendered, LITE_TASK_PROGRESS_FRAGMENTS)
 }
 
 /**
@@ -80,6 +80,6 @@ export function getDeepPlanningPrompt(
  * @returns True when PowerShell command examples should be used.
  */
 function detectPowerShell(shell: string | undefined): boolean {
-	const normalized = shell?.toLowerCase() ?? ""
-	return normalized.includes("powershell") || normalized.includes("pwsh")
+    const normalized = shell?.toLowerCase() ?? ""
+    return normalized.includes("powershell") || normalized.includes("pwsh")
 }

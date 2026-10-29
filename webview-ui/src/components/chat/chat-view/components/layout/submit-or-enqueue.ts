@@ -8,10 +8,10 @@
 export type SendDisposition = "submit" | "enqueue" | "retain"
 
 export interface SendConditions {
-	/** Whether the composer can dispatch this draft to the task right now. */
-	canSubmit: boolean
-	/** Whether a task in this phase still reaches a queue delivery point. */
-	queueCanDeliver: boolean
+    /** Whether the composer can dispatch this draft to the task right now. */
+    canSubmit: boolean
+    /** Whether a task in this phase still reaches a queue delivery point. */
+    queueCanDeliver: boolean
 }
 
 /**
@@ -25,8 +25,8 @@ export interface SendConditions {
  * ever silently dropped.
  */
 export function resolveSendDisposition({ canSubmit, queueCanDeliver }: SendConditions): SendDisposition {
-	if (canSubmit) {
-		return "submit"
-	}
-	return queueCanDeliver ? "enqueue" : "retain"
+    if (canSubmit) {
+        return "submit"
+    }
+    return queueCanDeliver ? "enqueue" : "retain"
 }

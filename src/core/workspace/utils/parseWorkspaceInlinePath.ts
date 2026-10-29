@@ -12,16 +12,16 @@
  */
 
 export interface ParsedWorkspacePath {
-	/**
-	 * The workspace hint extracted from the path (if any)
-	 * This can be a workspace name or partial path to match
-	 */
-	workspaceHint?: string
+    /**
+     * The workspace hint extracted from the path (if any)
+     * This can be a workspace name or partial path to match
+     */
+    workspaceHint?: string
 
-	/**
-	 * The relative path after removing the workspace prefix
-	 */
-	relPath: string
+    /**
+     * The relative path after removing the workspace prefix
+     */
+    relPath: string
 }
 
 /**
@@ -31,27 +31,27 @@ export interface ParsedWorkspacePath {
  * @returns Parsed result with optional workspace hint and the relative path
  */
 export function parseWorkspaceInlinePath(value: string): ParsedWorkspacePath {
-	// Handle null/undefined/empty inputs
-	if (!value) {
-		return { workspaceHint: undefined, relPath: value || "" }
-	}
+    // Handle null/undefined/empty inputs
+    if (!value) {
+        return { workspaceHint: undefined, relPath: value || "" }
+    }
 
-	// Regex to match @workspace:path pattern
-	// Captures:
-	// - Group 1: workspace name (anything except colon)
-	// - Group 2: the path after the colon
-	const match = value.match(/^@([^:]+):(.*)$/)
+    // Regex to match @workspace:path pattern
+    // Captures:
+    // - Group 1: workspace name (anything except colon)
+    // - Group 2: the path after the colon
+    const match = value.match(/^@([^:]+):(.*)$/)
 
-	if (match) {
-		const [, workspaceHint, relPath] = match
-		return {
-			workspaceHint: workspaceHint.trim(),
-			relPath: relPath.trim(),
-		}
-	}
+    if (match) {
+        const [, workspaceHint, relPath] = match
+        return {
+            workspaceHint: workspaceHint.trim(),
+            relPath: relPath.trim(),
+        }
+    }
 
-	// No workspace hint found, return original value as relative path
-	return { workspaceHint: undefined, relPath: value }
+    // No workspace hint found, return original value as relative path
+    return { workspaceHint: undefined, relPath: value }
 }
 
 /**
@@ -61,7 +61,7 @@ export function parseWorkspaceInlinePath(value: string): ParsedWorkspacePath {
  * @returns True if the path contains a workspace hint
  */
 export function hasWorkspaceHint(value: string): boolean {
-	return /^@[^:]+:/.test(value)
+    return /^@[^:]+:/.test(value)
 }
 
 /**
@@ -72,9 +72,9 @@ export function hasWorkspaceHint(value: string): boolean {
  * @returns The path with workspace hint prefix
  */
 export function addWorkspaceHint(workspaceName: string, path: string): string {
-	// Remove any existing hint first
-	const { relPath } = parseWorkspaceInlinePath(path)
-	return `@${workspaceName}:${relPath}`
+    // Remove any existing hint first
+    const { relPath } = parseWorkspaceInlinePath(path)
+    return `@${workspaceName}:${relPath}`
 }
 
 /**
@@ -84,8 +84,8 @@ export function addWorkspaceHint(workspaceName: string, path: string): string {
  * @returns The path without workspace hint
  */
 export function removeWorkspaceHint(value: string): string {
-	const { relPath } = parseWorkspaceInlinePath(value)
-	return relPath
+    const { relPath } = parseWorkspaceInlinePath(value)
+    return relPath
 }
 
 /**
@@ -96,5 +96,5 @@ export function removeWorkspaceHint(value: string): string {
  * @returns Array of parsed results
  */
 export function parseMultipleWorkspacePaths(paths: string[]): ParsedWorkspacePath[] {
-	return paths.map((path) => parseWorkspaceInlinePath(path))
+    return paths.map((path) => parseWorkspaceInlinePath(path))
 }

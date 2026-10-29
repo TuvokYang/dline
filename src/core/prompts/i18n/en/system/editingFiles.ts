@@ -1,7 +1,7 @@
 // English editing files prompts — key-value pairs only, no code logic.
 
 const prompts: Record<string, string> = {
-	autoFormatting: `# Auto-formatting Considerations
+    autoFormatting: `# Auto-formatting Considerations
 
 - After using either write_to_file or replace_in_file, the user's editor may automatically format the file
 - This auto-formatting may modify the file contents, for example:
@@ -15,7 +15,7 @@ const prompts: Record<string, string> = {
 - The write_to_file and replace_in_file tool responses will include the final state of the file after any auto-formatting
 - Use this final state as your reference point for any subsequent edits. This is ESPECIALLY important when crafting SEARCH blocks for replace_in_file which require the content to match what's in the file exactly.`,
 
-	main: `EDITING FILES
+    main: `EDITING FILES
 
 You have access to two tools for working with files: **write_to_file** and **replace_in_file**. Understanding their roles and selecting the right one for the job will help ensure efficient and accurate modifications.
 

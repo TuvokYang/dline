@@ -6,47 +6,47 @@ import { buildEffectiveModelInfo, type ProviderModelOverrides } from "./effectiv
 import type { ProviderModelsConfig } from "./types"
 
 export const PROFILE_PROVIDER_KEYS: Partial<Record<string, keyof ApiProfile>> = {
-	aihubmix: "aihubmix",
-	anthropic: "anthropic",
-	asksage: "asksage",
-	baseten: "baseten",
-	bedrock: "bedrock",
-	"claude-code": "claudeCode",
-	cline: "clineProvider",
-	cerebras: "cerebras",
-	deepseek: "deepseek",
-	dify: "dify",
-	doubao: "doubao",
-	fireworks: "fireworks",
-	gemini: "gemini",
-	groq: "groq",
-	hicap: "hicap",
-	"huawei-cloud-maas": "huaweiCloudMaas",
-	huggingface: "huggingface",
-	litellm: "litellm",
-	lmstudio: "lmstudio",
-	minimax: "minimax",
-	mistral: "mistral",
-	moonshot: "moonshot",
-	nebius: "nebius",
-	nousResearch: "nousResearch",
-	oca: "oca",
-	ollama: "ollama",
-	openai: "openai",
-	"openai-codex": "openaiCodex",
-	openrouter: "openrouter",
-	qwen: "qwen",
-	"qwen-code": "qwenCode",
-	requesty: "requesty",
-	sambanova: "sambanova",
-	sapaicore: "sapaicore",
-	together: "together",
-	"vercel-ai-gateway": "vercelAiGateway",
-	vertex: "vertex",
-	"vscode-lm": "vscodeLm",
-	wandb: "wandb",
-	xai: "xai",
-	zai: "zai",
+    aihubmix: "aihubmix",
+    anthropic: "anthropic",
+    asksage: "asksage",
+    baseten: "baseten",
+    bedrock: "bedrock",
+    "claude-code": "claudeCode",
+    cline: "clineProvider",
+    cerebras: "cerebras",
+    deepseek: "deepseek",
+    dify: "dify",
+    doubao: "doubao",
+    fireworks: "fireworks",
+    gemini: "gemini",
+    groq: "groq",
+    hicap: "hicap",
+    "huawei-cloud-maas": "huaweiCloudMaas",
+    huggingface: "huggingface",
+    litellm: "litellm",
+    lmstudio: "lmstudio",
+    minimax: "minimax",
+    mistral: "mistral",
+    moonshot: "moonshot",
+    nebius: "nebius",
+    nousResearch: "nousResearch",
+    oca: "oca",
+    ollama: "ollama",
+    openai: "openai",
+    "openai-codex": "openaiCodex",
+    openrouter: "openrouter",
+    qwen: "qwen",
+    "qwen-code": "qwenCode",
+    requesty: "requesty",
+    sambanova: "sambanova",
+    sapaicore: "sapaicore",
+    together: "together",
+    "vercel-ai-gateway": "vercelAiGateway",
+    vertex: "vertex",
+    "vscode-lm": "vscodeLm",
+    wandb: "wandb",
+    xai: "xai",
+    zai: "zai",
 }
 
 /**
@@ -57,7 +57,7 @@ export const PROFILE_PROVIDER_KEYS: Partial<Record<string, keyof ApiProfile>> = 
  */
 
 function isObject(value: unknown): value is Record<string, unknown> {
-	return value !== null && typeof value === "object" && !Array.isArray(value)
+    return value !== null && typeof value === "object" && !Array.isArray(value)
 }
 
 /**
@@ -68,21 +68,21 @@ function isObject(value: unknown): value is Record<string, unknown> {
  */
 
 function readOverrides(value: unknown): ProviderModelOverrides {
-	if (!isObject(value)) {
-		return {}
-	}
+    if (!isObject(value)) {
+        return {}
+    }
 
-	// The server-tool declaration is stripped inside buildEffectiveModelInfo, so
-	// every consumer of these overrides shares one rule.
-	const capabilities = isObject(value.capabilities) ? (value.capabilities as ModelCapabilities) : undefined
+    // The server-tool declaration is stripped inside buildEffectiveModelInfo, so
+    // every consumer of these overrides shares one rule.
+    const capabilities = isObject(value.capabilities) ? (value.capabilities as ModelCapabilities) : undefined
 
-	const pricing = isObject(value.pricing) ? (value.pricing as ModelPricing) : undefined
-	// The 1M long-context option is enabled by default; only an explicit false disables it.
-	// Keeps TaskHeader/runtime display consistent with the provider UI and API handlers.
-	const enableLongContext = value.enableLongContext !== false
-	const pricingTiersEnabled = typeof value.pricingTiersEnabled === "boolean" ? value.pricingTiersEnabled : undefined
+    const pricing = isObject(value.pricing) ? (value.pricing as ModelPricing) : undefined
+    // The 1M long-context option is enabled by default; only an explicit false disables it.
+    // Keeps TaskHeader/runtime display consistent with the provider UI and API handlers.
+    const enableLongContext = value.enableLongContext !== false
+    const pricingTiersEnabled = typeof value.pricingTiersEnabled === "boolean" ? value.pricingTiersEnabled : undefined
 
-	return { capabilities, pricing, enableLongContext, pricingTiersEnabled }
+    return { capabilities, pricing, enableLongContext, pricingTiersEnabled }
 }
 
 /**
@@ -93,28 +93,28 @@ function readOverrides(value: unknown): ProviderModelOverrides {
  */
 
 export function resolveProfileOverrides(profile: ApiProfile): ProviderModelOverrides {
-	const providerKey = PROFILE_PROVIDER_KEYS[profile.provider]
+    const providerKey = PROFILE_PROVIDER_KEYS[profile.provider]
 
-	return providerKey ? readOverrides(profile[providerKey]) : {}
+    return providerKey ? readOverrides(profile[providerKey]) : {}
 }
 
 /** Read the API protocol and optional Responses transport selected by a provider Profile. */
 function resolveProfileApiFormat(profile: ApiProfile): ApiFormat | undefined {
-	const providerKey = PROFILE_PROVIDER_KEYS[profile.provider]
-	if (!providerKey) return undefined
+    const providerKey = PROFILE_PROVIDER_KEYS[profile.provider]
+    if (!providerKey) return undefined
 
-	const config = profile[providerKey]
-	if (!isObject(config)) return undefined
+    const config = profile[providerKey]
+    if (!isObject(config)) return undefined
 
-	const configured = typeof config.apiFormat === "number" ? (config.apiFormat as ApiFormat) : undefined
-	const baseFormat = configured === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE ? ApiFormat.OPENAI_RESPONSES : configured
-	if (config.websocketEnabled === true && (baseFormat === undefined || baseFormat === ApiFormat.OPENAI_RESPONSES)) {
-		return ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE
-	}
-	if (config.websocketEnabled === undefined && configured === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE) {
-		return ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE
-	}
-	return baseFormat
+    const configured = typeof config.apiFormat === "number" ? (config.apiFormat as ApiFormat) : undefined
+    const baseFormat = configured === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE ? ApiFormat.OPENAI_RESPONSES : configured
+    if (config.websocketEnabled === true && (baseFormat === undefined || baseFormat === ApiFormat.OPENAI_RESPONSES)) {
+        return ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE
+    }
+    if (config.websocketEnabled === undefined && configured === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE) {
+        return ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE
+    }
+    return baseFormat
 }
 
 /**
@@ -124,14 +124,14 @@ function resolveProfileApiFormat(profile: ApiProfile): ApiFormat | undefined {
  * provider without the switch keeps every hosted capability its model offers.
  */
 export function resolveProfileDisabledServerTools(profile: ApiProfile): readonly ServerTool[] | undefined {
-	const providerKey = PROFILE_PROVIDER_KEYS[profile.provider]
-	if (!providerKey) return undefined
+    const providerKey = PROFILE_PROVIDER_KEYS[profile.provider]
+    if (!providerKey) return undefined
 
-	const config = profile[providerKey]
-	if (!isObject(config)) return undefined
+    const config = profile[providerKey]
+    if (!isObject(config)) return undefined
 
-	const disabled = (config as { disabledServerTools?: unknown }).disabledServerTools
-	return Array.isArray(disabled) ? (disabled as ServerTool[]) : undefined
+    const disabled = (config as { disabledServerTools?: unknown }).disabledServerTools
+    return Array.isArray(disabled) ? (disabled as ServerTool[]) : undefined
 }
 
 /**
@@ -143,10 +143,10 @@ export function resolveProfileDisabledServerTools(profile: ApiProfile): readonly
  */
 
 export function resolveProfileModelId(
-	profile: ApiProfile,
-	providerModels?: Pick<ProviderModelsConfig, "defaultModelId">,
+    profile: ApiProfile,
+    providerModels?: Pick<ProviderModelsConfig, "defaultModelId">,
 ): string {
-	return profile.modelId || profile.modelInfo?.id || providerModels?.defaultModelId || ""
+    return profile.modelId || profile.modelInfo?.id || providerModels?.defaultModelId || ""
 }
 
 /**
@@ -155,12 +155,12 @@ export function resolveProfileModelId(
  * explicit unknown selection never borrows the provider's default declaration.
  */
 export function resolveRuntimeModel(
-	profile: ApiProfile,
-	providerModels?: Pick<ProviderModelsConfig, "models" | "defaultModelId">,
+    profile: ApiProfile,
+    providerModels?: Pick<ProviderModelsConfig, "models" | "defaultModelId">,
 ): { id: string; info: ModelInfo } {
-	const id = resolveProfileModelId(profile, providerModels)
-	const matchingInfo = profile.modelInfo?.id === id ? profile.modelInfo : undefined
-	return { id, info: matchingInfo ?? providerModels?.models[id] ?? { id } }
+    const id = resolveProfileModelId(profile, providerModels)
+    const matchingInfo = profile.modelInfo?.id === id ? profile.modelInfo : undefined
+    return { id, info: matchingInfo ?? providerModels?.models[id] ?? { id } }
 }
 
 /**
@@ -172,35 +172,35 @@ export function resolveRuntimeModel(
  */
 
 export function resolveProfileModelInfo(
-	profile: ApiProfile,
+    profile: ApiProfile,
 
-	providerModels?: Pick<ProviderModelsConfig, "models" | "defaultModelId">,
+    providerModels?: Pick<ProviderModelsConfig, "models" | "defaultModelId">,
 ): ModelInfo {
-	const modelId = resolveProfileModelId(profile, providerModels)
+    const modelId = resolveProfileModelId(profile, providerModels)
 
-	const registryModel = modelId ? providerModels?.models?.[modelId] : undefined
+    const registryModel = modelId ? providerModels?.models?.[modelId] : undefined
 
-	const defaultModel = providerModels?.defaultModelId ? providerModels.models[providerModels.defaultModelId] : undefined
+    const defaultModel = providerModels?.defaultModelId ? providerModels.models[providerModels.defaultModelId] : undefined
 
-	const configuredBaseId =
-		profile.provider === "bedrock" && profile.bedrock?.awsBedrockCustomSelected
-			? profile.bedrock.awsBedrockCustomModelBaseId
-			: undefined
-	const configuredBase = configuredBaseId ? providerModels?.models?.[configuredBaseId] : undefined
-	const matchingModel = profile.modelInfo?.id === modelId ? profile.modelInfo : undefined
-	const baseModel = registryModel ?? configuredBase ?? matchingModel ?? (profile.modelId ? undefined : defaultModel)
+    const configuredBaseId =
+        profile.provider === "bedrock" && profile.bedrock?.awsBedrockCustomSelected
+            ? profile.bedrock.awsBedrockCustomModelBaseId
+            : undefined
+    const configuredBase = configuredBaseId ? providerModels?.models?.[configuredBaseId] : undefined
+    const matchingModel = profile.modelInfo?.id === modelId ? profile.modelInfo : undefined
+    const baseModel = registryModel ?? configuredBase ?? matchingModel ?? (profile.modelId ? undefined : defaultModel)
 
-	const modelInfo = buildEffectiveModelInfo(modelId || baseModel?.id, baseModel, {
-		...resolveProfileOverrides(profile),
-		preferContextWindowTier: profile.provider === "anthropic",
-		contextWindowTiersEnabled:
-			profile.provider === "anthropic" && registryModel
-				? Boolean(registryModel.capabilities?.contextWindowTiers?.length)
-				: undefined,
-	})
-	const configuredApiFormat = resolveProfileApiFormat(profile)
-	if (configuredApiFormat === undefined) return modelInfo
+    const modelInfo = buildEffectiveModelInfo(modelId || baseModel?.id, baseModel, {
+        ...resolveProfileOverrides(profile),
+        preferContextWindowTier: profile.provider === "anthropic",
+        contextWindowTiersEnabled:
+            profile.provider === "anthropic" && registryModel
+                ? Boolean(registryModel.capabilities?.contextWindowTiers?.length)
+                : undefined,
+    })
+    const configuredApiFormat = resolveProfileApiFormat(profile)
+    if (configuredApiFormat === undefined) return modelInfo
 
-	const activeApiFormat = resolveApiFormat(configuredApiFormat, modelInfo, modelInfo.apiFormats?.[0] ?? configuredApiFormat)
-	return prioritizeApiFormat(modelInfo, activeApiFormat)
+    const activeApiFormat = resolveApiFormat(configuredApiFormat, modelInfo, modelInfo.apiFormats?.[0] ?? configuredApiFormat)
+    return prioritizeApiFormat(modelInfo, activeApiFormat)
 }

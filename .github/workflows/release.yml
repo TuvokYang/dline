@@ -68,8 +68,6 @@ jobs:
       package_profile: release
       package_channel: production
     secrets:
-      TELEMETRY_SERVICE_API_KEY: ${{ secrets.TELEMETRY_SERVICE_API_KEY }}
-      ERROR_SERVICE_API_KEY: ${{ secrets.ERROR_SERVICE_API_KEY }}
       OTEL_TELEMETRY_ENABLED: ${{ secrets.OTEL_TELEMETRY_ENABLED }}
       OTEL_EXPORTER_OTLP_PROTOCOL: ${{ secrets.OTEL_EXPORTER_OTLP_PROTOCOL }}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT }}
@@ -86,7 +84,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        folder: [api, capabilities, chat, context, harness, performance, profiles, tasks]
+        folder: [api, capabilities, chat, context, harness, performance, profiles, tasks, telemetry]
     env:
       DLINE_E2E_INSTALL_VSIX: "1"
       DLINE_E2E_PROFILE: mock-openai

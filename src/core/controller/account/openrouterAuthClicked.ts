@@ -7,11 +7,11 @@ import { Controller } from ".."
  * Initiates OpenRouter auth
  */
 export async function openrouterAuthClicked(_: Controller, __: EmptyRequest): Promise<Empty> {
-	const callbackUrl = await HostProvider.get().getCallbackUrl("/openrouter")
-	const authUrl = new URL("https://openrouter.ai/auth")
-	authUrl.searchParams.set("callback_url", callbackUrl)
+    const callbackUrl = await HostProvider.get().getCallbackUrl("/openrouter")
+    const authUrl = new URL("https://openrouter.ai/auth")
+    authUrl.searchParams.set("callback_url", callbackUrl)
 
-	await openExternal(authUrl.toString())
+    await openExternal(authUrl.toString())
 
-	return {}
+    return {}
 }

@@ -14,13 +14,13 @@ export const E2E_LOOPBACK_VISIT_TIMEOUT_MS = 15_000
  * fetch a remote page instead of opening it.
  */
 export function shouldVisitLoopbackUrlDirectly(url: string, env: NodeJS.ProcessEnv): boolean {
-	if (env.E2E_TEST !== "true") return false
-	try {
-		const parsed = new URL(url)
-		return parsed.protocol === "http:" && LOOPBACK_HOSTNAMES.has(parsed.hostname)
-	} catch {
-		return false
-	}
+    if (env.E2E_TEST !== "true") return false
+    try {
+        const parsed = new URL(url)
+        return parsed.protocol === "http:" && LOOPBACK_HOSTNAMES.has(parsed.hostname)
+    } catch {
+        return false
+    }
 }
 
 /**
@@ -30,7 +30,7 @@ export function shouldVisitLoopbackUrlDirectly(url: string, env: NodeJS.ProcessE
  * final status is returned instead of thrown. Transport failures and timeouts reject.
  */
 export async function visitLoopbackUrl(url: string, timeoutMs = E2E_LOOPBACK_VISIT_TIMEOUT_MS): Promise<number> {
-	const response = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(timeoutMs) })
-	await response.arrayBuffer()
-	return response.status
+    const response = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(timeoutMs) })
+    await response.arrayBuffer()
+    return response.status
 }

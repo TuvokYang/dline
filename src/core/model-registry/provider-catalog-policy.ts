@@ -6,11 +6,11 @@ import { allProviderModels } from "@core/api/providers/models"
  * is enough.
  */
 export const DEFERRED_PROVIDER_IDS: ReadonlySet<string> = new Set(
-	Object.values(allProviderModels)
-		.filter((config) => config.deferred === true)
-		.map((config) => config.provider),
+    Object.values(allProviderModels)
+        .filter((config) => config.deferred === true)
+        .map((config) => config.provider),
 )
 
 export function isDeferredProvider(providerId: string): boolean {
-	return DEFERRED_PROVIDER_IDS.has(providerId)
+    return DEFERRED_PROVIDER_IDS.has(providerId)
 }

@@ -12,9 +12,9 @@
 export const UNKNOWN_BUILD_ID = "unknown"
 
 export interface BuildIdentity {
-	readonly buildId: string
-	/** False when the id is unknown, so a reader does not trust symbolication. */
-	readonly symbolicatable: boolean
+    readonly buildId: string
+    /** False when the id is unknown, so a reader does not trust symbolication. */
+    readonly symbolicatable: boolean
 }
 
 /**
@@ -24,13 +24,13 @@ export interface BuildIdentity {
  * how the id reaches the process.
  */
 export function interpretBuildId(rawBuildId: string | undefined): BuildIdentity {
-	const buildId = rawBuildId?.trim()
-	if (!buildId || buildId === UNKNOWN_BUILD_ID) {
-		return { buildId: UNKNOWN_BUILD_ID, symbolicatable: false }
-	}
-	// A dev build is readable without a map because it is not minified, but it
-	// still has no archived map, so it is not symbolicatable in this sense.
-	return { buildId, symbolicatable: buildId !== "dev" }
+    const buildId = rawBuildId?.trim()
+    if (!buildId || buildId === UNKNOWN_BUILD_ID) {
+        return { buildId: UNKNOWN_BUILD_ID, symbolicatable: false }
+    }
+    // A dev build is readable without a map because it is not minified, but it
+    // still has no archived map, so it is not symbolicatable in this sense.
+    return { buildId, symbolicatable: buildId !== "dev" }
 }
 
 /**
@@ -42,5 +42,5 @@ export function interpretBuildId(rawBuildId: string | undefined): BuildIdentity 
  * defeats the substitution and makes every shipped build report `unknown`.
  */
 export function readBuildIdentity(): BuildIdentity {
-	return interpretBuildId(process.env.DLINE_BUILD_ID)
+    return interpretBuildId(process.env.DLINE_BUILD_ID)
 }

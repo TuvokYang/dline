@@ -4,47 +4,47 @@ import type { TaskServiceTierOverride } from "./task-provider-overrides"
 import type { TaskReasoningOverride } from "./task-reasoning"
 
 export type ApiProvider =
-	| "anthropic"
-	| "claude-code"
-	| "openrouter"
-	| "bedrock"
-	| "vertex"
-	| "openai"
-	| "ollama"
-	| "lmstudio"
-	| "gemini"
-	| "openai-codex"
-	| "requesty"
-	| "together"
-	| "deepseek"
-	| "qwen"
-	| "qwen-code"
-	| "doubao"
-	| "mistral"
-	| "vscode-lm"
-	| "cline"
-	| "litellm"
-	| "moonshot"
-	| "nebius"
-	| "fireworks"
-	| "asksage"
-	| "xai"
-	| "sambanova"
-	| "cerebras"
-	| "sapaicore"
-	| "groq"
-	| "huggingface"
-	| "huawei-cloud-maas"
-	| "dify"
-	| "baseten"
-	| "vercel-ai-gateway"
-	| "zai"
-	| "oca"
-	| "aihubmix"
-	| "minimax"
-	| "hicap"
-	| "nousResearch"
-	| "wandb"
+    | "anthropic"
+    | "claude-code"
+    | "openrouter"
+    | "bedrock"
+    | "vertex"
+    | "openai"
+    | "ollama"
+    | "lmstudio"
+    | "gemini"
+    | "openai-codex"
+    | "requesty"
+    | "together"
+    | "deepseek"
+    | "qwen"
+    | "qwen-code"
+    | "doubao"
+    | "mistral"
+    | "vscode-lm"
+    | "cline"
+    | "litellm"
+    | "moonshot"
+    | "nebius"
+    | "fireworks"
+    | "asksage"
+    | "xai"
+    | "sambanova"
+    | "cerebras"
+    | "sapaicore"
+    | "groq"
+    | "huggingface"
+    | "huawei-cloud-maas"
+    | "dify"
+    | "baseten"
+    | "vercel-ai-gateway"
+    | "zai"
+    | "oca"
+    | "aihubmix"
+    | "minimax"
+    | "hicap"
+    | "nousResearch"
+    | "wandb"
 
 export const DEFAULT_API_PROVIDER = "openrouter" as ApiProvider
 
@@ -54,46 +54,38 @@ export const DEFAULT_API_PROVIDER = "openrouter" as ApiProvider
  * are now sourced from ApiProfile + ModelRegistry at runtime.
  */
 export interface ApiConfiguration {
-	/** Stable Profile identity for plan mode. */
-	planModeProfileId?: string
-	/** Legacy/display Profile name for plan mode. */
-	planModeProfile?: string
-	/** Stable Profile identity for act mode. */
-	actModeProfileId?: string
-	/** Legacy/display Profile name for act mode. */
-	actModeProfile?: string
-	/** Stable Profile identity for image generation. */
-	imageProfileId?: string
-	/** Legacy/display Profile name for image generation. */
-	imageProfile?: string
-	/** Task-local reasoning override for plan mode. */
-	planModeReasoningOverride?: TaskReasoningOverride
-	/** Task-local reasoning override for act mode. */
-	actModeReasoningOverride?: TaskReasoningOverride
-	/** Task-local OpenAI service tier override for plan mode. */
-	planModeServiceTierOverride?: TaskServiceTierOverride
-	/** Task-local OpenAI service tier override for act mode. */
-	actModeServiceTierOverride?: TaskServiceTierOverride
-	/** Stable workspace identity for provider-side routing affinity. */
-	workspaceId?: string
-	/** Task identifier */
-	ulid?: string
-	/** Retry callback */
-	onRetryAttempt?: (attempt: number, maxRetries: number, delay: number, error: any) => void
-	/** Global request timeout (ms) */
-	requestTimeoutMs?: number
-	/** Whether parallel tool calling is enabled */
-	enableParallelToolCalling?: boolean
-	/** Report estimated streaming token activity for Task-local rate metrics. */
-	onStreamEstimatedTokens?: (tokens: number) => void
-}
-
-/**
- * @deprecated Legacy flat-field config, replaced by ApiConfiguration.
- * Kept for gradual migration — will be removed.
- */
-export interface ApiHandlerOptions extends ApiConfiguration {
-	[key: string]: any
+    /** Stable Profile identity for plan mode. */
+    planModeProfileId?: string
+    /** Legacy/display Profile name for plan mode. */
+    planModeProfile?: string
+    /** Stable Profile identity for act mode. */
+    actModeProfileId?: string
+    /** Legacy/display Profile name for act mode. */
+    actModeProfile?: string
+    /** Stable Profile identity for image generation. */
+    imageProfileId?: string
+    /** Legacy/display Profile name for image generation. */
+    imageProfile?: string
+    /** Task-local reasoning override for plan mode. */
+    planModeReasoningOverride?: TaskReasoningOverride
+    /** Task-local reasoning override for act mode. */
+    actModeReasoningOverride?: TaskReasoningOverride
+    /** Task-local OpenAI service tier override for plan mode. */
+    planModeServiceTierOverride?: TaskServiceTierOverride
+    /** Task-local OpenAI service tier override for act mode. */
+    actModeServiceTierOverride?: TaskServiceTierOverride
+    /** Stable workspace identity for provider-side routing affinity. */
+    workspaceId?: string
+    /** Task identifier */
+    ulid?: string
+    /** Retry callback */
+    onRetryAttempt?: (attempt: number, maxRetries: number, delay: number, error: any) => void
+    /** Global request timeout (ms) */
+    requestTimeoutMs?: number
+    /** Whether parallel tool calling is enabled */
+    enableParallelToolCalling?: boolean
+    /** Report estimated streaming token activity for Task-local rate metrics. */
+    onStreamEstimatedTokens?: (tokens: number) => void
 }
 
 // ModelInfo type re-exported from proto/dline/models (canonical source)
@@ -108,12 +100,12 @@ export type { ModelCapabilities, ModelPricing, ThinkingConfig } from "./proto/dl
 
 // Anthropic constants (used by webview-ui)
 export {
-	ANTHROPIC_FAST_MODE_SUFFIX,
-	ANTHROPIC_MAX_THINKING_BUDGET,
-	ANTHROPIC_MIN_THINKING_BUDGET,
-	anthropicDefaultModelId,
-	anthropicModelInfoSaneDefaults,
-	CLAUDE_SONNET_1M_SUFFIX,
+    ANTHROPIC_FAST_MODE_SUFFIX,
+    ANTHROPIC_MAX_THINKING_BUDGET,
+    ANTHROPIC_MIN_THINKING_BUDGET,
+    anthropicDefaultModelId,
+    anthropicModelInfoSaneDefaults,
+    CLAUDE_SONNET_1M_SUFFIX,
 } from "../core/api/providers/models/anthropic"
 export { askSageDefaultModelId, askSageDefaultURL } from "../core/api/providers/models/asksage"
 export { basetenDefaultModelId } from "../core/api/providers/models/baseten"
@@ -141,14 +133,14 @@ export { openAiCodexDefaultModelId } from "../core/api/providers/models/openai-c
 export { azureOpenAiDefaultApiVersion, openAiModelInfoSaneDefaults } from "../core/api/providers/models/openai-compatible"
 // OpenRouter
 export {
-	OPENROUTER_PROVIDER_PREFERENCES,
-	openRouterClaudeOpus461mModelId,
-	openRouterClaudeOpus471mModelId,
-	openRouterClaudeSonnet41mModelId,
-	openRouterClaudeSonnet451mModelId,
-	openRouterClaudeSonnet461mModelId,
-	openRouterDefaultModelId,
-	openRouterDefaultModelInfo,
+    OPENROUTER_PROVIDER_PREFERENCES,
+    openRouterClaudeOpus461mModelId,
+    openRouterClaudeOpus471mModelId,
+    openRouterClaudeSonnet41mModelId,
+    openRouterClaudeSonnet451mModelId,
+    openRouterClaudeSonnet461mModelId,
+    openRouterDefaultModelId,
+    openRouterDefaultModelInfo,
 } from "../core/api/providers/models/openrouter"
 export { mainlandQwenDefaultModelId } from "../core/api/providers/models/qwen-cn"
 export { qwenCodeDefaultModelId } from "../core/api/providers/models/qwen-code"
@@ -165,12 +157,12 @@ export { internationalZAiDefaultModelId } from "../core/api/providers/models/zai
 
 // OcaModelInfo (used by oca provider, proto-conversions, state-keys)
 export type OcaModelInfo = ModelInfo & {
-	modelName: string
-	surveyId?: string
-	banner?: string
-	surveyContent?: string
-	supportsReasoning?: boolean
-	reasoningEffortOptions: string[]
+    modelName: string
+    surveyId?: string
+    banner?: string
+    surveyContent?: string
+    supportsReasoning?: boolean
+    reasoningEffortOptions: string[]
 }
 
 // Provider model ID type aliases (all string-based, used by backend provider files)
@@ -209,19 +201,19 @@ export { CLAUDE_OPUS_1M_TIERS, CLAUDE_SONNET_1M_TIERS } from "../core/api/provid
 
 // Hicap (kept inline to avoid circular dependency with @shared/api ModelInfo import)
 export interface HicapCompatibleModelInfo extends ModelInfo {
-	temperature?: number
+    temperature?: number
 }
 export const hicapModelInfoSaneDefaults: HicapCompatibleModelInfo = {
-	id: "",
-	capabilities: {
-		supportsImages: true,
-		supportsPromptCache: true,
-		supportsReasoning: false,
-		maxTokens: -1,
-		contextWindow: 128_000,
-	},
-	pricing: { inputPrice: 0, outputPrice: 0 },
-	temperature: 1,
+    id: "",
+    capabilities: {
+        supportsImages: true,
+        supportsPromptCache: true,
+        supportsReasoning: false,
+        maxTokens: -1,
+        contextWindow: 128_000,
+    },
+    pricing: { inputPrice: 0, outputPrice: 0 },
+    temperature: 1,
 }
 
 // Model data re-exports (canonical source: src/core/api/providers/models/)

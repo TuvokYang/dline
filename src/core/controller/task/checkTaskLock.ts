@@ -11,17 +11,17 @@ import type { Controller } from ".."
  * @returns TaskLockStatus proto message
  */
 export async function checkTaskLock(controller: Controller, request: StringRequest): Promise<TaskLockStatus> {
-	const taskId = request.value
-	if (!taskId) {
-		throw new Error("Missing task ID")
-	}
+    const taskId = request.value
+    if (!taskId) {
+        throw new Error("Missing task ID")
+    }
 
-	const status = await controller.lockService.checkTaskLock(taskId)
+    const status = await controller.lockService.checkTaskLock(taskId)
 
-	return TaskLockStatus.create({
-		isLocked: status.isLocked,
-		lockedBy: status.lockedBy ?? "",
-		lockedAt: status.lockedAt ?? 0,
-		isStale: status.isStale,
-	})
+    return TaskLockStatus.create({
+        isLocked: status.isLocked,
+        lockedBy: status.lockedBy ?? "",
+        lockedAt: status.lockedAt ?? 0,
+        isStale: status.isStale,
+    })
 }

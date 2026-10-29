@@ -10,10 +10,20 @@ import { ServerConfigSchema } from "./schemas"
 export type Transport = StdioClientTransport | SSEClientTransport | StreamableHTTPClientTransport
 
 export type McpConnection = {
-	server: McpServer
-	client: Client
-	transport: Transport
-	authProvider?: OAuthClientProvider
+    server: McpServer
+    client: Client
+    transport: Transport
+    authProvider?: OAuthClientProvider
+    /**
+     * The `${env:...}` variable the user declined to provide. Such a connection stays
+     * closed until its configuration changes or the user restarts it or clears its values.
+     */
+    missingVariable?: string
+    /**
+     * The `${env:...}` variable that has no value yet and could not be asked for
+     * because no Dline view had been shown. The server connects once one is.
+     */
+    waitingForDline?: string
 }
 
 export type McpTransportType = "stdio" | "sse" | "http"

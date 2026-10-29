@@ -8,6 +8,6 @@ import { ExtensionRegistryInfo } from "@/registry"
  * @returns The announcement ID string (major.minor version) or empty string if unavailable
  */
 export function getLatestAnnouncementId(): string {
-	const version = ExtensionRegistryInfo.version
-	return version.split(".").slice(0, 2).join(".")
+    const version = ExtensionRegistryInfo.version
+    return version.split(".").slice(0, 2).join(".")
 }

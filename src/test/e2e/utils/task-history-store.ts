@@ -15,12 +15,12 @@ import { TaskHistoryRow } from "@/core/storage/entities/TaskHistoryRow"
 
 /** Absolute path of the task history database owned by a Dline documents dir. */
 export function taskHistoryDatabasePath(dlineDocsDir: string): string {
-	return path.join(dlineDocsDir, "tasks", "taskHistory.db")
+    return path.join(dlineDocsDir, "tasks", "taskHistory.db")
 }
 
 /** Absolute path of the legacy JSONL history, used only to seed a migration. */
 export function legacyTaskHistoryPath(dlineDocsDir: string): string {
-	return path.join(dlineDocsDir, "tasks", "taskHistory.jsonl")
+    return path.join(dlineDocsDir, "tasks", "taskHistory.jsonl")
 }
 
 /**
@@ -30,9 +30,9 @@ export function legacyTaskHistoryPath(dlineDocsDir: string): string {
  * matching the append semantics of the file this migration replaces.
  */
 export async function seedLegacyTaskHistory(dlineDocsDir: string, items: readonly HistoryItem[]): Promise<void> {
-	const filePath = legacyTaskHistoryPath(dlineDocsDir)
-	await mkdir(path.dirname(filePath), { recursive: true })
-	await writeFile(filePath, `${items.map((item) => JSON.stringify(item)).join("\n")}\n`, "utf8")
+    const filePath = legacyTaskHistoryPath(dlineDocsDir)
+    await mkdir(path.dirname(filePath), { recursive: true })
+    await writeFile(filePath, `${items.map((item) => JSON.stringify(item)).join("\n")}\n`, "utf8")
 }
 
 /**
@@ -43,30 +43,30 @@ export async function seedLegacyTaskHistory(dlineDocsDir: string, items: readonl
  * A missing or not-yet-created database reads as an empty history.
  */
 export async function readStoredTaskHistory(dlineDocsDir: string): Promise<HistoryItem[]> {
-	const database = await new SqliteUnifyStoreBackend().open(taskHistoryDatabasePath(dlineDocsDir)).catch(() => undefined)
-	if (!database) return []
-	try {
-		const store = await database.openStore(TaskHistoryRow)
-		const { records } = await store.query()
-		return records.map((row) => row.toHistoryItem()).sort((a, b) => b.ts - a.ts)
-	} catch {
-		return []
-	} finally {
-		await database.close().catch(() => undefined)
-	}
+    const database = await new SqliteUnifyStoreBackend().open(taskHistoryDatabasePath(dlineDocsDir)).catch(() => undefined)
+    if (!database) return []
+    try {
+        const store = await database.openStore(TaskHistoryRow)
+        const { records } = await store.query()
+        return records.map((row) => row.toHistoryItem()).sort((a, b) => b.ts - a.ts)
+    } catch {
+        return []
+    } finally {
+        await database.close().catch(() => undefined)
+    }
 }
 
 /** Read the stored entry for one task, or undefined when it is absent. */
 export async function readStoredTaskHistoryItem(dlineDocsDir: string, taskId: string): Promise<HistoryItem | undefined> {
-	return (await readStoredTaskHistory(dlineDocsDir)).find((item) => item.id === taskId)
+    return (await readStoredTaskHistory(dlineDocsDir)).find((item) => item.id === taskId)
 }
 
 /** Count the stored entries for one task; the id is a primary key, so this is 0 or 1. */
 export async function countStoredRowsForTask(dlineDocsDir: string, taskId: string): Promise<number> {
-	return (await readStoredTaskHistory(dlineDocsDir)).filter((item) => item.id === taskId).length
+    return (await readStoredTaskHistory(dlineDocsDir)).filter((item) => item.id === taskId).length
 }
 
 /** Count every stored entry. */
 export async function countStoredTaskHistory(dlineDocsDir: string): Promise<number> {
-	return (await readStoredTaskHistory(dlineDocsDir)).length
+    return (await readStoredTaskHistory(dlineDocsDir)).length
 }

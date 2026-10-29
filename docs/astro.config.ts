@@ -8,46 +8,48 @@ import { locales, ROOT_LOCALE } from "./src/data/locales.mjs"
 import { sidebar } from "./src/data/navigation.mjs"
 import { redirects } from "./src/data/redirects.mjs"
 import { remarkBaseLinks, toPrefix, withBase } from "./src/plugins/remark-base-links.mjs"
+import { remarkThemedImages } from "./src/plugins/remark-themed-images.mjs"
 
 const { site, base } = resolveSiteConfig()
 const repositoryUrl = "https://github.com/TuvokYang/dline"
 
 export default defineConfig({
-	site,
-	base,
-	// The base-link rewrite is a remark plugin, so content must run on the unified pipeline.
-	markdown: { processor: unified() },
-	vite: {
-		resolve: { alias: { [DOCS_ASSETS_ALIAS]: DOCS_ASSETS_DIR } },
-		// The images sit outside the docs project root; let the dev server read them.
-		server: { fs: { allow: [".", DOCS_ASSETS_DIR] } },
-	},
-	integrations: [
-		baseSafeContentLinks(),
-		starlight({
-			title: {
-				en: "Dline Docs",
-				"zh-CN": "Dline 文档",
-			},
-			defaultLocale: ROOT_LOCALE,
-			locales,
-			logo: {
-				light: "./src/assets/brand/logo-light.svg",
-				dark: "./src/assets/brand/logo-dark.svg",
-				alt: "Dline",
-			},
-			social: [{ icon: "github", label: "GitHub", href: repositoryUrl }],
-			editLink: { baseUrl: `${repositoryUrl}/edit/dev/docs/` },
-			customCss: ["./src/styles/custom.css"],
-			components: {
-				Header: "./src/components/Header.astro",
-				Hero: "./src/components/Hero.astro",
-				PageFrame: "./src/components/PageFrame.astro",
-			},
-			routeMiddleware: "./src/routeData.ts",
-			sidebar,
-		}),
-	],
+    site,
+    base,
+    // The base-link rewrite is a remark plugin, so content must run on the unified pipeline.
+    markdown: { processor: unified() },
+    vite: {
+        resolve: { alias: { [DOCS_ASSETS_ALIAS]: DOCS_ASSETS_DIR } },
+        // The images sit outside the docs project root; let the dev server read them.
+        server: { fs: { allow: [".", DOCS_ASSETS_DIR] } },
+    },
+    integrations: [
+        baseSafeContentLinks(),
+        themedContentImages(),
+        starlight({
+            title: {
+                en: "Dline Docs",
+                "zh-CN": "Dline 文档",
+            },
+            defaultLocale: ROOT_LOCALE,
+            locales,
+            logo: {
+                light: "./src/assets/brand/logo-light.svg",
+                dark: "./src/assets/brand/logo-dark.svg",
+                alt: "Dline",
+            },
+            social: [{ icon: "github", label: "GitHub", href: repositoryUrl }],
+            editLink: { baseUrl: `${repositoryUrl}/edit/dev/docs/` },
+            customCss: ["./src/styles/custom.css"],
+            components: {
+                Header: "./src/components/Header.astro",
+                Hero: "./src/components/Hero.astro",
+                PageFrame: "./src/components/PageFrame.astro",
+            },
+            routeMiddleware: "./src/routeData.ts",
+            sidebar,
+        }),
+    ],
 })
 
 /**
@@ -56,8 +58,8 @@ export default defineConfig({
  * the final base so the redirect data stays deployment-independent.
  */
 function withBaseDestinations(map: Readonly<Record<string, string>>, siteBase: string): Record<string, string> {
-	const prefix = toPrefix(siteBase)
-	return Object.fromEntries(Object.entries(map).map(([from, to]) => [from, withBase(to, prefix)]))
+    const prefix = toPrefix(siteBase)
+    return Object.fromEntries(Object.entries(map).map(([from, to]) => [from, withBase(to, prefix)]))
 }
 
 /**
@@ -67,21 +69,41 @@ function withBaseDestinations(map: Readonly<Record<string, string>>, siteBase: s
  * silently skipping the rewrite would publish links that miss the Pages base.
  */
 function baseSafeContentLinks(): AstroIntegration {
-	return {
-		name: "dline-docs:base-safe-links",
-		hooks: {
-			"astro:config:setup": ({ config, updateConfig }) => {
-				// Registered here rather than at the top level so a `--base` CLI override
-				// (used by `npm run dev`) also reaches redirect destinations.
-				updateConfig({ redirects: withBaseDestinations(redirects, config.base) })
-				const processor = config.markdown.processor
-				if (!processor || !isUnifiedProcessor(processor)) {
-					throw new Error(
-						`dline-docs:base-safe-links requires the unified Markdown processor, got "${processor?.name ?? "none"}".`,
-					)
-				}
-				processor.options.remarkPlugins.push([remarkBaseLinks, { base: config.base }])
-			},
-		},
-	}
+    return {
+        name: "dline-docs:base-safe-links",
+        hooks: {
+            "astro:config:setup": ({ config, updateConfig }) => {
+                // Registered here rather than at the top level so a `--base` CLI override
+                // (used by `npm run dev`) also reaches redirect destinations.
+                updateConfig({ redirects: withBaseDestinations(redirects, config.base) })
+                remarkPluginsOf(config, "dline-docs:base-safe-links").push([remarkBaseLinks, { base: config.base }])
+            },
+        },
+    }
+}
+
+/**
+ * Show every documentation capture in the edition of the reader's color theme.
+ * Fails fast like the base-link rewrite, because skipping it would silently
+ * publish dark captures on light pages.
+ */
+function themedContentImages(): AstroIntegration {
+    return {
+        name: "dline-docs:themed-images",
+        hooks: {
+            "astro:config:setup": ({ config }) => {
+                remarkPluginsOf(config, "dline-docs:themed-images").push([remarkThemedImages, {}])
+            },
+        },
+    }
+}
+
+type AstroSetupConfig = Parameters<NonNullable<AstroIntegration["hooks"]["astro:config:setup"]>>[0]["config"]
+
+function remarkPluginsOf(config: AstroSetupConfig, integrationName: string) {
+    const processor = config.markdown.processor
+    if (!processor || !isUnifiedProcessor(processor)) {
+        throw new Error(`${integrationName} requires the unified Markdown processor, got "${processor?.name ?? "none"}".`)
+    }
+    return processor.options.remarkPlugins
 }

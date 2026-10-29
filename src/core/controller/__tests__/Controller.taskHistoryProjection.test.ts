@@ -22,102 +22,102 @@ import { Controller } from "../index"
  * very reuse under test.
  */
 interface ProjectingController {
-	projectTaskHistoryCached(history: readonly HistoryItem[] | undefined): Array<{ id: string }>
+    projectTaskHistoryCached(history: readonly HistoryItem[] | undefined): Array<{ id: string }>
 }
 
 function createController(): ProjectingController {
-	return Object.create(Controller.prototype) as unknown as ProjectingController
+    return Object.create(Controller.prototype) as unknown as ProjectingController
 }
 
 function createItem(id: string, ts: number): HistoryItem {
-	return {
-		id,
-		ulid: `ulid-${id}`,
-		ts,
-		task: `task text for ${id}`,
-		tokensIn: 1,
-		tokensOut: 1,
-		cacheWrites: 0,
-		cacheReads: 0,
-		totalCost: 0,
-		size: 0,
-	} as HistoryItem
+    return {
+        id,
+        ulid: `ulid-${id}`,
+        ts,
+        task: `task text for ${id}`,
+        tokensIn: 1,
+        tokensOut: 1,
+        cacheWrites: 0,
+        cacheReads: 0,
+        totalCost: 0,
+        size: 0,
+    } as HistoryItem
 }
 
 describe("Controller task history projection", () => {
-	it("returns the same projection instance for the same history array", () => {
-		const controller = createController()
-		const history = [createItem("a", 1_000), createItem("b", 2_000)]
+    it("returns the same projection instance for the same history array", () => {
+        const controller = createController()
+        const history = [createItem("a", 1_000), createItem("b", 2_000)]
 
-		const first = controller.projectTaskHistoryCached(history)
-		const second = controller.projectTaskHistoryCached(history)
+        const first = controller.projectTaskHistoryCached(history)
+        const second = controller.projectTaskHistoryCached(history)
 
-		expect(second).toBe(first)
-	})
+        expect(second).toBe(first)
+    })
 
-	it("reprojects when the history array is replaced", () => {
-		const controller = createController()
-		const history = [createItem("a", 1_000)]
-		const first = controller.projectTaskHistoryCached(history)
+    it("reprojects when the history array is replaced", () => {
+        const controller = createController()
+        const history = [createItem("a", 1_000)]
+        const first = controller.projectTaskHistoryCached(history)
 
-		// Every update path allocates a new array rather than mutating in place.
-		const updated = [...history, createItem("b", 2_000)]
-		const second = controller.projectTaskHistoryCached(updated)
+        // Every update path allocates a new array rather than mutating in place.
+        const updated = [...history, createItem("b", 2_000)]
+        const second = controller.projectTaskHistoryCached(updated)
 
-		expect(second).not.toBe(first)
-		expect(second.map((entry) => entry.id)).toEqual(["b", "a"])
-	})
+        expect(second).not.toBe(first)
+        expect(second.map((entry) => entry.id)).toEqual(["b", "a"])
+    })
 
-	it("orders entries newest first", () => {
-		const controller = createController()
+    it("orders entries newest first", () => {
+        const controller = createController()
 
-		const projected = controller.projectTaskHistoryCached([
-			createItem("older", 1_000),
-			createItem("newest", 3_000),
-			createItem("middle", 2_000),
-		])
+        const projected = controller.projectTaskHistoryCached([
+            createItem("older", 1_000),
+            createItem("newest", 3_000),
+            createItem("middle", 2_000),
+        ])
 
-		expect(projected.map((entry) => entry.id)).toEqual(["newest", "middle", "older"])
-	})
+        expect(projected.map((entry) => entry.id)).toEqual(["newest", "middle", "older"])
+    })
 
-	it("does not reorder the array it was given", () => {
-		const controller = createController()
-		const history = [createItem("older", 1_000), createItem("newest", 3_000)]
+    it("does not reorder the array it was given", () => {
+        const controller = createController()
+        const history = [createItem("older", 1_000), createItem("newest", 3_000)]
 
-		controller.projectTaskHistoryCached(history)
+        controller.projectTaskHistoryCached(history)
 
-		expect(history.map((entry) => entry.id)).toEqual(["older", "newest"])
-	})
+        expect(history.map((entry) => entry.id)).toEqual(["older", "newest"])
+    })
 
-	it("treats a missing history as empty", () => {
-		const controller = createController()
+    it("treats a missing history as empty", () => {
+        const controller = createController()
 
-		// A missing history has no array to key on, so each call substitutes a
-		// fresh empty one. Projecting nothing is cheap, so this stays correct
-		// rather than reaching for a shared sentinel.
-		expect(controller.projectTaskHistoryCached(undefined)).toEqual([])
-	})
+        // A missing history has no array to key on, so each call substitutes a
+        // fresh empty one. Projecting nothing is cheap, so this stays correct
+        // rather than reaching for a shared sentinel.
+        expect(controller.projectTaskHistoryCached(undefined)).toEqual([])
+    })
 
-	it("reuses the projection for a stable empty history array", () => {
-		const controller = createController()
-		const empty: HistoryItem[] = []
+    it("reuses the projection for a stable empty history array", () => {
+        const controller = createController()
+        const empty: HistoryItem[] = []
 
-		const first = controller.projectTaskHistoryCached(empty)
-		const second = controller.projectTaskHistoryCached(empty)
+        const first = controller.projectTaskHistoryCached(empty)
+        const second = controller.projectTaskHistoryCached(empty)
 
-		expect(first).toEqual([])
-		expect(second).toBe(first)
-	})
+        expect(first).toEqual([])
+        expect(second).toBe(first)
+    })
 
-	it("drops entries without a timestamp or task text", () => {
-		const controller = createController()
+    it("drops entries without a timestamp or task text", () => {
+        const controller = createController()
 
-		const projected = controller.projectTaskHistoryCached([
-			createItem("kept", 2_000),
-			{ ...createItem("no-text", 1_000), task: "" } as HistoryItem,
-			{ ...createItem("no-ts", 0), ts: 0 } as HistoryItem,
-		])
+        const projected = controller.projectTaskHistoryCached([
+            createItem("kept", 2_000),
+            { ...createItem("no-text", 1_000), task: "" } as HistoryItem,
+            { ...createItem("no-ts", 0), ts: 0 } as HistoryItem,
+        ])
 
-		expect(projected.map((entry) => entry.id)).toEqual(["kept"])
-	})
+        expect(projected.map((entry) => entry.id)).toEqual(["kept"])
+    })
 })

@@ -1,140 +1,82 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import { indexPreEditCheckpointAttachments } from "@shared/chat/drawnMessages"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import type React from "react"
 import { useMemo } from "react"
-import BrowserSessionRow from "@/components/chat/BrowserSessionRow"
-import ChatRow from "@/components/chat/ChatRow"
-import { TOOL_RESPONSE_SCROLL_CLASS } from "@/components/chat/constants"
-import { useExtensionState } from "@/context/ExtensionStateContext"
-import { cn } from "@/lib/utils"
-import type { MessageHandlers } from "../../types/chatTypes"
-import {
-	findReasoningForApiReq,
-	isTextMessagePendingToolCall,
-	isToolGroup,
-	resolveMessageRowExpanded,
-} from "../../utils/messageUtils"
-import { ToolGroupRenderer } from "./ToolGroupRenderer"
+import type { FoldExpansion, MessageHandlers, RowExpansionOrigin } from "../../types/chatTypes"
+import { isActivityFold, isExplorationRun } from "../../utils/chatRowKinds"
+import { isToolGroup } from "../../utils/messageUtils"
+import { ROW_TS_ATTRIBUTE } from "../../utils/viewportRowAnchor"
+import { ActivityFoldRenderer } from "./ActivityFoldRenderer"
+import { RowContent } from "./RowContent"
+
+/** Rows that draw low-stakes tool calls; only the newest one shows the calls still executing. */
+function drawsToolActivity(row: UiMessage | UiMessage[]): boolean {
+    return isToolGroup(row) || isExplorationRun(row)
+}
+
+/** No fold is expanded and toggling does nothing: the list draws no folds at the standard level. */
+const NO_FOLD_EXPANSION: FoldExpansion = { expanded: {}, toggle: () => {} }
 
 interface MessageRendererProps {
-	index: number
-	messageOrGroup: ClineMessage | ClineMessage[]
-	groupedMessages: (ClineMessage | ClineMessage[])[]
-	modifiedMessages: ClineMessage[]
-	expandedRows: Record<number, boolean>
-	onToggleExpand: (ts: number) => void
-	onHeightChange: (isTaller: boolean) => void
-	onAddToInput: (text: string) => void
-	onSetQuote: (quote: string | null) => void
-	onFollowupOptionSelect: (message: ClineMessage, option: string) => Promise<void>
-	messageHandlers: MessageHandlers
-	footerActive: boolean
+    index: number
+    messageOrGroup: UiMessage | UiMessage[]
+    groupedMessages: (UiMessage | UiMessage[])[]
+    modifiedMessages: UiMessage[]
+    checkpointAttachments: ReadonlyMap<number, UiMessage[]>
+    expandedRows: Record<number, boolean>
+    onToggleExpand: (ts: number, origin?: RowExpansionOrigin) => void
+    onHeightChange: (isTaller: boolean) => void
+    onAddToInput: (text: string) => void
+    onSetQuote: (quote: string | null) => void
+    onFollowupOptionSelect: (message: UiMessage, option: string) => Promise<void>
+    messageHandlers: MessageHandlers
+    footerActive: boolean
+    foldExpansion?: FoldExpansion
 }
 
 /**
- * Specialized component for rendering different message types
- * Handles browser sessions, regular messages, and checkpoint logic
+ * Draws the row at `index` of the chat list.
+ *
+ * It decides where the row sits in the list (last row, newest tool activity)
+ * and hands the drawing to `RowContent`, or to `ActivityFoldRenderer` for a
+ * folded block.
  */
 export const MessageRenderer: React.FC<MessageRendererProps> = ({
-	index,
-	messageOrGroup,
-	groupedMessages,
-	modifiedMessages,
-	expandedRows,
-	onToggleExpand,
-	onHeightChange,
-	onAddToInput,
-	onSetQuote,
-	onFollowupOptionSelect,
-	messageHandlers,
-	footerActive,
+    index,
+    messageOrGroup,
+    groupedMessages,
+    messageHandlers: _messageHandlers,
+    foldExpansion = NO_FOLD_EXPANSION,
+    ...context
 }) => {
-	const { mode } = useExtensionState()
+    const isLastMessage = useMemo(() => index === groupedMessages?.length - 1, [groupedMessages, index])
 
-	const isLastMessage = useMemo(() => index === groupedMessages?.length - 1, [groupedMessages, index])
+    // Only the newest row drawing tool calls shows the ones still executing.
+    const isLastToolActivity = useMemo(() => {
+        if (!drawsToolActivity(messageOrGroup)) {
+            return false
+        }
+        for (let i = groupedMessages.length - 1; i >= 0; i--) {
+            if (drawsToolActivity(groupedMessages[i])) {
+                return i === index
+            }
+        }
+        return false
+    }, [messageOrGroup, groupedMessages, index])
 
-	// Get reasoning content and response status for api_req_started messages
-	const reasoningData = useMemo(() => {
-		if (!Array.isArray(messageOrGroup) && messageOrGroup.say === "api_req_started") {
-			// Use the same message source-of-truth that `groupedMessages` is derived from.
-			return findReasoningForApiReq(messageOrGroup.ts, modifiedMessages)
-		}
-		return { reasoning: undefined, responseStarted: false }
-	}, [messageOrGroup, modifiedMessages])
+    // A fold is an array row too, so it must be recognised before the browser-session fallback.
+    if (isActivityFold(messageOrGroup)) {
+        return (
+            <ActivityFoldRenderer
+                {...context}
+                fold={messageOrGroup}
+                isExpanded={foldExpansion.expanded[messageOrGroup._activityFoldId] === true}
+                onToggleFold={foldExpansion.toggle}
+            />
+        )
+    }
 
-	// Check if a text message is waiting for tool call completion
-	const isRequestInProgress = useMemo(() => {
-		if (!Array.isArray(messageOrGroup) && messageOrGroup.say === "text") {
-			// Use modifiedMessages so this stays consistent with the rendered list.
-			return isTextMessagePendingToolCall(messageOrGroup.ts, modifiedMessages)
-		}
-		return false
-	}, [messageOrGroup, modifiedMessages])
-
-	// Tool group (low-stakes tools grouped together)
-	// Determine if this is the last tool group to show active items
-	const isLastToolGroup = useMemo(() => {
-		if (!isToolGroup(messageOrGroup)) {
-			return false
-		}
-		// Find the last tool group in groupedMessages
-		for (let i = groupedMessages.length - 1; i >= 0; i--) {
-			if (isToolGroup(groupedMessages[i])) {
-				return i === index
-			}
-		}
-		return false
-	}, [messageOrGroup, groupedMessages, index])
-
-	if (isToolGroup(messageOrGroup)) {
-		return (
-			<div className={TOOL_RESPONSE_SCROLL_CLASS} data-testid="tool-group-scroll">
-				<ToolGroupRenderer allMessages={modifiedMessages} isLastGroup={isLastToolGroup} messages={messageOrGroup} />
-			</div>
-		)
-	}
-
-	// Browser session group
-	if (Array.isArray(messageOrGroup)) {
-		return (
-			<BrowserSessionRow
-				expandedRows={expandedRows}
-				isLast={isLastMessage}
-				key={messageOrGroup[0]?.ts}
-				lastModifiedMessage={modifiedMessages.at(-1)}
-				messages={messageOrGroup}
-				onHeightChange={onHeightChange}
-				onSetQuote={onSetQuote}
-				onToggleExpand={onToggleExpand}
-			/>
-		)
-	}
-
-	// Regular message
-	return (
-		<div
-			className={cn({
-				"pb-2.5": isLastMessage && !footerActive,
-			})}
-			data-message-ts={messageOrGroup.ts}>
-			<ChatRow
-				isExpanded={resolveMessageRowExpanded(messageOrGroup, expandedRows)}
-				isLast={isLastMessage}
-				isRequestInProgress={isRequestInProgress}
-				key={messageOrGroup.ts}
-				lastModifiedMessage={modifiedMessages.at(-1)}
-				message={messageOrGroup}
-				mode={mode}
-				onAddToInput={onAddToInput}
-				onFollowupOptionSelect={onFollowupOptionSelect}
-				onHeightChange={onHeightChange}
-				onSetQuote={onSetQuote}
-				onToggleExpand={onToggleExpand}
-				reasoningContent={reasoningData.reasoning}
-				responseStarted={reasoningData.responseStarted}
-				sendMessageFromChatRow={messageHandlers.handleSendMessage}
-			/>
-		</div>
-	)
+    return <RowContent {...context} isLastRow={isLastMessage} isLastToolActivity={isLastToolActivity} row={messageOrGroup} />
 }
 
 /**
@@ -142,31 +84,43 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
  * This allows us to encapsulate the rendering logic while maintaining performance
  */
 export const createMessageRenderer = (
-	groupedMessages: (ClineMessage | ClineMessage[])[],
-	modifiedMessages: ClineMessage[],
-	expandedRows: Record<number, boolean>,
-	onToggleExpand: (ts: number) => void,
-	onHeightChange: (isTaller: boolean) => void,
-	onAddToInput: (text: string) => void,
-	onSetQuote: (quote: string | null) => void,
-	onFollowupOptionSelect: (message: ClineMessage, option: string) => Promise<void>,
-	messageHandlers: MessageHandlers,
-	footerActive: boolean,
+    groupedMessages: (UiMessage | UiMessage[])[],
+    modifiedMessages: UiMessage[],
+    expandedRows: Record<number, boolean>,
+    onToggleExpand: (ts: number, origin?: RowExpansionOrigin) => void,
+    onHeightChange: (isTaller: boolean) => void,
+    onAddToInput: (text: string) => void,
+    onSetQuote: (quote: string | null) => void,
+    onFollowupOptionSelect: (message: UiMessage, option: string) => Promise<void>,
+    messageHandlers: MessageHandlers,
+    footerActive: boolean,
+    foldExpansion: FoldExpansion = NO_FOLD_EXPANSION,
 ) => {
-	return (index: number, messageOrGroup: ClineMessage | ClineMessage[]) => (
-		<MessageRenderer
-			expandedRows={expandedRows}
-			footerActive={footerActive}
-			groupedMessages={groupedMessages}
-			index={index}
-			messageHandlers={messageHandlers}
-			messageOrGroup={messageOrGroup}
-			modifiedMessages={modifiedMessages}
-			onAddToInput={onAddToInput}
-			onFollowupOptionSelect={onFollowupOptionSelect}
-			onHeightChange={onHeightChange}
-			onSetQuote={onSetQuote}
-			onToggleExpand={onToggleExpand}
-		/>
-	)
+    const checkpointAttachments = indexPreEditCheckpointAttachments(modifiedMessages)
+    return (index: number, messageOrGroup: UiMessage | UiMessage[]) => (
+        // Box-less, so it adds a row identity every row kind shares without changing layout.
+        <div className="contents" {...{ [ROW_TS_ATTRIBUTE]: rowTs(messageOrGroup) }}>
+            <MessageRenderer
+                checkpointAttachments={checkpointAttachments}
+                expandedRows={expandedRows}
+                foldExpansion={foldExpansion}
+                footerActive={footerActive}
+                groupedMessages={groupedMessages}
+                index={index}
+                messageHandlers={messageHandlers}
+                messageOrGroup={messageOrGroup}
+                modifiedMessages={modifiedMessages}
+                onAddToInput={onAddToInput}
+                onFollowupOptionSelect={onFollowupOptionSelect}
+                onHeightChange={onHeightChange}
+                onSetQuote={onSetQuote}
+                onToggleExpand={onToggleExpand}
+            />
+        </div>
+    )
+}
+
+/** The ts that places a rendered row in the conversation: its first message's. */
+export function rowTs(messageOrGroup: UiMessage | UiMessage[]): number | undefined {
+    return Array.isArray(messageOrGroup) ? messageOrGroup[0]?.ts : messageOrGroup.ts
 }

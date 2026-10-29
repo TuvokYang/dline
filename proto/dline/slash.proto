@@ -16,6 +16,60 @@ service SlashService {
 
   // Get available slash commands for autocomplete (used by CLI)
   rpc getAvailableSlashCommands(EmptyRequest) returns (SlashCommandsResponse);
+
+  // Read the input semantic catalog: the canonical description of every chat
+  // input node, including the capabilities discovered for this workspace.
+  rpc getInputSemanticCatalog(EmptyRequest) returns (InputSemanticCatalog);
+
+  // Observe catalog revisions so a composer drops a withdrawn capability
+  // instead of submitting a node the backend no longer recognizes.
+  rpc subscribeToInputSemanticCatalog(EmptyRequest) returns (stream InputSemanticCatalog);
+}
+
+// How a semantic node is triggered while composing input.
+enum InputSemanticKind {
+  INPUT_SEMANTIC_KIND_COMMAND = 0;
+  INPUT_SEMANTIC_KIND_MENTION = 1;
+}
+
+// What the node carries after its trigger.
+enum InputSemanticPayload {
+  INPUT_SEMANTIC_PAYLOAD_NONE = 0;
+  INPUT_SEMANTIC_PAYLOAD_TEXT = 1;
+  INPUT_SEMANTIC_PAYLOAD_PATH = 2;
+  INPUT_SEMANTIC_PAYLOAD_URL = 3;
+  INPUT_SEMANTIC_PAYLOAD_CAPABILITY = 4;
+}
+
+// Whether the node may be submitted together with other nodes.
+enum InputSemanticComposition {
+  INPUT_SEMANTIC_COMPOSITION_COMBINABLE = 0;
+  INPUT_SEMANTIC_COMPOSITION_EXCLUSIVE = 1;
+}
+
+// How far the node's effect reaches.
+enum InputSemanticLifecycle {
+  INPUT_SEMANTIC_LIFECYCLE_TURN = 0;
+  INPUT_SEMANTIC_LIFECYCLE_TASK = 1;
+}
+
+// One addressable chat input node.
+message InputSemanticDescriptor {
+  string id = 1; // Stable identity, e.g. "command.compact" or "mention.file"
+  InputSemanticKind kind = 2;
+  string trigger = 3; // Canonical trigger text, e.g. "/compact"
+  repeated string aliases = 4; // Accepted alternates preserved for compatibility
+  InputSemanticPayload payload = 5;
+  InputSemanticComposition composition = 6;
+  InputSemanticLifecycle lifecycle = 7;
+  string authorizes = 8; // Tool this node authorizes; empty when it authorizes nothing
+  bool dynamic = 9; // True for a discovered skill, workflow or MCP prompt
+}
+
+// The catalog revision advances only when the descriptor set actually changed.
+message InputSemanticCatalog {
+  int32 revision = 1;
+  repeated InputSemanticDescriptor descriptors = 2;
 }
 
 // Slash command definition for autocomplete

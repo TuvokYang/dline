@@ -15,18 +15,18 @@ const DEFAULT_LITELLM_BASE_URL = "http://localhost:4000"
  * back to the legacy apiConfiguration fields.
  */
 function resolveLiteLlmCredentials(): { apiKey?: string; baseUrl: string } {
-	for (const profile of findEnabledProfiles("litellm")) {
-		const apiKey = SecretsManager.getApiKey(profile.id)
-		if (apiKey) {
-			return { apiKey, baseUrl: profile.baseUrl || DEFAULT_LITELLM_BASE_URL }
-		}
-	}
+    for (const profile of findEnabledProfiles("litellm")) {
+        const apiKey = SecretsManager.getApiKey(profile.id)
+        if (apiKey) {
+            return { apiKey, baseUrl: profile.baseUrl || DEFAULT_LITELLM_BASE_URL }
+        }
+    }
 
-	const apiConfiguration = StateManager.get().getApiConfiguration()
-	return {
-		apiKey: (apiConfiguration as any).liteLlmApiKey,
-		baseUrl: (apiConfiguration as any).liteLlmBaseUrl || DEFAULT_LITELLM_BASE_URL,
-	}
+    const apiConfiguration = StateManager.get().getApiConfiguration()
+    return {
+        apiKey: (apiConfiguration as any).liteLlmApiKey,
+        baseUrl: (apiConfiguration as any).liteLlmBaseUrl || DEFAULT_LITELLM_BASE_URL,
+    }
 }
 
 /**
@@ -35,32 +35,32 @@ function resolveLiteLlmCredentials(): { apiKey?: string; baseUrl: string } {
  * @returns Record of model ID to ModelInfo (application types)
  */
 export async function refreshLiteLlmModels(): Promise<Record<string, ModelInfo>> {
-	let models: Record<string, ModelInfo> = {}
+    let models: Record<string, ModelInfo> = {}
 
-	try {
-		const { apiKey, baseUrl } = resolveLiteLlmCredentials()
-		if (!apiKey) {
-			throw new Error("LiteLLM API key is not configured or is invalid")
-		}
+    try {
+        const { apiKey, baseUrl } = resolveLiteLlmCredentials()
+        if (!apiKey) {
+            throw new Error("LiteLLM API key is not configured or is invalid")
+        }
 
-		// Callers rely on failures surfacing, so this bypasses the swallowing
-		// discovery entry point and drives the vendor source directly.
-		models = await liteLlmModelSource.fetchModels({ apiKey, baseUrl })
-	} catch (error) {
-		Logger.error("Error fetching LiteLLM models:", error)
-		throw error
-	}
+        // Callers rely on failures surfacing, so this bypasses the swallowing
+        // discovery entry point and drives the vendor source directly.
+        models = await liteLlmModelSource.fetchModels({ apiKey, baseUrl })
+    } catch (error) {
+        Logger.error("Error fetching LiteLLM models:", error)
+        throw error
+    }
 
-	// Send event to subscribers
-	try {
-		await sendLiteLlmModelsEvent(
-			OpenRouterCompatibleModelInfo.create({
-				models: toProtobufModels(models),
-			}),
-		)
-	} catch (error) {
-		Logger.error("Error sending LiteLLM models event:", error)
-	}
+    // Send event to subscribers
+    try {
+        await sendLiteLlmModelsEvent(
+            OpenRouterCompatibleModelInfo.create({
+                models: toProtobufModels(models),
+            }),
+        )
+    } catch (error) {
+        Logger.error("Error sending LiteLLM models event:", error)
+    }
 
-	return models
+    return models
 }

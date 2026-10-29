@@ -3,8 +3,8 @@ import type { Controller } from ".."
 import { updateShellEnvironmentProfile as writeProfile } from "./shellEnvironmentConfig"
 
 export async function updateShellEnvironmentProfile(
-	_controller: Controller,
-	request: UpdateShellEnvironmentProfileRequest,
+    _controller: Controller,
+    request: UpdateShellEnvironmentProfileRequest,
 ): Promise<ShellEnvironmentProfile> {
-	return writeProfile(request)
+    return writeProfile(request)
 }

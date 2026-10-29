@@ -14,90 +14,94 @@ import { HookFactory, Hooks, NamedHookInput } from "../hook-factory"
 type HookName = keyof Hooks
 
 export type HookTestEnv = {
-	tempDir: string
-	hooksDir: string
-	sandbox: sinon.SinonSandbox
-	cleanup: () => Promise<void>
+    tempDir: string
+    hooksDir: string
+    sandbox: sinon.SinonSandbox
+    cleanup: () => Promise<void>
 }
 
 async function removeTempDirWithRetry(tempDir: string): Promise<void> {
-	const maxAttempts = process.platform === "win32" ? 5 : 1
-	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-		try {
-			await fs.rm(tempDir, { recursive: true, force: true })
-			return
-		} catch (error) {
-			const nodeError = error as NodeJS.ErrnoException
-			const isRetryableWindowsLock = process.platform === "win32" && nodeError?.code === "EBUSY"
-			if (!isRetryableWindowsLock || attempt === maxAttempts) {
-				throw error
-			}
+    const maxAttempts = process.platform === "win32" ? 5 : 1
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            await fs.rm(tempDir, { recursive: true, force: true })
+            return
+        } catch (error) {
+            const nodeError = error as NodeJS.ErrnoException
+            const isRetryableWindowsLock = process.platform === "win32" && nodeError?.code === "EBUSY"
+            if (!isRetryableWindowsLock || attempt === maxAttempts) {
+                throw error
+            }
 
-			// Give Windows a brief moment to release file handles from child processes.
-			await new Promise((resolve) => setTimeout(resolve, 100 * attempt))
-		}
-	}
+            // Give Windows a brief moment to release file handles from child processes.
+            await new Promise((resolve) => setTimeout(resolve, 100 * attempt))
+        }
+    }
 }
 
 export function resetHookCache(): void {
-	HookDiscoveryCache.resetForTesting()
+    HookDiscoveryCache.resetForTesting()
 }
 
 export async function withPlatform<T>(platform: NodeJS.Platform, fn: () => Promise<T> | T): Promise<T> {
-	const originalPlatform = process.platform
-	Object.defineProperty(process, "platform", { value: platform, configurable: true })
-	try {
-		return await fn()
-	} finally {
-		Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true })
-	}
+    const originalPlatform = process.platform
+    Object.defineProperty(process, "platform", { value: platform, configurable: true })
+    try {
+        return await fn()
+    } finally {
+        Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true })
+    }
 }
 
 export function hookFileName(hookName: string, platform: NodeJS.Platform = process.platform): string {
-	return platform === "win32" ? `${hookName}.ps1` : hookName
+    return platform === "win32" ? `${hookName}.ps1` : hookName
 }
 
 export function hookPath(hooksDir: string, hookName: string, platform: NodeJS.Platform = process.platform): string {
-	return path.join(hooksDir, hookFileName(hookName, platform))
+    return path.join(hooksDir, hookFileName(hookName, platform))
 }
 
 export function stubHookDirs(sandbox: sinon.SinonSandbox, dirs: string[]): sinon.SinonStub | ReturnType<typeof vi.fn> {
-	// Use vi.spyOn for vitest compatibility — sinon sandbox.stub may not intercept modules
-	// that vitest processes through its own mock system. Create a spy that vitest can restore.
-	const stub = vi.spyOn(diskModule, "getAllHooksDirs").mockResolvedValue(dirs)
-	return stub as any
+    // Use vi.spyOn for vitest compatibility — sinon sandbox.stub may not intercept modules
+    // that vitest processes through its own mock system. Create a spy that vitest can restore.
+    // Discovery probes the configured candidates and execution classifies scripts
+    // against the same list, so both must name only the test's directories; the
+    // real candidates include the user's global hooks directory.
+    vi.spyOn(diskModule, "getHookDirectoryCandidates").mockResolvedValue(dirs)
+    const stub = vi.spyOn(diskModule, "getAllHooksDirs").mockResolvedValue(dirs)
+    return stub as any
 }
 
 export async function createHookTestEnv(): Promise<HookTestEnv> {
-	const sandbox = sinon.createSandbox()
-	const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "hook-test-"))
-	const hooksDir = await createHooksDirectory(tempDir)
+    const sandbox = sinon.createSandbox()
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "hook-test-"))
+    const hooksDir = await createHooksDirectory(tempDir)
 
-	sandbox.stub(StateManager, "get").returns({
-		getGlobalStateKey: (key: string) => {
-			if (key === "workspaceRoots") {
-				return [{ path: tempDir }]
-			}
-			if (key === "primaryRootIndex") {
-				return 0
-			}
-			return undefined
-		},
-	} as any)
+    sandbox.stub(StateManager, "get").returns({
+        getGlobalStateKey: (key: string) => {
+            if (key === "workspaceRoots") {
+                return [{ path: tempDir }]
+            }
+            if (key === "primaryRootIndex") {
+                return 0
+            }
+            return undefined
+        },
+    } as any)
 
-	resetHookCache()
-	stubHookDirs(sandbox, [hooksDir])
+    resetHookCache()
+    stubHookDirs(sandbox, [hooksDir])
 
-	return {
-		tempDir,
-		hooksDir,
-		sandbox,
-		cleanup: async () => {
-			sandbox.restore()
-			resetHookCache()
-			await removeTempDirWithRetry(tempDir)
-		},
-	}
+    return {
+        tempDir,
+        hooksDir,
+        sandbox,
+        cleanup: async () => {
+            sandbox.restore()
+            resetHookCache()
+            await removeTempDirWithRetry(tempDir)
+        },
+    }
 }
 
 /**
@@ -111,9 +115,9 @@ export async function createHookTestEnv(): Promise<HookTestEnv> {
  * // Returns: "/tmp/test/.agents/hooks"
  */
 export async function createHooksDirectory(baseDir: string): Promise<string> {
-	const hooksDir = path.join(baseDir, ".agents", "hooks")
-	await fs.mkdir(hooksDir, { recursive: true })
-	return hooksDir
+    const hooksDir = path.join(baseDir, ".agents", "hooks")
+    await fs.mkdir(hooksDir, { recursive: true })
+    return hooksDir
 }
 
 /**
@@ -158,22 +162,22 @@ export async function createHooksDirectory(baseDir: string): Promise<string> {
  * })
  */
 export async function createTestHook(
-	baseDir: string,
-	hookName: string,
-	output: Partial<HookOutput>,
-	options: {
-		delay?: number
-		exitCode?: number
-		malformedJson?: boolean
-		customNodeCode?: string
-		exitWithoutOutput?: boolean
-	} = {},
+    baseDir: string,
+    hookName: string,
+    output: Partial<HookOutput>,
+    options: {
+        delay?: number
+        exitCode?: number
+        malformedJson?: boolean
+        customNodeCode?: string
+        exitWithoutOutput?: boolean
+    } = {},
 ): Promise<string> {
-	const hooksDir = await createHooksDirectory(baseDir)
-	const scriptContent = generateHookScript(output, options)
+    const hooksDir = await createHooksDirectory(baseDir)
+    const scriptContent = generateHookScript(output, options)
 
-	// Create hook scripts compatible with the active platform/runtime.
-	return writeShellHook(hooksDir, hookName, scriptContent)
+    // Create hook scripts compatible with the active platform/runtime.
+    return writeShellHook(hooksDir, hookName, scriptContent)
 }
 
 /**
@@ -183,78 +187,78 @@ export async function createTestHook(
  * - Windows: writes `<HookName>.ps1` + `<HookName>.js` companion script
  */
 export async function writeHookScriptForPlatform(hookPath: string, nodeScript: string): Promise<void> {
-	if (process.platform === "win32") {
-		const jsPath = `${hookPath}.js`
-		const ps1Path = `${hookPath}.ps1`
-		const psBridge = buildPowerShellNodeBridge(process.execPath, path.basename(jsPath))
+    if (process.platform === "win32") {
+        const jsPath = `${hookPath}.js`
+        const ps1Path = `${hookPath}.ps1`
+        const psBridge = buildPowerShellNodeBridge(process.execPath, path.basename(jsPath))
 
-		await fs.writeFile(jsPath, nodeScript)
-		await fs.writeFile(ps1Path, psBridge)
-		return
-	}
+        await fs.writeFile(jsPath, nodeScript)
+        await fs.writeFile(ps1Path, psBridge)
+        return
+    }
 
-	await fs.writeFile(hookPath, nodeScript)
-	await fs.chmod(hookPath, 0o755)
+    await fs.writeFile(hookPath, nodeScript)
+    await fs.chmod(hookPath, 0o755)
 }
 
 function buildPowerShellNodeBridge(nodePath: string, jsFileName: string): string {
-	const escapedNodePath = nodePath.replace(/'/g, "''")
-	const escapedJsFileName = jsFileName.replace(/'/g, "''")
+    const escapedNodePath = nodePath.replace(/'/g, "''")
+    const escapedJsFileName = jsFileName.replace(/'/g, "''")
 
-	return [
-		`$ErrorActionPreference = 'Stop'`,
-		`$scriptPath = Join-Path -Path $PSScriptRoot -ChildPath '${escapedJsFileName}'`,
-		`$inputData = [Console]::In.ReadToEnd()`,
-		`$inputData | & '${escapedNodePath}' $scriptPath`,
-		`if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }`,
-		`exit 0`,
-	].join("\n")
+    return [
+        `$ErrorActionPreference = 'Stop'`,
+        `$scriptPath = Join-Path -Path $PSScriptRoot -ChildPath '${escapedJsFileName}'`,
+        `$inputData = [Console]::In.ReadToEnd()`,
+        `$inputData | & '${escapedNodePath}' $scriptPath`,
+        `if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }`,
+        `exit 0`,
+    ].join("\n")
 }
 
 /**
  * Generates an executable Node.js script with shebang.
  */
 function generateHookScript(
-	output: Partial<HookOutput>,
-	options: {
-		delay?: number
-		exitCode?: number
-		malformedJson?: boolean
-		customNodeCode?: string
-		exitWithoutOutput?: boolean
-	},
+    output: Partial<HookOutput>,
+    options: {
+        delay?: number
+        exitCode?: number
+        malformedJson?: boolean
+        customNodeCode?: string
+        exitWithoutOutput?: boolean
+    },
 ): string {
-	let script = "#!/usr/bin/env node\n"
+    let script = "#!/usr/bin/env node\n"
 
-	// If custom Node.js code is provided, use it directly
-	if (options.customNodeCode) {
-		return script + options.customNodeCode
-	}
+    // If custom Node.js code is provided, use it directly
+    if (options.customNodeCode) {
+        return script + options.customNodeCode
+    }
 
-	// If exitWithoutOutput is true, just exit
-	if (options.exitWithoutOutput) {
-		return `${script}process.exit(0);\n`
-	}
+    // If exitWithoutOutput is true, just exit
+    if (options.exitWithoutOutput) {
+        return `${script}process.exit(0);\n`
+    }
 
-	if (options.delay) {
-		script += `setTimeout(() => {\n`
-	}
+    if (options.delay) {
+        script += `setTimeout(() => {\n`
+    }
 
-	if (options.malformedJson) {
-		script += `  console.log("not valid json");\n`
-	} else {
-		script += `  console.log(JSON.stringify(${JSON.stringify(output)}));\n`
-	}
+    if (options.malformedJson) {
+        script += `  console.log("not valid json");\n`
+    } else {
+        script += `  console.log(JSON.stringify(${JSON.stringify(output)}));\n`
+    }
 
-	if (options.exitCode !== undefined) {
-		script += `  process.exit(${options.exitCode});\n`
-	}
+    if (options.exitCode !== undefined) {
+        script += `  process.exit(${options.exitCode});\n`
+    }
 
-	if (options.delay) {
-		script += `}, ${options.delay});\n`
-	}
+    if (options.delay) {
+        script += `}, ${options.delay});\n`
+    }
 
-	return script
+    return script
 }
 
 /**
@@ -264,9 +268,9 @@ function generateHookScript(
  * Windows: writes a PowerShell bridge that pipes stdin to a Node companion script.
  */
 async function writeShellHook(hooksDir: string, hookName: string, scriptContent: string): Promise<string> {
-	const scriptPath = path.join(hooksDir, hookName)
-	await writeHookScriptForPlatform(scriptPath, scriptContent)
-	return process.platform === "win32" ? `${scriptPath}.ps1` : scriptPath
+    const scriptPath = path.join(hooksDir, hookName)
+    await writeHookScriptForPlatform(scriptPath, scriptContent)
+    return process.platform === "win32" ? `${scriptPath}.ps1` : scriptPath
 }
 
 /**
@@ -282,17 +286,17 @@ async function writeShellHook(hooksDir: string, hookName: string, scriptContent:
  * })
  */
 export function buildPreToolUseInput(params: {
-	toolName: string
-	parameters?: Record<string, any>
-	taskId?: string
+    toolName: string
+    parameters?: Record<string, any>
+    taskId?: string
 }): NamedHookInput<"PreToolUse"> {
-	return {
-		taskId: params.taskId || "test-task-id",
-		preToolUse: {
-			toolName: params.toolName,
-			parameters: params.parameters || {},
-		},
-	}
+    return {
+        taskId: params.taskId || "test-task-id",
+        preToolUse: {
+            toolName: params.toolName,
+            parameters: params.parameters || {},
+        },
+    }
 }
 
 /**
@@ -309,23 +313,23 @@ export function buildPreToolUseInput(params: {
  * })
  */
 export function buildPostToolUseInput(params: {
-	toolName: string
-	parameters?: Record<string, any>
-	result?: string
-	success?: boolean
-	executionTimeMs?: number
-	taskId?: string
+    toolName: string
+    parameters?: Record<string, any>
+    result?: string
+    success?: boolean
+    executionTimeMs?: number
+    taskId?: string
 }): NamedHookInput<"PostToolUse"> {
-	return {
-		taskId: params.taskId || "test-task-id",
-		postToolUse: {
-			toolName: params.toolName,
-			parameters: params.parameters || {},
-			result: params.result || "",
-			success: params.success ?? true,
-			executionTimeMs: params.executionTimeMs ?? 100,
-		},
-	}
+    return {
+        taskId: params.taskId || "test-task-id",
+        postToolUse: {
+            toolName: params.toolName,
+            parameters: params.parameters || {},
+            result: params.result || "",
+            success: params.success ?? true,
+            executionTimeMs: params.executionTimeMs ?? 100,
+        },
+    }
 }
 
 /**
@@ -342,38 +346,38 @@ export function buildPostToolUseInput(params: {
  * })
  */
 export function assertHookOutput(actual: HookOutput, expected: Partial<HookOutput>): void {
-	if (expected.cancel !== undefined) {
-		if (actual.cancel !== expected.cancel) {
-			throw new Error(
-				`Hook output assertion failed for 'cancel':\n` +
-					`  Expected: ${expected.cancel}\n` +
-					`  Received: ${actual.cancel}\n` +
-					`  Full output: ${JSON.stringify(actual, null, 2)}`,
-			)
-		}
-	}
+    if (expected.cancel !== undefined) {
+        if (actual.cancel !== expected.cancel) {
+            throw new Error(
+                `Hook output assertion failed for 'cancel':\n` +
+                    `  Expected: ${expected.cancel}\n` +
+                    `  Received: ${actual.cancel}\n` +
+                    `  Full output: ${JSON.stringify(actual, null, 2)}`,
+            )
+        }
+    }
 
-	if (expected.contextModification !== undefined) {
-		if (actual.contextModification !== expected.contextModification) {
-			throw new Error(
-				`Hook output assertion failed for 'contextModification':\n` +
-					`  Expected: "${expected.contextModification}"\n` +
-					`  Received: "${actual.contextModification}"\n` +
-					`  Full output: ${JSON.stringify(actual, null, 2)}`,
-			)
-		}
-	}
+    if (expected.contextModification !== undefined) {
+        if (actual.contextModification !== expected.contextModification) {
+            throw new Error(
+                `Hook output assertion failed for 'contextModification':\n` +
+                    `  Expected: "${expected.contextModification}"\n` +
+                    `  Received: "${actual.contextModification}"\n` +
+                    `  Full output: ${JSON.stringify(actual, null, 2)}`,
+            )
+        }
+    }
 
-	if (expected.errorMessage !== undefined) {
-		if (actual.errorMessage !== expected.errorMessage) {
-			throw new Error(
-				`Hook output assertion failed for 'errorMessage':\n` +
-					`  Expected: "${expected.errorMessage}"\n` +
-					`  Received: "${actual.errorMessage}"\n` +
-					`  Full output: ${JSON.stringify(actual, null, 2)}`,
-			)
-		}
-	}
+    if (expected.errorMessage !== undefined) {
+        if (actual.errorMessage !== expected.errorMessage) {
+            throw new Error(
+                `Hook output assertion failed for 'errorMessage':\n` +
+                    `  Expected: "${expected.errorMessage}"\n` +
+                    `  Received: "${actual.errorMessage}"\n` +
+                    `  Full output: ${JSON.stringify(actual, null, 2)}`,
+            )
+        }
+    }
 }
 
 /**
@@ -381,31 +385,31 @@ export function assertHookOutput(actual: HookOutput, expected: Partial<HookOutpu
  * Prevents errors from attempting to clone non-serializable objects.
  */
 function isSerializable(value: any): boolean {
-	if (value === null || value === undefined) {
-		return true
-	}
+    if (value === null || value === undefined) {
+        return true
+    }
 
-	const type = typeof value
-	if (type === "string" || type === "number" || type === "boolean") {
-		return true
-	}
+    const type = typeof value
+    if (type === "string" || type === "number" || type === "boolean") {
+        return true
+    }
 
-	if (type === "object") {
-		// Check for non-serializable types
-		if (value instanceof Function || value instanceof RegExp || value instanceof Error) {
-			return false
-		}
+    if (type === "object") {
+        // Check for non-serializable types
+        if (value instanceof Function || value instanceof RegExp || value instanceof Error) {
+            return false
+        }
 
-		// Check if it's an array or plain object
-		if (Array.isArray(value)) {
-			return value.every(isSerializable)
-		}
+        // Check if it's an array or plain object
+        if (Array.isArray(value)) {
+            return value.every(isSerializable)
+        }
 
-		// For objects, check all values
-		return Object.values(value).every(isSerializable)
-	}
+        // For objects, check all values
+        return Object.values(value).every(isSerializable)
+    }
 
-	return false
+    return false
 }
 
 /**
@@ -421,124 +425,124 @@ function isSerializable(value: any): boolean {
  * mockRunner.assertCalledWith({ preToolUse: { toolName: "write_to_file" } })
  */
 export class MockHookRunner<Name extends HookName> {
-	private response: HookOutput = {
-		cancel: false,
-		contextModification: "",
-		errorMessage: "",
-	}
-	public executionLog: Array<{ input: NamedHookInput<Name>; timestamp: number }> = []
-	public readonly hookName: Name
+    private response: HookOutput = {
+        cancel: false,
+        contextModification: "",
+        errorMessage: "",
+    }
+    public executionLog: Array<{ input: NamedHookInput<Name>; timestamp: number }> = []
+    public readonly hookName: Name
 
-	constructor(hookName: Name) {
-		this.hookName = hookName
-	}
+    constructor(hookName: Name) {
+        this.hookName = hookName
+    }
 
-	/**
-	 * Set the response this mock should return.
-	 *
-	 * @param output The HookOutput to return on execution
-	 */
-	setResponse(output: Partial<HookOutput>): void {
-		this.response = {
-			cancel: output.cancel ?? false,
-			contextModification: output.contextModification ?? "",
-			errorMessage: output.errorMessage ?? "",
-		}
-	}
+    /**
+     * Set the response this mock should return.
+     *
+     * @param output The HookOutput to return on execution
+     */
+    setResponse(output: Partial<HookOutput>): void {
+        this.response = {
+            cancel: output.cancel ?? false,
+            contextModification: output.contextModification ?? "",
+            errorMessage: output.errorMessage ?? "",
+        }
+    }
 
-	/**
-	 * Mock run method that records calls and returns preset response.
-	 * Does not use the actual HookRunner execution mechanism.
-	 */
-	async run(params: NamedHookInput<Name>): Promise<HookOutput> {
-		// Validate params are serializable
-		if (!isSerializable(params)) {
-			throw new Error(
-				`MockHookRunner: Cannot clone non-serializable input. ` +
-					`Ensure all input values are primitive types, arrays, or plain objects.`,
-			)
-		}
+    /**
+     * Mock run method that records calls and returns preset response.
+     * Does not use the actual HookRunner execution mechanism.
+     */
+    async run(params: NamedHookInput<Name>): Promise<HookOutput> {
+        // Validate params are serializable
+        if (!isSerializable(params)) {
+            throw new Error(
+                `MockHookRunner: Cannot clone non-serializable input. ` +
+                    `Ensure all input values are primitive types, arrays, or plain objects.`,
+            )
+        }
 
-		// Use structuredClone for deep copy (Node 17+)
-		// Falls back to JSON stringify/parse for older Node versions
-		let clonedInput: NamedHookInput<Name>
-		try {
-			clonedInput = structuredClone(params)
-		} catch {
-			// Fallback for older Node versions
-			clonedInput = JSON.parse(JSON.stringify(params))
-		}
+        // Use structuredClone for deep copy (Node 17+)
+        // Falls back to JSON stringify/parse for older Node versions
+        let clonedInput: NamedHookInput<Name>
+        try {
+            clonedInput = structuredClone(params)
+        } catch {
+            // Fallback for older Node versions
+            clonedInput = JSON.parse(JSON.stringify(params))
+        }
 
-		this.executionLog.push({
-			input: clonedInput,
-			timestamp: Date.now(),
-		})
+        this.executionLog.push({
+            input: clonedInput,
+            timestamp: Date.now(),
+        })
 
-		// Simulate async execution
-		await new Promise((resolve) => setTimeout(resolve, 1))
+        // Simulate async execution
+        await new Promise((resolve) => setTimeout(resolve, 1))
 
-		return this.response
-	}
+        return this.response
+    }
 
-	/**
-	 * Assert this hook was called a specific number of times.
-	 *
-	 * @param times Expected number of calls
-	 */
-	assertCalled(times: number): void {
-		if (this.executionLog.length !== times) {
-			throw new Error(
-				`MockHookRunner call count assertion failed:\n` +
-					`  Expected: ${times} calls\n` +
-					`  Received: ${this.executionLog.length} calls\n` +
-					`  Execution log:\n${JSON.stringify(this.executionLog, null, 2)}`,
-			)
-		}
-	}
+    /**
+     * Assert this hook was called a specific number of times.
+     *
+     * @param times Expected number of calls
+     */
+    assertCalled(times: number): void {
+        if (this.executionLog.length !== times) {
+            throw new Error(
+                `MockHookRunner call count assertion failed:\n` +
+                    `  Expected: ${times} calls\n` +
+                    `  Received: ${this.executionLog.length} calls\n` +
+                    `  Execution log:\n${JSON.stringify(this.executionLog, null, 2)}`,
+            )
+        }
+    }
 
-	/**
-	 * Assert this hook was called with matching input.
-	 * Performs partial match on the input object using deep equality.
-	 * Property ordering does not affect equality checks.
-	 * Uses should.js's eql() for robust deep equality comparison.
-	 *
-	 * @param matcher Partial input to match against
-	 */
-	assertCalledWith(matcher: Partial<NamedHookInput<Name>>): void {
-		const matchingCalls = this.executionLog.filter((log) => {
-			return Object.keys(matcher).every((key) => {
-				const matcherValue = (matcher as any)[key]
-				const logValue = (log.input as any)[key]
-				// Use should.js's eql() for deep equality (handles property ordering)
-				try {
-					should(logValue).eql(matcherValue)
-					return true
-				} catch {
-					return false
-				}
-			})
-		})
+    /**
+     * Assert this hook was called with matching input.
+     * Performs partial match on the input object using deep equality.
+     * Property ordering does not affect equality checks.
+     * Uses should.js's eql() for robust deep equality comparison.
+     *
+     * @param matcher Partial input to match against
+     */
+    assertCalledWith(matcher: Partial<NamedHookInput<Name>>): void {
+        const matchingCalls = this.executionLog.filter((log) => {
+            return Object.keys(matcher).every((key) => {
+                const matcherValue = (matcher as any)[key]
+                const logValue = (log.input as any)[key]
+                // Use should.js's eql() for deep equality (handles property ordering)
+                try {
+                    should(logValue).eql(matcherValue)
+                    return true
+                } catch {
+                    return false
+                }
+            })
+        })
 
-		if (matchingCalls.length === 0) {
-			throw new Error(
-				`MockHookRunner input assertion failed - no calls matched the expected input:\n` +
-					`  Expected input (partial): ${JSON.stringify(matcher, null, 2)}\n` +
-					`  Actual calls: ${JSON.stringify(this.executionLog, null, 2)}`,
-			)
-		}
-	}
+        if (matchingCalls.length === 0) {
+            throw new Error(
+                `MockHookRunner input assertion failed - no calls matched the expected input:\n` +
+                    `  Expected input (partial): ${JSON.stringify(matcher, null, 2)}\n` +
+                    `  Actual calls: ${JSON.stringify(this.executionLog, null, 2)}`,
+            )
+        }
+    }
 
-	/**
-	 * Reset all recorded calls and responses.
-	 */
-	reset(): void {
-		this.executionLog = []
-		this.response = {
-			cancel: false,
-			contextModification: "",
-			errorMessage: "",
-		}
-	}
+    /**
+     * Reset all recorded calls and responses.
+     */
+    reset(): void {
+        this.executionLog = []
+        this.response = {
+            cancel: false,
+            contextModification: "",
+            errorMessage: "",
+        }
+    }
 }
 
 /**
@@ -552,27 +556,27 @@ export class MockHookRunner<Name extends HookName> {
  * // Hook is now available at tempDir/.agents/hooks/PreToolUse
  */
 export async function loadFixture(fixtureName: string, destDir: string): Promise<void> {
-	const fixturesDir = path.join(__dirname, "fixtures")
-	const sourcePath = path.join(fixturesDir, fixtureName)
-	const destHooksDir = await createHooksDirectory(destDir)
+    const fixturesDir = path.join(__dirname, "fixtures")
+    const sourcePath = path.join(fixturesDir, fixtureName)
+    const destHooksDir = await createHooksDirectory(destDir)
 
-	// Copy all files from the fixture directory to the destination
-	const files = await fs.readdir(sourcePath)
-	for (const file of files) {
-		const sourceFile = path.join(sourcePath, file)
+    // Copy all files from the fixture directory to the destination
+    const files = await fs.readdir(sourcePath)
+    for (const file of files) {
+        const sourceFile = path.join(sourcePath, file)
 
-		if (process.platform === "win32") {
-			const sourceContent = await fs.readFile(sourceFile, "utf-8")
-			await writeHookScriptForPlatform(path.join(destHooksDir, file), sourceContent)
-		} else {
-			const destFile = path.join(destHooksDir, file)
-			await fs.copyFile(sourceFile, destFile)
+        if (process.platform === "win32") {
+            const sourceContent = await fs.readFile(sourceFile, "utf-8")
+            await writeHookScriptForPlatform(path.join(destHooksDir, file), sourceContent)
+        } else {
+            const destFile = path.join(destHooksDir, file)
+            await fs.copyFile(sourceFile, destFile)
 
-			// Set executable permission (not needed on Windows)
-			const stats = await fs.stat(sourceFile)
-			await fs.chmod(destFile, stats.mode)
-		}
-	}
+            // Set executable permission (not needed on Windows)
+            const stats = await fs.stat(sourceFile)
+            await fs.chmod(destFile, stats.mode)
+        }
+    }
 }
 
 /**
@@ -584,39 +588,39 @@ export async function loadFixture(fixtureName: string, destDir: string): Promise
  * between scenarios.
  */
 export async function withFixtureRunner<Name extends HookName, TResult>(
-	hookName: Name,
-	fixtureName: string,
-	callback: (runner: Awaited<ReturnType<HookFactory["create"]>>, env: HookTestEnv) => Promise<TResult>,
+    hookName: Name,
+    fixtureName: string,
+    callback: (runner: Awaited<ReturnType<HookFactory["create"]>>, env: HookTestEnv) => Promise<TResult>,
 ): Promise<TResult>
 export async function withFixtureRunner<Name extends HookName, TResult>(
-	hookName: Name,
-	fixtureName: string,
-	env: HookTestEnv,
-	callback: (runner: Awaited<ReturnType<HookFactory["create"]>>, env: HookTestEnv) => Promise<TResult>,
+    hookName: Name,
+    fixtureName: string,
+    env: HookTestEnv,
+    callback: (runner: Awaited<ReturnType<HookFactory["create"]>>, env: HookTestEnv) => Promise<TResult>,
 ): Promise<TResult>
 export async function withFixtureRunner<Name extends HookName, TResult>(
-	hookName: Name,
-	fixtureName: string,
-	envOrCallback: HookTestEnv | ((runner: Awaited<ReturnType<HookFactory["create"]>>, env: HookTestEnv) => Promise<TResult>),
-	maybeCallback?: (runner: Awaited<ReturnType<HookFactory["create"]>>, env: HookTestEnv) => Promise<TResult>,
+    hookName: Name,
+    fixtureName: string,
+    envOrCallback: HookTestEnv | ((runner: Awaited<ReturnType<HookFactory["create"]>>, env: HookTestEnv) => Promise<TResult>),
+    maybeCallback?: (runner: Awaited<ReturnType<HookFactory["create"]>>, env: HookTestEnv) => Promise<TResult>,
 ): Promise<TResult> {
-	const usingExistingEnv = typeof envOrCallback !== "function"
-	const env = usingExistingEnv ? envOrCallback : await createHookTestEnv()
-	const runCallback = usingExistingEnv ? maybeCallback : envOrCallback
-	if (!runCallback) {
-		throw new Error("withFixtureRunner requires a callback")
-	}
-	try {
-		await fs.rm(env.hooksDir, { recursive: true, force: true })
-		await createHooksDirectory(env.tempDir)
-		resetHookCache()
-		await loadFixture(fixtureName, env.tempDir)
-		const factory = new HookFactory()
-		const runner = await factory.create(hookName)
-		return await runCallback(runner, env)
-	} finally {
-		if (!usingExistingEnv) {
-			await env.cleanup()
-		}
-	}
+    const usingExistingEnv = typeof envOrCallback !== "function"
+    const env = usingExistingEnv ? envOrCallback : await createHookTestEnv()
+    const runCallback = usingExistingEnv ? maybeCallback : envOrCallback
+    if (!runCallback) {
+        throw new Error("withFixtureRunner requires a callback")
+    }
+    try {
+        await fs.rm(env.hooksDir, { recursive: true, force: true })
+        await createHooksDirectory(env.tempDir)
+        resetHookCache()
+        await loadFixture(fixtureName, env.tempDir)
+        const factory = new HookFactory()
+        const runner = await factory.create(hookName)
+        return await runCallback(runner, env)
+    } finally {
+        if (!usingExistingEnv) {
+            await env.cleanup()
+        }
+    }
 }

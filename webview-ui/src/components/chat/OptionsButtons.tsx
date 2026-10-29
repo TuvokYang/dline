@@ -13,8 +13,8 @@ const OptionButton = styled.button<{ isSelected?: boolean; isNotSelectable?: boo
 	font-size: 12px;
 
 	${(props) =>
-		!props.isNotSelectable &&
-		`
+        !props.isNotSelectable &&
+        `
 		&:hover {
 			background: var(--vscode-focusBorder);
 			color: white;
@@ -23,59 +23,59 @@ const OptionButton = styled.button<{ isSelected?: boolean; isNotSelectable?: boo
 `
 
 export const OptionsButtons = ({
-	options,
-	selected,
-	isActive,
-	onSelect,
+    options,
+    selected,
+    isActive,
+    onSelect,
 }: {
-	options?: string[]
-	selected?: string
-	isActive?: boolean
-	onSelect?: (option: string) => Promise<void>
+    options?: string[]
+    selected?: string
+    isActive?: boolean
+    onSelect?: (option: string) => Promise<void>
 }) => {
-	const [pending, setPending] = useState(false)
-	if (!options?.length) {
-		return null
-	}
+    const [pending, setPending] = useState(false)
+    if (!options?.length) {
+        return null
+    }
 
-	const hasSelected = selected !== undefined && options.includes(selected)
+    const hasSelected = selected !== undefined && options.includes(selected)
 
-	return (
-		<div
-			style={{
-				display: "flex",
-				flexDirection: "column",
-				gap: "8px",
-			}}>
-			{/* <div style={{ color: "var(--vscode-descriptionForeground)", fontSize: "11px", textTransform: "uppercase" }}>
+    return (
+        <div
+            style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "8px",
+            }}>
+            {/* <div style={{ color: "var(--vscode-descriptionForeground)", fontSize: "11px", textTransform: "uppercase" }}>
 				SELECT ONE:
 			</div> */}
-			{options.map((option, index) => (
-				<OptionButton
-					aria-pressed={option === selected}
-					className="options-button"
-					disabled={hasSelected || !isActive || pending || !onSelect}
-					id={`options-button-${index}`}
-					isNotSelectable={hasSelected || !isActive || pending || !onSelect}
-					isSelected={option === selected}
-					key={index}
-					onClick={async () => {
-						if (hasSelected || !isActive || pending || !onSelect) {
-							return
-						}
-						setPending(true)
-						try {
-							await onSelect(option)
-						} catch (error) {
-							console.error("Error sending option response:", error)
-						} finally {
-							setPending(false)
-						}
-					}}
-					type="button">
-					<span className="ph-no-capture">{option}</span>
-				</OptionButton>
-			))}
-		</div>
-	)
+            {options.map((option, index) => (
+                <OptionButton
+                    aria-pressed={option === selected}
+                    className="options-button"
+                    disabled={hasSelected || !isActive || pending || !onSelect}
+                    id={`options-button-${index}`}
+                    isNotSelectable={hasSelected || !isActive || pending || !onSelect}
+                    isSelected={option === selected}
+                    key={index}
+                    onClick={async () => {
+                        if (hasSelected || !isActive || pending || !onSelect) {
+                            return
+                        }
+                        setPending(true)
+                        try {
+                            await onSelect(option)
+                        } catch (error) {
+                            console.error("Error sending option response:", error)
+                        } finally {
+                            setPending(false)
+                        }
+                    }}
+                    type="button">
+                    <span className="ph-no-capture">{option}</span>
+                </OptionButton>
+            ))}
+        </div>
+    )
 }

@@ -1,240 +1,359 @@
 import type CheckpointTracker from "@integrations/checkpoints/CheckpointTracker"
-import type { TaskFileTracker } from "@integrations/checkpoints/TaskFileTracker"
+import { TaskFileTracker } from "@integrations/checkpoints/TaskFileTracker"
 import { VcsType, type WorkspaceRoot } from "@shared/multi-root/types"
 import * as path from "path"
 import { describe, expect, it, vi } from "vitest"
 import { CheckpointUnitCoordinator } from "../CheckpointUnitCoordinator"
 
 function root(rootPath: string, name: string): WorkspaceRoot {
-	return { path: rootPath, name, vcs: VcsType.None }
+    return { path: rootPath, name, vcs: VcsType.None }
 }
 
 function tracker(hash: string) {
-	return {
-		commitForFiles: vi.fn().mockResolvedValue(hash),
-		restoreFiles: vi.fn().mockResolvedValue(undefined),
-		resetHead: vi.fn().mockResolvedValue(undefined),
-		getDiffSet: vi.fn().mockResolvedValue([]),
-		getTaskDiffSet: vi.fn().mockResolvedValue([]),
-		getTaskDiffCount: vi.fn().mockResolvedValue(0),
-		getConsecutiveStagingFailures: vi.fn().mockReturnValue(0),
-	} as unknown as CheckpointTracker
+    return {
+        commitForFiles: vi.fn().mockResolvedValue(hash),
+        restoreFiles: vi.fn().mockResolvedValue(undefined),
+        resetHead: vi.fn().mockResolvedValue(undefined),
+        getDiffSet: vi.fn().mockResolvedValue([]),
+        getTaskDiffSet: vi.fn().mockResolvedValue([]),
+        getTaskDiffCount: vi.fn().mockResolvedValue(0),
+        getConsecutiveStagingFailures: vi.fn().mockReturnValue(0),
+    } as unknown as CheckpointTracker
 }
 
-function taskFiles(files: string[], scanRequired = false): TaskFileTracker {
-	return {
-		getModifiedFiles: vi.fn().mockReturnValue(files),
-		isWorkspaceScanRequired: vi.fn().mockReturnValue(scanRequired),
-		dropModifiedFiles: vi.fn(),
-		clearWorkspaceScanRequired: vi.fn(),
-	} as unknown as TaskFileTracker
+function taskFiles(
+    files: string[],
+    scanRequired = false,
+    observed: string[] = [],
+    scanAttributed = scanRequired,
+): TaskFileTracker {
+    return {
+        getModifiedFiles: vi.fn().mockReturnValue(files),
+        getObservedFiles: vi.fn().mockReturnValue(observed),
+        pendingWatermark: vi.fn().mockReturnValue(7),
+        settlePending: vi.fn(),
+        isWorkspaceScanRequired: vi.fn().mockReturnValue(scanRequired),
+        isScanAttributedToTask: vi.fn().mockReturnValue(scanAttributed),
+        dropModifiedFiles: vi.fn(),
+        clearWorkspaceScanRequired: vi.fn(),
+    } as unknown as TaskFileTracker
 }
 
 describe("CheckpointUnitCoordinator", () => {
-	it("commits every workspace root and preserves root-aligned references", async () => {
-		const rootA = path.resolve("C:/workspace-a")
-		const rootB = path.resolve("C:/workspace-b")
-		const fileA = path.join(rootA, "src", "a.ts")
-		const fileB = path.join(rootB, "src", "b.ts")
-		const trackerA = tracker("hash-a")
-		const trackerB = tracker("hash-b")
-		const trackedFiles = taskFiles([fileA, fileB])
-		const createCheckpointTracker = vi.fn(async (_taskId: string, _enabled: boolean, workspacePath: string) =>
-			workspacePath === rootA ? trackerA : trackerB,
-		)
-		const coordinator = new CheckpointUnitCoordinator({
-			taskId: "task-1",
-			enableCheckpoints: true,
-			roots: [root(rootA, "a"), root(rootB, "b")],
-			primaryRootIndex: 0,
-			taskFileTracker: trackedFiles,
-			createCheckpointTracker,
-		})
+    it("commits every workspace root and preserves root-aligned references", async () => {
+        const rootA = path.resolve("C:/workspace-a")
+        const rootB = path.resolve("C:/workspace-b")
+        const fileA = path.join(rootA, "src", "a.ts")
+        const fileB = path.join(rootB, "src", "b.ts")
+        const trackerA = tracker("hash-a")
+        const trackerB = tracker("hash-b")
+        const trackedFiles = taskFiles([fileA, fileB])
+        const createCheckpointTracker = vi.fn(async (_taskId: string, _enabled: boolean, workspacePath: string) =>
+            workspacePath === rootA ? trackerA : trackerB,
+        )
+        const coordinator = new CheckpointUnitCoordinator({
+            taskId: "task-1",
+            enableCheckpoints: true,
+            roots: [root(rootA, "a"), root(rootB, "b")],
+            primaryRootIndex: 0,
+            taskFileTracker: trackedFiles,
+            createCheckpointTracker,
+        })
 
-		const references = await coordinator.commit()
+        const references = await coordinator.commit()
 
-		expect(references).toEqual({ hashes: ["hash-a", "hash-b"], workspaceRoots: [rootA, rootB] })
-		expect(trackerA.commitForFiles).toHaveBeenCalledWith([fileA], { forceWorkspaceScan: false })
-		expect(trackerB.commitForFiles).toHaveBeenCalledWith([fileB], { forceWorkspaceScan: false })
-		expect(trackedFiles.dropModifiedFiles).toHaveBeenCalledWith(expect.arrayContaining([fileA, fileB]))
-	})
+        expect(references).toEqual({ hashes: ["hash-a", "hash-b"], workspaceRoots: [rootA, rootB] })
+        expect(trackerA.commitForFiles).toHaveBeenCalledWith([fileA], {
+            forceWorkspaceScan: false,
+            attributeScanToTask: false,
+            observedFiles: [],
+        })
+        expect(trackerB.commitForFiles).toHaveBeenCalledWith([fileB], {
+            forceWorkspaceScan: false,
+            attributeScanToTask: false,
+            observedFiles: [],
+        })
+        expect(trackedFiles.settlePending).toHaveBeenCalledWith(expect.arrayContaining([fileA, fileB]), 7)
+    })
 
-	it("keeps successful roots usable when another root cannot initialize", async () => {
-		const rootA = path.resolve("C:/workspace-a")
-		const rootB = path.resolve("C:/workspace-b")
-		const trackerA = tracker("hash-a")
-		const coordinator = new CheckpointUnitCoordinator({
-			taskId: "task-1",
-			enableCheckpoints: true,
-			roots: [root(rootA, "a"), root(rootB, "b")],
-			primaryRootIndex: 0,
-			createCheckpointTracker: vi.fn(async (_taskId, _enabled, workspacePath) => {
-				if (workspacePath === rootB) throw new Error("secondary unavailable")
-				return trackerA
-			}),
-		})
+    it("clears paths outside every root without losing owned pending changes", async () => {
+        const rootA = path.resolve("C:/workspace-a")
+        const rootB = path.resolve("C:/workspace-b")
+        const ownedFile = path.join(rootA, "..cache", "owned.ts")
+        const outsideModified = path.resolve("C:/outside", "modified.ts")
+        const outsideObserved = path.resolve("C:/outside", "observed.ts")
+        const trackerA = tracker("hash-a")
+        const trackerB = tracker("hash-b")
+        const trackedFiles = new TaskFileTracker("task-unowned-paths")
+        trackedFiles.trackModification(ownedFile)
+        trackedFiles.trackModification(outsideModified)
+        trackedFiles.notePendingChange(outsideObserved)
+        const coordinator = new CheckpointUnitCoordinator({
+            taskId: "task-unowned-paths",
+            enableCheckpoints: true,
+            roots: [root(rootA, "a"), root(rootB, "b")],
+            primaryRootIndex: 0,
+            taskFileTracker: trackedFiles,
+            createCheckpointTracker: vi.fn(async (_taskId, _enabled, workspacePath) =>
+                workspacePath === rootA ? trackerA : trackerB,
+            ),
+        })
 
-		const references = await coordinator.commit()
-		const outcome = await coordinator.restore({ hashes: ["hash-a", "hash-b"], workspaceRoots: [rootA, rootB] }, [])
+        await coordinator.commit()
 
-		expect(references).toEqual({ hashes: ["hash-a", ""], workspaceRoots: [rootA, rootB] })
-		expect(outcome.restoredWorkspacePaths).toEqual([rootA])
-		expect(outcome.restoredReferences).toEqual({ hashes: ["hash-a", ""], workspaceRoots: [rootA, rootB] })
-		expect(outcome.failures).toEqual([{ workspacePath: rootB, reason: "secondary unavailable" }])
-		expect(trackerA.resetHead).toHaveBeenCalledWith("hash-a")
-	})
+        expect(trackerA.commitForFiles).toHaveBeenCalledWith([ownedFile], {
+            forceWorkspaceScan: false,
+            attributeScanToTask: false,
+            observedFiles: [],
+        })
+        expect(trackedFiles.getModifiedFiles()).toEqual([])
+        expect(trackedFiles.getObservedFiles()).toEqual([])
+        expect(trackedFiles.getAllModifiedFiles()).toEqual([ownedFile, outsideModified])
+    })
 
-	it("uses persisted root identity when workspace root order changes", async () => {
-		const rootA = path.resolve("C:/workspace-a")
-		const rootB = path.resolve("C:/workspace-b")
-		const trackerA = tracker("new-a")
-		const trackerB = tracker("new-b")
-		const coordinator = new CheckpointUnitCoordinator({
-			taskId: "task-1",
-			enableCheckpoints: true,
-			roots: [root(rootB, "b"), root(rootA, "a")],
-			primaryRootIndex: 0,
-			createCheckpointTracker: vi.fn(async (_taskId, _enabled, workspacePath) =>
-				workspacePath === rootA ? trackerA : trackerB,
-			),
-		})
+    it("routes watched changes to the root that owns them", async () => {
+        const rootA = path.resolve("C:/workspace-a")
+        const rootB = path.resolve("C:/workspace-b")
+        const observedB = path.join(rootB, "generated.txt")
+        const trackerA = tracker("hash-a")
+        const trackerB = tracker("hash-b")
+        const trackedFiles = taskFiles([], false, [observedB])
+        const coordinator = new CheckpointUnitCoordinator({
+            taskId: "task-1",
+            enableCheckpoints: true,
+            roots: [root(rootA, "a"), root(rootB, "b")],
+            primaryRootIndex: 0,
+            taskFileTracker: trackedFiles,
+            createCheckpointTracker: vi.fn(async (_taskId, _enabled, workspacePath) =>
+                workspacePath === rootA ? trackerA : trackerB,
+            ),
+        })
 
-		await coordinator.restore({ hashes: ["old-a", "old-b"], workspaceRoots: [rootA, rootB] }, [])
+        await coordinator.commit()
 
-		expect(trackerA.resetHead).toHaveBeenCalledWith("old-a")
-		expect(trackerB.resetHead).toHaveBeenCalledWith("old-b")
-	})
+        expect(trackerB.commitForFiles).toHaveBeenCalledWith([], {
+            forceWorkspaceScan: false,
+            attributeScanToTask: false,
+            observedFiles: [observedB],
+        })
+        expect(trackedFiles.settlePending).toHaveBeenCalledWith([observedB], 7)
+    })
 
-	it("aggregates task-owned diffs and completion counts across roots", async () => {
-		const rootA = path.resolve("C:/workspace-a")
-		const rootB = path.resolve("C:/workspace-b")
-		const trackerA = tracker("hash-a")
-		const trackerB = tracker("hash-b")
-		vi.mocked(trackerA.getTaskDiffSet).mockResolvedValue([
-			{ relativePath: "a.ts", absolutePath: path.join(rootA, "a.ts"), before: "a0", after: "a1" },
-		])
-		vi.mocked(trackerB.getTaskDiffSet).mockResolvedValue([
-			{ relativePath: "b.ts", absolutePath: path.join(rootB, "b.ts"), before: "b0", after: "b1" },
-		])
-		vi.mocked(trackerA.getTaskDiffCount).mockResolvedValue(1)
-		vi.mocked(trackerB.getTaskDiffCount).mockResolvedValue(2)
-		const coordinator = new CheckpointUnitCoordinator({
-			taskId: "task-1",
-			enableCheckpoints: true,
-			roots: [root(rootA, "a"), root(rootB, "b")],
-			primaryRootIndex: 0,
-			createCheckpointTracker: vi.fn(async (_taskId, _enabled, workspacePath) =>
-				workspacePath === rootA ? trackerA : trackerB,
-			),
-		})
-		const base = { hashes: ["base-a", "base-b"], workspaceRoots: [rootA, rootB] }
-		const target = { hashes: ["target-a", "target-b"], workspaceRoots: [rootA, rootB] }
+    it("keeps successful roots usable when another root cannot initialize", async () => {
+        const rootA = path.resolve("C:/workspace-a")
+        const rootB = path.resolve("C:/workspace-b")
+        const trackerA = tracker("hash-a")
+        const coordinator = new CheckpointUnitCoordinator({
+            taskId: "task-1",
+            enableCheckpoints: true,
+            roots: [root(rootA, "a"), root(rootB, "b")],
+            primaryRootIndex: 0,
+            createCheckpointTracker: vi.fn(async (_taskId, _enabled, workspacePath) => {
+                if (workspacePath === rootB) throw new Error("secondary unavailable")
+                return trackerA
+            }),
+        })
 
-		const diffOutcome = await coordinator.getDiffSet(target, base, true)
-		const countOutcome = await coordinator.getTaskDiffCount(base, target)
+        const references = await coordinator.commit()
+        const outcome = await coordinator.restore({ hashes: ["hash-a", "hash-b"], workspaceRoots: [rootA, rootB] }, [])
 
-		expect(diffOutcome.changedFiles.map((file) => file.relativePath)).toEqual(["a.ts", "b.ts"])
-		expect(diffOutcome.failures).toEqual([])
-		expect(countOutcome).toEqual({ count: 3, failures: [] })
-	})
+        expect(references).toEqual({ hashes: ["hash-a", ""], workspaceRoots: [rootA, rootB] })
+        expect(outcome.restoredWorkspacePaths).toEqual([rootA])
+        expect(outcome.restoredReferences).toEqual({ hashes: ["hash-a", ""], workspaceRoots: [rootA, rootB] })
+        expect(outcome.failures).toEqual([{ workspacePath: rootB, reason: "secondary unavailable" }])
+        expect(trackerA.resetHead).toHaveBeenCalledWith("hash-a")
+    })
 
-	it("forces every ready root to scan after a terminal command", async () => {
-		const rootA = path.resolve("C:/workspace-a")
-		const rootB = path.resolve("C:/workspace-b")
-		const trackerA = tracker("hash-a")
-		const trackerB = tracker("hash-b")
-		const trackedFiles = taskFiles([], true)
-		const coordinator = new CheckpointUnitCoordinator({
-			taskId: "task-1",
-			enableCheckpoints: true,
-			roots: [root(rootA, "a"), root(rootB, "b")],
-			primaryRootIndex: 0,
-			taskFileTracker: trackedFiles,
-			createCheckpointTracker: vi.fn(async (_taskId, _enabled, workspacePath) =>
-				workspacePath === rootA ? trackerA : trackerB,
-			),
-		})
+    it("uses persisted root identity when workspace root order changes", async () => {
+        const rootA = path.resolve("C:/workspace-a")
+        const rootB = path.resolve("C:/workspace-b")
+        const trackerA = tracker("new-a")
+        const trackerB = tracker("new-b")
+        const coordinator = new CheckpointUnitCoordinator({
+            taskId: "task-1",
+            enableCheckpoints: true,
+            roots: [root(rootB, "b"), root(rootA, "a")],
+            primaryRootIndex: 0,
+            createCheckpointTracker: vi.fn(async (_taskId, _enabled, workspacePath) =>
+                workspacePath === rootA ? trackerA : trackerB,
+            ),
+        })
 
-		await coordinator.commit()
+        await coordinator.restore({ hashes: ["old-a", "old-b"], workspaceRoots: [rootA, rootB] }, [])
 
-		expect(trackerA.commitForFiles).toHaveBeenCalledWith([], { forceWorkspaceScan: true })
-		expect(trackerB.commitForFiles).toHaveBeenCalledWith([], { forceWorkspaceScan: true })
-		expect(trackedFiles.clearWorkspaceScanRequired).toHaveBeenCalledOnce()
-	})
+        expect(trackerA.resetHead).toHaveBeenCalledWith("old-a")
+        expect(trackerB.resetHead).toHaveBeenCalledWith("old-b")
+    })
 
-	it("does not reuse a stale root revision when the current commit fails", async () => {
-		const rootA = path.resolve("C:/workspace-a")
-		const rootB = path.resolve("C:/workspace-b")
-		const trackerA = tracker("unused-a")
-		const trackerB = tracker("unused-b")
-		vi.mocked(trackerA.commitForFiles).mockResolvedValueOnce("hash-a1").mockResolvedValueOnce("hash-a2")
-		vi.mocked(trackerB.commitForFiles).mockResolvedValueOnce("hash-b1").mockResolvedValueOnce(undefined)
-		const coordinator = new CheckpointUnitCoordinator({
-			taskId: "task-1",
-			enableCheckpoints: true,
-			roots: [root(rootA, "a"), root(rootB, "b")],
-			primaryRootIndex: 0,
-			createCheckpointTracker: vi.fn(async (_taskId, _enabled, workspacePath) =>
-				workspacePath === rootA ? trackerA : trackerB,
-			),
-		})
+    it("aggregates task-owned diffs and completion counts across roots", async () => {
+        const rootA = path.resolve("C:/workspace-a")
+        const rootB = path.resolve("C:/workspace-b")
+        const trackerA = tracker("hash-a")
+        const trackerB = tracker("hash-b")
+        vi.mocked(trackerA.getTaskDiffSet).mockResolvedValue([
+            { relativePath: "a.ts", absolutePath: path.join(rootA, "a.ts"), before: "a0", after: "a1" },
+        ])
+        vi.mocked(trackerB.getTaskDiffSet).mockResolvedValue([
+            { relativePath: "b.ts", absolutePath: path.join(rootB, "b.ts"), before: "b0", after: "b1" },
+        ])
+        vi.mocked(trackerA.getTaskDiffCount).mockResolvedValue(1)
+        vi.mocked(trackerB.getTaskDiffCount).mockResolvedValue(2)
+        const coordinator = new CheckpointUnitCoordinator({
+            taskId: "task-1",
+            enableCheckpoints: true,
+            roots: [root(rootA, "a"), root(rootB, "b")],
+            primaryRootIndex: 0,
+            createCheckpointTracker: vi.fn(async (_taskId, _enabled, workspacePath) =>
+                workspacePath === rootA ? trackerA : trackerB,
+            ),
+        })
+        const base = { hashes: ["base-a", "base-b"], workspaceRoots: [rootA, rootB] }
+        const target = { hashes: ["target-a", "target-b"], workspaceRoots: [rootA, rootB] }
 
-		expect(await coordinator.commit()).toEqual({ hashes: ["hash-a1", "hash-b1"], workspaceRoots: [rootA, rootB] })
-		expect(await coordinator.commit()).toEqual({ hashes: ["hash-a2", ""], workspaceRoots: [rootA, rootB] })
-	})
+        const diffOutcome = await coordinator.getDiffSet(target, base, true)
+        const countOutcome = await coordinator.getTaskDiffCount(base, target)
 
-	it("preserves healthy root diffs when another root fails", async () => {
-		const rootA = path.resolve("C:/workspace-a")
-		const rootB = path.resolve("C:/workspace-b")
-		const trackerA = tracker("hash-a")
-		const trackerB = tracker("hash-b")
-		vi.mocked(trackerA.getTaskDiffSet).mockResolvedValue([
-			{ relativePath: "a.ts", absolutePath: path.join(rootA, "a.ts"), before: "a0", after: "a1" },
-		])
-		vi.mocked(trackerB.getTaskDiffSet).mockRejectedValue(new Error("broken shadow repo"))
-		vi.mocked(trackerA.getTaskDiffCount).mockResolvedValue(1)
-		vi.mocked(trackerB.getTaskDiffCount).mockRejectedValue(new Error("broken shadow repo"))
-		const coordinator = new CheckpointUnitCoordinator({
-			taskId: "task-1",
-			enableCheckpoints: true,
-			roots: [root(rootA, "a"), root(rootB, "b")],
-			primaryRootIndex: 0,
-			createCheckpointTracker: vi.fn(async (_taskId, _enabled, workspacePath) =>
-				workspacePath === rootA ? trackerA : trackerB,
-			),
-		})
-		const base = { hashes: ["base-a", "base-b"], workspaceRoots: [rootA, rootB] }
-		const target = { hashes: ["target-a", "target-b"], workspaceRoots: [rootA, rootB] }
+        expect(diffOutcome.changedFiles.map((file) => file.relativePath)).toEqual(["a.ts", "b.ts"])
+        expect(diffOutcome.failures).toEqual([])
+        expect(countOutcome).toEqual({ count: 3, failures: [] })
+    })
 
-		const diffOutcome = await coordinator.getDiffSet(target, base, true)
-		const countOutcome = await coordinator.getTaskDiffCount(base, target)
+    it("forces every ready root to scan after a terminal command", async () => {
+        const rootA = path.resolve("C:/workspace-a")
+        const rootB = path.resolve("C:/workspace-b")
+        const trackerA = tracker("hash-a")
+        const trackerB = tracker("hash-b")
+        const trackedFiles = taskFiles([], true)
+        const coordinator = new CheckpointUnitCoordinator({
+            taskId: "task-1",
+            enableCheckpoints: true,
+            roots: [root(rootA, "a"), root(rootB, "b")],
+            primaryRootIndex: 0,
+            taskFileTracker: trackedFiles,
+            createCheckpointTracker: vi.fn(async (_taskId, _enabled, workspacePath) =>
+                workspacePath === rootA ? trackerA : trackerB,
+            ),
+        })
 
-		expect(diffOutcome.changedFiles.map((file) => file.relativePath)).toEqual(["a.ts"])
-		expect(diffOutcome.failures).toEqual([{ workspacePath: rootB, reason: "broken shadow repo" }])
-		expect(countOutcome).toEqual({ count: 1, failures: [{ workspacePath: rootB, reason: "broken shadow repo" }] })
-	})
+        await coordinator.commit()
 
-	it("does not route a removed root revision to a newly opened root", async () => {
-		const rootA = path.resolve("C:/workspace-a")
-		const rootB = path.resolve("C:/workspace-b")
-		const rootC = path.resolve("C:/workspace-c")
-		const trackerB = tracker("hash-b")
-		const trackerC = tracker("hash-c")
-		const coordinator = new CheckpointUnitCoordinator({
-			taskId: "task-1",
-			enableCheckpoints: true,
-			roots: [root(rootB, "b"), root(rootC, "c")],
-			primaryRootIndex: 0,
-			createCheckpointTracker: vi.fn(async (_taskId, _enabled, workspacePath) =>
-				workspacePath === rootB ? trackerB : trackerC,
-			),
-		})
+        expect(trackerA.commitForFiles).toHaveBeenCalledWith([], {
+            forceWorkspaceScan: true,
+            attributeScanToTask: true,
+            observedFiles: [],
+        })
+        expect(trackerB.commitForFiles).toHaveBeenCalledWith([], {
+            forceWorkspaceScan: true,
+            attributeScanToTask: true,
+            observedFiles: [],
+        })
+        expect(trackedFiles.clearWorkspaceScanRequired).toHaveBeenCalledOnce()
+    })
 
-		const outcome = await coordinator.restore({ hashes: ["old-a", "old-b"], workspaceRoots: [rootA, rootB] }, [])
+    // A scan standing in for the watcher finds changes that may be anyone's, so every
+    // root is told not to record them as this task's.
+    it("tells each root when the scan it runs is not the task's own", async () => {
+        const rootA = path.resolve("C:/workspace-a")
+        const rootB = path.resolve("C:/workspace-b")
+        const trackerA = tracker("hash-a")
+        const trackerB = tracker("hash-b")
+        const trackedFiles = taskFiles([], true, [], false)
+        const coordinator = new CheckpointUnitCoordinator({
+            taskId: "task-1",
+            enableCheckpoints: true,
+            roots: [root(rootA, "a"), root(rootB, "b")],
+            primaryRootIndex: 0,
+            taskFileTracker: trackedFiles,
+            createCheckpointTracker: vi.fn(async (_taskId, _enabled, workspacePath) =>
+                workspacePath === rootA ? trackerA : trackerB,
+            ),
+        })
 
-		expect(trackerB.resetHead).toHaveBeenCalledWith("old-b")
-		expect(trackerC.resetHead).not.toHaveBeenCalled()
-		expect(outcome.restoredReferences).toEqual({ hashes: ["old-b", ""], workspaceRoots: [rootB, rootC] })
-		expect(outcome.failures).toEqual([{ workspacePath: rootA, reason: "Workspace root is not currently open" }])
-	})
+        await coordinator.commit()
+
+        for (const rootTracker of [trackerA, trackerB]) {
+            expect(rootTracker.commitForFiles).toHaveBeenCalledWith([], {
+                forceWorkspaceScan: true,
+                attributeScanToTask: false,
+                observedFiles: [],
+            })
+            expect(rootTracker.getDiffSet).not.toHaveBeenCalled()
+        }
+    })
+
+    it("does not reuse a stale root revision when the current commit fails", async () => {
+        const rootA = path.resolve("C:/workspace-a")
+        const rootB = path.resolve("C:/workspace-b")
+        const trackerA = tracker("unused-a")
+        const trackerB = tracker("unused-b")
+        vi.mocked(trackerA.commitForFiles).mockResolvedValueOnce("hash-a1").mockResolvedValueOnce("hash-a2")
+        vi.mocked(trackerB.commitForFiles).mockResolvedValueOnce("hash-b1").mockResolvedValueOnce(undefined)
+        const coordinator = new CheckpointUnitCoordinator({
+            taskId: "task-1",
+            enableCheckpoints: true,
+            roots: [root(rootA, "a"), root(rootB, "b")],
+            primaryRootIndex: 0,
+            createCheckpointTracker: vi.fn(async (_taskId, _enabled, workspacePath) =>
+                workspacePath === rootA ? trackerA : trackerB,
+            ),
+        })
+
+        expect(await coordinator.commit()).toEqual({ hashes: ["hash-a1", "hash-b1"], workspaceRoots: [rootA, rootB] })
+        expect(await coordinator.commit()).toEqual({ hashes: ["hash-a2", ""], workspaceRoots: [rootA, rootB] })
+    })
+
+    it("preserves healthy root diffs when another root fails", async () => {
+        const rootA = path.resolve("C:/workspace-a")
+        const rootB = path.resolve("C:/workspace-b")
+        const trackerA = tracker("hash-a")
+        const trackerB = tracker("hash-b")
+        vi.mocked(trackerA.getTaskDiffSet).mockResolvedValue([
+            { relativePath: "a.ts", absolutePath: path.join(rootA, "a.ts"), before: "a0", after: "a1" },
+        ])
+        vi.mocked(trackerB.getTaskDiffSet).mockRejectedValue(new Error("broken shadow repo"))
+        vi.mocked(trackerA.getTaskDiffCount).mockResolvedValue(1)
+        vi.mocked(trackerB.getTaskDiffCount).mockRejectedValue(new Error("broken shadow repo"))
+        const coordinator = new CheckpointUnitCoordinator({
+            taskId: "task-1",
+            enableCheckpoints: true,
+            roots: [root(rootA, "a"), root(rootB, "b")],
+            primaryRootIndex: 0,
+            createCheckpointTracker: vi.fn(async (_taskId, _enabled, workspacePath) =>
+                workspacePath === rootA ? trackerA : trackerB,
+            ),
+        })
+        const base = { hashes: ["base-a", "base-b"], workspaceRoots: [rootA, rootB] }
+        const target = { hashes: ["target-a", "target-b"], workspaceRoots: [rootA, rootB] }
+
+        const diffOutcome = await coordinator.getDiffSet(target, base, true)
+        const countOutcome = await coordinator.getTaskDiffCount(base, target)
+
+        expect(diffOutcome.changedFiles.map((file) => file.relativePath)).toEqual(["a.ts"])
+        expect(diffOutcome.failures).toEqual([{ workspacePath: rootB, reason: "broken shadow repo" }])
+        expect(countOutcome).toEqual({ count: 1, failures: [{ workspacePath: rootB, reason: "broken shadow repo" }] })
+    })
+
+    it("does not route a removed root revision to a newly opened root", async () => {
+        const rootA = path.resolve("C:/workspace-a")
+        const rootB = path.resolve("C:/workspace-b")
+        const rootC = path.resolve("C:/workspace-c")
+        const trackerB = tracker("hash-b")
+        const trackerC = tracker("hash-c")
+        const coordinator = new CheckpointUnitCoordinator({
+            taskId: "task-1",
+            enableCheckpoints: true,
+            roots: [root(rootB, "b"), root(rootC, "c")],
+            primaryRootIndex: 0,
+            createCheckpointTracker: vi.fn(async (_taskId, _enabled, workspacePath) =>
+                workspacePath === rootB ? trackerB : trackerC,
+            ),
+        })
+
+        const outcome = await coordinator.restore({ hashes: ["old-a", "old-b"], workspaceRoots: [rootA, rootB] }, [])
+
+        expect(trackerB.resetHead).toHaveBeenCalledWith("old-b")
+        expect(trackerC.resetHead).not.toHaveBeenCalled()
+        expect(outcome.restoredReferences).toEqual({ hashes: ["old-b", ""], workspaceRoots: [rootB, rootC] })
+        expect(outcome.failures).toEqual([{ workspacePath: rootA, reason: "Workspace root is not currently open" }])
+    })
 })

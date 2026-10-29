@@ -9,12 +9,12 @@ import { Controller } from ".."
  * @returns ProcessInfo with process details
  */
 export async function getProcessInfo(controller: Controller, _request: EmptyRequest): Promise<ProcessInfo> {
-	// Get the current state to access the version (same source as webview)
-	const state = await controller.getStateToPostToWebview()
+    // Get the current state to access the version (same source as webview)
+    const state = await controller.getStateToPostToWebview()
 
-	return ProcessInfo.create({
-		processId: process.pid,
-		version: state.version || "unknown",
-		uptimeMs: Math.floor(process.uptime() * 1000), // Convert seconds to milliseconds
-	})
+    return ProcessInfo.create({
+        processId: process.pid,
+        version: state.version || "unknown",
+        uptimeMs: Math.floor(process.uptime() * 1000), // Convert seconds to milliseconds
+    })
 }

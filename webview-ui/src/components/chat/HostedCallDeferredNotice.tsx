@@ -1,8 +1,8 @@
 import { ClockIcon } from "lucide-react"
 
 interface HostedCallDeferredNoticeProps {
-	action: "search" | "fetch"
-	testId: string
+    action: "search" | "fetch"
+    testId: string
 }
 
 /**
@@ -11,10 +11,10 @@ interface HostedCallDeferredNoticeProps {
  * start of the next request, once the local tool results are sent back.
  */
 const HostedCallDeferredNotice = ({ action, testId }: HostedCallDeferredNoticeProps) => (
-	<div className="flex items-start gap-2 text-xs text-description" data-testid={testId}>
-		<ClockIcon aria-hidden="true" className="mt-0.5 size-3 shrink-0" />
-		<span>Waiting for the local tool results. The provider runs this {action} with the next request.</span>
-	</div>
+    <div className="flex items-start gap-2 text-xs text-description" data-testid={testId}>
+        <ClockIcon aria-hidden="true" className="mt-0.5 size-3 shrink-0" />
+        <span>Waiting for the local tool results. The provider runs this {action} with the next request.</span>
+    </div>
 )
 
 export default HostedCallDeferredNotice

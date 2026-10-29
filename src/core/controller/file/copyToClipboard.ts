@@ -10,12 +10,13 @@ import { Controller } from ".."
  * @returns Empty response
  */
 export async function copyToClipboard(_controller: Controller, request: StringRequest): Promise<Empty> {
-	try {
-		if (request.value) {
-			await writeTextToClipboard(request.value)
-		}
-	} catch (error) {
-		Logger.error("Error copying to clipboard:", error)
-	}
-	return Empty.create()
+    try {
+        if (request.value) {
+            await writeTextToClipboard(request.value)
+        }
+    } catch (error) {
+        Logger.error("Error copying to clipboard:", error)
+        throw error
+    }
+    return Empty.create()
 }

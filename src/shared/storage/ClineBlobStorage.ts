@@ -10,111 +10,111 @@ export type { BlobStoreSettings } from "./types"
  * Uses AWS S3, Cloudflare R2, or Azure Blob Storage as the backend storage.
  */
 export class ClineBlobStorage extends ClineStorage {
-	override name = "ClineBlobStorage"
+    override name = "ClineBlobStorage"
 
-	private static store: ClineBlobStorage | null = null
-	static get instance(): ClineBlobStorage {
-		if (!ClineBlobStorage.store) {
-			ClineBlobStorage.store = new ClineBlobStorage()
-		}
-		return ClineBlobStorage.store
-	}
+    private static store: ClineBlobStorage | null = null
+    static get instance(): ClineBlobStorage {
+        if (!ClineBlobStorage.store) {
+            ClineBlobStorage.store = new ClineBlobStorage()
+        }
+        return ClineBlobStorage.store
+    }
 
-	private adapter: StorageAdapter | undefined
-	private settings: BlobStoreSettings | undefined
-	private initialized = false
+    private adapter: StorageAdapter | undefined
+    private settings: BlobStoreSettings | undefined
+    private initialized = false
 
-	/**
-	 * Initialize the storage adapter with the given settings.
-	 * Can be called multiple times - will reinitialize if settings change.
-	 */
-	public init(settings?: BlobStoreSettings) {
-		if (!settings) {
-			return
-		}
+    /**
+     * Initialize the storage adapter with the given settings.
+     * Can be called multiple times - will reinitialize if settings change.
+     */
+    public init(settings?: BlobStoreSettings) {
+        if (!settings) {
+            return
+        }
 
-		// Check if settings have changed (compare key fields)
-		const settingsChanged =
-			!this.settings ||
-			this.settings.adapterType !== settings.adapterType ||
-			this.settings.bucket !== settings.bucket ||
-			this.settings.accessKeyId !== settings.accessKeyId ||
-			this.settings.endpoint !== settings.endpoint ||
-			this.settings.accountId !== settings.accountId
+        // Check if settings have changed (compare key fields)
+        const settingsChanged =
+            !this.settings ||
+            this.settings.adapterType !== settings.adapterType ||
+            this.settings.bucket !== settings.bucket ||
+            this.settings.accessKeyId !== settings.accessKeyId ||
+            this.settings.endpoint !== settings.endpoint ||
+            this.settings.accountId !== settings.accountId
 
-		// Skip if already initialized with same settings
-		if (this.initialized && !settingsChanged) {
-			return
-		}
+        // Skip if already initialized with same settings
+        if (this.initialized && !settingsChanged) {
+            return
+        }
 
-		try {
-			if (!ClineBlobStorage.isConfigured(settings)) {
-				// Not configured - this is expected and not an error
-				return
-			}
+        try {
+            if (!ClineBlobStorage.isConfigured(settings)) {
+                // Not configured - this is expected and not an error
+                return
+            }
 
-			const adapter = getStorageAdapter(settings)
-			if (adapter) {
-				this.adapter = adapter
-				this.settings = settings
-				this.initialized = true
-				Logger.log(`[ClineBlobStorage] Adapter created for ${settings.adapterType}`)
-			}
-		} catch (error) {
-			// Log but don't throw - allow startup to continue
-			Logger.error("[ClineBlobStorage] initialization failed:", error)
-		}
-	}
+            const adapter = getStorageAdapter(settings)
+            if (adapter) {
+                this.adapter = adapter
+                this.settings = settings
+                this.initialized = true
+                Logger.log(`[ClineBlobStorage] Adapter created for ${settings.adapterType}`)
+            }
+        } catch (error) {
+            // Log but don't throw - allow startup to continue
+            Logger.error("[ClineBlobStorage] initialization failed:", error)
+        }
+    }
 
-	/**
-	 * Check if the storage is properly initialized and ready to use.
-	 */
-	public isReady(): boolean {
-		return this.initialized && this.adapter !== undefined
-	}
+    /**
+     * Check if the storage is properly initialized and ready to use.
+     */
+    public isReady(): boolean {
+        return this.initialized && this.adapter !== undefined
+    }
 
-	public static isConfigured(settings: BlobStoreSettings): boolean {
-		const adapter = settings.adapterType
-		if (adapter !== "s3" && adapter !== "r2" && adapter !== "azure") {
-			return false
-		}
+    public static isConfigured(settings: BlobStoreSettings): boolean {
+        const adapter = settings.adapterType
+        if (adapter !== "s3" && adapter !== "r2" && adapter !== "azure") {
+            return false
+        }
 
-		const hasRequiredVars = !!settings.bucket && !!settings.accessKeyId && !!settings.secretAccessKey
+        const hasRequiredVars = !!settings.bucket && !!settings.accessKeyId && !!settings.secretAccessKey
 
-		if (adapter === "r2") {
-			return hasRequiredVars && !!(settings.accountId || settings.endpoint)
-		}
+        if (adapter === "r2") {
+            return hasRequiredVars && !!(settings.accountId || settings.endpoint)
+        }
 
-		return hasRequiredVars
-	}
+        return hasRequiredVars
+    }
 
-	protected async _get(key: string): Promise<string | undefined> {
-		if (!this.isReady()) {
-			return undefined
-		}
-		try {
-			return await this.adapter?.read(key)
-		} catch {
-			// Silently return undefined on read errors
-			return undefined
-		}
-	}
+    protected async _get(key: string): Promise<string | undefined> {
+        if (!this.isReady()) {
+            return undefined
+        }
+        try {
+            return await this.adapter?.read(key)
+        } catch {
+            // Silently return undefined on read errors
+            return undefined
+        }
+    }
 
-	protected async _store(key: string, value: string): Promise<void> {
-		if (!this.isReady()) {
-			// Silently fail if not configured - this is expected behavior
-			return
-		}
-		await this.adapter?.write(key, value)
-	}
+    protected async _store(key: string, value: string): Promise<void> {
+        if (!this.isReady()) {
+            // Silently fail if not configured - this is expected behavior
+            return
+        }
+        await this.adapter?.write(key, value)
+    }
 
-	protected async _delete(key: string): Promise<void> {
-		if (!this.isReady()) {
-			// Silently fail if not configured - this is expected behavior
-			return
-		}
-		await this.adapter?.remove(key)
-	}
+    protected async _delete(key: string): Promise<void> {
+        if (!this.isReady()) {
+            // Silently fail if not configured - this is expected behavior
+            return
+        }
+        await this.adapter?.remove(key)
+    }
 }
 
 /**

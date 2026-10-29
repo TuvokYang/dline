@@ -19,6 +19,7 @@ import * as cp from "child_process"
 import * as os from "os"
 import * as util from "util"
 import { Logger } from "@/shared/services/Logger"
+import { shouldVisitLoopbackUrlDirectly } from "@/utils/e2e-loopback-visit"
 import { openExternal, writeTextToClipboard } from "@/utils/env"
 
 /**
@@ -40,21 +41,21 @@ import { openExternal, writeTextToClipboard } from "@/utils/env"
  * @returns The properly encoded full URL
  */
 export function createGitHubIssueUrl(baseUrl: string, params: Map<string, string>): string {
-	// Build query string manually with proper encoding
-	const queryParts: string[] = []
+    // Build query string manually with proper encoding
+    const queryParts: string[] = []
 
-	for (const [key, value] of params.entries()) {
-		const encodedKey = encodeURIComponent(key)
-		const encodedValue = encodeURIComponent(value)
-		queryParts.push(`${encodedKey}=${encodedValue}`)
-	}
+    for (const [key, value] of params.entries()) {
+        const encodedKey = encodeURIComponent(key)
+        const encodedValue = encodeURIComponent(value)
+        queryParts.push(`${encodedKey}=${encodedValue}`)
+    }
 
-	// Determine the proper separator (? or &) based on whether baseUrl already has parameters
-	const separator = baseUrl.includes("?") ? "&" : "?"
+    // Determine the proper separator (? or &) based on whether baseUrl already has parameters
+    const separator = baseUrl.includes("?") ? "&" : "?"
 
-	// Join all parts to create the final URL
-	const queryString = queryParts.join("&")
-	return `${baseUrl}${separator}${queryString}`
+    // Join all parts to create the final URL
+    const queryString = queryParts.join("&")
+    return `${baseUrl}${separator}${queryString}`
 }
 
 /**
@@ -79,96 +80,101 @@ export function createGitHubIssueUrl(baseUrl: string, params: Map<string, string
  * @returns A promise that resolves when an attempt to open the URL has completed
  */
 export async function openUrlInBrowser(url: string): Promise<void> {
-	// For debugging
-	Logger.log(`Opening URL: ${url}`)
+    // For debugging
+    Logger.log(`Opening URL: ${url}`)
 
-	// Always copy to clipboard as a fallback
-	try {
-		await writeTextToClipboard(url)
-		Logger.log("URL copied to clipboard as backup")
-	} catch (error) {
-		Logger.error(`Failed to copy URL to clipboard: ${error}`)
-	}
+    if (shouldVisitLoopbackUrlDirectly(url, process.env)) {
+        await openExternal(url)
+        return
+    }
 
-	// Try to open the URL using platform-specific commands
-	try {
-		const platform = os.platform()
-		Logger.log(`Detected platform: ${platform}`)
+    // Always copy to clipboard as a fallback
+    try {
+        await writeTextToClipboard(url)
+        Logger.log("URL copied to clipboard as backup")
+    } catch (error) {
+        Logger.error(`Failed to copy URL to clipboard: ${error}`)
+    }
 
-		// Use promisify for better async error handling
-		const execPromise = util.promisify(cp.exec)
+    // Try to open the URL using platform-specific commands
+    try {
+        const platform = os.platform()
+        Logger.log(`Detected platform: ${platform}`)
 
-		// Use platform-specific commands
-		if (platform === "win32") {
-			// Windows - try multiple approaches
-			try {
-				await execPromise(`start "" "${url}"`)
-				Logger.log("Opened URL with Windows 'start' command")
-				return
-			} catch (winError) {
-				Logger.error(`Error with Windows 'start' command: ${winError}`)
+        // Use promisify for better async error handling
+        const execPromise = util.promisify(cp.exec)
 
-				try {
-					await execPromise(`powershell.exe -Command "Start-Process '${url}'"`)
-					Logger.log("Opened URL with PowerShell command")
-					return
-				} catch (psError) {
-					Logger.error(`Error with PowerShell command: ${psError}`)
-					// Fall through to the fallbacks
-				}
-			}
-		} else if (platform === "darwin") {
-			// macOS
-			await execPromise(`open "${url}"`)
-			Logger.log("Opened URL with macOS 'open' command")
-			return
-		} else {
-			// Linux and others - try multiple commands
-			const linuxCommands = ["xdg-open", "gnome-open", "kde-open", "wslview"]
+        // Use platform-specific commands
+        if (platform === "win32") {
+            // Windows - try multiple approaches
+            try {
+                await execPromise(`start "" "${url}"`)
+                Logger.log("Opened URL with Windows 'start' command")
+                return
+            } catch (winError) {
+                Logger.error(`Error with Windows 'start' command: ${winError}`)
 
-			for (const cmd of linuxCommands) {
-				try {
-					await execPromise(`${cmd} "${url}"`)
-					Logger.log(`Opened URL with '${cmd}' command`)
-					return
-				} catch (cmdError) {
-					Logger.error(`Error with '${cmd}' command: ${cmdError}`)
-					// Try next command
-				}
-			}
-		}
+                try {
+                    await execPromise(`powershell.exe -Command "Start-Process '${url}'"`)
+                    Logger.log("Opened URL with PowerShell command")
+                    return
+                } catch (psError) {
+                    Logger.error(`Error with PowerShell command: ${psError}`)
+                    // Fall through to the fallbacks
+                }
+            }
+        } else if (platform === "darwin") {
+            // macOS
+            await execPromise(`open "${url}"`)
+            Logger.log("Opened URL with macOS 'open' command")
+            return
+        } else {
+            // Linux and others - try multiple commands
+            const linuxCommands = ["xdg-open", "gnome-open", "kde-open", "wslview"]
 
-		// If we got here, none of the OS commands worked
-		throw new Error("All OS commands failed")
-	} catch (error) {
-		Logger.error(`OS commands failed: ${error}`)
+            for (const cmd of linuxCommands) {
+                try {
+                    await execPromise(`${cmd} "${url}"`)
+                    Logger.log(`Opened URL with '${cmd}' command`)
+                    return
+                } catch (cmdError) {
+                    Logger.error(`Error with '${cmd}' command: ${cmdError}`)
+                    // Try next command
+                }
+            }
+        }
 
-		// First fallback: Try openExternal utility
-		// Note: This will likely have encoding issues per https://github.com/microsoft/vscode/issues/85930
-		// but we include it as a fallback in case OS commands completely fail
-		try {
-			await openExternal(url)
-			Logger.log("Opened URL with openExternal utility (note: URL encoding may be affected)")
-			return
-		} catch (openExternalError) {
-			Logger.error(`Error with openExternal utility: ${openExternalError}`)
+        // If we got here, none of the OS commands worked
+        throw new Error("All OS commands failed")
+    } catch (error) {
+        Logger.error(`OS commands failed: ${error}`)
 
-			// Last fallback: Show a message with instructions
-			HostProvider.window
-				.showMessage({
-					type: ShowMessageType.INFORMATION,
-					message: "Couldn't open the URL automatically. It has been copied to your clipboard.",
-					options: {
-						items: ["Copy URL Again"],
-					},
-				})
-				.then((response: SelectedResponse) => {
-					if (response.selectedOption === "Copy URL Again") {
-						writeTextToClipboard(url)
-					}
-				})
-		}
-	}
+        // First fallback: Try openExternal utility
+        // Note: This will likely have encoding issues per https://github.com/microsoft/vscode/issues/85930
+        // but we include it as a fallback in case OS commands completely fail
+        try {
+            await openExternal(url)
+            Logger.log("Opened URL with openExternal utility (note: URL encoding may be affected)")
+            return
+        } catch (openExternalError) {
+            Logger.error(`Error with openExternal utility: ${openExternalError}`)
+
+            // Last fallback: Show a message with instructions
+            HostProvider.window
+                .showMessage({
+                    type: ShowMessageType.INFORMATION,
+                    message: "Couldn't open the URL automatically. It has been copied to your clipboard.",
+                    options: {
+                        items: ["Copy URL Again"],
+                    },
+                })
+                .then((response: SelectedResponse) => {
+                    if (response.selectedOption === "Copy URL Again") {
+                        writeTextToClipboard(url)
+                    }
+                })
+        }
+    }
 }
 
 /**
@@ -193,21 +199,26 @@ export async function openUrlInBrowser(url: string): Promise<void> {
  * @param issueTemplate Template name to use (e.g., 'bug_report.yml')
  * @param params Map of parameter names to values for the issue form
  */
+export interface GitHubIssueOpenOptions {
+    readonly baseUrl?: string
+}
+
 export async function createAndOpenGitHubIssue(
-	repoOwner: string,
-	repoName: string,
-	issueTemplate: string | null,
-	params: Map<string, string>,
+    repoOwner: string,
+    repoName: string,
+    issueTemplate: string | null,
+    params: Map<string, string>,
+    options?: GitHubIssueOpenOptions,
 ): Promise<void> {
-	// Construct the base URL
-	const baseUrl = `https://github.com/${repoOwner}/${repoName}/issues/new`
+    // Construct the base URL
+    const baseUrl = options?.baseUrl ?? `https://github.com/${repoOwner}/${repoName}/issues/new`
 
-	// Add template parameter if provided
-	if (issueTemplate) {
-		params.set("template", issueTemplate)
-	}
+    // Add template parameter if provided
+    if (issueTemplate) {
+        params.set("template", issueTemplate)
+    }
 
-	// Create the URL and open it
-	const issueUrl = createGitHubIssueUrl(baseUrl, params)
-	await openUrlInBrowser(issueUrl)
+    // Create the URL and open it
+    const issueUrl = createGitHubIssueUrl(baseUrl, params)
+    await openUrlInBrowser(issueUrl)
 }

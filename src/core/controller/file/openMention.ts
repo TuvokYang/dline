@@ -9,6 +9,6 @@ import { Controller } from ".."
  * @returns Empty response
  */
 export async function openMention(_controller: Controller, request: StringRequest): Promise<Empty> {
-	coreOpenMention(request.value)
-	return Empty.create()
+    coreOpenMention(request.value)
+    return Empty.create()
 }

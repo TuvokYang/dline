@@ -1,47 +1,241 @@
 ---
-title: 遥测与诊断
-description: 了解 Dline 的使用数据与错误报告如何征得同意、默认发送到哪里、哪些内容会被屏蔽，以及如何导出诊断包。
+title: 遥测与 Issue 诊断
+description: 了解 Dline 的报告等级、数据用途、身份分离、本地保留边界、向 otel.dline.cc 投递使用统计和错误诊断，以及计划中的 Issue 授权流程。
 ---
 
 import { Aside } from "@astrojs/starlight/components"
 
-Dline 把“使用数据”和“错误报告”分开征求同意。未经你同意，不会发送任何一类数据。
-
-## 同意设置
-
-在 **Settings → About** 中有两个独立的选项：
-
-- **Allow usage reporting**：使用数据；
-- **Allow error reporting**：错误报告。
-
-两者默认都未勾选。只有明确勾选才算同意；未勾选（包括从未设置过）时，对应类别的数据不会被收集或发送。组织的远程配置可以关闭遥测，但不能替你开启。
-
-VS Code 自身的遥测设置（`telemetry.telemetryLevel`）关闭时，Dline 也不会向远程端点发送遥测数据。
-
-## 数据发往哪里
-
-- 默认情况下，同意后的数据以 OpenTelemetry（OTLP，HTTP/protobuf）格式发送到**本机**的 `http://127.0.0.1:4318`。只有你在本机运行了 OTLP 收集器时，这些数据才会被接收。
-- 组织可以通过远程配置指定其他 OTLP 端点。
-- 同意后，Dline 还会在本地写入 JSONL 格式的会话日志，用于诊断。
+Dline 分别征求产品使用统计和错误/运行时诊断的同意。两个复选框共同形成有效报告等级，但仍是独立权限。
 
 <Aside>
-Dline 默认不会把遥测数据发送到任何固定的外部服务。
+向 `otel.dline.cc` 投递使用统计和错误诊断已按下文所述启用。本页标为“计划”的统一 journal 迁移、`issue_diagnostic` 与 `development` profile，以及 Issue 诊断授权在当前构建中尚未启用。
 </Aside>
 
-## 哪些内容会被屏蔽
+个人信息处理和用户选择适用的政策见 [Dline 隐私政策](/zh-cn/privacy/)。
 
-发送前，Dline 会屏蔽以下内容：
+## 报告等级
 
-- 提示词、命令和命令输出；
-- 凭据；
-- 与身份相关的字段。
+在 **Settings → About** 中可以找到 **Allow usage reporting** 和 **Allow error reporting**。两者默认勾选。取消勾选任一项会保存为 `disabled` 并立即拒绝对应通道；`unset` 同样表示拒绝。
 
-保留的内容包括服务商与模型名称、token 用量等数值，以及其他有长度限制的结构化字段。
+| 有效等级 | 使用统计 | 错误报告 | 数据与用途 |
+|---|---:|---:|---|
+| **等级 0：关闭** | 关闭 | 关闭 | 不把受同意控制的使用或诊断信号接纳到 telemetry journal 或 OTLP sink。仍保留小型本地进程 ledger 用于崩溃恢复。 |
+| **等级 1：使用统计** | 开启 | 关闭 | 不含正文的产品事件和聚合指标，用于功能采用、兼容性、请求/工具趋势、token/cache/cost 总量和回归分析。 |
+| **等级 2：诊断** | 关闭 | 开启 | 崩溃、异常、健康和生命周期信号，同时允许手动导出本地诊断包。 |
+| **等级 3：使用统计 + 诊断** | 开启 | 开启 | 等级 1 与等级 2 的并集，不授权提示词、文件、命令、模型响应或 raw artifact。 |
+
+当前组织 policy 只有一个遥测禁用开关，可以强制同时关闭两个通道，但不能开启。VS Code 的 `telemetry.telemetryLevel` 可以进一步限制远端投递，但不能扩大 Dline 同意。
+
+账户身份使用受 usage consent 控制的独立通道，不会附加到普通 usage、error、runtime 或 metric record。
+
+## 数据类别与用途
+
+使用统计可以包含版本、宿主与操作系统类型、服务商/模型/API 格式、Task/轮次/工具/MCP/Subagent 结果、时长、吞吐、重试、token/cache/cost 总量和功能计数等有界数据。它不包含对话或 Task 正文，无法还原对话。
+
+诊断可以包含异常类型与安全错误码、严重级别、Extension Host/Controller/Task/API/Tool/Subagent/MCP 生命周期原因、CPU/内存/event-loop/队列数值和上一进程的中断证据。native abort 与 `SIGKILL` 不保证可恢复堆栈。
+
+独立 `account` 通道只发出包含 account ID 的 `account.identified` record。display name、email、organization 和 membership 不会复制到普通遥测。该通道受 usage consent 控制，并且只投递给显式声明支持 account 的 sink。
+
+## 当前数据去向
+
+- canonical Event、Metric 和 Trace 可以写入本地 OTLP 形态 JSONL。
+- 默认网络 sink 是本机 OTLP/HTTP 端点 `http://127.0.0.1:4318`。
+- 默认 loopback sink 接受 `usage`、`account`、`error` 和 `runtime`；account record 与普通 record 分离。
+- 组织配置的 OTLP 端点当前只接收已获准的 `usage` Event 和 Metric，不是 account、error/runtime 或 Trace sink。
+- 使用情况报告开启期间（默认开启），聚合后的使用计数会发送到 `https://otel.dline.cc`，详见下文使用统计投递一节；错误报告开启期间，聚合后的错误和运行时诊断也会发送到该地址，详见错误诊断投递一节。不会向该地址发送其他通道，也没有其他目的地回退到它。
 
 <Aside type="caution">
-同意后发送的事件包含一个匿名的设备标识（`distinct_id`），用于区分不同的安装，它不会被屏蔽。请不要认为遥测数据中完全没有任何标识符。
+非 loopback 端点会把数据发送到本机以外。启用前应检查其保留、访问控制和法律政策。
 </Aside>
 
-## 导出诊断包
+## 设备与账户身份
 
-勾选 **Allow error reporting** 后，**Settings → About** 中会出现 **Export diagnostic bundle**。它会在本地生成一个 ZIP 文件，写入前会再次执行脱敏处理，不会自动上传。遇到问题时，你可以检查后再决定是否附在 issue 中。
+`distinct_id` 现在只表示设备/安装。它从已保存设备 ID、machine ID 或本地生成 UUID 初始化，登录、退出或切换账户都不会改写它。
+
+普通 OpenTelemetry event 可以携带稳定的设备 `distinct_id`。account ID 只通过独立 `account.identified` 发出，不能作为 `distinct_id`、不能与它 alias，也不能被普通 Event/Metric 继承。当前组织 usage OTLP sink 不接收 account 通道。
+
+向 `otel.dline.cc` 投递的使用统计同时排除 `distinct_id` 和 account identity；服务端只能看到下文所述的假名化设备主体。计划中的 diagnostic profile 同样排除这两者。未来若新增 account telemetry 目的地，必须显式声明 account-capable sink，并单独公开保留和访问政策。
+
+## 当前本地存储与限制
+
+所有 journal 文件位于 Dline data root 下的 `telemetry/sessions/`。
+
+| 产物 | 当前行为 |
+|---|---|
+| 进程会话 ledger | 最多 20 个小型 JSON，包含有界进程/session、活动操作、健康和 termination 元数据。 |
+| canonical OTLP journal | 每个进程 session 的 `usage`、`metrics`、`traces` 文件各保留最多 4 MiB 最新尾部；account identity 不通过该 journal capability 写入。 |
+| runtime 兼容 journal | 错误报告开启时，每 session 一个无前缀 runtime 文件，保留最多 1 MiB 最新尾部。 |
+| 诊断 ZIP | 只由手动导出创建，不会自动上传。 |
+
+当前清理按文件而不是按 session 执行。error-reporting lifecycle 启动时扫描共享目录全部 `.jsonl`，只保护活动的无前缀 runtime 文件，最多保留其他 8 个符合条件文件，并删除超过 3 天的符合条件文件。带前缀文件被分别计数；只开启使用统计时不会启动这套 cleanup。因此 canonical journal 当前没有可靠的跨 session 全局字节上限。
+
+Collector 缺失时 exporter 仍只使用有界内存队列，OTLP exporter 不会创建磁盘重试 spool。只有向 `otel.dline.cc` 投递使用统计和错误诊断时，才会保留下文所述的有界磁盘队列。
+
+开启错误报告还会在本地 secret storage 创建 owner-only legacy pairing credential。当前没有 transport 发送或消费它。计划中的 Issue diagnostics 必须迁移或丢弃它，不能在没有新用户显式操作时视为 Issue 授权。
+
+## 单一遥测机制目标
+
+目标是一套 canonical mechanism：
+
+- 普通信号和权威 usage settlement 通过类型化 ingress port 进入同一个 admission boundary；
+- 一个 consent/profile resolver、channel/severity catalog、canonicalization boundary 和 content policy 约束获准数据；
+- sink-specific policy 只能删字段或降低密度；
+- 一个 provider registry 管理本地、loopback、`otel.dline.cc`、account-capable 和测试 sink；
+- 一个本地 journal owner 只有在 parity 通过后才替代重复 production 写入；
+- Issue diagnostics 只是临时 profile overlay；
+- 进程 ledger 仍是 telemetry stream 之外的 crash capsule。
+
+统一迁移必须先精确复现当前 byte limit、文件选择清理、顺序、崩溃证据、取消、bundle export 和 restart recovery，之后才能停止重复 runtime-journal 写入。文件分组、retention count、active-file 保护、age 或 byte budget 的改变属于独立存储 policy 决定；本次工作不授权删除或缩减现有遥测文件。
+
+## 隐私过滤
+
+canonical policy 会阻止或屏蔽提示词、模型输出、消息、源码与文件内容、patch/diff、路径、命令、终端输入输出、MCP 参数/结果、凭据，以及传入普通 event/metric 的身份字段。保留的是版本、服务商/模型名称、枚举、计数、时长、token/cache/cost 数值、结果和安全指纹等有界字段。
+
+development 模式可以保留额外本地关联字段，但不等于远端授权。
+
+## 诊断包与当前 `/reportbug`
+
+**Export diagnostic bundle** 在错误报告开启时把脱敏 ZIP 写到本地，不会自动上传。附加前请自行检查。
+
+当前 `/reportbug` handler 要求 `api_request_output` 和 `additional_context`。这些值会显示在 Dline 审批预览中；批准后，`api_request_output` 会进入预填 GitHub Issue 的 `logs` 字段并通过浏览器 URL 传递。只有你在浏览器再次检查并点击 submit 后，GitHub 才会收到 Issue，因此提交前可以编辑或删除该字段。该流程不会授权 `otel.dline.cc`，也不会上传 journal 或 ZIP。
+
+## 向 `otel.dline.cc` 投递使用统计
+
+只有以下条件全部成立时，Dline 才会向 `https://otel.dline.cc` 发送使用计数：
+
+- 已勾选 **Allow usage reporting**。该项默认开启；在 **Settings → About** 中取消勾选会停止投递并删除尚未发送的计数。
+- 组织 policy 没有禁用遥测。
+- VS Code 的 `telemetry.telemetryLevel` 为 `all`。`error`、`crash`、`off` 或无法读取的等级都会停止投递。
+- 服务端没有拒绝该设备。
+- 当前不是自动化测试运行。development 构建同样发送，其批次带 `is_dev=true`。
+
+### 发送内容
+
+每个已结算的服务商请求只计数一次，取消和失败的请求也计入；扩展每次启动也计数一次。Dline 按分钟累加计数，既没有请求也没有扩展启动的分钟不记录任何内容。一批最多覆盖 60 个这样的分钟，这些分钟不必连续；每批是一个 JSON 文档（`schema_version: 2`），不超过 32 KiB：
+
+| 部分 | 内容 |
+|---|---|
+| `client` | 客户端版本、操作系统类型、架构、编辑器版本、编辑器类别（`vscode`、`cursor`、`vscodium`、`windsurf` 或 `other`）、发布通道（`stable` 或 `insiders`），以及是否为 development 构建 |
+| `window` | 所覆盖分钟的起止时间、有活动的分钟数，以及在本批之前于本地丢弃的分钟数 |
+| `sessions_started` | 扩展启动次数 |
+| `purposes` | 按用途（`task`、`subagent`、`compaction` 或 `other`）统计：完成、取消和失败的请求数；新输入、输出、缓存读取和缓存写入 token；请求时长的次数、总和、最小值和最大值 |
+| `models` | 按 provider 和模型统计：自定义模型另带 `custom: true`；请求数（总数、失败、取消）；包含推理 token 在内的 token 总量；请求时长、首个输出耗时和输出耗时的直方图，边界从 250 ms 到 120 s（后两项只统计流式请求）；以及本批中按请求数和按输出 token 分别计算的最繁忙一分钟 |
+| `providers` | 只列出有失败或重试请求的 provider：按类别（`rate_limited`、`overloaded`、`timeout`、`auth`、`network`、`invalid_request` 或 `other`）统计的失败数、自动重试次数及重试前的等待时间 |
+
+provider 用 Profile 的 provider ID 表示，模型用模型 ID 表示，均转为小写，字母、数字、`_`、`.`、`-` 以外的字符替换为 `_`，provider 最长 32 个字符，模型最长 64 个字符。只有在 Profile 中勾选 **Use custom model ID** 并手动输入模型 ID，或在 Bedrock 的模型列表中选择 **Custom** 时，该模型才是自定义模型；它同样按模型 ID 报告，只是另外标记为自定义，因此手动输入的 ID 也会发送，例如 Bedrock 推理配置文件 ARN 中的区域和 AWS 账号 ID。从模型列表中选择的模型都不是自定义模型，与服务商、所用端点以及模型是否在 Dline 内置目录中无关。时长指标描述请求在重试之后的最后一次尝试。每批最多列出 8 个模型和 8 个 provider：超出时保留请求数最多的 7 个模型、失败与重试最多的 7 个 provider，其余合并计入 `_other`（`_other` 不标记为自定义），总量保持不变。
+
+不会发送 API 格式、Task 或 workspace 身份、`distinct_id`、account ID、提示词、响应、文件内容、路径、命令和错误文本。当前构建中该投递是只能承载这一目录的专用路径；把它纳入上文的 canonical admission boundary 仍属于目标的一部分。
+
+### 设备身份与传输
+
+首次发送时，Dline 在 Dline data root 下的 `secrets/otel/device.json` 创建随机设备密钥，权限为 owner-only，并用它交换短期访问令牌。服务端只能看到一个假名化设备主体，使用同一 data root 的所有 Dline 窗口共享该主体。
+
+请求只发往固定 HTTPS origin，经由 Dline 支持代理的 transport，拒绝 redirect 并使用有界 timeout。每个请求都通过 `x-dline-contract` 请求头声明遥测合同版本 2。环境变量 `DLINE_OTEL_ENDPOINT` 只接受用于本地契约测试的 loopback origin，其他值会被忽略。
+
+### 发送时机与等待
+
+使用统计和错误诊断遵循相同的规则，但各自独立计时，并在多个窗口和重启之间保持：
+
+- 使用统计最多每 10 分钟、错误诊断最多每 5 分钟开始一个新批次。服务端指定了更晚的下一批时间时，Dline 会等到该时间，最长 7 天。
+- 服务端返回限流或遥测暂停（HTTP 429）时，该通道在等待结束前不发送任何请求，重发也不例外。等待时长取服务端要求的时间；没有指定时从 1 分钟开始，每次连续限流翻倍，最长 30 分钟；再加上最多 10% 的随机偏移，总计不超过 7 天。被退回的批次保持不变，等待结束后最先以相同的请求 ID 和字节发送，因为此前超时的尝试可能已被存储。等待期间产生的数据另外组成新批次。等待不计入重发次数，等待时间也不计入下文的 24 小时期限。另一个通道照常发送。
+- 结果未知的批次（超时、网络错误、HTTP 408 或 5xx）会以相同请求 ID 和字节重发，不会被重复计数。等待从 30 秒开始翻倍，最长 30 分钟；12 次尝试或 24 小时后放弃该批次。
+- 被判定无效（HTTP 422）的批次直接丢弃、不再重试；过大（HTTP 413）的使用统计批次同样丢弃。每个请求都在 `User-Agent: Dline/<version>` 请求头中声明客户端版本。服务端确认但不存储的批次（`ignored_version`）与其他已确认的批次一样被删除，不会重发。
+
+### 本地队列
+
+队列位于 Dline data root 下的 `telemetry/remote/usage/`：
+
+| 产物 | 用途 |
+|---|---|
+| `observations/` | 按进程分开的文件，在分组前记录已结算请求 |
+| `outbox.json` | 发送租约、发送时机与等待状态、待发分钟和等待应答的请求 |
+| `inflight/` | 结果未知的请求的原始字节 |
+
+同一时间只有一个 Dline 窗口发送，各窗口轮流发送：一个窗口最多连续发送 10 分钟，然后把发送租约交给等待最久的窗口，包括其他 Dline 版本的窗口。超过轮次 90 秒仍不交出租约的窗口会被接管，它未得到应答的请求会以相同字节重发。每个批次在保存前都会按遥测合同的请求规则在本地校验，校验失败的批次直接丢弃。最多保留 60 个待发分钟，更早的分钟会被丢弃。丢弃的分钟数会在下一批中报告。
+
+### 关闭使用统计投递
+
+上述任一条件导致投递停止时，Dline 会中止当前发送，并删除未发送的 observation、待发分钟和已保存的请求正文。取消勾选 **Allow usage reporting** 还会删除本地使用统计访问令牌；设备密钥会保留，因此重新同意不会注册新设备。错误诊断投递及其令牌不受影响。服务端已接收的数据不会被删除。
+
+该投递进入 production 版本之前，必须公开服务端的保留、访问和删除政策。
+
+## 向 `otel.dline.cc` 投递错误诊断
+
+只有以下条件全部成立时，Dline 才会向 `https://otel.dline.cc/v1/logs` 发送错误和运行时诊断：
+
+- 已勾选 **Allow error reporting**。该项默认开启；在 **Settings → About** 中取消勾选会立即停止投递并删除尚未发送的诊断。
+- 组织 policy 没有禁用错误报告。
+- VS Code 的 `telemetry.telemetryLevel` 不是 `off`。为 `error` 时只发送 error 和 fatal 记录，为 `crash` 时只发送 fatal 记录；无法读取的等级会停止投递。
+- 服务端没有拒绝该设备或诊断流。
+- 当前不是自动化测试运行。
+
+### 发送内容
+
+log 记录采用 OTLP/JSON 格式，每个请求都带 `X-Dline-Contract: 5`。在相同条件下，Dline 还会向 `/v1/metrics` 发送 delta metrics（每 60 秒结束一个窗口，每个请求只含一个窗口），并向 `/v1/traces` 发送任务（`dline.task`）、工具执行（`dline.tool.execute`）和服务商请求（`gen_ai.client.operation`）的 span。metrics 与 span 使用与 log 记录相同的属性规则和 resource，在各自的队列中等待发送；一台设备每个 UTC 小时最多保留 300 个 span、每个 UTC 日最多 1,200 个，每个请求最多 200 个 span 且不超过 128 KiB。
+
+只有下表列出的事件，且严重度为 warning 及以上时，才会生成 log 记录：
+
+| 事件 | 通道 | 严重度 |
+|---|---|---|
+| `task.browser_error`、`user.extension_storage_error`、`workspace.init_error` | `error` | error |
+| `user.auth_failed`、`task.diff_edit_failed`、`task.terminal_output_failure`、`task.terminal_hang`、`task.mention_failed` | `error` | warning |
+| `api.request.failed`、`tool.execution.failed`、`subagent.run.failed`、`mcp.tools.call.failed`、`extension.error` | `error` | 由运行时诊断管线评定 |
+| `runtime.cpu_utilization_ratio.breach`、`runtime.event_loop_delay_ms.breach`、`runtime.heap_growth_bytes.breach`、`runtime.previous_session_reconciled`、`task.tool.interrupted_inferred` | `runtime` | 由运行时诊断管线评定 |
+
+其他事件都只留在本机，包括重复上表已报告失败的 `task.error`。服务商请求失败只以 `api.request.failed` 报告一次；早期构建还会以 `task.provider_api_error` 再发送一次。Dline 记为 warning 的日志消息，以及预期内的取消（例如停止请求或撤回审查），都只在本地记为 `extension.warning`，不会发送。Dline 只以 warning 记录的失败按 warning 严重度报告，而不是 error。
+
+事件名、严重度、错误指纹及其版本、错误类别、provider、模型和工具都相同的事件，在等待发送期间合并为一条记录。每条记录包含事件名、通道（`error` 或 `runtime`）、严重度、首次发生时间、发生次数（`dline.occurrences`）和最后一次发生时间（`dline.last_seen_ms`）。
+
+其他属性只取自以下固定列表：
+
+- `error.class`、`error.code`、`error.type`、`http.status`、`provider`、`model`、`model.custom`、`api.format`、`phase`（`connect`、`stream`、`parse`、`tool` 或 `other`）、`retry.attempt`、`retryable` 和 `duration_ms`。
+- `error.fingerprint`（16 位十六进制）和 `error.fingerprint_version`（`2` 或 `3`）。版本 3 在记录了失败的捕获位置时按该位置分组，否则按源码位置分组。
+- `error.site`，即失败被捕获的位置，取自固定列表：`ripgrep.search`、`task_history.update` 或 `mcp.connect`。
+- `tool.name`，只用于 Dline 内置工具。MCP 工具的名称从不发送。
+- `failure.stage`：`validation`、`authorization`、`routing`、`execution` 或 `remote`。
+- 性能预算超限时，发送 `perf.metric`、`perf.kind`（`fixed_budget` 或 `dynamic_baseline`）、`perf.value` 和 `perf.limit`。CPU 利用率按千分之一发送，例如 `0.92` 记为 `920`。
+
+文本值只有是由字母、数字、`_`、`.`、`+`、`-` 组成的短 token（最多 64 个字符）时才保留，数值只保留非负整数。不在属性取值列表内的值不发送。Dline 内部仍在使用的旧属性名会映射到这些键；其他属性一律不发送。失败事件按与使用统计相同的方式命名模型；只有上文定义的自定义模型，`model.custom` 才为 `true`。
+
+请求 resource 只包含客户端版本、操作系统类型与 CPU 架构、发布通道（`stable` 或 `insiders`）、编辑器类别（`vscode`、`cursor`、`vscodium`、`windsurf` 或 `other`），以及自上一个请求以来在本地丢弃的记录数（`dline.dropped_records`）。开发构建还会发送 `dline.is_dev=true`；其他构建不发送该属性。
+
+不会发送错误消息、堆栈、提示词、响应、文件内容、路径、URL、命令、Task 或 workspace 身份、`distinct_id` 和 account ID。
+
+### 设备身份、队列与上限
+
+诊断与使用统计共用同一个假名化设备密钥，但交换各自的 `production` 访问令牌，因此每项同意只控制自己的令牌。队列位于 Dline data root 下的 `telemetry/remote/diagnostics/outbox.json`，由所有 Dline 窗口共享。早期构建留下的队列，例如早期 0.11 构建的 `outbox-v2.json`，或按更早遥测合同写入的队列，会被直接删除而不发送；本机只保留记录丢弃了什么、丢弃多少的元数据：
+
+- 各窗口每 5 秒把收集到的记录写入队列。同一时间只有一个窗口约每 20 秒检查一次队列，并按上文“发送时机与等待”最多每 5 分钟开始一个新批次。
+- 每台设备每个 UTC 小时最多新增 50 条、每个 UTC 日最多新增 200 条记录；已保留记录的重复事件仍会合并进去。最多保留 1,000 条待发记录。超出这些上限的记录会被丢弃，并计入 `dline.dropped_records`。
+- 每个请求最多 100 条记录、不超过 128 KiB。服务端答复请求过大（HTTP 413）时，前一半会立即以新的请求 ID 重发，其余放回队列。被判定无效（HTTP 422）的请求中的记录会被丢弃并计数。
+- 服务端拒绝诊断流时，所有窗口停止发送 30 分钟后再重试。
+
+### 关闭错误诊断
+
+取消勾选 **Allow error reporting**、宿主遥测等级为 `off`，或组织 policy 禁用错误报告时，Dline 会删除未发送的诊断和本地 `production` 访问令牌。每小时和每天的上限，以及服务端要求的等待仍然有效，因此关闭后再开启不会提前发送。使用统计投递及其令牌不受影响，设备密钥会保留。服务端已接收的数据不会被删除。
+
+### 计划中的 profile
+
+| Profile | 授权 | 数据 |
+|---|---|---|
+| `issue_diagnostic` | 错误报告加 active per-Issue grant | 相同诊断类别的更高频视图 |
+| `development` | 对应同意加有效 development enrollment | 普通用户不可加入的开发流 |
+
+两者都是同一机制内计划中的 sink，在当前构建中尚未启用。
+
+## 计划中的 Issue 诊断流程
+
+1. 打开 `/reportbug` 或 **Settings → Support & Diagnostics**；提交普通 Issue 不需要远端诊断。
+2. 只有选择 **Request detailed diagnostic authorization** 后，host 才创建一次性 pairing secret 和公开 support code。
+3. pairing secret、support code 和 consent marker 由确定性 host code 管理，不加入模型对话上下文；单独 support code 不能读取诊断。
+4. 你自行检查并提交 GitHub Issue；API 原始输出、journal 和 ZIP 不会自动附加。
+5. 你提供 Issue URL/编号并显式发起一次授权检查；没有后台轮询或自动重试循环。
+6. 维护者批准有时限 grant 后，Dline 才交换 Issue token。UI 显示服务端过期时间和本地停止入口；support service 会关联 Issue、账户上下文和假名化 machine principal。
+7. 只启动 Issue `error`/`runtime` stream，usage 继续独立。授权拒绝、过期、格式错误或不符合约定时，Issue stream 保持关闭，基础 production profile 不变。
+8. 过期、选择 **Stop Issue diagnostics on this device**、关闭错误报告、宿主/组织限制或 server kill switch 都会停止本地 capture 与发送、取消 in-flight Issue request，并删除本地 Issue token、pairing secret 和未发送 Issue outbox。
+
+服务端当前没有 client revoke endpoint。本地停止不会撤销服务端 grant，grant 会持续到服务端过期，也不会删除已上传数据。
+
+<Aside type="caution">
+Issue diagnostics 不是 raw-log 模式。提示词、代码、命令文本、模型输出、MCP payload、凭据、稳定用户/Task/workspace 身份和 raw artifact 仍然禁止传输。
+</Aside>

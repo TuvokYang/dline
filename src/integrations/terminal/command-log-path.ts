@@ -13,23 +13,23 @@ import { Logger } from "@/shared/services/Logger"
  */
 
 function resolveLogPath(taskId: string | undefined, section: TaskTempSection, stableStem: string): string {
-	if (taskId) {
-		try {
-			return resolveTaskTempLogPath(taskId, section, stableStem)
-		} catch (error) {
-			// Losing the task-owned directory must not fail the command itself.
-			Logger.warn(`[CommandLog] Falling back to process temp storage for ${stableStem}:`, error)
-		}
-	}
-	return DlineRuntimeFileManager.createTempFilePath(stableStem)
+    if (taskId) {
+        try {
+            return resolveTaskTempLogPath(taskId, section, stableStem)
+        } catch (error) {
+            // Losing the task-owned directory must not fail the command itself.
+            Logger.warn(`[CommandLog] Falling back to process temp storage for ${stableStem}:`, error)
+        }
+    }
+    return DlineRuntimeFileManager.createTempFilePath(stableStem)
 }
 
 /** Resolve the file that retains one command activity's complete output. */
 export function resolveCommandLogPath(taskId: string | undefined, stableStem: string): string {
-	return resolveLogPath(taskId, TaskTempSection.CommandLogs, stableStem)
+    return resolveLogPath(taskId, TaskTempSection.CommandLogs, stableStem)
 }
 
 /** Resolve the file that collects one command's shell environment failures. */
 export function resolveShellDiagnosticsPath(taskId: string | undefined, stableStem: string): string {
-	return resolveLogPath(taskId, TaskTempSection.ShellDiagnostics, stableStem)
+    return resolveLogPath(taskId, TaskTempSection.ShellDiagnostics, stableStem)
 }

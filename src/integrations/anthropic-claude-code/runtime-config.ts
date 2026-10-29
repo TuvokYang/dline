@@ -6,19 +6,19 @@
  * without a real subscription account.
  */
 export const CLAUDE_CODE_PRODUCTION_RUNTIME_CONFIG = {
-	authorizationEndpoint: "https://claude.com/cai/oauth/authorize",
-	tokenEndpoint: "https://platform.claude.com/v1/oauth/token",
-	manualRedirectUri: "https://platform.claude.com/oauth/code/callback",
-	usageUrl: "https://api.anthropic.com/api/oauth/usage",
+    authorizationEndpoint: "https://claude.com/cai/oauth/authorize",
+    tokenEndpoint: "https://platform.claude.com/v1/oauth/token",
+    manualRedirectUri: "https://platform.claude.com/oauth/code/callback",
+    usageUrl: "https://api.anthropic.com/api/oauth/usage",
 } as const
 
 export interface ClaudeCodeRuntimeConfig {
-	authorizationEndpoint: string
-	tokenEndpoint: string
-	manualRedirectUri: string
-	usageUrl: string
-	callbackPorts?: readonly number[]
-	timeoutMs?: number
+    authorizationEndpoint: string
+    tokenEndpoint: string
+    manualRedirectUri: string
+    usageUrl: string
+    callbackPorts?: readonly number[]
+    timeoutMs?: number
 }
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"])
@@ -31,36 +31,36 @@ const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"])
  * real authorization code, to whatever host the variable named.
  */
 function loopbackHttpUrl(name: string, value: string): URL {
-	let parsed: URL
-	try {
-		parsed = new URL(value)
-	} catch {
-		throw new Error(`${name} must be a loopback HTTP URL.`)
-	}
-	if (parsed.protocol !== "http:" || !LOOPBACK_HOSTS.has(parsed.hostname) || parsed.username || parsed.password) {
-		throw new Error(`${name} must be a loopback HTTP URL.`)
-	}
-	parsed.hash = ""
-	return parsed
+    let parsed: URL
+    try {
+        parsed = new URL(value)
+    } catch {
+        throw new Error(`${name} must be a loopback HTTP URL.`)
+    }
+    if (parsed.protocol !== "http:" || !LOOPBACK_HOSTS.has(parsed.hostname) || parsed.username || parsed.password) {
+        throw new Error(`${name} must be a loopback HTTP URL.`)
+    }
+    parsed.hash = ""
+    return parsed
 }
 
 function normalizedUrl(url: URL): string {
-	return url.toString().replace(/\/$/, "")
+    return url.toString().replace(/\/$/, "")
 }
 
 function appendPath(base: URL, segment: string): string {
-	const url = new URL(base)
-	url.pathname = `${url.pathname.replace(/\/$/, "")}/${segment}`
-	url.search = ""
-	return normalizedUrl(url)
+    const url = new URL(base)
+    url.pathname = `${url.pathname.replace(/\/$/, "")}/${segment}`
+    url.search = ""
+    return normalizedUrl(url)
 }
 
 function positiveInteger(name: string, value: string | undefined): number | undefined {
-	if (value === undefined) return undefined
-	if (!/^\d+$/.test(value)) throw new Error(`${name} must be a positive integer.`)
-	const parsed = Number(value)
-	if (!Number.isSafeInteger(parsed) || parsed <= 0) throw new Error(`${name} must be a positive integer.`)
-	return parsed
+    if (value === undefined) return undefined
+    if (!/^\d+$/.test(value)) throw new Error(`${name} must be a positive integer.`)
+    const parsed = Number(value)
+    if (!Number.isSafeInteger(parsed) || parsed <= 0) throw new Error(`${name} must be a positive integer.`)
+    return parsed
 }
 
 /**
@@ -70,18 +70,18 @@ function positiveInteger(name: string, value: string | undefined): number | unde
  * is how a test proves the flow still works when the preferred ports are taken.
  */
 function callbackPorts(value: string | undefined): readonly number[] | undefined {
-	if (value === undefined) return undefined
-	const ports = value.split(",").map((port) => {
-		const trimmed = port.trim()
-		if (!/^\d+$/.test(trimmed)) throw new Error("DLINE_E2E_CLAUDE_CODE_CALLBACK_PORTS must contain TCP ports.")
-		const parsed = Number(trimmed)
-		if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 65_535) {
-			throw new Error("DLINE_E2E_CLAUDE_CODE_CALLBACK_PORTS must contain TCP ports.")
-		}
-		return parsed
-	})
-	if (ports.length === 0) throw new Error("DLINE_E2E_CLAUDE_CODE_CALLBACK_PORTS must contain TCP ports.")
-	return ports
+    if (value === undefined) return undefined
+    const ports = value.split(",").map((port) => {
+        const trimmed = port.trim()
+        if (!/^\d+$/.test(trimmed)) throw new Error("DLINE_E2E_CLAUDE_CODE_CALLBACK_PORTS must contain TCP ports.")
+        const parsed = Number(trimmed)
+        if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 65_535) {
+            throw new Error("DLINE_E2E_CLAUDE_CODE_CALLBACK_PORTS must contain TCP ports.")
+        }
+        return parsed
+    })
+    if (ports.length === 0) throw new Error("DLINE_E2E_CLAUDE_CODE_CALLBACK_PORTS must contain TCP ports.")
+    return ports
 }
 
 /**
@@ -91,47 +91,47 @@ function callbackPorts(value: string | undefined): readonly number[] | undefined
  * user's shell cannot redirect production traffic.
  */
 export function resolveClaudeCodeRuntimeConfig(env: NodeJS.ProcessEnv = process.env): ClaudeCodeRuntimeConfig {
-	if (env.E2E_TEST !== "true") return CLAUDE_CODE_PRODUCTION_RUNTIME_CONFIG
+    if (env.E2E_TEST !== "true") return CLAUDE_CODE_PRODUCTION_RUNTIME_CONFIG
 
-	const oauthBase = env.DLINE_E2E_CLAUDE_CODE_OAUTH_BASE_URL
-	const usageUrl = env.DLINE_E2E_CLAUDE_CODE_USAGE_URL
-		? normalizedUrl(loopbackHttpUrl("DLINE_E2E_CLAUDE_CODE_USAGE_URL", env.DLINE_E2E_CLAUDE_CODE_USAGE_URL))
-		: CLAUDE_CODE_PRODUCTION_RUNTIME_CONFIG.usageUrl
+    const oauthBase = env.DLINE_E2E_CLAUDE_CODE_OAUTH_BASE_URL
+    const usageUrl = env.DLINE_E2E_CLAUDE_CODE_USAGE_URL
+        ? normalizedUrl(loopbackHttpUrl("DLINE_E2E_CLAUDE_CODE_USAGE_URL", env.DLINE_E2E_CLAUDE_CODE_USAGE_URL))
+        : CLAUDE_CODE_PRODUCTION_RUNTIME_CONFIG.usageUrl
 
-	if (!oauthBase) {
-		return {
-			...CLAUDE_CODE_PRODUCTION_RUNTIME_CONFIG,
-			usageUrl,
-			...(env.DLINE_E2E_CLAUDE_CODE_CALLBACK_PORTS
-				? { callbackPorts: callbackPorts(env.DLINE_E2E_CLAUDE_CODE_CALLBACK_PORTS) }
-				: {}),
-			...(env.DLINE_E2E_CLAUDE_CODE_OAUTH_TIMEOUT_MS
-				? {
-						timeoutMs: positiveInteger(
-							"DLINE_E2E_CLAUDE_CODE_OAUTH_TIMEOUT_MS",
-							env.DLINE_E2E_CLAUDE_CODE_OAUTH_TIMEOUT_MS,
-						),
-					}
-				: {}),
-		}
-	}
+    if (!oauthBase) {
+        return {
+            ...CLAUDE_CODE_PRODUCTION_RUNTIME_CONFIG,
+            usageUrl,
+            ...(env.DLINE_E2E_CLAUDE_CODE_CALLBACK_PORTS
+                ? { callbackPorts: callbackPorts(env.DLINE_E2E_CLAUDE_CODE_CALLBACK_PORTS) }
+                : {}),
+            ...(env.DLINE_E2E_CLAUDE_CODE_OAUTH_TIMEOUT_MS
+                ? {
+                      timeoutMs: positiveInteger(
+                          "DLINE_E2E_CLAUDE_CODE_OAUTH_TIMEOUT_MS",
+                          env.DLINE_E2E_CLAUDE_CODE_OAUTH_TIMEOUT_MS,
+                      ),
+                  }
+                : {}),
+        }
+    }
 
-	const base = loopbackHttpUrl("DLINE_E2E_CLAUDE_CODE_OAUTH_BASE_URL", oauthBase)
-	return {
-		authorizationEndpoint: appendPath(base, "authorize"),
-		tokenEndpoint: appendPath(base, "token"),
-		manualRedirectUri: appendPath(base, "code/callback"),
-		usageUrl,
-		...(env.DLINE_E2E_CLAUDE_CODE_CALLBACK_PORTS
-			? { callbackPorts: callbackPorts(env.DLINE_E2E_CLAUDE_CODE_CALLBACK_PORTS) }
-			: {}),
-		...(env.DLINE_E2E_CLAUDE_CODE_OAUTH_TIMEOUT_MS
-			? {
-					timeoutMs: positiveInteger(
-						"DLINE_E2E_CLAUDE_CODE_OAUTH_TIMEOUT_MS",
-						env.DLINE_E2E_CLAUDE_CODE_OAUTH_TIMEOUT_MS,
-					),
-				}
-			: {}),
-	}
+    const base = loopbackHttpUrl("DLINE_E2E_CLAUDE_CODE_OAUTH_BASE_URL", oauthBase)
+    return {
+        authorizationEndpoint: appendPath(base, "authorize"),
+        tokenEndpoint: appendPath(base, "token"),
+        manualRedirectUri: appendPath(base, "code/callback"),
+        usageUrl,
+        ...(env.DLINE_E2E_CLAUDE_CODE_CALLBACK_PORTS
+            ? { callbackPorts: callbackPorts(env.DLINE_E2E_CLAUDE_CODE_CALLBACK_PORTS) }
+            : {}),
+        ...(env.DLINE_E2E_CLAUDE_CODE_OAUTH_TIMEOUT_MS
+            ? {
+                  timeoutMs: positiveInteger(
+                      "DLINE_E2E_CLAUDE_CODE_OAUTH_TIMEOUT_MS",
+                      env.DLINE_E2E_CLAUDE_CODE_OAUTH_TIMEOUT_MS,
+                  ),
+              }
+            : {}),
+    }
 }

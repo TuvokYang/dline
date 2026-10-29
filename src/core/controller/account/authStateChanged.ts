@@ -10,14 +10,14 @@ import type { Controller } from "../index"
  * @returns The updated user info
  */
 export async function authStateChanged(controller: Controller, request: AuthStateChangedRequest): Promise<AuthState> {
-	try {
-		// Store the user info directly in global state
-		controller.stateManager.setGlobalState("userInfo", request.user)
+    try {
+        // Store the user info directly in global state
+        controller.stateManager.setGlobalState("userInfo", request.user)
 
-		// Return the same user info
-		return AuthState.create({ user: request.user })
-	} catch (error) {
-		Logger.error(`Failed to update auth state: ${error}`)
-		throw error
-	}
+        // Return the same user info
+        return AuthState.create({ user: request.user })
+    } catch (error) {
+        Logger.error(`Failed to update auth state: ${error}`)
+        throw error
+    }
 }

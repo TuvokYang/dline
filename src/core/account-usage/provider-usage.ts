@@ -14,7 +14,7 @@ type AccountUsageSource = Pick<ApiHandler, "getAccountUsage" | "supportsAccountU
  * `getAccountUsage()`.
  */
 export function allowsAccountUsagePolling(handler: AccountUsageSource): boolean {
-	return Boolean(handler.getAccountUsage) && handler.supportsAccountUsagePolling !== false
+    return Boolean(handler.getAccountUsage) && handler.supportsAccountUsagePolling !== false
 }
 
 /** What a scheduled tick should do with one Profile's usage capability. */
@@ -33,13 +33,13 @@ export type AccountUsageReadDecision = "skip" | "read"
  * @param alreadyReadKey Profile key already read outside the timer, if any.
  */
 export function decideAccountUsageRead(
-	handler: AccountUsageSource,
-	profileKey: string,
-	alreadyReadKey: string | undefined,
+    handler: AccountUsageSource,
+    profileKey: string,
+    alreadyReadKey: string | undefined,
 ): AccountUsageReadDecision {
-	if (!handler.getAccountUsage) return "skip"
-	if (allowsAccountUsagePolling(handler)) return "read"
-	return alreadyReadKey === profileKey ? "skip" : "read"
+    if (!handler.getAccountUsage) return "skip"
+    if (allowsAccountUsagePolling(handler)) return "read"
+    return alreadyReadKey === profileKey ? "skip" : "read"
 }
 
 /**
@@ -51,25 +51,25 @@ export function decideAccountUsageRead(
  * keeps it.
  */
 export function decorateProviderAccountUsage(
-	profile: ApiProfile,
-	usage: AccountUsage | undefined,
-	localDailyTokens?: TokenIncrement,
+    profile: ApiProfile,
+    usage: AccountUsage | undefined,
+    localDailyTokens?: TokenIncrement,
 ): AccountUsage | undefined {
-	if (!usage) return undefined
-	return applyLocalDailyTokens(
-		{
-			...usage,
-			profileId: profile.id,
-			providerId: profile.provider,
-			retrievedAt: usage.retrievedAt ?? new Date().toISOString(),
-		},
-		localDailyTokens,
-	)
+    if (!usage) return undefined
+    return applyLocalDailyTokens(
+        {
+            ...usage,
+            profileId: profile.id,
+            providerId: profile.provider,
+            retrievedAt: usage.retrievedAt ?? new Date().toISOString(),
+        },
+        localDailyTokens,
+    )
 }
 
 /** A subscription reports quota windows or a plan, never a balance-style token count. */
 export function isSubscriptionUsage(usage: AccountUsage): boolean {
-	return Boolean(usage.planType) || (usage.quotas?.length ?? 0) > 0
+    return Boolean(usage.planType) || (usage.quotas?.length ?? 0) > 0
 }
 
 /**
@@ -80,11 +80,17 @@ export function isSubscriptionUsage(usage: AccountUsage): boolean {
  * counts keeps them, and balance providers are left untouched.
  */
 export function applyLocalDailyTokens(usage: AccountUsage, localDailyTokens: TokenIncrement | undefined): AccountUsage {
-	if (!localDailyTokens || !isSubscriptionUsage(usage)) return usage
-	if (usage.dailyInputTokens !== undefined || usage.dailyOutputTokens !== undefined) return usage
-	return {
-		...usage,
-		dailyInputTokens: localDailyTokens.inputTokens,
-		dailyOutputTokens: localDailyTokens.outputTokens,
-	}
+    if (!localDailyTokens || !isSubscriptionUsage(usage)) return usage
+    // Zero is not a report, it is the absence of one. A provider whose model
+    // matching fails returns a defined zero for the day, and treating that as
+    // authoritative hid the ledger's real totals behind "Today In: 0". A day
+    // that reported any non-zero count is left exactly as the provider said.
+    const reportedInput = usage.dailyInputTokens ?? 0
+    const reportedOutput = usage.dailyOutputTokens ?? 0
+    if (reportedInput > 0 || reportedOutput > 0) return usage
+    return {
+        ...usage,
+        dailyInputTokens: localDailyTokens.inputTokens,
+        dailyOutputTokens: localDailyTokens.outputTokens,
+    }
 }

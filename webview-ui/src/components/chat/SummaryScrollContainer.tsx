@@ -1,17 +1,19 @@
 import type { ReactNode } from "react"
 
 interface SummaryScrollContainerProps {
-	children: ReactNode
+    children: ReactNode
+    className?: string
+    maxHeight?: string
 }
 
 /** Keep long automatic and manual summaries inside a viewport-bounded scroll region. */
-export function SummaryScrollContainer({ children }: SummaryScrollContainerProps) {
-	return (
-		<div
-			className="max-h-[60vh] overflow-y-auto pr-1"
-			data-testid="summary-scroll-container"
-			style={{ maxHeight: "60vh", overflowY: "auto" }}>
-			{children}
-		</div>
-	)
+export function SummaryScrollContainer({ children, className, maxHeight = "60vh" }: SummaryScrollContainerProps) {
+    return (
+        <div
+            className={`overflow-y-auto pr-1 ${maxHeight === "60vh" ? "max-h-[60vh]" : ""} ${className ?? ""}`.trim()}
+            data-testid="summary-scroll-container"
+            style={{ maxHeight, overflowY: "auto" }}>
+            {children}
+        </div>
+    )
 }

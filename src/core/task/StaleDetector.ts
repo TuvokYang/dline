@@ -8,20 +8,20 @@ import { hashPromptContent } from "@core/prompts/system-prompt-cache/hash"
  * relative to the current capability configuration.
  */
 export class StaleDetector {
-	/**
-	 * Compare current capabilities hash against the frozen cache hash.
-	 * @param frozenHash Hash from context.json frozen prompt.
-	 * @param input Capability collection input.
-	 * @returns True when stale (hashes differ).
-	 */
-	async checkStaleness(frozenHash: string, input: CollectCapabilitiesInput): Promise<boolean> {
-		try {
-			const capabilities = await collectCapabilities(input)
-			const section = renderCapabilitiesSection(capabilities)
-			const currentHash = hashPromptContent(section)
-			return currentHash !== frozenHash
-		} catch {
-			return false
-		}
-	}
+    /**
+     * Compare current capabilities hash against the frozen cache hash.
+     * @param frozenHash Hash from context.json frozen prompt.
+     * @param input Capability collection input.
+     * @returns True when stale (hashes differ).
+     */
+    async checkStaleness(frozenHash: string, input: CollectCapabilitiesInput): Promise<boolean> {
+        try {
+            const capabilities = await collectCapabilities(input)
+            const section = renderCapabilitiesSection(capabilities)
+            const currentHash = hashPromptContent(section)
+            return currentHash !== frozenHash
+        } catch {
+            return false
+        }
+    }
 }

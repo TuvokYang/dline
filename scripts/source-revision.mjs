@@ -25,21 +25,21 @@ export const FALLBACK_SOURCE_REF = "HEAD"
  * @returns {string} Branch, tag, or commit.
  */
 export function resolveSourceRef(env, readGit) {
-	const explicit = env.DLINE_SOURCE_REF?.trim()
-	if (explicit) return explicit
+    const explicit = env.DLINE_SOURCE_REF?.trim()
+    if (explicit) return explicit
 
-	// A pull request run checks out a synthetic merge ref (`<n>/merge`) that has no
-	// page on GitHub; the source branch does.
-	const pullRequestBranch = env.GITHUB_HEAD_REF?.trim()
-	if (pullRequestBranch) return pullRequestBranch
+    // A pull request run checks out a synthetic merge ref (`<n>/merge`) that has no
+    // page on GitHub; the source branch does.
+    const pullRequestBranch = env.GITHUB_HEAD_REF?.trim()
+    if (pullRequestBranch) return pullRequestBranch
 
-	const actionsRef = env.GITHUB_REF_NAME?.trim()
-	if (actionsRef && (env.GITHUB_REF_TYPE === "branch" || env.GITHUB_REF_TYPE === "tag")) return actionsRef
+    const actionsRef = env.GITHUB_REF_NAME?.trim()
+    if (actionsRef && (env.GITHUB_REF_TYPE === "branch" || env.GITHUB_REF_TYPE === "tag")) return actionsRef
 
-	const branch = readGit(["rev-parse", "--abbrev-ref", "HEAD"])
-	if (branch && branch !== "HEAD") return branch
+    const branch = readGit(["rev-parse", "--abbrev-ref", "HEAD"])
+    if (branch && branch !== "HEAD") return branch
 
-	return readGit(["rev-parse", "HEAD"]) || FALLBACK_SOURCE_REF
+    return readGit(["rev-parse", "HEAD"]) || FALLBACK_SOURCE_REF
 }
 
 /**
@@ -49,13 +49,13 @@ export function resolveSourceRef(env, readGit) {
  * @returns {(args: string[]) => string | null}
  */
 export function gitReader(cwd) {
-	return (args) => {
-		try {
-			return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim() || null
-		} catch {
-			return null
-		}
-	}
+    return (args) => {
+        try {
+            return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim() || null
+        } catch {
+            return null
+        }
+    }
 }
 
 /**
@@ -65,11 +65,11 @@ export function gitReader(cwd) {
  * @returns {string}
  */
 export function readRepositoryWebUrl(packageJsonPath) {
-	const manifest = JSON.parse(readFileSync(packageJsonPath, "utf-8"))
-	const url = typeof manifest.repository === "string" ? manifest.repository : manifest.repository?.url
-	if (!url) throw new Error(`${packageJsonPath} declares no repository URL.`)
-	return url
-		.replace(/^git\+/, "")
-		.replace(/\.git$/, "")
-		.replace(/\/$/, "")
+    const manifest = JSON.parse(readFileSync(packageJsonPath, "utf-8"))
+    const url = typeof manifest.repository === "string" ? manifest.repository : manifest.repository?.url
+    if (!url) throw new Error(`${packageJsonPath} declares no repository URL.`)
+    return url
+        .replace(/^git\+/, "")
+        .replace(/\.git$/, "")
+        .replace(/\/$/, "")
 }

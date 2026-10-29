@@ -5,26 +5,26 @@ import type { SignalSpanHandle } from "./pipeline-port"
 const activeSpan = new AsyncLocalStorage<SignalSpanHandle>()
 
 export function currentSignalSpan(): SignalSpanHandle | undefined {
-	const span = activeSpan.getStore()
-	return span?.active ? span : undefined
+    const span = activeSpan.getStore()
+    return span?.active ? span : undefined
 }
 
 export function runInSpanScope<T>(span: SignalSpanHandle, action: () => T): T {
-	return activeSpan.run(span, action)
+    return activeSpan.run(span, action)
 }
 
 /** Capture before any queue/await, not inside the later exporter drain. */
 export function captureSpanLogProperties(): Record<string, string | number> {
-	const span = currentSignalSpan()
-	const identity = span?.spanContext
-	return {
-		...(span?.taskId ? { taskId: span.taskId } : {}),
-		...(identity
-			? {
-					runtime_trace_id: identity.traceId,
-					runtime_span_id: identity.spanId,
-					runtime_trace_flags: identity.traceFlags,
-				}
-			: {}),
-	}
+    const span = currentSignalSpan()
+    const identity = span?.spanContext
+    return {
+        ...(span?.taskId ? { taskId: span.taskId } : {}),
+        ...(identity
+            ? {
+                  runtime_trace_id: identity.traceId,
+                  runtime_span_id: identity.spanId,
+                  runtime_trace_flags: identity.traceFlags,
+              }
+            : {}),
+    }
 }

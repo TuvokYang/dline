@@ -9,6 +9,12 @@ This file records high-signal project conventions that are easy to miss and expe
 - Combine independent search/replace blocks for one file when that keeps the change atomic and reviewable.
 - Preserve unrelated and unknown workspace changes. Do not use formatting or bulk replacement to absorb another task's work.
 
+## Source file size
+
+- A hand-written source file must not exceed 2,000 physical lines.
+- Do not split a file merely because it is large while its responsibilities, change reasons, and dependency direction remain coherent. When a file approaches the limit, extract stable responsibilities or dependency boundaries rather than creating arbitrary forwarding fragments.
+- Generated code, machine-managed lockfiles and snapshots, and fixture data are not hand-written source files and must not be split solely to satisfy this limit.
+
 ## Searching ignored directories
 
 `search_files` runs through ripgrep, which honours `.gitignore` plus the scan
@@ -45,6 +51,17 @@ Before editing, inspect the owning implementation, tests, generated contracts, a
 
 Check `package.json` before choosing a verification command. Current primary scripts include `check-types`, `lint`, `format`, `test:smoke`, `test:run`, `test:e2e:work`, `protos`, `package`, and `vsix`.
 
+## Test assertion quality
+
+Every test must have an independent behavioral oracle and must fail for a plausible defect in the contract it claims to protect. Do not add tests merely to increase counts or freeze implementation-owned spelling.
+
+- Do not assert prose, labels, tags, HTML, generated prompt text, or serialized output only with `contains`, `toContain`, substring search, or equivalent text matching. Such assertions are allowed only when the exact token is itself a public parser, protocol, compatibility, or accessibility contract and the test demonstrates that boundary rather than restating a source literal.
+- Do not create self-fulfilling assertions such as assigning the same source value to `a` and `b` and asserting `a === b`, deriving expected and actual values through the same implementation, returning a value from a mock and only asserting that value, or copying production constants/logic into the test.
+- Do not use tag-presence or string snapshots as a substitute for semantic verification. Parse structured output and assert its schema, ordering, identity, behavior, state transition, error path, or observable side effect. Repository-owned generated snapshots may record intentional aggregate output, but they do not replace focused behavioral assertions.
+- Prefer real inputs and outputs at the smallest stable boundary. A useful test distinguishes success from failure, covers meaningful edge or recovery paths, and proves ownership or side effects where those are the contract.
+- Before adding a test, state the defect or mutation it would catch. If no plausible incorrect implementation would make the assertion fail, omit the test.
+- When a touched scope already contains a low-value assertion of these forms, remove it or replace it with a behavioral test; do not preserve it merely as historical coverage.
+
 ## E2E validation tiers
 
 Load `use-e2e` for test selection and diagnostics, and load `e2e-validation` for the ordered validation procedure.
@@ -52,7 +69,7 @@ Load `use-e2e` for test selection and diagnostics, and load `e2e-validation` for
 - `src/test/e2e/work/` is the required continuous gate: one 120-second smoke project plus four single-file, single-top-level-test daily workflows with 600-second hard timeouts. Run the complete local gate with `npm run test:e2e:work`.
 - `dist/` is the one E2E resource that is not run-scoped. `scripts/with-dist-lock.mjs` guards it with a reader/writer lock: builds are exclusive, Playwright runs are shared. To run tiers concurrently, build once and then start read-only runs; inspect holders with `npm run e2e:lock:status` rather than deleting `dist/.e2e-lock/`.
 - Whether a tier installs the packaged VSIX is decided by `PACKAGED_E2E_LIFECYCLES` in `src/test/e2e/utils/vscode-launch-isolation.ts`. `test:e2e:work` and `test:e2e:functional` run in source mode against the `pree2e` dev bundle; adding a VSIX build to them would ship a production bundle into a source-mode run without changing what is tested.
-- `src/test/e2e/functional/` holds stable focused black-box regressions. Run only the files or test names required by the changed behavior; full functional execution is reserved for nightly or explicit investigation.
+- `src/test/e2e/functional/` holds stable focused black-box regressions. Run only the files or test names required by the changed behavior; full functional execution runs only in production release validation or explicit investigation.
 - `src/test/e2e/dev/` holds fault injection, forensic capture, and narrowly scoped reproduction. It uses one worker, no retries, and retained failure traces, and it never enters required CI or release gates.
 - `playwright.pressure.config.ts` remains the explicit pressure/soak tier. Do not use it as routine completion evidence.
 - Keep `demo/`, `fixtures/`, and `utils/` in their existing roles. Work journeys must not duplicate functional implementation geometry or state matrices.
@@ -97,13 +114,25 @@ Responses API support is driven by API format and provider capabilities. Do not 
 
 ## Prompt and tool changes
 
-The only stable prompt profiles are Standard and Lite. Tool descriptions have one canonical source in `src/core/prompts/tools/tool-specs.ts`, with ordered inclusion in `tool-ids.ts`. Native and XML definitions are projected from that source.
+The only stable prompt profiles are Standard and Lite. Tool descriptors have one canonical source in `src/core/prompts/tools/tool-specs.ts`, with ordered inclusion in `tool-ids.ts`. Native and XML definitions are projected from that source.
 
 Do not create `system-prompt/tools/<tool>.ts` model-family variants or edit generated provider schemas independently.
 
+### Where prompt text lives
+
+Every sentence the model reads lives in the English i18n tree under `src/core/prompts/i18n/en/`, never inline in descriptors, handlers, or continuations:
+
+- **Tool descriptor text** (description, parameter instructions and usage examples) goes in `i18n/en/tools/<toolName>.ts`, a key-value module with no logic, registered in `i18n/en/tools/index.ts` with `defineLegacyModule("<toolName>", "tools", module, contracts)`. `tool-specs.ts` reads it with `getPrompt("<toolName>", "<key>")`.
+- **Runtime values** are written as `@NAME@` in the text and declared with `createRuntimeContract("NAME", ...)` in that module's registration.
+- **Handler-side text** (tool results, errors, feedback wrappers, recovery answers) goes in `i18n/en/tools/toolHandlers.ts` and is rendered through a `formatResponse` entry in `src/core/prompts/responses.ts`. When a live handler and a restored answer produce the same result, both call the same function so the model reads identical text.
+- **Slash-command and explicit-instruction text** (for example `/newtask`) goes in `i18n/en/commands/`.
+- Inline literals are acceptable only for protocol markers and structural tags a parser depends on, not for prose.
+- `i18n/__tests__/prompt-asset-inventory.test.ts` locks the module inventory; update it when adding or removing a module, and delete a module once no `getPrompt` reader remains.
+- `zh-CN` currently overlays only `system`; tool and command text is English-only.
+
 For a new tool, load `add-new-tool`. The change may include:
 
-- `ClineDefaultTool` and read-only classification;
+- `DlineDefaultTool` and read-only classification;
 - i18n prompt module registration;
 - canonical descriptor and Standard/Lite membership;
 - handler and executor coordination;
@@ -150,6 +179,7 @@ Follow `network`. Extension/core code must not introduce global `fetch`, an unco
 - `.agents` files use English.
 - `docs/` changes require Chinese and English deliverables for the same scope.
 - Root README and changelog files follow their established bilingual pairs.
+- Every version update adds a section to both What's New editions under `docs/whats-new/`; follow repository-and-release and dev-version-bump.
 
 Load `writing-documentation` for documentation work.
 

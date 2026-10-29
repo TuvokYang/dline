@@ -1,7 +1,8 @@
 import { readJsonl } from "@core/storage/backend/jsonl/jsonl-utils"
 import { getTaskHeaderText } from "@core/storage/disk"
+import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import type { ContextWindowIndicatorSnapshot } from "@shared/context-window-indicator"
-import type { ClineMessage, ExtensionState } from "@shared/ExtensionMessage"
+import type { ExtensionState, UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it, vi } from "vitest"
 import { Controller } from "../index"
 
@@ -9,46 +10,40 @@ import { Controller } from "../index"
 // ui_messages.jsonl (getSavedClineMessages -> readJsonl) while the task header
 // is still available from the in-memory message list.
 vi.mock("@/core/storage/disk", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("@/core/storage/disk")>()
-	return { ...actual, getTaskHeaderText: vi.fn(async () => "") }
+    const actual = await importOriginal<typeof import("@/core/storage/disk")>()
+    return { ...actual, getTaskHeaderText: vi.fn(async () => "") }
 })
 
 vi.mock("@/core/storage/backend/jsonl/jsonl-utils", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("@/core/storage/backend/jsonl/jsonl-utils")>()
-	return { ...actual, readJsonl: vi.fn() }
+    const actual = await importOriginal<typeof import("@/core/storage/backend/jsonl/jsonl-utils")>()
+    return { ...actual, readJsonl: vi.fn() }
 })
 
 const oauthMocks = vi.hoisted(() => ({ isAuthenticated: vi.fn(async () => false) }))
 
 // The compatibility field must not probe Profile OAuth state during ordinary state pushes.
 vi.mock("@/integrations/openai-codex/oauth", () => ({
-	openAiCodexOAuthManager: { isAuthenticated: oauthMocks.isAuthenticated },
-}))
-
-// The full task-view projection needs a complete runtime state; header sourcing
-// under test does not depend on it, so stub the projector output.
-vi.mock("@/core/task/view/TaskViewProjector", () => ({
-	projectTaskView: vi.fn(() => undefined),
+    openAiCodexOAuthManager: { isAuthenticated: oauthMocks.isAuthenticated },
 }))
 
 // Environment singletons that are not part of the header-sourcing behavior.
 vi.mock("@/services/logging/distinctId", () => ({
-	getDistinctId: () => "test-distinct-id",
+    getDistinctId: () => "test-distinct-id",
 }))
 
 vi.mock("@/utils/announcements", () => ({
-	getLatestAnnouncementId: () => "test-announcement",
+    getLatestAnnouncementId: () => "test-announcement",
 }))
 
 const HEADER_TEXT = "test task header"
 
 /** Build a realistic long-conversation message list with a leading task header. */
-function buildMessages(count: number): ClineMessage[] {
-	const messages: ClineMessage[] = [{ ts: 1, type: "say", say: "task", text: HEADER_TEXT }]
-	for (let i = 2; i <= count; i++) {
-		messages.push({ ts: i, type: "say", say: "text", text: `message ${i}` })
-	}
-	return messages
+function buildMessages(count: number): UiMessage[] {
+    const messages: UiMessage[] = [{ ts: 1, type: "say", say: "task", text: HEADER_TEXT }]
+    for (let i = 2; i <= count; i++) {
+        messages.push({ ts: i, type: "say", say: "text", text: `message ${i}` })
+    }
+    return messages
 }
 
 /**
@@ -57,142 +52,147 @@ function buildMessages(count: number): ClineMessage[] {
  * The double is a plain object, so the method has to be taken from the
  * prototype for `buildState.call` to resolve it.
  */
-function controllerAccessor(name: "getCurrentTaskId" | "getCurrentTaskMessages" | "getCurrentTaskMessageCount"): unknown {
-	return (Controller.prototype as unknown as Record<string, unknown>)[name]
+function controllerAccessor(
+    name: "currentOpening" | "getCurrentTaskId" | "getCurrentTaskMessages" | "getCurrentTaskMessageCount",
+): unknown {
+    return (Controller.prototype as unknown as Record<string, unknown>)[name]
 }
 
 /** Minimal Controller-shaped object exposing every field buildState touches. */
-function createFakeController(messages: ClineMessage[]): Record<string, unknown> {
-	return {
-		task: {
-			taskId: "test-task-1",
-			taskInstanceId: "open-test-1",
-			isReadOnly: () => false,
-			getDisplayMessages: () => messages,
-			getDisplayMessageCount: () => messages.length,
-			getTaskTitleMessage: () => messages[0],
-			taskSm: {
-				planModeProfile: undefined,
-				actModeProfile: undefined,
-				mode: "act",
-				taskCapabilityToggles: undefined,
-			},
-			messageStateHandler: { clineMessages: messages },
-			taskState: {
-				checkpointManagerErrorMessage: undefined,
-				currentFocusChainChecklist: null,
-				focusChainHistory: null,
-			},
-			getRuntimeState: () => ({}),
-			getApiRateSnapshot: () => ({}),
-			getContextWindowIndicator: () => undefined,
-			getPromptCacheHealth: () => undefined,
-			getPromptFreshness: () => undefined,
-			getReadyBackgroundHandoffActivityId: () => undefined,
-			getContextCompactionOperationId: () => undefined,
-			isBackgroundHandoffRequested: () => false,
-			isForceTruncateAvailable: () => false,
-			hasAutoRetrySequence: () => false,
-			hasPendingAutoRetry: () => false,
-		},
-		stateManager: {
-			setActiveTaskId: vi.fn(),
-			getApiConfiguration: () => ({}),
-			getGlobalStateKey: (key: string) => (key === "taskHistory" ? [] : undefined),
-			getGlobalSettingsKey: () => undefined,
-			getCanonicalSettingsKey: () => undefined,
-			getWorkspaceStateKey: () => undefined,
-			getRemoteConfigSettings: () => ({}),
-		},
-		// buildState resolves capability toggles through this private helper; the
-		// header assertions below do not depend on discovery, so an empty result
-		// keeps the double focused on message sourcing.
-		readLocalCapabilityToggles: () => ({}),
-		// The task-view projection is unrelated to header sourcing and requires
-		// canonical runtime state that this focused double intentionally omits.
-		projectCurrentTaskViewState: () => undefined,
-		// The history projection is memoized per history array by its owner.
-		// This double is not a Controller instance, so the real method has to be
-		// borrowed for the call to resolve.
-		projectTaskHistoryCached: (
-			Controller.prototype as unknown as {
-				projectTaskHistoryCached: (history: unknown) => unknown
-			}
-		).projectTaskHistoryCached,
-		// buildState reads the active surface through these accessors rather than
-		// reaching into `task` directly. Borrowing the real implementations keeps
-		// the double honest about where the identity and messages come from, and
-		// keeps it valid when the Controller changes how it resolves them.
-		getCurrentTaskId: controllerAccessor("getCurrentTaskId"),
-		getCurrentTaskMessages: controllerAccessor("getCurrentTaskMessages"),
-		getCurrentTaskMessageCount: controllerAccessor("getCurrentTaskMessageCount"),
-		modeSwitchCoordinator: { getSnapshot: () => ({}) },
-		getTaskLockStatus: () => undefined,
-		backgroundCommandRunning: undefined,
-		backgroundCommandTaskId: undefined,
-	}
+function createFakeController(messages: UiMessage[]): Record<string, unknown> {
+    return {
+        task: createSessionFixture({
+            taskId: "test-task-1",
+            owners: {
+                settings: {
+                    planModeProfile: undefined,
+                    actModeProfile: undefined,
+                    mode: "act",
+                    taskCapabilityToggles: undefined,
+                },
+                messages: {
+                    clineMessages: messages,
+                    readStateMetrics: () => undefined,
+                },
+                apiRateSnapshot: () => ({}),
+            },
+        }),
+        stateManager: {
+            setActiveTaskId: vi.fn(),
+            getApiConfiguration: () => ({}),
+            getGlobalStateKey: (key: string) => (key === "taskHistory" ? [] : undefined),
+            getGlobalSettingsKey: () => undefined,
+            getCanonicalSettingsKey: () => undefined,
+            getWorkspaceStateKey: () => undefined,
+            getRemoteConfigSettings: () => ({}),
+        },
+        // buildState resolves capability toggles through this private helper; the
+        // header assertions below do not depend on discovery, so an empty result
+        // keeps the double focused on message sourcing.
+        readLocalCapabilityToggles: () => ({}),
+        // The task-view projection
+        // canonical runtime state that this focused double intentionally omits.
+        projectCurrentTaskViewState: () => undefined,
+        // The history projection is memoized per history array by its owner.
+        // This double is not a Controller instance, so the real method has to be
+        // borrowed for the call to resolve.
+        projectTaskHistoryCached: (
+            Controller.prototype as unknown as {
+                projectTaskHistoryCached: (history: unknown) => unknown
+            }
+        ).projectTaskHistoryCached,
+        // buildState reads the active surface through these accessors rather than
+        // reaching into `task` directly. Borrowing the real implementations keeps
+        // the double honest about where the identity and messages come from, and
+        // keeps it valid when the Controller changes how it resolves them.
+        currentOpening: controllerAccessor("currentOpening"),
+        getCurrentTaskId: controllerAccessor("getCurrentTaskId"),
+        getCurrentTaskMessages: controllerAccessor("getCurrentTaskMessages"),
+        getCurrentTaskMessageCount: controllerAccessor("getCurrentTaskMessageCount"),
+        modeSwitchCoordinator: { getSnapshot: () => ({}) },
+        getTaskLockStatus: () => undefined,
+        backgroundCommandRunning: undefined,
+        backgroundCommandTaskId: undefined,
+    }
 }
 
 const buildState = (
-	Controller.prototype as unknown as {
-		buildState: (revision: number) => Promise<ExtensionState>
-	}
+    Controller.prototype as unknown as {
+        buildState: (revision: number) => Promise<ExtensionState>
+    }
 ).buildState
 
 describe("buildState header sourcing", () => {
-	it("never re-reads the task header from disk while messages are in memory", async () => {
-		const getTaskHeaderTextMock = vi.mocked(getTaskHeaderText)
-		const readJsonlMock = vi.mocked(readJsonl)
-		getTaskHeaderTextMock.mockClear()
-		readJsonlMock.mockClear()
+    it("never re-reads the task header from disk while messages are in memory", async () => {
+        const getTaskHeaderTextMock = vi.mocked(getTaskHeaderText)
+        const readJsonlMock = vi.mocked(readJsonl)
+        getTaskHeaderTextMock.mockClear()
+        readJsonlMock.mockClear()
 
-		const messages = buildMessages(1500)
-		const fakeController = createFakeController(messages)
+        const messages = buildMessages(1500)
+        const fakeController = createFakeController(messages)
 
-		// Simulate repeated state pushes: every MessageChannel.say schedules one.
-		for (let revision = 1; revision <= 3; revision++) {
-			const state = await buildState.call(fakeController, revision)
-			expect(state.taskTitleMessage?.text).toBe(HEADER_TEXT)
-		}
+        // Simulate repeated state pushes: every MessageChannel.say schedules one.
+        for (let revision = 1; revision <= 3; revision++) {
+            const state = await buildState.call(fakeController, revision)
+            expect(state.taskTitleMessage?.text).toBe(HEADER_TEXT)
+        }
 
-		expect(getTaskHeaderTextMock).not.toHaveBeenCalled()
-		expect(readJsonlMock).not.toHaveBeenCalled()
-		expect(oauthMocks.isAuthenticated).not.toHaveBeenCalled()
-	})
+        expect(getTaskHeaderTextMock).not.toHaveBeenCalled()
+        expect(readJsonlMock).not.toHaveBeenCalled()
+        expect(oauthMocks.isAuthenticated).not.toHaveBeenCalled()
+    })
 
-	it("projects saved history segments and their total without an executing Task", async () => {
-		const indicator: ContextWindowIndicatorSnapshot = {
-			taskId: "history-task",
-			revision: 7,
-			epoch: 2,
-			phase: "stable",
-			durableContextTokens: 40_000,
-			pendingSendTokens: 0,
-			receivingTokens: 0,
-			stagedTokens: 2_000,
-			environmentTokens: 1_000,
-			contextWindow: 128_000,
-			mode: "act",
-			updatedAt: 100,
-			lineage: { kind: "baseline" },
-		}
-		const fakeController = createFakeController([])
-		const task = fakeController.task as Record<string, unknown>
-		task.taskId = indicator.taskId
-		task.getContextWindowIndicator = () => indicator
-		const state = await buildState.call(fakeController, 1)
-		expect(state.contextWindowIndicator).toEqual(indicator)
-		expect(state.lastApiReqTotalTokens).toBe(43_000)
-	})
+    it("projects the session's context window indicator and its total", async () => {
+        const indicator: ContextWindowIndicatorSnapshot = {
+            taskId: "history-task",
+            revision: 7,
+            epoch: 2,
+            phase: "stable",
+            durableContextTokens: 40_000,
+            pendingSendTokens: 0,
+            receivingTokens: 0,
+            stagedTokens: 2_000,
+            environmentTokens: 1_000,
+            contextWindow: 128_000,
+            mode: "act",
+            updatedAt: 100,
+            lineage: { kind: "baseline" },
+        }
+        const fakeController = createFakeController([])
+        const owners = (fakeController.task as { owners: Record<string, Record<string, unknown>> }).owners
+        owners.toolState = { ...owners.toolState, contextWindowIndicator: indicator }
+        const state = await buildState.call(fakeController, 1)
+        expect(state.contextWindowIndicator).toEqual(indicator)
+        expect(state.lastApiReqTotalTokens).toBe(43_000)
+    })
 
-	it("keeps returning the in-memory header even when disk is unavailable", async () => {
-		const messages = buildMessages(50)
-		const fakeController = createFakeController(messages)
+    it("keeps returning the in-memory header even when disk is unavailable", async () => {
+        const messages = buildMessages(50)
+        const fakeController = createFakeController(messages)
 
-		const state = await buildState.call(fakeController, 1)
+        const state = await buildState.call(fakeController, 1)
 
-		expect(state.taskTitleMessage?.text).toBe(HEADER_TEXT)
-		expect(state.totalMessageCount).toBe(50)
-		expect(state.firstItemIndex).toBe(0)
-	})
+        expect(state.taskTitleMessage?.text).toBe(HEADER_TEXT)
+        expect(state.totalMessageCount).toBe(50)
+        expect(state.firstItemIndex).toBe(0)
+    })
+})
+
+describe("buildState usage totals", () => {
+    // The chat rows price requests the provider did not price, as the task
+    // history does; the provider-round store only knows reported cost.
+    it("keeps the task's priced cost when the rate snapshot reports less", async () => {
+        const fakeController = createFakeController(buildMessages(3))
+        const owners = (fakeController.task as { owners: Record<string, unknown> }).owners
+        owners.messages = {
+            ...(owners.messages as Record<string, unknown>),
+            readStateMetrics: () => ({ totalTokensIn: 1_000, totalTokensOut: 200, totalCost: 0.5, currency: "USD" }),
+        }
+        owners.apiRateSnapshot = () => ({ requestsPerMinute: 6, totalTokensIn: 1_000, totalCost: 0 })
+
+        const state = await buildState.call(fakeController, 1)
+
+        expect(state.apiMetrics).toMatchObject({ totalCost: 0.5, currency: "USD", requestsPerMinute: 6 })
+    })
 })

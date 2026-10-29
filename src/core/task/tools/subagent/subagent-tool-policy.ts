@@ -1,5 +1,5 @@
 import { TURN_ENDING_TOOL_NAMES } from "@core/task/assistant-message-order"
-import { ClineDefaultTool, CONVERSATIONAL_TOOL_NAMES } from "@shared/tools"
+import { CONVERSATIONAL_TOOL_NAMES, DlineDefaultTool } from "@shared/tools"
 import { DEFAULT_SUBAGENT_ALLOWED_TOOLS } from "./DefaultSubagentConfig"
 
 /**
@@ -8,10 +8,10 @@ import { DEFAULT_SUBAGENT_ALLOWED_TOOLS } from "./DefaultSubagentConfig"
  * A subagent reports back by completing, so removing this would leave a run
  * with no way to finish. It is therefore enforced rather than offered.
  */
-export const REQUIRED_SUBAGENT_TOOL = ClineDefaultTool.ATTEMPT
+export const REQUIRED_SUBAGENT_TOOL = DlineDefaultTool.ATTEMPT
 
 /** Every identity the config loader will accept when reading a document back. */
-const KNOWN_TOOL_NAMES: ReadonlySet<ClineDefaultTool> = new Set(Object.values(ClineDefaultTool))
+const KNOWN_TOOL_NAMES: ReadonlySet<DlineDefaultTool> = new Set(Object.values(DlineDefaultTool))
 
 /**
  * Delegation tools, which a subagent must not call.
@@ -24,9 +24,9 @@ const KNOWN_TOOL_NAMES: ReadonlySet<ClineDefaultTool> = new Set(Object.values(Cl
  * Delegation is therefore a capability of the main task. A subagent that needs
  * more work done reports back and lets the task decide.
  */
-const DELEGATION_TOOL_NAMES: ReadonlySet<ClineDefaultTool> = new Set([
-	ClineDefaultTool.USE_SUBAGENT,
-	ClineDefaultTool.USE_SUBAGENTS,
+const DELEGATION_TOOL_NAMES: ReadonlySet<DlineDefaultTool> = new Set([
+    DlineDefaultTool.USE_SUBAGENT,
+    DlineDefaultTool.USE_SUBAGENTS,
 ])
 
 /**
@@ -36,8 +36,9 @@ const DELEGATION_TOOL_NAMES: ReadonlySet<ClineDefaultTool> = new Set([
  *
  * - `TURN_ENDING_TOOL_NAMES` hands control back to the user and ends the turn.
  * - `CONVERSATIONAL_TOOL_NAMES` opens a UI interaction and awaits user input.
- *   `act_mode_respond` is in this set but not the first, because it continues
- *   the turn; it still addresses a user the subagent does not have.
+ *   `working_respond` (formerly `act_mode_respond`) is in this set but not
+ *   the first, because it continues the turn; it still addresses a user the
+ *   subagent does not have.
  * - `DELEGATION_TOOL_NAMES` starts another fan-out from inside one.
  *
  * The first two leave the subagent waiting on a person who will never answer;
@@ -46,12 +47,12 @@ const DELEGATION_TOOL_NAMES: ReadonlySet<ClineDefaultTool> = new Set([
  * order to finish.
  */
 export function isForbiddenSubagentTool(tool: string): boolean {
-	if (tool === REQUIRED_SUBAGENT_TOOL) return false
-	return (
-		TURN_ENDING_TOOL_NAMES.has(tool) ||
-		CONVERSATIONAL_TOOL_NAMES.has(tool as ClineDefaultTool) ||
-		DELEGATION_TOOL_NAMES.has(tool as ClineDefaultTool)
-	)
+    if (tool === REQUIRED_SUBAGENT_TOOL) return false
+    return (
+        TURN_ENDING_TOOL_NAMES.has(tool) ||
+        CONVERSATIONAL_TOOL_NAMES.has(tool as DlineDefaultTool) ||
+        DELEGATION_TOOL_NAMES.has(tool as DlineDefaultTool)
+    )
 }
 
 /**
@@ -66,7 +67,7 @@ export function isForbiddenSubagentTool(tool: string): boolean {
  * @returns The same tools minus the ones policy forbids, order preserved.
  */
 export function rejectForbiddenSubagentTools<T extends string>(requestedTools: readonly T[]): T[] {
-	return requestedTools.filter((tool) => !isForbiddenSubagentTool(tool))
+    return requestedTools.filter((tool) => !isForbiddenSubagentTool(tool))
 }
 
 /**
@@ -81,16 +82,16 @@ export function rejectForbiddenSubagentTools<T extends string>(requestedTools: r
  * @returns Persistable list: known names only, de-duplicated, forbidden tools
  *   removed. May be empty, which on disk means "inherit the default allowlist".
  */
-export function sanitizeSubagentToolsForPersistence(requestedTools: readonly string[]): ClineDefaultTool[] {
-	// An unrecognised name would be written happily and then rejected by the
-	// loader, which fails the whole document and makes the subagent disappear.
-	// Refusing it here keeps what can be stored equal to what can be read back.
-	const known = requestedTools.filter((tool): tool is ClineDefaultTool => KNOWN_TOOL_NAMES.has(tool as ClineDefaultTool))
-	// The required tool is dropped rather than rejected: it is permitted, and the
-	// UI keeps it checked, but resolution grants it regardless. It is excluded
-	// here separately from the forbidden set, which it does not belong to.
-	const selectable = known.filter((tool) => tool !== REQUIRED_SUBAGENT_TOOL)
-	return Array.from(new Set(rejectForbiddenSubagentTools(selectable)))
+export function sanitizeSubagentToolsForPersistence(requestedTools: readonly string[]): DlineDefaultTool[] {
+    // An unrecognised name would be written happily and then rejected by the
+    // loader, which fails the whole document and makes the subagent disappear.
+    // Refusing it here keeps what can be stored equal to what can be read back.
+    const known = requestedTools.filter((tool): tool is DlineDefaultTool => KNOWN_TOOL_NAMES.has(tool as DlineDefaultTool))
+    // The required tool is dropped rather than rejected: it is permitted, and the
+    // UI keeps it checked, but resolution grants it regardless. It is excluded
+    // here separately from the forbidden set, which it does not belong to.
+    const selectable = known.filter((tool) => tool !== REQUIRED_SUBAGENT_TOOL)
+    return Array.from(new Set(rejectForbiddenSubagentTools(selectable)))
 }
 
 /**
@@ -115,21 +116,21 @@ export function sanitizeSubagentToolsForPersistence(requestedTools: readonly str
  * @returns Ordered, de-duplicated allowlist with the policy applied.
  */
 export function sanitizeSubagentTools(
-	requestedTools: readonly string[] | undefined,
-	options: { builtInDefault?: boolean; explicitlyNarrowed?: boolean } = {},
-): ClineDefaultTool[] {
-	const specified = requestedTools && requestedTools.length > 0
-	if (!specified && options.explicitlyNarrowed) {
-		return [REQUIRED_SUBAGENT_TOOL]
-	}
+    requestedTools: readonly string[] | undefined,
+    options: { builtInDefault?: boolean; explicitlyNarrowed?: boolean } = {},
+): DlineDefaultTool[] {
+    const specified = requestedTools && requestedTools.length > 0
+    if (!specified && options.explicitlyNarrowed) {
+        return [REQUIRED_SUBAGENT_TOOL]
+    }
 
-	const source = specified ? requestedTools : (DEFAULT_SUBAGENT_ALLOWED_TOOLS as readonly string[])
+    const source = specified ? requestedTools : (DEFAULT_SUBAGENT_ALLOWED_TOOLS as readonly string[])
 
-	const allowed = source.filter((tool): tool is ClineDefaultTool => {
-		if (isForbiddenSubagentTool(tool)) return false
-		if (options.builtInDefault && tool === ClineDefaultTool.BASH) return false
-		return true
-	})
+    const allowed = source.filter((tool): tool is DlineDefaultTool => {
+        if (isForbiddenSubagentTool(tool)) return false
+        if (options.builtInDefault && tool === DlineDefaultTool.BASH) return false
+        return true
+    })
 
-	return Array.from(new Set<ClineDefaultTool>([...allowed, REQUIRED_SUBAGENT_TOOL]))
+    return Array.from(new Set<DlineDefaultTool>([...allowed, REQUIRED_SUBAGENT_TOOL]))
 }

@@ -12,22 +12,22 @@ import { ModelListingSource, readPositiveNumber } from "../model-listing-source"
 const NON_CHAT_GROQ_MARKERS = ["guard", "allam"]
 
 export class GroqModelSource extends ModelListingSource {
-	readonly providerId = "groq"
-	readonly providerName = "Groq"
-	override readonly reconciliation: ProviderModelReconciliationMode = "overlay-remote"
-	protected override readonly defaultBaseUrl = "https://api.groq.com/openai/v1"
+    readonly providerId = "groq"
+    readonly providerName = "Groq"
+    override readonly reconciliation: ProviderModelReconciliationMode = "overlay-remote"
+    protected override readonly defaultBaseUrl = "https://api.groq.com/openai/v1"
 
-	protected override isChatModel(raw: unknown): boolean {
-		if (!super.isChatModel(raw)) {
-			return false
-		}
-		const modelId = this.readModelId(raw)?.toLowerCase() ?? ""
-		return !NON_CHAT_GROQ_MARKERS.some((marker) => modelId.includes(marker))
-	}
+    protected override isChatModel(raw: unknown): boolean {
+        if (!super.isChatModel(raw)) {
+            return false
+        }
+        const modelId = this.readModelId(raw)?.toLowerCase() ?? ""
+        return !NON_CHAT_GROQ_MARKERS.some((marker) => modelId.includes(marker))
+    }
 
-	protected override readContextWindow(raw: unknown): number | undefined {
-		return readPositiveNumber(raw, "context_window")
-	}
+    protected override readContextWindow(raw: unknown): number | undefined {
+        return readPositiveNumber(raw, "context_window")
+    }
 }
 
 export const groqModelSource = new GroqModelSource()

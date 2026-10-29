@@ -14,47 +14,47 @@ import { Controller } from ".."
  * @throws Error if operation fails
  */
 export async function deleteRuleFile(controller: Controller, request: RuleFileRequest): Promise<RuleFile> {
-	if (
-		typeof request.isGlobal !== "boolean" ||
-		typeof request.rulePath !== "string" ||
-		!request.rulePath ||
-		!request.type ||
-		typeof request.type !== "string"
-	) {
-		Logger.error("deleteRuleFile: Missing or invalid parameters", {
-			isGlobal: typeof request.isGlobal === "boolean" ? request.isGlobal : `Invalid: ${typeof request.isGlobal}`,
-			rulePath: typeof request.rulePath === "string" ? request.rulePath : `Invalid: ${typeof request.rulePath}`,
-			type: typeof request.type === "string" ? request.type : `Invalid: ${typeof request.type}`,
-		})
-		throw new Error("Missing or invalid parameters")
-	}
+    if (
+        typeof request.isGlobal !== "boolean" ||
+        typeof request.rulePath !== "string" ||
+        !request.rulePath ||
+        !request.type ||
+        typeof request.type !== "string"
+    ) {
+        Logger.error("deleteRuleFile: Missing or invalid parameters", {
+            isGlobal: typeof request.isGlobal === "boolean" ? request.isGlobal : `Invalid: ${typeof request.isGlobal}`,
+            rulePath: typeof request.rulePath === "string" ? request.rulePath : `Invalid: ${typeof request.rulePath}`,
+            type: typeof request.type === "string" ? request.type : `Invalid: ${typeof request.type}`,
+        })
+        throw new Error("Missing or invalid parameters")
+    }
 
-	const result = await deleteRuleFileImpl(controller, request.rulePath, request.isGlobal, request.type)
+    const result = await deleteRuleFileImpl(controller, request.rulePath, request.isGlobal, request.type)
 
-	if (!result.success) {
-		throw new Error(result.message || "Failed to delete rule file")
-	}
+    if (!result.success) {
+        throw new Error(result.message || "Failed to delete rule file")
+    }
 
-	// The delete implementation updates the canonical toggle store before returning.
-	if (controller.task) {
-		await controller.task.flushPromptFreshnessInvalidation("capability_mutation")
-	} else {
-		await controller.postStateToWebview()
-	}
+    // The delete implementation updates the canonical toggle store before returning.
+    if (controller.task) {
+        await controller.task.owners.prompt.flush("capability_mutation")
+    } else {
+        await controller.postStateToWebview()
+    }
 
-	const fileName = getWorkspaceBasename(request.rulePath, "Controller.deleteRuleFile")
+    const fileName = getWorkspaceBasename(request.rulePath, "Controller.deleteRuleFile")
 
-	const fileTypeName = request.type === "workflow" ? "workflow" : "rule"
+    const fileTypeName = request.type === "workflow" ? "workflow" : "rule"
 
-	const message = `${fileTypeName} file "${fileName}" deleted successfully`
-	HostProvider.window.showMessage({
-		type: ShowMessageType.INFORMATION,
-		message,
-	})
+    const message = `${fileTypeName} file "${fileName}" deleted successfully`
+    HostProvider.window.showMessage({
+        type: ShowMessageType.INFORMATION,
+        message,
+    })
 
-	return RuleFile.create({
-		filePath: request.rulePath,
-		displayName: fileName,
-		alreadyExists: false,
-	})
+    return RuleFile.create({
+        filePath: request.rulePath,
+        displayName: fileName,
+        alreadyExists: false,
+    })
 }

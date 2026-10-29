@@ -3,16 +3,16 @@
  */
 
 export enum VcsType {
-	None = "none",
-	Git = "git",
-	Mercurial = "mercurial",
+    None = "none",
+    Git = "git",
+    Mercurial = "mercurial",
 }
 
 export interface WorkspaceRoot {
-	path: string // Absolute path to the workspace root
-	name?: string // Optional display name for the workspace (auto-derived from path if not provided)
-	vcs: VcsType // Version control system type for this root
-	commitHash?: string // Optional latest commit hash/changeset ID for VCS tracking
+    path: string // Absolute path to the workspace root
+    name?: string // Optional display name for the workspace (auto-derived from path if not provided)
+    vcs: VcsType // Version control system type for this root
+    commitHash?: string // Optional latest commit hash/changeset ID for VCS tracking
 }
 
 // Example usage:

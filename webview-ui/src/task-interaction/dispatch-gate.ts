@@ -2,7 +2,7 @@ import type { DispatchInteraction } from "./types"
 
 /** Build the causal identity shared by every UI surface for one interaction. */
 function interactionDispatchKey(request: Parameters<DispatchInteraction>[0]): string {
-	return `${request.taskId}:${request.turnId}:${request.interactionId}`
+    return `${request.taskId}:${request.turnId}:${request.interactionId}`
 }
 
 /**
@@ -15,23 +15,23 @@ function interactionDispatchKey(request: Parameters<DispatchInteraction>[0]): st
  * interaction has a different identity and remains independently dispatchable.
  */
 export function createInteractionDispatchGate(dispatch: DispatchInteraction): DispatchInteraction {
-	const inFlight = new Map<string, ReturnType<DispatchInteraction>>()
+    const inFlight = new Map<string, ReturnType<DispatchInteraction>>()
 
-	return (request) => {
-		const key = interactionDispatchKey(request)
-		const existing = inFlight.get(key)
-		if (existing) {
-			return existing
-		}
+    return (request) => {
+        const key = interactionDispatchKey(request)
+        const existing = inFlight.get(key)
+        if (existing) {
+            return existing
+        }
 
-		const pending = dispatch(request)
-		inFlight.set(key, pending)
-		const release = () => {
-			if (inFlight.get(key) === pending) {
-				inFlight.delete(key)
-			}
-		}
-		void pending.then(release, release)
-		return pending
-	}
+        const pending = dispatch(request)
+        inFlight.set(key, pending)
+        const release = () => {
+            if (inFlight.get(key) === pending) {
+                inFlight.delete(key)
+            }
+        }
+        void pending.then(release, release)
+        return pending
+    }
 }

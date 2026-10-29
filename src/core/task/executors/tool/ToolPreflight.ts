@@ -1,12 +1,14 @@
 import type { AutoApprovalSettings } from "@shared/AutoApprovalSettings"
-import type { ClineAsk } from "@shared/ExtensionMessage"
+import type { UiAsk } from "@shared/ExtensionMessage"
 import {
-	type ApprovalDecision,
-	type ConfigurableCeilings,
-	type PermissionScopeContext,
-	resolveApprovalKind,
-} from "../../kernel/turn/approval-kind"
-import { resolveToolLanes, type ToolLane, type ToolLaneContext } from "../../kernel/turn/tool-lanes"
+    type ApprovalDecision,
+    type ConfigurableCeilings,
+    type PermissionScopeContext,
+    resolveApprovalKind,
+    resolveToolLanes,
+    type ToolLane,
+    type ToolLaneContext,
+} from "../../kernel"
 
 /**
  * Two-phase tool admission.
@@ -25,9 +27,9 @@ import { resolveToolLanes, type ToolLane, type ToolLaneContext } from "../../ker
 
 /** Why a call cannot proceed, decided before anything is shown or run. */
 export interface ToolPreflightRejection {
-	reason: "invalid_parameters" | "unsupported_tool"
-	/** Message shown to the model, already safe to surface. */
-	message: string
+    reason: "invalid_parameters" | "unsupported_tool"
+    /** Message shown to the model, already safe to surface. */
+    message: string
 }
 
 /**
@@ -40,12 +42,12 @@ export interface ToolPreflightRejection {
  * and in which slot it is presented.
  */
 export interface ToolApprovalPresentation {
-	/** Interaction kind the Webview uses to render the request. */
-	ask: ClineAsk
-	/** Serialized payload for that interaction. */
-	body: string
-	/** Whether a desktop notification should accompany the request. */
-	notify: boolean
+    /** Interaction kind the Webview uses to render the request. */
+    ask: UiAsk
+    /** Serialized payload for that interaction. */
+    body: string
+    /** Whether a desktop notification should accompany the request. */
+    notify: boolean
 }
 
 /** The side effect a tool performs once it has been admitted. */
@@ -53,45 +55,58 @@ export type ToolSideEffect<T> = () => Promise<T>
 
 /** A call that passed validation and may proceed once approved. */
 export interface ToolPreflightAdmission<T> {
-	outcome: "admitted"
-	decision: ApprovalDecision
-	/**
-	 * Absent when the decision needs no user-facing request, which is the case
-	 * for policy-approved calls and for tools that present their own
-	 * interaction.
-	 */
-	presentation?: ToolApprovalPresentation
-	/** Shared resources this call serializes against. */
-	lanes: ToolLane[]
-	/**
-	 * The side effect, deliberately not started.
-	 *
-	 * Returning it unstarted lets the caller resolve approval again immediately
-	 * before this runs, so tightening a setting still affects work that has not
-	 * begun without depending on a shared version counter.
-	 */
-	run: ToolSideEffect<T>
-	/** Optional input-only preparation that must finish before a manual approval is presented. */
-	prepareApproval?: () => Promise<ToolPreflightResult<T>>
-	/**
-	 * Optional pre-scheduling scope confirmation.
-	 *
-	 * Admission itself stays target-I/O free. Filesystem-backed calls may attach
-	 * this unstarted closure so aliases and final lanes are canonicalized before
-	 * the execution pool reserves a lane or permit. The returned Admission is the
-	 * one that must execute.
-	 */
-	confirm?: () => Promise<ToolPreflightResult<T>>
-	/** True when a human already approved this exact call before target confirmation. */
-	manualApprovalSatisfied?: boolean
-	/** Recompute only the live approval decision while preserving run and lanes. */
-	refreshDecision?: () => ToolPreflightAdmission<T>
+    outcome: "admitted"
+    decision: ApprovalDecision
+    /**
+     * The classification facts the decision was resolved from.
+     *
+     * The decision itself is an output: `scope` and `ceiling` say which rule
+     * applied, not why it applied. Anything that must reach the same conclusion
+     * again — notably the approval policy, which re-resolves from value facts
+     * alone — needs these inputs, because re-resolving without them silently
+     * reclassifies the call. A safe command would land in the "all commands"
+     * scope and be refused under a grant that does cover it.
+     */
+    scope?: PermissionScopeContext
+    /** Whether this call inherits an approval its parent already obtained. */
+    inheritsApproval?: boolean
+    /**
+     * Absent when the decision needs no user-facing request, which is the case
+     * for policy-approved calls and for tools that present their own
+     * interaction.
+     */
+    presentation?: ToolApprovalPresentation
+    /** Shared resources this call serializes against. */
+    lanes: ToolLane[]
+    /**
+     * The side effect, deliberately not started.
+     *
+     * Returning it unstarted lets the caller resolve approval again immediately
+     * before this runs, so tightening a setting still affects work that has not
+     * begun without depending on a shared version counter.
+     */
+    run: ToolSideEffect<T>
+    /** Optional input-only preparation that must finish before a manual approval is presented. */
+    prepareApproval?: () => Promise<ToolPreflightResult<T>>
+    /**
+     * Optional pre-scheduling scope confirmation.
+     *
+     * Admission itself stays target-I/O free. Filesystem-backed calls may attach
+     * this unstarted closure so aliases and final lanes are canonicalized before
+     * the execution pool reserves a lane or permit. The returned Admission is the
+     * one that must execute.
+     */
+    confirm?: () => Promise<ToolPreflightResult<T>>
+    /** True when a human already approved this exact call before target confirmation. */
+    manualApprovalSatisfied?: boolean
+    /** Recompute only the live approval decision while preserving run and lanes. */
+    refreshDecision?: () => ToolPreflightAdmission<T>
 }
 
 /** A call that cannot proceed. */
 export interface ToolPreflightRejected {
-	outcome: "rejected"
-	rejection: ToolPreflightRejection
+    outcome: "rejected"
+    rejection: ToolPreflightRejection
 }
 
 /** Result of preflighting one tool call. */
@@ -99,22 +114,22 @@ export type ToolPreflightResult<T> = ToolPreflightAdmission<T> | ToolPreflightRe
 
 /** Inputs needed to decide admission for one call. */
 export interface ToolPreflightInput {
-	toolName: string
-	settings: AutoApprovalSettings
-	ceilings?: ConfigurableCeilings
-	scope?: PermissionScopeContext
-	lanes?: ToolLaneContext
-	blanket?: { yoloMode?: boolean; approveAll?: boolean }
-	/**
-	 * Subagent execution inherits the approval its parent already obtained, so
-	 * a nested call does not raise a second prompt the user never asked for.
-	 */
-	inheritsApproval?: boolean
+    toolName: string
+    settings: AutoApprovalSettings
+    ceilings?: ConfigurableCeilings
+    scope?: PermissionScopeContext
+    lanes?: ToolLaneContext
+    blanket?: { yoloMode?: boolean; approveAll?: boolean }
+    /**
+     * Subagent execution inherits the approval its parent already obtained, so
+     * a nested call does not raise a second prompt the user never asked for.
+     */
+    inheritsApproval?: boolean
 }
 
 /** Build a rejected preflight result. */
 export function rejectToolCall<T>(rejection: ToolPreflightRejection): ToolPreflightResult<T> {
-	return { outcome: "rejected", rejection }
+    return { outcome: "rejected", rejection }
 }
 
 /**
@@ -126,37 +141,39 @@ export function rejectToolCall<T>(rejection: ToolPreflightRejection): ToolPrefli
  * @returns The admission, carrying the decision, lanes and unstarted effect.
  */
 export function admitToolCall<T>(
-	input: ToolPreflightInput,
-	run: ToolSideEffect<T>,
-	presentation?: ToolApprovalPresentation,
-	confirm?: () => Promise<ToolPreflightResult<T>>,
-	refreshDecision?: () => ToolPreflightAdmission<T>,
+    input: ToolPreflightInput,
+    run: ToolSideEffect<T>,
+    presentation?: ToolApprovalPresentation,
+    confirm?: () => Promise<ToolPreflightResult<T>>,
+    refreshDecision?: () => ToolPreflightAdmission<T>,
 ): ToolPreflightAdmission<T> {
-	// The runtime facts that classify a call are named `scope` here and
-	// `context` on the resolver, so they must be mapped rather than spread.
-	// An inherited call still needs the correct scope for diagnostics, and
-	// spreading would leave `context` undefined and silently report an
-	// external path as an in-workspace one.
-	const resolverInput = {
-		toolName: input.toolName,
-		settings: input.settings,
-		ceilings: input.ceilings,
-		context: input.scope,
-		inheritsApproval: input.inheritsApproval,
-		blanket: input.blanket,
-	}
+    // The runtime facts that classify a call are named `scope` here and
+    // `context` on the resolver, so they must be mapped rather than spread.
+    // An inherited call still needs the correct scope for diagnostics, and
+    // spreading would leave `context` undefined and silently report an
+    // external path as an in-workspace one.
+    const resolverInput = {
+        toolName: input.toolName,
+        settings: input.settings,
+        ceilings: input.ceilings,
+        context: input.scope,
+        inheritsApproval: input.inheritsApproval,
+        blanket: input.blanket,
+    }
 
-	const decision = resolveApprovalKind(resolverInput)
+    const decision = resolveApprovalKind(resolverInput)
 
-	return {
-		outcome: "admitted",
-		decision,
-		// A decision that needs no user request carries no payload, so a caller
-		// cannot accidentally present one.
-		presentation: decision.kind === "manual" || decision.kind === "ai_approver" ? presentation : undefined,
-		lanes: resolveToolLanes(input.toolName, input.lanes ?? {}),
-		run,
-		confirm,
-		refreshDecision,
-	}
+    return {
+        outcome: "admitted",
+        decision,
+        scope: input.scope,
+        inheritsApproval: input.inheritsApproval,
+        // A decision that needs no user request carries no payload, so a caller
+        // cannot accidentally present one.
+        presentation: decision.kind === "manual" || decision.kind === "ai_approver" ? presentation : undefined,
+        lanes: resolveToolLanes(input.toolName, input.lanes ?? {}),
+        run,
+        confirm,
+        refreshDecision,
+    }
 }

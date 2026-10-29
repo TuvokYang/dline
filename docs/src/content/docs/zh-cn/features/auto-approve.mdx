@@ -83,7 +83,7 @@ YOLO 模式不是“关闭所有安全检查”：命令权限规则、[.agentig
 
 ## 与其他设置的关系
 
-- **MCP 工具级自动批准**：在 MCP 服务器管理界面中，可以为单个工具开启 **Auto-approve**，或为服务器开启 **Auto-approve all tools**（工作区服务器除外）。这与聊天中的 **Use MCP servers** 是不同的开关，参见 [MCP 概览](/zh-cn/mcp/mcp-overview/)。
+- **MCP 工具级自动批准**：在 MCP 服务器管理界面中，可以为单个工具开启 **Auto-approve**，或为服务器开启 **Auto-approve all tools**。工作区服务器的工具默认不自动批准，对它们的选择只对当前工作区生效。这与聊天中的 **Use MCP servers** 是不同的开关，参见 [MCP 概览](/zh-cn/mcp/mcp-overview/)。
 - **.agentignore**：被 `.agentignore` 拒绝的操作即使被自动批准也会失败，并在聊天中显示原因。
 - **子代理**：启动子代理使用 **Read project files** 权限，子代理内部的工具不会逐个请求你批准，参见[子代理](/zh-cn/features/subagents/#approval)。
 - **工作区内外的判定**：依据工具声明或确认的路径。这不代表命令或 MCP 工具无法访问工作区之外的资源。

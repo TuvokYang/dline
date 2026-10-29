@@ -1,54 +1,69 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
+import { encodeNewTaskAsk } from "@shared/new-task-ask"
 import { fireEvent, render, screen } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 import { PRESENTATION_KINDS, renderPresentation } from "../renderer-registry"
 
-const MESSAGE: ClineMessage = { ts: 100, type: "ask", ask: "tool", text: "Presentation text" }
+const MESSAGE: UiMessage = { ts: 100, type: "ask", ask: "tool", text: "Presentation text" }
 
 const APPROVAL_PRESENTATION_KINDS = [
-	"tool_approval",
-	"command_approval",
-	"browser_approval",
-	"mcp_approval",
-	"subagent_approval",
-	"spawn_task_approval",
-	"focus_chain_change",
+    "tool_approval",
+    "command_approval",
+    "browser_approval",
+    "mcp_approval",
+    "subagent_approval",
+    "spawn_task_approval",
+    "focus_chain_change",
 ] as const
 
 describe("renderer registry", () => {
-	it.each(PRESENTATION_KINDS)("renders %s without a dispatch port", (kind) => {
-		render(renderPresentation(kind, { message: MESSAGE, selection: [], onSelectionChange: vi.fn() }))
-		expect(screen.getByTestId(`presentation-${kind}`)).toBeVisible()
-	})
+    it.each(PRESENTATION_KINDS)("renders %s without a dispatch port", (kind) => {
+        render(renderPresentation(kind, { message: MESSAGE, selection: [], onSelectionChange: vi.fn() }))
+        expect(screen.getByTestId(`presentation-${kind}`)).toBeVisible()
+    })
 
-	it.each(APPROVAL_PRESENTATION_KINDS)("caps %s at 30 percent of the viewport with internal scrolling", (kind) => {
-		render(renderPresentation(kind, { message: MESSAGE, selection: [], onSelectionChange: vi.fn() }))
+    it.each(APPROVAL_PRESENTATION_KINDS)("caps %s at 30 percent of the viewport with internal scrolling", (kind) => {
+        render(renderPresentation(kind, { message: MESSAGE, selection: [], onSelectionChange: vi.fn() }))
 
-		expect(screen.getByTestId(`presentation-${kind}`)).toHaveClass("max-h-[30vh]", "overflow-y-auto", "overscroll-x-contain")
-	})
+        expect(screen.getByTestId(`presentation-${kind}`)).toHaveClass("max-h-[30vh]", "overflow-y-auto", "overscroll-x-contain")
+    })
 
-	it("caps make_plan at 80 percent of the viewport with internal scrolling", () => {
-		render(renderPresentation("make_plan", { message: MESSAGE, selection: [], onSelectionChange: vi.fn() }))
+    it("caps make_plan at 80 percent of the viewport with internal scrolling", () => {
+        render(renderPresentation("make_plan", { message: MESSAGE, selection: [], onSelectionChange: vi.fn() }))
 
-		expect(screen.getByTestId("presentation-make_plan")).toHaveClass(
-			"max-h-[80vh]",
-			"overflow-y-auto",
-			"overscroll-x-contain",
-		)
-	})
+        expect(screen.getByTestId("presentation-make_plan")).toHaveClass(
+            "max-h-[80vh]",
+            "overflow-y-auto",
+            "overscroll-x-contain",
+        )
+    })
 
-	it("reports focus-chain checked items through selection state", () => {
-		const onSelectionChange = vi.fn()
-		const message: ClineMessage = {
-			ts: 100,
-			type: "ask",
-			ask: "change_todo_list",
-			text: JSON.stringify({ plan: "# Plan\n- [ ] First item\n- [ ] Second item", reason: "Review" }),
-		}
-		render(renderPresentation("focus_chain_change", { message, selection: [], onSelectionChange }))
+    it("renders a pending new_task as its task and context, not the encoded payload", async () => {
+        const message: UiMessage = {
+            ts: 100,
+            type: "ask",
+            ask: "new_task",
+            text: encodeNewTaskAsk({ task: "Ship the migration", context: "Context body" }),
+        }
+        render(renderPresentation("new_task", { message, selection: [], onSelectionChange: vi.fn() }))
 
-		fireEvent.click(screen.getByLabelText("Second item"))
+        expect(await screen.findByText("Ship the migration")).toBeVisible()
+        expect(screen.getByRole("button", { name: /Context body/ })).toBeVisible()
+        expect(screen.getByTestId("presentation-new_task").textContent).not.toContain('"task"')
+    })
 
-		expect(onSelectionChange).toHaveBeenLastCalledWith(["1"])
-	})
+    it("reports focus-chain checked items through selection state", () => {
+        const onSelectionChange = vi.fn()
+        const message: UiMessage = {
+            ts: 100,
+            type: "ask",
+            ask: "change_todo_list",
+            text: JSON.stringify({ plan: "# Plan\n- [ ] First item\n- [ ] Second item", reason: "Review" }),
+        }
+        render(renderPresentation("focus_chain_change", { message, selection: [], onSelectionChange }))
+
+        fireEvent.click(screen.getByLabelText("Second item"))
+
+        expect(onSelectionChange).toHaveBeenLastCalledWith(["1"])
+    })
 })

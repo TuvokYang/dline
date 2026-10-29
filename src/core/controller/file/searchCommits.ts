@@ -12,17 +12,17 @@ import { Controller } from ".."
  * @returns GitCommits containing the matching commits
  */
 export async function searchCommits(_controller: Controller, request: StringRequest): Promise<GitCommits> {
-	const cwd = await getWorkspacePath()
-	if (!cwd) {
-		return GitCommits.create({ commits: [] })
-	}
+    const cwd = await getWorkspacePath()
+    if (!cwd) {
+        return GitCommits.create({ commits: [] })
+    }
 
-	try {
-		const commits = await searchCommitsUtil(request.value || "", cwd)
+    try {
+        const commits = await searchCommitsUtil(request.value || "", cwd)
 
-		return GitCommits.create({ commits })
-	} catch (error) {
-		Logger.error(`Error searching commits: ${JSON.stringify(error)}`)
-		return GitCommits.create({ commits: [] })
-	}
+        return GitCommits.create({ commits })
+    } catch (error) {
+        Logger.error(`Error searching commits: ${JSON.stringify(error)}`)
+        return GitCommits.create({ commits: [] })
+    }
 }

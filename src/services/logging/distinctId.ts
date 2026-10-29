@@ -16,26 +16,26 @@ let _distinctId = ""
 export const _GENERATED_MACHINE_ID_KEY = "cline.generatedMachineId"
 
 export async function initializeDistinctId(storage: StorageContext, uuid: () => string = uuidv4) {
-	// Try to read the ID from storage.
-	let distinctId = storage.globalState.get<string>(_GENERATED_MACHINE_ID_KEY)
+    // Try to read the ID from storage.
+    let distinctId = storage.globalState.get<string>(_GENERATED_MACHINE_ID_KEY)
 
-	if (!distinctId) {
-		// Get the ID from the host environment.
-		distinctId = await getMachineId()
-	}
-	if (!distinctId) {
-		// Fallback to generating a unique ID and keeping in global storage.
-		Logger.warn("No machine ID found for telemetry, generating UUID")
-		// Add a prefix to the UUID so we can see in the telemetry how many clients are don't have a machine ID.
-		distinctId = `cl-${uuid()}`
-		storage.globalState.update(_GENERATED_MACHINE_ID_KEY, distinctId)
-	}
+    if (!distinctId) {
+        // Get the ID from the host environment.
+        distinctId = await getMachineId()
+    }
+    if (!distinctId) {
+        // Fallback to generating a unique ID and keeping in global storage.
+        Logger.warn("No machine ID found for telemetry, generating UUID")
+        // Add a prefix to the UUID so we can see in the telemetry how many clients are don't have a machine ID.
+        distinctId = `cl-${uuid()}`
+        storage.globalState.update(_GENERATED_MACHINE_ID_KEY, distinctId)
+    }
 
-	setDistinctId(distinctId)
+    setDeviceDistinctId(distinctId)
 
-	await HostRegistryInfo.init(distinctId)
+    await HostRegistryInfo.init(distinctId)
 
-	Logger.log("[DistinctId] initialized:", distinctId)
+    Logger.log("[DistinctId] initialized:", distinctId)
 }
 
 /*
@@ -43,36 +43,39 @@ export async function initializeDistinctId(storage: StorageContext, uuid: () => 
  * This works across all platforms (VS Code, JetBrains, CLI)
  */
 async function getMachineId(): Promise<string | undefined> {
-	try {
-		// Get the machine ID using node-machine-id package
-		// This provides a deterministic ID across different operating systems
-		const id = await machineId()
-		return id
-	} catch (error) {
-		Logger.log("[DistinctId] Failed to get machine ID from node-machine-id", error)
-		return undefined
-	}
+    try {
+        // Get the machine ID using node-machine-id package
+        // This provides a deterministic ID across different operating systems
+        const id = await machineId()
+        return id
+    } catch (error) {
+        Logger.log("[DistinctId] Failed to get machine ID from node-machine-id", error)
+        return undefined
+    }
 }
 
-/*
- * Set the distinct ID for logging and telemetry.
- * This is updated to Cline User ID when authenticated.
- */
-export function setDistinctId(newId: string) {
-	if (_distinctId && _distinctId !== newId) {
-		Logger.log("[DistinctId] Updating...", `From ${_distinctId} to ${newId}`)
-	}
-	_distinctId = newId
+/** Set the device-scoped identifier during initialization. */
+function setDeviceDistinctId(newId: string): void {
+    if (_distinctId && _distinctId !== newId) {
+        Logger.log("[DistinctId] Updating device identity", `From ${_distinctId} to ${newId}`)
+    }
+    _distinctId = newId
 }
 
-/*
- * Unique identifier for the current user
- * If authenticated, this will be the Cline User ID.
- * Else, this will be the machine ID, or the anonymous ID as a fallback.
+/** Test seam. Production account flows must never mutate the device identity. */
+export function setDistinctIdForTesting(newId: string): void {
+    setDeviceDistinctId(newId)
+}
+
+/**
+ * Stable identifier for this local device or installation.
+ *
+ * Account identity is recorded through the telemetry account channel and never
+ * replaces this value.
  */
 export function getDistinctId() {
-	if (!_distinctId) {
-		Logger.debug("[DistinctId] Not initialized. Call initializeDistinctId() first.")
-	}
-	return _distinctId
+    if (!_distinctId) {
+        Logger.debug("[DistinctId] Not initialized. Call initializeDistinctId() first.")
+    }
+    return _distinctId
 }

@@ -11,11 +11,11 @@ const LMSTUDIO_PROVIDER_ID = "lmstudio"
  * @returns Array of model ids
  */
 export async function getLmStudioModels(_controller: Controller, request: StringRequest): Promise<StringArray> {
-	const baseUrl = request.value || undefined
-	if (baseUrl && !URL.canParse(baseUrl)) {
-		return StringArray.create({ values: [] })
-	}
+    const baseUrl = request.value || undefined
+    if (baseUrl && !URL.canParse(baseUrl)) {
+        return StringArray.create({ values: [] })
+    }
 
-	const models = await discoverProviderModels(LMSTUDIO_PROVIDER_ID, { baseUrl }, { persist: true })
-	return StringArray.create({ values: Object.keys(models).sort() })
+    const models = await discoverProviderModels(LMSTUDIO_PROVIDER_ID, { baseUrl }, { persist: true })
+    return StringArray.create({ values: Object.keys(models).sort() })
 }

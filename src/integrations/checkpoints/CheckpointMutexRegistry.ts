@@ -19,58 +19,58 @@ import { Logger } from "@/shared/services/Logger"
  *   the Node.js event loop; no additional synchronization is needed.
  */
 export class CheckpointMutexRegistry {
-	private static instance: CheckpointMutexRegistry
+    private static instance: CheckpointMutexRegistry
 
-	/** Map from cwdHash to its dedicated Mutex */
-	private mutexes = new Map<string, Mutex>()
+    /** Map from cwdHash to its dedicated Mutex */
+    private mutexes = new Map<string, Mutex>()
 
-	private constructor() {
-		Logger.info("[CheckpointMutexRegistry] Initialized")
-	}
+    private constructor() {
+        Logger.info("[CheckpointMutexRegistry] Initialized")
+    }
 
-	/**
-	 * Get the global singleton instance.
-	 */
-	static getInstance(): CheckpointMutexRegistry {
-		if (!CheckpointMutexRegistry.instance) {
-			CheckpointMutexRegistry.instance = new CheckpointMutexRegistry()
-		}
-		return CheckpointMutexRegistry.instance
-	}
+    /**
+     * Get the global singleton instance.
+     */
+    static getInstance(): CheckpointMutexRegistry {
+        if (!CheckpointMutexRegistry.instance) {
+            CheckpointMutexRegistry.instance = new CheckpointMutexRegistry()
+        }
+        return CheckpointMutexRegistry.instance
+    }
 
-	/**
-	 * Execute a function under the mutex for the given cwdHash.
-	 *
-	 * If no mutex exists for this cwdHash, one is created lazily.
-	 * All callers sharing the same cwdHash are serialized.
-	 *
-	 * @param cwdHash - Hash identifying the workspace (shadow git key)
-	 * @param fn      - Async function to run under mutual exclusion
-	 * @param opts    - Optional: label for diagnostics, timeout for warning threshold (ms)
-	 * @returns The result of fn
-	 */
-	async runExclusive<T>(cwdHash: string, fn: () => Promise<T>, opts?: { label?: string; warnAfterMs?: number }): Promise<T> {
-		let mutex = this.mutexes.get(cwdHash)
-		if (!mutex) {
-			mutex = new Mutex()
-			this.mutexes.set(cwdHash, mutex)
-		}
+    /**
+     * Execute a function under the mutex for the given cwdHash.
+     *
+     * If no mutex exists for this cwdHash, one is created lazily.
+     * All callers sharing the same cwdHash are serialized.
+     *
+     * @param cwdHash - Hash identifying the workspace (shadow git key)
+     * @param fn      - Async function to run under mutual exclusion
+     * @param opts    - Optional: label for diagnostics, timeout for warning threshold (ms)
+     * @returns The result of fn
+     */
+    async runExclusive<T>(cwdHash: string, fn: () => Promise<T>, opts?: { label?: string; warnAfterMs?: number }): Promise<T> {
+        let mutex = this.mutexes.get(cwdHash)
+        if (!mutex) {
+            mutex = new Mutex()
+            this.mutexes.set(cwdHash, mutex)
+        }
 
-		const waitStart = performance.now()
-		const label = opts?.label ?? "checkpoint op"
-		const warnThreshold = opts?.warnAfterMs ?? 500
+        const waitStart = performance.now()
+        const label = opts?.label ?? "checkpoint op"
+        const warnThreshold = opts?.warnAfterMs ?? 500
 
-		const result = await mutex.withLock(async () => {
-			const waitDuration = performance.now() - waitStart
-			if (waitDuration > warnThreshold) {
-				Logger.warn(
-					`[CheckpointMutex] ${label} waited ${Math.round(waitDuration)}ms for lock ` +
-						`(cwdHash=${cwdHash}) — multi-window contention likely`,
-				)
-			}
-			return fn()
-		})
+        const result = await mutex.withLock(async () => {
+            const waitDuration = performance.now() - waitStart
+            if (waitDuration > warnThreshold) {
+                Logger.warn(
+                    `[CheckpointMutex] ${label} waited ${Math.round(waitDuration)}ms for lock ` +
+                        `(cwdHash=${cwdHash}) — multi-window contention likely`,
+                )
+            }
+            return fn()
+        })
 
-		return result
-	}
+        return result
+    }
 }

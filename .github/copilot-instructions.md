@@ -1,58 +1,39 @@
-# Copilot Instructions for Cline
+# Copilot Instructions for Dline
 
-This is a VS Code extension. Read `.clinerules/general.md` for tribal knowledge and nuanced patterns.
+Read the project rules before proposing changes:
 
-## Architecture
-- **Core** (`src/`): `extension.ts` → `WebviewProvider` → `Controller` (single source of truth) → `Task` (agent loop).
-- **Webview** (`webview-ui/`): React/Vite app. State via `ExtensionStateContext.tsx`, synced through message passing.
-- **CLI** (`cli/`): React Ink terminal UI sharing core logic. Update CLI when changing webview features.
-- **Communication**: Protobuf-defined gRPC-like protocol over VS Code message passing. Schemas in `proto/`.
-- **MCP**: `src/services/mcp/McpHub.ts`.
+- `.agents/rules/dline-overview.md` for the current VS Code extension architecture;
+- `.agents/rules/engineering-guide.md` for editing, testing, prompt, provider, and generated-code contracts;
+- `.agents/rules/storage.md` for persistence ownership;
+- `.agents/rules/network.md` for proxy-aware transport requirements;
+- `.agents/rules/protobuf-development.md` for Proto and ProtoBus changes.
 
-## Build & Test (Critical — non-obvious commands)
-- **Build**: `npm run compile` — NOT `npm run build`.
-- **Watch**: `npm run watch` (extension + webview).
-- **Protos**: `npm run protos` — run **immediately** after any `.proto` change. Generates into `src/shared/proto/`, `src/generated/`.
-- **Tests**: `npm run test:unit`. After prompt/tool changes: `UPDATE_SNAPSHOTS=true npm run test:unit`.
+## Current product boundary
 
-## Protobuf RPC Workflow (4 steps)
-1. **Define** in `proto/cline/*.proto`. Naming: `PascalCaseService`, `camelCase` RPCs, `PascalCase` Messages. Use `common.proto` shared types for simple data.
-2. **Generate**: `npm run protos`.
-3. **Backend handler**: `src/core/controller/<domain>/`. 
-4. **Frontend call**: `UiServiceClient.myMethod(Request.create({...}))`.
-- Adding enums (e.g. `ClineSay`) → also update `src/shared/proto-conversions/cline-message.ts`.
+Dline currently ships one VS Code extension from `src/extension.ts` with an embedded React Webview. `src/standalone`, `src/hosts/external`, and standalone projections are retained architecture for a future executable, not the current release surface.
 
-## Adding API Providers (silent failure risk)
-Three proto conversion updates are **required** or the provider silently resets to Anthropic:
-1. `proto/cline/models.proto` — add to `ApiProvider` enum.
-2. `convertApiProviderToProto()` in `src/shared/proto-conversions/models/api-configuration-conversion.ts`.
-3. `convertProtoToApiProvider()` in the same file.
+## Build and verification
 
-Also update: `src/shared/api.ts`, `src/shared/providers/providers.json`, `src/core/api/index.ts`, `webview-ui/.../providerUtils.ts`, `webview-ui/.../validate.ts`, `webview-ui/.../ApiOptions.tsx`, and `cli/src/components/ModelPicker.tsx`.
+- Type checking: `npm run check-types`.
+- Lint: `npm run lint`.
+- Focused Vitest: `npm run test:run -- <test-file>`.
+- Proto generation: `npm run protos`; never edit generated projections as source.
+- Production bundle: `npm run package`.
 
-For Responses API providers: add to `isNextGenModelProvider()` in `src/utils/model-utils.ts` and set `apiFormat: ApiFormat.OPENAI_RESPONSES` on models.
+Do not use a hand-written `tsc -b` command or start Vitest watch mode for one-shot verification.
 
-## Adding Tools to System Prompt (5+ file chain)
-1. Add enum to `ClineDefaultTool` in `src/shared/tools.ts`.
-2. Create definition in `src/core/prompts/system-prompt/tools/` (export `[GENERIC]` minimum).
-3. Register in `src/core/prompts/system-prompt/tools/init.ts`.
-4. Whitelist in `src/core/prompts/system-prompt/variants/*/config.ts` for each model family.
-5. Handler in `src/core/task/tools/handlers/`, wire in `ToolExecutor.ts`.
-6. If tool has UI: add `ClineSay` enum in proto → `ExtensionMessage.ts` → `cline-message.ts` → `ChatRow.tsx`.
-7. Regenerate snapshots: `UPDATE_SNAPSHOTS=true npm run test:unit`.
+## Protobuf and Webview RPC
 
-## Modifying System Prompt
-Modular: `components/` (shared) + `variants/` (model-specific) + `templates/` (`{{PLACEHOLDER}}`). Variants override components via `componentOverrides` in `config.ts` or custom `template.ts`. XS variant is heavily condensed inline. Always regenerate snapshots after changes.
+Proto sources live under `proto/dline/`. Webview RPC uses generated ProtoBus envelopes over VS Code `postMessage`; it is not a network gRPC socket. A contract change normally requires the owning Proto service, regenerated projections, a controller or host handler, a generated client call, and focused transport tests.
 
-## Global State Keys (silent failure risk)
-Adding a key requires: type in `src/shared/storage/state-keys.ts`, read via `context.globalState.get()` in `src/core/storage/utils/state-helpers.ts` `readGlobalStateFromDisk()`, and add to return object. Missing the `.get()` call compiles fine but value is always `undefined`.
+## Providers and models
 
-## Slash Commands (3 places)
-- `src/core/slash-commands/index.ts` — definitions.
-- `src/core/prompts/commands.ts` — system prompt integration.
-- `webview-ui/src/utils/slash-commands.ts` — webview autocomplete.
+Provider handlers live under `src/core/api/providers/`; runtime model metadata belongs to `src/core/model-registry/`. Use shared proxy-aware transports from `@shared/net` and current analogous providers. Prompt behavior has only Standard and Lite profiles; do not add model-family prompt variants.
 
-## Conventions
-- **Paths**: Always use `src/utils/path` helpers (`toPosixString`) for cross-platform compatibility.
-- **Logging**: `src/shared/services/Logger.ts`.
-- **Feature flags**: See PR #7566 as reference pattern.
+## Tools and prompts
+
+Built-in tool identities are declared in `src/shared/tools.ts`. Canonical descriptors live in `src/core/prompts/tools/tool-specs.ts`, ordered memberships in `tool-ids.ts`, and model-visible prose in `src/core/prompts/i18n/en/`. Follow the project `add-new-tool` skill for the complete change chain.
+
+## Storage
+
+Runtime persistence is file-backed through `StorageContext`, `StateManager`, and owning repositories. VS Code `ExtensionContext` is a migration source, not the current authority. Do not add ad-hoc JSON writes or reconstruct storage paths outside their owner.

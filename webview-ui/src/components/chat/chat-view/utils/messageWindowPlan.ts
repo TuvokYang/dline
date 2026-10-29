@@ -15,32 +15,32 @@
 
 /** Absolute bounds of the currently loaded message window. */
 export interface MessageWindow {
-	/** Absolute index of the first loaded message. */
-	start: number
-	/** Number of loaded messages. */
-	length: number
-	/** Total messages the backend holds for this task. */
-	total: number
+    /** Absolute index of the first loaded message. */
+    start: number
+    /** Number of loaded messages. */
+    length: number
+    /** Total messages the backend holds for this task. */
+    total: number
 }
 
 /** Absolute message indexes currently on screen. */
 export interface VisibleMessageRange {
-	/** Absolute index of the first visible message. */
-	firstMessageIndex: number
-	/** Absolute index of the last visible message. */
-	lastMessageIndex: number
+    /** Absolute index of the first visible message. */
+    firstMessageIndex: number
+    /** Absolute index of the last visible message. */
+    lastMessageIndex: number
 }
 
 /** Tuning for window growth and release. */
 export interface MessageWindowLimits {
-	/** Messages to request per extension. */
-	loadCount: number
-	/** Buffer below which an extension is requested. */
-	loadThreshold: number
-	/** Buffer above which the far side may be released. */
-	maxSideBuffer: number
-	/** Buffer left behind after a release. */
-	trimSideTarget: number
+    /** Messages to request per extension. */
+    loadCount: number
+    /** Buffer below which an extension is requested. */
+    loadThreshold: number
+    /** Buffer above which the far side may be released. */
+    maxSideBuffer: number
+    /** Buffer left behind after a release. */
+    trimSideTarget: number
 }
 
 /**
@@ -67,30 +67,30 @@ export type WindowSide = "leading" | "trailing"
 
 /** A request to extend the window on one side. */
 export interface WindowExtension {
-	side: WindowSide
-	/** Absolute index the fetch starts from. */
-	startIndex: number
-	/** Number of messages to fetch. */
-	count: number
+    side: WindowSide
+    /** Absolute index the fetch starts from. */
+    startIndex: number
+    /** Number of messages to fetch. */
+    count: number
 }
 
 /** A request to release messages from one side of the window. */
 export interface WindowTrim {
-	side: WindowSide
-	/** Number of messages to drop. */
-	count: number
-	/** Window start after the trim is applied. */
-	nextStart: number
-	/** Window length after the trim is applied. */
-	nextLength: number
+    side: WindowSide
+    /** Number of messages to drop. */
+    count: number
+    /** Window start after the trim is applied. */
+    nextStart: number
+    /** Window length after the trim is applied. */
+    nextLength: number
 }
 
 /** Default limits used by the chat message list. */
 export const DEFAULT_MESSAGE_WINDOW_LIMITS: MessageWindowLimits = {
-	loadCount: 200,
-	loadThreshold: 100,
-	maxSideBuffer: 300,
-	trimSideTarget: 100,
+    loadCount: 200,
+    loadThreshold: 100,
+    maxSideBuffer: 300,
+    trimSideTarget: 100,
 }
 
 /**
@@ -100,7 +100,7 @@ export const DEFAULT_MESSAGE_WINDOW_LIMITS: MessageWindowLimits = {
  * @returns True when no further extension is possible.
  */
 export function isWholeConversationLoaded(window: MessageWindow): boolean {
-	return window.start <= 0 && window.start + window.length >= window.total
+    return window.start <= 0 && window.start + window.length >= window.total
 }
 
 /**
@@ -111,7 +111,7 @@ export function isWholeConversationLoaded(window: MessageWindow): boolean {
  * @returns Number of loaded messages before the first visible one.
  */
 export function leadingBuffer(window: MessageWindow, visible: VisibleMessageRange): number {
-	return Math.max(0, visible.firstMessageIndex - window.start)
+    return Math.max(0, visible.firstMessageIndex - window.start)
 }
 
 /**
@@ -122,7 +122,7 @@ export function leadingBuffer(window: MessageWindow, visible: VisibleMessageRang
  * @returns Number of loaded messages after the last visible one.
  */
 export function trailingBuffer(window: MessageWindow, visible: VisibleMessageRange): number {
-	return Math.max(0, window.start + window.length - 1 - visible.lastMessageIndex)
+    return Math.max(0, window.start + window.length - 1 - visible.lastMessageIndex)
 }
 
 /**
@@ -134,29 +134,29 @@ export function trailingBuffer(window: MessageWindow, visible: VisibleMessageRan
  * @returns Extensions to request, in priority order.
  */
 export function planWindowExtensions(
-	window: MessageWindow,
-	visible: VisibleMessageRange,
-	limits: MessageWindowLimits = DEFAULT_MESSAGE_WINDOW_LIMITS,
+    window: MessageWindow,
+    visible: VisibleMessageRange,
+    limits: MessageWindowLimits = DEFAULT_MESSAGE_WINDOW_LIMITS,
 ): WindowExtension[] {
-	const extensions: WindowExtension[] = []
+    const extensions: WindowExtension[] = []
 
-	if (window.start > 0 && leadingBuffer(window, visible) < limits.loadThreshold) {
-		const startIndex = Math.max(0, window.start - limits.loadCount)
-		const count = window.start - startIndex
-		if (count > 0) {
-			extensions.push({ side: "leading", startIndex, count })
-		}
-	}
+    if (window.start > 0 && leadingBuffer(window, visible) < limits.loadThreshold) {
+        const startIndex = Math.max(0, window.start - limits.loadCount)
+        const count = window.start - startIndex
+        if (count > 0) {
+            extensions.push({ side: "leading", startIndex, count })
+        }
+    }
 
-	const windowEnd = window.start + window.length
-	if (windowEnd < window.total && trailingBuffer(window, visible) < limits.loadThreshold) {
-		const count = Math.min(limits.loadCount, window.total - windowEnd)
-		if (count > 0) {
-			extensions.push({ side: "trailing", startIndex: windowEnd, count })
-		}
-	}
+    const windowEnd = window.start + window.length
+    if (windowEnd < window.total && trailingBuffer(window, visible) < limits.loadThreshold) {
+        const count = Math.min(limits.loadCount, window.total - windowEnd)
+        if (count > 0) {
+            extensions.push({ side: "trailing", startIndex: windowEnd, count })
+        }
+    }
 
-	return extensions
+    return extensions
 }
 
 /**
@@ -172,44 +172,44 @@ export function planWindowExtensions(
  * @returns Trim to apply, or undefined when the window should be left alone.
  */
 export function planWindowTrim(
-	window: MessageWindow,
-	visible: VisibleMessageRange,
-	limits: MessageWindowLimits = DEFAULT_MESSAGE_WINDOW_LIMITS,
+    window: MessageWindow,
+    visible: VisibleMessageRange,
+    limits: MessageWindowLimits = DEFAULT_MESSAGE_WINDOW_LIMITS,
 ): WindowTrim | undefined {
-	// Releasing below the fetch threshold would re-arm the fetch that the
-	// release just satisfied, so the target may reach that threshold but not
-	// pass it. Landing exactly on it is the intended steady state: the side
-	// is left at the lower bound with a full `loadCount` of headroom before
-	// either rule fires again.
-	if (limits.trimSideTarget < limits.loadThreshold) {
-		return undefined
-	}
+    // Releasing below the fetch threshold would re-arm the fetch that the
+    // release just satisfied, so the target may reach that threshold but not
+    // pass it. Landing exactly on it is the intended steady state: the side
+    // is left at the lower bound with a full `loadCount` of headroom before
+    // either rule fires again.
+    if (limits.trimSideTarget < limits.loadThreshold) {
+        return undefined
+    }
 
-	const leading = leadingBuffer(window, visible)
-	if (leading > limits.maxSideBuffer) {
-		const count = Math.min(leading - limits.trimSideTarget, window.length)
-		if (count > 0) {
-			return {
-				side: "leading",
-				count,
-				nextStart: window.start + count,
-				nextLength: window.length - count,
-			}
-		}
-	}
+    const leading = leadingBuffer(window, visible)
+    if (leading > limits.maxSideBuffer) {
+        const count = Math.min(leading - limits.trimSideTarget, window.length)
+        if (count > 0) {
+            return {
+                side: "leading",
+                count,
+                nextStart: window.start + count,
+                nextLength: window.length - count,
+            }
+        }
+    }
 
-	const trailing = trailingBuffer(window, visible)
-	if (trailing > limits.maxSideBuffer) {
-		const count = Math.min(trailing - limits.trimSideTarget, window.length)
-		if (count > 0) {
-			return {
-				side: "trailing",
-				count,
-				nextStart: window.start,
-				nextLength: window.length - count,
-			}
-		}
-	}
+    const trailing = trailingBuffer(window, visible)
+    if (trailing > limits.maxSideBuffer) {
+        const count = Math.min(trailing - limits.trimSideTarget, window.length)
+        if (count > 0) {
+            return {
+                side: "trailing",
+                count,
+                nextStart: window.start,
+                nextLength: window.length - count,
+            }
+        }
+    }
 
-	return undefined
+    return undefined
 }

@@ -4,14 +4,14 @@ import { groqModels } from "../../../shared/api"
 import { Controller } from ".."
 
 export function resolveGroqSupportsTools(rawModel: any, staticModelInfo?: ModelInfo): boolean | undefined {
-	const supportedFeatures = rawModel?.supportedFeatures ?? rawModel?.supported_features
-	if (Array.isArray(supportedFeatures)) {
-		return supportedFeatures.includes("tools")
-	}
-	if (supportedFeatures && typeof supportedFeatures.tools === "boolean") {
-		return supportedFeatures.tools
-	}
-	return staticModelInfo?.capabilities?.supportsTools
+    const supportedFeatures = rawModel?.supportedFeatures ?? rawModel?.supported_features
+    if (Array.isArray(supportedFeatures)) {
+        return supportedFeatures.includes("tools")
+    }
+    if (supportedFeatures && typeof supportedFeatures.tools === "boolean") {
+        return supportedFeatures.tools
+    }
+    return staticModelInfo?.capabilities?.supportsTools
 }
 
 /**
@@ -23,6 +23,6 @@ export function resolveGroqSupportsTools(rawModel: any, staticModelInfo?: ModelI
  * @returns Record of model ID to ModelInfo (application types)
  */
 export async function refreshGroqModels(_controller: Controller): Promise<Record<string, ModelInfo>> {
-	const models = await discoverProviderModels("groq", undefined, { persist: true })
-	return Object.keys(models).length > 0 ? models : groqModels
+    const models = await discoverProviderModels("groq", undefined, { persist: true })
+    return Object.keys(models).length > 0 ? models : groqModels
 }

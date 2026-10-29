@@ -17,7 +17,7 @@ Dline 目前以一个 VS Code 扩展发布，内嵌 React Webview。本页按运
 | `scripts/` | 代码生成、打包、测试与构建辅助脚本 |
 | `docs/` | 本文档站（独立的 Astro Starlight 项目）和英文更新日志 |
 | `standalone/`、`src/standalone/`、`src/hosts/external/` | 为未来的独立可执行程序保留的代码，当前发布只包含 VS Code 扩展 |
-| `evals/`、`testing-platform/`、`tests/` | 评测框架、测试平台和 Storybook 等附加测试 |
+| `testing-platform/`、`tests/` | 独立集成测试客户端和 Storybook 等附加测试 |
 
 `src/core` 是源码分组，不是单独部署的产品。
 
@@ -27,7 +27,7 @@ Dline 目前以一个 VS Code 扩展发布，内嵌 React Webview。本页按运
 
 1. `setupHostProvider()` 通过 `HostProvider.initialize()` 注册 VS Code 版本的 Webview、diff、review、终端和宿主桥接实现；
 2. 立即创建并注册侧边栏 Webview 提供者，它的 Controller 稍后才创建；
-3. `migrateFromClineWithProgress()` 复制旧的 Cline 数据（见[从 Cline 迁移](/zh-cn/getting-started/migration-cline-to-dline/)），然后清理旧的 VS Code 存储；
+3. 清理旧的 VS Code 存储；Dline 不会导入 Cline 数据（手动步骤见[从 Cline 迁移](/zh-cn/getting-started/migration-cline-to-dline/)）；
 4. `createStorageContext()` 解析存储根目录，`exportVSCodeStorageToSharedFiles()` 把旧的 `ExtensionContext` 状态导出到文件存储；
 5. `initialize()`（`src/common.ts`）初始化 `StateManager` 和 `ModelRegistry`，创建 Controller 并挂到 Webview 提供者上，同时注册为编排器的主 Controller；
 6. 注册编辑器面板的序列化器、测试模式和钩子，最后注册 VS Code 命令。
@@ -58,26 +58,28 @@ VS Code API 调用应当留在宿主和集成边界内。
 
 ## Task 运行时
 
-`src/core/task/index.ts` 中的 `Task` 是任务的主协调者，生命周期由以下组件分担：
+任务运行在基于日志（journal）的内核之上。Controller 为每个打开的任务持有一个 `session/ActiveTaskSession.ts`，所有生命周期变化都经过以下组件：
 
 | 源码 | 职责 |
 |---|---|
-| `runtime/TaskRuntime.ts` | 串行分发任务事件 |
-| `runtime/TaskReducer.ts`、`runtime/TaskEvent.ts`、`TaskPhase.ts` | 定义合法的生命周期转换 |
-| `TaskController.ts` | 协调块阶段、审批归属和保留的展示状态 |
-| `MessageChannel.ts` | 串行投递消息 |
-| `message-state.ts` | 管理 API 与界面消息状态 |
-| `interaction/InteractionCoordinator.ts` | 管理审批、重试、恢复、问答、计划和完成等用户交互 |
-| `TaskSnapshotPersistence.ts` | 合并快照写入，用于崩溃恢复 |
+| `shell/Task.ts`、`shell/TaskShell.ts` | 任务的对外接口：打开、启动、提交输入、响应、取消和终止 |
+| `kernel/transition.ts` | 纯转换函数，按任务状态校验每个事件 |
+| `kernel/hydrate.ts`、`kernel/recovery.ts` | 任务重新打开时从 `state.json` 与日志重建状态，并恢复被中断的工作 |
+| `runtime/TaskRuntime.ts` | 串行处理事件，经提交管线持久化，并从持久化的 outbox 分发命令 |
+| `stores/` | 每次提交背后的日志、载荷与状态存储 |
+| `composition/` | 组装会话的运行时、存储与执行器，包括导入旧版本对话的升级流程 |
+| `session/ActiveTaskSession.ts` | 管理一个打开任务的资源，以及本窗口是否可以写入它 |
+| `session/TaskInteractionOwner.ts` | 管理审批、重试、恢复、问答、计划和完成等用户交互 |
+| `MessageChannel.ts`、`message-state.ts` | 串行投递消息并投影聊天行 |
 | `activity/TaskActivityStore.ts` | 管理聊天和 Activities 视图中的任务活动 |
 
-以上路径都相对于 `src/core/task/`。新的生命周期转换应当表达为事件，经 reducer 校验，再投影到界面并按需持久化；不要在 `TaskRuntime` 旁边另建布尔状态机。
+以上路径都相对于 `src/core/task/`。新的生命周期转换应当表达为事件，经内核转换函数校验，再投影到界面；不要在 `TaskRuntime` 旁边另建布尔状态机。只有持有任务锁的窗口可以写入任务：在 `TaskShell.open()` 授予写入所有权之前，运行时以 `read_only` 拒绝所有事件，Controller 以只读方式显示该任务。
 
 ## 工具
 
 | 位置 | 内容 |
 |---|---|
-| `src/shared/tools.ts` | 内置工具身份，枚举 `ClineDefaultTool` |
+| `src/shared/tools.ts` | 内置工具身份，枚举 `DlineDefaultTool` |
 | `src/core/prompts/tools/tool-specs.ts` | 规范工具描述 `STANDARD_TOOL_SPECS` |
 | `src/core/prompts/tools/tool-ids.ts` | 按顺序列出 Standard 与 Lite 注册的工具 ID |
 | `src/core/prompts/tools/provider-projector.ts` | 投影为服务商原生工具 Schema |

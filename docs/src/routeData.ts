@@ -6,9 +6,9 @@ import { selectSection } from "./data/sections.mjs"
  * documentation section and publish the section tabs for the header.
  */
 export const onRequest = defineRouteMiddleware((context) => {
-	const route = context.locals.starlightRoute
-	const { tabs, sidebar, pagination } = selectSection(route)
-	context.locals.dlineSections = tabs
-	route.sidebar = sidebar
-	route.pagination = pagination
+    const route = context.locals.starlightRoute
+    const { tabs, sidebar, pagination } = selectSection(route)
+    context.locals.dlineSections = tabs
+    route.sidebar = sidebar
+    route.pagination = pagination
 })

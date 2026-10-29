@@ -6,529 +6,561 @@ import { ChatRowContent } from "../ChatRow"
 void React
 
 vi.mock("@/context/ExtensionStateContext", () => ({
-	useExtensionState: () => ({
-		backgroundEditEnabled: true,
-		mcpServers: [],
-		mcpMarketplaceCatalog: [],
-		onRelinquishControl: () => () => undefined,
-		vscodeTerminalExecutionMode: "backgroundExec",
-		clineMessages: [],
-		showFeatureTips: false,
-		taskViewState: undefined,
-		currentTaskItem: { id: "task-1" },
-	}),
+    useExtensionState: () => ({
+        backgroundEditEnabled: true,
+        mcpServers: [],
+        mcpMarketplaceCatalog: [],
+        onRelinquishControl: () => () => undefined,
+        vscodeTerminalExecutionMode: "backgroundExec",
+        clineMessages: [],
+        showFeatureTips: false,
+        taskViewState: undefined,
+        currentTaskItem: { id: "task-1" },
+    }),
 }))
 
 const baseProps = {
-	isExpanded: false,
-	isLast: true,
-	onSetQuote: vi.fn(),
-	onToggleExpand: vi.fn(),
+    isExpanded: false,
+    isLast: true,
+    onSetQuote: vi.fn(),
+    onToggleExpand: vi.fn(),
 }
 
 describe("ChatRow hosted Web Search rendering", () => {
-	it("does not render a duplicate external icon on the Web Search card", () => {
-		const { container } = render(
-			<ChatRowContent
-				{...baseProps}
-				message={{
-					ts: 1,
-					type: "say",
-					say: "tool",
-					partial: false,
-					text: JSON.stringify({
-						tool: "webSearch",
-						path: "Dline web search",
-						content: "Searching for: Dline web search",
-						operationIsLocatedInWorkspace: false,
-						webSearch: {
-							schemaVersion: 1,
-							status: "completed",
-							source: {
-								id: "deepseek-hosted",
-								label: "DeepSeek Web Search",
-								execution: "hosted",
-								provider: "deepseek",
-							},
-							query: "Dline web search",
-							items: [
-								{
-									title: "Dline result",
-									url: "https://example.com/dline",
-									snippet: "Provider-compressed search result",
-								},
-							],
-						},
-					}),
-				}}
-			/>,
-		)
+    it("does not render a duplicate external icon on the Web Search card", () => {
+        const { container } = render(
+            <ChatRowContent
+                {...baseProps}
+                message={{
+                    ts: 1,
+                    type: "say",
+                    say: "tool",
+                    partial: false,
+                    text: JSON.stringify({
+                        tool: "webSearch",
+                        path: "Dline web search",
+                        content: "Searching for: Dline web search",
+                        operationIsLocatedInWorkspace: false,
+                        webSearch: {
+                            schemaVersion: 1,
+                            status: "completed",
+                            source: {
+                                id: "deepseek-hosted",
+                                label: "DeepSeek Web Search",
+                                execution: "hosted",
+                                provider: "deepseek",
+                            },
+                            query: "Dline web search",
+                            items: [
+                                {
+                                    title: "Dline result",
+                                    url: "https://example.com/dline",
+                                    snippet: "Provider-compressed search result",
+                                },
+                            ],
+                        },
+                    }),
+                }}
+            />,
+        )
 
-		expect(container.querySelector(".codicon-sign-out")).toBeNull()
-	})
+        expect(container.querySelector(".codicon-sign-out")).toBeNull()
+    })
 
-	it("renders the actual source and provider-compressed results", () => {
-		render(
-			<ChatRowContent
-				{...baseProps}
-				message={{
-					ts: 1,
-					type: "say",
-					say: "tool",
-					partial: false,
-					text: JSON.stringify({
-						tool: "webSearch",
-						path: "Dline web search",
-						content: "Searching for: Dline web search",
-						operationIsLocatedInWorkspace: false,
-						webSearch: {
-							schemaVersion: 1,
-							status: "completed",
-							source: {
-								id: "deepseek-hosted",
-								label: "DeepSeek Web Search",
-								execution: "hosted",
-								provider: "deepseek",
-							},
-							query: "Dline web search",
-							items: [
-								{
-									title: "Dline result",
-									url: "https://example.com/dline",
-									snippet: "Provider-compressed search result",
-								},
-							],
-						},
-					}),
-				}}
-			/>,
-		)
+    it("renders the actual source and provider-compressed results", () => {
+        render(
+            <ChatRowContent
+                {...baseProps}
+                message={{
+                    ts: 1,
+                    type: "say",
+                    say: "tool",
+                    partial: false,
+                    text: JSON.stringify({
+                        tool: "webSearch",
+                        path: "Dline web search",
+                        content: "Searching for: Dline web search",
+                        operationIsLocatedInWorkspace: false,
+                        webSearch: {
+                            schemaVersion: 1,
+                            status: "completed",
+                            source: {
+                                id: "deepseek-hosted",
+                                label: "DeepSeek Web Search",
+                                execution: "hosted",
+                                provider: "deepseek",
+                            },
+                            query: "Dline web search",
+                            items: [
+                                {
+                                    title: "Dline result",
+                                    url: "https://example.com/dline",
+                                    snippet: "Provider-compressed search result",
+                                },
+                            ],
+                        },
+                    }),
+                }}
+            />,
+        )
 
-		expect(screen.getByText("DeepSeek Web Search (Hosted)")).toBeInTheDocument()
-		const toggle = screen.getByTestId("web-search-details-toggle")
-		expect(toggle).toHaveAttribute("aria-expanded", "false")
-		expect(screen.queryByTestId("web-search-results")).not.toBeInTheDocument()
-		expect(screen.queryByText("Dline result")).not.toBeInTheDocument()
+        expect(screen.getByText("DeepSeek Web Search (Hosted)")).toBeInTheDocument()
+        const toggle = screen.getByTestId("web-search-details-toggle")
+        expect(toggle).toHaveAttribute("aria-expanded", "false")
+        expect(screen.queryByTestId("web-search-results")).not.toBeInTheDocument()
+        expect(screen.queryByText("Dline result")).not.toBeInTheDocument()
 
-		fireEvent.click(toggle)
+        fireEvent.click(toggle)
 
-		expect(toggle).toHaveAttribute("aria-expanded", "true")
-		expect(screen.getByText("Dline result")).toBeInTheDocument()
-		expect(screen.getByText("https://example.com/dline")).toBeInTheDocument()
-		expect(screen.getByText("Provider-compressed search result")).toBeInTheDocument()
-		expect(screen.getByTestId("web-search-card")).toHaveClass("max-h-[40vh]", "overflow-hidden")
-		expect(screen.getByTestId("web-search-card")).not.toHaveClass("overflow-y-auto")
-		expect(screen.getByTestId("web-search-results")).toHaveClass("overflow-y-auto")
+        expect(toggle).toHaveAttribute("aria-expanded", "true")
+        expect(screen.getByText("Dline result")).toBeInTheDocument()
+        expect(screen.getByText("https://example.com/dline")).toBeInTheDocument()
+        expect(screen.getByText("Provider-compressed search result")).toBeInTheDocument()
+        expect(screen.getByTestId("web-search-card")).toHaveClass("max-h-[40vh]", "overflow-hidden")
+        expect(screen.getByTestId("web-search-card")).not.toHaveClass("overflow-y-auto")
+        expect(screen.getByTestId("web-search-results")).toHaveClass("overflow-y-auto")
 
-		const header = screen.getByTestId("web-search-header")
-		expect(header).toHaveAttribute("aria-expanded", "true")
-		fireEvent.click(header)
+        const header = screen.getByTestId("web-search-header")
+        expect(header).toHaveAttribute("aria-expanded", "true")
+        fireEvent.click(header)
 
-		expect(header).toHaveAttribute("aria-expanded", "false")
-		expect(toggle).toHaveAttribute("aria-expanded", "false")
-		expect(screen.queryByTestId("web-search-results")).not.toBeInTheDocument()
+        expect(header).toHaveAttribute("aria-expanded", "false")
+        expect(toggle).toHaveAttribute("aria-expanded", "false")
+        expect(screen.queryByTestId("web-search-results")).not.toBeInTheDocument()
 
-		fireEvent.click(header)
+        fireEvent.click(header)
 
-		expect(toggle).toHaveAttribute("aria-expanded", "true")
-		expect(screen.getByText("Dline result")).toBeInTheDocument()
-	})
+        expect(toggle).toHaveAttribute("aria-expanded", "true")
+        expect(screen.getByText("Dline result")).toBeInTheDocument()
+    })
 
-	it("renders all normalized search queries instead of the generic hosted placeholder", () => {
-		render(
-			<ChatRowContent
-				{...baseProps}
-				message={{
-					ts: 5,
-					type: "say",
-					say: "tool",
-					partial: false,
-					text: JSON.stringify({
-						tool: "webSearch",
-						path: "Provider-hosted web search",
-						webSearch: {
-							schemaVersion: 1,
-							status: "completed",
-							operation: {
-								type: "search",
-								queries: ["Dline hosted search", "OpenAI Responses"],
-							},
-						},
-					}),
-				}}
-			/>,
-		)
+    it("renders all normalized search queries instead of the generic hosted placeholder", () => {
+        render(
+            <ChatRowContent
+                {...baseProps}
+                message={{
+                    ts: 5,
+                    type: "say",
+                    say: "tool",
+                    partial: false,
+                    text: JSON.stringify({
+                        tool: "webSearch",
+                        path: "Provider-hosted web search",
+                        webSearch: {
+                            schemaVersion: 1,
+                            status: "completed",
+                            operation: {
+                                type: "search",
+                                queries: ["Dline hosted search", "OpenAI Responses"],
+                            },
+                        },
+                    }),
+                }}
+            />,
+        )
 
-		expect(screen.getByText("Dline searched the web for:")).toBeInTheDocument()
-		expect(screen.getByText("Dline hosted search")).toBeInTheDocument()
-		expect(screen.getByText("OpenAI Responses")).toBeInTheDocument()
-		expect(screen.queryByText("Provider-hosted web search")).not.toBeInTheDocument()
-	})
+        expect(screen.getByText("Dline searched the web for:")).toBeInTheDocument()
+        expect(screen.getByText("Dline hosted search")).toBeInTheDocument()
+        expect(screen.getByText("OpenAI Responses")).toBeInTheDocument()
+        expect(screen.queryByText("Provider-hosted web search")).not.toBeInTheDocument()
+    })
 
-	it("renders open_page with its actual URL and operation-specific title", () => {
-		render(
-			<ChatRowContent
-				{...baseProps}
-				message={{
-					ts: 6,
-					type: "say",
-					say: "tool",
-					partial: false,
-					text: JSON.stringify({
-						tool: "webSearch",
-						path: "Provider-hosted web search",
-						webSearch: {
-							schemaVersion: 1,
-							status: "completed",
-							operation: {
-								type: "open_page",
-								url: "https://example.com/current",
-							},
-						},
-					}),
-				}}
-			/>,
-		)
+    it("renders open_page with its actual URL and operation-specific title", () => {
+        render(
+            <ChatRowContent
+                {...baseProps}
+                message={{
+                    ts: 6,
+                    type: "say",
+                    say: "tool",
+                    partial: false,
+                    text: JSON.stringify({
+                        tool: "webSearch",
+                        path: "Provider-hosted web search",
+                        webSearch: {
+                            schemaVersion: 1,
+                            status: "completed",
+                            operation: {
+                                type: "open_page",
+                                url: "https://example.com/current",
+                            },
+                        },
+                    }),
+                }}
+            />,
+        )
 
-		expect(screen.getByText("Dline opened a web page:")).toBeInTheDocument()
-		expect(screen.getByText("https://example.com/current")).toBeInTheDocument()
-		expect(screen.queryByText("Provider-hosted web search")).not.toBeInTheDocument()
-	})
+        expect(screen.getByText("Dline opened a web page:")).toBeInTheDocument()
+        expect(screen.getByText("https://example.com/current")).toBeInTheDocument()
+        expect(screen.queryByText("Provider-hosted web search")).not.toBeInTheDocument()
+    })
 
-	it("renders find_in_page with its URL, pattern, and operation-specific title", () => {
-		render(
-			<ChatRowContent
-				{...baseProps}
-				message={{
-					ts: 7,
-					type: "say",
-					say: "tool",
-					partial: false,
-					text: JSON.stringify({
-						tool: "webSearch",
-						path: "Provider-hosted web search",
-						webSearch: {
-							schemaVersion: 1,
-							status: "completed",
-							operation: {
-								type: "find_in_page",
-								url: "https://example.com/docs",
-								pattern: "hosted search action",
-							},
-						},
-					}),
-				}}
-			/>,
-		)
+    it("renders find_in_page with its URL, pattern, and operation-specific title", () => {
+        render(
+            <ChatRowContent
+                {...baseProps}
+                message={{
+                    ts: 7,
+                    type: "say",
+                    say: "tool",
+                    partial: false,
+                    text: JSON.stringify({
+                        tool: "webSearch",
+                        path: "Provider-hosted web search",
+                        webSearch: {
+                            schemaVersion: 1,
+                            status: "completed",
+                            operation: {
+                                type: "find_in_page",
+                                url: "https://example.com/docs",
+                                pattern: "hosted search action",
+                            },
+                        },
+                    }),
+                }}
+            />,
+        )
 
-		expect(screen.getByText("Dline searched within a web page:")).toBeInTheDocument()
-		expect(screen.getByText("https://example.com/docs")).toBeInTheDocument()
-		expect(screen.getByText("hosted search action")).toBeInTheDocument()
-		expect(screen.queryByText("Provider-hosted web search")).not.toBeInTheDocument()
-	})
+        expect(screen.getByText("Dline searched within a web page:")).toBeInTheDocument()
+        expect(screen.getByText("https://example.com/docs")).toBeInTheDocument()
+        expect(screen.getByText("hosted search action")).toBeInTheDocument()
+        expect(screen.queryByText("Provider-hosted web search")).not.toBeInTheDocument()
+    })
 
-	it("falls back to the legacy query when a persisted message has no operation", () => {
-		render(
-			<ChatRowContent
-				{...baseProps}
-				message={{
-					ts: 8,
-					type: "say",
-					say: "tool",
-					partial: false,
-					text: JSON.stringify({
-						tool: "webSearch",
-						path: "legacy path",
-						webSearch: {
-							schemaVersion: 1,
-							status: "completed",
-							query: "legacy persisted query",
-						},
-					}),
-				}}
-			/>,
-		)
+    it("falls back to the legacy query when a persisted message has no operation", () => {
+        render(
+            <ChatRowContent
+                {...baseProps}
+                message={{
+                    ts: 8,
+                    type: "say",
+                    say: "tool",
+                    partial: false,
+                    text: JSON.stringify({
+                        tool: "webSearch",
+                        path: "legacy path",
+                        webSearch: {
+                            schemaVersion: 1,
+                            status: "completed",
+                            query: "legacy persisted query",
+                        },
+                    }),
+                }}
+            />,
+        )
 
-		expect(screen.getByText("Dline searched the web for:")).toBeInTheDocument()
-		expect(screen.getByText("legacy persisted query")).toBeInTheDocument()
-	})
+        expect(screen.getByText("Dline searched the web for:")).toBeInTheDocument()
+        expect(screen.getByText("legacy persisted query")).toBeInTheDocument()
+    })
 
-	it("renders URL-only hosted sources with a readable fallback title", () => {
-		render(
-			<ChatRowContent
-				{...baseProps}
-				message={{
-					ts: 3,
-					type: "say",
-					say: "tool",
-					partial: false,
-					text: JSON.stringify({
-						tool: "webSearch",
-						path: "URL only",
-						webSearch: {
-							schemaVersion: 1,
-							status: "completed",
-							query: "URL only",
-							items: [{ url: "https://docs.example.com/current" }],
-						},
-					}),
-				}}
-			/>,
-		)
+    it("renders URL-only hosted sources with a readable fallback title", () => {
+        render(
+            <ChatRowContent
+                {...baseProps}
+                message={{
+                    ts: 3,
+                    type: "say",
+                    say: "tool",
+                    partial: false,
+                    text: JSON.stringify({
+                        tool: "webSearch",
+                        path: "URL only",
+                        webSearch: {
+                            schemaVersion: 1,
+                            status: "completed",
+                            query: "URL only",
+                            items: [{ url: "https://docs.example.com/current" }],
+                        },
+                    }),
+                }}
+            />,
+        )
 
-		fireEvent.click(screen.getByTestId("web-search-details-toggle"))
-		expect(screen.getByText("docs.example.com")).toBeInTheDocument()
-		expect(screen.getByText("https://docs.example.com/current")).toBeInTheDocument()
-	})
+        fireEvent.click(screen.getByTestId("web-search-details-toggle"))
+        expect(screen.getByText("docs.example.com")).toBeInTheDocument()
+        expect(screen.getByText("https://docs.example.com/current")).toBeInTheDocument()
+    })
 
-	it("renders the hosted source and routing failure", () => {
-		render(
-			<ChatRowContent
-				{...baseProps}
-				message={{
-					ts: 2,
-					type: "say",
-					say: "tool",
-					partial: false,
-					text: JSON.stringify({
-						tool: "webSearch",
-						path: "current OpenAI news",
-						webSearch: {
-							schemaVersion: 1,
-							status: "failed",
-							source: {
-								id: "openai-hosted",
-								label: "OpenAI Web Search",
-								execution: "hosted",
-								provider: "openai",
-							},
-							query: "current OpenAI news",
-							error: "OpenAI hosted Web Search returned a local function call; falling back to Dline local Web Search.",
-						},
-					}),
-				}}
-			/>,
-		)
+    it("renders the hosted source and routing failure", () => {
+        render(
+            <ChatRowContent
+                {...baseProps}
+                message={{
+                    ts: 2,
+                    type: "say",
+                    say: "tool",
+                    partial: false,
+                    text: JSON.stringify({
+                        tool: "webSearch",
+                        path: "current OpenAI news",
+                        webSearch: {
+                            schemaVersion: 1,
+                            status: "failed",
+                            source: {
+                                id: "openai-hosted",
+                                label: "OpenAI Web Search",
+                                execution: "hosted",
+                                provider: "openai",
+                            },
+                            query: "current OpenAI news",
+                            error: "OpenAI hosted Web Search returned a local function call; falling back to Dline local Web Search.",
+                        },
+                    }),
+                }}
+            />,
+        )
 
-		expect(screen.getByText("OpenAI Web Search (Hosted)")).toBeInTheDocument()
-		expect(
-			screen.getByText("OpenAI hosted Web Search returned a local function call; falling back to Dline local Web Search."),
-		).toBeInTheDocument()
-	})
+        expect(screen.getByText("OpenAI Web Search (Hosted)")).toBeInTheDocument()
+        expect(
+            screen.getByText("OpenAI hosted Web Search returned a local function call; falling back to Dline local Web Search."),
+        ).toBeInTheDocument()
+    })
 
-	it("renders the selected Dline engine and actionable error", () => {
-		render(
-			<ChatRowContent
-				{...baseProps}
-				message={{
-					ts: 2,
-					type: "say",
-					say: "tool",
-					partial: false,
-					text: JSON.stringify({
-						tool: "webSearch",
-						path: "Dline timeout",
-						webSearch: {
-							schemaVersion: 1,
-							status: "failed",
-							source: { id: "bing", label: "Browser / Bing", execution: "dline" },
-							query: "Dline timeout",
-							error: "Browser / Bing search failed: navigation timed out",
-						},
-					}),
-				}}
-			/>,
-		)
+    it("renders the selected Dline engine and actionable error", () => {
+        render(
+            <ChatRowContent
+                {...baseProps}
+                message={{
+                    ts: 2,
+                    type: "say",
+                    say: "tool",
+                    partial: false,
+                    text: JSON.stringify({
+                        tool: "webSearch",
+                        path: "Dline timeout",
+                        webSearch: {
+                            schemaVersion: 1,
+                            status: "failed",
+                            source: { id: "bing", label: "Browser / Bing", execution: "dline" },
+                            query: "Dline timeout",
+                            error: "Browser / Bing search failed: navigation timed out",
+                        },
+                    }),
+                }}
+            />,
+        )
 
-		expect(screen.getByText("Browser / Bing (Dline)")).toBeInTheDocument()
-		expect(screen.getByText("Browser / Bing search failed: navigation timed out")).toBeInTheDocument()
-	})
+        expect(screen.getByText("Browser / Bing (Dline)")).toBeInTheDocument()
+        expect(screen.getByText("Browser / Bing search failed: navigation timed out")).toBeInTheDocument()
+    })
 
-	it("renders the complete URL in a pending Web Fetch approval", () => {
-		const url = "https://example.com/a/long/path/to/current/api/documentation"
-		render(
-			<ChatRowContent
-				{...baseProps}
-				message={{
-					ts: 3,
-					type: "ask",
-					ask: "tool",
-					partial: false,
-					text: JSON.stringify({
-						tool: "webFetch",
-						path: url,
-						webFetch: {
-							schemaVersion: 1,
-							status: "running",
-							url,
-							prompt: "Read the current API documentation",
-						},
-					}),
-				}}
-			/>,
-		)
+    it("shows why a local search took over a hosted call on that call's one card", () => {
+        const notice =
+            "OpenAI hosted Web Search returned a local web_search function call; falling back to Dline local Web Search."
+        render(
+            <ChatRowContent
+                {...baseProps}
+                message={{
+                    ts: 3,
+                    type: "say",
+                    say: "tool",
+                    partial: false,
+                    text: JSON.stringify({
+                        tool: "webSearch",
+                        path: "fallback query",
+                        webSearch: {
+                            schemaVersion: 1,
+                            status: "completed",
+                            source: { id: "searxng", label: "SearXNG", execution: "dline" },
+                            query: "fallback query",
+                            items: [{ url: "https://example.com/result", title: "Result" }],
+                            notice,
+                        },
+                    }),
+                }}
+            />,
+        )
 
-		const link = screen.getByRole("button", { name: url })
-		expect(link).toHaveTextContent(url)
-		expect(link.firstElementChild).toHaveClass("break-all", "text-left", "[direction:ltr]")
-	})
+        expect(screen.getAllByTestId("web-search-card")).toHaveLength(1)
+        expect(screen.getByText("SearXNG (Dline)")).toBeInTheDocument()
+        expect(screen.getByTestId("web-search-notice")).toHaveTextContent(notice)
+    })
 
-	describe("fetched Web Fetch content", () => {
-		const completedFetch = (content: string) => (
-			<ChatRowContent
-				{...baseProps}
-				message={{
-					ts: 4,
-					type: "say",
-					say: "tool",
-					partial: false,
-					text: JSON.stringify({
-						tool: "webFetch",
-						path: "https://example.com/docs",
-						webFetch: {
-							schemaVersion: 1,
-							status: "completed",
-							source: { id: "anthropic-hosted", label: "Anthropic Web Fetch", execution: "hosted" },
-							url: "https://example.com/docs",
-							content,
-						},
-					}),
-				}}
-			/>
-		)
+    it("renders the complete URL in a pending Web Fetch approval", () => {
+        const url = "https://example.com/a/long/path/to/current/api/documentation"
+        render(
+            <ChatRowContent
+                {...baseProps}
+                message={{
+                    ts: 3,
+                    type: "ask",
+                    ask: "tool",
+                    partial: false,
+                    text: JSON.stringify({
+                        tool: "webFetch",
+                        path: url,
+                        webFetch: {
+                            schemaVersion: 1,
+                            status: "running",
+                            url,
+                            prompt: "Read the current API documentation",
+                        },
+                    }),
+                }}
+            />,
+        )
 
-		it("starts collapsed and renders none of the fetched page until it is expanded", () => {
-			render(completedFetch("# Current docs\n\nFetched content marker"))
+        const link = screen.getByRole("button", { name: url })
+        expect(link).toHaveTextContent(url)
+        expect(link.firstElementChild).toHaveClass("break-all", "text-left", "[direction:ltr]")
+    })
 
-			expect(screen.getByText("Anthropic Web Fetch (Hosted)")).toBeInTheDocument()
-			expect(screen.getByTestId("web-fetch-details-toggle")).toHaveAttribute("aria-expanded", "false")
-			expect(screen.queryByTestId("web-fetch-results")).not.toBeInTheDocument()
-			expect(screen.queryByText(/Fetched content marker/)).not.toBeInTheDocument()
-			expect(screen.getByTestId("web-fetch-card")).not.toHaveClass("max-h-[40vh]", "overflow-y-auto")
-		})
+    describe("fetched Web Fetch content", () => {
+        const completedFetch = (content: string) => (
+            <ChatRowContent
+                {...baseProps}
+                message={{
+                    ts: 4,
+                    type: "say",
+                    say: "tool",
+                    partial: false,
+                    text: JSON.stringify({
+                        tool: "webFetch",
+                        path: "https://example.com/docs",
+                        webFetch: {
+                            schemaVersion: 1,
+                            status: "completed",
+                            source: { id: "anthropic-hosted", label: "Anthropic Web Fetch", execution: "hosted" },
+                            url: "https://example.com/docs",
+                            content,
+                        },
+                    }),
+                }}
+            />
+        )
 
-		it("toggles the fetched page from the card title, keeping the toggle bar above the page", () => {
-			render(completedFetch(`# Long page\n\n${"Fetched paragraph. ".repeat(600)}`))
-			const header = screen.getByTestId("web-fetch-header")
-			const toggle = screen.getByTestId("web-fetch-details-toggle")
-			expect(header).toHaveAttribute("aria-expanded", "false")
+        it("starts collapsed and renders none of the fetched page until it is expanded", () => {
+            render(completedFetch("# Current docs\n\nFetched content marker"))
 
-			fireEvent.click(header)
+            expect(screen.getByText("Anthropic Web Fetch (Hosted)")).toBeInTheDocument()
+            expect(screen.getByTestId("web-fetch-details-toggle")).toHaveAttribute("aria-expanded", "false")
+            expect(screen.queryByTestId("web-fetch-results")).not.toBeInTheDocument()
+            expect(screen.queryByText(/Fetched content marker/)).not.toBeInTheDocument()
+            expect(screen.getByTestId("web-fetch-card")).not.toHaveClass("max-h-[40vh]", "overflow-y-auto")
+        })
 
-			const results = screen.getByTestId("web-fetch-results")
-			expect(header).toHaveAttribute("aria-expanded", "true")
-			expect(toggle).toHaveAttribute("aria-expanded", "true")
-			expect(toggle.compareDocumentPosition(results) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+        it("toggles the fetched page from the card title, keeping the toggle bar above the page", () => {
+            render(completedFetch(`# Long page\n\n${"Fetched paragraph. ".repeat(600)}`))
+            const header = screen.getByTestId("web-fetch-header")
+            const toggle = screen.getByTestId("web-fetch-details-toggle")
+            expect(header).toHaveAttribute("aria-expanded", "false")
 
-			fireEvent.click(header)
+            fireEvent.click(header)
 
-			expect(toggle).toHaveAttribute("aria-expanded", "false")
-			expect(screen.queryByTestId("web-fetch-results")).not.toBeInTheDocument()
-		})
+            const results = screen.getByTestId("web-fetch-results")
+            expect(header).toHaveAttribute("aria-expanded", "true")
+            expect(toggle).toHaveAttribute("aria-expanded", "true")
+            expect(toggle.compareDocumentPosition(results) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 
-		it("expands the page into a bounded scroll area with the toggle bar pinned outside it", () => {
-			render(completedFetch(`# Long page\n\n${"Fetched paragraph. ".repeat(600)}`))
-			const toggle = screen.getByTestId("web-fetch-details-toggle")
+            fireEvent.click(header)
 
-			fireEvent.click(toggle)
+            expect(toggle).toHaveAttribute("aria-expanded", "false")
+            expect(screen.queryByTestId("web-fetch-results")).not.toBeInTheDocument()
+        })
 
-			const results = screen.getByTestId("web-fetch-results")
-			expect(toggle).toHaveAttribute("aria-expanded", "true")
-			expect(results).toHaveTextContent("Fetched paragraph.")
-			expect(results).toHaveClass("max-h-[40vh]", "overflow-y-auto")
-			expect(results).not.toContainElement(toggle)
+        it("expands the page into a bounded scroll area with the toggle bar pinned outside it", () => {
+            render(completedFetch(`# Long page\n\n${"Fetched paragraph. ".repeat(600)}`))
+            const toggle = screen.getByTestId("web-fetch-details-toggle")
 
-			fireEvent.click(toggle)
+            fireEvent.click(toggle)
 
-			expect(toggle).toHaveAttribute("aria-expanded", "false")
-			expect(screen.queryByTestId("web-fetch-results")).not.toBeInTheDocument()
-		})
-	})
+            const results = screen.getByTestId("web-fetch-results")
+            expect(toggle).toHaveAttribute("aria-expanded", "true")
+            expect(results).toHaveTextContent("Fetched paragraph.")
+            expect(results).toHaveClass("max-h-[40vh]", "overflow-y-auto")
+            expect(results).not.toContainElement(toggle)
 
-	it("explains that a deferred hosted search waits for the next request", () => {
-		render(
-			<ChatRowContent
-				{...baseProps}
-				message={{
-					ts: 8,
-					type: "say",
-					say: "tool",
-					partial: false,
-					text: JSON.stringify({
-						tool: "webSearch",
-						path: "deferred search",
-						webSearch: {
-							schemaVersion: 1,
-							status: "deferred",
-							source: { id: "anthropic-hosted", label: "Anthropic Web Search", execution: "hosted" },
-							query: "deferred search",
-							hostedCall: { functionId: "srvtoolu_deferred", traceId: "trace-search" },
-						},
-					}),
-				}}
-			/>,
-		)
+            fireEvent.click(toggle)
 
-		const notice = screen.getByTestId("web-search-deferred")
-		expect(notice).toHaveTextContent("Waiting for the local tool results")
-		expect(notice).toHaveTextContent("next request")
-		expect(screen.getByText("deferred search")).toBeInTheDocument()
-		expect(screen.getByTestId("web-search-card").querySelector(".animate-spin")).toBeNull()
-	})
+            expect(toggle).toHaveAttribute("aria-expanded", "false")
+            expect(screen.queryByTestId("web-fetch-results")).not.toBeInTheDocument()
+        })
+    })
 
-	it("explains that a deferred hosted fetch waits for the next request", () => {
-		render(
-			<ChatRowContent
-				{...baseProps}
-				message={{
-					ts: 9,
-					type: "say",
-					say: "tool",
-					partial: false,
-					text: JSON.stringify({
-						tool: "webFetch",
-						path: "https://example.com/deferred",
-						webFetch: {
-							schemaVersion: 1,
-							status: "deferred",
-							source: { id: "anthropic-hosted", label: "Anthropic Web Fetch", execution: "hosted" },
-							url: "https://example.com/deferred",
-							hostedCall: { functionId: "srvtoolu_fetch", traceId: "trace-fetch" },
-						},
-					}),
-				}}
-			/>,
-		)
+    it("explains that a deferred hosted search waits for the next request", () => {
+        render(
+            <ChatRowContent
+                {...baseProps}
+                message={{
+                    ts: 8,
+                    type: "say",
+                    say: "tool",
+                    partial: false,
+                    text: JSON.stringify({
+                        tool: "webSearch",
+                        path: "deferred search",
+                        webSearch: {
+                            schemaVersion: 1,
+                            status: "deferred",
+                            source: { id: "anthropic-hosted", label: "Anthropic Web Search", execution: "hosted" },
+                            query: "deferred search",
+                            hostedCall: { functionId: "srvtoolu_deferred", traceId: "trace-search" },
+                        },
+                    }),
+                }}
+            />,
+        )
 
-		const notice = screen.getByTestId("web-fetch-deferred")
-		expect(notice).toHaveTextContent("Waiting for the local tool results")
-		expect(notice).toHaveTextContent("next request")
-		expect(screen.getByTestId("web-fetch-card").querySelector(".animate-spin")).toBeNull()
-	})
+        const notice = screen.getByTestId("web-search-deferred")
+        expect(notice).toHaveTextContent("Waiting for the local tool results")
+        expect(notice).toHaveTextContent("next request")
+        expect(screen.getByText("deferred search")).toBeInTheDocument()
+        expect(screen.getByTestId("web-search-card").querySelector(".animate-spin")).toBeNull()
+    })
 
-	it("does not show the deferral notice once the hosted search completes", () => {
-		render(
-			<ChatRowContent
-				{...baseProps}
-				message={{
-					ts: 10,
-					type: "say",
-					say: "tool",
-					partial: false,
-					text: JSON.stringify({
-						tool: "webSearch",
-						path: "deferred search",
-						webSearch: {
-							schemaVersion: 1,
-							status: "completed",
-							query: "deferred search",
-							hostedCall: { functionId: "srvtoolu_deferred", traceId: "trace-search" },
-						},
-					}),
-				}}
-			/>,
-		)
+    it("explains that a deferred hosted fetch waits for the next request", () => {
+        render(
+            <ChatRowContent
+                {...baseProps}
+                message={{
+                    ts: 9,
+                    type: "say",
+                    say: "tool",
+                    partial: false,
+                    text: JSON.stringify({
+                        tool: "webFetch",
+                        path: "https://example.com/deferred",
+                        webFetch: {
+                            schemaVersion: 1,
+                            status: "deferred",
+                            source: { id: "anthropic-hosted", label: "Anthropic Web Fetch", execution: "hosted" },
+                            url: "https://example.com/deferred",
+                            hostedCall: { functionId: "srvtoolu_fetch", traceId: "trace-fetch" },
+                        },
+                    }),
+                }}
+            />,
+        )
 
-		expect(screen.queryByTestId("web-search-deferred")).not.toBeInTheDocument()
-	})
+        const notice = screen.getByTestId("web-fetch-deferred")
+        expect(notice).toHaveTextContent("Waiting for the local tool results")
+        expect(notice).toHaveTextContent("next request")
+        expect(screen.getByTestId("web-fetch-card").querySelector(".animate-spin")).toBeNull()
+    })
+
+    it("does not show the deferral notice once the hosted search completes", () => {
+        render(
+            <ChatRowContent
+                {...baseProps}
+                message={{
+                    ts: 10,
+                    type: "say",
+                    say: "tool",
+                    partial: false,
+                    text: JSON.stringify({
+                        tool: "webSearch",
+                        path: "deferred search",
+                        webSearch: {
+                            schemaVersion: 1,
+                            status: "completed",
+                            query: "deferred search",
+                            hostedCall: { functionId: "srvtoolu_deferred", traceId: "trace-search" },
+                        },
+                    }),
+                }}
+            />,
+        )
+
+        expect(screen.queryByTestId("web-search-deferred")).not.toBeInTheDocument()
+    })
 })

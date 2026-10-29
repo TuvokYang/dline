@@ -1,7 +1,7 @@
 import type {
-	ChatCompletionChunk,
-	ChatCompletionToolChoiceOption,
-	ChatCompletionTool as OpenAITool,
+    ChatCompletionChunk,
+    ChatCompletionToolChoiceOption,
+    ChatCompletionTool as OpenAITool,
 } from "openai/resources/chat/completions"
 import { Logger } from "@/shared/services/Logger"
 import type { ApiRawStreamToolCallsChunk } from "./stream"
@@ -12,114 +12,114 @@ import type { ApiRawStreamToolCallsChunk } from "./stream"
  * and yields properly formatted tool call chunks when arguments are received.
  */
 export class ToolCallProcessor {
-	private toolCallStateByIndex: Map<number, { id: string; name: string; completed: boolean }>
+    private toolCallStateByIndex: Map<number, { id: string; name: string; completed: boolean }>
 
-	constructor() {
-		this.toolCallStateByIndex = new Map()
-	}
+    constructor() {
+        this.toolCallStateByIndex = new Map()
+    }
 
-	/**
-	 * Process tool call deltas from a chunk and yield formatted tool call chunks.
-	 * @param toolCallDeltas - Array of tool call deltas from the chunk
-	 * @yields Formatted tool call chunks ready to be yielded in the API stream
-	 */
-	*processToolCallDeltas(
-		toolCallDeltas: ChatCompletionChunk.Choice.Delta.ToolCall[] | undefined,
-	): Generator<ApiRawStreamToolCallsChunk> {
-		if (!toolCallDeltas) {
-			return
-		}
+    /**
+     * Process tool call deltas from a chunk and yield formatted tool call chunks.
+     * @param toolCallDeltas - Array of tool call deltas from the chunk
+     * @yields Formatted tool call chunks ready to be yielded in the API stream
+     */
+    *processToolCallDeltas(
+        toolCallDeltas: ChatCompletionChunk.Choice.Delta.ToolCall[] | undefined,
+    ): Generator<ApiRawStreamToolCallsChunk> {
+        if (!toolCallDeltas) {
+            return
+        }
 
-		for (const [fallbackIndex, toolCallDelta] of toolCallDeltas.entries()) {
-			// OpenAI-style streams include an index per tool call. Use iteration order as a fallback.
-			const toolCallIndex = toolCallDelta.index ?? fallbackIndex
-			const toolCallState = this.getOrCreateToolCallState(toolCallIndex)
+        for (const [fallbackIndex, toolCallDelta] of toolCallDeltas.entries()) {
+            // OpenAI-style streams include an index per tool call. Use iteration order as a fallback.
+            const toolCallIndex = toolCallDelta.index ?? fallbackIndex
+            const toolCallState = this.getOrCreateToolCallState(toolCallIndex)
 
-			// Accumulate the tool call ID if present
-			if (toolCallDelta.id) {
-				toolCallState.id = toolCallDelta.id
-			}
+            // Accumulate the tool call ID if present
+            if (toolCallDelta.id) {
+                toolCallState.id = toolCallDelta.id
+            }
 
-			// Accumulate the function name if present
-			if (toolCallDelta.function?.name) {
-				Logger.debug(`[ToolCallProcessor] Native Tool Called: ${toolCallDelta.function.name}`)
-				toolCallState.name = toolCallDelta.function.name
-			}
+            // Accumulate the function name if present
+            if (toolCallDelta.function?.name) {
+                Logger.debug(`[ToolCallProcessor] Native Tool Called: ${toolCallDelta.function.name}`)
+                toolCallState.name = toolCallDelta.function.name
+            }
 
-			// Only yield when we have all required fields: id, name, and arguments
-			if (toolCallState.id && toolCallState.name && toolCallDelta.function?.arguments) {
-				yield {
-					type: "tool_calls",
-					function_id: toolCallState.id,
-					tool_index: toolCallIndex,
-					tool_call: {
-						function: {
-							name: toolCallState.name,
-							arguments: toolCallDelta.function.arguments,
-						},
-					},
-				}
-			}
-		}
-	}
+            // Only yield when we have all required fields: id, name, and arguments
+            if (toolCallState.id && toolCallState.name && toolCallDelta.function?.arguments) {
+                yield {
+                    type: "tool_calls",
+                    function_id: toolCallState.id,
+                    tool_index: toolCallIndex,
+                    tool_call: {
+                        function: {
+                            name: toolCallState.name,
+                            arguments: toolCallDelta.function.arguments,
+                        },
+                    },
+                }
+            }
+        }
+    }
 
-	/** Emit one completion boundary for each accumulated tool call. */
-	*completeToolCalls(): Generator<ApiRawStreamToolCallsChunk> {
-		for (const [toolCallIndex, toolCallState] of [...this.toolCallStateByIndex.entries()].sort(
-			([left], [right]) => left - right,
-		)) {
-			if (!toolCallState.id || !toolCallState.name || toolCallState.completed) continue
-			toolCallState.completed = true
-			yield {
-				type: "tool_calls",
-				function_id: toolCallState.id,
-				phase: "completed",
-				tool_index: toolCallIndex,
-				tool_call: {
-					function: {
-						name: toolCallState.name,
-					},
-				},
-			}
-		}
-	}
+    /** Emit one completion boundary for each accumulated tool call. */
+    *completeToolCalls(): Generator<ApiRawStreamToolCallsChunk> {
+        for (const [toolCallIndex, toolCallState] of [...this.toolCallStateByIndex.entries()].sort(
+            ([left], [right]) => left - right,
+        )) {
+            if (!toolCallState.id || !toolCallState.name || toolCallState.completed) continue
+            toolCallState.completed = true
+            yield {
+                type: "tool_calls",
+                function_id: toolCallState.id,
+                phase: "completed",
+                tool_index: toolCallIndex,
+                tool_call: {
+                    function: {
+                        name: toolCallState.name,
+                    },
+                },
+            }
+        }
+    }
 
-	private getOrCreateToolCallState(index: number): { id: string; name: string; completed: boolean } {
-		const existingState = this.toolCallStateByIndex.get(index)
-		if (existingState) {
-			return existingState
-		}
+    private getOrCreateToolCallState(index: number): { id: string; name: string; completed: boolean } {
+        const existingState = this.toolCallStateByIndex.get(index)
+        if (existingState) {
+            return existingState
+        }
 
-		const initialState = { id: "", name: "", completed: false }
-		this.toolCallStateByIndex.set(index, initialState)
-		return initialState
-	}
+        const initialState = { id: "", name: "", completed: false }
+        this.toolCallStateByIndex.set(index, initialState)
+        return initialState
+    }
 
-	/**
-	 * Reset the internal state. Call this when starting a new message.
-	 */
-	reset(): void {
-		this.toolCallStateByIndex.clear()
-	}
+    /**
+     * Reset the internal state. Call this when starting a new message.
+     */
+    reset(): void {
+        this.toolCallStateByIndex.clear()
+    }
 
-	/**
-	 * Get the current accumulated tool call state (useful for debugging).
-	 */
-	getState(): Record<number, { id: string; name: string; completed: boolean }> {
-		return Object.fromEntries(this.toolCallStateByIndex.entries())
-	}
+    /**
+     * Get the current accumulated tool call state (useful for debugging).
+     */
+    getState(): Record<number, { id: string; name: string; completed: boolean }> {
+        return Object.fromEntries(this.toolCallStateByIndex.entries())
+    }
 }
 
 export function getOpenAIToolParams(tools?: OpenAITool[], enableParallelToolCalls = false) {
-	if (!tools?.length) {
-		return {
-			tools: undefined,
-		}
-	}
+    if (!tools?.length) {
+        return {
+            tools: undefined,
+        }
+    }
 
-	return {
-		tools,
-		tool_choice: "auto" as ChatCompletionToolChoiceOption,
-		parallel_tool_calls: enableParallelToolCalls,
-	}
+    return {
+        tools,
+        tool_choice: "auto" as ChatCompletionToolChoiceOption,
+        parallel_tool_calls: enableParallelToolCalls,
+    }
 }

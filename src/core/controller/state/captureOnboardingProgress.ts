@@ -11,16 +11,16 @@ import type { Controller } from "../index"
  * @returns Empty response
  */
 export async function captureOnboardingProgress(_controller: Controller, request: OnboardingProgressRequest): Promise<Empty> {
-	try {
-		telemetryService.captureOnboardingProgress({
-			step: Number(request.step),
-			model: request.modelSelected,
-			action: request.action,
-			completed: !!request.completed,
-		})
-		return Empty.create({})
-	} catch (error) {
-		Logger.error("Failed to set welcome view completed:", error)
-		throw error
-	}
+    try {
+        telemetryService.captureOnboardingProgress({
+            step: Number(request.step),
+            model: request.modelSelected,
+            action: request.action,
+            completed: !!request.completed,
+        })
+        return Empty.create({})
+    } catch (error) {
+        Logger.error("Failed to set welcome view completed:", error)
+        throw error
+    }
 }

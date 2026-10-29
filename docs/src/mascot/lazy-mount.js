@@ -17,41 +17,41 @@ const REDUCED_MOTION = "(prefers-reduced-motion: reduce)"
  * @returns {{ replay(): void }} Replays the warm-up once mounted; does nothing before.
  */
 export function showMascotWhen(stage, layout, { still = false } = {}) {
-	const query = window.matchMedia(layout)
-	/** @type {{ replay(): void } | null} */
-	let mounted = null
-	let pending = false
-	let unavailable = false
+    const query = window.matchMedia(layout)
+    /** @type {{ replay(): void } | null} */
+    let mounted = null
+    let pending = false
+    let unavailable = false
 
-	async function mount() {
-		pending = true
-		// The stage needs its CSS size before the renderer measures it.
-		stage.hidden = false
-		try {
-			const { mountMascot } = await import("./scene.js")
-			mounted = mountMascot(stage, { still: still || window.matchMedia(REDUCED_MOTION).matches })
-		} catch (error) {
-			// WebGL may be unavailable; the page works without the mascot.
-			console.warn("Dline mascot unavailable:", error)
-			unavailable = true
-		} finally {
-			pending = false
-		}
-		// The layout may have changed while three.js was loading.
-		update()
-	}
+    async function mount() {
+        pending = true
+        // The stage needs its CSS size before the renderer measures it.
+        stage.hidden = false
+        try {
+            const { mountMascot } = await import("./scene.js")
+            mounted = mountMascot(stage, { still: still || window.matchMedia(REDUCED_MOTION).matches })
+        } catch (error) {
+            // WebGL may be unavailable; the page works without the mascot.
+            console.warn("Dline mascot unavailable:", error)
+            unavailable = true
+        } finally {
+            pending = false
+        }
+        // The layout may have changed while three.js was loading.
+        update()
+    }
 
-	function update() {
-		if (!query.matches || unavailable) {
-			stage.hidden = true
-		} else if (mounted) {
-			stage.hidden = false
-		} else if (!pending) {
-			void mount()
-		}
-	}
+    function update() {
+        if (!query.matches || unavailable) {
+            stage.hidden = true
+        } else if (mounted) {
+            stage.hidden = false
+        } else if (!pending) {
+            void mount()
+        }
+    }
 
-	query.addEventListener("change", update)
-	update()
-	return { replay: () => mounted?.replay() }
+    query.addEventListener("change", update)
+    update()
+    return { replay: () => mounted?.replay() }
 }

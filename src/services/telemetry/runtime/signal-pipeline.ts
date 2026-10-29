@@ -1,13 +1,13 @@
 import { Logger } from "@/shared/services/Logger"
 import {
-	configureSignalRecording,
-	discardBootstrapSignals,
-	drainBootstrapSignals,
-	installSignalPipeline,
-	resetSignalRecording,
-	type SignalLevel,
-	type SignalPipeline,
-	type TelemetrySignal,
+    configureSignalRecording,
+    discardBootstrapSignals,
+    drainBootstrapSignals,
+    installSignalPipeline,
+    resetSignalRecording,
+    type SignalLevel,
+    type SignalPipeline,
+    type TelemetrySignal,
 } from "../service/pipeline-port"
 import type { RuntimeEventBus } from "./runtime-event-bus"
 import { RuntimeEventPriority } from "./types"
@@ -29,15 +29,15 @@ import { RuntimeEventPriority } from "./types"
  * `Debug` would make new facts the first thing dropped under pressure.
  */
 const PRIORITY_BY_LEVEL: Record<SignalLevel, RuntimeEventPriority> = {
-	debug: RuntimeEventPriority.Debug,
-	info: RuntimeEventPriority.Info,
-	performance: RuntimeEventPriority.PerformanceSample,
-	error: RuntimeEventPriority.Error,
-	invariant: RuntimeEventPriority.Invariant,
+    debug: RuntimeEventPriority.Debug,
+    info: RuntimeEventPriority.Info,
+    performance: RuntimeEventPriority.PerformanceSample,
+    error: RuntimeEventPriority.Error,
+    invariant: RuntimeEventPriority.Invariant,
 }
 
 export function signalLevelToPriority(level: SignalLevel): RuntimeEventPriority {
-	return PRIORITY_BY_LEVEL[level]
+    return PRIORITY_BY_LEVEL[level]
 }
 
 /**
@@ -47,25 +47,25 @@ export function signalLevelToPriority(level: SignalLevel): RuntimeEventPriority 
  * must not fail because the reporting path did.
  */
 export class RuntimeSignalPipeline implements SignalPipeline {
-	constructor(private readonly bus: RuntimeEventBus) {}
+    constructor(private readonly bus: RuntimeEventBus) {}
 
-	accept(signal: TelemetrySignal): void {
-		try {
-			this.bus.record({
-				name: signal.name,
-				timestamp: signal.timestamp,
-				monotonicMs: signal.monotonicMs,
-				priority: signalLevelToPriority(signal.level),
-				attributes: signal.attributes,
-				error: signal.error,
-				// `sessionId` is owned by the bus context holder; a producer
-				// cannot relabel which host session produced the event.
-				context: signal.context,
-			})
-		} catch {
-			// Isolated on purpose: see the class comment.
-		}
-	}
+    accept(signal: TelemetrySignal): void {
+        try {
+            this.bus.record({
+                name: signal.name,
+                timestamp: signal.timestamp,
+                monotonicMs: signal.monotonicMs,
+                priority: signalLevelToPriority(signal.level),
+                attributes: signal.attributes,
+                error: signal.error,
+                // `sessionId` is owned by the bus context holder; a producer
+                // cannot relabel which host session produced the event.
+                context: signal.context,
+            })
+        } catch {
+            // Isolated on purpose: see the class comment.
+        }
+    }
 }
 
 /**
@@ -75,9 +75,9 @@ export class RuntimeSignalPipeline implements SignalPipeline {
  * it; tests rely on that to keep suites independent.
  */
 export function installRuntimeSignalPipeline(bus: RuntimeEventBus, enabled: () => boolean): SignalPipeline | undefined {
-	const previous = installSignalPipeline(new RuntimeSignalPipeline(bus))
-	configureSignalRecording({ enabled })
-	return previous
+    const previous = installSignalPipeline(new RuntimeSignalPipeline(bus))
+    configureSignalRecording({ enabled })
+    return previous
 }
 
 /**
@@ -91,24 +91,24 @@ export function installRuntimeSignalPipeline(bus: RuntimeEventBus, enabled: () =
  * @param admit Whether the buffered signals may be recorded.
  */
 export function drainBootstrapSignalsInto(bus: RuntimeEventBus, admit: boolean): void {
-	const { signals, dropped } = drainBootstrapSignals()
+    const { signals, dropped } = drainBootstrapSignals()
 
-	if (!admit) {
-		// Declining consent discards them rather than holding them for a later
-		// opt-in: the user did not agree to the session in which they occurred.
-		return
-	}
+    if (!admit) {
+        // Declining consent discards them rather than holding them for a later
+        // opt-in: the user did not agree to the session in which they occurred.
+        return
+    }
 
-	const pipeline = new RuntimeSignalPipeline(bus)
-	for (const signal of signals) {
-		pipeline.accept(signal)
-	}
+    const pipeline = new RuntimeSignalPipeline(bus)
+    for (const signal of signals) {
+        pipeline.accept(signal)
+    }
 
-	if (dropped > 0) {
-		// A gap must be visible; silently shorter evidence is worse than
-		// evidence that admits it is incomplete.
-		Logger.warn(`[RuntimeTelemetry] Dropped ${dropped} startup signal(s) before the pipeline was installed`)
-	}
+    if (dropped > 0) {
+        // A gap must be visible; silently shorter evidence is worse than
+        // evidence that admits it is incomplete.
+        Logger.warn(`[RuntimeTelemetry] Dropped ${dropped} startup signal(s) before the pipeline was installed`)
+    }
 }
 
 /**
@@ -119,9 +119,9 @@ export function drainBootstrapSignalsInto(bus: RuntimeEventBus, admit: boolean):
  * would only refill the bootstrap buffer.
  */
 export function uninstallRuntimeSignalPipeline(): void {
-	installSignalPipeline(undefined)
-	discardBootstrapSignals()
-	configureSignalRecording({ enabled: () => false })
+    installSignalPipeline(undefined)
+    discardBootstrapSignals()
+    configureSignalRecording({ enabled: () => false })
 }
 
 /**
@@ -133,13 +133,13 @@ export function uninstallRuntimeSignalPipeline(): void {
  * before any pipeline existed, which is precisely why they were buffered.
  */
 export function resetRuntimeSignalRecording(): void {
-	installSignalPipeline(undefined)
-	resetSignalRecording()
+    installSignalPipeline(undefined)
+    resetSignalRecording()
 }
 
 /** Restore the port's defaults and drop buffered signals. Intended for tests. */
 export function resetRuntimeSignalPipeline(): void {
-	installSignalPipeline(undefined)
-	discardBootstrapSignals()
-	resetSignalRecording()
+    installSignalPipeline(undefined)
+    discardBootstrapSignals()
+    resetSignalRecording()
 }

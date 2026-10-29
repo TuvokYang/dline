@@ -10,10 +10,10 @@ import { useProviderModels } from "./useProviderModels"
  * Props for the MistralProvider component
  */
 interface MistralProviderProps {
-	showModelOptions: boolean
-	isPopup?: boolean
-	profile: ApiProfile
-	onUpdate: (updates: Partial<ApiProfile>) => void
+    showModelOptions: boolean
+    isPopup?: boolean
+    profile: ApiProfile
+    onUpdate: (updates: Partial<ApiProfile>) => void
 }
 
 /**
@@ -21,34 +21,34 @@ interface MistralProviderProps {
  * All data sourced from ApiProfile.
  */
 export const MistralProvider = ({ showModelOptions, isPopup: _isPopup, profile, onUpdate }: MistralProviderProps) => {
-	const { models: mistralModels, defaultModelId: mistralDefaultModelId } = useProviderModels("mistral")
+    const { models: mistralModels, defaultModelId: mistralDefaultModelId } = useProviderModels("mistral")
 
-	const modelInfo = resolveProfileModelInfo(profile, { models: mistralModels, defaultModelId: mistralDefaultModelId })
-	const modelId = modelInfo.id
+    const modelInfo = resolveProfileModelInfo(profile, { models: mistralModels, defaultModelId: mistralDefaultModelId })
+    const modelId = modelInfo.id
 
-	return (
-		<div>
-			<ApiKeyField
-				initialValue={profile.apiKey}
-				onChange={(value) => onUpdate({ apiKey: value })}
-				providerName="Mistral"
-				signupUrl="https://console.mistral.ai/codestral"
-			/>
+    return (
+        <div>
+            <ApiKeyField
+                initialValue={profile.apiKey}
+                onChange={(value) => onUpdate({ apiKey: value })}
+                providerName="Mistral"
+                signupUrl="https://console.mistral.ai/codestral"
+            />
 
-			{showModelOptions && (
-				<>
-					<ModelSelector
-						label="Model"
-						models={mistralModels}
-						onChange={(e: any) =>
-							onUpdate({ modelId: e.target.value, modelInfo: mistralModels[e.target.value] as any })
-						}
-						selectedModelId={modelId}
-					/>
+            {showModelOptions && (
+                <>
+                    <ModelSelector
+                        label="Model"
+                        models={mistralModels}
+                        onChange={(e: any) =>
+                            onUpdate({ modelId: e.target.value, modelInfo: mistralModels[e.target.value] as any })
+                        }
+                        selectedModelId={modelId}
+                    />
 
-					<ModelInfoView isPopup={_isPopup} modelInfo={modelInfo} selectedModelId={modelId} />
-				</>
-			)}
-		</div>
-	)
+                    <ModelInfoView isPopup={_isPopup} modelInfo={modelInfo} selectedModelId={modelId} />
+                </>
+            )}
+        </div>
+    )
 }

@@ -143,8 +143,8 @@ interface PromptVariant {
   placeholders: { [key: string]: string };      // Default placeholder values
 
   // Tool configuration
-  tools?: ClineDefaultTool[];                    // Ordered list of tools to include
-  toolOverrides?: { [K in ClineDefaultTool]?: ConfigOverride }; // Tool-specific customizations
+  tools?: DlineDefaultTool[];                    // Ordered list of tools to include
+  toolOverrides?: { [K in DlineDefaultTool]?: ConfigOverride }; // Tool-specific customizations
 }
 
 interface PromptConfig {
@@ -411,7 +411,7 @@ public static async getToolsPrompts(variant: PromptVariant, context: SystemPromp
 ```typescript
 // variants/generic/config.ts
 import { ModelFamily } from "@/shared/prompts";
-import { ClineDefaultTool } from "@/shared/tools";
+import { DlineDefaultTool } from "@/shared/tools";
 import { SystemPromptSection } from "../../templates/placeholders";
 import { validateVariant } from "../../validation/VariantValidator";
 import { createVariant } from "../builder";
@@ -441,22 +441,22 @@ export const config = createVariant(ModelFamily.GENERIC)
     SystemPromptSection.USER_INSTRUCTIONS,
   )
   .tools(
-    ClineDefaultTool.BASH,
-    ClineDefaultTool.FILE_READ,
-    ClineDefaultTool.FILE_NEW,
-    ClineDefaultTool.FILE_EDIT,
-    ClineDefaultTool.SEARCH,
-    ClineDefaultTool.LIST_FILES,
-    ClineDefaultTool.LIST_CODE_DEF,
-    ClineDefaultTool.BROWSER,
-    ClineDefaultTool.MCP_USE,
-    ClineDefaultTool.MCP_ACCESS,
-    ClineDefaultTool.ASK,
-    ClineDefaultTool.ATTEMPT,
-    ClineDefaultTool.NEW_TASK,
-    ClineDefaultTool.MAKE_PLAN,
-    ClineDefaultTool.MCP_DOCS,
-    ClineDefaultTool.TODO,
+    DlineDefaultTool.BASH,
+    DlineDefaultTool.FILE_READ,
+    DlineDefaultTool.FILE_NEW,
+    DlineDefaultTool.FILE_EDIT,
+    DlineDefaultTool.SEARCH,
+    DlineDefaultTool.LIST_FILES,
+    DlineDefaultTool.LIST_CODE_DEF,
+    DlineDefaultTool.BROWSER,
+    DlineDefaultTool.MCP_USE,
+    DlineDefaultTool.MCP_ACCESS,
+    DlineDefaultTool.ASK,
+    DlineDefaultTool.ATTEMPT,
+    DlineDefaultTool.NEW_TASK,
+    DlineDefaultTool.MAKE_PLAN,
+    DlineDefaultTool.MCP_DOCS,
+    DlineDefaultTool.TODO,
   )
   .placeholders({
     MODEL_FAMILY: "generic",
@@ -480,7 +480,7 @@ export type GenericVariantConfig = typeof config;
 ```typescript
 // variants/next-gen/config.ts
 import { ModelFamily } from "@/shared/prompts";
-import { ClineDefaultTool } from "@/shared/tools";
+import { DlineDefaultTool } from "@/shared/tools";
 import { SystemPromptSection } from "../../templates/placeholders";
 import { validateVariant } from "../../validation/VariantValidator";
 import { createVariant } from "../builder";
@@ -512,23 +512,23 @@ export const config = createVariant(ModelFamily.NEXT_GEN)
     SystemPromptSection.USER_INSTRUCTIONS,
   )
   .tools(
-    ClineDefaultTool.BASH,
-    ClineDefaultTool.FILE_READ,
-    ClineDefaultTool.FILE_NEW,
-    ClineDefaultTool.FILE_EDIT,
-    ClineDefaultTool.SEARCH,
-    ClineDefaultTool.LIST_FILES,
-    ClineDefaultTool.LIST_CODE_DEF,
-    ClineDefaultTool.BROWSER,
-    ClineDefaultTool.WEB_FETCH,  // Additional tool for next-gen
-    ClineDefaultTool.MCP_USE,
-    ClineDefaultTool.MCP_ACCESS,
-    ClineDefaultTool.ASK,
-    ClineDefaultTool.ATTEMPT,
-    ClineDefaultTool.NEW_TASK,
-    ClineDefaultTool.MAKE_PLAN,
-    ClineDefaultTool.MCP_DOCS,
-    ClineDefaultTool.TODO,
+    DlineDefaultTool.BASH,
+    DlineDefaultTool.FILE_READ,
+    DlineDefaultTool.FILE_NEW,
+    DlineDefaultTool.FILE_EDIT,
+    DlineDefaultTool.SEARCH,
+    DlineDefaultTool.LIST_FILES,
+    DlineDefaultTool.LIST_CODE_DEF,
+    DlineDefaultTool.BROWSER,
+    DlineDefaultTool.WEB_FETCH,  // Additional tool for next-gen
+    DlineDefaultTool.MCP_USE,
+    DlineDefaultTool.MCP_ACCESS,
+    DlineDefaultTool.ASK,
+    DlineDefaultTool.ATTEMPT,
+    DlineDefaultTool.NEW_TASK,
+    DlineDefaultTool.MAKE_PLAN,
+    DlineDefaultTool.MCP_DOCS,
+    DlineDefaultTool.TODO,
   )
   .placeholders({
     MODEL_FAMILY: ModelFamily.NEXT_GEN,
@@ -556,7 +556,7 @@ export type NextGenVariantConfig = typeof config;
 ```typescript
 // variants/xs/config.ts
 import { ModelFamily } from "@/shared/prompts";
-import { ClineDefaultTool } from "@/shared/tools";
+import { DlineDefaultTool } from "@/shared/tools";
 import { SystemPromptSection } from "../../templates/placeholders";
 import { validateVariant } from "../../validation/VariantValidator";
 import { createVariant } from "../builder";
@@ -585,19 +585,19 @@ export const config = createVariant(ModelFamily.XS)
     SystemPromptSection.USER_INSTRUCTIONS,
   )
   .tools(
-    ClineDefaultTool.BASH,
-    ClineDefaultTool.FILE_READ,
-    ClineDefaultTool.FILE_NEW,
-    ClineDefaultTool.FILE_EDIT,
-    ClineDefaultTool.SEARCH,
-    ClineDefaultTool.LIST_FILES,
-    ClineDefaultTool.ASK,
-    ClineDefaultTool.ATTEMPT,
-    ClineDefaultTool.NEW_TASK,
-    ClineDefaultTool.MAKE_PLAN,
-    ClineDefaultTool.MCP_USE,
-    ClineDefaultTool.MCP_ACCESS,
-    ClineDefaultTool.MCP_DOCS,
+    DlineDefaultTool.BASH,
+    DlineDefaultTool.FILE_READ,
+    DlineDefaultTool.FILE_NEW,
+    DlineDefaultTool.FILE_EDIT,
+    DlineDefaultTool.SEARCH,
+    DlineDefaultTool.LIST_FILES,
+    DlineDefaultTool.ASK,
+    DlineDefaultTool.ATTEMPT,
+    DlineDefaultTool.NEW_TASK,
+    DlineDefaultTool.MAKE_PLAN,
+    DlineDefaultTool.MCP_USE,
+    DlineDefaultTool.MCP_ACCESS,
+    DlineDefaultTool.MCP_DOCS,
   )
   .placeholders({
     MODEL_FAMILY: ModelFamily.XS,
@@ -639,8 +639,8 @@ const config = createVariant(ModelFamily.GENERIC)
     // ... more components
   )
   .tools(                                          // Optional, type-safe tool selection
-    ClineDefaultTool.BASH,
-    ClineDefaultTool.FILE_READ,
+    DlineDefaultTool.BASH,
+    DlineDefaultTool.FILE_READ,
     // ... more tools
   )
   .placeholders({                                  // Optional
@@ -654,7 +654,7 @@ const config = createVariant(ModelFamily.GENERIC)
   .overrideComponent(SystemPromptSection.RULES, {  // Optional, component overrides
     template: customRulesTemplate,
   })
-  .overrideTool(ClineDefaultTool.BASH, {          // Optional, tool overrides
+  .overrideTool(DlineDefaultTool.BASH, {          // Optional, tool overrides
     enabled: false,
   })
   .build();                                       // Returns Omit<PromptVariant, "id">
@@ -750,7 +750,7 @@ The system includes the following built-in components:
 
 ## Available Tools
 
-The system supports the following tools (mapped to `ClineDefaultTool` enum):
+The system supports the following tools (mapped to `DlineDefaultTool` enum):
 
 - `BASH`: Execute shell commands
 - `FILE_READ`: Read file contents
@@ -779,10 +779,10 @@ Each tool in Cline follows a specific structure with variants for different mode
 ```typescript
 // src/core/prompts/system-prompt/tools/my_new_tool.ts
 import { ModelFamily } from "@/shared/prompts"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import type { ClineToolSpec } from "../spec"
 
-const id = ClineDefaultTool.MY_NEW_TOOL // Add to enum first
+const id = DlineDefaultTool.MY_NEW_TOOL // Add to enum first
 
 const generic: ClineToolSpec = {
 	variant: ModelFamily.GENERIC,
@@ -801,7 +801,7 @@ const generic: ClineToolSpec = {
 			required: false,
 			instruction: "Description of optional parameter",
 			usage: "Optional example (optional)",
-			dependencies: [ClineDefaultTool.SOME_OTHER_TOOL], // Only show if dependency exists
+			dependencies: [DlineDefaultTool.SOME_OTHER_TOOL], // Only show if dependency exists
 		},
 	],
 }
@@ -818,11 +818,11 @@ export const my_new_tool_variants = [generic, nextGen, gpt, gemini]
 
 #### 1. Add Tool ID to Enum
 
-First, add your tool ID to the `ClineDefaultTool` enum:
+First, add your tool ID to the `DlineDefaultTool` enum:
 
 ```typescript
 // src/shared/tools.ts
-export enum ClineDefaultTool {
+export enum DlineDefaultTool {
 	// ... existing tools
 	MY_NEW_TOOL = "my_new_tool",
 }
@@ -835,10 +835,10 @@ Create a new file in `src/core/prompts/system-prompt/tools/` following the namin
 ```typescript
 // src/core/prompts/system-prompt/tools/my_new_tool.ts
 import { ModelFamily } from "@/shared/prompts"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import type { ClineToolSpec } from "../spec"
 
-const id = ClineDefaultTool.MY_NEW_TOOL
+const id = DlineDefaultTool.MY_NEW_TOOL
 
 const generic: ClineToolSpec = {
 	variant: ModelFamily.GENERIC,
@@ -920,7 +920,7 @@ Tools can be conditionally enabled based on context:
 ```typescript
 const contextAwareTool: ClineToolSpec = {
 	variant: ModelFamily.GENERIC,
-	id: ClineDefaultTool.CONTEXT_TOOL,
+	id: DlineDefaultTool.CONTEXT_TOOL,
 	name: "context_tool",
 	description: "Tool that only appears in certain contexts",
 	contextRequirements: (context: SystemPromptContext) => {
@@ -940,7 +940,7 @@ Create different tool behaviors for different model families:
 ```typescript
 const claude: ClineToolSpec = {
 	variant: ModelFamily.GENERIC,
-	id: ClineDefaultTool.MODEL_SPECIFIC_TOOL,
+	id: DlineDefaultTool.MODEL_SPECIFIC_TOOL,
 	name: "model_specific_tool",
 	description: "Tool optimized for Claude models with detailed instructions",
 	parameters: [
@@ -977,7 +977,7 @@ Tools can have parameters that only appear when other tools are available:
 ```typescript
 const dependentTool: ClineToolSpec = {
 	variant: ModelFamily.GENERIC,
-	id: ClineDefaultTool.DEPENDENT_TOOL,
+	id: DlineDefaultTool.DEPENDENT_TOOL,
 	name: "dependent_tool",
 	description: "Tool with conditional parameters",
 	parameters: [
@@ -992,7 +992,7 @@ const dependentTool: ClineToolSpec = {
 			required: false,
 			instruction: "This parameter only appears if TODO tool is available",
 			usage: "Conditional input (optional)",
-			dependencies: [ClineDefaultTool.TODO],
+			dependencies: [DlineDefaultTool.TODO],
 		},
 	],
 }
@@ -1069,17 +1069,17 @@ Here's a complete example of adding a new "analyze_file" tool:
 
 ```typescript
 // 1. Add to src/shared/tools.ts
-export enum ClineDefaultTool {
+export enum DlineDefaultTool {
 	// ... existing tools
 	ANALYZE_FILE = "analyze_file",
 }
 
 // 2. Create src/core/prompts/system-prompt/tools/analyze_file.ts
 import { ModelFamily } from "@/shared/prompts"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import type { ClineToolSpec } from "../spec"
 
-const id = ClineDefaultTool.ANALYZE_FILE
+const id = DlineDefaultTool.ANALYZE_FILE
 
 const generic: ClineToolSpec = {
 	variant: ModelFamily.GENERIC,

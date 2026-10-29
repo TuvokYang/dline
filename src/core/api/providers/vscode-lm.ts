@@ -1,11 +1,10 @@
 import { ModelInfo, openAiModelInfoSaneDefaults } from "@shared/api"
-import { observeProviderStreamResponse } from "@shared/provider-attempt-observer"
 import { SELECTOR_SEPARATOR, stringifyVsCodeLmModelSelector } from "@shared/vsCodeSelectorUtils"
 import { calculateApiCostAnthropic } from "@utils/cost"
 import * as vscode from "vscode"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
-import { ApiHandler, ApiHandlerContext, SingleCompletionHandler } from "../"
+import { ApiHandler, ApiHandlerContext, SingleCompletionHandler } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { ApiStream } from "../transform/stream"
 import { convertToVsCodeLmMessages } from "../transform/vscode-lm-format"
@@ -15,87 +14,87 @@ import type { LanguageModelChatSelector as LanguageModelChatSelectorFromTypes } 
 // This declaration (as seen in src/integrations/TerminalManager.ts) provides types for the Language Model API in newer versions of VSCode.
 // Extracted from https://github.com/microsoft/vscode/blob/131ee0ef660d600cd0a7e6058375b281553abe20/src/vscode-dts/vscode.d.ts
 declare module "vscode" {
-	enum LanguageModelChatMessageRole {
-		User = 1,
-		Assistant = 2,
-	}
-	enum LanguageModelChatToolMode {
-		Auto = 1,
-		Required = 2,
-	}
-	interface LanguageModelChatSelector extends LanguageModelChatSelectorFromTypes {}
-	interface LanguageModelChatTool {
-		name: string
-		description: string
-		inputSchema?: object
-	}
-	interface LanguageModelChatRequestOptions {
-		justification?: string
-		modelOptions?: { [name: string]: any }
-		tools?: LanguageModelChatTool[]
-		toolMode?: LanguageModelChatToolMode
-	}
-	class LanguageModelTextPart {
-		value: string
-		constructor(value: string)
-	}
-	class LanguageModelToolCallPart {
-		callId: string
-		name: string
-		input: object
-		constructor(callId: string, name: string, input: object)
-	}
-	interface LanguageModelChatResponse {
-		stream: AsyncIterable<LanguageModelTextPart | LanguageModelToolCallPart | unknown>
-		text: AsyncIterable<string>
-	}
-	interface LanguageModelChat {
-		readonly name: string
-		readonly id: string
-		readonly vendor: string
-		readonly family: string
-		readonly version: string
-		readonly maxInputTokens: number
+    enum LanguageModelChatMessageRole {
+        User = 1,
+        Assistant = 2,
+    }
+    enum LanguageModelChatToolMode {
+        Auto = 1,
+        Required = 2,
+    }
+    interface LanguageModelChatSelector extends LanguageModelChatSelectorFromTypes {}
+    interface LanguageModelChatTool {
+        name: string
+        description: string
+        inputSchema?: object
+    }
+    interface LanguageModelChatRequestOptions {
+        justification?: string
+        modelOptions?: { [name: string]: any }
+        tools?: LanguageModelChatTool[]
+        toolMode?: LanguageModelChatToolMode
+    }
+    class LanguageModelTextPart {
+        value: string
+        constructor(value: string)
+    }
+    class LanguageModelToolCallPart {
+        callId: string
+        name: string
+        input: object
+        constructor(callId: string, name: string, input: object)
+    }
+    interface LanguageModelChatResponse {
+        stream: AsyncIterable<LanguageModelTextPart | LanguageModelToolCallPart | unknown>
+        text: AsyncIterable<string>
+    }
+    interface LanguageModelChat {
+        readonly name: string
+        readonly id: string
+        readonly vendor: string
+        readonly family: string
+        readonly version: string
+        readonly maxInputTokens: number
 
-		sendRequest(
-			messages: LanguageModelChatMessage[],
-			options?: LanguageModelChatRequestOptions,
-			token?: CancellationToken,
-		): Thenable<LanguageModelChatResponse>
-		countTokens(text: string | LanguageModelChatMessage, token?: CancellationToken): Thenable<number>
-	}
-	class LanguageModelPromptTsxPart {
-		value: unknown
-		constructor(value: unknown)
-	}
-	class LanguageModelToolResultPart {
-		callId: string
-		content: Array<LanguageModelTextPart | LanguageModelPromptTsxPart | unknown>
-		constructor(callId: string, content: Array<LanguageModelTextPart | LanguageModelPromptTsxPart | unknown>)
-	}
-	class LanguageModelChatMessage {
-		static User(
-			content: string | Array<LanguageModelTextPart | LanguageModelToolResultPart>,
-			name?: string,
-		): LanguageModelChatMessage
-		static Assistant(
-			content: string | Array<LanguageModelTextPart | LanguageModelToolCallPart>,
-			name?: string,
-		): LanguageModelChatMessage
+        sendRequest(
+            messages: LanguageModelChatMessage[],
+            options?: LanguageModelChatRequestOptions,
+            token?: CancellationToken,
+        ): Thenable<LanguageModelChatResponse>
+        countTokens(text: string | LanguageModelChatMessage, token?: CancellationToken): Thenable<number>
+    }
+    class LanguageModelPromptTsxPart {
+        value: unknown
+        constructor(value: unknown)
+    }
+    class LanguageModelToolResultPart {
+        callId: string
+        content: Array<LanguageModelTextPart | LanguageModelPromptTsxPart | unknown>
+        constructor(callId: string, content: Array<LanguageModelTextPart | LanguageModelPromptTsxPart | unknown>)
+    }
+    class LanguageModelChatMessage {
+        static User(
+            content: string | Array<LanguageModelTextPart | LanguageModelToolResultPart>,
+            name?: string,
+        ): LanguageModelChatMessage
+        static Assistant(
+            content: string | Array<LanguageModelTextPart | LanguageModelToolCallPart>,
+            name?: string,
+        ): LanguageModelChatMessage
 
-		role: LanguageModelChatMessageRole
-		content: Array<LanguageModelTextPart | LanguageModelToolResultPart | LanguageModelToolCallPart>
-		name: string | undefined
+        role: LanguageModelChatMessageRole
+        content: Array<LanguageModelTextPart | LanguageModelToolResultPart | LanguageModelToolCallPart>
+        name: string | undefined
 
-		constructor(
-			role: LanguageModelChatMessageRole,
-			content: string | Array<LanguageModelTextPart | LanguageModelToolResultPart | LanguageModelToolCallPart>,
-			name?: string,
-		)
-	}
-	namespace lm {
-		function selectChatModels(selector?: LanguageModelChatSelector): Thenable<LanguageModelChat[]>
-	}
+        constructor(
+            role: LanguageModelChatMessageRole,
+            content: string | Array<LanguageModelTextPart | LanguageModelToolResultPart | LanguageModelToolCallPart>,
+            name?: string,
+        )
+    }
+    namespace lm {
+        function selectChatModels(selector?: LanguageModelChatSelector): Thenable<LanguageModelChat[]>
+    }
 }
 
 /**
@@ -125,476 +124,480 @@ declare module "vscode" {
  * }
  * ```
  */
-export class VsCodeLmHandler implements ApiHandler, SingleCompletionHandler {
-	private client: vscode.LanguageModelChat | null
-	private disposable: vscode.Disposable | null
-	private currentRequestCancellation: vscode.CancellationTokenSource | null
+export class VsCodeLmHandler extends ApiHandler implements SingleCompletionHandler {
+    private client: vscode.LanguageModelChat | null
+    private disposable: vscode.Disposable | null
+    private currentRequestCancellation: vscode.CancellationTokenSource | null
 
-	constructor(private ctx: ApiHandlerContext) {
-		this.client = null
-		this.disposable = null
-		this.currentRequestCancellation = null
+    constructor(private ctx: ApiHandlerContext) {
+        super()
+        this.client = null
+        this.disposable = null
+        this.currentRequestCancellation = null
 
-		try {
-			// Listen for model changes and reset client
-			this.disposable = vscode.workspace.onDidChangeConfiguration((event) => {
-				if (event.affectsConfiguration("lm")) {
-					try {
-						this.client = null
-						this.ensureCleanState()
-					} catch (error) {
-						Logger.error("Error during configuration change cleanup:", error)
-					}
-				}
-			})
-		} catch (error) {
-			// Ensure cleanup if constructor fails
-			this.dispose()
+        try {
+            // Listen for model changes and reset client
+            this.disposable = vscode.workspace.onDidChangeConfiguration((event) => {
+                if (event.affectsConfiguration("lm")) {
+                    try {
+                        this.client = null
+                        this.ensureCleanState()
+                    } catch (error) {
+                        Logger.error("Error during configuration change cleanup:", error)
+                    }
+                }
+            })
+        } catch (error) {
+            // Ensure cleanup if constructor fails
+            this.dispose()
 
-			throw new Error(
-				`Cline <Language Model API>: Failed to initialize handler: ${error instanceof Error ? error.message : "Unknown error"}`,
-			)
-		}
-	}
+            throw new Error(
+                `Cline <Language Model API>: Failed to initialize handler: ${error instanceof Error ? error.message : "Unknown error"}`,
+            )
+        }
+    }
 
-	private get config() {
-		return this.ctx.profile.vscodeLm
-	}
+    private get config() {
+        return this.ctx.profile.vscodeLm
+    }
 
-	/**
-	 * Creates a language model chat client based on the provided selector.
-	 *
-	 * @param selector - Selector criteria to filter language model chat instances
-	 * @returns Promise resolving to the first matching language model chat instance
-	 * @throws Error when no matching models are found with the given selector
-	 *
-	 * @example
-	 * const selector = { vendor: "copilot", family: "gpt-4o" };
-	 * const chatClient = await createClient(selector);
-	 */
-	async createClient(selector: vscode.LanguageModelChatSelector): Promise<vscode.LanguageModelChat> {
-		try {
-			const models = await vscode.lm.selectChatModels(selector)
+    /**
+     * Creates a language model chat client based on the provided selector.
+     *
+     * @param selector - Selector criteria to filter language model chat instances
+     * @returns Promise resolving to the first matching language model chat instance
+     * @throws Error when no matching models are found with the given selector
+     *
+     * @example
+     * const selector = { vendor: "copilot", family: "gpt-4o" };
+     * const chatClient = await createClient(selector);
+     */
+    async createClient(selector: vscode.LanguageModelChatSelector): Promise<vscode.LanguageModelChat> {
+        try {
+            const models = await vscode.lm.selectChatModels(selector)
 
-			// Use first available model or create a minimal model object
-			if (models && Array.isArray(models) && models.length > 0) {
-				return models[0]
-			}
+            // Use first available model or create a minimal model object
+            if (models && Array.isArray(models) && models.length > 0) {
+                return models[0]
+            }
 
-			// Create a minimal model if no models are available
-			return {
-				id: "default-lm",
-				name: "Default Language Model",
-				vendor: "vscode",
-				family: "lm",
-				version: "1.0",
-				maxInputTokens: 8192,
-				sendRequest: async (_messages, _options, _token) => {
-					// Provide a minimal implementation
-					return {
-						stream: (async function* () {
-							yield new vscode.LanguageModelTextPart(
-								"Language model functionality is limited. Please check VS Code configuration.",
-							)
-						})(),
-						text: (async function* () {
-							yield "Language model functionality is limited. Please check VS Code configuration."
-						})(),
-					}
-				},
-				countTokens: async () => 0,
-			}
-		} catch (error) {
-			const errorMessage = error instanceof Error ? error.message : "Unknown error"
-			throw new Error(`Cline <Language Model API>: Failed to select model: ${errorMessage}`)
-		}
-	}
+            // Create a minimal model if no models are available
+            return {
+                id: "default-lm",
+                name: "Default Language Model",
+                vendor: "vscode",
+                family: "lm",
+                version: "1.0",
+                maxInputTokens: 8192,
+                sendRequest: async (_messages, _options, _token) => {
+                    // Provide a minimal implementation
+                    return {
+                        stream: (async function* () {
+                            yield new vscode.LanguageModelTextPart(
+                                "Language model functionality is limited. Please check VS Code configuration.",
+                            )
+                        })(),
+                        text: (async function* () {
+                            yield "Language model functionality is limited. Please check VS Code configuration."
+                        })(),
+                    }
+                },
+                countTokens: async () => 0,
+            }
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : "Unknown error"
+            throw new Error(`Cline <Language Model API>: Failed to select model: ${errorMessage}`)
+        }
+    }
 
-	/**
-	 * Creates and streams a message using the VS Code Language Model API.
-	 *
-	 * @param systemPrompt - The system prompt to initialize the conversation context
-	 * @param messages - An array of message parameters following the Anthropic message format
-	 *
-	 * @yields {ApiStream} An async generator that yields either text chunks or tool calls from the model response
-	 *
-	 * @throws {Error} When vsCodeLmModelSelector option is not provided
-	 * @throws {Error} When the response stream encounters an error
-	 *
-	 * @remarks
-	 * This method handles the initialization of the VS Code LM client if not already created,
-	 * converts the messages to VS Code LM format, and streams the response chunks.
-	 * Tool calls handling is currently a work in progress.
-	 */
-	dispose(): void {
-		if (this.disposable) {
-			this.disposable.dispose()
-		}
+    /**
+     * Creates and streams a message using the VS Code Language Model API.
+     *
+     * @param systemPrompt - The system prompt to initialize the conversation context
+     * @param messages - An array of message parameters following the Anthropic message format
+     *
+     * @yields {ApiStream} An async generator that yields either text chunks or tool calls from the model response
+     *
+     * @throws {Error} When vsCodeLmModelSelector option is not provided
+     * @throws {Error} When the response stream encounters an error
+     *
+     * @remarks
+     * This method handles the initialization of the VS Code LM client if not already created,
+     * converts the messages to VS Code LM format, and streams the response chunks.
+     * Tool calls handling is currently a work in progress.
+     */
+    dispose(): void {
+        if (this.disposable) {
+            this.disposable.dispose()
+        }
 
-		if (this.currentRequestCancellation) {
-			this.currentRequestCancellation.cancel()
-			this.currentRequestCancellation.dispose()
-		}
-	}
+        if (this.currentRequestCancellation) {
+            this.currentRequestCancellation.cancel()
+            this.currentRequestCancellation.dispose()
+        }
+    }
 
-	private extractTextFromMessage(message: vscode.LanguageModelChatMessage): string {
-		if (Array.isArray(message.content)) {
-			return message.content
-				.filter((part) => part instanceof vscode.LanguageModelTextPart)
-				.map((part) => (part as vscode.LanguageModelTextPart).value)
-				.join("")
-		}
-		return ""
-	}
+    private extractTextFromMessage(message: vscode.LanguageModelChatMessage): string {
+        if (Array.isArray(message.content)) {
+            return message.content
+                .filter((part) => part instanceof vscode.LanguageModelTextPart)
+                .map((part) => (part as vscode.LanguageModelTextPart).value)
+                .join("")
+        }
+        return ""
+    }
 
-	private async countTokens(text: string | vscode.LanguageModelChatMessage): Promise<number> {
-		/**
-		 * NOTE (intentional trade-off):
-		 * We use a coarse chars/4 heuristic here instead of a real tokenizer (e.g., js-tiktoken with o200k_base).
-		 * Rationale:
-		 *  - Avoid pulling multi‑MB rank files and increasing the extension install/download size.
-		 *  - Eliminate encoder lifecycle/memory concerns in long-running sessions.
-		 * Consequences:
-		 *  - This is not model-accurate and can under/over-estimate tokens, especially with tool/function calls.
-		 *  - It is “good enough” for budgeting/context checks, and we accept the inaccuracy by design.
-		 * If precise accounting becomes a requirement, reintroduce a tokenizer behind a feature flag or backend-only path.
-		 */
-		const textContent = typeof text === "string" ? text : this.extractTextFromMessage(text)
-		return Math.ceil((textContent || "").length / 4)
-	}
+    private async countTokens(text: string | vscode.LanguageModelChatMessage): Promise<number> {
+        /**
+         * NOTE (intentional trade-off):
+         * We use a coarse chars/4 heuristic here instead of a real tokenizer (e.g., js-tiktoken with o200k_base).
+         * Rationale:
+         *  - Avoid pulling multi‑MB rank files and increasing the extension install/download size.
+         *  - Eliminate encoder lifecycle/memory concerns in long-running sessions.
+         * Consequences:
+         *  - This is not model-accurate and can under/over-estimate tokens, especially with tool/function calls.
+         *  - It is “good enough” for budgeting/context checks, and we accept the inaccuracy by design.
+         * If precise accounting becomes a requirement, reintroduce a tokenizer behind a feature flag or backend-only path.
+         */
+        const textContent = typeof text === "string" ? text : this.extractTextFromMessage(text)
+        return Math.ceil((textContent || "").length / 4)
+    }
 
-	private async calculateTotalInputTokens(vsCodeLmMessages: vscode.LanguageModelChatMessage[]): Promise<number> {
-		const messageTokens: number[] = await Promise.all(vsCodeLmMessages.map((msg) => this.countTokens(msg)))
+    private async calculateTotalInputTokens(vsCodeLmMessages: vscode.LanguageModelChatMessage[]): Promise<number> {
+        const messageTokens: number[] = await Promise.all(vsCodeLmMessages.map((msg) => this.countTokens(msg)))
 
-		return messageTokens.reduce((sum: number, tokens: number): number => sum + tokens, 0)
-	}
+        return messageTokens.reduce((sum: number, tokens: number): number => sum + tokens, 0)
+    }
 
-	private ensureCleanState(): void {
-		if (this.currentRequestCancellation) {
-			this.currentRequestCancellation.cancel()
-			this.currentRequestCancellation.dispose()
-			this.currentRequestCancellation = null
-		}
-	}
+    private ensureCleanState(): void {
+        if (this.currentRequestCancellation) {
+            this.currentRequestCancellation.cancel()
+            this.currentRequestCancellation.dispose()
+            this.currentRequestCancellation = null
+        }
+    }
 
-	private async getClient(): Promise<vscode.LanguageModelChat> {
-		if (!this.client) {
-			Logger.debug("Cline <Language Model API>: Getting client with options:", {
-				vsCodeLmModelSelector: (this.config as any)?.modelSelector,
-				hasOptions: !!this.ctx.profile,
-				selectorKeys: (this.config as any)?.modelSelector ? Object.keys((this.config as any)?.modelSelector) : [],
-			})
+    private async getClient(): Promise<vscode.LanguageModelChat> {
+        if (!this.client) {
+            Logger.debug("Cline <Language Model API>: Getting client with options:", {
+                vsCodeLmModelSelector: (this.config as any)?.modelSelector,
+                hasOptions: !!this.ctx.profile,
+                selectorKeys: (this.config as any)?.modelSelector ? Object.keys((this.config as any)?.modelSelector) : [],
+            })
 
-			try {
-				// Use default empty selector if none provided to get all available models
-				const selector = (this.config as any)?.modelSelector || {}
-				Logger.debug("Cline <Language Model API>: Creating client with selector:", selector)
-				this.client = await this.createClient(selector)
-			} catch (error) {
-				const message = error instanceof Error ? error.message : "Unknown error"
-				Logger.error("Cline <Language Model API>: Client creation failed:", message)
-				throw new Error(`Cline <Language Model API>: Failed to create client: ${message}`)
-			}
-		}
+            try {
+                // Use default empty selector if none provided to get all available models
+                const selector = (this.config as any)?.modelSelector || {}
+                Logger.debug("Cline <Language Model API>: Creating client with selector:", selector)
+                this.client = await this.createClient(selector)
+            } catch (error) {
+                const message = error instanceof Error ? error.message : "Unknown error"
+                Logger.error("Cline <Language Model API>: Client creation failed:", message)
+                throw new Error(`Cline <Language Model API>: Failed to create client: ${message}`)
+            }
+        }
 
-		return this.client
-	}
+        return this.client
+    }
 
-	private cleanTerminalOutput(text: string): string {
-		if (!text) {
-			return ""
-		}
+    private cleanTerminalOutput(text: string): string {
+        if (!text) {
+            return ""
+        }
 
-		return (
-			text
-				// Normalize line breaks
-				.replace(/\r\n/g, "\n")
-				.replace(/\r/g, "\n")
+        return (
+            text
+                // Normalize line breaks
+                .replace(/\r\n/g, "\n")
+                .replace(/\r/g, "\n")
 
-				// Remove ANSI escape sequences
-				.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "") // Full set of ANSI sequences
-				.replace(/\x9B[0-?]*[ -/]*[@-~]/g, "") // CSI sequences
+                // Remove ANSI escape sequences
+                .replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "") // Full set of ANSI sequences
+                .replace(/\x9B[0-?]*[ -/]*[@-~]/g, "") // CSI sequences
 
-				// Remove terminal title setting sequences and other OSC sequences
-				.replace(/\x1B\][0-9;]*(?:\x07|\x1B\\)/g, "")
+                // Remove terminal title setting sequences and other OSC sequences
+                .replace(/\x1B\][0-9;]*(?:\x07|\x1B\\)/g, "")
 
-				// Remove control characters
-				.replace(/[\x00-\x09\x0B-\x0C\x0E-\x1F\x7F]/g, "")
+                // Remove control characters
+                .replace(/[\x00-\x09\x0B-\x0C\x0E-\x1F\x7F]/g, "")
 
-				// Remove VS Code escape sequences
-				.replace(/\x1B[PD].*?\x1B\\/g, "") // DCS sequences
-				.replace(/\x1B_.*?\x1B\\/g, "") // APC sequences
-				.replace(/\x1B\^.*?\x1B\\/g, "") // PM sequences
-				.replace(/\x1B\[[\d;]*[HfABCDEFGJKST]/g, "") // Cursor movement and clear screen
+                // Remove VS Code escape sequences
+                .replace(/\x1B[PD].*?\x1B\\/g, "") // DCS sequences
+                .replace(/\x1B_.*?\x1B\\/g, "") // APC sequences
+                .replace(/\x1B\^.*?\x1B\\/g, "") // PM sequences
+                .replace(/\x1B\[[\d;]*[HfABCDEFGJKST]/g, "") // Cursor movement and clear screen
 
-				// Remove Windows paths and service information
-				.replace(/^(?:PS )?[A-Z]:\\[^\n]*$/gm, "")
-				.replace(/^;?Cwd=.*$/gm, "")
+                // Remove Windows paths and service information
+                .replace(/^(?:PS )?[A-Z]:\\[^\n]*$/gm, "")
+                .replace(/^;?Cwd=.*$/gm, "")
 
-				// Clean escaped sequences
-				.replace(/\\x[0-9a-fA-F]{2}/g, "")
-				.replace(/\\u[0-9a-fA-F]{4}/g, "")
+                // Clean escaped sequences
+                .replace(/\\x[0-9a-fA-F]{2}/g, "")
+                .replace(/\\u[0-9a-fA-F]{4}/g, "")
 
-				// Final cleanup
-				.replace(/\n{3,}/g, "\n\n") // Remove multiple empty lines
-				.trim()
-		)
-	}
+                // Final cleanup
+                .replace(/\n{3,}/g, "\n\n") // Remove multiple empty lines
+                .trim()
+        )
+    }
 
-	private cleanMessageContent(content: any): any {
-		if (!content) {
-			return content
-		}
+    private cleanMessageContent(content: any): any {
+        if (!content) {
+            return content
+        }
 
-		if (typeof content === "string") {
-			return this.cleanTerminalOutput(content)
-		}
+        if (typeof content === "string") {
+            return this.cleanTerminalOutput(content)
+        }
 
-		if (Array.isArray(content)) {
-			return content.map((item) => this.cleanMessageContent(item))
-		}
+        if (Array.isArray(content)) {
+            return content.map((item) => this.cleanMessageContent(item))
+        }
 
-		if (typeof content === "object") {
-			const cleaned: any = {}
-			for (const [key, value] of Object.entries(content)) {
-				cleaned[key] = this.cleanMessageContent(value)
-			}
-			return cleaned
-		}
+        if (typeof content === "object") {
+            const cleaned: any = {}
+            for (const [key, value] of Object.entries(content)) {
+                cleaned[key] = this.cleanMessageContent(value)
+            }
+            return cleaned
+        }
 
-		return content
-	}
+        return content
+    }
 
-	@withRetry()
-	async *createMessage(systemPrompt: string, messages: ClineStorageMessage[]): ApiStream {
-		// Ensure clean state before starting a new request
-		this.ensureCleanState()
-		const client: vscode.LanguageModelChat = await this.getClient()
+    @withRetry()
+    async *createMessage(systemPrompt: string, messages: ClineStorageMessage[]): ApiStream {
+        // Ensure clean state before starting a new request
+        this.ensureCleanState()
+        const client: vscode.LanguageModelChat = await this.getClient()
 
-		// Clean system prompt and messages
-		const cleanedSystemPrompt = this.cleanTerminalOutput(systemPrompt)
-		const cleanedMessages = messages.map((msg) => ({
-			...msg,
-			content: this.cleanMessageContent(msg.content),
-		}))
+        // Clean system prompt and messages
+        const cleanedSystemPrompt = this.cleanTerminalOutput(systemPrompt)
+        const cleanedMessages = messages.map((msg) => ({
+            ...msg,
+            content: this.cleanMessageContent(msg.content),
+        }))
 
-		// Convert Anthropic messages to VS Code LM messages
-		const vsCodeLmMessages: vscode.LanguageModelChatMessage[] = [
-			vscode.LanguageModelChatMessage.Assistant(cleanedSystemPrompt),
-			...convertToVsCodeLmMessages(cleanedMessages),
-		]
+        // Convert Anthropic messages to VS Code LM messages
+        const vsCodeLmMessages: vscode.LanguageModelChatMessage[] = [
+            vscode.LanguageModelChatMessage.Assistant(cleanedSystemPrompt),
+            ...convertToVsCodeLmMessages(cleanedMessages),
+        ]
 
-		// Initialize cancellation token for the request
-		const requestCancellation = new vscode.CancellationTokenSource()
-		this.currentRequestCancellation = requestCancellation
+        // Initialize cancellation token for the request
+        const requestCancellation = new vscode.CancellationTokenSource()
+        this.currentRequestCancellation = requestCancellation
 
-		// Calculate input tokens before starting the stream
-		const totalInputTokens: number = await this.calculateTotalInputTokens(vsCodeLmMessages)
+        // Calculate input tokens before starting the stream
+        const totalInputTokens: number = await this.calculateTotalInputTokens(vsCodeLmMessages)
 
-		// Accumulate the text and count at the end of the stream to reduce token counting overhead.
-		let accumulatedText = ""
+        // Accumulate the text and count at the end of the stream to reduce token counting overhead.
+        let accumulatedText = ""
 
-		try {
-			// Create the response stream with minimal required options
-			const requestOptions: vscode.LanguageModelChatRequestOptions = {
-				justification: `Cline would like to use '${client.name}' from '${client.vendor}', Click 'Allow' to proceed.`,
-			}
+        try {
+            // Create the response stream with minimal required options
+            const requestOptions: vscode.LanguageModelChatRequestOptions = {
+                justification: `Cline would like to use '${client.name}' from '${client.vendor}', Click 'Allow' to proceed.`,
+            }
 
-			// Note: Tool support is currently provided by the VSCode Language Model API directly
-			// Extensions can register tools using vscode.lm.registerTool()
+            // Note: Tool support is currently provided by the VSCode Language Model API directly
+            // Extensions can register tools using vscode.lm.registerTool()
 
-			const { stream } = await observeProviderStreamResponse(
-				() => client.sendRequest(vsCodeLmMessages, requestOptions, requestCancellation.token),
-				(response) => response.stream,
-			)
-			if (!stream) throw new Error("Cline <Language Model API>: Response stream is unavailable")
+            // The Language Model API sends no thinking parameter; the chat model ID is the sent model.
+            const { stream } = await ApiHandler.observeProviderStreamResponse(
+                ApiHandler.identifyProviderAttempt("vscode-lm", { model: client.id }),
+                () => client.sendRequest(vsCodeLmMessages, requestOptions, requestCancellation.token),
+                (response) => response.stream,
+            )
+            if (!stream) throw new Error("Cline <Language Model API>: Response stream is unavailable")
 
-			// Consume the stream and handle both text and tool call chunks
-			for await (const chunk of stream) {
-				if (chunk instanceof vscode.LanguageModelTextPart) {
-					// Validate text part value
-					if (typeof chunk.value !== "string") {
-						Logger.warn("Cline <Language Model API>: Invalid text part value received:", chunk.value)
-						continue
-					}
+            // Consume the stream and handle both text and tool call chunks
+            for await (const chunk of stream) {
+                if (chunk instanceof vscode.LanguageModelTextPart) {
+                    // Validate text part value
+                    if (typeof chunk.value !== "string") {
+                        Logger.warn("Cline <Language Model API>: Invalid text part value received:", chunk.value)
+                        continue
+                    }
 
-					accumulatedText += chunk.value
-					yield {
-						type: "text",
-						text: chunk.value,
-					}
-				} else if (chunk instanceof vscode.LanguageModelToolCallPart) {
-					try {
-						// Validate tool call parameters
-						if (!chunk.name || typeof chunk.name !== "string") {
-							Logger.warn("Cline <Language Model API>: Invalid tool name received:", chunk.name)
-							continue
-						}
+                    accumulatedText += chunk.value
+                    yield {
+                        type: "text",
+                        text: chunk.value,
+                    }
+                } else if (chunk instanceof vscode.LanguageModelToolCallPart) {
+                    try {
+                        // Validate tool call parameters
+                        if (!chunk.name || typeof chunk.name !== "string") {
+                            Logger.warn("Cline <Language Model API>: Invalid tool name received:", chunk.name)
+                            continue
+                        }
 
-						if (!chunk.callId || typeof chunk.callId !== "string") {
-							Logger.warn("Cline <Language Model API>: Invalid tool callId received:", chunk.callId)
-							continue
-						}
+                        if (!chunk.callId || typeof chunk.callId !== "string") {
+                            Logger.warn("Cline <Language Model API>: Invalid tool callId received:", chunk.callId)
+                            continue
+                        }
 
-						// Ensure input is a valid object
-						if (!chunk.input || typeof chunk.input !== "object") {
-							Logger.warn("Cline <Language Model API>: Invalid tool input received:", chunk.input)
-							continue
-						}
+                        // Ensure input is a valid object
+                        if (!chunk.input || typeof chunk.input !== "object") {
+                            Logger.warn("Cline <Language Model API>: Invalid tool input received:", chunk.input)
+                            continue
+                        }
 
-						// Convert tool calls to text format with proper error handling
-						const toolCall = {
-							type: "tool_call",
-							name: chunk.name,
-							arguments: chunk.input,
-							callId: chunk.callId,
-						}
+                        // Convert tool calls to text format with proper error handling
+                        const toolCall = {
+                            type: "tool_call",
+                            name: chunk.name,
+                            arguments: chunk.input,
+                            callId: chunk.callId,
+                        }
 
-						const toolCallText = JSON.stringify(toolCall)
-						accumulatedText += toolCallText
+                        const toolCallText = JSON.stringify(toolCall)
+                        accumulatedText += toolCallText
 
-						// Log tool call for debugging
-						Logger.debug("Cline <Language Model API>: Processing tool call:", {
-							name: chunk.name,
-							callId: chunk.callId,
-							inputSize: JSON.stringify(chunk.input).length,
-						})
+                        // Log tool call for debugging
+                        Logger.debug("Cline <Language Model API>: Processing tool call:", {
+                            name: chunk.name,
+                            callId: chunk.callId,
+                            inputSize: JSON.stringify(chunk.input).length,
+                        })
 
-						yield {
-							type: "text",
-							text: toolCallText,
-						}
-					} catch (error) {
-						Logger.error("Cline <Language Model API>: Failed to process tool call:", error)
-					}
-				} else {
-					Logger.warn("Cline <Language Model API>: Unknown chunk type received:", chunk)
-				}
-			}
+                        yield {
+                            type: "text",
+                            text: toolCallText,
+                        }
+                    } catch (error) {
+                        Logger.error("Cline <Language Model API>: Failed to process tool call:", error)
+                    }
+                } else {
+                    Logger.warn("Cline <Language Model API>: Unknown chunk type received:", chunk)
+                }
+            }
 
-			// Count tokens in the accumulated text after stream completion
-			const totalOutputTokens: number = await this.countTokens(accumulatedText)
+            // Count tokens in the accumulated text after stream completion
+            const totalOutputTokens: number = await this.countTokens(accumulatedText)
 
-			// Report final usage after stream completion
-			yield {
-				type: "usage",
-				inputTokens: totalInputTokens,
-				outputTokens: totalOutputTokens,
-				totalCost: calculateApiCostAnthropic(this.getModel().info, totalInputTokens, totalOutputTokens),
-			}
-		} catch (error: unknown) {
-			this.ensureCleanState()
+            // Report final usage after stream completion
+            yield {
+                type: "usage",
+                inputTokens: totalInputTokens,
+                outputTokens: totalOutputTokens,
+                totalCost: calculateApiCostAnthropic(this.getModel().info, totalInputTokens, totalOutputTokens),
+            }
+        } catch (error: unknown) {
+            this.ensureCleanState()
 
-			if (error instanceof vscode.CancellationError) {
-				throw new Error("Cline <Language Model API>: Request cancelled by user")
-			}
+            if (error instanceof vscode.CancellationError) {
+                throw new Error("Cline <Language Model API>: Request cancelled by user")
+            }
 
-			if (error instanceof Error) {
-				Logger.error("Cline <Language Model API>: Stream error details:", {
-					message: error.message,
-					stack: error.stack,
-					name: error.name,
-				})
+            if (error instanceof Error) {
+                Logger.error("Cline <Language Model API>: Stream error details:", {
+                    message: error.message,
+                    stack: error.stack,
+                    name: error.name,
+                })
 
-				// Return original error if it's already an Error instance
-				throw error
-			}
-			if (typeof error === "object" && error !== null) {
-				// Handle error-like objects
-				const errorDetails = JSON.stringify(error, null, 2)
-				Logger.error("Cline <Language Model API>: Stream error object:", errorDetails)
-				throw new Error(`Cline <Language Model API>: Response stream error: ${errorDetails}`)
-			}
-			// Fallback for unknown error types
-			const errorMessage = String(error)
-			Logger.error("Cline <Language Model API>: Unknown stream error:", errorMessage)
-			throw new Error(`Cline <Language Model API>: Response stream error: ${errorMessage}`)
-		}
-	}
+                // Return original error if it's already an Error instance
+                throw error
+            }
+            if (typeof error === "object" && error !== null) {
+                // Handle error-like objects
+                const errorDetails = JSON.stringify(error, null, 2)
+                Logger.error("Cline <Language Model API>: Stream error object:", errorDetails)
+                throw new Error(`Cline <Language Model API>: Response stream error: ${errorDetails}`)
+            }
+            // Fallback for unknown error types
+            const errorMessage = String(error)
+            Logger.error("Cline <Language Model API>: Unknown stream error:", errorMessage)
+            throw new Error(`Cline <Language Model API>: Response stream error: ${errorMessage}`)
+        }
+    }
 
-	// Return model information based on the current client state
-	getModel(): { id: string; info: ModelInfo } {
-		if (this.client) {
-			// Validate client properties
-			const requiredProps = {
-				id: this.client.id,
-				vendor: this.client.vendor,
-				family: this.client.family,
-				version: this.client.version,
-				maxInputTokens: this.client.maxInputTokens,
-			}
+    // Return model information based on the current client state
+    getModel(): { id: string; info: ModelInfo } {
+        if (this.client) {
+            // Validate client properties
+            const requiredProps = {
+                id: this.client.id,
+                vendor: this.client.vendor,
+                family: this.client.family,
+                version: this.client.version,
+                maxInputTokens: this.client.maxInputTokens,
+            }
 
-			// Log any missing properties for debugging
-			for (const [prop, value] of Object.entries(requiredProps)) {
-				if (!value && value !== 0) {
-					Logger.warn(`Cline <Language Model API>: Client missing ${prop} property`)
-				}
-			}
+            // Log any missing properties for debugging
+            for (const [prop, value] of Object.entries(requiredProps)) {
+                if (!value && value !== 0) {
+                    Logger.warn(`Cline <Language Model API>: Client missing ${prop} property`)
+                }
+            }
 
-			// Construct model ID using available information
-			const modelParts = [this.client.vendor, this.client.family, this.client.version].filter(Boolean)
+            // Construct model ID using available information
+            const modelParts = [this.client.vendor, this.client.family, this.client.version].filter(Boolean)
 
-			const modelId = this.client.id || modelParts.join(SELECTOR_SEPARATOR)
+            const modelId = this.client.id || modelParts.join(SELECTOR_SEPARATOR)
 
-			// Build model info with conservative defaults for missing values
-			const modelInfo: ModelInfo = {
-				id: modelId,
-				description: `VSCode Language Model: ${modelId}`,
-				capabilities: {
-					maxTokens: -1, // Unlimited tokens by default
-					contextWindow:
-						typeof this.client.maxInputTokens === "number"
-							? Math.max(0, this.client.maxInputTokens)
-							: openAiModelInfoSaneDefaults.capabilities?.contextWindow,
-					supportsImages: false, // VSCode Language Model API currently doesn't support image inputs
-					supportsPromptCache: true,
-				},
-				pricing: {
-					inputPrice: 0,
-					outputPrice: 0,
-				},
-			}
+            // Build model info with conservative defaults for missing values
+            const modelInfo: ModelInfo = {
+                id: modelId,
+                description: `VSCode Language Model: ${modelId}`,
+                capabilities: {
+                    maxTokens: -1, // Unlimited tokens by default
+                    contextWindow:
+                        typeof this.client.maxInputTokens === "number"
+                            ? Math.max(0, this.client.maxInputTokens)
+                            : openAiModelInfoSaneDefaults.capabilities?.contextWindow,
+                    supportsImages: false, // VSCode Language Model API currently doesn't support image inputs
+                    supportsPromptCache: true,
+                },
+                pricing: {
+                    inputPrice: 0,
+                    outputPrice: 0,
+                },
+            }
 
-			return { id: modelId, info: modelInfo }
-		}
+            return { id: modelId, info: modelInfo }
+        }
 
-		// Fallback when no client is available
-		const fallbackId = (this.config as any)?.modelSelector
-			? stringifyVsCodeLmModelSelector((this.config as any)?.modelSelector)
-			: "vscode-lm"
+        // Fallback when no client is available
+        const fallbackId = (this.config as any)?.modelSelector
+            ? stringifyVsCodeLmModelSelector((this.config as any)?.modelSelector)
+            : "vscode-lm"
 
-		Logger.debug("Cline <Language Model API>: No client available, using fallback model info")
+        Logger.debug("Cline <Language Model API>: No client available, using fallback model info")
 
-		return {
-			id: fallbackId,
-			info: {
-				...openAiModelInfoSaneDefaults,
-				description: `VSCode Language Model (Fallback): ${fallbackId}`,
-			},
-		}
-	}
+        return {
+            id: fallbackId,
+            info: {
+                ...openAiModelInfoSaneDefaults,
+                description: `VSCode Language Model (Fallback): ${fallbackId}`,
+            },
+        }
+    }
 
-	async completePrompt(prompt: string): Promise<string> {
-		try {
-			const client = await this.getClient()
-			const requestCancellation = new vscode.CancellationTokenSource()
-			const { stream } = await observeProviderStreamResponse(
-				() => client.sendRequest([vscode.LanguageModelChatMessage.User(prompt)], {}, requestCancellation.token),
-				(response) => response.stream,
-			)
-			if (!stream) throw new Error("Cline <Language Model API>: Response stream is unavailable")
-			let result = ""
-			for await (const chunk of stream) {
-				if (chunk instanceof vscode.LanguageModelTextPart) {
-					result += chunk.value
-				}
-			}
-			return result
-		} catch (error) {
-			if (error instanceof Error) {
-				throw new Error(`VSCode LM completion error: ${error.message}`)
-			}
-			throw error
-		}
-	}
+    async completePrompt(prompt: string): Promise<string> {
+        try {
+            const client = await this.getClient()
+            const requestCancellation = new vscode.CancellationTokenSource()
+            const { stream } = await ApiHandler.observeProviderStreamResponse(
+                ApiHandler.identifyProviderAttempt("vscode-lm", { model: client.id }),
+                () => client.sendRequest([vscode.LanguageModelChatMessage.User(prompt)], {}, requestCancellation.token),
+                (response) => response.stream,
+            )
+            if (!stream) throw new Error("Cline <Language Model API>: Response stream is unavailable")
+            let result = ""
+            for await (const chunk of stream) {
+                if (chunk instanceof vscode.LanguageModelTextPart) {
+                    result += chunk.value
+                }
+            }
+            return result
+        } catch (error) {
+            if (error instanceof Error) {
+                throw new Error(`VSCode LM completion error: ${error.message}`)
+            }
+            throw error
+        }
+    }
 }

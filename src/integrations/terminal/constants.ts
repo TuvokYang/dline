@@ -17,6 +17,14 @@ export const PROCESS_HOT_TIMEOUT_NORMAL = 2_000
 /** Extended timeout for compilation/build commands (15 seconds) */
 export const PROCESS_HOT_TIMEOUT_COMPILING = 15_000
 
+/**
+ * Longest an explicit background start waits for the command's first output.
+ * The handoff tells the model the command is running, so it waits until the
+ * command has shown that it is; a command that starts silently is handed off
+ * once this window passes.
+ */
+export const EXPLICIT_BACKGROUND_START_WINDOW_MS = 2_000
+
 // =============================================================================
 // Output Buffering (CommandOrchestrator)
 // =============================================================================
@@ -98,18 +106,18 @@ export const COMPILING_MARKERS = ["compiling", "building", "bundling", "transpil
 
 /** Markers that indicate compilation is done (nullify extended timeout) */
 export const COMPILING_NULLIFIERS = [
-	"compiled",
-	"success",
-	"finish",
-	"complete",
-	"succeed",
-	"done",
-	"end",
-	"stop",
-	"exit",
-	"terminate",
-	"error",
-	"fail",
+    "compiled",
+    "success",
+    "finish",
+    "complete",
+    "succeed",
+    "done",
+    "end",
+    "stop",
+    "exit",
+    "terminate",
+    "error",
+    "fail",
 ]
 
 /**
@@ -117,8 +125,8 @@ export const COMPILING_NULLIFIERS = [
  * Matches markers anywhere in the output.
  */
 export function isCompilingOutput(data: string): boolean {
-	const lowerData = data.toLowerCase()
-	const hasMarker = COMPILING_MARKERS.some((marker) => lowerData.includes(marker.toLowerCase()))
-	const hasNullifier = COMPILING_NULLIFIERS.some((nullifier) => lowerData.includes(nullifier.toLowerCase()))
-	return hasMarker && !hasNullifier
+    const lowerData = data.toLowerCase()
+    const hasMarker = COMPILING_MARKERS.some((marker) => lowerData.includes(marker.toLowerCase()))
+    const hasNullifier = COMPILING_NULLIFIERS.some((nullifier) => lowerData.includes(nullifier.toLowerCase()))
+    return hasMarker && !hasNullifier
 }

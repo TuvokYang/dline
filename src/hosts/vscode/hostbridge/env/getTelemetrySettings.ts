@@ -4,11 +4,11 @@ import { EmptyRequest } from "@/shared/proto/dline"
 import { GetTelemetrySettingsResponse, Setting } from "@/shared/proto/dline/host"
 
 export async function getTelemetrySettings(_: EmptyRequest): Promise<GetTelemetrySettingsResponse> {
-	const config = vscode.workspace.getConfiguration("telemetry")
-	const errorLevel = config?.get<ErrorSettings["level"]>("telemetryLevel") || "all"
+    const config = vscode.workspace.getConfiguration("telemetry")
+    const errorLevel = config?.get<ErrorSettings["level"]>("telemetryLevel") || "all"
 
-	if (vscode.env.isTelemetryEnabled) {
-		return { isEnabled: Setting.ENABLED, errorLevel }
-	}
-	return { isEnabled: Setting.DISABLED, errorLevel }
+    if (vscode.env.isTelemetryEnabled) {
+        return { isEnabled: Setting.ENABLED, errorLevel }
+    }
+    return { isEnabled: Setting.DISABLED, errorLevel }
 }

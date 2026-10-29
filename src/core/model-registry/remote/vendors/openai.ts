@@ -10,13 +10,13 @@ import type { ProviderModelReconciliationMode } from "../../provider-model-recon
 import { ModelListingSource } from "../model-listing-source"
 
 export class OpenAiModelSource extends ModelListingSource {
-	readonly providerId = "openai"
-	readonly providerName = "OpenAI Compatible"
-	/** Some self-hosted gateways list models without authentication. */
-	override readonly requiresApiKey = false
-	/** The catalog is whatever the gateway reports; stale entries should disappear. */
-	override readonly reconciliation: ProviderModelReconciliationMode = "replace"
-	protected override readonly defaultBaseUrl = "https://api.openai.com/v1"
+    readonly providerId = "openai"
+    readonly providerName = "OpenAI Compatible"
+    /** Some self-hosted gateways list models without authentication. */
+    override readonly requiresApiKey = false
+    /** The catalog is whatever the gateway reports; stale entries should disappear. */
+    override readonly reconciliation: ProviderModelReconciliationMode = "replace"
+    protected override readonly defaultBaseUrl = "https://api.openai.com/v1"
 }
 
 export const openAiModelSource = new OpenAiModelSource()

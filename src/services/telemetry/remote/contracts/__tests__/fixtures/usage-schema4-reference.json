@@ -1,0 +1,1662 @@
+{
+    "fixture_version": 4,
+    "contract_version": 1,
+    "contract": "dline.usage.schema5",
+    "mutation_format": "RFC 6902 JSON Patch subset: add, remove, replace",
+    "canonical_json": {
+        "algorithm": "RFC 8785 JSON Canonicalization Scheme after semantic array sorting",
+        "encoding": "UTF-8 without BOM",
+        "numbers": "safe integers only",
+        "string_order": "UTF-16 code unit lexicographic order; locale/ICU collation is forbidden",
+        "bucket_order": "bucket_id ascending by string_order",
+        "fact_order": "role, provider, model_id, thinking tag, thinking value ascending by string_order; number tag before string tag",
+        "tool_order": "tool name ascending by string_order",
+        "content_hash": "SHA-256 lowercase hex of complete canonical body bytes"
+    },
+    "histogram_bounds_ms": [
+        250,
+        500,
+        1000,
+        2000,
+        5000,
+        10000,
+        20000,
+        30000,
+        60000,
+        120000
+    ],
+    "histogram_bucket_semantics": "(-infinity,b0], (b0,b1], ..., (bn,+infinity); bucket count is bounds length plus one",
+    "hard_limits": {
+        "max_body_bytes": 65536,
+        "max_buckets": 8,
+        "max_facts": 32,
+        "max_tool_rows": 384,
+        "max_write_rows": 486,
+        "event_window_ms": 600000,
+        "duration_bucket_threshold_ms": 60000,
+        "default_interval_ms": 600000,
+        "new_batch_jitter_max_ms": 300000,
+        "max_request_replay_age_ms": 604800000
+    },
+    "valid_requests": [
+        {
+            "name": "schema5-valid",
+            "headers": {
+                "content-type": "application/json",
+                "user-agent": "Dline/0.12.0",
+                "x-dline-contract": "5",
+                "x-dline-request-id": "11111111-1111-4111-8111-111111111111",
+                "authorization": "Bearer fixture-device-token-not-a-secret"
+            },
+            "body": {
+                "schema_version": 5,
+                "client": {
+                    "version": "0.12.0",
+                    "platform": "win32",
+                    "architecture": "x64",
+                    "host_editor": "vscode",
+                    "channel": "insiders",
+                    "is_dev": true
+                },
+                "buckets": [
+                    {
+                        "bucket_id": "22222222-2222-4222-8222-222222222222",
+                        "policy_epoch": 12,
+                        "event_window": {
+                            "started_at": 1792800000000,
+                            "ended_at": 1792800600000,
+                            "first_attempt_at": 1792800012000,
+                            "last_attempt_at": 1792800190000,
+                            "sealed_at": 1792800191000
+                        },
+                        "duration_ms": 78600,
+                        "sessions_started": 1,
+                        "facts": [
+                            {
+                                "role": "reviewer",
+                                "provider": "anthropic",
+                                "model_id": "catalog:claude-opus-4-1",
+                                "thinking": "level:high",
+                                "requests": {
+                                    "completed": 1,
+                                    "failed": 1,
+                                    "cancelled": 0,
+                                    "aborted": 0
+                                },
+                                "tokens": {
+                                    "input": 1200,
+                                    "output": 300,
+                                    "cache_read": 54000,
+                                    "cache_write": 2100,
+                                    "reasoning": 40
+                                },
+                                "token_coverage": {
+                                    "reported": 2,
+                                    "unreported": 0
+                                },
+                                "generation_coverage": {
+                                    "reported": 1,
+                                    "unreported": 1
+                                },
+                                "logical_execution_coverage": {
+                                    "reported": 1,
+                                    "unreported": 0
+                                },
+                                "generation_output_tokens": 220,
+                                "duration_ms": {
+                                    "count": 2,
+                                    "sum": 76900,
+                                    "min": 3800,
+                                    "max": 73100,
+                                    "buckets": [
+                                        0,
+                                        0,
+                                        0,
+                                        0,
+                                        1,
+                                        0,
+                                        0,
+                                        0,
+                                        0,
+                                        1,
+                                        0
+                                    ]
+                                },
+                                "ttft_ms": {
+                                    "count": 2,
+                                    "sum": 1200,
+                                    "min": 400,
+                                    "max": 800,
+                                    "buckets": [
+                                        0,
+                                        1,
+                                        1,
+                                        0,
+                                        0,
+                                        0,
+                                        0,
+                                        0,
+                                        0,
+                                        0,
+                                        0
+                                    ]
+                                },
+                                "generation_ms": {
+                                    "count": 1,
+                                    "sum": 5200,
+                                    "min": 5200,
+                                    "max": 5200,
+                                    "buckets": [
+                                        0,
+                                        0,
+                                        0,
+                                        0,
+                                        0,
+                                        1,
+                                        0,
+                                        0,
+                                        0,
+                                        0,
+                                        0
+                                    ]
+                                },
+                                "errors": {
+                                    "rate_limited": 1
+                                },
+                                "logical_execution": {
+                                    "logical_requests": {
+                                        "completed": 1,
+                                        "failed": 0,
+                                        "cancelled": 0,
+                                        "aborted": 0
+                                    },
+                                    "turn_duration_ms": {
+                                        "count": 1,
+                                        "sum": 82000,
+                                        "min": 82000,
+                                        "max": 82000
+                                    },
+                                    "tools": {
+                                        "completed": 2,
+                                        "failed": 1,
+                                        "cancelled": 0,
+                                        "by_name": {
+                                            "read_file": {
+                                                "completed": 2,
+                                                "failed": 0,
+                                                "cancelled": 0
+                                            },
+                                            "execute_command": {
+                                                "completed": 0,
+                                                "failed": 1,
+                                                "cancelled": 0
+                                            }
+                                        },
+                                        "unlisted": {
+                                            "completed": 0,
+                                            "failed": 0,
+                                            "cancelled": 0
+                                        }
+                                    },
+                                    "task_attempts": {
+                                        "count": 1,
+                                        "sum": 2,
+                                        "min": 2,
+                                        "max": 2
+                                    }
+                                }
+                            },
+                            {
+                                "role": "reviewer",
+                                "provider": "anthropic",
+                                "model_id": "catalog:claude-opus-4-1",
+                                "thinking": 2048,
+                                "requests": {
+                                    "completed": 1,
+                                    "failed": 0,
+                                    "cancelled": 0,
+                                    "aborted": 0
+                                },
+                                "tokens": {
+                                    "input": 400,
+                                    "output": 80,
+                                    "cache_read": 0,
+                                    "cache_write": 0,
+                                    "reasoning": 20
+                                },
+                                "token_coverage": {
+                                    "reported": 1,
+                                    "unreported": 0
+                                },
+                                "generation_coverage": {
+                                    "reported": 0,
+                                    "unreported": 1
+                                },
+                                "logical_execution_coverage": {
+                                    "reported": 0,
+                                    "unreported": 0
+                                },
+                                "generation_output_tokens": 0,
+                                "duration_ms": {
+                                    "count": 1,
+                                    "sum": 1200,
+                                    "min": 1200,
+                                    "max": 1200,
+                                    "buckets": [
+                                        0,
+                                        0,
+                                        0,
+                                        1,
+                                        0,
+                                        0,
+                                        0,
+                                        0,
+                                        0,
+                                        0,
+                                        0
+                                    ]
+                                },
+                                "errors": {}
+                            },
+                            {
+                                "role": "task",
+                                "provider": "openai_compatible",
+                                "model_id": "state:private",
+                                "thinking": "state:dynamic",
+                                "requests": {
+                                    "completed": 0,
+                                    "failed": 1,
+                                    "cancelled": 0,
+                                    "aborted": 0
+                                },
+                                "tokens": {
+                                    "input": 0,
+                                    "output": 0,
+                                    "cache_read": 0,
+                                    "cache_write": 0,
+                                    "reasoning": 0
+                                },
+                                "token_coverage": {
+                                    "reported": 0,
+                                    "unreported": 1
+                                },
+                                "generation_coverage": {
+                                    "reported": 0,
+                                    "unreported": 1
+                                },
+                                "logical_execution_coverage": {
+                                    "reported": 0,
+                                    "unreported": 1
+                                },
+                                "generation_output_tokens": 0,
+                                "duration_ms": {
+                                    "count": 1,
+                                    "sum": 500,
+                                    "min": 500,
+                                    "max": 500,
+                                    "buckets": [
+                                        0,
+                                        1,
+                                        0,
+                                        0,
+                                        0,
+                                        0,
+                                        0,
+                                        0,
+                                        0,
+                                        0,
+                                        0
+                                    ]
+                                },
+                                "errors": {
+                                    "network": 1
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            "expected": {
+                "status": 200,
+                "disposition": "accepted",
+                "business_write_occurred": true,
+                "logical_write_rows": 15,
+                "fact_identity": [
+                    "role",
+                    "provider",
+                    "model_id",
+                    "thinking"
+                ],
+                "derived_views": [
+                    "global",
+                    "provider",
+                    "model",
+                    "thinking",
+                    "role",
+                    "platform"
+                ]
+            }
+        }
+    ],
+    "response_cases": [
+        {
+            "name": "accepted-ack",
+            "status": 200,
+            "body": {
+                "ok": true,
+                "request_id": "11111111-1111-4111-8111-111111111111",
+                "disposition": "accepted",
+                "next_eligible_at": 1792800900000
+            },
+            "client_action": "persist eligibility and acknowledge immutable manifest"
+        },
+        {
+            "name": "duplicate-ack",
+            "status": 200,
+            "body": {
+                "ok": true,
+                "request_id": "11111111-1111-4111-8111-111111111111",
+                "disposition": "duplicate",
+                "next_eligible_at": 1792800900000
+            },
+            "client_action": "persist eligibility and acknowledge immutable manifest"
+        },
+        {
+            "name": "request-conflict",
+            "status": 409,
+            "body": {
+                "ok": false,
+                "error": {
+                    "code": "request_id_conflict",
+                    "path": "request_id"
+                }
+            },
+            "client_action": "dead-letter without changing request id or bytes"
+        },
+        {
+            "name": "quota-limited",
+            "status": 429,
+            "body": {
+                "ok": false,
+                "error": {
+                    "code": "quota_limited"
+                },
+                "next_eligible_at": 1792801200000
+            },
+            "client_action": "persist wait and replay exact manifest"
+        },
+        {
+            "name": "temporarily-unavailable",
+            "status": 503,
+            "body": {
+                "ok": false,
+                "error": {
+                    "code": "temporarily_unavailable"
+                }
+            },
+            "client_action": "bounded exact-byte replay"
+        }
+    ],
+    "rate_vectors": [
+        {
+            "name": "multi-provider-model-role-and-bucket",
+            "facts": [
+                {
+                    "device_id": "device-a",
+                    "bucket_id": "bucket-1",
+                    "platform": "win32",
+                    "role": "task",
+                    "provider": "anthropic",
+                    "model_id": "catalog:model-a",
+                    "attempts": 2,
+                    "reported_output": 120,
+                    "duration_ms": 30000
+                },
+                {
+                    "device_id": "device-a",
+                    "bucket_id": "bucket-1",
+                    "platform": "win32",
+                    "role": "subagent",
+                    "provider": "anthropic",
+                    "model_id": "catalog:model-a",
+                    "attempts": 1,
+                    "reported_output": 180,
+                    "duration_ms": 15000
+                },
+                {
+                    "device_id": "device-a",
+                    "bucket_id": "bucket-1",
+                    "platform": "win32",
+                    "role": "task",
+                    "provider": "anthropic",
+                    "model_id": "catalog:model-b",
+                    "attempts": 1,
+                    "reported_output": 100,
+                    "duration_ms": 10000
+                },
+                {
+                    "device_id": "device-a",
+                    "bucket_id": "bucket-1",
+                    "platform": "win32",
+                    "role": "reviewer",
+                    "provider": "openai",
+                    "model_id": "catalog:model-c",
+                    "attempts": 2,
+                    "reported_output": 200,
+                    "duration_ms": 40000
+                },
+                {
+                    "device_id": "device-a",
+                    "bucket_id": "bucket-2",
+                    "platform": "linux",
+                    "role": "task",
+                    "provider": "anthropic",
+                    "model_id": "catalog:model-a",
+                    "attempts": 1,
+                    "reported_output": 300,
+                    "duration_ms": 10000
+                },
+                {
+                    "device_id": "device-a",
+                    "bucket_id": "bucket-2",
+                    "platform": "linux",
+                    "role": "subagent",
+                    "provider": "anthropic",
+                    "model_id": "catalog:model-b",
+                    "attempts": 2,
+                    "reported_output": 100,
+                    "duration_ms": 20000
+                }
+            ],
+            "expected": {
+                "global": {
+                    "attempts": 9,
+                    "reported_output": 1000,
+                    "duration_ms": 125000,
+                    "average_rpm": 4.32,
+                    "average_tpm": 480,
+                    "peak_rpm": 6,
+                    "peak_tpm": 800
+                },
+                "provider:anthropic": {
+                    "attempts": 7,
+                    "reported_output": 800,
+                    "duration_ms": 85000,
+                    "average_rpm": 4.9411764705882355,
+                    "average_tpm": 564.7058823529412,
+                    "peak_rpm": 6,
+                    "peak_tpm": 800
+                },
+                "provider:openai": {
+                    "attempts": 2,
+                    "reported_output": 200,
+                    "duration_ms": 40000,
+                    "average_rpm": 3,
+                    "average_tpm": 300,
+                    "peak_rpm": 3,
+                    "peak_tpm": 300
+                },
+                "model:anthropic/catalog:model-a": {
+                    "attempts": 4,
+                    "reported_output": 600,
+                    "duration_ms": 55000,
+                    "average_rpm": 4.363636363636363,
+                    "average_tpm": 654.5454545454545,
+                    "peak_rpm": 6,
+                    "peak_tpm": 1800
+                },
+                "model:anthropic/catalog:model-b": {
+                    "attempts": 3,
+                    "reported_output": 200,
+                    "duration_ms": 30000,
+                    "average_rpm": 6,
+                    "average_tpm": 400,
+                    "peak_rpm": 6,
+                    "peak_tpm": 600
+                },
+                "role:task": {
+                    "attempts": 4,
+                    "reported_output": 520,
+                    "duration_ms": 50000,
+                    "average_rpm": 4.8,
+                    "average_tpm": 624
+                },
+                "role:subagent": {
+                    "attempts": 3,
+                    "reported_output": 280,
+                    "duration_ms": 35000,
+                    "average_rpm": 5.142857142857143,
+                    "average_tpm": 480
+                },
+                "role:reviewer": {
+                    "attempts": 2,
+                    "reported_output": 200,
+                    "duration_ms": 40000,
+                    "average_rpm": 3,
+                    "average_tpm": 300
+                },
+                "platform:win32": {
+                    "attempts": 6,
+                    "reported_output": 600,
+                    "duration_ms": 95000,
+                    "average_rpm": 3.789473684210526,
+                    "average_tpm": 378.94736842105266,
+                    "peak_rpm": 3.789473684210526,
+                    "peak_tpm": 378.94736842105266
+                },
+                "platform:linux": {
+                    "attempts": 3,
+                    "reported_output": 400,
+                    "duration_ms": 30000,
+                    "average_rpm": 6,
+                    "average_tpm": 800,
+                    "peak_rpm": 6,
+                    "peak_tpm": 800
+                }
+            }
+        }
+    ],
+    "boundary_cases": [
+        {
+            "name": "facts-at-limit",
+            "dimension": "facts",
+            "value": 32,
+            "expected_status": 200
+        },
+        {
+            "name": "facts-over-limit",
+            "dimension": "facts",
+            "value": 33,
+            "expected_status": 422,
+            "expected_code": "invalid_usage_body"
+        },
+        {
+            "name": "tools-per-fact-at-limit",
+            "dimension": "named_tools_per_fact",
+            "value": 12,
+            "expected_status": 200
+        },
+        {
+            "name": "tools-per-fact-over-limit",
+            "dimension": "named_tools_per_fact",
+            "value": 13,
+            "expected_status": 422,
+            "expected_code": "invalid_usage_body"
+        },
+        {
+            "name": "tools-total-at-limit",
+            "dimension": "named_tools_total",
+            "value": 384,
+            "grant_max_write_rows": 486,
+            "expected_status": 200
+        },
+        {
+            "name": "tools-total-over-limit",
+            "dimension": "named_tools_total",
+            "value": 385,
+            "grant_max_write_rows": 487,
+            "expected_status": 422,
+            "expected_code": "invalid_usage_body"
+        },
+        {
+            "name": "body-at-limit",
+            "dimension": "canonical_body_bytes",
+            "value": 65536,
+            "expected_status": 200
+        },
+        {
+            "name": "body-over-limit",
+            "dimension": "canonical_body_bytes",
+            "value": 65537,
+            "expected_status": 413,
+            "expected_code": "payload_too_large"
+        },
+        {
+            "name": "safe-integer-at-limit",
+            "dimension": "any_counter_after_accumulation",
+            "value": 9007199254740991,
+            "expected_status": 200
+        },
+        {
+            "name": "safe-integer-over-limit",
+            "dimension": "any_counter_after_accumulation",
+            "value": 9007199254740992,
+            "expected_status": 422,
+            "expected_code": "invalid_usage_body"
+        },
+        {
+            "name": "reasoning-equals-output",
+            "dimension": "tokens.reasoning<=tokens.output",
+            "reasoning": 300,
+            "output": 300,
+            "expected_status": 200
+        },
+        {
+            "name": "reasoning-over-output",
+            "dimension": "tokens.reasoning<=tokens.output",
+            "reasoning": 301,
+            "output": 300,
+            "expected_status": 422,
+            "expected_code": "invalid_usage_body"
+        },
+        {
+            "name": "generation-equals-output",
+            "dimension": "generation_output_tokens<=tokens.output",
+            "generation_output": 300,
+            "output": 300,
+            "expected_status": 200
+        },
+        {
+            "name": "generation-over-output",
+            "dimension": "generation_output_tokens<=tokens.output",
+            "generation_output": 301,
+            "output": 300,
+            "expected_status": 422,
+            "expected_code": "invalid_usage_body"
+        },
+        {
+            "name": "logical-write-rows-at-grant",
+            "dimension": "logical_write_rows",
+            "value": 256,
+            "grant": 256,
+            "expected_status": 200
+        },
+        {
+            "name": "logical-write-rows-over-grant",
+            "dimension": "logical_write_rows",
+            "value": 257,
+            "grant": 256,
+            "expected_status": 422,
+            "expected_code": "write_budget_exceeded"
+        },
+        {
+            "name": "unique-bucket-ids-within-request",
+            "dimension": "duplicate_bucket_ids_in_one_request",
+            "value": 0,
+            "expected_status": 200
+        },
+        {
+            "name": "duplicate-bucket-id-within-request",
+            "dimension": "duplicate_bucket_ids_in_one_request",
+            "value": 1,
+            "expected_status": 422,
+            "expected_code": "invalid_usage_body"
+        },
+        {
+            "name": "logical-row-formula-maximum",
+            "dimension": "6 + 2*facts + execution_rows + named_tool_rows",
+            "facts": 32,
+            "execution_rows": 32,
+            "named_tool_rows": 384,
+            "value": 486,
+            "grant": 486,
+            "expected_status": 200
+        }
+    ],
+    "error_catalog": {
+        "401": [
+            "invalid_authorization"
+        ],
+        "403": [
+            "scope_denied",
+            "device_revoked"
+        ],
+        "409": [
+            "request_id_conflict",
+            "cleanup_snapshot_changed"
+        ],
+        "413": [
+            "payload_too_large"
+        ],
+        "422": [
+            "invalid_schema",
+            "invalid_usage_body",
+            "identity_mismatch",
+            "invalid_coverage",
+            "write_budget_exceeded",
+            "invalid_schema5_filter"
+        ],
+        "429": [
+            "reservation_limited",
+            "quota_limited"
+        ],
+        "503": [
+            "temporarily_unavailable",
+            "read_budget_exceeded"
+        ]
+    },
+    "server_retention_constraints": {
+        "request_journal_retention": ">= usage_contract.max_request_replay_age_ms",
+        "country_source": "trusted edge request.cf.country; invalid or missing becomes ZZ",
+        "sessions_started": "sum once per (device_id,bucket_id) for global/platform only",
+        "max_index_range_page": 500,
+        "max_primary_key_in_chunk": 90,
+        "max_cleanup_fact_keys_per_page": 90
+    },
+    "session_vectors": [
+        {
+            "name": "same-session-multiple-facts",
+            "session_ids": [
+                "session-a",
+                "session-a",
+                "session-a"
+            ],
+            "bucket_ids": [
+                "bucket-1",
+                "bucket-1",
+                "bucket-1"
+            ],
+            "expected_sessions_started": {
+                "bucket-1": 1
+            }
+        },
+        {
+            "name": "new-session-reuses-restored-open-bucket",
+            "session_ids": [
+                "session-a",
+                "session-b"
+            ],
+            "bucket_ids": [
+                "bucket-1",
+                "bucket-1"
+            ],
+            "expected_sessions_started": {
+                "bucket-1": 2
+            }
+        },
+        {
+            "name": "recovery-does-not-reclaim-session",
+            "session_ids": [
+                "session-a",
+                "session-a"
+            ],
+            "bucket_ids": [
+                "bucket-1",
+                "bucket-1"
+            ],
+            "recovery_between_observations": true,
+            "expected_sessions_started": {
+                "bucket-1": 1
+            }
+        }
+    ],
+    "country_vectors": [
+        {
+            "name": "trusted-edge-country",
+            "edge_country": "us",
+            "expected_facet_country": "US"
+        },
+        {
+            "name": "missing-edge-country",
+            "expected_facet_country": "ZZ"
+        },
+        {
+            "name": "invalid-edge-country",
+            "edge_country": "USA",
+            "expected_facet_country": "ZZ"
+        },
+        {
+            "name": "duplicate-keeps-first-country",
+            "first_edge_country": "US",
+            "duplicate_edge_country": "CA",
+            "expected_facet_country": "US"
+        }
+    ],
+    "replay_cases": [
+        {
+            "name": "same-request-same-bytes",
+            "base": "schema5-valid",
+            "expected": {
+                "status": 200,
+                "disposition": "duplicate",
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "same-request-rotated-authorization",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "replace",
+                    "path": "/headers/authorization",
+                    "value": "Bearer fixture-rotated-device-token-not-a-secret"
+                }
+            ],
+            "expected": {
+                "status": 200,
+                "disposition": "duplicate",
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "same-request-different-user-agent",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "replace",
+                    "path": "/headers/user-agent",
+                    "value": "Dline/0.12.1"
+                }
+            ],
+            "expected": {
+                "status": 409,
+                "code": "request_id_conflict",
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "same-request-different-bytes",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "replace",
+                    "path": "/body/buckets/0/facts/1/tokens/output",
+                    "value": 81
+                }
+            ],
+            "expected": {
+                "status": 409,
+                "code": "request_id_conflict",
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "schema3-after-clean-cut",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "replace",
+                    "path": "/headers/x-dline-contract",
+                    "value": "3"
+                },
+                {
+                    "op": "replace",
+                    "path": "/body/schema_version",
+                    "value": 3
+                }
+            ],
+            "expected": {
+                "status": 200,
+                "disposition": "ignored_version",
+                "reservation_writes": 0,
+                "quota_writes": 0,
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "schema4-after-clean-cut",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "replace",
+                    "path": "/headers/x-dline-contract",
+                    "value": "4"
+                },
+                {
+                    "op": "replace",
+                    "path": "/body/schema_version",
+                    "value": 4
+                }
+            ],
+            "expected": {
+                "status": 200,
+                "disposition": "ignored_version",
+                "d1_reads": 0,
+                "reservation_writes": 0,
+                "quota_writes": 0,
+                "business_write_occurred": false
+            }
+        }
+    ],
+    "invalid_cases": [
+        {
+            "name": "missing-contract-header",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "remove",
+                    "path": "/headers/x-dline-contract"
+                }
+            ],
+            "expected": {
+                "status": 422,
+                "code": "invalid_schema",
+                "path": "headers.x-dline-contract",
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "todos-not-in-schema5",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "add",
+                    "path": "/body/buckets/0/facts/0/logical_execution/todos",
+                    "value": {
+                        "created": 1,
+                        "completed": 1
+                    }
+                }
+            ],
+            "expected": {
+                "status": 422,
+                "code": "invalid_usage_body",
+                "path": "buckets[0].facts[0].logical_execution.todos",
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "client-version-mismatch",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "replace",
+                    "path": "/body/client/version",
+                    "value": "0.12.1"
+                }
+            ],
+            "expected": {
+                "status": 422,
+                "code": "invalid_usage_body",
+                "path": "client.version",
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "missing-role",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "remove",
+                    "path": "/body/buckets/0/facts/0/role"
+                }
+            ],
+            "expected": {
+                "status": 422,
+                "code": "invalid_usage_body",
+                "path": "buckets[0].facts[0].role",
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "model-id-without-namespace",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "replace",
+                    "path": "/body/buckets/0/facts/2/model_id",
+                    "value": "internal/project-secret-model"
+                }
+            ],
+            "expected": {
+                "status": 422,
+                "code": "invalid_usage_body",
+                "path": "buckets[0].facts[2].model_id",
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "fractional-thinking-budget",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "replace",
+                    "path": "/body/buckets/0/facts/1/thinking",
+                    "value": 2048.5
+                }
+            ],
+            "expected": {
+                "status": 422,
+                "code": "invalid_usage_body",
+                "path": "buckets[0].facts[1].thinking",
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "attempt-coverage-mismatch",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "replace",
+                    "path": "/body/buckets/0/facts/0/token_coverage/reported",
+                    "value": 1
+                }
+            ],
+            "expected": {
+                "status": 422,
+                "code": "invalid_usage_body",
+                "invariant": "token_coverage.reported + token_coverage.unreported == requests.total",
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "duration-count-mismatch",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "replace",
+                    "path": "/body/buckets/0/facts/0/duration_ms/count",
+                    "value": 1
+                }
+            ],
+            "expected": {
+                "status": 422,
+                "code": "invalid_usage_body",
+                "invariant": "duration_ms.count == requests.total",
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "bucket-duration-mismatch",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "replace",
+                    "path": "/body/buckets/0/duration_ms",
+                    "value": 60000
+                }
+            ],
+            "expected": {
+                "status": 422,
+                "code": "invalid_usage_body",
+                "invariant": "bucket.duration_ms == sum(facts[*].duration_ms.sum)",
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "generation-without-reported-token-usage",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "add",
+                    "path": "/body/buckets/0/facts/2/generation_ms",
+                    "value": {
+                        "count": 1,
+                        "sum": 100,
+                        "min": 100,
+                        "max": 100,
+                        "buckets": [
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    }
+                },
+                {
+                    "op": "replace",
+                    "path": "/body/buckets/0/facts/2/generation_output_tokens",
+                    "value": 1
+                }
+            ],
+            "expected": {
+                "status": 422,
+                "code": "invalid_usage_body",
+                "invariant": "generation coverage requires reported token usage",
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "thinking-state-enabled-not-canonical",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "replace",
+                    "path": "/body/buckets/0/facts/2/thinking",
+                    "value": "state:enabled"
+                }
+            ],
+            "expected": {
+                "status": 422,
+                "code": "invalid_usage_body",
+                "path": "buckets[0].facts[2].thinking",
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "event-window-not-utc-aligned",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "replace",
+                    "path": "/body/buckets/0/event_window/started_at",
+                    "value": 1792800000001
+                },
+                {
+                    "op": "replace",
+                    "path": "/body/buckets/0/event_window/ended_at",
+                    "value": 1792800600001
+                }
+            ],
+            "expected": {
+                "status": 422,
+                "code": "invalid_usage_body",
+                "path": "buckets[0].event_window",
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "too-many-tools-in-one-fact",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "replace",
+                    "path": "/body/buckets/0/facts/0/logical_execution/tools/by_name",
+                    "value": {
+                        "tool_01": {
+                            "completed": 0,
+                            "failed": 0,
+                            "cancelled": 0
+                        },
+                        "tool_02": {
+                            "completed": 0,
+                            "failed": 0,
+                            "cancelled": 0
+                        },
+                        "tool_03": {
+                            "completed": 0,
+                            "failed": 0,
+                            "cancelled": 0
+                        },
+                        "tool_04": {
+                            "completed": 0,
+                            "failed": 0,
+                            "cancelled": 0
+                        },
+                        "tool_05": {
+                            "completed": 0,
+                            "failed": 0,
+                            "cancelled": 0
+                        },
+                        "tool_06": {
+                            "completed": 0,
+                            "failed": 0,
+                            "cancelled": 0
+                        },
+                        "tool_07": {
+                            "completed": 0,
+                            "failed": 0,
+                            "cancelled": 0
+                        },
+                        "tool_08": {
+                            "completed": 0,
+                            "failed": 0,
+                            "cancelled": 0
+                        },
+                        "tool_09": {
+                            "completed": 0,
+                            "failed": 0,
+                            "cancelled": 0
+                        },
+                        "tool_10": {
+                            "completed": 0,
+                            "failed": 0,
+                            "cancelled": 0
+                        },
+                        "tool_11": {
+                            "completed": 0,
+                            "failed": 0,
+                            "cancelled": 0
+                        },
+                        "tool_12": {
+                            "completed": 0,
+                            "failed": 0,
+                            "cancelled": 0
+                        },
+                        "tool_13": {
+                            "completed": 0,
+                            "failed": 0,
+                            "cancelled": 0
+                        }
+                    }
+                }
+            ],
+            "expected": {
+                "status": 422,
+                "code": "invalid_usage_body",
+                "path": "buckets[0].facts[0].logical_execution.tools.by_name",
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "zero-attempt-duration",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "replace",
+                    "path": "/body/buckets/0/facts/1/duration_ms/sum",
+                    "value": 0
+                },
+                {
+                    "op": "replace",
+                    "path": "/body/buckets/0/facts/1/duration_ms/min",
+                    "value": 0
+                },
+                {
+                    "op": "replace",
+                    "path": "/body/buckets/0/facts/1/duration_ms/max",
+                    "value": 0
+                },
+                {
+                    "op": "replace",
+                    "path": "/body/buckets/0/duration_ms",
+                    "value": 77400
+                }
+            ],
+            "expected": {
+                "status": 422,
+                "code": "invalid_usage_body",
+                "invariant": "every real provider attempt duration is at least 1 ms",
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "logical-execution-coverage-mismatch",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "replace",
+                    "path": "/body/buckets/0/facts/0/logical_execution_coverage/reported",
+                    "value": 0
+                }
+            ],
+            "expected": {
+                "status": 422,
+                "code": "invalid_usage_body",
+                "invariant": "logical_execution outcome total == task_attempts.count == logical_execution_coverage.reported",
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "logical-denominator-mismatch",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "replace",
+                    "path": "/body/buckets/0/facts/0/logical_execution/task_attempts/count",
+                    "value": 2
+                }
+            ],
+            "expected": {
+                "status": 422,
+                "code": "invalid_usage_body",
+                "invariant": "task_attempts.count == logical_requests.total",
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "generation-coverage-mismatch",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "replace",
+                    "path": "/body/buckets/0/facts/0/generation_coverage/reported",
+                    "value": 0
+                },
+                {
+                    "op": "replace",
+                    "path": "/body/buckets/0/facts/0/generation_coverage/unreported",
+                    "value": 2
+                }
+            ],
+            "expected": {
+                "status": 422,
+                "code": "invalid_coverage",
+                "invariant": "generation_ms.count == generation_coverage.reported",
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "failed-error-conservation-mismatch",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "replace",
+                    "path": "/body/buckets/0/facts/0/errors",
+                    "value": {}
+                }
+            ],
+            "expected": {
+                "status": 422,
+                "code": "invalid_usage_body",
+                "invariant": "sum(errors[*]) == requests.failed",
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "model-id-not-normalized",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "replace",
+                    "path": "/body/buckets/0/facts/2/model_id",
+                    "value": "custom:Qwen3-Coder"
+                }
+            ],
+            "expected": {
+                "status": 422,
+                "code": "invalid_usage_body",
+                "path": "buckets[0].facts[2].model_id",
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "model-id-unknown-namespace",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "replace",
+                    "path": "/body/buckets/0/facts/2/model_id",
+                    "value": "local:qwen3"
+                }
+            ],
+            "expected": {
+                "status": 422,
+                "code": "invalid_usage_body",
+                "path": "buckets[0].facts[2].model_id",
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "thinking-state-disabled-not-canonical",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "replace",
+                    "path": "/body/buckets/0/facts/2/thinking",
+                    "value": "state:disabled"
+                }
+            ],
+            "expected": {
+                "status": 422,
+                "code": "invalid_usage_body",
+                "path": "buckets[0].facts[2].thinking",
+                "business_write_occurred": false
+            }
+        },
+        {
+            "name": "thinking-state-adaptive-not-canonical",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "replace",
+                    "path": "/body/buckets/0/facts/2/thinking",
+                    "value": "state:adaptive"
+                }
+            ],
+            "expected": {
+                "status": 422,
+                "code": "invalid_usage_body",
+                "path": "buckets[0].facts[2].thinking",
+                "business_write_occurred": false
+            }
+        }
+    ],
+    "identity_cases": [
+        {
+            "name": "custom-model-id-accepted",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "replace",
+                    "path": "/body/buckets/0/facts/2/model_id",
+                    "value": "custom:qwen3-coder:30b"
+                }
+            ],
+            "expected": {
+                "status": 200,
+                "disposition": "accepted",
+                "business_write_occurred": true
+            }
+        },
+        {
+            "name": "catalog-model-id-with-separators-accepted",
+            "base": "schema5-valid",
+            "mutations": [
+                {
+                    "op": "replace",
+                    "path": "/body/buckets/0/facts/0/model_id",
+                    "value": "catalog:anthropic/claude-sonnet-4.5"
+                }
+            ],
+            "expected": {
+                "status": 200,
+                "disposition": "accepted",
+                "business_write_occurred": true
+            }
+        }
+    ],
+    "model_identity_vectors": [
+        {
+            "name": "listed-catalog-id",
+            "wire_model_id": "claude-opus-4-1",
+            "profile_custom_model": false,
+            "expected": "catalog:claude-opus-4-1"
+        },
+        {
+            "name": "listed-vendor-slash-id",
+            "wire_model_id": "anthropic/claude-sonnet-4.5",
+            "profile_custom_model": false,
+            "expected": "catalog:anthropic/claude-sonnet-4.5"
+        },
+        {
+            "name": "listed-local-tag",
+            "wire_model_id": "qwen3:8b",
+            "profile_custom_model": false,
+            "expected": "catalog:qwen3:8b"
+        },
+        {
+            "name": "custom-mixed-case",
+            "wire_model_id": "Qwen3-Coder:30B",
+            "profile_custom_model": true,
+            "expected": "custom:qwen3-coder:30b"
+        },
+        {
+            "name": "custom-whitespace-replaced",
+            "wire_model_id": "  My Tuned Model v2 ",
+            "profile_custom_model": true,
+            "expected": "custom:my_tuned_model_v2"
+        },
+        {
+            "name": "custom-version-suffix",
+            "wire_model_id": "claude-3-5-sonnet@20240620",
+            "profile_custom_model": true,
+            "expected": "custom:claude-3-5-sonnet@20240620"
+        },
+        {
+            "name": "custom-bedrock-arn",
+            "wire_model_id": "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123",
+            "profile_custom_model": true,
+            "expected": "custom:arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123"
+        },
+        {
+            "name": "custom-leading-separator-stripped",
+            "wire_model_id": "_internal-v1",
+            "profile_custom_model": true,
+            "expected": "custom:internal-v1"
+        },
+        {
+            "name": "posix-absolute-path",
+            "wire_model_id": "/home/alice/models/llama-3.gguf",
+            "profile_custom_model": true,
+            "expected": "state:private"
+        },
+        {
+            "name": "windows-path",
+            "wire_model_id": "C:\\Users\\alice\\models\\llama.gguf",
+            "profile_custom_model": true,
+            "expected": "state:private"
+        },
+        {
+            "name": "home-relative-path",
+            "wire_model_id": "~/models/llama.gguf",
+            "profile_custom_model": true,
+            "expected": "state:private"
+        },
+        {
+            "name": "url",
+            "wire_model_id": "https://llm.corp.example/v1/models/x",
+            "profile_custom_model": true,
+            "expected": "state:private"
+        },
+        {
+            "name": "email",
+            "wire_model_id": "alice@example.com",
+            "profile_custom_model": true,
+            "expected": "state:private"
+        },
+        {
+            "name": "empty-after-trim",
+            "wire_model_id": "   ",
+            "profile_custom_model": true,
+            "expected": "state:unknown"
+        },
+        {
+            "name": "unavailable",
+            "wire_model_id": null,
+            "profile_custom_model": false,
+            "expected": "state:unknown"
+        }
+    ],
+    "thinking_vectors": [
+        {
+            "name": "budget",
+            "request": {
+                "thinking": {
+                    "type": "enabled",
+                    "budget_tokens": 2048
+                }
+            },
+            "expected": 2048
+        },
+        {
+            "name": "budget-zero",
+            "request": {
+                "config": {
+                    "thinkingConfig": {
+                        "thinkingBudget": 0
+                    }
+                }
+            },
+            "expected": 0
+        },
+        {
+            "name": "dynamic-budget",
+            "request": {
+                "config": {
+                    "thinkingConfig": {
+                        "thinkingBudget": -1
+                    }
+                }
+            },
+            "expected": -1
+        },
+        {
+            "name": "effort",
+            "request": {
+                "reasoning_effort": "High"
+            },
+            "expected": "level:high"
+        },
+        {
+            "name": "adaptive-with-effort",
+            "request": {
+                "thinking": {
+                    "type": "adaptive"
+                },
+                "output_config": {
+                    "effort": "medium"
+                }
+            },
+            "expected": "level:medium"
+        },
+        {
+            "name": "adaptive-without-effort",
+            "request": {
+                "thinking": {
+                    "type": "adaptive"
+                }
+            },
+            "expected": "state:dynamic"
+        },
+        {
+            "name": "explicit-disabled",
+            "request": {
+                "thinking": {
+                    "type": "disabled"
+                }
+            },
+            "expected": "state:off"
+        },
+        {
+            "name": "enabled-without-budget-or-effort",
+            "request": {
+                "enable_thinking": true
+            },
+            "expected": "state:dynamic"
+        },
+        {
+            "name": "no-thinking-parameter",
+            "request": {},
+            "expected": "state:default"
+        },
+        {
+            "name": "unreadable-request",
+            "request": null,
+            "expected": "state:unknown"
+        }
+    ],
+    "device_grant": {
+        "request": {
+            "operation": "device.grant",
+            "request_id": "33333333-3333-4333-8333-333333333333",
+            "supported_usage_schema_versions": [
+                5
+            ],
+            "requested_profile": "usage",
+            "device_secret": "sssssssssssssssssssssssssssssssssssssssssss",
+            "client_version": "0.12.0",
+            "platform": "win32"
+        },
+        "response": {
+            "access_token": "fixture-device-token-not-a-secret",
+            "device_id": "dev_0123456789abcdef0123456789abcdef",
+            "profile": "usage",
+            "scopes": [
+                "usage"
+            ],
+            "expires_at": 1795392000000,
+            "usage_contract": {
+                "schema_version": 5,
+                "contract_version": 1,
+                "max_body_bytes": 65536,
+                "max_buckets": 8,
+                "max_facts": 32,
+                "max_tool_rows": 384,
+                "max_write_rows": 256,
+                "event_window_ms": 600000,
+                "duration_bucket_threshold_ms": 60000,
+                "default_interval_ms": 600000,
+                "new_batch_jitter_max_ms": 300000,
+                "max_request_replay_age_ms": 604800000
+            }
+        },
+        "publication": {
+            "atomic_fields": [
+                "access_token",
+                "device_id",
+                "profile",
+                "scopes",
+                "usage_contract",
+                "expires_at"
+            ]
+        }
+    }
+}

@@ -1,23 +1,23 @@
-import type { ClineContent } from "@shared/messages/content"
+import type { ToolResultAttachments } from "@integrations/misc/extract-text"
+import { REPLY_AS_TYPED, submittedInputRow } from "@shared/input-semantics/submitted-input"
 import type { ClineAskResponse } from "@shared/WebviewMessage"
+import type { InteractionOutcome } from "../../interaction/InteractionProtocol"
 import type { TaskConfig } from "../types/TaskConfig"
 
 /**
- * Load files the user attached while answering a tool and return the text for its tool result.
+ * Load files the user attached while answering a tool.
  *
- * PDFs are queued in the pending user message instead, where they follow the tool results and reach the
- * model as native documents within the request's document budget.
- * @param userMessageContent Pending next-user-message content of the task.
+ * The handler returns the documents with its result (see `withToolDocuments`), so the
+ * journal records them beside the result and the provider request places them after it
+ * as native documents within the request's document budget.
  * @param files Attached file paths, if any.
- * @returns `<file_content>` text for the tool result; empty when nothing was attached.
+ * @returns `<file_content>` text for the tool result and the PDFs that follow it; both empty when nothing was attached.
  */
-export async function attachToolFeedbackFiles(userMessageContent: ClineContent[], files: string[] | undefined): Promise<string> {
-	if (!files?.length) return ""
-	// Loaded on demand: the extractor pulls in the PDF and spreadsheet parsers.
-	const { processFilesForToolResult } = await import("@integrations/misc/extract-text")
-	const { text, documents } = await processFilesForToolResult(files)
-	userMessageContent.push(...documents)
-	return text
+export async function attachToolFeedbackFiles(files: string[] | undefined): Promise<ToolResultAttachments> {
+    if (!files?.length) return { text: "", documents: [] }
+    // Loaded on demand: the extractor pulls in the PDF and spreadsheet parsers.
+    const { processFilesForToolResult } = await import("@integrations/misc/extract-text")
+    return processFilesForToolResult(files)
 }
 
 /**
@@ -30,19 +30,19 @@ export async function attachToolFeedbackFiles(userMessageContent: ClineContent[]
  * @returns True when the same feedback was already acknowledged by the webview response path.
  */
 export function isAckedFeedback(
-	config: Pick<TaskConfig, "taskState">,
-	response: ClineAskResponse,
-	text?: string,
-	images?: string[],
-	files?: string[],
+    config: Pick<TaskConfig, "taskState">,
+    response: ClineAskResponse,
+    text?: string,
+    images?: string[],
+    files?: string[],
 ): boolean {
-	const ackedFeedback = config.taskState.ackedFeedback
-	return Boolean(
-		ackedFeedback?.response === response &&
-			ackedFeedback.text === text &&
-			JSON.stringify(ackedFeedback.images ?? []) === JSON.stringify(images ?? []) &&
-			JSON.stringify(ackedFeedback.files ?? []) === JSON.stringify(files ?? []),
-	)
+    const ackedFeedback = config.taskState.ackedFeedback
+    return Boolean(
+        ackedFeedback?.response === response &&
+            ackedFeedback.text === text &&
+            JSON.stringify(ackedFeedback.images ?? []) === JSON.stringify(images ?? []) &&
+            JSON.stringify(ackedFeedback.files ?? []) === JSON.stringify(files ?? []),
+    )
 }
 
 /**
@@ -52,17 +52,36 @@ export function isAckedFeedback(
  * @param text Optional feedback text.
  * @param images Optional feedback image payloads.
  * @param files Optional feedback file payloads.
+ * @param presentation The outcome the feedback came from. A structured draft in
+ *   it is shown as the user submitted it, not as the text and attachments the
+ *   receiver resolved from it.
  * @returns Promise resolved after optional UI feedback rendering.
  */
 export async function sayFeedbackOnce(
-	config: Pick<TaskConfig, "callbacks" | "taskState">,
-	response: ClineAskResponse,
-	text?: string,
-	images?: string[],
-	files?: string[],
+    config: Pick<TaskConfig, "callbacks" | "taskState">,
+    response: ClineAskResponse,
+    text?: string,
+    images?: string[],
+    files?: string[],
+    presentation?: Pick<InteractionOutcome, "feedbackPresented" | "draft">,
 ): Promise<void> {
-	if (!isAckedFeedback(config, response, text, images, files)) {
-		await config.callbacks.say("user_feedback", text ?? "", images, files)
-	}
-	config.taskState.ackedFeedback = undefined
+    if (presentation?.feedbackPresented) return
+    if (!isAckedFeedback(config, response, text, images, files)) {
+        const draft = presentation?.draft
+        if (draft?.semanticInput) {
+            // A dialog reply reaches its receiver as typed; a command its owner
+            // claimed was already taken out of this document. By now the draft's
+            // flat attachments may hold what its resources resolved to;
+            // submittedInputRow keeps those out of the row.
+            await config.callbacks.sayUserReply(
+                submittedInputRow(
+                    [{ semanticInput: draft.semanticInput, images: draft.images, files: draft.files }],
+                    REPLY_AS_TYPED,
+                ),
+            )
+        } else {
+            await config.callbacks.say("user_feedback", text ?? "", images, files)
+        }
+    }
+    config.taskState.ackedFeedback = undefined
 }

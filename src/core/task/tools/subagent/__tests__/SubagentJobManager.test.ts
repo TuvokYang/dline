@@ -1,419 +1,178 @@
 import { strict as assert } from "node:assert"
-import { describe, it } from "vitest"
+import { describe, it, vi } from "vitest"
+import type { SubagentExecResult } from "../SubagentExecutor"
 import { SubagentJobManager } from "../SubagentJobManager"
 
-/**
- * Wait for queued background job promises to settle.
- * @returns Promise that resolves after the current async queue drains.
- */
-async function flushJobs(): Promise<void> {
-	await Promise.resolve()
-	await Promise.resolve()
+function result(status: SubagentExecResult["status"], detail: string, retryable = false): SubagentExecResult {
+    return {
+        status,
+        ...(status === "completed" ? { result: detail } : { error: detail }),
+        retryable,
+        stats: {
+            toolCalls: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheWriteTokens: 0,
+            cacheReadTokens: 0,
+            totalCost: 0,
+            currency: "USD",
+            contextTokens: 0,
+            contextWindow: 1,
+            contextUsagePercentage: 0,
+        },
+    }
 }
 
 describe("SubagentJobManager", () => {
-	it("allocates unique job identities across manager instances", () => {
-		const runner = async () => ({
-			status: "completed" as const,
-			result: "done",
-			stats: {
-				toolCalls: 0,
-				inputTokens: 0,
-				outputTokens: 0,
-				cacheWriteTokens: 0,
-				cacheReadTokens: 0,
-				totalCost: 0,
-				currency: "USD",
-				contextTokens: 0,
-				contextWindow: 1,
-				contextUsagePercentage: 0,
-			},
-		})
-		const first = new SubagentJobManager().startJob({ task: "first", prompt: "first", timeoutSeconds: 30, runner })
-		const second = new SubagentJobManager().startJob({ task: "second", prompt: "second", timeoutSeconds: 30, runner })
+    it("allocates unique job identities across manager instances", () => {
+        const runner = async () => result("completed", "done")
+        const first = new SubagentJobManager().startJob({ task: "first", prompt: "first", timeoutSeconds: 30, runner })
+        const second = new SubagentJobManager().startJob({ task: "second", prompt: "second", timeoutSeconds: 30, runner })
 
-		assert.match(first.jobId, /^subagent_[0-9a-f-]{36}$/i)
-		assert.match(second.jobId, /^subagent_[0-9a-f-]{36}$/i)
-		assert.notEqual(first.jobId, second.jobId)
-	})
+        assert.match(first.jobId, /^subagent_[0-9a-f-]{36}$/i)
+        assert.match(second.jobId, /^subagent_[0-9a-f-]{36}$/i)
+        assert.notEqual(first.jobId, second.jobId)
+    })
 
-	it("lists a completed batch as one injectable batch result", async () => {
-		const manager = new SubagentJobManager()
-		const batch = manager.startBatch({
-			timeoutSeconds: 30,
-			items: [
-				{
-					task: "review api",
-					prompt: "<task>review api</task><context>ctx</context>",
-					runner: async () => ({
-						status: "completed",
-						result: "api ok",
-						stats: {
-							toolCalls: 1,
-							inputTokens: 10,
-							outputTokens: 5,
-							cacheWriteTokens: 0,
-							cacheReadTokens: 0,
-							totalCost: 0,
-							currency: "USD",
-							contextTokens: 100,
-							contextWindow: 1000,
-							contextUsagePercentage: 10,
-						},
-					}),
-				},
-				{
-					task: "review tests",
-					prompt: "<task>review tests</task><context>ctx</context>",
-					runner: async () => ({
-						status: "completed",
-						result: "tests ok",
-						stats: {
-							toolCalls: 2,
-							inputTokens: 20,
-							outputTokens: 8,
-							cacheWriteTokens: 0,
-							cacheReadTokens: 0,
-							totalCost: 0,
-							currency: "USD",
-							contextTokens: 150,
-							contextWindow: 1000,
-							contextUsagePercentage: 15,
-						},
-					}),
-				},
-			],
-		})
+    it("publishes a completed batch snapshot through the status callback", async () => {
+        const manager = new SubagentJobManager()
+        const onStatusChange = vi.fn()
+        const batch = manager.startBatch({
+            timeoutSeconds: 30,
+            items: [
+                { task: "review api", prompt: "review api", runner: async () => result("completed", "api ok") },
+                { task: "review tests", prompt: "review tests", runner: async () => result("completed", "tests ok") },
+            ],
+            onStatusChange,
+        })
 
-		await flushJobs()
+        await vi.waitFor(() => assert.equal(manager.getBatch(batch.batchJobId)?.status, "completed"))
+        const finalNotification = onStatusChange.mock.calls.find((call) => call[1]?.status === "completed")
+        assert.ok(finalNotification)
+        assert.equal(finalNotification[1].batchJobId, batch.batchJobId)
+        assert.deepEqual(
+            batch.itemJobIds.map((jobId) => manager.getJob(jobId)?.status),
+            ["completed", "completed"],
+        )
+    })
 
-		const managerWithResults = manager as unknown as {
-			listInjectableResults?: () => Array<{ kind: string; batch: { batchJobId: string }; jobs: Array<{ jobId: string }> }>
-		}
-		const results = managerWithResults.listInjectableResults?.()
+    it("notifies batch creation before starting item runners", async () => {
+        const manager = new SubagentJobManager()
+        let runnerStarted = false
+        let createdBeforeRun = false
+        let createdJobIds: string[] = []
 
-		assert.ok(Array.isArray(results), "listInjectableResults should return an array")
-		assert.equal(results.length, 1)
-		assert.equal(results[0]?.kind, "batch")
-		assert.equal(results[0]?.batch.batchJobId, batch.batchJobId)
-		assert.deepEqual(
-			results[0]?.jobs.map((job) => job.jobId),
-			batch.itemJobIds,
-		)
-	})
+        manager.startBatch({
+            timeoutSeconds: 30,
+            items: [
+                {
+                    task: "review api",
+                    prompt: "review api",
+                    runner: async () => {
+                        runnerStarted = true
+                        return result("completed", "api ok")
+                    },
+                },
+            ],
+            onCreated: (batch) => {
+                createdBeforeRun = !runnerStarted
+                createdJobIds = batch.itemJobIds
+            },
+        })
 
-	it("moves injection state forward only", async () => {
-		const manager = new SubagentJobManager()
-		const job = manager.startJob({
-			task: "review api",
-			prompt: "<task>review api</task><context>ctx</context>",
-			timeoutSeconds: 30,
-			runner: async () => ({
-				status: "completed",
-				result: "api ok",
-				stats: {
-					toolCalls: 1,
-					inputTokens: 10,
-					outputTokens: 5,
-					cacheWriteTokens: 0,
-					cacheReadTokens: 0,
-					totalCost: 0,
-					currency: "USD",
-					contextTokens: 100,
-					contextWindow: 1000,
-					contextUsagePercentage: 10,
-				},
-			}),
-		})
-		await flushJobs()
+        await vi.waitFor(() => assert.equal(runnerStarted, true))
+        assert.equal(createdBeforeRun, true)
+        assert.equal(createdJobIds.length, 1)
+        assert.match(createdJobIds[0] ?? "", /^subagent_[0-9a-f-]{36}$/i)
+    })
 
-		manager.markConsumed([job.jobId])
-		assert.equal(manager.getJob(job.jobId)?.injectionState, "pending")
-		assert.equal(manager.listInjectableResults().length, 1)
+    it("marks an all-cancelled background batch as cancelled", async () => {
+        const manager = new SubagentJobManager()
+        const batch = manager.startBatch({
+            timeoutSeconds: 30,
+            items: ["one", "two", "three"].map((task) => ({
+                task,
+                prompt: task,
+                runner: async () => result("cancelled", "Subagent run cancelled."),
+            })),
+        })
 
-		manager.markInjected([job.jobId])
-		assert.equal(manager.getJob(job.jobId)?.injectionState, "injected")
-		assert.equal(manager.listInjectableResults().length, 0)
+        await vi.waitFor(() => assert.equal(manager.getBatch(batch.batchJobId)?.status, "cancelled"))
+        assert.deepEqual(
+            batch.itemJobIds.map((jobId) => manager.getJob(jobId)?.status),
+            ["cancelled", "cancelled", "cancelled"],
+        )
+    })
 
-		manager.markConsumed([job.jobId])
-		assert.equal(manager.getJob(job.jobId)?.injectionState, "consumed")
+    it("retains a retryable failure and reports the successful retry through the callback", async () => {
+        const manager = new SubagentJobManager()
+        const onStatusChange = vi.fn()
+        let attempt = 0
+        const job = manager.startJob({
+            task: "review api",
+            prompt: "review api",
+            timeoutSeconds: 30,
+            runner: async () => {
+                attempt += 1
+                return attempt === 1
+                    ? result("failed", "temporary provider failure", true)
+                    : result("completed", "recovered result")
+            },
+            onStatusChange,
+        })
 
-		manager.markInjected([job.jobId])
-		assert.equal(manager.getJob(job.jobId)?.injectionState, "consumed")
-	})
+        await vi.waitFor(() => assert.equal(manager.getJob(job.jobId)?.status, "failed"))
+        assert.deepEqual(
+            { retryable: manager.getJob(job.jobId)?.retryable, attempt: manager.getJob(job.jobId)?.attempt },
+            { retryable: true, attempt: 1 },
+        )
+        assert.equal(await manager.retryJob(job.jobId), true)
+        assert.equal(await manager.retryJob(job.jobId), false)
+        await vi.waitFor(() => assert.equal(manager.getJob(job.jobId)?.status, "completed"))
+        assert.deepEqual(
+            {
+                result: manager.getJob(job.jobId)?.result,
+                retryable: manager.getJob(job.jobId)?.retryable,
+                attempt: manager.getJob(job.jobId)?.attempt,
+            },
+            { result: "recovered result", retryable: false, attempt: 2 },
+        )
+        assert.equal(onStatusChange.mock.calls.at(-1)?.[0].result, "recovered result")
+    })
 
-	it("links batch and item injection states", async () => {
-		const manager = new SubagentJobManager()
-		const batch = manager.startBatch({
-			timeoutSeconds: 30,
-			items: [
-				{
-					task: "review api",
-					prompt: "<task>review api</task><context>ctx</context>",
-					runner: async () => ({
-						status: "completed",
-						result: "api ok",
-						stats: {
-							toolCalls: 1,
-							inputTokens: 10,
-							outputTokens: 5,
-							cacheWriteTokens: 0,
-							cacheReadTokens: 0,
-							totalCost: 0,
-							currency: "USD",
-							contextTokens: 100,
-							contextWindow: 1000,
-							contextUsagePercentage: 10,
-						},
-					}),
-				},
-				{
-					task: "review tests",
-					prompt: "<task>review tests</task><context>ctx</context>",
-					runner: async () => ({
-						status: "completed",
-						result: "tests ok",
-						stats: {
-							toolCalls: 2,
-							inputTokens: 20,
-							outputTokens: 8,
-							cacheWriteTokens: 0,
-							cacheReadTokens: 0,
-							totalCost: 0,
-							currency: "USD",
-							contextTokens: 150,
-							contextWindow: 1000,
-							contextUsagePercentage: 15,
-						},
-					}),
-				},
-			],
-		})
-		await flushJobs()
+    it("keeps a batch failed while one item is retained for retry", async () => {
+        const manager = new SubagentJobManager()
+        const batch = manager.startBatch({
+            timeoutSeconds: 30,
+            items: [
+                { task: "stable", prompt: "stable", runner: async () => result("completed", "stable") },
+                { task: "retry", prompt: "retry", runner: async () => result("failed", "temporary", true) },
+            ],
+        })
 
-		manager.markInjected([batch.batchJobId])
-		assert.deepEqual(
-			batch.itemJobIds.map((jobId) => manager.getJob(jobId)?.injectionState),
-			["injected", "injected"],
-		)
+        await vi.waitFor(() => assert.equal(manager.getBatch(batch.batchJobId)?.status, "failed"))
+        assert.equal(manager.getJob(batch.itemJobIds[1])?.retryable, true)
+    })
 
-		manager.markConsumed([batch.itemJobIds[0]])
-		assert.equal(manager.getBatch(batch.batchJobId)?.injectionState, "injected")
+    it("notifies single job creation before starting its runner", async () => {
+        const manager = new SubagentJobManager()
+        let createdBeforeRun = false
+        let runnerStarted = false
 
-		manager.markConsumed([batch.itemJobIds[1]])
-		assert.equal(manager.getBatch(batch.batchJobId)?.injectionState, "consumed")
-	})
+        manager.startJob({
+            task: "review api",
+            prompt: "review api",
+            timeoutSeconds: 30,
+            runner: async () => {
+                runnerStarted = true
+                return result("completed", "api ok")
+            },
+            onCreated: () => {
+                createdBeforeRun = !runnerStarted
+            },
+        })
 
-	it("notifies batch creation before starting item runners", async () => {
-		const manager = new SubagentJobManager()
-		let runnerStarted = false
-		let createdBeforeRun = false
-		let createdJobIds: string[] = []
-
-		manager.startBatch({
-			timeoutSeconds: 30,
-			items: [
-				{
-					task: "review api",
-					prompt: "<task>review api</task><context>ctx</context>",
-					runner: async () => {
-						runnerStarted = true
-						return {
-							status: "completed",
-							result: "api ok",
-							stats: {
-								toolCalls: 1,
-								inputTokens: 10,
-								outputTokens: 5,
-								cacheWriteTokens: 0,
-								cacheReadTokens: 0,
-								totalCost: 0,
-								currency: "USD",
-								contextTokens: 100,
-								contextWindow: 1000,
-								contextUsagePercentage: 10,
-							},
-						}
-					},
-				},
-			],
-			onCreated: (batch) => {
-				createdBeforeRun = !runnerStarted
-				createdJobIds = batch.itemJobIds
-			},
-		})
-
-		await flushJobs()
-
-		assert.equal(createdBeforeRun, true)
-		assert.equal(createdJobIds.length, 1)
-		assert.match(createdJobIds[0] ?? "", /^subagent_[0-9a-f-]{36}$/i)
-	})
-
-	it("marks an all-cancelled background batch as cancelled", async () => {
-		const manager = new SubagentJobManager()
-		const batch = manager.startBatch({
-			timeoutSeconds: 30,
-			items: ["one", "two", "three"].map((task) => ({
-				task,
-				prompt: `<task>${task}</task><context>ctx</context>`,
-				runner: async () => ({
-					status: "cancelled" as const,
-					error: "Subagent run cancelled.",
-					stats: {
-						toolCalls: 0,
-						inputTokens: 0,
-						outputTokens: 0,
-						cacheWriteTokens: 0,
-						cacheReadTokens: 0,
-						totalCost: 0,
-						currency: "USD",
-						contextTokens: 0,
-						contextWindow: 1000,
-						contextUsagePercentage: 0,
-					},
-				}),
-			})),
-		})
-
-		await flushJobs()
-
-		assert.equal(manager.getBatch(batch.batchJobId)?.status, "cancelled")
-		const [injectable] = manager.listInjectableResults()
-		assert.equal(injectable?.kind, "batch")
-		if (injectable?.kind !== "batch") assert.fail("cancelled batch should remain injectable")
-		assert.equal(injectable.batch.status, "cancelled")
-	})
-
-	it("retains a retryable failure without injecting diagnostics and injects the successful retry once", async () => {
-		const manager = new SubagentJobManager()
-		let attempt = 0
-		const job = manager.startJob({
-			task: "review api",
-			prompt: "<task>review api</task><context>ctx</context>",
-			timeoutSeconds: 30,
-			runner: async () => {
-				attempt += 1
-				return attempt === 1
-					? {
-							status: "failed",
-							error: "temporary provider failure",
-							retryable: true,
-							stats: {
-								toolCalls: 0,
-								inputTokens: 0,
-								outputTokens: 0,
-								cacheWriteTokens: 0,
-								cacheReadTokens: 0,
-								totalCost: 0,
-								currency: "USD",
-								contextTokens: 0,
-								contextWindow: 1000,
-								contextUsagePercentage: 0,
-							},
-						}
-					: {
-							status: "completed",
-							result: "recovered result",
-							stats: {
-								toolCalls: 1,
-								inputTokens: 10,
-								outputTokens: 5,
-								cacheWriteTokens: 0,
-								cacheReadTokens: 0,
-								totalCost: 0,
-								currency: "USD",
-								contextTokens: 15,
-								contextWindow: 1000,
-								contextUsagePercentage: 1.5,
-							},
-						}
-			},
-		})
-		await flushJobs()
-
-		expect(manager.getJob(job.jobId)).toMatchObject({ status: "failed", retryable: true, attempt: 1 })
-		expect(manager.listInjectableResults()).toEqual([])
-		expect(await manager.retryJob(job.jobId)).toBe(true)
-		expect(await manager.retryJob(job.jobId)).toBe(false)
-		await flushJobs()
-
-		expect(manager.getJob(job.jobId)).toMatchObject({
-			status: "completed",
-			result: "recovered result",
-			retryable: false,
-			attempt: 2,
-			injectionState: "pending",
-		})
-		expect(manager.listInjectableResults()).toHaveLength(1)
-		manager.markInjected([job.jobId])
-		expect(manager.listInjectableResults()).toEqual([])
-		manager.markConsumed([job.jobId])
-		expect(manager.getJob(job.jobId)?.injectionState).toBe("consumed")
-	})
-
-	it("holds an entire batch while any item awaits retry", async () => {
-		const manager = new SubagentJobManager()
-		const batch = manager.startBatch({
-			timeoutSeconds: 30,
-			items: [
-				{
-					task: "stable",
-					prompt: "stable",
-					runner: async () => ({ status: "completed", result: "stable", stats: {} as never }),
-				},
-				{
-					task: "retry",
-					prompt: "retry",
-					runner: async () => ({
-						status: "failed",
-						error: "temporary",
-						retryable: true,
-						stats: {} as never,
-					}),
-				},
-			],
-		})
-		await flushJobs()
-
-		expect(manager.getBatch(batch.batchJobId)?.status).toBe("failed")
-		expect(manager.listInjectableResults()).toEqual([])
-	})
-
-	it("notifies single job creation before starting its runner", async () => {
-		const manager = new SubagentJobManager()
-		let createdBeforeRun = false
-		let runnerStarted = false
-
-		manager.startJob({
-			task: "review api",
-			prompt: "<task>review api</task><context>ctx</context>",
-			timeoutSeconds: 30,
-			runner: async () => {
-				runnerStarted = true
-				return {
-					status: "completed",
-					result: "api ok",
-					stats: {
-						toolCalls: 1,
-						inputTokens: 10,
-						outputTokens: 5,
-						cacheWriteTokens: 0,
-						cacheReadTokens: 0,
-						totalCost: 0,
-						currency: "USD",
-						contextTokens: 100,
-						contextWindow: 1000,
-						contextUsagePercentage: 10,
-					},
-				}
-			},
-			onCreated: () => {
-				createdBeforeRun = !runnerStarted
-			},
-		})
-
-		await flushJobs()
-		assert.equal(createdBeforeRun, true)
-	})
+        await vi.waitFor(() => assert.equal(runnerStarted, true))
+        assert.equal(createdBeforeRun, true)
+    })
 })

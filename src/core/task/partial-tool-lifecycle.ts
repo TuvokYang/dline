@@ -23,26 +23,26 @@ export type DeferredToolAction = "execute" | "defer" | "skip"
  * @param streamComplete Whether the API stream has finished (`didCompleteReadingStream`)
  */
 export function getDeferredToolAction(
-	lifecycle: PartialToolLifecycle | undefined,
-	isTurnEnding: boolean,
-	streamComplete: boolean,
+    lifecycle: PartialToolLifecycle | undefined,
+    isTurnEnding: boolean,
+    streamComplete: boolean,
 ): DeferredToolAction {
-	// Already executing or completed - nothing to do
-	if (lifecycle === "complete-running" || lifecycle === "complete-done") {
-		return "skip"
-	}
+    // Already executing or completed - nothing to do
+    if (lifecycle === "complete-running" || lifecycle === "complete-done") {
+        return "skip"
+    }
 
-	// Never seen or already handled
-	if (lifecycle !== "partial-shown") {
-		return "skip"
-	}
+    // Never seen or already handled
+    if (lifecycle !== "partial-shown") {
+        return "skip"
+    }
 
-	// Turn-ending tools must wait until the stream is fully consumed
-	if (isTurnEnding && !streamComplete) {
-		return "defer"
-	}
+    // Turn-ending tools must wait until the stream is fully consumed
+    if (isTurnEnding && !streamComplete) {
+        return "defer"
+    }
 
-	return "execute"
+    return "execute"
 }
 
 /**
@@ -59,29 +59,29 @@ export function getDeferredToolAction(
  * @param action Which lifecycle transition to record
  */
 export function advanceLifecycle(
-	map: Map<number, PartialToolLifecycle>,
-	ts: number,
-	action: "start-execute" | "execution-success" | "execution-failed",
+    map: Map<number, PartialToolLifecycle>,
+    ts: number,
+    action: "start-execute" | "execution-success" | "execution-failed",
 ): void {
-	const current = map.get(ts)
+    const current = map.get(ts)
 
-	switch (action) {
-		case "start-execute":
-			if (current === "partial-shown") {
-				map.set(ts, "complete-running")
-			}
-			break
+    switch (action) {
+        case "start-execute":
+            if (current === "partial-shown") {
+                map.set(ts, "complete-running")
+            }
+            break
 
-		case "execution-success":
-			if (current === "complete-running") {
-				map.set(ts, "complete-done")
-			}
-			break
+        case "execution-success":
+            if (current === "complete-running") {
+                map.set(ts, "complete-done")
+            }
+            break
 
-		case "execution-failed":
-			if (current === "complete-running") {
-				map.set(ts, "partial-shown")
-			}
-			break
-	}
+        case "execution-failed":
+            if (current === "complete-running") {
+                map.set(ts, "partial-shown")
+            }
+            break
+    }
 }

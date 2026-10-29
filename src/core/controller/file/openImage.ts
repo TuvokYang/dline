@@ -10,12 +10,12 @@ import { Controller } from ".."
  * @returns Empty response
  */
 export async function openImage(controller: Controller, request: StringRequest): Promise<Empty> {
-	if (request.value) {
-		const taskId = controller.task?.taskId
-		if (!taskId) {
-			throw new Error("An active task is required to open image viewer content.")
-		}
-		await openImageIntegration(request.value, getTaskArtifactDirectory(taskId))
-	}
-	return Empty.create()
+    if (request.value) {
+        const taskId = controller.task?.taskId
+        if (!taskId) {
+            throw new Error("An active task is required to open image viewer content.")
+        }
+        await openImageIntegration(request.value, getTaskArtifactDirectory(taskId))
+    }
+    return Empty.create()
 }

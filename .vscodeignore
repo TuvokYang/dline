@@ -27,7 +27,6 @@ scripts/**
 testing-platform/**
 biome.jsonc
 knip.json
-.gitmodules
 .env.example
 esbuild.mjs
 go.work.sum
@@ -62,7 +61,6 @@ README.marketplace.md
 .github/
 eslint-rules/
 old_docs/
-evals/
 .codespellrc
 .mocharc.json
 buf.yaml

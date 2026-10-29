@@ -11,11 +11,11 @@ import { refreshOpenRouterModels } from "./refreshOpenRouterModels"
  * @returns OpenRouterCompatibleModelInfo with protobuf types
  */
 export async function refreshOpenRouterModelsRpc(
-	controller: Controller,
-	_request: EmptyRequest,
+    controller: Controller,
+    _request: EmptyRequest,
 ): Promise<OpenRouterCompatibleModelInfo> {
-	const models = await refreshOpenRouterModels(controller)
-	return OpenRouterCompatibleModelInfo.create({
-		models: toProtobufModels(models),
-	})
+    const models = await refreshOpenRouterModels(controller)
+    return OpenRouterCompatibleModelInfo.create({
+        models: toProtobufModels(models),
+    })
 }

@@ -1,59 +1,96 @@
+import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import { Empty } from "@shared/proto/dline/common"
-import { AskResponseRequest } from "@shared/proto/dline/task"
+import { AskResponseRequest, DispatchInteractionRequest } from "@shared/proto/dline/task"
+import { decodeAdmissibleSemanticInputDocument } from "@shared/proto-conversions/input-semantics/document"
 import { Logger } from "@/shared/services/Logger"
-import { ClineAskResponse } from "../../../shared/WebviewMessage"
 import { Controller } from ".."
+import { dispatchInteraction } from "./dispatchInteraction"
 
 /**
- * Handles a response from the webview for a previous ask operation
+ * Decode the submitted structure, or report that this response is text only.
  *
- * @param controller The controller instance
- * @param request The request containing response type, optional text and optional images
- * @returns Empty response
+ * A document that was sent but cannot be admitted rejects the whole response.
+ * Falling back to the plain text would re-read entity syntax the user never
+ * selected, which is exactly what the structure exists to prevent; the
+ * rejection lets the composer restore the draft instead.
  */
+function decodeSemanticInput(request: AskResponseRequest): SemanticInputDocument | undefined {
+    if (!request.semanticInput) return undefined
+    const decoded = decodeAdmissibleSemanticInputDocument(request.semanticInput)
+    if (decoded.ok) return decoded.document
+    throw new Error(`Response input was rejected: ${decoded.diagnostic.code}`)
+}
+
+function selectAction(responseType: string, actionIds: readonly string[]): string | undefined {
+    const preferences =
+        responseType === "yesButtonClicked" || responseType === "retry"
+            ? ["approve", "acknowledge", "resume", "retry", "process_anyway", "confirm_utility", "start_new_task"]
+            : responseType === "noButtonClicked"
+              ? ["reject", "stop"]
+              : ["reply", "resume", "retry", "acknowledge"]
+    return preferences.find((candidate) => actionIds.includes(candidate)) ?? actionIds[0]
+}
+
+/** Compatibility adapter that routes legacy asks into canonical interaction or intake events. */
 export async function askResponse(controller: Controller, request: AskResponseRequest): Promise<Empty> {
-	try {
-		if (!controller.task) {
-			Logger.warn("askResponse: No active task to receive response")
-			return Empty.create()
-		}
-
-		// Automatic API retry waits have no active interaction identity yet. Keep
-		// their explicit override on the legacy transport so the Webview can
-		// trigger the pending retry without resolving an unrelated tool ask.
-		if (request.responseType === "retry") {
-			controller.task.overridePendingAutoRetry()
-			return Empty.create()
-		}
-
-		// Map the string responseType to the ClineAskResponse enum
-		let responseType: ClineAskResponse
-		switch (request.responseType) {
-			case "yesButtonClicked":
-				responseType = "yesButtonClicked"
-				break
-			case "noButtonClicked":
-				responseType = "noButtonClicked"
-				break
-			case "messageResponse":
-				responseType = "messageResponse"
-				break
-			default:
-				Logger.warn(`askResponse: Unknown response type: ${request.responseType}`)
-				return Empty.create()
-		}
-
-		// The causal interaction RPC owns all projected TaskViewState responses.
-		// This endpoint remains only for legacy callers that do not carry interaction identity.
-		if (controller.task.getRuntimeState().interaction) {
-			Logger.warn("askResponse: Ignoring legacy response for an active causal interaction")
-			return Empty.create()
-		}
-		await controller.task.handleWebviewAskResponse(responseType, request.text, request.images, request.files)
-
-		return Empty.create()
-	} catch (error) {
-		Logger.error("Error in askResponse handler:", error)
-		throw error
-	}
+    try {
+        const session = controller.task
+        if (!session) {
+            Logger.warn("askResponse: No active task to receive response")
+            return Empty.create()
+        }
+        if (!session.writable) {
+            Logger.warn(`askResponse: Task ${session.taskId} is owned by another window; response refused`)
+            return Empty.create()
+        }
+        // Retry during an automatic countdown sends the scheduled attempt now,
+        // spending the same retry the countdown would have spent.
+        if (request.responseType === "retry" && session.owners.providerRetry?.retryNow()) return Empty.create()
+        const state = session.state()
+        const semanticInput = decodeSemanticInput(request)
+        const interaction =
+            state.dialog.primary?.status === "awaiting"
+                ? state.dialog.primary
+                : Object.values(state.dialog.approvalsByBlock).find((candidate) => candidate.status === "awaiting")
+        if (!interaction) {
+            if (request.responseType === "retry") throw new Error("Retry is no longer waiting")
+            if (request.responseType === "messageResponse" && (request.text || request.images.length || request.files.length)) {
+                const input = await session.inputs.materialize({
+                    text: request.text,
+                    images: [...request.images],
+                    files: [...request.files],
+                    ...(semanticInput === undefined ? {} : { semanticInput }),
+                })
+                await session.task.submitInput(input)
+            }
+            return Empty.create()
+        }
+        const actionId = selectAction(
+            request.responseType,
+            interaction.actionRules.map((rule) => rule.actionId),
+        )
+        if (!actionId) return Empty.create()
+        await dispatchInteraction(
+            controller,
+            DispatchInteractionRequest.create({
+                taskId: session.taskId,
+                // The interaction was just read from this opening's state.
+                taskInstanceId: session.taskInstanceId,
+                turnId: interaction.turnId,
+                interactionId: interaction.interactionId,
+                actionId,
+                stateRevision: state.revision,
+                draft: {
+                    text: request.text,
+                    images: [...request.images],
+                    files: [...request.files],
+                    ...(semanticInput === undefined ? {} : { semanticInput: request.semanticInput }),
+                },
+            }),
+        )
+        return Empty.create()
+    } catch (error) {
+        Logger.error("Error in askResponse handler:", error)
+        throw error
+    }
 }

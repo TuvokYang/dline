@@ -14,22 +14,22 @@ export const openRouterDefaultModelId = "anthropic/claude-sonnet-4.5"
 
 /** Default ModelInfo for OpenRouter provider */
 export const openRouterDefaultModelInfo: ModelInfo = {
-	id: "",
-	description: "Claude Sonnet 4.5 delivers superior intelligence across coding, agentic search, and AI agent capabilities.",
-	capabilities: {
-		supportsImages: true,
-		supportsPromptCache: true,
-		supportsReasoning: true,
-		supportsTools: true,
-		maxTokens: 64_000,
-		contextWindow: 200_000,
-	},
-	pricing: {
-		inputPrice: 3.0,
-		outputPrice: 15.0,
-		cacheWritesPrice: 3.75,
-		cacheReadsPrice: 0.3,
-	},
+    id: "",
+    description: "Claude Sonnet 4.5 delivers superior intelligence across coding, agentic search, and AI agent capabilities.",
+    capabilities: {
+        supportsImages: true,
+        supportsPromptCache: true,
+        supportsReasoning: true,
+        supportsTools: true,
+        maxTokens: 64_000,
+        contextWindow: 200_000,
+    },
+    pricing: {
+        inputPrice: 3.0,
+        outputPrice: 15.0,
+        cacheWritesPrice: 3.75,
+        cacheReadsPrice: 0.3,
+    },
 }
 
 /** OpenRouter Claude Sonnet 1M variant model IDs */

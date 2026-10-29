@@ -12,21 +12,21 @@ import { sendMcpServersUpdate } from "./subscribeToMcpServers"
  * @returns A response indicating success or failure
  */
 export async function toggleMcpServer(controller: Controller, request: ToggleMcpServerRequest): Promise<McpServers> {
-	try {
-		if (controller.stateManager.hasWorkspaceScope) {
-			controller.setWorkspaceMcpServerEnabled(request.serverName, !request.disabled)
-			await sendMcpServersUpdate()
-		} else {
-			await controller.mcpHub?.toggleServerDisabledRPC(request.serverName, request.disabled)
-		}
-		const mcpServers = await controller.getLatestMcpServersForOwner()
+    try {
+        if (controller.stateManager.hasWorkspaceScope) {
+            controller.setWorkspaceMcpServerEnabled(request.serverName, !request.disabled)
+            await sendMcpServersUpdate()
+        } else {
+            await controller.mcpHub?.toggleServerDisabledRPC(request.serverName, request.disabled)
+        }
+        const mcpServers = await controller.getLatestMcpServersForOwner()
 
-		// Convert from McpServer[] to ProtoMcpServer[] ensuring all required fields are set
-		const protoServers = convertMcpServersToProtoMcpServers(mcpServers)
+        // Convert from McpServer[] to ProtoMcpServer[] ensuring all required fields are set
+        const protoServers = convertMcpServersToProtoMcpServers(mcpServers)
 
-		return McpServers.create({ mcpServers: protoServers })
-	} catch (error) {
-		Logger.error(`Failed to toggle MCP server ${request.serverName}:`, error)
-		throw error
-	}
+        return McpServers.create({ mcpServers: protoServers })
+    } catch (error) {
+        Logger.error(`Failed to toggle MCP server ${request.serverName}:`, error)
+        throw error
+    }
 }

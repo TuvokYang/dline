@@ -13,8 +13,8 @@ const Description = styled.p`
 `
 
 export interface ClaudeCodeIdentitySectionProps {
-	config: ClaudeCodeIdentityConfig | undefined
-	onChange: (config: ClaudeCodeIdentityConfig) => void
+    config: ClaudeCodeIdentityConfig | undefined
+    onChange: (config: ClaudeCodeIdentityConfig) => void
 }
 
 /**
@@ -26,25 +26,25 @@ export interface ClaudeCodeIdentitySectionProps {
  * belong to whichever provider declares a full client identity.
  */
 export const ClaudeCodeIdentitySection = ({ config, onChange }: ClaudeCodeIdentitySectionProps) => {
-	const enabled = config?.enabled === true
+    const enabled = config?.enabled === true
 
-	return (
-		<div>
-			<StyledCheckbox
-				checked={enabled}
-				onChange={(event: Event | React.FormEvent<HTMLElement>) =>
-					onChange({
-						...(config ?? { enabled: false, clientVersionOverride: undefined, entrypointOverride: undefined }),
-						enabled: (event.target as HTMLInputElement | null)?.checked === true,
-					})
-				}>
-				Send Claude Code billing header
-			</StyledCheckbox>
-			<Description>
-				Adds the Claude Code billing attribution block to each request. Anthropic uses several signals to attribute a
-				request, so this alone does not guarantee your subscription quota applies. Leave it off unless you know you need
-				it.
-			</Description>
-		</div>
-	)
+    return (
+        <div>
+            <StyledCheckbox
+                checked={enabled}
+                onChange={(event: Event | React.FormEvent<HTMLElement>) =>
+                    onChange({
+                        ...(config ?? { enabled: false, clientVersionOverride: undefined, entrypointOverride: undefined }),
+                        enabled: (event.target as HTMLInputElement | null)?.checked === true,
+                    })
+                }>
+                Send Claude Code billing header
+            </StyledCheckbox>
+            <Description>
+                Adds the Claude Code billing attribution block to each request. Anthropic uses several signals to attribute a
+                request, so this alone does not guarantee your subscription quota applies. Leave it off unless you know you need
+                it.
+            </Description>
+        </div>
+    )
 }

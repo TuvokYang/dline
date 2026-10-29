@@ -8,9 +8,9 @@ import { ProfileField } from "../profile-ui"
  * This is necessary to ensure dropdown opens downward
  */
 export const DropdownContainer = styled.div.attrs<{ zIndex?: number }>(({ zIndex }) => ({
-	style: {
-		zIndex: zIndex || 1000,
-	},
+    style: {
+        zIndex: zIndex || 1000,
+    },
 }))`
 	position: relative;
 
@@ -26,11 +26,11 @@ export const DropdownContainer = styled.div.attrs<{ zIndex?: number }>(({ zIndex
  * Props for the ModelSelector component
  */
 interface ModelSelectorProps {
-	models: Record<string, { id: string }>
-	selectedModelId: string | undefined
-	onChange: ((e: Event) => unknown) & FormEventHandler<HTMLElement>
-	zIndex?: number
-	label?: string
+    models: Record<string, { id: string }>
+    selectedModelId: string | undefined
+    onChange: ((e: Event) => unknown) & FormEventHandler<HTMLElement>
+    zIndex?: number
+    label?: string
 }
 
 /*
@@ -48,24 +48,24 @@ OG Saoud Note:
  * A reusable component for selecting models from a dropdown
  */
 export const ModelSelector = ({ models, selectedModelId, onChange, zIndex, label = "Model" }: ModelSelectorProps) => {
-	const inputId = useId()
-	return (
-		<ProfileField htmlFor={inputId} label={label}>
-			<DropdownContainer className="dropdown-container min-w-0" zIndex={zIndex}>
-				<VSCodeDropdown
-					aria-label={label}
-					className="min-h-7 w-full"
-					id={inputId}
-					onChange={onChange}
-					value={selectedModelId}>
-					<VSCodeOption value="">Select a model...</VSCodeOption>
-					{Object.keys(models).map((modelId) => (
-						<VSCodeOption className="max-w-full break-words whitespace-normal" key={modelId} value={modelId}>
-							{modelId}
-						</VSCodeOption>
-					))}
-				</VSCodeDropdown>
-			</DropdownContainer>
-		</ProfileField>
-	)
+    const inputId = useId()
+    return (
+        <ProfileField htmlFor={inputId} label={label}>
+            <DropdownContainer className="dropdown-container min-w-0" zIndex={zIndex}>
+                <VSCodeDropdown
+                    aria-label={label}
+                    className="min-h-7 w-full"
+                    id={inputId}
+                    onChange={onChange}
+                    value={selectedModelId}>
+                    <VSCodeOption value="">Select a model...</VSCodeOption>
+                    {Object.keys(models).map((modelId) => (
+                        <VSCodeOption className="max-w-full break-words whitespace-normal" key={modelId} value={modelId}>
+                            {modelId}
+                        </VSCodeOption>
+                    ))}
+                </VSCodeDropdown>
+            </DropdownContainer>
+        </ProfileField>
+    )
 }

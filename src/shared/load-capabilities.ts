@@ -5,21 +5,21 @@ export type LoadCapabilityStatus = "loading" | "completed" | "failed"
 export type LoadCapabilitySource = "mcp" | "project" | "global" | "remote" | "workspace"
 
 export interface LoadCapabilityDetail {
-	label: string
-	value: string | string[] | Record<string, unknown>
+    label: string
+    value: string | string[] | Record<string, unknown>
 }
 
 export interface LoadCapabilityPayload {
-	tool: "loadCapability"
-	kind: LoadCapabilityKind
-	status: LoadCapabilityStatus
-	name: string
-	source?: LoadCapabilitySource
-	summary?: string
-	details?: LoadCapabilityDetail[]
-	body?: string
-	error?: string
-	enabled?: boolean
+    tool: "loadCapability"
+    kind: LoadCapabilityKind
+    status: LoadCapabilityStatus
+    name: string
+    source?: LoadCapabilitySource
+    summary?: string
+    details?: LoadCapabilityDetail[]
+    body?: string
+    error?: string
+    enabled?: boolean
 }
 
 /**
@@ -29,7 +29,7 @@ export interface LoadCapabilityPayload {
  * @returns Stable tool name exposed to models.
  */
 export function buildLoadToolName(kind: LoadCapabilityKind): string {
-	return `load_${kind}`
+    return `load_${kind}`
 }
 
 /**
@@ -37,15 +37,15 @@ export function buildLoadToolName(kind: LoadCapabilityKind): string {
  *
  * @param kind Capability family currently loading.
  * @param name Capability name requested by the model.
- * @returns Structured payload for ClineSayTool messages.
+ * @returns Structured payload for UiSayTool messages.
  */
 export function createLoadingPayload(kind: LoadCapabilityKind, name: string): LoadCapabilityPayload {
-	return {
-		tool: "loadCapability",
-		kind,
-		status: "loading",
-		name,
-	}
+    return {
+        tool: "loadCapability",
+        kind,
+        status: "loading",
+        name,
+    }
 }
 
 /**
@@ -54,15 +54,15 @@ export function createLoadingPayload(kind: LoadCapabilityKind, name: string): Lo
  * @param kind Capability family that failed to load.
  * @param name Capability name requested by the model.
  * @param error Human-readable failure reason.
- * @returns Structured payload for ClineSayTool messages.
+ * @returns Structured payload for UiSayTool messages.
  */
 export function createFailedPayload(kind: LoadCapabilityKind, name: string, error: string): LoadCapabilityPayload {
-	return {
-		tool: "loadCapability",
-		kind,
-		status: "failed",
-		name,
-		error,
-		enabled: false,
-	}
+    return {
+        tool: "loadCapability",
+        kind,
+        status: "failed",
+        name,
+        error,
+        enabled: false,
+    }
 }

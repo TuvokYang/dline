@@ -26,29 +26,29 @@ import { sapAiCoreModelSource } from "./sapaicore"
 import { vercelAiGatewayModelSource } from "./vercel"
 
 export const MODEL_SOURCES: readonly ProviderRemoteSource[] = [
-	aiHubMixModelSource,
-	anthropicModelSource,
-	basetenModelSource,
-	claudeCodeModelSource,
-	clineModelSource,
-	deepSeekModelSource,
-	groqModelSource,
-	hicapModelSource,
-	huggingFaceModelSource,
-	liteLlmModelSource,
-	lmStudioModelSource,
-	ocaModelSource,
-	ollamaModelSource,
-	openAiModelSource,
-	openAiCodexModelSource,
-	openRouterModelSource,
-	requestyModelSource,
-	sapAiCoreModelSource,
-	vercelAiGatewayModelSource,
+    aiHubMixModelSource,
+    anthropicModelSource,
+    basetenModelSource,
+    claudeCodeModelSource,
+    clineModelSource,
+    deepSeekModelSource,
+    groqModelSource,
+    hicapModelSource,
+    huggingFaceModelSource,
+    liteLlmModelSource,
+    lmStudioModelSource,
+    ocaModelSource,
+    ollamaModelSource,
+    openAiModelSource,
+    openAiCodexModelSource,
+    openRouterModelSource,
+    requestyModelSource,
+    sapAiCoreModelSource,
+    vercelAiGatewayModelSource,
 ]
 
 const sourcesById = new Map<string, ProviderRemoteSource>(MODEL_SOURCES.map((source) => [source.providerId, source]))
 
 export function getModelSource(providerId: string): ProviderRemoteSource | undefined {
-	return sourcesById.get(providerId)
+    return sourcesById.get(providerId)
 }

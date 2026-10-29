@@ -20,51 +20,51 @@ export { GRID }
 const NOTE = generatedNote("scripts/brand/dline-mark.mjs")
 
 const ROBOT = Object.freeze({
-	/** Forked antenna: a stem and two branches, drawn as round-capped strokes. */
-	antenna: {
-		radius: 1.1,
-		stem: [
-			[16, 10.5],
-			[16, 7.5],
-		],
-		tips: [
-			[12.8, 4.5],
-			[19.2, 4.5],
-		],
-	},
-	/** Square head: 18 by 18. */
-	head: { x: 7, y: 10.5, width: 18, height: 18, radius: 4.5 },
-	/** Left chevron ear, top to tip to bottom; the right ear mirrors it. */
-	ear: {
-		radius: 1.05,
-		points: [
-			[5.2, 15.5],
-			[3.4, 19.5],
-			[5.2, 23.5],
-		],
-	},
-	eyes: {
-		radius: 2.4,
-		centers: [
-			[12.3, 18.3],
-			[19.7, 18.3],
-		],
-	},
-	mouth: { x: 13, y: 23, width: 6, height: 2.4, radius: 1.2 },
-	sleepyEyes: {
-		radius: 0.9,
-		segments: [
-			[
-				[10.5, 18.8],
-				[14.1, 18.8],
-			],
-			[
-				[17.9, 18.8],
-				[21.5, 18.8],
-			],
-		],
-	},
-	sleepyMouth: { center: [16, 24.2], radius: 1.1 },
+    /** Forked antenna: a stem and two branches, drawn as round-capped strokes. */
+    antenna: {
+        radius: 1.1,
+        stem: [
+            [16, 10.5],
+            [16, 7.5],
+        ],
+        tips: [
+            [12.8, 4.5],
+            [19.2, 4.5],
+        ],
+    },
+    /** Square head: 18 by 18. */
+    head: { x: 7, y: 10.5, width: 18, height: 18, radius: 4.5 },
+    /** Left chevron ear, top to tip to bottom; the right ear mirrors it. */
+    ear: {
+        radius: 1.05,
+        points: [
+            [5.2, 15.5],
+            [3.4, 19.5],
+            [5.2, 23.5],
+        ],
+    },
+    eyes: {
+        radius: 2.4,
+        centers: [
+            [12.3, 18.3],
+            [19.7, 18.3],
+        ],
+    },
+    mouth: { x: 13, y: 23, width: 6, height: 2.4, radius: 1.2 },
+    sleepyEyes: {
+        radius: 0.9,
+        segments: [
+            [
+                [10.5, 18.8],
+                [14.1, 18.8],
+            ],
+            [
+                [17.9, 18.8],
+                [21.5, 18.8],
+            ],
+        ],
+    },
+    sleepyMouth: { center: [16, 24.2], radius: 1.1 },
 })
 
 /**
@@ -72,38 +72,38 @@ const ROBOT = Object.freeze({
  * shortened, so the head fills more of a 16 px favicon.
  */
 const COMPACT = Object.freeze({
-	...ROBOT,
-	antenna: {
-		...ROBOT.antenna,
-		stem: [
-			[16, 10.5],
-			[16, 8.6],
-		],
-		tips: [
-			[13.9, 6.5],
-			[18.1, 6.5],
-		],
-	},
-	ear: {
-		...ROBOT.ear,
-		points: [
-			[5.6, 16.8],
-			[4.3, 19.5],
-			[5.6, 22.2],
-		],
-	},
+    ...ROBOT,
+    antenna: {
+        ...ROBOT.antenna,
+        stem: [
+            [16, 10.5],
+            [16, 8.6],
+        ],
+        tips: [
+            [13.9, 6.5],
+            [18.1, 6.5],
+        ],
+    },
+    ear: {
+        ...ROBOT.ear,
+        points: [
+            [5.6, 16.8],
+            [4.3, 19.5],
+            [5.6, 22.2],
+        ],
+    },
 })
 
 const COLORS = Object.freeze({
-	/** VS Code tile: dark tile, light robot. */
-	tile: "#222222",
-	tileRobot: "#F2F2F2",
-	/** Editor-tab icon foreground of the dark and light VS Code themes. */
-	panelDark: "#C5C5C5",
-	panelLight: "#424242",
-	/** Documentation site: teal on light backgrounds, a lighter teal on dark ones. */
-	webLight: "#1F7A6F",
-	webDark: "#5CC8B8",
+    /** VS Code tile: dark tile, light robot. */
+    tile: "#222222",
+    tileRobot: "#F2F2F2",
+    /** Editor-tab icon foreground of the dark and light VS Code themes. */
+    panelDark: "#C5C5C5",
+    panelLight: "#424242",
+    /** Documentation site: teal on light backgrounds, a lighter teal on dark ones. */
+    webLight: "#1F7A6F",
+    webDark: "#5CC8B8",
 })
 
 /** The robot is scaled around its center so the tile keeps a margin. */
@@ -122,7 +122,7 @@ export const FONT = Object.freeze({ unitsPerEm: 1024, ascent: 960, descent: -64,
 
 /** @param {Point} point @returns {Point} */
 function mirror([x, y]) {
-	return [GRID - x, y]
+    return [GRID - x, y]
 }
 
 /**
@@ -131,7 +131,7 @@ function mirror([x, y]) {
  * @param {number} radius
  */
 function strokes(points, radius) {
-	return points.slice(1).map((point, index) => capsule(points[index], point, radius, true))
+    return points.slice(1).map((point, index) => capsule(points[index], point, radius, true))
 }
 
 /**
@@ -141,23 +141,23 @@ function strokes(points, radius) {
  * @returns {import("./shapes.mjs").Contour[]}
  */
 function markContours(expression = "default", layout = ROBOT) {
-	const { antenna, head, ear, eyes, mouth, sleepyEyes, sleepyMouth } = layout
-	const [base, fork] = antenna.stem
-	const face =
-		expression === "sleepy"
-			? [
-					...sleepyEyes.segments.map(([a, b]) => capsule(a, b, sleepyEyes.radius, false)),
-					circle(sleepyMouth.center, sleepyMouth.radius, false),
-				]
-			: [...eyes.centers.map((center) => circle(center, eyes.radius, false)), roundedRect(mouth, false)]
-	return [
-		capsule(base, fork, antenna.radius, true),
-		...antenna.tips.map((tip) => capsule(fork, tip, antenna.radius, true)),
-		...strokes(ear.points, ear.radius),
-		...strokes(ear.points.map(mirror), ear.radius),
-		roundedRect(head, true),
-		...face,
-	]
+    const { antenna, head, ear, eyes, mouth, sleepyEyes, sleepyMouth } = layout
+    const [base, fork] = antenna.stem
+    const face =
+        expression === "sleepy"
+            ? [
+                  ...sleepyEyes.segments.map(([a, b]) => capsule(a, b, sleepyEyes.radius, false)),
+                  circle(sleepyMouth.center, sleepyMouth.radius, false),
+              ]
+            : [...eyes.centers.map((center) => circle(center, eyes.radius, false)), roundedRect(mouth, false)]
+    return [
+        capsule(base, fork, antenna.radius, true),
+        ...antenna.tips.map((tip) => capsule(fork, tip, antenna.radius, true)),
+        ...strokes(ear.points, ear.radius),
+        ...strokes(ear.points.map(mirror), ear.radius),
+        roundedRect(head, true),
+        ...face,
+    ]
 }
 
 /**
@@ -166,15 +166,15 @@ function markContours(expression = "default", layout = ROBOT) {
  * @returns {{ left: number, top: number, right: number, bottom: number }}
  */
 export function markBounds(layout = ROBOT) {
-	const { antenna, head, ear } = layout
-	const left = Math.min(...ear.points.map(([x]) => x)) - ear.radius
-	const top = Math.min(...antenna.tips.map(([, y]) => y)) - antenna.radius
-	return { left, right: GRID - left, top, bottom: head.y + head.height }
+    const { antenna, head, ear } = layout
+    const left = Math.min(...ear.points.map(([x]) => x)) - ear.radius
+    const top = Math.min(...antenna.tips.map(([, y]) => y)) - antenna.radius
+    return { left, right: GRID - left, top, bottom: head.y + head.height }
 }
 
 /** Width and height of the head, which carries the icon's proportions. */
 export function headSize() {
-	return { width: ROBOT.head.width, height: ROBOT.head.height }
+    return { width: ROBOT.head.width, height: ROBOT.head.height }
 }
 
 /**
@@ -182,8 +182,8 @@ export function headSize() {
  * @returns {Point}
  */
 export function markCenter() {
-	const { left, top, right, bottom } = markBounds()
-	return [(left + right) / 2, (top + bottom) / 2]
+    const { left, top, right, bottom } = markBounds()
+    return [(left + right) / 2, (top + bottom) / 2]
 }
 
 /**
@@ -191,7 +191,7 @@ export function markCenter() {
  * @param {Expression} [expression]
  */
 export function markPath(expression = "default") {
-	return toPathData(markContours(expression))
+    return toPathData(markContours(expression))
 }
 
 /**
@@ -199,8 +199,8 @@ export function markPath(expression = "default") {
  * @param {number} scale
  */
 function centeredPath(scale) {
-	const [cx, cy] = markCenter()
-	return toPathData(markContours(), { scale, translate: [GRID / 2 - cx * scale, GRID / 2 - cy * scale] })
+    const [cx, cy] = markCenter()
+    return toPathData(markContours(), { scale, translate: [GRID / 2 - cx * scale, GRID / 2 - cy * scale] })
 }
 
 /**
@@ -210,21 +210,21 @@ function centeredPath(scale) {
  * @param {number} [margin]
  */
 function filledPath(layout = ROBOT, margin = 0) {
-	const { left, top, right, bottom } = markBounds(layout)
-	const scale = (GRID - 2 * margin) / Math.max(right - left, bottom - top)
-	const [cx, cy] = [(left + right) / 2, (top + bottom) / 2]
-	return toPathData(markContours("default", layout), { scale, translate: [GRID / 2 - cx * scale, GRID / 2 - cy * scale] })
+    const { left, top, right, bottom } = markBounds(layout)
+    const scale = (GRID - 2 * margin) / Math.max(right - left, bottom - top)
+    const [cx, cy] = [(left + right) / 2, (top + bottom) / 2]
+    return toPathData(markContours("default", layout), { scale, translate: [GRID / 2 - cx * scale, GRID / 2 - cy * scale] })
 }
 
 /** @param {string[]} body @param {string} [attributes] @param {number} [size] */
 function svgDocument(body, attributes = "", size = GRID) {
-	return [
-		`<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${GRID} ${GRID}"${attributes}>`,
-		`\t<!-- ${NOTE} -->`,
-		...body.map((line) => `\t${line}`),
-		"</svg>",
-		"",
-	].join("\n")
+    return [
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${GRID} ${GRID}"${attributes}>`,
+        `\t<!-- ${NOTE} -->`,
+        ...body.map((line) => `\t${line}`),
+        "</svg>",
+        "",
+    ].join("\n")
 }
 
 /**
@@ -232,15 +232,15 @@ function svgDocument(body, attributes = "", size = GRID) {
  * the single tiled SVG: another background only needs a different rect fill.
  */
 export function tileSvg() {
-	return svgDocument([
-		`<rect width="${GRID}" height="${GRID}" rx="${TILE.radius}" fill="${COLORS.tile}" />`,
-		`<path fill="${COLORS.tileRobot}" d="${filledPath(ROBOT, TILE.margin)}" />`,
-	])
+    return svgDocument([
+        `<rect width="${GRID}" height="${GRID}" rx="${TILE.radius}" fill="${COLORS.tile}" />`,
+        `<path fill="${COLORS.tileRobot}" d="${filledPath(ROBOT, TILE.margin)}" />`,
+    ])
 }
 
 /** Single-color robot for the activity bar, which uses the SVG as a mask and applies the theme color. */
 export function glyphSvg() {
-	return svgDocument([`<path fill="currentColor" d="${filledPath(ROBOT, ACTIVITY_BAR.margin)}" />`], "", ACTIVITY_BAR.size)
+    return svgDocument([`<path fill="currentColor" d="${filledPath(ROBOT, ACTIVITY_BAR.margin)}" />`], "", ACTIVITY_BAR.size)
 }
 
 /**
@@ -249,16 +249,16 @@ export function glyphSvg() {
  * @param {"light" | "dark"} theme
  */
 export function panelSvg(theme) {
-	const color = theme === "dark" ? COLORS.panelDark : COLORS.panelLight
-	return svgDocument([`<path fill="${color}" d="${centeredPath(1)}" />`])
+    const color = theme === "dark" ? COLORS.panelDark : COLORS.panelLight
+    return svgDocument([`<path fill="${color}" d="${centeredPath(1)}" />`])
 }
 
 /** Browser-tab icon of the documentation site: the teal robot on a transparent background. */
 export function faviconSvg() {
-	return svgDocument([
-		`<style>path{fill:${COLORS.webLight}}@media (prefers-color-scheme:dark){path{fill:${COLORS.webDark}}}</style>`,
-		`<path d="${filledPath(COMPACT)}" />`,
-	])
+    return svgDocument([
+        `<style>path{fill:${COLORS.webLight}}@media (prefers-color-scheme:dark){path{fill:${COLORS.webDark}}}</style>`,
+        `<path d="${filledPath(COMPACT)}" />`,
+    ])
 }
 
 /**
@@ -266,8 +266,8 @@ export function faviconSvg() {
  * @param {"light" | "dark"} theme
  */
 export function logoSvg(theme) {
-	const color = theme === "light" ? COLORS.webLight : COLORS.webDark
-	return svgDocument(["<title>Dline</title>", `<path fill="${color}" d="${filledPath()}" />`], ' role="img" aria-label="Dline"')
+    const color = theme === "light" ? COLORS.webLight : COLORS.webDark
+    return svgDocument(["<title>Dline</title>", `<path fill="${color}" d="${filledPath()}" />`], ' role="img" aria-label="Dline"')
 }
 
 /**
@@ -277,42 +277,43 @@ export function logoSvg(theme) {
  * @returns {Point}
  */
 export function designToFont([x, y]) {
-	const scale = FONT.unitsPerEm / GRID
-	const [cx, cy] = markCenter()
-	return [FONT.unitsPerEm / 2 + (x - cx) * scale, (FONT.ascent + FONT.descent) / 2 - (y - cy) * scale]
+    const scale = FONT.unitsPerEm / GRID
+    const [cx, cy] = markCenter()
+    return [FONT.unitsPerEm / 2 + (x - cx) * scale, (FONT.ascent + FONT.descent) / 2 - (y - cy) * scale]
 }
 
 /** SVG font holding the single `dline-icon` glyph, the input of svg2ttf. */
 export function fontSvg() {
-	const scale = FONT.unitsPerEm / GRID
-	const glyph = toPathData(markContours(), { scale, translate: designToFont([0, 0]), flipY: true })
-	const codepoint = FONT.codepoint.toString(16)
-	return [
-		'<svg xmlns="http://www.w3.org/2000/svg"><defs>',
-		`<font id="dline-icon" horiz-adv-x="${FONT.unitsPerEm}">`,
-		`<font-face font-family="dline-icon" units-per-em="${FONT.unitsPerEm}" ascent="${FONT.ascent}" descent="${FONT.descent}" />`,
-		`<missing-glyph horiz-adv-x="${FONT.unitsPerEm}" />`,
-		`<glyph unicode="&#x${codepoint};" glyph-name="dline" horiz-adv-x="${FONT.unitsPerEm}" d="${glyph}" />`,
-		"</font></defs></svg>",
-	].join("")
+    const scale = FONT.unitsPerEm / GRID
+    const glyph = toPathData(markContours(), { scale, translate: designToFont([0, 0]), flipY: true })
+    const codepoint = FONT.codepoint.toString(16)
+    return [
+        '<svg xmlns="http://www.w3.org/2000/svg"><defs>',
+        `<font id="dline-icon" horiz-adv-x="${FONT.unitsPerEm}">`,
+        `<font-face font-family="dline-icon" units-per-em="${FONT.unitsPerEm}" ascent="${FONT.ascent}" descent="${FONT.descent}" />`,
+        `<missing-glyph horiz-adv-x="${FONT.unitsPerEm}" />`,
+        `<glyph unicode="&#x${codepoint};" glyph-name="dline" horiz-adv-x="${FONT.unitsPerEm}" d="${glyph}" />`,
+        "</font></defs></svg>",
+    ].join("")
 }
 
-/** TypeScript module exposing the Webview's copy of the robot paths. */
-export function webviewPathsModule() {
-	return [
-		`// ${NOTE}`,
-		"",
-		"/** View box of the Dline mark paths: the 32-unit design grid. */",
-		`export const DLINE_MARK_VIEW_BOX = "0 0 ${GRID} ${GRID}"`,
-		"",
-		// Biome keeps an over-long string initializer on its own indented line.
-		"/** The Dline robot; the eyes are cut-outs. */",
-		"export const DLINE_MARK_PATH =",
-		`\t"${markPath()}"`,
-		"",
-		"/** The sleepy robot shown in Lazy Teammate Mode. */",
-		"export const DLINE_MARK_SLEEPY_PATH =",
-		`\t"${markPath("sleepy")}"`,
-		"",
-	].join("\n")
+/** TypeScript module exposing the robot paths to the Webview and the extension host. */
+export function markPathsModule() {
+    return [
+        `// ${NOTE}`,
+        "",
+        "/** View box of the Dline mark paths: the 32-unit design grid. */",
+        `export const DLINE_MARK_VIEW_BOX = "0 0 ${GRID} ${GRID}"`,
+        "",
+        // Biome keeps an over-long string initializer on its own line, indented
+        // with the repository's four spaces.
+        "/** The Dline robot; the eyes are cut-outs. */",
+        "export const DLINE_MARK_PATH =",
+        `    "${markPath()}"`,
+        "",
+        "/** The sleepy robot shown in Lazy Teammate Mode. */",
+        "export const DLINE_MARK_SLEEPY_PATH =",
+        `    "${markPath("sleepy")}"`,
+        "",
+    ].join("\n")
 }

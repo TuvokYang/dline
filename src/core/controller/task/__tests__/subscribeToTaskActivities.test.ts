@@ -1,173 +1,257 @@
+import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import { TaskActivitySubscriptionRequest, TaskActivityUpdate } from "@shared/proto/dline/task"
 import { describe, expect, it, vi } from "vitest"
 import { TaskActivityStore } from "../../../task/activity/TaskActivityStore"
 import { getRequestRegistry } from "../../grpc-handler"
 import { subscribeToTaskActivities } from "../subscribeToTaskActivities"
 
+type Opening = { readonly taskId: string; readonly taskInstanceId: string }
+
+/** A Controller double whose current opening is its session, or else its history display. */
+function controllerWith(fields: {
+    task?: Opening
+    historyDisplay?: Opening
+    activityStore?: TaskActivityStore
+    canPromoteHistoryDisplay?: boolean
+}) {
+    const controller = {
+        task: fields.task,
+        currentOpening: (): Opening | undefined => controller.task ?? fields.historyDisplay,
+        getCurrentTaskActivityStore: () => fields.activityStore,
+        canPromoteHistoryDisplay: () => fields.canPromoteHistoryDisplay ?? false,
+    }
+    return controller
+}
+
 describe("subscribeToTaskActivities", () => {
-	it("ends the stream when the controller has no current task", async () => {
-		const responseStream = vi.fn(async () => undefined)
-		const requestId = "activity-no-current-task"
+    it("ends the stream when the controller has no current task", async () => {
+        const responseStream = vi.fn(async () => undefined)
+        const requestId = "activity-no-current-task"
 
-		await subscribeToTaskActivities(
-			{ task: undefined, getCurrentTaskActivityStore: () => undefined } as never,
-			TaskActivitySubscriptionRequest.create({ taskId: "task-1", taskInstanceId: "open-1" }),
-			responseStream,
-			requestId,
-		)
+        await subscribeToTaskActivities(
+            controllerWith({}) as never,
+            TaskActivitySubscriptionRequest.create({ taskId: "task-1", taskInstanceId: "open-1" }),
+            responseStream,
+            requestId,
+        )
 
-		expect(responseStream).toHaveBeenCalledOnce()
-		expect(responseStream).toHaveBeenCalledWith(
-			expect.objectContaining({ sequence: 0, snapshot: true, activities: [] }),
-			true,
-		)
-		expect(getRequestRegistry().hasRequest(requestId)).toBe(false)
-	})
+        expect(responseStream).toHaveBeenCalledOnce()
+        expect(responseStream).toHaveBeenCalledWith(
+            expect.objectContaining({ sequence: 0, snapshot: true, activities: [] }),
+            true,
+        )
+        expect(getRequestRegistry().hasRequest(requestId)).toBe(false)
+    })
 
-	it("ends the stream when the controller is bound to a different task", async () => {
-		const responseStream = vi.fn(async () => undefined)
-		const requestId = "activity-different-current-task"
-		const activityStore = new TaskActivityStore("task-2")
+    it("ends the stream when the controller is bound to a different task", async () => {
+        const responseStream = vi.fn(async () => undefined)
+        const requestId = "activity-different-current-task"
+        const activityStore = new TaskActivityStore("task-2")
 
-		await subscribeToTaskActivities(
-			{ task: { taskId: "task-2", activityStore }, getCurrentTaskActivityStore: () => undefined } as never,
-			TaskActivitySubscriptionRequest.create({ taskId: "task-1", taskInstanceId: "open-1" }),
-			responseStream,
-			requestId,
-		)
+        await subscribeToTaskActivities(
+            controllerWith({ task: { taskId: "task-2", taskInstanceId: "open-1" }, activityStore }) as never,
+            TaskActivitySubscriptionRequest.create({ taskId: "task-1", taskInstanceId: "open-1" }),
+            responseStream,
+            requestId,
+        )
 
-		expect(responseStream).toHaveBeenCalledOnce()
-		expect(responseStream).toHaveBeenCalledWith(
-			expect.objectContaining({ sequence: 0, snapshot: true, activities: [] }),
-			true,
-		)
-		expect(getRequestRegistry().hasRequest(requestId)).toBe(false)
-	})
+        expect(responseStream).toHaveBeenCalledOnce()
+        expect(responseStream).toHaveBeenCalledWith(
+            expect.objectContaining({ sequence: 0, snapshot: true, activities: [] }),
+            true,
+        )
+        expect(getRequestRegistry().hasRequest(requestId)).toBe(false)
+    })
 
-	it("streams the canonical non-working Task activity surface", async () => {
-		const activityStore = new TaskActivityStore("task-1")
-		activityStore.create({
-			activityId: "history-subagent",
-			kind: "subagent",
-			executionMode: "foreground",
-			title: "history review",
-		})
-		activityStore.update("history-subagent", { metrics: { toolCalls: 4, inputTokens: 40, outputTokens: 8 } })
-		const responseStream = vi.fn(async () => undefined)
+    it("ends the stream for a request from a previous opening of the same task", async () => {
+        const responseStream = vi.fn(async () => undefined)
+        const activityStore = new TaskActivityStore("task-1")
+        const subscribe = vi.spyOn(activityStore, "subscribe")
 
-		await subscribeToTaskActivities(
-			{
-				task: { taskId: "task-1", taskInstanceId: "open-1", isReadOnly: () => false, activityStore },
-			} as never,
-			TaskActivitySubscriptionRequest.create({ taskId: "task-1", taskInstanceId: "open-1" }),
-			responseStream,
-		)
-		await vi.waitFor(() => expect(responseStream).toHaveBeenCalledOnce())
+        await subscribeToTaskActivities(
+            controllerWith({ task: { taskId: "task-1", taskInstanceId: "open-2" }, activityStore }) as never,
+            TaskActivitySubscriptionRequest.create({ taskId: "task-1", taskInstanceId: "open-1" }),
+            responseStream,
+        )
 
-		expect(responseStream).toHaveBeenCalledWith(
-			expect.objectContaining({
-				snapshot: true,
-				activities: [
-					expect.objectContaining({
-						activityId: "history-subagent",
-						metrics: expect.objectContaining({ toolCalls: 4, inputTokens: 40, outputTokens: 8 }),
-					}),
-				],
-			}),
-			false,
-			expect.any(Number),
-		)
-	})
+        expect(subscribe).not.toHaveBeenCalled()
+        expect(responseStream).toHaveBeenCalledWith(
+            expect.objectContaining({ sequence: 0, snapshot: true, activities: [], taskId: "task-1", taskInstanceId: "open-1" }),
+            true,
+        )
+    })
 
-	it("ends and unregisters an activity stream when its owning surface is disposed", async () => {
-		const activityStore = new TaskActivityStore("task-1")
-		const responseStream = vi.fn(async () => undefined)
-		const requestId = "activity-surface-disposed"
+    it("streams a history surface's activities attributed to its opening", async () => {
+        const activityStore = new TaskActivityStore("task-1")
+        activityStore.create({
+            activityId: "history-subagent",
+            kind: "subagent",
+            executionMode: "foreground",
+            title: "history review",
+        })
+        activityStore.update("history-subagent", { metrics: { toolCalls: 4, inputTokens: 40, outputTokens: 8 } })
+        const responseStream = vi.fn(async () => undefined)
 
-		await subscribeToTaskActivities(
-			{
-				task: { taskId: "task-1", taskInstanceId: "open-1", isReadOnly: () => false, activityStore },
-				getCurrentTaskActivityStore: () => activityStore,
-			} as never,
-			TaskActivitySubscriptionRequest.create({ taskId: "task-1", taskInstanceId: "open-1" }),
-			responseStream,
-			requestId,
-		)
-		try {
-			await vi.waitFor(() => expect(responseStream).toHaveBeenCalledOnce())
-			expect(getRequestRegistry().hasRequest(requestId)).toBe(true)
+        await subscribeToTaskActivities(
+            controllerWith({
+                historyDisplay: { taskId: "task-1", taskInstanceId: "open-1" },
+                activityStore,
+                canPromoteHistoryDisplay: true,
+            }) as never,
+            TaskActivitySubscriptionRequest.create({ taskId: "task-1", taskInstanceId: "open-1" }),
+            responseStream,
+        )
+        await vi.waitFor(() => expect(responseStream).toHaveBeenCalledOnce())
 
-			activityStore.dispose()
+        expect(responseStream).toHaveBeenCalledWith(
+            expect.objectContaining({
+                taskId: "task-1",
+                taskInstanceId: "open-1",
+                snapshot: true,
+                activities: [
+                    expect.objectContaining({
+                        activityId: "history-subagent",
+                        metrics: expect.objectContaining({ toolCalls: 4, inputTokens: 40, outputTokens: 8 }),
+                        // No runtime backs a history surface, so nothing can be stopped from it.
+                        cancellable: false,
+                        finishable: false,
+                    }),
+                ],
+            }),
+            false,
+            expect.any(Number),
+        )
+    })
 
-			await vi.waitFor(() => expect(responseStream).toHaveBeenCalledTimes(2))
-			expect(responseStream.mock.calls[1]).toEqual([expect.objectContaining({ snapshot: false, activities: [] }), true])
-			expect(getRequestRegistry().hasRequest(requestId)).toBe(false)
-		} finally {
-			getRequestRegistry().cancelRequest(requestId)
-		}
-	})
+    it("ends and unregisters an activity stream when its owning surface is disposed", async () => {
+        const activityStore = new TaskActivityStore("task-1")
+        const responseStream = vi.fn(async () => undefined)
+        const requestId = "activity-surface-disposed"
 
-	it("projects retry attempts and an unavailable reason through the Proto stream", async () => {
-		const activityStore = new TaskActivityStore("task-1")
-		activityStore.create({
-			activityId: "subagent-projection",
-			kind: "subagent",
-			executionMode: "background",
-			title: "review",
-			retryRecipe: {
-				kind: "subagent",
-				schemaVersion: 1,
-				subagentName: "retired-reviewer",
-				task: "review",
-				prompt: "<task>review</task><context>ctx</context>",
-				timeoutSeconds: 30,
-				retryable: true,
-			},
-			retry: async () => true,
-		})
-		activityStore.appendEvent("subagent-projection", {
-			kind: "assistant_message",
-			phase: "final",
-			text: "first attempt",
-		})
-		activityStore.update("subagent-projection", { status: "failed", error: "temporary failure" })
-		await activityStore.retry(["subagent-projection"])
-		activityStore.appendEvent("subagent-projection", {
-			kind: "assistant_message",
-			phase: "final",
-			text: "second attempt",
-		})
-		activityStore.update("subagent-projection", { status: "failed", error: "configuration changed" })
-		activityStore.setRetryUnavailableReason(
-			"subagent-projection",
-			"Retry unavailable: subagent 'retired-reviewer' is no longer enabled.",
-		)
-		const streamedUpdates: TaskActivityUpdate[] = []
-		const responseStream = vi.fn(async (update: TaskActivityUpdate) => {
-			streamedUpdates.push(update)
-		})
+        await subscribeToTaskActivities(
+            controllerWith({ task: { taskId: "task-1", taskInstanceId: "open-1" }, activityStore }) as never,
+            TaskActivitySubscriptionRequest.create({ taskId: "task-1", taskInstanceId: "open-1" }),
+            responseStream,
+            requestId,
+        )
+        try {
+            await vi.waitFor(() => expect(responseStream).toHaveBeenCalledOnce())
+            expect(getRequestRegistry().hasRequest(requestId)).toBe(true)
 
-		await subscribeToTaskActivities(
-			{
-				task: { taskId: "task-1", taskInstanceId: "open-1", isReadOnly: () => false, activityStore },
-				getCurrentTaskActivityStore: () => activityStore,
-			} as never,
-			TaskActivitySubscriptionRequest.create({ taskId: "task-1", taskInstanceId: "open-1" }),
-			responseStream,
-		)
-		await vi.waitFor(() => expect(responseStream).toHaveBeenCalledOnce())
+            activityStore.dispose()
 
-		const streamed = streamedUpdates[0]
-		expect(streamed).toBeDefined()
-		const decoded = TaskActivityUpdate.decode(TaskActivityUpdate.encode(streamed).finish())
-		const activity = decoded.activities[0]
-		expect(activity).toMatchObject({
-			activityId: "subagent-projection",
-			currentAttempt: 2,
-			retryable: false,
-			retryUnavailableReason: "Retry unavailable: subagent 'retired-reviewer' is no longer enabled.",
-		})
-		expect(activity?.events.find((event) => event.text === "first attempt")?.attempt).toBe(1)
-		expect(activity?.events.find((event) => event.text === "second attempt")?.attempt).toBe(2)
-	})
+            await vi.waitFor(() => expect(responseStream).toHaveBeenCalledTimes(2))
+            // The end is keyed to its opening, so the Webview clears what it showed.
+            expect(responseStream.mock.calls[1]).toEqual([
+                expect.objectContaining({ snapshot: true, activities: [], taskId: "task-1", taskInstanceId: "open-1" }),
+                true,
+            ])
+            expect(getRequestRegistry().hasRequest(requestId)).toBe(false)
+        } finally {
+            getRequestRegistry().cancelRequest(requestId)
+        }
+    })
+
+    // Updates are never replayed, so a stream that silently skipped one would show
+    // the stale row until the panel was reopened.
+    it("ends the stream once its opening is replaced instead of dropping the next update", async () => {
+        const activityStore = new TaskActivityStore("task-1")
+        const responseStream = vi.fn(async () => undefined)
+        const requestId = "activity-opening-replaced"
+        const controller = controllerWith({ task: { taskId: "task-1", taskInstanceId: "open-1" }, activityStore })
+
+        await subscribeToTaskActivities(
+            controller as never,
+            TaskActivitySubscriptionRequest.create({ taskId: "task-1", taskInstanceId: "open-1" }),
+            responseStream,
+            requestId,
+        )
+        try {
+            await vi.waitFor(() => expect(responseStream).toHaveBeenCalledOnce())
+
+            controller.task = { taskId: "task-1", taskInstanceId: "open-2" }
+            activityStore.create({ activityId: "command-1", kind: "command", executionMode: "foreground", title: "npm test" })
+
+            await vi.waitFor(() => expect(responseStream).toHaveBeenCalledTimes(2))
+            expect(responseStream.mock.calls[1]).toEqual([
+                expect.objectContaining({ snapshot: true, activities: [], taskId: "task-1", taskInstanceId: "open-1" }),
+                true,
+            ])
+            expect(getRequestRegistry().hasRequest(requestId)).toBe(false)
+
+            activityStore.update("command-1", { status: "completed" })
+            await new Promise((resolve) => setImmediate(resolve))
+            expect(responseStream).toHaveBeenCalledTimes(2)
+        } finally {
+            getRequestRegistry().cancelRequest(requestId)
+            activityStore.dispose()
+        }
+    })
+
+    it("projects retry attempts and an unavailable reason through the Proto stream", async () => {
+        const activityStore = new TaskActivityStore("task-1")
+        activityStore.create({
+            activityId: "subagent-projection",
+            kind: "subagent",
+            executionMode: "background",
+            title: "review",
+            retryRecipe: {
+                kind: "subagent",
+                schemaVersion: 1,
+                subagentName: "retired-reviewer",
+                task: "review",
+                prompt: "<task>review</task><context>ctx</context>",
+                timeoutSeconds: 30,
+                retryable: true,
+            },
+            retry: async () => true,
+        })
+        activityStore.appendEvent("subagent-projection", {
+            kind: "assistant_message",
+            phase: "final",
+            text: "first attempt",
+        })
+        activityStore.update("subagent-projection", { status: "failed", error: "temporary failure" })
+        await activityStore.retry(["subagent-projection"])
+        activityStore.appendEvent("subagent-projection", {
+            kind: "assistant_message",
+            phase: "final",
+            text: "second attempt",
+        })
+        activityStore.update("subagent-projection", { status: "failed", error: "configuration changed" })
+        activityStore.setRetryUnavailableReason(
+            "subagent-projection",
+            "Retry unavailable: subagent 'retired-reviewer' is no longer enabled.",
+        )
+        const streamedUpdates: TaskActivityUpdate[] = []
+        const responseStream = vi.fn(async (update: TaskActivityUpdate) => {
+            streamedUpdates.push(update)
+        })
+
+        const session = createSessionFixture({
+            taskId: "task-1",
+            taskInstanceId: "open-1",
+            owners: { activities: activityStore },
+        })
+
+        await subscribeToTaskActivities(
+            controllerWith({ task: session, activityStore }) as never,
+            TaskActivitySubscriptionRequest.create({ taskId: "task-1", taskInstanceId: "open-1" }),
+            responseStream,
+        )
+        await vi.waitFor(() => expect(responseStream).toHaveBeenCalledOnce())
+
+        const streamed = streamedUpdates[0]
+        expect(streamed).toBeDefined()
+        const decoded = TaskActivityUpdate.decode(TaskActivityUpdate.encode(streamed).finish())
+        const activity = decoded.activities[0]
+        expect(activity).toMatchObject({
+            activityId: "subagent-projection",
+            currentAttempt: 2,
+            retryable: false,
+            retryUnavailableReason: "Retry unavailable: subagent 'retired-reviewer' is no longer enabled.",
+        })
+        expect(activity?.events.find((event) => event.text === "first attempt")?.attempt).toBe(1)
+        expect(activity?.events.find((event) => event.text === "second attempt")?.attempt).toBe(2)
+    })
 })

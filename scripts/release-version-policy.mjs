@@ -23,11 +23,11 @@ const RELEASE_VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)$/
  * @throws {Error} When the version is not three numeric segments.
  */
 export function parseReleaseVersion(version) {
-	const match = RELEASE_VERSION_PATTERN.exec(version)
-	if (!match) {
-		throw new Error(`Version '${version}' is not a plain major.minor.patch number.`)
-	}
-	return { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]) }
+    const match = RELEASE_VERSION_PATTERN.exec(version)
+    if (!match) {
+        throw new Error(`Version '${version}' is not a plain major.minor.patch number.`)
+    }
+    return { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]) }
 }
 
 /**
@@ -37,7 +37,7 @@ export function parseReleaseVersion(version) {
  * @returns {boolean}
  */
 export function isPreReleaseMinor(minor) {
-	return minor % 2 === 1
+    return minor % 2 === 1
 }
 
 /**
@@ -48,17 +48,17 @@ export function isPreReleaseMinor(minor) {
  * @throws {Error} When the version is malformed or on the other channel's line.
  */
 export function assertChannelVersion(channel, version) {
-	const { minor } = parseReleaseVersion(version)
-	if (channel === "production" && isPreReleaseMinor(minor)) {
-		throw new Error(
-			`Production version ${version} has an odd minor. Production releases use even minors; odd minors are reserved for pre-releases.`,
-		)
-	}
-	if (channel === "pre-release" && !isPreReleaseMinor(minor)) {
-		throw new Error(
-			`Pre-release version ${version} has an even minor. Pre-releases use odd minors so they never occupy a production version.`,
-		)
-	}
+    const { minor } = parseReleaseVersion(version)
+    if (channel === "production" && isPreReleaseMinor(minor)) {
+        throw new Error(
+            `Production version ${version} has an odd minor. Production releases use even minors; odd minors are reserved for pre-releases.`,
+        )
+    }
+    if (channel === "pre-release" && !isPreReleaseMinor(minor)) {
+        throw new Error(
+            `Pre-release version ${version} has an even minor. Pre-releases use odd minors so they never occupy a production version.`,
+        )
+    }
 }
 
 /**
@@ -73,7 +73,7 @@ export function assertChannelVersion(channel, version) {
  * @returns {string}
  */
 export function createInsidersVersion(packageVersion, nowMs = Date.now()) {
-	const { major, minor } = parseReleaseVersion(packageVersion)
-	const preReleaseMinor = isPreReleaseMinor(minor) ? minor : minor + 1
-	return `${major}.${preReleaseMinor}.${Math.floor(nowMs / 1000)}`
+    const { major, minor } = parseReleaseVersion(packageVersion)
+    const preReleaseMinor = isPreReleaseMinor(minor) ? minor : minor + 1
+    return `${major}.${preReleaseMinor}.${Math.floor(nowMs / 1000)}`
 }

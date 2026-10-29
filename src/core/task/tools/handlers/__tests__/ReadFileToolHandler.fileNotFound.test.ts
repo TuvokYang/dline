@@ -2,11 +2,11 @@ import { strict as assert } from "node:assert"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import * as pathUtils from "@utils/path"
 import { afterEach, beforeEach, describe, it, vi } from "vitest"
 // sinon import removed: using vitest globals
-import { TaskState } from "../../../TaskState"
+import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 import { ToolValidator } from "../../ToolValidator"
 import type { TaskConfig } from "../../types/TaskConfig"
 import { ReadFileToolHandler } from "../ReadFileToolHandler"
@@ -26,213 +26,298 @@ import { ReadFileToolHandler } from "../ReadFileToolHandler"
 
 let tmpDir: string
 
-function createConfig() {
-	const taskState = new TaskState()
+function createConfig({ supportsImages = false }: { supportsImages?: boolean } = {}) {
+    const taskState = new DefaultToolHandlerState()
 
-	const callbacks = {
-		say: vi.fn().mockResolvedValue(undefined),
-		ask: vi.fn().mockResolvedValue({ response: "yesButtonClicked" }),
-		saveCheckpoint: vi.fn().mockResolvedValue(undefined),
-		sayAndCreateMissingParamError: vi.fn().mockResolvedValue("missing"),
-		shouldAutoApproveToolWithPath: vi.fn().mockResolvedValue(true),
-		postStateToWebview: vi.fn().mockResolvedValue(undefined),
-		cancelTask: vi.fn().mockResolvedValue(undefined),
-		updateTaskHistory: vi.fn().mockResolvedValue([]),
-		switchToActMode: vi.fn().mockResolvedValue(false),
-		setActiveHookExecution: vi.fn().mockResolvedValue(undefined),
-		clearActiveHookExecution: vi.fn().mockResolvedValue(undefined),
-		getActiveHookExecution: vi.fn().mockResolvedValue(undefined),
-		runUserPromptSubmitHook: vi.fn().mockResolvedValue({}),
-		executeCommandTool: vi
-			.fn()
-			.mockResolvedValue({ userRejected: false, result: "ok", completed: true, exitCode: 0, signal: null }),
-		cancelRunningCommandTool: vi.fn().mockResolvedValue(false),
-		doesLatestTaskCompletionHaveNewChanges: vi.fn().mockResolvedValue(false),
-		updateFCListFromToolResponse: vi.fn().mockResolvedValue(undefined),
-		shouldAutoApproveTool: vi.fn().mockReturnValue([true, true]),
-		reinitExistingTaskFromId: vi.fn().mockResolvedValue(undefined),
-		applyLatestBrowserSettings: vi.fn().mockResolvedValue(undefined),
-	}
+    const callbacks = {
+        say: vi.fn().mockResolvedValue(undefined),
+        ask: vi.fn().mockResolvedValue({ response: "yesButtonClicked" }),
+        saveCheckpoint: vi.fn().mockResolvedValue(undefined),
+        sayAndCreateMissingParamError: vi.fn().mockResolvedValue("missing"),
+        shouldAutoApproveToolWithPath: vi.fn().mockResolvedValue(true),
+        postStateToWebview: vi.fn().mockResolvedValue(undefined),
+        cancelTask: vi.fn().mockResolvedValue(undefined),
+        updateTaskHistory: vi.fn().mockResolvedValue([]),
+        switchToActMode: vi.fn().mockResolvedValue(false),
+        setActiveHookExecution: vi.fn().mockResolvedValue(undefined),
+        clearActiveHookExecution: vi.fn().mockResolvedValue(undefined),
+        getActiveHookExecution: vi.fn().mockResolvedValue(undefined),
+        runUserPromptSubmitHook: vi.fn().mockResolvedValue({}),
+        executeCommandTool: vi
+            .fn()
+            .mockResolvedValue({ userRejected: false, result: "ok", completed: true, exitCode: 0, signal: null }),
+        cancelRunningCommandTool: vi.fn().mockResolvedValue(false),
+        doesLatestTaskCompletionHaveNewChanges: vi.fn().mockResolvedValue(false),
+        updateFCListFromToolResponse: vi.fn().mockResolvedValue(undefined),
+        shouldAutoApproveTool: vi.fn().mockReturnValue([true, true]),
+        reinitExistingTaskFromId: vi.fn().mockResolvedValue(undefined),
+        applyLatestBrowserSettings: vi.fn().mockResolvedValue(undefined),
+    }
 
-	const config = {
-		taskId: "task-1",
-		ulid: "ulid-1",
-		cwd: tmpDir,
-		mode: "act",
-		strictPlanModeEnabled: false,
-		yoloModeToggled: true,
-		doubleCheckCompletionEnabled: false,
-		vscodeTerminalExecutionMode: "backgroundExec",
-		enableParallelToolCalling: true,
-		isSubagentExecution: true, // skip UI calls and approval flow
-		taskState,
-		messageState: {},
-		api: {
-			getModel: () => ({ id: "test-model", info: { capabilities: { supportsImages: false } } }),
-		},
-		autoApprovalSettings: {
-			enableNotifications: false,
-			actions: { executeSafeCommands: false, executeAllCommands: false },
-		},
-		autoApprover: {
-			shouldAutoApproveTool: vi.fn().mockReturnValue([true, true]),
-		},
-		browserSettings: {},
-		focusChainSettings: {},
-		services: {
-			stateManager: {
-				getGlobalStateKey: () => undefined,
-				getGlobalSettingsKey: (key: string) => {
-					if (key === "mode") return "act"
-					if (key === "hooksEnabled") return false
-					return undefined
-				},
-				getApiConfiguration: () => ({
-					planModeProfile: "openai",
-					actModeProfile: "openai",
-				}),
-			},
-			fileContextTracker: {
-				trackFileContext: vi.fn().mockResolvedValue(undefined),
-			},
-			mcpHub: {},
-			browserSession: {},
-			urlContentFetcher: {},
-			diffViewProvider: {},
-			ignoreController: { validateAccess: () => true },
-			commandPermissionController: {},
-			contextManager: {},
-		},
-		callbacks,
-		coordinator: { getHandler: vi.fn() },
-	} as unknown as TaskConfig
+    const config = {
+        taskId: "task-1",
+        ulid: "ulid-1",
+        cwd: tmpDir,
+        mode: "act",
+        strictPlanModeEnabled: false,
+        yoloModeToggled: true,
+        doubleCheckCompletionEnabled: false,
+        vscodeTerminalExecutionMode: "backgroundExec",
+        enableParallelToolCalling: true,
+        isSubagentExecution: true, // skip UI calls and approval flow
+        taskState,
+        messageState: {},
+        api: {
+            getModel: () => ({ id: "test-model", info: { capabilities: { supportsImages } } }),
+        },
+        autoApprovalSettings: {
+            enableNotifications: false,
+            actions: { executeSafeCommands: false, executeAllCommands: false },
+        },
+        autoApprover: {
+            shouldAutoApproveTool: vi.fn().mockReturnValue([true, true]),
+        },
+        browserSettings: {},
+        focusChainSettings: {},
+        services: {
+            stateManager: {
+                getGlobalStateKey: () => undefined,
+                getGlobalSettingsKey: (key: string) => {
+                    if (key === "mode") return "act"
+                    if (key === "hooksEnabled") return false
+                    return undefined
+                },
+                getApiConfiguration: () => ({
+                    planModeProfile: "openai",
+                    actModeProfile: "openai",
+                }),
+            },
+            fileContextTracker: {
+                trackFileContext: vi.fn().mockResolvedValue(undefined),
+            },
+            mcpHub: {},
+            browserSession: {},
+            urlContentFetcher: {},
+            diffViewProvider: {},
+            ignoreController: { validateAccess: () => true },
+            commandPermissionController: {},
+            contextManager: {},
+        },
+        callbacks,
+        coordinator: { getHandler: vi.fn() },
+    } as unknown as TaskConfig
 
-	const validator = new ToolValidator({ validateAccess: () => true } as any)
+    const validator = new ToolValidator({ validateAccess: () => true } as any)
 
-	return { config, callbacks, taskState, validator }
+    return { config, callbacks, taskState, validator }
 }
 
 function makeBlock(relPath?: string) {
-	return {
-		type: "tool_use" as const,
-		function_id: "test_read_file",
-		dline_tid: "test_tid_read_file",
-		name: ClineDefaultTool.FILE_READ,
-		params: relPath !== undefined ? { path: relPath } : {},
-		partial: false,
-		ts: Date.now(),
-	}
+    return {
+        type: "tool_use" as const,
+        function_id: "test_read_file",
+        dline_tid: "test_tid_read_file",
+        name: DlineDefaultTool.FILE_READ,
+        params: relPath !== undefined ? { path: relPath } : {},
+        partial: false,
+        ts: Date.now(),
+    }
 }
 
 function makeBlockWithRange(relPath: string, startLine?: string, endLine?: string) {
-	return {
-		type: "tool_use" as const,
-		function_id: "test_read_file_range",
-		dline_tid: "test_tid_read_file_range",
-		name: ClineDefaultTool.FILE_READ,
-		params: {
-			path: relPath,
-			...(startLine !== undefined ? { start_line: startLine } : {}),
-			...(endLine !== undefined ? { end_line: endLine } : {}),
-		},
-		partial: false,
-		ts: Date.now(),
-	}
+    return {
+        type: "tool_use" as const,
+        function_id: "test_read_file_range",
+        dline_tid: "test_tid_read_file_range",
+        name: DlineDefaultTool.FILE_READ,
+        params: {
+            path: relPath,
+            ...(startLine !== undefined ? { start_line: startLine } : {}),
+            ...(endLine !== undefined ? { end_line: endLine } : {}),
+        },
+        partial: false,
+        ts: Date.now(),
+    }
 }
 
 describe("ReadFileToolHandler.execute – file not found", () => {
-	let sandbox: any /* sinon.SinonSandbox → vitest */
+    let sandbox: any /* sinon.SinonSandbox → vitest */
 
-	beforeEach(async () => {
-		sandbox = { mockRestore: () => {} }
-		tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "cline-read-test-"))
-		vi.spyOn(pathUtils, "isLocatedInWorkspace").mockResolvedValue(true)
-	})
+    beforeEach(async () => {
+        sandbox = { mockRestore: () => {} }
+        tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "cline-read-test-"))
+        vi.spyOn(pathUtils, "isLocatedInWorkspace").mockResolvedValue(true)
+    })
 
-	afterEach(async () => {
-		vi.restoreAllMocks()
-		await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})
-	})
+    afterEach(async () => {
+        vi.restoreAllMocks()
+        await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})
+    })
 
-	it("returns a tool error (not a thrown exception) for a non-existent file", async () => {
-		const { config, taskState, validator } = createConfig()
-		const handler = new ReadFileToolHandler(validator)
+    it("returns a tool error (not a thrown exception) for a non-existent file", async () => {
+        const { config, taskState, validator } = createConfig()
+        const handler = new ReadFileToolHandler(validator)
 
-		const result = await handler.execute(config, makeBlock("no-such-file.py"))
+        const result = await handler.execute(config, makeBlock("no-such-file.py"))
 
-		assert.equal(typeof result, "string")
-		assert.ok((result as string).includes("File not found"))
-		// File not found is NOT a model mistake — it's normal exploratory behavior
-		assert.equal(taskState.consecutiveMistakeCount, 0)
-	})
+        assert.equal(typeof result, "string")
+        assert.ok((result as string).includes("File not found"))
+        // File not found is NOT a model mistake — it's normal exploratory behavior
+        assert.equal(taskState.consecutiveMistakeCount, 0)
+    })
 
-	it("returns an empty string for an existing empty file", async () => {
-		const { config, validator } = createConfig()
-		const handler = new ReadFileToolHandler(validator)
-		const emptyFile = "empty.txt"
-		await fs.writeFile(path.join(tmpDir, emptyFile), "")
+    it("returns an empty string for an existing empty file", async () => {
+        const { config, validator } = createConfig()
+        const handler = new ReadFileToolHandler(validator)
+        const emptyFile = "empty.txt"
+        await fs.writeFile(path.join(tmpDir, emptyFile), "")
 
-		const result = await handler.execute(config, makeBlock(emptyFile))
+        const result = await handler.execute(config, makeBlock(emptyFile))
 
-		assert.equal(result, "")
-	})
+        assert.equal(result, "")
+    })
 
-	it("does NOT increment consecutiveMistakeCount for file-not-found (exploratory)", async () => {
-		const { config, taskState, validator } = createConfig()
-		const handler = new ReadFileToolHandler(validator)
+    it("reads a range beyond the first 400 KB of a large plain-text file", async () => {
+        const { config, validator } = createConfig()
+        const handler = new ReadFileToolHandler(validator)
+        const largeFile = "large.log"
+        const lines = Array.from({ length: 12_000 }, (_, index) => `row ${index + 1}`.padEnd(99, "."))
+        await fs.writeFile(path.join(tmpDir, largeFile), `${lines.join("\n")}\n`)
 
-		await handler.execute(config, makeBlock("ghost-1.py"))
-		assert.equal(taskState.consecutiveMistakeCount, 0)
+        const result = await handler.execute(config, makeBlockWithRange(largeFile, "9000", "9001"))
 
-		await handler.execute(config, makeBlock("ghost-2.py"))
-		assert.equal(taskState.consecutiveMistakeCount, 0)
+        assert.equal(
+            result,
+            `9000 | ${lines[8999]}\n9001 | ${lines[9000]}\n\n(Showing lines 9000-9001 of 12000 total. Use start_line=9002 to continue reading.)`,
+        )
+    })
 
-		await handler.execute(config, makeBlock("ghost-3.py"))
-		assert.equal(taskState.consecutiveMistakeCount, 0)
-	})
+    it("does NOT increment consecutiveMistakeCount for file-not-found (exploratory)", async () => {
+        const { config, taskState, validator } = createConfig()
+        const handler = new ReadFileToolHandler(validator)
 
-	it("resets consecutiveMistakeCount to 0 after a successful read", async () => {
-		const { config, taskState, validator } = createConfig()
-		const handler = new ReadFileToolHandler(validator)
+        await handler.execute(config, makeBlock("ghost-1.py"))
+        assert.equal(taskState.consecutiveMistakeCount, 0)
 
-		// Accumulate two failures via missing parameter (still counts as mistake)
-		await handler.execute(config, makeBlock())
-		await handler.execute(config, makeBlock())
-		assert.equal(taskState.consecutiveMistakeCount, 2)
+        await handler.execute(config, makeBlock("ghost-2.py"))
+        assert.equal(taskState.consecutiveMistakeCount, 0)
 
-		// Create a real file and read it — success should reset the counter
-		const realFile = "real-file.txt"
-		await fs.writeFile(path.join(tmpDir, realFile), "hello world")
+        await handler.execute(config, makeBlock("ghost-3.py"))
+        assert.equal(taskState.consecutiveMistakeCount, 0)
+    })
 
-		const result = await handler.execute(config, makeBlock(realFile))
-		assert.equal(result, "1 | hello world\n\n(File has 1 lines total.)")
-		assert.equal(taskState.consecutiveMistakeCount, 0)
-	})
+    it("resets consecutiveMistakeCount to 0 after a successful read", async () => {
+        const { config, taskState, validator } = createConfig()
+        const handler = new ReadFileToolHandler(validator)
 
-	it("increments consecutiveMistakeCount when path parameter is missing", async () => {
-		const { config, taskState, validator } = createConfig()
-		const handler = new ReadFileToolHandler(validator)
+        // Accumulate two failures via missing parameter (still counts as mistake)
+        await handler.execute(config, makeBlock())
+        await handler.execute(config, makeBlock())
+        assert.equal(taskState.consecutiveMistakeCount, 2)
 
-		const result = await handler.execute(config, makeBlock())
+        // Create a real file and read it — success should reset the counter
+        const realFile = "real-file.txt"
+        await fs.writeFile(path.join(tmpDir, realFile), "hello world")
 
-		assert.equal(result, "missing")
-		assert.equal(taskState.consecutiveMistakeCount, 1)
-	})
+        const result = await handler.execute(config, makeBlock(realFile))
+        assert.equal(result, "1 | hello world\n\n(File has 1 lines total.)")
+        assert.equal(taskState.consecutiveMistakeCount, 0)
+    })
 
-	it("respects requested line ranges on cached rereads", async () => {
-		const { config, validator } = createConfig()
-		const handler = new ReadFileToolHandler(validator)
+    it("increments consecutiveMistakeCount when path parameter is missing", async () => {
+        const { config, taskState, validator } = createConfig()
+        const handler = new ReadFileToolHandler(validator)
 
-		const realFile = "real-file.txt"
-		await fs.writeFile(path.join(tmpDir, realFile), "alpha\nbeta\ngamma\n")
+        const result = await handler.execute(config, makeBlock())
 
-		const firstRead = await handler.execute(config, makeBlock(realFile))
-		assert.equal(firstRead, "1 | alpha\n2 | beta\n3 | gamma\n\n(File has 3 lines total.)")
+        assert.equal(result, "missing")
+        assert.equal(taskState.consecutiveMistakeCount, 1)
+    })
 
-		const secondRead = await handler.execute(config, makeBlockWithRange(realFile, "2", "2"))
-		assert.equal(
-			secondRead,
-			"[File already read] The file 'real-file.txt' was already read earlier in this conversation. Returning content:\n2 | beta\n\n(Showing lines 2-2 of 3 total. Use start_line=3 to continue reading.)",
-		)
-	})
+    it("respects requested line ranges on cached rereads", async () => {
+        const { config, validator } = createConfig()
+        const handler = new ReadFileToolHandler(validator)
+
+        const realFile = "real-file.txt"
+        await fs.writeFile(path.join(tmpDir, realFile), "alpha\nbeta\ngamma\n")
+
+        const firstRead = await handler.execute(config, makeBlock(realFile))
+        assert.equal(firstRead, "1 | alpha\n2 | beta\n3 | gamma\n\n(File has 3 lines total.)")
+
+        const secondRead = await handler.execute(config, makeBlockWithRange(realFile, "2", "2"))
+        assert.equal(
+            secondRead,
+            "[File already read] The file 'real-file.txt' was already read earlier in this conversation. Returning content:\n2 | beta\n\n(Showing lines 2-2 of 3 total. Use start_line=3 to continue reading.)",
+        )
+    })
+})
+
+/** A valid 1x1 PNG, so the image extraction path runs on real bytes. */
+const ONE_PIXEL_PNG = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+    "base64",
+)
+
+type ResultBlock = { type: string; text?: string; source?: { type: string; media_type?: string; data?: string } }
+
+describe("ReadFileToolHandler.execute – images", () => {
+    beforeEach(async () => {
+        tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "cline-read-image-test-"))
+        vi.spyOn(pathUtils, "isLocatedInWorkspace").mockResolvedValue(true)
+        await fs.mkdir(path.join(tmpDir, "shots"))
+        await fs.writeFile(path.join(tmpDir, "shots", "a&b.png"), ONE_PIXEL_PNG)
+    })
+
+    afterEach(async () => {
+        vi.restoreAllMocks()
+        await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})
+    })
+
+    function assertNamedImage(result: unknown, lead: string): void {
+        assert.ok(Array.isArray(result), "an image read returns content blocks, not text")
+        const blocks = result as ResultBlock[]
+        assert.equal(blocks.length, 3)
+        assert.equal(blocks[0].type, "text")
+        assert.equal(blocks[0].text, `${lead}<image name="a&amp;b.png" path="shots/a&amp;b.png">\n`)
+        assert.equal(blocks[1].type, "image")
+        assert.equal(blocks[1].source?.type, "base64")
+        assert.equal(blocks[1].source?.media_type, "image/png")
+        assert.ok((blocks[1].source?.data ?? "").length > 0)
+        assert.deepEqual(blocks[2], { type: "text", text: "\n</image>" })
+    }
+
+    // The tool result is the image's only way to the model; nothing sends a side buffer afterwards.
+    it("returns the image inside the tool result, named by the file it came from", async () => {
+        const { config, taskState, validator } = createConfig({ supportsImages: true })
+        const handler = new ReadFileToolHandler(validator)
+
+        const result = await handler.execute(config, makeBlock("shots/a&b.png"))
+
+        assertNamedImage(result, "")
+        assert.deepEqual(taskState.userMessageContent, [])
+    })
+
+    it("returns the image again on a cached reread, after the reread notice", async () => {
+        const { config, taskState, validator } = createConfig({ supportsImages: true })
+        const handler = new ReadFileToolHandler(validator)
+
+        await handler.execute(config, makeBlock("shots/a&b.png"))
+        const reread = await handler.execute(config, makeBlock("shots/a&b.png"))
+
+        assertNamedImage(
+            reread,
+            "[File already read] The file 'shots/a&b.png' was already read earlier in this conversation. Returning content:\n",
+        )
+        assert.deepEqual(taskState.userMessageContent, [])
+    })
+
+    it("still reports a model without image input as a tool error", async () => {
+        const { config, validator } = createConfig({ supportsImages: false })
+        const handler = new ReadFileToolHandler(validator)
+
+        const result = await handler.execute(config, makeBlock("shots/a&b.png"))
+
+        assert.equal(typeof result, "string")
+        assert.ok((result as string).includes("Current model does not support image input"))
+    })
 })

@@ -9,8 +9,8 @@ import { testHooks } from "@/core/controller/grpc-recorder/test-hooks"
  * E2E runs of a packaged VSIX (which is not a "local" environment) may opt in; production never does.
  */
 export function isGrpcRecorderRequested(env: NodeJS.ProcessEnv): boolean {
-	if (env.GRPC_RECORDER_ENABLED !== "true") return false
-	return env.DLINE_ENVIRONMENT === "local" || env.E2E_TEST === "true"
+    if (env.GRPC_RECORDER_ENABLED !== "true") return false
+    return env.DLINE_ENVIRONMENT === "local" || env.E2E_TEST === "true"
 }
 
 /**
@@ -21,103 +21,103 @@ export function isGrpcRecorderRequested(env: NodeJS.ProcessEnv): boolean {
  * is enabled or disabled before creating a final `IRecorder`.
  */
 export class GrpcRecorderBuilder {
-	private fileHandler: LogFileHandler | null = null
-	private enabled = true
-	private filters: GrpcRequestFilter[] = []
-	private hooks: GrpcPostRecordHook[] = []
+    private fileHandler: LogFileHandler | null = null
+    private enabled = true
+    private filters: GrpcRequestFilter[] = []
+    private hooks: GrpcPostRecordHook[] = []
 
-	public withLogFileHandler(handler: LogFileHandler): this {
-		this.fileHandler = handler
-		return this
-	}
+    public withLogFileHandler(handler: LogFileHandler): this {
+        this.fileHandler = handler
+        return this
+    }
 
-	public enableIf(condition: boolean): this {
-		this.enabled = condition
-		return this
-	}
+    public enableIf(condition: boolean): this {
+        this.enabled = condition
+        return this
+    }
 
-	public withFilters(...filters: GrpcRequestFilter[]): this {
-		this.filters.push(...filters)
-		return this
-	}
+    public withFilters(...filters: GrpcRequestFilter[]): this {
+        this.filters.push(...filters)
+        return this
+    }
 
-	public withPostRecordHooks(...hooks: GrpcPostRecordHook[]): this {
-		this.hooks.push(...hooks)
-		return this
-	}
+    public withPostRecordHooks(...hooks: GrpcPostRecordHook[]): this {
+        this.hooks.push(...hooks)
+        return this
+    }
 
-	// Initialize the recorder as a singleton
-	private static recorder: IRecorder
+    // Initialize the recorder as a singleton
+    private static recorder: IRecorder
 
-	/**
-	 * Gets or creates the GrpcRecorder instance
-	 */
-	static getRecorder(controller: Controller): IRecorder {
-		if (!GrpcRecorderBuilder.recorder) {
-			GrpcRecorderBuilder.recorder = GrpcRecorder.builder()
-				.enableIf(isGrpcRecorderRequested(process.env))
-				.withLogFileHandler(new LogFileHandler())
-				.build(controller)
-		}
-		return GrpcRecorderBuilder.recorder
-	}
+    /**
+     * Gets or creates the GrpcRecorder instance
+     */
+    static getRecorder(controller: Controller): IRecorder {
+        if (!GrpcRecorderBuilder.recorder) {
+            GrpcRecorderBuilder.recorder = GrpcRecorder.builder()
+                .enableIf(isGrpcRecorderRequested(process.env))
+                .withLogFileHandler(new LogFileHandler())
+                .build(controller)
+        }
+        return GrpcRecorderBuilder.recorder
+    }
 
-	public build(controller?: Controller): IRecorder {
-		if (!this.enabled) {
-			return new GrpcRecorderNoops()
-		}
+    public build(controller?: Controller): IRecorder {
+        if (!this.enabled) {
+            return new GrpcRecorderNoops()
+        }
 
-		let filters: GrpcRequestFilter[] = filtersFromEnv()
-		if (this.filters.length > 0) {
-			filters = filters.concat(this.filters)
-		}
+        let filters: GrpcRequestFilter[] = filtersFromEnv()
+        if (this.filters.length > 0) {
+            filters = filters.concat(this.filters)
+        }
 
-		let hooks: GrpcPostRecordHook[] = hooksFromEnv(controller)
-		if (this.hooks.length > 0) {
-			hooks = hooks.concat(this.hooks)
-		}
+        let hooks: GrpcPostRecordHook[] = hooksFromEnv(controller)
+        if (this.hooks.length > 0) {
+            hooks = hooks.concat(this.hooks)
+        }
 
-		const handler = this.fileHandler ?? new LogFileHandlerNoops()
-		return new GrpcRecorder(handler, filters, hooks)
-	}
+        const handler = this.fileHandler ?? new LogFileHandlerNoops()
+        return new GrpcRecorder(handler, filters, hooks)
+    }
 }
 
 function filtersFromEnv(): GrpcRequestFilter[] {
-	const filters: GrpcRequestFilter[] = []
+    const filters: GrpcRequestFilter[] = []
 
-	if (process.env.GRPC_RECORDER_TESTS_FILTERS_ENABLED === "true") {
-		filters.push(...testFilters())
-	}
+    if (process.env.GRPC_RECORDER_TESTS_FILTERS_ENABLED === "true") {
+        filters.push(...testFilters())
+    }
 
-	return filters
+    return filters
 }
 
 function testFilters(): GrpcRequestFilter[] {
-	/*
-	 * Ignores streaming messages and unwanted services messages
-	 * that record more than expected.
-	 */
-	return [
-		(req) => req.is_streaming,
-		(req) => ["cline.UiService", "cline.McpService", "cline.WebService"].includes(req.service),
-		(req) =>
-			[
-				"refreshOpenRouterModels",
-				"getAvailableTerminalProfiles",
-				"showTaskWithId",
-				"deleteTasksWithIds",
-				"getTotalTasksSize",
-				"cancelTask",
-			].includes(req.method),
-	]
+    /*
+     * Ignores streaming messages and unwanted services messages
+     * that record more than expected.
+     */
+    return [
+        (req) => req.is_streaming,
+        (req) => ["dline.UiService", "dline.McpService", "dline.WebService"].includes(req.service),
+        (req) =>
+            [
+                "refreshOpenRouterModels",
+                "getAvailableTerminalProfiles",
+                "showTaskWithId",
+                "deleteTasksWithIds",
+                "getTotalTasksSize",
+                "cancelTask",
+            ].includes(req.method),
+    ]
 }
 
 function hooksFromEnv(controller?: Controller): GrpcPostRecordHook[] {
-	const hooks: GrpcPostRecordHook[] = []
+    const hooks: GrpcPostRecordHook[] = []
 
-	if (controller && process.env.GRPC_RECORDER_TESTS_FILTERS_ENABLED === "true") {
-		hooks.push(...testHooks(controller))
-	}
+    if (controller && process.env.GRPC_RECORDER_TESTS_FILTERS_ENABLED === "true") {
+        hooks.push(...testHooks(controller))
+    }
 
-	return hooks
+    return hooks
 }

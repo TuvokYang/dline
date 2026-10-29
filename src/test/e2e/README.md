@@ -163,10 +163,12 @@ await actButton.click() // Switch to Plan mode
 
 #### File Operations
 ```typescript
+import { addSelectedCodeToDline, openTab } from "./utils/common"
+
 // Open file explorer and select code
 await openTab(page, "Explorer ")
 await page.getByRole("treeitem", { name: "index.html" }).locator("a").click()
-await addSelectedCodeToClineWebview(page)
+await addSelectedCodeToDline(page)
 ```
 
 #### Settings Navigation
@@ -240,11 +242,9 @@ The test environment includes:
    await expect(sidebar.getByText("Complete")).toBeVisible()
    ```
 
-3. **Clean up state:**
-   ```typescript
-   // Use helper functions for common cleanup
-   await cleanChatView(page)
-   ```
+3. **Keep tests isolated:**
+   - Use the run-scoped user-data directory and workspace fixtures.
+   - Do not depend on state left by an earlier test.
 
 4. **Handle async operations:**
    ```typescript
@@ -286,16 +286,6 @@ provider registry files, task history, or other user state. Before each test, th
 worker's `%TEMP%/.dline-e2e/worker-N` `DLINE_DIR`; `DLINE_HOME_DIR` uses the same path and `DLINE_DOCS_DIR` uses
 `%TEMP%/dline-e2e/worker-N`. All three worker-owned temporary locations are reset between tests and removed during
 worker teardown.
-
-### Persistent Legacy Upgrade Fixture
-
-Run `npm run e2e:legacy` separately from the regular parallel suite. It uses one worker and keeps its synthetic user
-state in `tmp/.dline-e2e-legacy` (`DLINE_DIR` and `DLINE_HOME_DIR`) and `tmp/dline-e2e-legacy`
-(`DLINE_DOCS_DIR` and workspace). The fixture is seeded only when its marker is absent, then every later run upgrades
-and validates the same files in place. Regular E2E setup does not clean these directories.
-
-Both directories are covered by the repository's `tmp` ignore rule. They contain fixed fake credentials and must never
-be added to Git. Only the generator, loader, assertions, and Playwright configuration are versioned.
 
 Generated live profiles use `high` reasoning effort. GitHub Actions creates only profiles whose corresponding credential
 is configured:

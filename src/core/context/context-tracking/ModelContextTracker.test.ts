@@ -6,172 +6,172 @@ import type { TaskMetadata } from "./ContextTrackerTypes"
 import { ModelContextTracker } from "./ModelContextTracker"
 
 describe("ModelContextTracker", () => {
-	const taskId = "test-task-id"
-	let sandbox: any /* sinon.SinonSandbox → vitest */
-	let tracker: ModelContextTracker
-	let mockTaskMetadata: TaskMetadata
-	let getTaskMetadataStub: any /* sinon.SinonStub → vitest */
-	let saveTaskMetadataStub: any /* sinon.SinonStub → vitest */
+    const taskId = "test-task-id"
+    let sandbox: any /* sinon.SinonSandbox → vitest */
+    let tracker: ModelContextTracker
+    let mockTaskMetadata: TaskMetadata
+    let getTaskMetadataStub: any /* sinon.SinonStub → vitest */
+    let saveTaskMetadataStub: any /* sinon.SinonStub → vitest */
 
-	beforeEach(() => {
-		sandbox = { mockRestore: () => {} }
+    beforeEach(() => {
+        sandbox = { mockRestore: () => {} }
 
-		// Mock disk module functions
-		mockTaskMetadata = { files_in_context: [], model_usage: [], environment_history: [] }
-		getTaskMetadataStub = vi.spyOn(diskModule, "getTaskMetadata").mockResolvedValue(mockTaskMetadata)
-		saveTaskMetadataStub = vi.spyOn(diskModule, "saveTaskMetadata").mockResolvedValue()
+        // Mock disk module functions
+        mockTaskMetadata = { files_in_context: [], model_usage: [], environment_history: [] }
+        getTaskMetadataStub = vi.spyOn(diskModule, "getTaskMetadata").mockResolvedValue(mockTaskMetadata)
+        saveTaskMetadataStub = vi.spyOn(diskModule, "saveTaskMetadata").mockResolvedValue()
 
-		// Create tracker instance
-		tracker = new ModelContextTracker(taskId)
-	})
+        // Create tracker instance
+        tracker = new ModelContextTracker(taskId)
+    })
 
-	afterEach(() => {
-		vi.restoreAllMocks()
-	})
+    afterEach(() => {
+        vi.restoreAllMocks()
+    })
 
-	it("should record model usage with correct data", async () => {
-		// Test data
-		const apiProviderId = "anthropic"
-		const modelId = "claude-3-opus"
-		const mode = "act"
+    it("should record model usage with correct data", async () => {
+        // Test data
+        const apiProviderId = "anthropic"
+        const modelId = "claude-3-opus"
+        const mode = "act"
 
-		// Use a fake timer to have a predictable timestamp
-		const fakeNow = 1617293940000 // Some fixed timestamp
-		const clock = vi.setSystemTime(fakeNow)
+        // Use a fake timer to have a predictable timestamp
+        const fakeNow = 1617293940000 // Some fixed timestamp
+        const clock = vi.setSystemTime(fakeNow)
 
-		try {
-			// Call the method being tested
-			await tracker.recordModelUsage(apiProviderId, modelId, mode)
+        try {
+            // Call the method being tested
+            await tracker.recordModelUsage(apiProviderId, modelId, mode)
 
-			// Verify getTaskMetadata was called with correct parameters
-			expect(getTaskMetadataStub.mock.calls.length === 1).to.be.true
-			expect(getTaskMetadataStub.mock.calls[0][0]).to.equal(taskId)
+            // Verify getTaskMetadata was called with correct parameters
+            expect(getTaskMetadataStub.mock.calls.length === 1).to.be.true
+            expect(getTaskMetadataStub.mock.calls[0][0]).to.equal(taskId)
 
-			// Verify saveTaskMetadata was called with the correct data
-			expect(saveTaskMetadataStub.mock.calls.length === 1).to.be.true
+            // Verify saveTaskMetadata was called with the correct data
+            expect(saveTaskMetadataStub.mock.calls.length === 1).to.be.true
 
-			// Extract the saved metadata from the call arguments
-			const savedMetadata = saveTaskMetadataStub.mock.calls[0][1]
+            // Extract the saved metadata from the call arguments
+            const savedMetadata = saveTaskMetadataStub.mock.calls[0][1]
 
-			// Verify model_usage array has one entry
-			expect(savedMetadata.model_usage.length).to.equal(1)
+            // Verify model_usage array has one entry
+            expect(savedMetadata.model_usage.length).to.equal(1)
 
-			// Verify the entry has the correct properties
-			const modelUsageEntry = savedMetadata.model_usage[0]
-			expect(modelUsageEntry.ts).to.equal(fakeNow)
-			expect(modelUsageEntry.model_id).to.equal(modelId)
-			expect(modelUsageEntry.model_provider_id).to.equal(apiProviderId)
-			expect(modelUsageEntry.mode).to.equal(mode)
-		} finally {
-			// Restore the clock
-			vi.useRealTimers()
-		}
-	})
+            // Verify the entry has the correct properties
+            const modelUsageEntry = savedMetadata.model_usage[0]
+            expect(modelUsageEntry.ts).to.equal(fakeNow)
+            expect(modelUsageEntry.model_id).to.equal(modelId)
+            expect(modelUsageEntry.model_provider_id).to.equal(apiProviderId)
+            expect(modelUsageEntry.mode).to.equal(mode)
+        } finally {
+            // Restore the clock
+            vi.useRealTimers()
+        }
+    })
 
-	it("should append model usage to existing entries", async () => {
-		// Add an existing model usage entry
-		const existingTimestamp = 1617200000000
-		mockTaskMetadata.model_usage = [
-			{
-				ts: existingTimestamp,
-				model_id: "existing-model",
-				model_provider_id: "existing-provider",
-				mode: "plan",
-			},
-		]
+    it("should append model usage to existing entries", async () => {
+        // Add an existing model usage entry
+        const existingTimestamp = 1617200000000
+        mockTaskMetadata.model_usage = [
+            {
+                ts: existingTimestamp,
+                model_id: "existing-model",
+                model_provider_id: "existing-provider",
+                mode: "plan",
+            },
+        ]
 
-		// Test data for new entry
-		const apiProviderId = "anthropic"
-		const modelId = "claude-3-sonnet"
-		const mode = "act"
+        // Test data for new entry
+        const apiProviderId = "anthropic"
+        const modelId = "claude-3-sonnet"
+        const mode = "act"
 
-		// Use a fake timer
-		const newTimestamp = 1617300000000
-		const clock = vi.setSystemTime(newTimestamp)
+        // Use a fake timer
+        const newTimestamp = 1617300000000
+        const clock = vi.setSystemTime(newTimestamp)
 
-		try {
-			// Call the method being tested
-			await tracker.recordModelUsage(apiProviderId, modelId, mode)
+        try {
+            // Call the method being tested
+            await tracker.recordModelUsage(apiProviderId, modelId, mode)
 
-			// Verify saveTaskMetadata was called
-			expect(saveTaskMetadataStub.mock.calls.length === 1).to.be.true
+            // Verify saveTaskMetadata was called
+            expect(saveTaskMetadataStub.mock.calls.length === 1).to.be.true
 
-			// Extract the saved metadata
-			const savedMetadata = saveTaskMetadataStub.mock.calls[0][1]
+            // Extract the saved metadata
+            const savedMetadata = saveTaskMetadataStub.mock.calls[0][1]
 
-			// Verify model_usage array now has two entries
-			expect(savedMetadata.model_usage.length).to.equal(2)
+            // Verify model_usage array now has two entries
+            expect(savedMetadata.model_usage.length).to.equal(2)
 
-			// Verify the existing entry is preserved
-			expect(savedMetadata.model_usage[0]).to.deep.equal({
-				ts: existingTimestamp,
-				model_id: "existing-model",
-				model_provider_id: "existing-provider",
-				mode: "plan",
-			})
+            // Verify the existing entry is preserved
+            expect(savedMetadata.model_usage[0]).to.deep.equal({
+                ts: existingTimestamp,
+                model_id: "existing-model",
+                model_provider_id: "existing-provider",
+                mode: "plan",
+            })
 
-			// Verify the new entry has correct data
-			expect(savedMetadata.model_usage[1]).to.deep.equal({
-				ts: newTimestamp,
-				model_id: modelId,
-				model_provider_id: apiProviderId,
-				mode: mode,
-			})
-		} finally {
-			vi.useRealTimers()
-		}
-	})
+            // Verify the new entry has correct data
+            expect(savedMetadata.model_usage[1]).to.deep.equal({
+                ts: newTimestamp,
+                model_id: modelId,
+                model_provider_id: apiProviderId,
+                mode: mode,
+            })
+        } finally {
+            vi.useRealTimers()
+        }
+    })
 
-	it("should handle multiple model usages in sequence", async () => {
-		// Test data for sequential calls
-		const usages = [
-			{ provider: "anthropic", model: "claude-3-opus", mode: "plan" },
-			{ provider: "openai", model: "gpt-4", mode: "act" },
-			{ provider: "anthropic", model: "claude-3-haiku", mode: "plan" },
-		]
+    it("should handle multiple model usages in sequence", async () => {
+        // Test data for sequential calls
+        const usages = [
+            { provider: "anthropic", model: "claude-3-opus", mode: "plan" },
+            { provider: "openai", model: "gpt-4", mode: "act" },
+            { provider: "anthropic", model: "claude-3-haiku", mode: "plan" },
+        ]
 
-		// Use a fake timer that advances with each call
-		const startTime = 1617300000000
-		const clock = vi.setSystemTime(startTime)
+        // Use a fake timer that advances with each call
+        const startTime = 1617300000000
+        const clock = vi.setSystemTime(startTime)
 
-		try {
-			// Record multiple model usages
-			for (let i = 0; i < usages.length; i++) {
-				const { provider, model, mode } = usages[i]
+        try {
+            // Record multiple model usages
+            for (let i = 0; i < usages.length; i++) {
+                const { provider, model, mode } = usages[i]
 
-				// Advance time by 1 second for each call
-				vi.setSystemTime(startTime + (i + 1) * 1000)
-				const expectedTime = startTime + (i + 1) * 1000
+                // Advance time by 1 second for each call
+                vi.setSystemTime(startTime + (i + 1) * 1000)
+                const expectedTime = startTime + (i + 1) * 1000
 
-				// Reset history between calls to check individual call behavior
-				getTaskMetadataStub.mockClear()
-				saveTaskMetadataStub.mockClear()
+                // Reset history between calls to check individual call behavior
+                getTaskMetadataStub.mockClear()
+                saveTaskMetadataStub.mockClear()
 
-				// Reset mock metadata for each iteration to avoid accumulation
-				mockTaskMetadata.model_usage = []
+                // Reset mock metadata for each iteration to avoid accumulation
+                mockTaskMetadata.model_usage = []
 
-				// Call the method
-				await tracker.recordModelUsage(provider, model, mode)
+                // Call the method
+                await tracker.recordModelUsage(provider, model, mode)
 
-				// Verify interaction with disk module
-				expect(getTaskMetadataStub.mock.calls.length === 1).to.be.true
-				expect(saveTaskMetadataStub.mock.calls.length === 1).to.be.true
+                // Verify interaction with disk module
+                expect(getTaskMetadataStub.mock.calls.length === 1).to.be.true
+                expect(saveTaskMetadataStub.mock.calls.length === 1).to.be.true
 
-				// Get the saved metadata
-				const savedMetadata = saveTaskMetadataStub.mock.calls[0][1]
+                // Get the saved metadata
+                const savedMetadata = saveTaskMetadataStub.mock.calls[0][1]
 
-				// Since we reset the array for each call, we should always have 1 entry
-				expect(savedMetadata.model_usage.length).to.equal(1)
+                // Since we reset the array for each call, we should always have 1 entry
+                expect(savedMetadata.model_usage.length).to.equal(1)
 
-				// Check the entry
-				const entry = savedMetadata.model_usage[0]
-				expect(entry.ts).to.equal(expectedTime)
-				expect(entry.model_id).to.equal(model)
-				expect(entry.model_provider_id).to.equal(provider)
-				expect(entry.mode).to.equal(mode)
-			}
-		} finally {
-			vi.useRealTimers()
-		}
-	})
+                // Check the entry
+                const entry = savedMetadata.model_usage[0]
+                expect(entry.ts).to.equal(expectedTime)
+                expect(entry.model_id).to.equal(model)
+                expect(entry.model_provider_id).to.equal(provider)
+                expect(entry.mode).to.equal(mode)
+            }
+        } finally {
+            vi.useRealTimers()
+        }
+    })
 })

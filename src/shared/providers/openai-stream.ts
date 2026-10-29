@@ -8,8 +8,8 @@ export const DEFAULT_OPENAI_RESPONSES_STREAM_IDLE_TIMEOUT_SECONDS = 120
  * @returns A positive integer timeout in seconds.
  */
 export function normalizeOpenAIResponsesStreamIdleTimeoutSeconds(value: number | undefined): number {
-	if (!Number.isSafeInteger(value) || value === undefined || value <= 0) {
-		return DEFAULT_OPENAI_RESPONSES_STREAM_IDLE_TIMEOUT_SECONDS
-	}
-	return value
+    if (!Number.isSafeInteger(value) || value === undefined || value <= 0) {
+        return DEFAULT_OPENAI_RESPONSES_STREAM_IDLE_TIMEOUT_SECONDS
+    }
+    return value
 }

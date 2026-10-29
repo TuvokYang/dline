@@ -1,20 +1,20 @@
 // English tool use examples prompts — key-value pairs only, no code logic.
 
 const prompts: Record<string, string> = {
-	focusChainBash: `<task_progress>
+    focusChainBash: `<task_progress>
 - [x] Set up project structure
 - [x] Install dependencies
 </task_progress>\n`,
 
-	focusChainNewFile: `<task_progress>
+    focusChainNewFile: `<task_progress>
 - [x] Create components
 </task_progress>\n`,
 
-	focusChainEdit: `<task_progress>
+    focusChainEdit: `<task_progress>
 - [x] Add error handling
 </task_progress>\n`,
 
-	main: `# Tool Use Examples
+    main: `# Tool Use Examples
 
 ## Example 1: Requesting to execute a command
 
@@ -48,6 +48,7 @@ const prompts: Record<string, string> = {
 ## Example 3: Creating a new task
 
 <new_task>
+<task>Continue implementing the settings migration described in the context</task>
 <context>
 1. Current Work:
    [Detailed description]

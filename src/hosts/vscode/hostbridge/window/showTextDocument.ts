@@ -3,51 +3,51 @@ import { ShowTextDocumentRequest, TextEditorInfo } from "@/shared/proto/dline/ho
 import { arePathsEqual } from "@/utils/path"
 
 export async function showTextDocument(request: ShowTextDocumentRequest): Promise<TextEditorInfo> {
-	// Convert file path to URI
-	const uri = vscode.Uri.file(request.path)
+    // Convert file path to URI
+    const uri = vscode.Uri.file(request.path)
 
-	// Check if the document is already open in a tab group that's not in the active editor's column.
-	//  If it is, then close it (if not dirty) so that we don't duplicate tabs
-	try {
-		for (const group of vscode.window.tabGroups.all) {
-			const existingTab = group.tabs.find(
-				(tab) => tab.input instanceof vscode.TabInputText && arePathsEqual(tab.input.uri.fsPath, uri.fsPath),
-			)
-			if (existingTab) {
-				const activeColumn = vscode.window.activeTextEditor?.viewColumn
-				const tabColumn = vscode.window.tabGroups.all.find((group) => group.tabs.includes(existingTab))?.viewColumn
-				if (activeColumn && activeColumn !== tabColumn && !existingTab.isDirty) {
-					await vscode.window.tabGroups.close(existingTab)
-				}
-				break
-			}
-		}
-	} catch {} // not essential, sometimes tab operations fail
+    // Check if the document is already open in a tab group that's not in the active editor's column.
+    //  If it is, then close it (if not dirty) so that we don't duplicate tabs
+    try {
+        for (const group of vscode.window.tabGroups.all) {
+            const existingTab = group.tabs.find(
+                (tab) => tab.input instanceof vscode.TabInputText && arePathsEqual(tab.input.uri.fsPath, uri.fsPath),
+            )
+            if (existingTab) {
+                const activeColumn = vscode.window.activeTextEditor?.viewColumn
+                const tabColumn = vscode.window.tabGroups.all.find((group) => group.tabs.includes(existingTab))?.viewColumn
+                if (activeColumn && activeColumn !== tabColumn && !existingTab.isDirty) {
+                    await vscode.window.tabGroups.close(existingTab)
+                }
+                break
+            }
+        }
+    } catch {} // not essential, sometimes tab operations fail
 
-	const options: vscode.TextDocumentShowOptions = {}
+    const options: vscode.TextDocumentShowOptions = {}
 
-	if (request.options?.preview !== undefined) {
-		options.preview = request.options.preview
-	}
-	if (request.options?.preserveFocus !== undefined) {
-		options.preserveFocus = request.options.preserveFocus
-	}
-	if (request.options?.viewColumn !== undefined) {
-		options.viewColumn = request.options.viewColumn
-	}
-	if (request.options?.selection?.start && request.options?.selection?.end) {
-		const sel = request.options.selection
-		options.selection = new vscode.Range(
-			new vscode.Position(sel.start!.line ?? 0, sel.start!.character ?? 0),
-			new vscode.Position(sel.end!.line ?? 0, sel.end!.character ?? 0),
-		)
-	}
+    if (request.options?.preview !== undefined) {
+        options.preview = request.options.preview
+    }
+    if (request.options?.preserveFocus !== undefined) {
+        options.preserveFocus = request.options.preserveFocus
+    }
+    if (request.options?.viewColumn !== undefined) {
+        options.viewColumn = request.options.viewColumn
+    }
+    if (request.options?.selection?.start && request.options?.selection?.end) {
+        const sel = request.options.selection
+        options.selection = new vscode.Range(
+            new vscode.Position(sel.start!.line ?? 0, sel.start!.character ?? 0),
+            new vscode.Position(sel.end!.line ?? 0, sel.end!.character ?? 0),
+        )
+    }
 
-	const editor = await vscode.window.showTextDocument(uri, options)
+    const editor = await vscode.window.showTextDocument(uri, options)
 
-	return TextEditorInfo.create({
-		documentPath: editor.document.uri.fsPath,
-		viewColumn: editor.viewColumn,
-		isActive: vscode.window.activeTextEditor === editor,
-	})
+    return TextEditorInfo.create({
+        documentPath: editor.document.uri.fsPath,
+        viewColumn: editor.viewColumn,
+        isActive: vscode.window.activeTextEditor === editor,
+    })
 }

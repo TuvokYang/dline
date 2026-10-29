@@ -7,147 +7,267 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import ServerRow from "./ServerRow"
 
 const mocks = vi.hoisted(() => ({
-	setMcpServers: vi.fn(),
-	toggleMcpServer: vi.fn(),
-	toggleToolAutoApprove: vi.fn(),
+    authenticateMcpServer: vi.fn(),
+    clearMcpServerVariables: vi.fn(),
+    restartMcpServer: vi.fn(),
+    setMcpServers: vi.fn(),
+    toggleMcpServer: vi.fn(),
+    toggleToolAutoApprove: vi.fn(),
 }))
 
 vi.mock("@/context/ExtensionStateContext", () => ({
-	useExtensionState: () => ({
-		autoApprovalSettings: { actions: { useMcp: true } },
-		mcpMarketplaceCatalog: { items: [] },
-		remoteConfigSettings: undefined,
-		setMcpServers: mocks.setMcpServers,
-	}),
+    useExtensionState: () => ({
+        autoApprovalSettings: { actions: { useMcp: true } },
+        mcpMarketplaceCatalog: { items: [] },
+        remoteConfigSettings: undefined,
+        setMcpServers: mocks.setMcpServers,
+    }),
 }))
 
 vi.mock("@/services/grpc-client", () => ({
-	McpServiceClient: {
-		authenticateMcpServer: vi.fn(),
-		deleteMcpServer: vi.fn(),
-		restartMcpServer: vi.fn(),
-		toggleMcpServer: mocks.toggleMcpServer,
-		toggleToolAutoApprove: mocks.toggleToolAutoApprove,
-		updateMcpTimeout: vi.fn(),
-	},
+    McpServiceClient: {
+        authenticateMcpServer: mocks.authenticateMcpServer,
+        clearMcpServerVariables: mocks.clearMcpServerVariables,
+        deleteMcpServer: vi.fn(),
+        restartMcpServer: mocks.restartMcpServer,
+        toggleMcpServer: mocks.toggleMcpServer,
+        toggleToolAutoApprove: mocks.toggleToolAutoApprove,
+        updateMcpTimeout: vi.fn(),
+    },
 }))
 
 vi.mock("@/components/ui/switch", () => ({
-	Switch: ({ checked, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { checked?: boolean }) => (
-		<button aria-checked={checked} role="switch" type="button" {...props} />
-	),
+    Switch: ({ checked, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { checked?: boolean }) => (
+        <button aria-checked={checked} role="switch" type="button" {...props} />
+    ),
 }))
 
 vi.mock("@/components/ui/tooltip", () => ({
-	Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
-	TooltipContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-	TooltipTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
+    TooltipContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+    TooltipTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
 }))
 
 vi.mock("@vscode/webview-ui-toolkit/react", () => ({
-	VSCodeCheckbox: ({ children, ...props }: InputHTMLAttributes<HTMLInputElement> & { children?: ReactNode }) => (
-		<label>
-			<input type="checkbox" {...props} />
-			{children}
-		</label>
-	),
-	VSCodeDropdown: (props: SelectHTMLAttributes<HTMLSelectElement>) => <select {...props} />,
-	VSCodeOption: (props: React.OptionHTMLAttributes<HTMLOptionElement>) => <option {...props} />,
-	VSCodePanels: ({ children, ...props }: HTMLAttributes<HTMLDivElement>) => <div {...props}>{children}</div>,
-	VSCodePanelTab: ({ children, ...props }: HTMLAttributes<HTMLDivElement>) => <div {...props}>{children}</div>,
-	VSCodePanelView: ({ children, ...props }: HTMLAttributes<HTMLDivElement>) => <div {...props}>{children}</div>,
+    VSCodeCheckbox: ({ children, ...props }: InputHTMLAttributes<HTMLInputElement> & { children?: ReactNode }) => (
+        <label>
+            <input type="checkbox" {...props} />
+            {children}
+        </label>
+    ),
+    VSCodeDropdown: (props: SelectHTMLAttributes<HTMLSelectElement>) => <select {...props} />,
+    VSCodeOption: (props: React.OptionHTMLAttributes<HTMLOptionElement>) => <option {...props} />,
+    VSCodePanels: ({ children, ...props }: HTMLAttributes<HTMLDivElement>) => <div {...props}>{children}</div>,
+    VSCodePanelTab: ({ children, ...props }: HTMLAttributes<HTMLDivElement>) => <div {...props}>{children}</div>,
+    VSCodePanelView: ({ children, ...props }: HTMLAttributes<HTMLDivElement>) => <div {...props}>{children}</div>,
 }))
 
 const workspaceServer: McpServer = {
-	name: "docs@a1b2c3d4",
-	displayName: "docs",
-	description: "Workspace docs",
-	source: "workspace",
-	config: JSON.stringify({ type: "stdio", command: "node", timeout: 60 }),
-	status: "connected",
-	tools: [{ name: "search", autoApprove: false }],
+    name: "docs@a1b2c3d4",
+    displayName: "docs",
+    description: "Workspace docs",
+    source: "workspace",
+    config: JSON.stringify({ type: "stdio", command: "node", timeout: 60 }),
+    status: "connected",
+    tools: [{ name: "search", autoApprove: false }],
 }
 
 describe("ServerRow workspace descriptor presentation", () => {
-	beforeEach(() => {
-		vi.clearAllMocks()
-	})
+    beforeEach(() => {
+        vi.clearAllMocks()
+    })
 
-	it("shows the descriptor display name without settings-backed controls", () => {
-		render(<ServerRow hasTrashIcon server={workspaceServer} />)
+    it("shows the descriptor display name without settings-backed controls", () => {
+        render(<ServerRow hasTrashIcon server={workspaceServer} />)
 
-		expect(screen.getByText("docs")).toBeInTheDocument()
-		expect(screen.queryByText("docs@a1b2c3d4")).not.toBeInTheDocument()
-		expect(screen.queryByRole("switch")).not.toBeInTheDocument()
-		expect(screen.queryByTitle("Delete Server")).not.toBeInTheDocument()
+        expect(screen.getByText("docs")).toBeInTheDocument()
+        expect(screen.queryByText("docs@a1b2c3d4")).not.toBeInTheDocument()
+        expect(screen.queryByTitle("Delete Server")).not.toBeInTheDocument()
 
-		fireEvent.click(screen.getByText("docs"))
+        fireEvent.click(screen.getByText("docs"))
 
-		expect(screen.queryByText("Request Timeout")).not.toBeInTheDocument()
-		expect(screen.queryByText("Auto-approve all tools")).not.toBeInTheDocument()
-		expect(screen.queryByText("Auto-approve")).not.toBeInTheDocument()
-		expect(screen.queryByRole("button", { name: "Delete Server" })).not.toBeInTheDocument()
-		expect(screen.getAllByRole("button", { name: "Restart Server" })).toHaveLength(2)
-	})
+        expect(screen.queryByText("Request Timeout")).not.toBeInTheDocument()
+        expect(screen.queryByRole("button", { name: "Delete Server" })).not.toBeInTheDocument()
+        expect(screen.getAllByRole("button", { name: "Restart Server" })).toHaveLength(2)
+    })
 
-	it("keeps the existing task-scoped toggle", () => {
-		const onToggleEnabled = vi.fn()
-		render(<ServerRow enabled={false} onToggleEnabled={onToggleEnabled} server={workspaceServer} />)
+    it("lets the user grant auto-approve to a workspace tool, unchecked until granted", () => {
+        mocks.toggleToolAutoApprove.mockResolvedValue({ mcpServers: [] })
+        const { rerender } = render(<ServerRow server={workspaceServer} />)
+        fireEvent.click(screen.getByText("docs"))
 
-		fireEvent.click(screen.getByRole("switch"))
+        const toolCheckbox = screen.getByRole("checkbox", { name: "Auto-approve" })
+        expect(toolCheckbox).not.toBeChecked()
+        expect(screen.getByRole("checkbox", { name: "Auto-approve all tools" })).not.toBeChecked()
 
-		expect(onToggleEnabled).toHaveBeenCalledWith(true)
-		expect(mocks.toggleMcpServer).not.toHaveBeenCalled()
-	})
+        fireEvent.click(toolCheckbox)
 
-	it("does not offer deletion when a workspace descriptor connection fails", () => {
-		render(<ServerRow hasTrashIcon server={{ ...workspaceServer, error: "Connection failed", status: "disconnected" }} />)
+        // The backend records the grant for the internal workspace name, not in the descriptor file.
+        expect(mocks.toggleToolAutoApprove).toHaveBeenCalledWith({
+            serverName: "docs@a1b2c3d4",
+            toolNames: ["search"],
+            autoApprove: true,
+        })
 
-		expect(screen.getByText("Connection failed")).toBeInTheDocument()
-		expect(screen.getByRole("button", { name: "Retry Connection" })).toBeInTheDocument()
-		expect(screen.queryByRole("button", { name: "Delete Server" })).not.toBeInTheDocument()
-	})
+        rerender(<ServerRow server={{ ...workspaceServer, tools: [{ name: "search", autoApprove: true }] }} />)
+        expect(screen.getByRole("checkbox", { name: "Auto-approve" })).toBeChecked()
+    })
 
-	it("keeps settings-backed controls for a settings server", () => {
-		const settingsServer: McpServer = {
-			...workspaceServer,
-			name: "global-docs",
-			displayName: undefined,
-			source: "settings",
-		}
-		render(<ServerRow hasTrashIcon server={settingsServer} />)
+    it("switches a workspace server for the workspace when no task scope is given", () => {
+        mocks.toggleMcpServer.mockResolvedValue({ mcpServers: [] })
+        render(<ServerRow server={workspaceServer} />)
 
-		expect(screen.getByRole("switch")).toBeInTheDocument()
-		expect(screen.getByTitle("Delete Server")).toBeInTheDocument()
-		fireEvent.click(screen.getByText("global-docs"))
+        const toggle = screen.getByRole("switch")
+        expect(toggle).toHaveAttribute("aria-checked", "true")
+        fireEvent.click(toggle)
 
-		expect(screen.getByText("Request Timeout")).toBeInTheDocument()
-		expect(screen.getByText("Auto-approve all tools")).toBeInTheDocument()
-		expect(screen.getByText("Auto-approve")).toBeInTheDocument()
-		expect(screen.getAllByRole("button", { name: "Delete Server" })).toHaveLength(2)
-	})
+        // The backend routes a workspace server to the workspace-level toggle, not mcp_settings.json.
+        expect(mocks.toggleMcpServer).toHaveBeenCalledWith(
+            expect.objectContaining({ serverName: "docs@a1b2c3d4", disabled: true }),
+        )
+    })
 
-	it("defaults unconfigured settings tools to auto-approve and persists an explicit disable", () => {
-		mocks.toggleToolAutoApprove.mockResolvedValue({ mcpServers: [] })
-		const settingsServer: McpServer = {
-			...workspaceServer,
-			name: "global-docs",
-			displayName: undefined,
-			source: "settings",
-			tools: [{ name: "search" }],
-		}
-		render(<ServerRow server={settingsServer} />)
-		fireEvent.click(screen.getByText("global-docs"))
+    it("keeps the existing task-scoped toggle", () => {
+        const onToggleEnabled = vi.fn()
+        render(<ServerRow enabled={false} onToggleEnabled={onToggleEnabled} server={workspaceServer} />)
 
-		const toolCheckbox = screen.getByRole("checkbox", { name: "Auto-approve" })
-		expect(toolCheckbox).toBeChecked()
+        fireEvent.click(screen.getByRole("switch"))
 
-		fireEvent.click(toolCheckbox)
+        expect(onToggleEnabled).toHaveBeenCalledWith(true)
+        expect(mocks.toggleMcpServer).not.toHaveBeenCalled()
+    })
 
-		expect(mocks.toggleToolAutoApprove).toHaveBeenCalledWith({
-			serverName: "global-docs",
-			toolNames: ["search"],
-			autoApprove: false,
-		})
-	})
+    it("does not offer deletion when a workspace descriptor connection fails", () => {
+        render(<ServerRow hasTrashIcon server={{ ...workspaceServer, error: "Connection failed", status: "disconnected" }} />)
+
+        expect(screen.getByText("Connection failed")).toBeInTheDocument()
+        expect(screen.getByRole("button", { name: "Retry Connection" })).toBeInTheDocument()
+        expect(screen.queryByRole("button", { name: "Delete Server" })).not.toBeInTheDocument()
+    })
+
+    it("keeps settings-backed controls for a settings server", () => {
+        const settingsServer: McpServer = {
+            ...workspaceServer,
+            name: "global-docs",
+            displayName: undefined,
+            source: "settings",
+        }
+        render(<ServerRow hasTrashIcon server={settingsServer} />)
+
+        expect(screen.getByRole("switch")).toBeInTheDocument()
+        expect(screen.getByTitle("Delete Server")).toBeInTheDocument()
+        fireEvent.click(screen.getByText("global-docs"))
+
+        expect(screen.getByText("Request Timeout")).toBeInTheDocument()
+        expect(screen.getByText("Auto-approve all tools")).toBeInTheDocument()
+        expect(screen.getByText("Auto-approve")).toBeInTheDocument()
+        expect(screen.getAllByRole("button", { name: "Delete Server" })).toHaveLength(2)
+    })
+
+    it("defaults unconfigured settings tools to auto-approve and persists an explicit disable", () => {
+        mocks.toggleToolAutoApprove.mockResolvedValue({ mcpServers: [] })
+        const settingsServer: McpServer = {
+            ...workspaceServer,
+            name: "global-docs",
+            displayName: undefined,
+            source: "settings",
+            tools: [{ name: "search" }],
+        }
+        render(<ServerRow server={settingsServer} />)
+        fireEvent.click(screen.getByText("global-docs"))
+
+        const toolCheckbox = screen.getByRole("checkbox", { name: "Auto-approve" })
+        expect(toolCheckbox).toBeChecked()
+
+        fireEvent.click(toolCheckbox)
+
+        expect(mocks.toggleToolAutoApprove).toHaveBeenCalledWith({
+            serverName: "global-docs",
+            toolNames: ["search"],
+            autoApprove: false,
+        })
+    })
+})
+
+describe("ServerRow connection errors", () => {
+    beforeEach(() => {
+        vi.clearAllMocks()
+        mocks.authenticateMcpServer.mockResolvedValue({})
+        mocks.restartMcpServer.mockResolvedValue({ mcpServers: [] })
+    })
+
+    it("keeps retrying available beside Authenticate when the server asked for authentication", () => {
+        const server: McpServer = {
+            ...workspaceServer,
+            name: "show3d",
+            displayName: undefined,
+            source: "settings",
+            config: JSON.stringify({ type: "streamableHttp", url: "http://127.0.0.1:3000/mcp" }),
+            status: "disconnected",
+            oauthRequired: true,
+            oauthAuthStatus: "unauthenticated",
+            error: "The server answered 401 Unauthorized: authenticate to connect, or retry if it was restarted.",
+        }
+        render(<ServerRow server={server} />)
+
+        fireEvent.click(screen.getByRole("button", { name: "Authenticate" }))
+        expect(mocks.authenticateMcpServer).toHaveBeenCalledWith({ value: "show3d" })
+
+        fireEvent.click(screen.getByRole("button", { name: "Retry Connection" }))
+        expect(mocks.restartMcpServer).toHaveBeenCalledWith({ value: "show3d" })
+    })
+
+    it("offers Reauthorize when saved OAuth credentials are no longer valid", () => {
+        const server: McpServer = {
+            ...workspaceServer,
+            name: "show3d",
+            source: "settings",
+            status: "disconnected",
+            oauthRequired: true,
+            oauthAuthStatus: "reauthentication-required",
+            error: "Authorization for this server is no longer valid. Reauthorize to reconnect.",
+        }
+        render(<ServerRow server={server} />)
+
+        fireEvent.click(screen.getByRole("button", { name: "Reauthorize" }))
+        expect(mocks.authenticateMcpServer).toHaveBeenCalledWith({ value: "show3d" })
+        expect(screen.queryByRole("button", { name: "Authenticate" })).not.toBeInTheDocument()
+    })
+
+    it("offers only retrying when the server is unavailable", () => {
+        render(<ServerRow server={{ ...workspaceServer, error: "fetch failed: connect ECONNREFUSED", status: "disconnected" }} />)
+
+        expect(screen.queryByRole("button", { name: "Authenticate" })).not.toBeInTheDocument()
+        expect(screen.queryByRole("button", { name: "Reauthorize" })).not.toBeInTheDocument()
+        fireEvent.click(screen.getByRole("button", { name: "Retry Connection" }))
+        expect(mocks.restartMcpServer).toHaveBeenCalledWith({ value: "docs@a1b2c3d4" })
+    })
+})
+
+describe("ServerRow saved variables", () => {
+    beforeEach(() => {
+        vi.clearAllMocks()
+        mocks.clearMcpServerVariables.mockResolvedValue({ mcpServers: [] })
+    })
+
+    it("offers clearing saved variables on the collapsed row of a server that references ${env:...}", () => {
+        const server: McpServer = {
+            ...workspaceServer,
+            config: JSON.stringify({ type: "stdio", command: "node", env: { API_TOKEN: "${env:DOCS_TOKEN}" } }),
+        }
+        render(<ServerRow server={server} />)
+
+        // Reachable without expanding the row.
+        fireEvent.click(screen.getByTitle("Clear Saved Variables"))
+
+        expect(mocks.clearMcpServerVariables).toHaveBeenCalledWith({ value: "docs@a1b2c3d4" })
+    })
+
+    it("offers no clearing for a server without ${env:...} references, which never has saved values", () => {
+        render(<ServerRow server={workspaceServer} />)
+        fireEvent.click(screen.getByText("docs"))
+
+        expect(screen.queryByTitle("Clear Saved Variables")).not.toBeInTheDocument()
+        expect(screen.queryByRole("button", { name: "Clear Saved Variables" })).not.toBeInTheDocument()
+    })
 })

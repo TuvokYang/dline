@@ -135,6 +135,6 @@ Choose the smallest layer that proves the behavior:
 - load and soak behavior: the explicit pressure tier;
 - release behavior: GitHub Actions, VSIX content, and ancestry gates.
 
-The required CI/release gate packages one VSIX, runs the work smoke and four daily workflows on Windows, macOS, and Linux against that same artifact, and publishes only after all cells pass. Full functional E2E is nightly or explicitly requested; dev E2E is development-only.
+The required CI/release gate packages one VSIX, runs the work smoke and four daily workflows on Windows, macOS, and Linux against that same artifact, and publishes only after all cells pass. Full functional E2E runs only in production release validation or when explicitly requested; dev E2E is development-only.
 
 For lifecycle, persistence, protocol, or tool changes, test failure paths and restart/recovery, not only the successful in-memory path.

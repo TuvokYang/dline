@@ -13,28 +13,28 @@ import { capabilityWriteContext } from "./capability-write-context"
  * @returns The updated Agents rule toggles
  */
 export async function toggleAgentsRule(controller: Controller, request: ToggleAgentsRuleRequest): Promise<ClineRulesToggles> {
-	const { rulePath, enabled } = request
+    const { rulePath, enabled } = request
 
-	if (!rulePath || typeof enabled !== "boolean") {
-		Logger.error("toggleAgentsRule: Missing or invalid parameters", {
-			rulePath,
-			enabled: typeof enabled === "boolean" ? enabled : `Invalid: ${typeof enabled}`,
-		})
-		throw new Error("Missing or invalid parameters for toggleAgentsRule")
-	}
+    if (!rulePath || typeof enabled !== "boolean") {
+        Logger.error("toggleAgentsRule: Missing or invalid parameters", {
+            rulePath,
+            enabled: typeof enabled === "boolean" ? enabled : `Invalid: ${typeof enabled}`,
+        })
+        throw new Error("Missing or invalid parameters for toggleAgentsRule")
+    }
 
-	// Agents rules always come from the workspace, but the preference is stored
-	// in the scope the editor is currently in, so only the changed path is
-	// recorded and every other rule keeps inheriting.
-	const agentsToggles = await setCapabilityEnabled(
-		controller.stateManager,
-		"agentsRules",
-		capabilityWriteContext(controller),
-		capabilityResourceId(rulePath),
-		enabled,
-	)
+    // Agents rules always come from the workspace, but the preference is stored
+    // in the scope the editor is currently in, so only the changed path is
+    // recorded and every other rule keeps inheriting.
+    const agentsToggles = await setCapabilityEnabled(
+        controller.stateManager,
+        "agentsRules",
+        capabilityWriteContext(controller),
+        capabilityResourceId(rulePath),
+        enabled,
+    )
 
-	return ClineRulesToggles.create({
-		toggles: agentsToggles as Record<string, boolean>,
-	})
+    return ClineRulesToggles.create({
+        toggles: agentsToggles as Record<string, boolean>,
+    })
 }

@@ -14,5 +14,5 @@ import type { TelemetrySignalSink } from "../service/signal-sink"
  * whole facade.
  */
 export abstract class DomainRecorder {
-	constructor(protected readonly sink: TelemetrySignalSink) {}
+    constructor(protected readonly sink: TelemetrySignalSink) {}
 }
