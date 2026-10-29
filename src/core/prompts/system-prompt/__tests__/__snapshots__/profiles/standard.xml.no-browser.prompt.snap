@@ -162,7 +162,7 @@ Usage:
 </write_to_file>
 
 ## replace_in_file
-Description: Request to edit an existing file using SEARCH/REPLACE blocks. PREFER this tool for all edits to existing files. Only use write_to_file for creating new files.
+Description: Request to edit an existing file using SEARCH/REPLACE blocks. Every file line matched by SEARCH is replaced in full by the REPLACE lines, so each REPLACE line must be the complete final line. PREFER this tool for all edits to existing files.
 Parameters:
 - path: (required) The workspace-relative path of the existing file to modify. For the default workspace, use a relative path. Use '..' segments only when the user has authorized a target outside every workspace.
 - diff: (required) One or more SEARCH/REPLACE blocks following this exact format:
@@ -182,8 +182,11 @@ Critical rules:
     * A block that matches several locations is rejected and the candidate line numbers are returned. Add more leading characters or a distinctive adjacent line, then retry.
     * Use multiple SEARCH/REPLACE blocks for multiple changes. List them in the order they appear in the file; they must not overlap.
 3. Every matched line is replaced in full, and REPLACE is inserted verbatim:
-    * Write every replacement line completely, including its exact indentation.
+    * A SEARCH line that is only a line prefix still selects the WHOLE file line. Everything after the prefix is deleted unless REPLACE writes it again.
+    * Write every REPLACE line as the complete final line: its exact indentation, the changed text, and the unchanged rest of the line. Never write only the changed fragment.
+    * Example: for the file line `    retries: 3, // keep in sync with server.ts`, SEARCH `    retries: 3,` with REPLACE `    retries: 5,` leaves `    retries: 5,` and deletes the comment. The correct REPLACE is `    retries: 5, // keep in sync with server.ts`.
     * Nothing from the matched lines is kept automatically: neither the indentation nor the unwritten rest of a prefix line.
+    * After editing a long line, re-read it and confirm that its ending is intact.
 4. SKIP ranges delete or rewrite a long range without copying it (saves output tokens):
     * In SEARCH, write the head line(s), then one line that is exactly `....... SKIP` (as many dots as your delimiter length), then the tail line(s):
 ------- SEARCH
@@ -503,11 +506,11 @@ Usage:
 </rename>
 
 ## replace_text
-Description: ALWAYS run with dry_run=true FIRST to preview changes before applying. Perform a global text replacement across all files matching a glob pattern. This operates at the text level (not semantic), replacing all occurrences of a literal or regex pattern. Substrings are matched: replacing "Hello" also changes "sayHello" to "sayHi". String literals and comments are also affected. Set dry_run=true to preview changes without modifying files. Use this for bulk text changes like renaming strings, updating URLs, or fixing repeated typos. For single-file edits, use replace_in_file. For safe identifier-only renames that skip strings and comments, use rename (semantic, LSP-based).
+Description: ALWAYS run with dry_run=true FIRST to preview changes before applying. Perform a global text replacement across all files matching a glob pattern. This operates at the text level (not semantic), replacing all occurrences of a literal or regex pattern. Substrings are matched: replacing "Hello" also changes "sayHello" to "sayHi". String literals and comments are also affected. Set dry_run=true to preview changes without modifying files. Use this for bulk text changes like renaming strings, updating URLs, or fixing repeated typos. Also use this to change only part of a line, even within one file: only the matched text changes and the rest of the line is kept, whereas replace_in_file replaces every matched line in full. For such an in-line edit, set file_pattern to the exact workspace-relative file path, make find long enough to occur only at the intended place, and confirm that the dry_run preview reports exactly 1 change before applying. Use replace_in_file to rewrite whole lines or multi-line blocks. For safe identifier-only renames that skip strings and comments, use rename (semantic, LSP-based).
 Parameters:
 - find: (required) The text to search for. By default this is a literal string; set literal=false to use a regex pattern.
 - replace: (required) The replacement text. Use an empty string to delete matches.
-- file_pattern: (required) Glob pattern to filter files (e.g., '*.ts', '*.md', 'src/**/*.ts'). Only files matching this pattern in the workspace will be checked.
+- file_pattern: (required) Glob pattern to filter files (e.g., '*.ts', '*.md', 'src/**/*.ts'). Only files matching this pattern in the workspace will be checked. An exact workspace-relative file path (e.g., 'src/app/config.ts') limits the replacement to that one file.
 - dry_run: (optional) When true, returns a preview of all matches without modifying any files. Defaults to false.
 - literal: (optional) When true (default), 'find' is treated as a literal string. When false, 'find' is treated as a regex pattern.
 - task_progress: (optional) Omit task_progress when no TODO item is being created or updated. When provided, include at least one non-empty checklist item. During an existing checklist, send exact newly completed items and at most one exact current item; the current item may be sent by itself. Do not repeat the full checklist or change its structure. Use a full checklist only for initial creation or after all current items are complete and a new phase begins.
