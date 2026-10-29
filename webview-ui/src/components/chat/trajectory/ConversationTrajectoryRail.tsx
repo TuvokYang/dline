@@ -173,7 +173,7 @@ function TrajectoryTurnPreview({ turn, turnNumber, attemptNumber }: TrajectoryTu
                             {turn.toolUsage.map(({ tool, count }) => (
                                 <li className="flex items-baseline justify-between gap-3 font-mono" key={tool}>
                                     <span className="min-w-0 truncate text-foreground">{tool}</span>
-                                    <span className="shrink-0 text-description tabular-nums">×{count}</span>
+                                    <span className="shrink-0 text-description tabular-nums">{count}</span>
                                 </li>
                             ))}
                         </ul>

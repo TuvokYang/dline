@@ -4,8 +4,8 @@ import { fireEvent, render, screen, within } from "@testing-library/react"
 import React, { useState } from "react"
 import { describe, expect, it, vi } from "vitest"
 import type { MessageHandlers } from "../../types/chatTypes"
-import { isActivityFold, isExplorationRun } from "../../utils/chatRowKinds"
-import { groupChatRows, isToolGroup } from "../../utils/messageUtils"
+import { type ActivityFold, isActivityFold } from "../../utils/chatRowKinds"
+import { groupChatRows } from "../../utils/messageUtils"
 import { rowIdentity } from "../../utils/rowCoordinate"
 import { finishedTurnTranscript } from "./activityFoldStoryFixtures"
 import { MessageRenderer } from "./MessageRenderer"
@@ -33,13 +33,22 @@ const messageHandlers: MessageHandlers = {
 }
 
 /**
- * The rows the standard level draws between the user message and the turn end.
- * A finished turn folds exactly these rows, so they are what an expanded fold
- * must draw again.
+ * The messages each round of the finished turn draws: a round opens at its
+ * request, and its restore point (10, 20, 30, 40) leads it.
  */
-const standardRows = groupChatRows(finishedTurnTranscript)
-const standardMembers = standardRows.slice(1, -1)
-const standardSingleRowTimestamps = standardMembers.flatMap((row) => (Array.isArray(row) ? [] : [row.ts]))
+const ROUND_ROWS = [
+    [10, 12, 13],
+    [20, 22, 23],
+    [30, 32, 33, 34],
+    [40, 42],
+]
+/** The same rounds without their tool calls (13, 23, 33, 34), which a tool group draws. */
+const ROUND_SINGLE_ROWS = [
+    [10, 12],
+    [20, 22],
+    [30, 32],
+    [40, 42],
+]
 
 /** Owns row and fold expansion the way the chat does: separate key spaces. */
 function Harness({ messages }: { messages: UiMessage[] }) {
@@ -70,75 +79,103 @@ function Harness({ messages }: { messages: UiMessage[] }) {
     )
 }
 
-const header = () => screen.getByTestId("activity-fold-header")
+const headers = () => screen.getAllByTestId("activity-fold-header")
+const turnHeader = () => headers()[0]
+const roundHeaders = () => headers().slice(1)
 const drawnMessageTimestamps = (root: HTMLElement | Document = document) =>
     Array.from(root.querySelectorAll<HTMLElement>("[data-message-ts]")).map((element) => Number(element.dataset.messageTs))
+const drawnRowTimestamps = (row: ActivityFold["_children"][number]): number[] =>
+    isActivityFold(row) ? row._children.flatMap(drawnRowTimestamps) : Array.isArray(row) ? row.map((m) => m.ts) : [row.ts]
 
 describe("ActivityFoldRenderer", () => {
-    it("folds the same rows the standard level draws between the user message and the turn end", () => {
-        const fold = groupChatRows(finishedTurnTranscript, undefined, { level: "turn" }).find(isActivityFold)
+    it("folds a finished turn into one turn fold holding one round fold per round", () => {
+        const rows = groupChatRows(finishedTurnTranscript, undefined, { level: "turn" })
+        const fold = rows.find(isActivityFold)
+        if (!fold) throw new Error("expected the finished turn to fold")
 
-        expect(fold?._children.map(rowIdentity)).toEqual(standardMembers.map(rowIdentity))
-        // The transcript exercises nested groups inside the fold.
-        expect(standardMembers.some(isExplorationRun)).toBe(true)
-        expect(standardMembers.some((row) => isToolGroup(row) && !isExplorationRun(row))).toBe(true)
+        // The user message and the completion stay outside the fold.
+        expect(rows.filter((row) => !isActivityFold(row)).map(rowIdentity)).toEqual(["1", "51"])
+        expect(fold._foldKind).toBe("turn")
+        expect(fold._children.every((child) => isActivityFold(child) && child._foldKind === "round")).toBe(true)
+        expect(fold._children.map(drawnRowTimestamps)).toEqual(ROUND_ROWS)
     })
 
-    it("draws a collapsed fold as its summary and none of its members", () => {
+    it("draws a collapsed turn fold as its summary and none of its rounds", () => {
         render(<Harness messages={finishedTurnTranscript} />)
 
-        // 13, 23, 33, 34 are tool calls; 42 is the command; 10, 20, 30, 40 are restore points; 32 is the message.
-        expect(screen.getByRole("button", { name: "4 tool calls · 1 command · 4 checkpoints · 1 message" })).toBe(header())
-        expect(header()).toHaveAttribute("aria-expanded", "false")
+        expect(
+            screen.getByRole("button", { name: "4 rounds · 4 tool calls · 1 command · 2 thoughts · 4 checkpoints · 1 message" }),
+        ).toBe(turnHeader())
+        expect(headers()).toHaveLength(1)
+        expect(turnHeader()).toHaveAttribute("aria-expanded", "false")
         expect(screen.queryByTestId("activity-fold-children")).not.toBeInTheDocument()
         expect(drawnMessageTimestamps()).toEqual([])
-        expect(screen.queryByTestId("tool-group-scroll")).not.toBeInTheDocument()
     })
 
-    it("expands a fold from its header", () => {
+    it("expands a turn fold into its collapsed round folds", () => {
         render(<Harness messages={finishedTurnTranscript} />)
 
-        fireEvent.click(header())
+        fireEvent.click(turnHeader())
 
-        expect(header()).toHaveAttribute("aria-expanded", "true")
-        const children = screen.getByTestId("activity-fold-children")
-        expect(drawnMessageTimestamps(children)).toEqual(standardSingleRowTimestamps)
-        expect(within(children).getByTestId("tool-group-scroll")).toBeInTheDocument()
-        expect(within(children).getByRole("button", { name: /^Dline read/ })).toBeInTheDocument()
+        expect(turnHeader()).toHaveAttribute("aria-expanded", "true")
+        expect(roundHeaders().map((header) => header.textContent)).toEqual([
+            "1 tool call · 1 thought · 1 checkpoint",
+            "1 tool call · 1 thought · 1 checkpoint",
+            "2 tool calls · 1 checkpoint · 1 message",
+            "1 command · 1 checkpoint",
+        ])
+        for (const header of roundHeaders()) expect(header).toHaveAttribute("aria-expanded", "false")
+        expect(drawnMessageTimestamps()).toEqual([])
+    })
+
+    it("expands one round inside an expanded turn fold and leaves the others folded", () => {
+        render(<Harness messages={finishedTurnTranscript} />)
+        fireEvent.click(turnHeader())
+
+        fireEvent.click(roundHeaders()[2])
+
+        expect(roundHeaders().map((header) => header.getAttribute("aria-expanded"))).toEqual(["false", "false", "true", "false"])
+        expect(drawnMessageTimestamps()).toEqual(ROUND_SINGLE_ROWS[2])
+        const openRound = screen.getAllByTestId("activity-fold")[3]
+        expect(within(openRound).getAllByTestId("tool-group-scroll")).toHaveLength(1)
+        // Expanding a round leaves the turn fold open.
+        expect(turnHeader()).toHaveAttribute("aria-expanded", "true")
     })
 
     it("draws no member as the list's last row", () => {
         render(<Harness messages={finishedTurnTranscript} />)
-        fireEvent.click(header())
+        fireEvent.click(turnHeader())
+        fireEvent.click(roundHeaders()[3])
 
-        const members = screen.getByTestId("activity-fold-children").querySelectorAll("[data-message-ts]")
+        const members = document.querySelectorAll<HTMLElement>("[data-message-ts]")
         // The last member is the command row, which would get the last row's bottom padding.
-        expect(Number((members[members.length - 1] as HTMLElement).dataset.messageTs)).toBe(42)
+        expect(Number(members[members.length - 1].dataset.messageTs)).toBe(42)
         for (const member of members) expect(member).not.toHaveClass("pb-2.5")
     })
 
-    it("keeps nested groups expandable inside an expanded fold", () => {
+    it("keeps an opened round open when its turn fold folds and opens again", () => {
         render(<Harness messages={finishedTurnTranscript} />)
-        fireEvent.click(header())
-        const children = screen.getByTestId("activity-fold-children")
-        const runHeader = within(children).getByRole("button", { name: /^Dline read/ })
+        fireEvent.click(turnHeader())
+        fireEvent.click(roundHeaders()[0])
 
-        expect(runHeader).toHaveAttribute("aria-expanded", "false")
-        fireEvent.click(runHeader)
+        fireEvent.click(turnHeader())
+        expect(screen.queryByTestId("activity-fold-children")).not.toBeInTheDocument()
+        expect(drawnMessageTimestamps()).toEqual([])
 
-        expect(runHeader).toHaveAttribute("aria-expanded", "true")
-        expect(within(children).getAllByTestId("exploration-round")).toHaveLength(2)
-        // Expanding the nested run leaves the fold open.
-        expect(header()).toHaveAttribute("aria-expanded", "true")
+        fireEvent.click(turnHeader())
+        expect(roundHeaders()[0]).toHaveAttribute("aria-expanded", "true")
+        expect(within(screen.getAllByTestId("activity-fold")[1]).getAllByTestId("activity-fold-children")).toHaveLength(1)
+        expect(drawnMessageTimestamps()).toEqual(ROUND_SINGLE_ROWS[0])
     })
 
-    it("folds back to the summary when the header is clicked again", () => {
+    it("folds back to the summary when the turn header is clicked again", () => {
         render(<Harness messages={finishedTurnTranscript} />)
 
-        fireEvent.click(header())
-        fireEvent.click(header())
+        fireEvent.click(turnHeader())
+        fireEvent.click(turnHeader())
 
-        expect(header()).toHaveAttribute("aria-expanded", "false")
+        expect(turnHeader()).toHaveAttribute("aria-expanded", "false")
+        expect(headers()).toHaveLength(1)
         expect(screen.queryByTestId("activity-fold-children")).not.toBeInTheDocument()
         expect(drawnMessageTimestamps()).toEqual([])
     })

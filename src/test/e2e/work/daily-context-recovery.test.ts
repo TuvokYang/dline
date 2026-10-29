@@ -26,9 +26,11 @@ const TARGET_TARGET = "openai-official-responses" as const
 const TASK_ID = "work-daily-context-recovery"
 const TASK_TEXT = "WORK_DAILY_CONTEXT_RECOVERY_TASK"
 const HISTORY_MESSAGE_COUNT = 1_200
-/** A locked legacy task is shown from its latest rows only until the owning window imports it. */
-const READ_ONLY_LEGACY_WINDOW = 400
-const HISTORY_BROWSE_TARGET = HISTORY_MESSAGE_COUNT - READ_ONLY_LEGACY_WINDOW + 100
+/**
+ * Older than the latest 400 rows, so browsing proves a locked legacy task serves its
+ * whole history rather than only a recent window until the owning window imports it.
+ */
+const HISTORY_BROWSE_TARGET = 650
 const STREAM_CONTINUATION = "WORK_CONTEXT_STREAM_CONTINUATION"
 const STREAM_PARTIAL = "WORK_CONTEXT_STREAM_PARTIAL"
 const STREAM_READY = "WORK_CONTEXT_STREAM_READY"

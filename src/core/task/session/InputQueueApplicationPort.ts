@@ -57,4 +57,10 @@ export interface InputQueueApplicationPort {
     project(): Promise<readonly QueuedInputEntry[]>
     /** Called only after the dialog reveal is durable and answerable. */
     onTurnEndAwaiting(interaction: CanonicalQueueAwaitingInteraction): void
+    /**
+     * Whether an enqueued input would be delivered to this waiting interaction
+     * as its response. A dialog reply that carries input relies on it: queued,
+     * the reply is admitted like a submission and still answers that dialog.
+     */
+    awaitsTurnEnd?(interactionId: string): boolean
 }

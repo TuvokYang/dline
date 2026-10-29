@@ -713,6 +713,47 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
         expect(screen.getByText("History 400")).toBeInTheDocument()
     })
 
+    it("loads only the latest page when the backend marks the interaction anchor synthetic", async () => {
+        // Walking back for an anchor no page holds read every page of a long
+        // history, several times over, before the user could browse it.
+        const history = Array.from({ length: 1_001 }, (_, index) =>
+            convertClineMessageToProto({ ts: 1_000 + index, type: "say", say: "text", text: `History ${index + 1}` }),
+        )
+        vi.mocked(TaskServiceClient.fetchMessage).mockImplementation(async (request) => {
+            const count = Number(request.count ?? 0)
+            const referenceIndex = Number(request.referenceIndex ?? -1)
+            const startIndex =
+                referenceIndex === -1 ? Math.max(0, history.length - count) : Math.min(referenceIndex, history.length)
+            return {
+                taskId: "task-1",
+                taskInstanceId: "open-1",
+                messages: history.slice(startIndex, startIndex + count),
+                startIndex,
+                totalCount: history.length,
+            }
+        })
+        render(
+            <ExtensionStateContextProvider>
+                <MessageProbe />
+            </ExtensionStateContextProvider>,
+        )
+        await waitFor(() => expect(subscriptions.state).toBeDefined())
+
+        const synthetic = resumeInteractionState(1, history.length)
+        if (!synthetic.taskViewState?.activeInteraction) throw new Error("Expected an active interaction")
+        synthetic.taskViewState.activeInteraction.anchorVerified = true
+        synthetic.taskViewState.activeInteraction.anchorSynthetic = true
+        act(() => {
+            subscriptions.state?.onResponse({ stateJson: JSON.stringify(synthetic) })
+        })
+
+        await waitFor(() => expect(screen.getByText("History 1001")).toBeInTheDocument())
+        // Give a walk-back and its bounded retries time to show up if they ran.
+        await new Promise((resolve) => setTimeout(resolve, 1_500))
+        expect(vi.mocked(TaskServiceClient.fetchMessage).mock.calls.map(([request]) => request.referenceIndex)).toEqual([-1])
+        expect(screen.queryByText("History 801")).not.toBeInTheDocument()
+    })
+
     it("replaces the window when promotion renumbers the history it was read from", async () => {
         // A read-only display of a legacy history serves only its latest rows,
         // numbered from zero. Promotion imports the whole history, so the same

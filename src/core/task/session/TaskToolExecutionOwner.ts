@@ -32,6 +32,7 @@ import type { TaskStateManager } from "../TaskStateManager"
 import type { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
 import { SubagentFanoutBudget, usableSubagentLimit } from "../tools/subagent/SubagentFanoutBudget"
 import { SubagentJobManager } from "../tools/subagent/SubagentJobManager"
+import type { ToolDenial } from "../tools/ToolExecutionResult"
 import type { TaskCallbacks, TaskConfig, TaskInteractionPorts, TaskServices } from "../tools/types/TaskConfig"
 import { createUIHelpers } from "../tools/types/UIHelpers"
 import type { TaskApiHandlerOwner } from "./TaskApiHandlerOwner"
@@ -139,7 +140,7 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
     }
 
     /** The result a manually rejected tool reports to the model, in its handler's own words. */
-    async describeDenial(invocationRef: string): Promise<string> {
+    async describeDenial(invocationRef: string): Promise<ToolDenial> {
         const block = await this.readInvocation(invocationRef)
         const runtime = this.options.toolRuntime
         return runtime.describeDenial(this.create({ coordinator: runtime.coordinator }), block)

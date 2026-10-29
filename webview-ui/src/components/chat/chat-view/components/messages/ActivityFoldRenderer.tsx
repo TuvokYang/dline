@@ -3,7 +3,7 @@ import type React from "react"
 import { useMemo } from "react"
 import { cn } from "@/lib/utils"
 import { describeActivityFold, describeToolCalls, summarizeActivityFold } from "../../utils/activityFoldSummary"
-import type { ActivityFold } from "../../utils/chatRowKinds"
+import { type ActivityFold, isActivityFold } from "../../utils/chatRowKinds"
 import { rowIdentity } from "../../utils/rowCoordinate"
 import { RowContent, type RowRenderContext } from "./RowContent"
 
@@ -11,6 +11,8 @@ interface ActivityFoldRendererProps extends RowRenderContext {
     fold: ActivityFold
     isExpanded: boolean
     onToggleFold: (foldId: string) => void
+    /** Expansion of the round folds a turn fold holds, by fold id. */
+    expandedFolds?: Readonly<Record<string, boolean>>
 }
 
 /**
@@ -18,10 +20,17 @@ interface ActivityFoldRendererProps extends RowRenderContext {
  *
  * Collapsed, it draws a one-line summary. Expanded, it draws each member row
  * exactly as the standard level does, so nested groups keep their own
- * expansion. A fold only ever holds finished work, so no member is drawn as
- * the list's last row or as the newest tool activity.
+ * expansion; a turn fold draws its round folds, each expanding on its own. A
+ * fold only ever holds finished work, so no member is drawn as the list's last
+ * row or as the newest tool activity.
  */
-export const ActivityFoldRenderer: React.FC<ActivityFoldRendererProps> = ({ fold, isExpanded, onToggleFold, ...context }) => {
+export const ActivityFoldRenderer: React.FC<ActivityFoldRendererProps> = ({
+    fold,
+    isExpanded,
+    onToggleFold,
+    expandedFolds = {},
+    ...context
+}) => {
     const summary = useMemo(
         () => summarizeActivityFold(fold, context.checkpointAttachments),
         [fold, context.checkpointAttachments],
@@ -43,16 +52,27 @@ export const ActivityFoldRenderer: React.FC<ActivityFoldRendererProps> = ({ fold
                 </button>
             </div>
             {isExpanded && (
-                <div data-testid="activity-fold-children">
-                    {fold._children.map((child) => (
-                        <RowContent
-                            {...context}
-                            isLastRow={false}
-                            isLastToolActivity={false}
-                            key={rowIdentity(child)}
-                            row={child}
-                        />
-                    ))}
+                <div className={cn(fold._foldKind === "turn" && "pl-3")} data-testid="activity-fold-children">
+                    {fold._children.map((child) =>
+                        isActivityFold(child) ? (
+                            <ActivityFoldRenderer
+                                {...context}
+                                expandedFolds={expandedFolds}
+                                fold={child}
+                                isExpanded={expandedFolds[child._activityFoldId] === true}
+                                key={rowIdentity(child)}
+                                onToggleFold={onToggleFold}
+                            />
+                        ) : (
+                            <RowContent
+                                {...context}
+                                isLastRow={false}
+                                isLastToolActivity={false}
+                                key={rowIdentity(child)}
+                                row={child}
+                            />
+                        ),
+                    )}
                 </div>
             )}
         </div>

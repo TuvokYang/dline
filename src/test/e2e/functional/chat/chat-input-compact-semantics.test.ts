@@ -219,7 +219,7 @@ for (const dialogCase of DIALOG_CASES) {
                     expectedRequestIncludes: [COMPACT_INSTRUCTION_MARKER, task, guidance],
                 },
                 {
-                    // The user's own reply answers the dialog, after the summary.
+                    // The user's own reply continues the task, after the summary.
                     type: "tool",
                     id: callIds[3],
                     name: dialogCase.dialogTool,
@@ -244,9 +244,11 @@ for (const dialogCase of DIALOG_CASES) {
 
                 await sendText(sidebar, `/compact ${guidance}`)
                 await condenseReviewedSummary(sidebar, summary)
-                // The command answered nothing: the dialog comes back after the review and no
-                // ordinary turn ran.
-                await dialogCase.awaitDialog(sidebar)
+                // The command answered nothing and no ordinary turn ran. The landed compaction
+                // outlives the dialog, so its actions stay hidden while the composer still
+                // takes the reply.
+                await expect(sidebar.locator('vscode-button[aria-label="Start New Task"]')).toHaveCount(0)
+                await expect(sidebar.getByTestId("chat-input")).toBeEnabled({ timeout: 60_000 })
                 expect(server.getRequestCount(PROVIDER)).toBe(3)
 
                 await sendText(sidebar, reply)

@@ -84,20 +84,20 @@ function persistedErrorReportingSetting(dlineDir: string): string | undefined {
 }
 
 /**
- * Tick the error-reporting consent and wait for it to be persisted.
+ * Untick the error-reporting consent and wait for the opt-out to be persisted.
  *
- * The checkbox is checked only for an explicit `enabled`, so an undecided
- * profile starts unchecked and a single click opts in.
+ * Error reporting is on by default (`state-keys.ts`), so a fresh profile with no
+ * persisted value starts checked and a single click opts out.
  */
-async function grantDiagnosticsConsent(dlineDir: string, sidebar: Frame): Promise<void> {
+async function withdrawDiagnosticsConsent(dlineDir: string, sidebar: Frame): Promise<void> {
     const checkbox = diagnosticsConsentCheckbox(sidebar)
     await checkbox.click()
-    await expect(checkbox).toBeChecked()
-    await expect.poll(() => persistedErrorReportingSetting(dlineDir), { timeout: 15_000 }).toBe("enabled")
+    await expect(checkbox).not.toBeChecked()
+    await expect.poll(() => persistedErrorReportingSetting(dlineDir), { timeout: 15_000 }).toBe("disabled")
 }
 
 e2e(
-    "Runtime diagnostics stay silent until consent, then journal what the extension measures",
+    "Runtime diagnostics journal what the extension measures by default and stop offering export after opt-out",
     async ({ dlineDir, helper, page, sidebar, userDataDir }, testInfo) => {
         e2e.setTimeout(240_000)
         await helper.signin(sidebar)
@@ -106,27 +106,15 @@ e2e(
         // what the bundle may contain, so both are reached the same way.
         await sidebar.getByTestId("tab-about").click()
 
-        // The consent gate: an undecided or declined user produces no journal,
-        // even though activation already installed the pipeline and producers
-        // have been recording since startup.
-        await expect(diagnosticsConsentCheckbox(sidebar)).toBeVisible()
-        expect(
-            journalFiles(dlineDir),
-            `Expected no session journal before consent, found ${journalFiles(dlineDir).join(", ")}`,
-        ).toHaveLength(0)
-
-        // With no pipeline running there is nothing to export, so the control
-        // is absent rather than present-and-failing: offering it would advertise
-        // diagnostics the extension is not permitted to collect.
-        await expect(sidebar.getByRole("button", { name: "Export diagnostic bundle", exact: true })).toHaveCount(0)
-
+        // The default: a profile that never answered the question has error
+        // reporting on, and nothing has been persisted yet — the checked state
+        // comes from the declared default, not from a stored answer.
+        await expect(diagnosticsConsentCheckbox(sidebar)).toBeChecked()
+        expect(persistedErrorReportingSetting(dlineDir)).toBeUndefined()
         expect(
             exportedBundles(dlineDir),
-            `Expected no archive before consent, found ${exportedBundles(dlineDir).join(", ")}`,
+            `Expected no archive before an export, found ${exportedBundles(dlineDir).join(", ")}`,
         ).toHaveLength(0)
-
-        // Opting in starts the sinks.
-        await grantDiagnosticsConsent(dlineDir, sidebar)
 
         // A journal appears while the session is still running. This is the
         // property that matters: the lifecycle drains the process-wide bus its
@@ -155,6 +143,12 @@ e2e(
         expect(bundles, "Expected an archive under the diagnostics directory").toHaveLength(1)
         const archivePath = path.join(diagnosticsDirectory(dlineDir), bundles[0])
         expect(statSync(archivePath).size, "Archive must not be empty").toBeGreaterThan(0)
+
+        // Opting out removes the export: with error reporting off there is no
+        // session the extension is permitted to collect, so the control is
+        // absent rather than present-and-failing.
+        await withdrawDiagnosticsConsent(dlineDir, sidebar)
+        await expect(exportButton).toHaveCount(0)
 
         const screenshotPath = testInfo.outputPath("runtime-telemetry.png")
         await page.screenshot({ path: screenshotPath, fullPage: false, timeout: 5_000 }).catch(() => undefined)

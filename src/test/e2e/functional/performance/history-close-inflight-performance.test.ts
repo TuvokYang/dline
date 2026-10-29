@@ -80,7 +80,7 @@ e2e(
         )
 
         await sendTask(sidebar)
-        await expect(sidebar.getByText("Dline read 1 file:", { exact: true })).toBeVisible({ timeout: 60_000 })
+        await expect(sidebar.getByText("Dline read 1 file", { exact: true })).toBeVisible({ timeout: 60_000 })
         await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(2)
         await closeCurrentTask(sidebar)
 

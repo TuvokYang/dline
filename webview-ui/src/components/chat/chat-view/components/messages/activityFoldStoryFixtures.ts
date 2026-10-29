@@ -41,6 +41,7 @@ export const createFile = (ts: number, path: string) => tool(ts, { tool: "newFil
 export const workingRespond = (ts: number, content: string) => tool(ts, { tool: "actModeRespond", content })
 export const finishedCommand = (ts: number, command: string) =>
     ask(ts, "command", { text: command, commandStatus: "completed", exitCode: 0 })
+export const runningCommand = (ts: number, command: string) => ask(ts, "command", { text: command, commandStatus: "running" })
 export const errorRow = (ts: number, text: string) => say(ts, "error", { text })
 export const completion = (ts: number, text: string) => ask(ts, "completion_result", { text })
 
@@ -145,6 +146,115 @@ export const discardedRequests = (ts: number) =>
     say(ts, "deleted_api_reqs", {
         text: JSON.stringify({ tokensIn: 1200, tokensOut: 300, cacheWrites: 0, cacheReads: 0, cost: 0.02 }),
     })
+
+/** One moment of a running task: what the chat holds and what just happened. */
+export interface LiveStep {
+    readonly caption: string
+    readonly messages: readonly UiMessage[]
+}
+
+interface LiveEvent {
+    readonly caption: string
+    /** Rows rewritten in place, matched by ts, the way the extension updates a row. */
+    readonly update?: readonly UiMessage[]
+    readonly append?: readonly UiMessage[]
+}
+
+function playEvents(events: readonly LiveEvent[]): LiveStep[] {
+    let messages: readonly UiMessage[] = []
+    return events.map(({ caption, update = [], append = [] }) => {
+        const updates = new Map(update.map((message) => [message.ts, message]))
+        messages = [...messages.map((message) => updates.get(message.ts) ?? message), ...append]
+        return { caption, messages }
+    })
+}
+
+/**
+ * Two turns as the extension writes them, one event at a time: every round
+ * opens with its restore point and request, streams, runs its tools and ends
+ * when the next round starts or the turn-ending interaction settles.
+ */
+export const liveTwoTurnSteps: readonly LiveStep[] = playEvents([
+    { caption: "The user sends the task", append: [userTask(1, "Fix the failing lint step")] },
+    {
+        caption: "Round 1 starts and streams its thinking",
+        append: [
+            restorePoint(10, "files-1"),
+            streamingRequest(11),
+            thinking(12, "Start with the lint configuration.", { partial: true }),
+        ],
+    },
+    {
+        caption: "Round 1 reads the lint configuration",
+        update: [thinking(12, "Start with the lint configuration.")],
+        append: [readFile(13, "eslint.config.js")],
+    },
+    {
+        caption: "Round 1 ends as round 2 starts",
+        update: [finishedRequest(11)],
+        append: [
+            restorePoint(20, "files-1"),
+            streamingRequest(21),
+            thinking(22, "Find where the rule is disabled.", { partial: true }),
+        ],
+    },
+    {
+        caption: "Round 2 searches the sources",
+        update: [thinking(22, "Find where the rule is disabled.")],
+        append: [searchFiles(23, "src", "eslint-disable")],
+    },
+    {
+        caption: "Round 2 ends as round 3 starts and edits a file",
+        update: [finishedRequest(21)],
+        append: [
+            restorePoint(30, "files-1"),
+            streamingRequest(31),
+            assistantText(32, "Two files disable the rule; I will fix both."),
+            editFile(33, "src/a.ts"),
+        ],
+    },
+    { caption: "Round 3 runs the linter", append: [runningCommand(34, "npm run lint")] },
+    { caption: "The linter passes", update: [finishedCommand(34, "npm run lint")] },
+    {
+        caption: "Round 3 ends as round 4 starts",
+        update: [finishedRequest(31)],
+        append: [
+            restorePoint(40, "files-2"),
+            streamingRequest(41),
+            thinking(42, "The lint step passes; report back.", { partial: true }),
+        ],
+    },
+    {
+        caption: "Round 4 completes the turn",
+        update: [thinking(42, "The lint step passes; report back."), finishedRequest(41)],
+        append: [completion(43, "The lint step passes again.")],
+    },
+    { caption: "The user asks a follow-up", append: [userFeedback(50, "Also document the rule.")] },
+    {
+        caption: "Round 5 starts and reads the docs",
+        append: [
+            restorePoint(51, "files-2"),
+            streamingRequest(52),
+            workingRespond(53, "Writing the lint notes next."),
+            readFile(54, "docs/lint.md"),
+        ],
+    },
+    {
+        caption: "Round 5 ends as round 6 writes the notes",
+        update: [finishedRequest(52)],
+        append: [restorePoint(60, "files-2"), streamingRequest(61), createFile(62, "docs/lint-rules.md")],
+    },
+    {
+        caption: "Round 6 ends as round 7 starts",
+        update: [finishedRequest(61)],
+        append: [restorePoint(70, "files-3"), streamingRequest(71), thinking(72, "The notes are written.", { partial: true })],
+    },
+    {
+        caption: "Round 7 completes the second turn",
+        update: [thinking(72, "The notes are written."), finishedRequest(71)],
+        append: [completion(73, "Documented the rule in docs/lint-rules.md.")],
+    },
+])
 
 /** A single finished turn whose activity folds into one block at the `turn` level. */
 export const finishedTurnTranscript: UiMessage[] = [

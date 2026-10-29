@@ -1,5 +1,6 @@
 import type { UiAskQuestion, UiMessage } from "@shared/ExtensionMessage"
 import {
+    ADMITTED_SUBMISSION,
     REPLY_AS_TYPED,
     rowHasVisibleContent,
     submittedInputRow,
@@ -18,11 +19,14 @@ import { putAttachedDocuments } from "../stores/payload/AttachedDocuments"
 import { decodeTaskPayload, encodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
 import type { ToolInvocationEnvelope, ToolResultEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
 import type { ToolPostCommitDirective } from "../tools/ToolExecutionResult"
-import type {
-    TaskResumptionPort,
-    UnownedDialogContinuationPort,
-    UnownedDialogOutcome,
-    UnownedDialogResolution,
+import type { AdmittedReply } from "./TaskInputAdmission"
+import {
+    dialogAnswerOf,
+    type ResumptionInput,
+    type TaskResumptionPort,
+    type UnownedDialogContinuationPort,
+    type UnownedDialogOutcome,
+    type UnownedDialogResolution,
 } from "./UnownedDialogContinuation"
 
 /**
@@ -115,6 +119,13 @@ export interface RestoredToolDialogPorts {
     readonly publishPostCommit?: PostCommitPublisher
     /** Replays the report's confirmed external effect before recording its restored tool result. */
     readonly reportBug?: (outcome: InteractionOutcome) => Promise<boolean>
+    /**
+     * Admit a reply that names a command or mention, as `TaskInputMaterializer.admitReply` does.
+     *
+     * The reply is user input: recorded as typed, `/reportbug` would reach the
+     * model as its literal trigger with no authority to file the report.
+     */
+    readonly admitReply: (reply: ResumptionInput) => Promise<AdmittedReply | undefined>
 }
 
 /** The option a follow-up answer picked, matched the way the live handler matches it. */
@@ -140,6 +151,13 @@ export function selectedFollowupOption(options: readonly string[], text: string 
  * resume path, which submits the answer as ordinary input.
  */
 export class RestoredToolDialogContinuation implements UnownedDialogContinuationPort {
+    /**
+     * One admission per answer. `continue` prepares again, and an answer that
+     * commits its source is recorded only after the directive is accepted, so
+     * every step that shows or records the reply reads this same admission.
+     */
+    private readonly admissions = new WeakMap<UnownedDialogResolution, Promise<AdmittedReply | undefined>>()
+
     constructor(
         private readonly ports: RestoredToolDialogPorts,
         private readonly resumption: TaskResumptionPort,
@@ -160,6 +178,9 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
             if (!target) return false
             // `continue` submits the answer as ordinary input, which writes its own row.
             if (target.recorded === "failed") return true
+            // Admitted before anything acts or is shown, so a reply admission
+            // refuses leaves the dialog answerable with nothing done.
+            const reply = await this.reply(target, resolution)
             if (
                 target.kind === "report_bug" &&
                 target.recorded === "none" &&
@@ -167,7 +188,7 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
             ) {
                 return false
             }
-            await this.present(resolution, resolution.outcome.draft)
+            await this.present(resolution, resolution.outcome.draft, reply)
             if (target.recorded === "answered") return true
             // An answer that commits the source is recorded only once its directive is accepted; see `commit`.
             if (target.postCommit) return true
@@ -191,11 +212,12 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
     ): Promise<boolean> {
         const { invocation, kind, turnId, operationId } = target
         const draft = resolution.outcome.draft
+        const reply = await this.reply(target, resolution)
         const result = await projectInteractionContinuation({
             kind,
             functionId: invocation.functionId,
             dlineTid: invocation.dlineTid,
-            chatContent: { message: draft?.text, images: draft?.images, files: draft?.files },
+            chatContent: { message: reply?.modelText ?? draft?.text, images: draft?.images, files: draft?.files },
             actionId: resolution.outcome.actionId,
         })
         const documentPayloadRefs = await putAttachedDocuments(this.ports.payloads, result.documents)
@@ -204,6 +226,8 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
             blockId: invocation.dlineTid,
             content: serializeDurableToolResult(result.toolResult, toolResultReplayOf(invocation)),
             ...(documentPayloadRefs ? { documentPayloadRefs } : {}),
+            // The result carries the reply's text; the ref only keeps the authority its admission granted.
+            ...(reply ? { feedbackInputRefs: [reply.payloadRef] } : {}),
         }
         const payloadRef = await this.ports.payloads.put(encodeTaskPayload(envelope))
         if (isCurrent && !isCurrent()) return false
@@ -283,6 +307,24 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
         }
     }
 
+    /**
+     * The reply admitted as user input, or undefined when it stands as typed.
+     *
+     * Only an answer about to become the block's result is admitted: a queued
+     * answer was admitted when it was queued, and a block that already has its
+     * result records nothing more.
+     */
+    private reply(target: RestoredToolTarget, resolution: UnownedDialogResolution): Promise<AdmittedReply | undefined> {
+        const draft = resolution.outcome.draft
+        if (!draft || resolution.queuedInput || target.recorded !== "none") return Promise.resolve(undefined)
+        let admission = this.admissions.get(resolution)
+        if (!admission) {
+            admission = this.ports.admitReply(dialogAnswerOf(draft))
+            this.admissions.set(resolution, admission)
+        }
+        return admission
+    }
+
     /** The tool behind a restored dialog, or undefined when the dialog does not belong to its block's tool. */
     private async target(block: KernelBlock, resolution: UnownedDialogResolution): Promise<RestoredToolTarget | undefined> {
         const invocation = decodeTaskPayload<ToolInvocationEnvelope>(await this.ports.payloads.read(block.invocationRef))
@@ -348,7 +390,11 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
     }
 
     /** Show the answer as the live handler does: the picked option and one feedback row. */
-    private async present(resolution: UnownedDialogResolution, draft: InteractionOutcome["draft"]): Promise<void> {
+    private async present(
+        resolution: UnownedDialogResolution,
+        draft: InteractionOutcome["draft"],
+        reply: AdmittedReply | undefined,
+    ): Promise<void> {
         const messages = this.ports.messages
         if (resolution.kind === "followup") {
             const index = lastIndexOfInteraction(messages.clineMessages, resolution.interactionId)
@@ -361,9 +407,12 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
             }
         }
         if (resolution.outcome.feedbackPresented || !draft) return
-        // The reply answered a tool, so nothing in it ran: it is shown as typed,
-        // and a structured reply names its resources without resolving them.
-        const row = submittedInputRow([draft], REPLY_AS_TYPED)
+        // A reply admitted as input shows what acted in it. Otherwise nothing in
+        // it ran: it is shown as typed, and a structured reply names its
+        // resources without resolving them.
+        const row = reply
+            ? submittedInputRow([{ ...draft, semanticInput: reply.document }], ADMITTED_SUBMISSION)
+            : submittedInputRow([draft], REPLY_AS_TYPED)
         if (!rowHasVisibleContent(row)) return
         const interactionId = `tool-feedback:${resolution.interactionId}`
         if (messages.clineMessages.some((message) => message.interactionId === interactionId)) return

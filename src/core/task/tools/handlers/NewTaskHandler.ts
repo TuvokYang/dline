@@ -2,7 +2,7 @@ import type { ToolUse } from "@core/assistant-message"
 import { encodeNewTaskAsk } from "@shared/new-task-ask"
 import { DlineDefaultTool } from "@/shared/tools"
 import { declinedNewTaskDenialResponse, newTaskCreatedResponse, successorDirective } from "../../new-task/new-task-answer"
-import type { ToolHandlerResult } from "../ToolExecutionResult"
+import type { ToolDenial, ToolHandlerResult } from "../ToolExecutionResult"
 import type { IDenialDescribingToolHandler, IPartialBlockHandler } from "../ToolExecutorCoordinator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
@@ -46,7 +46,12 @@ export class NewTaskHandler implements IDenialDescribingToolHandler, IPartialBlo
         }
     }
 
-    async describeDenial(_config: TaskConfig, _block: ToolUse): Promise<string> {
-        return declinedNewTaskDenialResponse()
+    /**
+     * Declining a New Task is the user's answer, not a failed call: the feedback
+     * result must read as an ordinary result so the next round may propose the
+     * handoff again (see `deriveNewTaskFeedbackContinuation`).
+     */
+    async describeDenial(_config: TaskConfig, _block: ToolUse): Promise<ToolDenial> {
+        return { text: declinedNewTaskDenialResponse(), isError: false }
     }
 }

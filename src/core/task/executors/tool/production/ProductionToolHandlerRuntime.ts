@@ -1,6 +1,6 @@
 import type { ToolUse } from "@core/assistant-message"
 import { DlineDefaultTool, getToolUseNames } from "@shared/tools"
-import type { ToolHandlerResult } from "../../../tools/ToolExecutionResult"
+import type { ToolDenial, ToolHandlerResult } from "../../../tools/ToolExecutionResult"
 import { describeToolDenial, presentToolDenial, ToolExecutorCoordinator } from "../../../tools/ToolExecutorCoordinator"
 import { ToolValidator } from "../../../tools/ToolValidator"
 import type { TaskConfig } from "../../../tools/types/TaskConfig"
@@ -27,7 +27,7 @@ export class ProductionToolHandlerRuntime {
     }
 
     /** The result a refused call reports to the model, in its handler's own words. */
-    describeDenial(config: TaskConfig, block: ToolUse): Promise<string> {
+    describeDenial(config: TaskConfig, block: ToolUse): Promise<ToolDenial> {
         return describeToolDenial(this.coordinator.getHandler(block.name), config, block)
     }
 

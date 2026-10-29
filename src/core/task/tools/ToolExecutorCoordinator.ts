@@ -45,7 +45,7 @@ import { WebSearchToolHandler } from "./handlers/WebSearchToolHandler"
 import { WorkingRespondHandler } from "./handlers/WorkingRespondHandler"
 import { WriteToFileToolHandler } from "./handlers/WriteToFileToolHandler"
 import { applyToolCallSideEffects, resolveToolCallSideEffects } from "./ToolCallSideEffects"
-import type { ToolHandlerResult } from "./ToolExecutionResult"
+import type { ToolDenial, ToolHandlerResult } from "./ToolExecutionResult"
 import { ToolValidator } from "./ToolValidator"
 import type { TaskConfig } from "./types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "./types/UIHelpers"
@@ -77,7 +77,7 @@ export interface IInteractionOwningToolHandler extends IToolHandler {
  * whether its target survived unchanged, so it may extend that wording.
  */
 export interface IDenialDescribingToolHandler extends IToolHandler {
-    describeDenial(config: TaskConfig, block: ToolUse): Promise<string>
+    describeDenial(config: TaskConfig, block: ToolUse): Promise<ToolDenial>
 }
 
 /**
@@ -143,7 +143,7 @@ export class SharedToolHandler implements IFullyManagedTool {
         return this.baseHandler.execute(config, block)
     }
 
-    async describeDenial(config: TaskConfig, block: ToolUse): Promise<string> {
+    async describeDenial(config: TaskConfig, block: ToolUse): Promise<ToolDenial> {
         return describeToolDenial(this.baseHandler, config, block)
     }
 
@@ -157,11 +157,15 @@ export class SharedToolHandler implements IFullyManagedTool {
 }
 
 /** Resolve the denial wording a handler reports, falling back to the generic denial. */
-export async function describeToolDenial(handler: IToolHandler | undefined, config: TaskConfig, block: ToolUse): Promise<string> {
+export async function describeToolDenial(
+    handler: IToolHandler | undefined,
+    config: TaskConfig,
+    block: ToolUse,
+): Promise<ToolDenial> {
     if (handler && "describeDenial" in handler) {
         return (handler as IDenialDescribingToolHandler).describeDenial(config, block)
     }
-    return formatResponse.toolDenied()
+    return { text: formatResponse.toolDenied(), isError: true }
 }
 
 /**

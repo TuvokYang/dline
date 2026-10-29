@@ -299,7 +299,11 @@ describe("TaskActivityPanel", () => {
         const environmentLabel = within(items[0]).getByTestId("activity-environment-label")
         expect(environmentLabel).toHaveTextContent("(base)")
         expect(environmentMode).toHaveClass("w-fit", "max-w-full", "flex-nowrap")
-        expect(environmentLabel).toHaveClass("max-w-[60%]", "flex-auto", "truncate")
+        // The environment takes only the remaining space and the mode may shrink, so the group never overflows.
+        expect(environmentLabel).toHaveClass("max-w-[60%]", "flex-1", "truncate")
+        expect(within(items[0]).getByTestId("activity-execution-mode")).toHaveClass("min-w-0")
+        expect(within(items[0]).getByTestId("activity-execution-mode")).not.toHaveClass("shrink-0")
+        expect(within(items[0]).getByTestId("activity-execution-mode-label")).toHaveClass("truncate")
         expect(environmentLabel.parentElement).toBe(environmentMode)
         expect(environmentMode.parentElement).toBe(metadata)
         expect(environmentMode.firstElementChild).toBe(environmentLabel)

@@ -1,5 +1,5 @@
 import { StringRequest } from "@shared/proto/dline/common"
-import { createReportBugDraft, reportBugDraftSelection } from "@shared/report-bug"
+import { createReportBugDraft, parseReportBugDraft, reportBugDraftSelection } from "@shared/report-bug"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { reportBug } from "./reportBug"
 
@@ -41,7 +41,10 @@ function controller(error: string, consent = false) {
         environment,
         consent,
     )
-    const open = vi.fn(async () => ({ actionId: "approve", selection: { values: reportBugDraftSelection(draft) } }))
+    const open = vi.fn(async (_request: { presentation: string }) => ({
+        actionId: "approve",
+        selection: { values: reportBugDraftSelection(draft) },
+    }))
     return {
         open,
         value: {
@@ -60,7 +63,7 @@ describe("reportBug local fallback", () => {
     it("opens the durable preview before an ordinary local issue", async () => {
         const test = controller("profile parse failed")
 
-        await reportBug(test.value as never, StringRequest.create({ value: "/cmd:reportbug cannot select profile" }))
+        await reportBug(test.value as never, StringRequest.create({ value: "cannot select profile" }))
 
         expect(reporting.recent).toHaveBeenCalledWith("profile parse failed")
         expect(test.open).toHaveBeenCalledWith(
@@ -76,7 +79,7 @@ describe("reportBug local fallback", () => {
     it("routes local consent through support without opening the ordinary issue path", async () => {
         const test = controller("provider execution failed", true)
 
-        await reportBug(test.value as never, StringRequest.create({ value: "/reportbug provider failed" }))
+        await reportBug(test.value as never, StringRequest.create({ value: "provider failed" }))
 
         expect(support.create).toHaveBeenCalledWith(expect.objectContaining({ temporaryTelemetryConsent: true }))
         expect(reporting.open).not.toHaveBeenCalled()
@@ -107,10 +110,30 @@ describe("reportBug local fallback", () => {
             }),
         }
 
-        await reportBug(value as never, StringRequest.create({ value: "/reportbug no profile" }))
+        await reportBug(value as never, StringRequest.create({ value: "no profile" }))
 
         expect(value.initTask).toHaveBeenCalledWith()
         expect(open).toHaveBeenCalledWith(expect.objectContaining({ kind: "report_bug", placement: "interrupt" }))
         expect(reporting.open).toHaveBeenCalledWith(expect.objectContaining({ title: "Edited no-profile title" }), environment)
+    })
+
+    // The composer already removed the command node; text that merely looks like
+    // a command spelling is the user's description and must reach the preview.
+    it("previews the sent details without re-parsing a command spelling", async () => {
+        const test = controller("failure")
+
+        await reportBug(test.value as never, StringRequest.create({ value: "  /reportbug is what I typed first  " }))
+
+        const presentation = test.open.mock.calls[0]?.[0].presentation
+        expect(parseReportBugDraft(presentation)?.content.whatHappened).toBe("/reportbug is what I typed first")
+    })
+
+    it("asks for a description when no details were sent", async () => {
+        const test = controller("failure")
+
+        await reportBug(test.value as never, StringRequest.create({ value: "   " }))
+
+        const presentation = test.open.mock.calls[0]?.[0].presentation
+        expect(parseReportBugDraft(presentation)?.content.whatHappened).toBe("Please describe what happened.")
     })
 })

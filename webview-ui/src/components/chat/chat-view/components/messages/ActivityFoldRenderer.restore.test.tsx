@@ -73,6 +73,9 @@ function turnRows(messages: UiMessage[]): ChatRow[] {
 
 const foldsOf = (rows: ChatRow[]): FoldShape[] =>
     rows.filter(isActivityFold).map((fold) => ({ id: fold._activityFoldId, members: fold.map((message) => message.ts) }))
+/** The round folds of each turn fold, by turn fold id. */
+const roundsOf = (rows: ChatRow[]): Record<string, FoldShape[]> =>
+    Object.fromEntries(rows.filter(isActivityFold).map((fold) => [fold._activityFoldId, foldsOf(fold._children)]))
 const unfoldedRowTs = (rows: ChatRow[]) => rows.filter((row) => !isActivityFold(row)).map((row) => rowTs(row))
 
 function renderRows(messages: UiMessage[], expandedFolds: Record<string, boolean>) {
@@ -110,9 +113,18 @@ describe("activity folds across a checkpoint restore", () => {
         const rows = turnRows(twoTurnTranscript)
 
         expect(foldsOf(rows)).toEqual([
-            { id: "fold:10", members: [10, 12, 20, 22, 30, 32, 33] },
-            { id: "fold:41", members: [41, 43] },
+            { id: "turn:10", members: [10, 12, 20, 22, 30, 32, 33] },
+            { id: "turn:41", members: [41, 43] },
         ])
+        // Each round opens at its request (11, 21, 31; 42) behind its restore point.
+        expect(roundsOf(rows)).toEqual({
+            "turn:10": [
+                { id: "fold:10", members: [10, 12] },
+                { id: "fold:20", members: [20, 22] },
+                { id: "fold:30", members: [30, 32, 33] },
+            ],
+            "turn:41": [{ id: "fold:41", members: [41, 43] }],
+        })
         expect(unfoldedRowTs(rows)).toEqual([1, 35, 40, 45])
     })
 
@@ -120,19 +132,25 @@ describe("activity folds across a checkpoint restore", () => {
         // A workspace restore rewinds the files only: the chat keeps its rows and every marker is recomputed.
         const restored = checkOutFileTree(twoTurnTranscript, "tree-b")
         // The same opening keeps its expansion; MessagesArea.test covers that ownership.
-        const { container, rows } = renderRows(restored, { "fold:10": true })
+        const { container, rows } = renderRows(restored, { "turn:10": true, "fold:10": true })
 
         expect(foldsOf(rows)).toEqual([
-            { id: "fold:10", members: [10, 12] },
-            { id: "fold:22", members: [22, 30, 32, 33] },
-            { id: "fold:41", members: [41, 43] },
+            { id: "turn:10", members: [10, 12] },
+            { id: "turn:22", members: [22, 30, 32, 33] },
+            { id: "turn:41", members: [41, 43] },
+        ])
+        // The checked-out restore point leaves the rest of its round as a round of its own.
+        expect(roundsOf(rows)["turn:22"]).toEqual([
+            { id: "fold:22", members: [22] },
+            { id: "fold:30", members: [30, 32, 33] },
         ])
         expect(unfoldedRowTs(rows)).toEqual([1, 20, 35, 40, 45])
-        expect(drawnMessageTimestamps(openFoldChildren(container, "fold:10"))).toEqual([10, 12])
+        expect(drawnMessageTimestamps(openFoldChildren(container, "turn:10"))).toEqual([10, 12])
         // The activity level cuts at the same restore point.
         expect(foldsOf(groupChatRows(restored, undefined, { level: "activity" })).map(({ id }) => id)).toEqual([
             "fold:10",
             "fold:22",
+            "fold:30",
             "fold:41",
         ])
     })
@@ -163,8 +181,8 @@ describe("activity folds across a checkpoint restore", () => {
         const { container, rows } = renderRows(reopened, {})
 
         expect(foldsOf(rows)).toEqual([
-            { id: "fold:10", members: [10, 12] },
-            { id: "fold:22", members: [22, 30, 32, 33] },
+            { id: "turn:10", members: [10, 12] },
+            { id: "turn:22", members: [22, 30, 32, 33] },
         ])
         // The edited feedback opens a turn that has not ended, so it stays
         // outside every fold; the discarded-request bookkeeping is never drawn.
@@ -172,29 +190,33 @@ describe("activity folds across a checkpoint restore", () => {
         expect(drawnMessageTimestamps(container)).not.toContain(DISCARDED_REQUESTS_TS)
     })
 
-    it("unfolds a kept turn that a task and workspace restore cut before its end", () => {
+    it("folds the ended rounds of a kept turn that a task and workspace restore cut before its end", () => {
         // Restoring restore point 30 keeps it, drops the rest of turn 1 with its
-        // end and checks it out. Rows 10, 12, 20 and 22 stay behind it: enough to
-        // fold, with no checked-out restore point among them, so only the lost end
-        // keeps them unfolded.
+        // end and checks it out. Rounds 10–12 and 20–22 each ended when a later
+        // round drew a row, so they fold into the turn even though its end is
+        // lost; the checked-out restore point stays outside every fold.
         const reopened = checkOutFileTree(reopenedAfterChatRestore(twoTurnTranscript, 30), "tree-c")
         expect(reopened.map(({ ts }) => ts)).toEqual([1, 10, 11, 12, 20, 21, 22, 30, DISCARDED_REQUESTS_TS])
         expect(reopened.filter(({ isCheckpointCheckedOut }) => isCheckpointCheckedOut).map(({ ts }) => ts)).toEqual([30])
 
         const { container, rows } = renderRows(reopened, {})
 
-        expect(foldsOf(rows)).toEqual([])
-        expect(unfoldedRowTs(rows)).toEqual([1, 10, 12, 20, 22, 30])
-        expect(drawnMessageTimestamps(container)).toEqual([1, 10, 12, 20, 22, 30])
+        expect(foldsOf(rows)).toEqual([{ id: "turn:10", members: [10, 12, 20, 22] }])
+        expect(roundsOf(rows)["turn:10"].map(({ id }) => id)).toEqual(["fold:10", "fold:20"])
+        expect(unfoldedRowTs(rows)).toEqual([1, 30])
+        expect(drawnMessageTimestamps(container)).toEqual([1, 30])
     })
 })
 
 describe("trajectory turns over activity folds", () => {
     /** The turn each fold of the multi-turn transcript belongs to, listed by hand. */
     const TURN_OF_FOLD: Record<string, number> = {
-        "fold:10": 1,
-        "fold:60": 1,
-        "fold:71": 70,
+        // Turn 1, cut by the failed lint run at 53.
+        "turn:10": 1,
+        "turn:60": 1,
+        // Turn 2, cut by the checked-out restore point at 80; a single round folds too.
+        "turn:71": 70,
+        "turn:82": 70,
     }
 
     it("draws every loaded user anchor as a row of its own", () => {

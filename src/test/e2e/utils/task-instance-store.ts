@@ -1,5 +1,6 @@
 import { access, readFile } from "node:fs/promises"
 import * as path from "node:path"
+import { expect } from "@playwright/test"
 import type { UiMessage } from "@shared/ExtensionMessage"
 import type { TaskActivityRecord } from "@shared/task-activity"
 import { TaskActivityRow } from "@/core/storage/activities/TaskActivityRow"
@@ -514,4 +515,25 @@ export async function readTaskActivities(dlineDocsDir: string, taskId: string): 
     } finally {
         await storage.close().catch(() => undefined)
     }
+}
+
+/**
+ * Wait until no extension process holds the task.
+ *
+ * Close Task detaches the UI before teardown, and the closing runtime keeps writing the task's
+ * stores (journal entries, settling checkpoint rows, the final activity flush) until it removes
+ * its lock. Read a closed task's stores as a baseline, or seed fixtures into them, only after this.
+ */
+export async function waitForTaskRelease(dlineDocsDir: string, taskId: string, timeoutMs = 60_000): Promise<void> {
+    const lockFile = path.join(taskRoot(dlineDocsDir, taskId), ".lock")
+    await expect
+        .poll(
+            () =>
+                access(lockFile).then(
+                    () => "held",
+                    () => "released",
+                ),
+            { timeout: timeoutMs },
+        )
+        .toBe("released")
 }

@@ -274,10 +274,11 @@ export class TaskSessionCompositionService {
                     startActivityMaintenance(false)
                     await activityMaintenance
                     try {
-                        // Released after the command and subagent owners, so nothing is
-                        // left that could still finish an activity in flight. The chat
-                        // store closes after this resource, so its rows can still be settled.
-                        if (ownsTask) await settleClosedActivities(activities, messages)
+                        // This fence is re-registered after the host owners, so reverse-order
+                        // teardown reaches it before the command and subagent owners release
+                        // their cancellers. The chat store closes after this resource, so its
+                        // rows can still be settled.
+                        if (ownsTask) await closeTaskActivities(activities, messages)
                         await activities.waitForPersistence()
                     } finally {
                         activities.dispose()
@@ -372,6 +373,7 @@ export class TaskSessionCompositionService {
                     publishRow: (row) => options.prompt.ports.presentation.publish(row),
                     publishPostCommit: postCommit,
                     reportBug: async (outcome) => (await executeReportBugOutcome(outcome)) !== "invalid",
+                    admitReply: (reply) => this.requireSession(session).inputs.admitReply(reply),
                 },
                 resumption,
                 new ResumeDialogContinuation(resumption, () => toolState.resetMistakeLimitState(), providerRetry),
@@ -1037,6 +1039,13 @@ export class TaskSessionCompositionService {
             releases: [resources],
         })
         session = opened
+        // A New Task approval restored from disk runs under its original turn,
+        // whose in-memory grant the restart lost; re-derive it before the user can answer.
+        await providerRequests
+            .restoreNewTaskApproval(opened.state(), persistence.payloads)
+            .catch((error) =>
+                Logger.warn(`[Task ${options.taskId}] Could not restore New Task approval authority: ${String(error)}`),
+            )
         opened.bindBackgroundIngress(backgroundIngress)
         collaboration = new TaskCollaborationSessionOwner({
             runtime: options.prompt.ports.collaboration,
@@ -1174,6 +1183,19 @@ async function settleClosedActivities(activities: TaskActivityStore, messages: C
             `[TaskSessionComposition] ${activities.taskId}: could not settle activities on close: ${error instanceof Error ? error.message : String(error)}`,
         )
     }
+}
+
+/**
+ * End a closing task's activities: cancel what still runs, then settle the rest.
+ *
+ * Cancellation comes first, while each activity's canceller is still bound.
+ * Settling first would mark running work interrupted and dispose the cancellers,
+ * so a background subagent kept streaming and a command the user closed was
+ * reported as interrupted instead of cancelled.
+ */
+export async function closeTaskActivities(activities: TaskActivityStore, messages: CommandRowSurface): Promise<void> {
+    await cancelRunningActivities(activities)
+    await settleClosedActivities(activities, messages)
 }
 
 /** How long closing a task waits for its running activities to acknowledge cancellation. */

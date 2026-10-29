@@ -3,7 +3,7 @@ import * as path from "node:path"
 import type { MockApiConsumption } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
-import { openSubagentCard, subagentCardByTask } from "@e2e/utils/subagent-card"
+import { openSubagentCard, showSubagentOutput, subagentCardByTask } from "@e2e/utils/subagent-card"
 import { readTaskActivities } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator, type Page, type TestInfo } from "@playwright/test"
 
@@ -558,7 +558,12 @@ e2e(
         expect(childConsumptions).toHaveLength(readToolCount + 2)
         expect(childConsumptions[readToolCount].abortedAtMs).toBeDefined()
         expect(childConsumptions.every((consumption) => consumption.contractError === undefined)).toBe(true)
-        expect(requestToolNames(childConsumptions[readToolCount + 1])).toEqual(["attempt_completion"])
+        // The finish turn converges by reminder, not by narrowing the declared
+        // tools: it resends the child's original tool list so the provider prompt
+        // cache stays valid, and the runner rejects anything but attempt_completion.
+        const finishTools = requestToolNames(childConsumptions[readToolCount + 1])
+        expect(finishTools).toEqual(requestToolNames(childConsumptions[0]))
+        expect(finishTools).toContain("attempt_completion")
         await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
     },
 )
@@ -618,7 +623,8 @@ e2e(
         )
 
         await sendTask(sidebar, "Start a subagent that must retry after a usage-only Provider prefix.")
-        await expect(sidebar.getByText(childResult, { exact: false }).last()).toBeVisible({ timeout: 120_000 })
+        const usageFirstCard = subagentCardByTask(sidebar, "E2E_SUBAGENT_USAGE_FIRST_TASK")
+        await expect(await showSubagentOutput(usageFirstCard, 120_000)).toContainText(childResult, { timeout: 120_000 })
         await expect(sidebar.getByText("E2E_SUBAGENT_USAGE_FIRST_PARENT_DONE", { exact: false }).last()).toBeVisible({
             timeout: 120_000,
         })
@@ -695,7 +701,10 @@ e2e(
         )
 
         await sendTask(sidebar, "Start a subagent that must retry the literal upstream HTTP/2 failure.")
-        await expect(sidebar.getByText(childResult, { exact: false })).toHaveCount(1, { timeout: 120_000 })
+        const childCard = subagentCardByTask(sidebar, childTask)
+        await expect(await showSubagentOutput(childCard, 120_000)).toContainText(childResult, { timeout: 120_000 })
+        // The retried run completes once: one completion step carries the result.
+        await expect(childCard.getByTestId("subagent-tool-step").filter({ hasText: childResult })).toHaveCount(1)
         await expect(sidebar.getByText("E2E_SUBAGENT_UPSTREAM_HTTP2_PARENT_DONE", { exact: false }).last()).toBeVisible({
             timeout: 120_000,
         })

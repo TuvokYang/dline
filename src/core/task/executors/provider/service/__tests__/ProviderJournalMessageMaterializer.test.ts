@@ -48,6 +48,46 @@ describe("ProviderJournalMessageMaterializer", () => {
         ])
     })
 
+    it("reads the authority of a restored dialog's admitted reply from its result without rendering the reply", async () => {
+        const declaration = {
+            type: "summarize_task" as const,
+            source: "manual_compact_command" as const,
+            targetTool: DlineDefaultTool.SUMMARIZE_TASK,
+        }
+        const content = serializeDurableToolResult({
+            type: "tool_result" as const,
+            function_id: "call_restored",
+            dline_tid: "tid-restored",
+            content: [{ type: "text" as const, text: "EXPANDED_REPLY" }],
+        })
+        const materializer = new ProviderJournalMessageMaterializer(
+            payloadStore({
+                "ref-reply": encodeTaskPayload({
+                    kind: "user_input",
+                    text: "RAW_TYPED_REPLY",
+                    admittedText: "EXPANDED_REPLY",
+                    explicitInstructions: [declaration],
+                }),
+                "ref-result": encodeTaskPayload({
+                    kind: "tool_result",
+                    blockId: "tid-restored",
+                    content,
+                    feedbackInputRefs: ["ref-reply"],
+                }),
+                "ref-legacy-result": encodeTaskPayload({ kind: "tool_result", blockId: "tid-old", content }),
+            }),
+        )
+
+        const entry = await materializer.materializeEntry("ref-result")
+
+        expect(entry.explicitInstructions).toEqual([declaration])
+        // Only the result is rendered: the reply's typed text never becomes a message of its own.
+        expect(entry.messages).toHaveLength(1)
+        expect(JSON.stringify(entry.messages)).not.toContain("RAW_TYPED_REPLY")
+        // A result written before the field existed grants nothing, as it always did.
+        expect((await materializer.materializeEntry("ref-legacy-result")).explicitInstructions).toBeUndefined()
+    })
+
     it("builds an input that carries resources from its ordered parts and the verified bytes", async () => {
         const ref = {
             resourceId: "00000000-0000-4000-8000-000000000001",

@@ -26,3 +26,17 @@ export async function openSubagentCard(card: Locator): Promise<void> {
     if (await open.isVisible()) await open.click()
     await expect(card.getByTestId("subagent-item-body")).toBeVisible()
 }
+
+/**
+ * Open a Work card and its Output section, which stays closed until asked, and
+ * return the completed result. The section appears only once the run settled,
+ * so `timeout` bounds the wait for that.
+ */
+export async function showSubagentOutput(card: Locator, timeout = 60_000): Promise<Locator> {
+    await openSubagentCard(card)
+    const show = card.getByRole("button", { name: "Show subagent output", exact: true })
+    const hide = card.getByRole("button", { name: "Hide subagent output", exact: true })
+    await expect(show.or(hide)).toBeVisible({ timeout })
+    if (await show.isVisible()) await show.click()
+    return card.getByTestId("subagent-output")
+}

@@ -14,7 +14,12 @@ import {
     LARGE_PROJECT_TOTAL_TRACKED_FILES,
     type LargeRealProjectFixture,
 } from "@e2e/utils/large-real-project-fixture"
-import { readHistoryDisplay, rewriteTaskActivities, rewriteTaskUiMessages } from "@e2e/utils/task-instance-store"
+import {
+    readHistoryDisplay,
+    rewriteTaskActivities,
+    rewriteTaskUiMessages,
+    waitForTaskRelease,
+} from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Page, type TestInfo } from "@playwright/test"
 import type { TaskActivityRecord } from "@shared/task-activity"
 import type { ElectronApplication } from "playwright"
@@ -269,7 +274,7 @@ e2e(
             const { sidebar } = await openSidebar(app, helper)
             await setAutoApproveRead(sidebar)
             await sendTask(sidebar, INTERRUPTED_TASK_TEXT)
-            await expect(sidebar.getByText("Dline read 1 file:", { exact: true })).toBeVisible({ timeout: 120_000 })
+            await expect(sidebar.getByText("Dline read 1 file", { exact: true })).toBeVisible({ timeout: 120_000 })
             await expect.poll(() => server.getRequestCount("openai-compatible-chat"), { timeout: 120_000 }).toBe(2)
             await closeCurrentTask(sidebar)
             await expect
@@ -278,6 +283,10 @@ e2e(
 
             const taskId = await onlyTaskId(dlineDocsDir)
             const taskDirectory = path.join(dlineDocsDir, "tasks", taskId)
+            // Close detaches the surface at once, but the next opening waits for the
+            // detached teardown (here the first shadow-git build of this large project)
+            // and its final activity flush would overwrite the seeded rows.
+            await waitForTaskRelease(dlineDocsDir, taskId)
             const activityBytes = await seedLargeTransientActivityHistory(dlineDocsDir, taskId)
             await startHistoryInteractivityProbe(sidebar, "resume")
             await clickHistoryPreview(sidebar, INTERRUPTED_TASK_TEXT)
@@ -342,7 +351,7 @@ e2e(
             await expect(opened.sidebar.getByText(LEGACY_COMPLETION_TEXT, { exact: false }).last()).toBeVisible({
                 timeout: 120_000,
             })
-            // The completion dialog opens once the completion checkpoint is saved;
+            // The completion dialog opens while the completion checkpoint is still being saved;
             // the first one in this large project builds the shadow repository.
             await expect(
                 opened.sidebar.getByRole("contentinfo").locator('vscode-button[aria-label="Start New Task"]'),
@@ -351,10 +360,12 @@ e2e(
 
             const taskId = await onlyTaskId(dlineDocsDir)
             const taskDirectory = path.join(dlineDocsDir, "tasks", taskId)
-            const legacyAsk = await rewriteCompletionAskAsLegacy(dlineDocsDir, taskId)
+            // Seed the legacy ask only once no extension process can still write the task.
+            await waitForTaskRelease(dlineDocsDir, taskId)
             await app.close()
             helper.clearCachedFrame()
             app = undefined
+            const legacyAsk = await rewriteCompletionAskAsLegacy(dlineDocsDir, taskId)
 
             app = await openVSCode(workspaceDir)
             opened = await openSidebar(app, helper)

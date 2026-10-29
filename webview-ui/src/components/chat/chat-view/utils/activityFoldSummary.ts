@@ -1,14 +1,16 @@
 import type { UiAskUseMcpServer, UiMessage, UiSayBrowserAction } from "@shared/ExtensionMessage"
-import type { ActivityFold } from "./chatRowKinds"
+import { type ActivityFold, isActivityFold } from "./chatRowKinds"
 
 /**
  * Facts a fold header states about its members.
  *
  * Only facts present in the members and their attached checkpoints are
- * counted. Model rounds are not: a successful request draws no row, so the
- * fold cannot tell how many there were.
+ * counted. A turn fold also states how many rounds it holds, which are its
+ * round folds.
  */
 export interface ActivityFoldSummary {
+    /** Rounds in a turn fold; absent for a round fold, which is one round. */
+    readonly rounds?: number
     /**
      * Tool calls by kind, in the order each kind first appears: built-in tools by
      * name, MCP calls as `server:tool` (`server:resource` for resource reads),
@@ -18,7 +20,8 @@ export interface ActivityFoldSummary {
     readonly commands: number
     readonly fileEdits: number
     readonly checkpoints: number
-    /** Assistant messages; only the `turn` level folds them. */
+    /** Reasoning blocks the model streamed in the folded rounds. */
+    readonly thoughts: number
     readonly assistantMessages: number
 }
 
@@ -33,11 +36,13 @@ export function summarizeActivityFold(
     let commands = 0
     let fileEdits = 0
     let checkpoints = 0
+    let thoughts = 0
     let assistantMessages = 0
 
     for (const member of fold) {
         checkpoints += checkpointAttachments.get(member.ts)?.length ?? 0
         if (member.say === "checkpoint_created") checkpoints += 1
+        else if (member.say === "reasoning") thoughts += 1
         else if (member.say === "command" || member.ask === "command") commands += 1
         else if (member.say === "text") assistantMessages += 1
         else if (member.say === "tool" || member.ask === "tool") {
@@ -51,7 +56,8 @@ export function summarizeActivityFold(
             if (name) countCall(toolCalls, name)
         }
     }
-    return { toolCalls, commands, fileEdits, checkpoints, assistantMessages }
+    const rounds = fold._foldKind === "turn" ? fold._children.filter(isActivityFold).length : undefined
+    return { rounds, toolCalls, commands, fileEdits, checkpoints, thoughts, assistantMessages }
 }
 
 function countCall(toolCalls: Map<string, number>, name: string): void {
@@ -79,9 +85,11 @@ function browserStepName(message: UiMessage): string | undefined {
 export function describeActivityFold(summary: ActivityFoldSummary): string {
     const toolTotal = Array.from(summary.toolCalls.values()).reduce((sum, count) => sum + count, 0)
     const parts = [
+        countOf(summary.rounds ?? 0, "round"),
         countOf(toolTotal, "tool call"),
         countOf(summary.commands, "command"),
         countOf(summary.fileEdits, "file edit"),
+        countOf(summary.thoughts, "thought"),
         countOf(summary.checkpoints, "checkpoint"),
         countOf(summary.assistantMessages, "message"),
     ].filter((part): part is string => part !== undefined)

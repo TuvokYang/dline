@@ -41,6 +41,8 @@ function harness(options: {
     readonly input?: Readonly<Record<string, unknown>>
     readonly publishPostCommit?: RestoredToolDialogPorts["publishPostCommit"]
     readonly reportBug?: RestoredToolDialogPorts["reportBug"]
+    /** Admission of the reply; by default nothing in it acts and it stands as typed. */
+    readonly admitReply?: RestoredToolDialogPorts["admitReply"]
 }) {
     const interruption: ToolResultEnvelope = { kind: "tool_result", blockId: TID, content: "interrupted", failed: true }
     const stored = new Map<string, unknown>([
@@ -111,6 +113,7 @@ function harness(options: {
         continue: vi.fn(async () => (options.fallbackAccepts ? ("continued" as const) : ("declined" as const))),
     }
     const publishRow = vi.fn(async () => undefined)
+    const admitReply = vi.fn(options.admitReply ?? (async () => undefined))
     const continuation = new RestoredToolDialogContinuation(
         {
             state: () => state,
@@ -121,12 +124,13 @@ function harness(options: {
             publishRow,
             ...(options.publishPostCommit ? { publishPostCommit: options.publishPostCommit } : {}),
             ...(options.reportBug ? { reportBug: options.reportBug } : {}),
+            admitReply,
         },
         resumption,
         fallback,
     )
     const journaledResult = () => decodeTaskPayload<ToolResultEnvelope>(puts.at(-1) as never)
-    return { continuation, journal, messages, resumption, fallback, journaledResult, publishRow }
+    return { continuation, journal, messages, resumption, fallback, journaledResult, publishRow, admitReply }
 }
 
 describe("RestoredToolDialogContinuation", () => {
@@ -198,10 +202,22 @@ describe("RestoredToolDialogContinuation", () => {
         expect(h.resumption.materialize).toHaveBeenCalledWith({})
         expect(h.resumption.submit).toHaveBeenCalledOnce()
         expect(h.fallback.continue).not.toHaveBeenCalled()
+        // Nothing in the reply acted, so the result grants no authority.
+        expect(h.admitReply).toHaveBeenCalledWith({ text: "OPTION_B: DRAFT_NOTE", images: [], files: [] })
+        expect(result.feedbackInputRefs).toBeUndefined()
     })
 
-    it("shows a structured restored reply as typed, naming its resource without resolving it", async () => {
-        const h = harness({ toolName: "ask_followup_question", askText: JSON.stringify({ question: "Q?", options: [] }) })
+    it("admits a structured restored reply naming a command, recording what acted and the authority it granted", async () => {
+        const admitted = {
+            payloadRef: "ref:admitted-reply",
+            modelText: "EXPANDED_EXPLAIN_INSTRUCTIONS see [image]",
+            document: undefined as unknown as SemanticInputDocument,
+        }
+        const h = harness({
+            toolName: "ask_followup_question",
+            askText: JSON.stringify({ question: "Q?", options: [] }),
+            admitReply: async (reply) => ({ ...admitted, document: reply.semanticInput as SemanticInputDocument }),
+        })
         const semanticInput: SemanticInputDocument = {
             schemaVersion: 1,
             parserVersion: "1.0.0",
@@ -235,6 +251,12 @@ describe("RestoredToolDialogContinuation", () => {
 
         await expect(h.continuation.continue(resolution)).resolves.toBe("continued")
 
+        // The document is what admission reads, so the structure is handed over whole.
+        expect(h.admitReply).toHaveBeenCalledWith({ text: semanticInput.rawText, semanticInput })
+        const result = h.journaledResult()
+        expect(result.feedbackInputRefs).toEqual(["ref:admitted-reply"])
+        expect(result.content).toContain("EXPANDED_EXPLAIN_INSTRUCTIONS see [image]")
+        expect(result.content).not.toContain("/explain-changes")
         const row = (h.messages.addToClineMessages as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]
         expect(row).toMatchObject({
             say: "user_feedback",
@@ -245,8 +267,8 @@ describe("RestoredToolDialogContinuation", () => {
             submittedInputs: [
                 {
                     segments: [
-                        // The reply answered the tool; its command did not run.
-                        { text: "/explain-changes", role: "command", active: false },
+                        // The reply is user input: its command ran.
+                        { text: "/explain-changes", role: "command", active: true },
                         { text: " see ", role: "text", active: false },
                         { text: "[shot.png]", role: "resource", active: true },
                     ],
@@ -254,6 +276,53 @@ describe("RestoredToolDialogContinuation", () => {
             ],
         })
         expect(JSON.stringify(row)).not.toContain("r-secret")
+        expect(h.resumption.submit).toHaveBeenCalledOnce()
+    })
+
+    it("leaves the restored dialog answerable when admission refuses the reply", async () => {
+        const h = harness({
+            toolName: "ask_followup_question",
+            askText: JSON.stringify({ question: "Q?", options: [] }),
+            admitReply: async () => {
+                throw new Error("SemanticInputRejected")
+            },
+        })
+        const resolution = {
+            interactionId: TID,
+            kind: "followup",
+            outcome: { actionId: "reply" as const, draft: { text: "/cmd:reportbug froze", images: [], files: [] } },
+        }
+
+        await expect(h.continuation.continue(resolution)).resolves.toBe("failed")
+
+        expect(h.journal.append).not.toHaveBeenCalled()
+        expect(h.messages.addToClineMessages).not.toHaveBeenCalled()
+        expect(h.resumption.submit).not.toHaveBeenCalled()
+    })
+
+    it("admits a reply once although the answer is prepared again before it continues", async () => {
+        const h = harness({
+            toolName: "ask_followup_question",
+            askText: JSON.stringify({ question: "Q?", options: [] }),
+            admitReply: async () => ({
+                payloadRef: "ref:admitted-once",
+                modelText: "EXPANDED_REPORT_BUG froze",
+                document: undefined as unknown as SemanticInputDocument,
+            }),
+        })
+        const resolution = {
+            interactionId: TID,
+            kind: "followup",
+            outcome: { actionId: "reply" as const, draft: { text: "/cmd:reportbug froze", images: [], files: [] } },
+        }
+
+        // The interaction owner prepares first; `continue` prepares again before it resumes.
+        await expect(h.continuation.prepare(resolution)).resolves.toBe(true)
+        await expect(h.continuation.continue(resolution)).resolves.toBe("continued")
+
+        expect(h.admitReply).toHaveBeenCalledOnce()
+        expect(h.journal.append).toHaveBeenCalledOnce()
+        expect(h.journaledResult().feedbackInputRefs).toEqual(["ref:admitted-once"])
     })
 
     it("answers a restored status Stop as the tool would instead of declining it", async () => {

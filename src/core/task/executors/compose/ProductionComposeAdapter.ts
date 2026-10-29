@@ -197,14 +197,19 @@ export class ProductionComposeAdapter implements ComposePort {
         // Canonicalize the completed turn before compaction reads it. Landing the
         // summary first and appending this manifest afterwards would reintroduce the
         // very tool results the summary replaced.
-        const terminalTokens = input.toolTerminals
+        // Queued answers never land as intake: the manifest records them so later
+        // rounds still read the authority their text no longer carries.
+        const respondedRefs = input.respondedQueue?.entries.map((entry) => entry.payloadRef) ?? []
+        const terminals = input.toolTerminals
             ? await materializeToolTerminalManifest({
                   manifest: input.toolTerminals,
                   payloads: this.options.payloads,
                   journal: this.options.journal,
                   denial: this.options.toolDenial,
+                  feedbackInputRefs: respondedRefs,
               })
-            : 0
+            : undefined
+        const terminalTokens = terminals?.tokens ?? 0
         const pendingContextTokens = (await this.growthSinceLastDraft()) ?? terminalTokens
         // Before the conversation is drafted, so the draft below describes what
         // compaction left behind rather than the request that was too large.
@@ -231,7 +236,7 @@ export class ProductionComposeAdapter implements ComposePort {
         await this.appendContinuation(input, state)
         // Tool feedback carries its model text in the paired result. These original
         // refs carry admission metadata only: never append their text a second time.
-        const inputPayloadRefs: string[] = [...(input.respondedQueue?.entries.map((entry) => entry.payloadRef) ?? [])]
+        const inputPayloadRefs: string[] = [...new Set([...respondedRefs, ...(terminals?.feedbackInputRefs ?? [])])]
         const retainedEntries = entries.filter((entry) => entry.queue !== undefined)
         const ordinaryEntries = entries.filter((entry) => entry.queue === undefined)
         inputPayloadRefs.push(...entries.map((entry) => entry.payloadRef))

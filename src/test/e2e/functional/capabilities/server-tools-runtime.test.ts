@@ -5,7 +5,12 @@ import { getE2EMockProviderBaseUrl } from "@e2e/fixtures/server/api"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { expectComposerPlaceholder, expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
-import { readTaskConversation, readTaskUiMessagesText, rewriteTaskUiMessages } from "@e2e/utils/task-instance-store"
+import {
+    readTaskConversation,
+    readTaskUiMessagesText,
+    rewriteTaskUiMessages,
+    waitForTaskRelease,
+} from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator, type Page } from "@playwright/test"
 import { type BrowserSettings, DEFAULT_BROWSER_SETTINGS } from "@shared/BrowserSettings"
 import { ServerTool } from "@shared/proto/dline/models/metadata"
@@ -398,30 +403,10 @@ function expectIsolatedDirectories(dlineDir: string, dlineHomeDir: string, dline
     expect(path.resolve(dlineDocsDir)).not.toBe(path.resolve(dlineDir))
 }
 
-/**
- * Wait until the closed task has released its stores.
- *
- * Close returns the surface to Recent before the detached task is torn down;
- * the task keeps flushing its journal and state until it removes its lock.
- * A fixture written before then is overwritten by that final flush.
- */
-async function waitForTaskRelease(taskDir: string): Promise<void> {
-    const lockFile = path.join(taskDir, ".lock")
-    await expect
-        .poll(
-            () =>
-                access(lockFile).then(
-                    () => "held",
-                    () => "released",
-                ),
-            { timeout: 30_000 },
-        )
-        .toBe("released")
-}
-
 async function seedLegacyHostedWebApproval(dlineDocsDir: string, taskId: string): Promise<void> {
     const taskDir = path.join(dlineDocsDir, "tasks", taskId)
-    await waitForTaskRelease(taskDir)
+    // A fixture written before the closed task releases its stores is overwritten by its final flush.
+    await waitForTaskRelease(dlineDocsDir, taskId)
     const layout = new InstanceLayout(taskDir)
     const conversation = await readTaskConversation(dlineDocsDir, taskId)
     const [request] = conversation
@@ -948,11 +933,14 @@ e2e(
     async ({ dlineDir, dlineDocsDir, dlineHomeDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
         e2e.setTimeout(180_000)
         expectIsolatedDirectories(dlineDir, dlineHomeDir, dlineDocsDir)
+        // DeepSeek runs hosted web_search only for deepseek-v4-pro; the shared profile's
+        // deepseek-flash deliberately declares no hosted tool, so Auto routes it locally.
         await prepareRuntimeProfile(dlineDir, E2E_PROFILE_NAMES.mockDeepSeek, {
             apiFormat: "OPENAI_RESPONSES",
             baseUrl: getE2EMockProviderBaseUrl(server.baseUrl, "deepseek-responses"),
             enabled: true,
             mode: "WEB_TOOLS_MODE_AUTO",
+            modelId: "deepseek-v4-pro",
         })
         const query = "Dline DeepSeek hosted search"
         const completion = "E2E_DEEPSEEK_HOSTED_WEB_SEARCH_OK"

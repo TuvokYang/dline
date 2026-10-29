@@ -102,6 +102,14 @@ export interface ReviewedReply {
      * of a reply that acts rather than reaching the dialog as typed.
      */
     readonly claimedBarrier?: string
+    /**
+     * Set when the reply names a command or mention that no lifecycle owner
+     * takes out. Such a reply is user input, not typed feedback: it must reach
+     * the dialog through the same admission as a submission, so the command
+     * expands and authorizes its tool and the mention resolves. Storing it as
+     * typed would hand the model the literal trigger with no authority.
+     */
+    readonly carriesInput?: true
     /** Carry out the reply's command; call only after the reply was accepted. */
     commit(): void
     /**
@@ -111,6 +119,23 @@ export interface ReviewedReply {
      * then is everything the user asked for.
      */
     readonly performAlone?: () => Promise<boolean>
+}
+
+/**
+ * A reply to a restored tool dialog, admitted as user input.
+ *
+ * The dialog's tool no longer runs, so the reply becomes the tool's recorded
+ * result rather than a queued submission. Its payload is stored but never
+ * enters intake: the result already carries {@link modelText}, and the payload
+ * is referenced only for the authority its admission granted.
+ */
+export interface AdmittedReply {
+    /** The stored `user_input` payload holding the admission. */
+    readonly payloadRef: string
+    /** What the reply says to the model once its commands expanded and its mentions resolved. */
+    readonly modelText: string
+    /** The admitted document, whose node states say which command or mention acted. */
+    readonly document: SemanticInputDocument
 }
 
 export type TaskInputAdmissionResult =

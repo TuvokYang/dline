@@ -244,6 +244,14 @@ e2e(
                     `(measured ${measurement.sendToRequestMs}ms)`,
             ).toBeLessThan(PROVIDER_WIRE_BUDGET_MS)
 
+            // The measurement is captured. The completion dialog appears before the task's
+            // checkpoint settles, so close the task and wait for it to drain and release its
+            // lock; shutting down earlier leaves checkpoint files busy for fixture removal.
+            await sidebar.getByRole("button", { name: "Close Task", exact: true }).click()
+            await expect
+                .poll(() => E2ETestHelper.readDlineOutputIfPresent(userDataDir) ?? "", { timeout: 120_000 })
+                .toMatch(/\[ControllerClosePerf\] phase=lock_release closeReason=user_clear taskId=\d+/)
+
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [
                 /e2e_mock_queue_exhausted/i,
                 /No scripted E2E response remains/i,

@@ -44,6 +44,8 @@ async function configureModeProfiles(
         actContextWindow: number
         planProfile: string
         planContextWindow: number
+        /** Leave unset to keep the stored setting. */
+        useAutoCondense?: boolean
     },
 ): Promise<void> {
     const profiles = JSON.parse(await readFile(profilesPath(dlineDir), "utf8")) as StoredProfile[]
@@ -72,6 +74,7 @@ async function configureModeProfiles(
                 actModeProfile: actProfile.name,
                 planModeProfileId: planProfile.id,
                 planModeProfile: planProfile.name,
+                ...(options.useAutoCondense === undefined ? {} : { useAutoCondense: options.useAutoCondense }),
             },
             null,
             2,
@@ -680,11 +683,14 @@ e2e(
     "Mode switch context - over-limit same profile switches directly without compaction",
     async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
         e2e.setTimeout(150_000)
+        // The contract is that the switch itself asks for no compaction; automatic compaction of
+        // the over-limit history before the next request is a separate behavior, so it stays off.
         await configureModeProfiles(dlineDir, {
             actProfile: E2E_PROFILE_NAMES.mockOpenAi,
             actContextWindow: 131_072,
             planProfile: E2E_PROFILE_NAMES.mockOpenAi,
             planContextWindow: 131_072,
+            useAutoCondense: false,
         })
         server.enqueueResponses(
             "openai-compatible-chat",
@@ -2138,21 +2144,19 @@ e2e(
             if (await expandTaskHeader.isVisible()) await expandTaskHeader.click()
             await expect(sidebar.locator('[title="Maximum context window size for this model"]')).toHaveText("1.0m")
             const contextProgress = sidebar.getByRole("progressbar", { name: "Context window usage progress" })
-            // The fixture reports 930K tokens for a request of a few hundred KB, a ratio no
-            // tokenizer produces, so the estimator rejects that sample. The hidden Pass is then
-            // shown at its own estimated size, which one token per byte bounds from above.
-            const summaryRequestBytes = Buffer.byteLength(JSON.stringify(summaryRequest.requestBody), "utf8")
-            let projectedTokens = 0
+            // The hidden Pass sends the conversation the Provider measured at 930K, so while it is
+            // in flight the bar keeps that figure instead of a local estimate of the same history.
+            let measuredTokens = 0
             await expect
                 .poll(async () => {
                     const phase = await contextProgress.getAttribute("data-phase")
-                    projectedTokens = Number(await contextProgress.getAttribute("aria-valuenow"))
+                    measuredTokens = Number(await contextProgress.getAttribute("aria-valuenow"))
                     return {
                         inFlight: phase === "sending" || phase === "receiving",
-                        bounded: projectedTokens > 0 && projectedTokens <= summaryRequestBytes,
+                        measured: measuredTokens >= 930_000,
                     }
                 })
-                .toEqual({ inFlight: true, bounded: true })
+                .toEqual({ inFlight: true, measured: true })
 
             await expect(sidebar.getByText("E2E_DEEPSEEK_PRESSURE_COMPLETE", { exact: false }).last()).toBeVisible({
                 timeout: 120_000,
@@ -2170,7 +2174,7 @@ e2e(
             await expectCompactionSummary(sidebar, summary)
             await expect
                 .poll(async () => Number(await contextProgress.getAttribute("aria-valuenow")))
-                .toBeLessThan(projectedTokens)
+                .toBeLessThan(measuredTokens)
 
             await captureContextWindowEvidence(sidebar, e2e.info(), "deepseek-context-1m-large-tool-result")
 

@@ -126,7 +126,7 @@ e2e(
 )
 
 e2e(
-    "Browser Session keeps navigation at the frame top and ordinary reasoning and text outside the frame",
+    "Browser Session keeps navigation in the frame under the screenshot and ordinary reasoning and text outside the frame",
     async ({ helper, page, server, sidebar, userDataDir }) => {
         e2e.setTimeout(180_000)
         await helper.signin(sidebar)
@@ -181,29 +181,38 @@ e2e(
         const toolbar = sidebar.getByTestId("browser-session-toolbar")
         const previous = toolbar.getByRole("button", { name: "Previous browser step" })
         const screenshot = frame.getByRole("img", { name: "Browser screenshot" })
-        const thinking = sidebar.getByRole("button", { name: "Thinking", exact: true }).last()
+        const stepsToggle = sidebar.getByTestId("browser-session-steps-toggle")
+        const steps = sidebar.getByTestId("browser-session-steps")
         const response = sidebar.getByText(responseMarker, { exact: false })
         await expect(frame).toBeVisible()
         await expect(toolbar).toBeVisible()
         await expect(previous).toBeVisible()
         await expect(screenshot).toBeVisible()
-        await expect(thinking).toBeVisible()
         await expect(response).toHaveCount(1)
         await expect(frame.getByRole("button", { name: "Thinking", exact: true })).toHaveCount(0)
         await expect(frame.getByText(responseMarker, { exact: false })).toHaveCount(0)
+        // Each round's thinking sits in the steps card under the frame, folded until the reader opens it.
+        await expect(stepsToggle).toHaveAttribute("aria-expanded", "false")
+        await stepsToggle.click()
+        await expect(stepsToggle).toHaveAttribute("aria-expanded", "true")
+        const thinking = steps.getByRole("button", { name: "Thinking", exact: true })
+        await expect(thinking).toHaveCount(1)
         await thinking.click()
         const reasoning = sidebar.getByText(reasoningMarker, { exact: false })
         await expect(reasoning).toHaveCount(1)
+        await expect(steps.getByText(reasoningMarker, { exact: false })).toHaveCount(1)
         await expect(frame.getByText(reasoningMarker, { exact: false })).toHaveCount(0)
 
-        const toolbarPrecedesScreenshot = await toolbar.evaluate(
-            (toolbarElement, screenshotElement) => {
-                if (!(screenshotElement instanceof Node)) return false
-                return Boolean(toolbarElement.compareDocumentPosition(screenshotElement) & Node.DOCUMENT_POSITION_FOLLOWING)
+        // Page navigation sits inside the frame, under the screenshot it pages through.
+        await expect(frame.getByTestId("browser-session-toolbar")).toHaveCount(1)
+        const screenshotPrecedesToolbar = await screenshot.evaluate(
+            (screenshotElement, toolbarElement) => {
+                if (!(toolbarElement instanceof Node)) return false
+                return Boolean(screenshotElement.compareDocumentPosition(toolbarElement) & Node.DOCUMENT_POSITION_FOLLOWING)
             },
-            await screenshot.elementHandle(),
+            await toolbar.elementHandle(),
         )
-        expect(toolbarPrecedesScreenshot).toBe(true)
+        expect(screenshotPrecedesToolbar).toBe(true)
         const framePrecedesReasoning = await frame.evaluate(
             (frameElement, reasoningElement) => {
                 if (!(reasoningElement instanceof Node)) return false

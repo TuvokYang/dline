@@ -22,8 +22,12 @@ import {
     foldTrajectory,
 } from "./foldTrajectory"
 
-/** Version of the fold rules; stored turns built by another version are discarded and rebuilt. */
-export const TRAJECTORY_BUILDER_VERSION = 1
+/**
+ * Version of the fold rules; stored turns built by another version are discarded and rebuilt.
+ *
+ * 2: renamed tools are counted under their current name instead of their former row key.
+ */
+export const TRAJECTORY_BUILDER_VERSION = 2
 
 /** Rows read per slice, so a catch-up never holds a long history in memory. */
 export const TRAJECTORY_SLICE_ROWS = 500

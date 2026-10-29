@@ -47,6 +47,7 @@ export function createSessionFixture(options: SessionFixtureOptions = {}) {
         activities: {
             list: vi.fn(() => []),
             update: vi.fn(),
+            hydrate: vi.fn(async () => undefined),
             retry: vi.fn(async (activityIds: string[]) => activityIds),
             hasLiveRetryControl: vi.fn(() => false),
             isRetryable: vi.fn(() => false),

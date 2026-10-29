@@ -69,6 +69,7 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
         return (
             <ActivityFoldRenderer
                 {...context}
+                expandedFolds={foldExpansion.expanded}
                 fold={messageOrGroup}
                 isExpanded={foldExpansion.expanded[messageOrGroup._activityFoldId] === true}
                 onToggleFold={foldExpansion.toggle}

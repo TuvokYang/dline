@@ -1,6 +1,6 @@
 import type { ProviderRetryPhase } from "@core/task/executors/provider/service/ProviderRetryGate"
 import type { InteractionKind } from "@core/task/interaction/Interaction"
-import { getInteraction, INTERACTION_KINDS } from "@core/task/interaction/InteractionRegistry"
+import { getInteraction, INTERACTION_KINDS, specializedToolApprovalKind } from "@core/task/interaction/InteractionRegistry"
 import type {
     CanonicalDialogProjection,
     CanonicalTaskViewProjection,
@@ -56,6 +56,19 @@ function taskViewPhase(view: CanonicalTaskViewProjection): TaskViewPhase {
 
 function interactionKind(kind: string): InteractionKind | undefined {
     return (INTERACTION_KINDS as readonly string[]).includes(kind) ? (kind as InteractionKind) : undefined
+}
+
+/**
+ * The interaction whose footer contract the dialog presents.
+ *
+ * A specialized tool approval such as NEW_TASK is opened by the kernel as a
+ * generic `tool_approval`; its anchor row's ask names the contract the user is
+ * actually answering, so its labels, payload rules and semantic kind come from
+ * that definition. Presentation placement keeps following the dialog's own kind.
+ */
+function presentedKind(dialogKind: InteractionKind | undefined, anchor: UiMessage | undefined): InteractionKind | undefined {
+    if (dialogKind !== "tool_approval") return dialogKind
+    return specializedToolApprovalKind(anchor?.ask) ?? dialogKind
 }
 
 /**
@@ -118,7 +131,7 @@ export function adaptCanonicalTaskView(
     truncationOffered = false,
 ): TaskViewState {
     const dialog = owningDialog(view)
-    const kind = dialog ? interactionKind(dialog.kind) : undefined
+    const dialogKind = dialog ? interactionKind(dialog.kind) : undefined
     // A still-partial row means the reveal never finished, so it cannot anchor a
     // dispatchable interaction.
     const anchors = dialog
@@ -127,14 +140,16 @@ export function adaptCanonicalTaskView(
           )
         : []
     const anchor = anchors.length === 1 ? anchors[0] : undefined
+    const kind = presentedKind(dialogKind, anchor)
     const definition = kind ? getInteraction(kind) : undefined
+    const placement = dialogKind ? getInteraction(dialogKind) : undefined
     const activeInteraction =
         dialog && definition && anchor
             ? {
                   taskId: view.taskId,
                   turnId: dialog.turnId,
                   interactionId: dialog.interactionId,
-                  kind: dialog.kind,
+                  kind: kind ?? dialog.kind,
                   status:
                       dialog.status === "awaiting"
                           ? ("awaiting" as const)
@@ -143,7 +158,8 @@ export function adaptCanonicalTaskView(
                             : ("opening" as const),
                   stateRevision: view.revision,
                   taskAsk: anchor.ask ?? definition.taskAsk,
-                  presentationKind: kind === "change_todo_list" ? "focus_chain_change" : definition.presentationKind,
+                  presentationKind:
+                      kind === "change_todo_list" ? "focus_chain_change" : (placement ?? definition).presentationKind,
                   askMessageTs: anchor.ts,
                   presentationText: anchor.text,
                   anchorVerified: true,

@@ -59,6 +59,14 @@ function layoutAt(messages: UiMessage[], level: AggressiveRenderingLevel, extra:
     return rowsAt(messages, level, extra).map(layoutOf)
 }
 
+/** The layout of a turn fold: one round fold per round, in order. */
+const turnFold = (...rounds: Layout[][]): Layout => ({ fold: rounds.map((round) => ({ fold: round })) })
+
+/** Every row a fold holds, through nested round folds, in order. */
+function expandFold(row: ChatRow): ChatRow[] {
+    return Array.isArray(row) && isActivityFold(row) ? row._children.flatMap(expandFold) : [row]
+}
+
 /** U1 C1 R1 T1 G1 C2 X1 C3 E1 T2 C4 X2 F1 from the spec, with the request rows that open each round. */
 const workedExample: UiMessage[] = [
     task(1),
@@ -87,20 +95,23 @@ describe("foldActivity on the spec worked example", () => {
         expect(layoutAt(workedExample, "standard")).toEqual([1, 2, 4, 5, "group:tool:6", 8, 10, 11, 13, 14, 15, 17, 19])
     })
 
-    it("folds activity runs between readable rows at activity", () => {
+    it("folds each ended round, headed by its restore point, at activity", () => {
         expect(layoutAt(workedExample, "activity")).toEqual([
             1,
-            { fold: [2, 4] },
-            5,
-            { fold: ["group:tool:6", 8, 10, 11, 13] },
-            14,
+            { fold: [2, 4, 5, "group:tool:6"] },
+            { fold: [8, 10] },
+            { fold: [11, 13, 14] },
             { fold: [15, 17] },
             19,
         ])
     })
 
-    it("folds everything between the user row and the turn end at turn", () => {
-        expect(layoutAt(workedExample, "turn")).toEqual([1, { fold: [2, 4, 5, "group:tool:6", 8, 10, 11, 13, 14, 15, 17] }, 19])
+    it("folds the ended rounds between the user row and the turn end into one turn fold of round folds", () => {
+        expect(layoutAt(workedExample, "turn")).toEqual([
+            1,
+            turnFold([2, 4, 5, "group:tool:6"], [8, 10], [11, 13, 14], [15, 17]),
+            19,
+        ])
     })
 })
 
@@ -119,11 +130,11 @@ describe("standard level", () => {
     })
 })
 
-describe("assistant updates at the activity level", () => {
+describe("assistant updates", () => {
     it.each([
         ["working_respond", "actModeRespond"],
         ["phase_report", "statusUpdate"],
-    ])("keeps a %s row visible between two folds", (_name, toolName) => {
+    ])("fold a %s row with the rest of its round", (_name, toolName) => {
         const messages = [
             task(1),
             command(10),
@@ -133,8 +144,8 @@ describe("assistant updates at the activity level", () => {
             command(21),
             completion(99),
         ]
-        expect(layoutAt(messages, "activity")).toEqual([1, { fold: [10, 11] }, 50, { fold: [20, 21] }, 99])
-        expect(layoutAt(messages, "turn")).toEqual([1, { fold: [10, 11, 50, 20, 21] }, 99])
+        expect(layoutAt(messages, "activity")).toEqual([1, { fold: [10, 11, 50, 20, 21] }, 99])
+        expect(layoutAt(messages, "turn")).toEqual([1, turnFold([10, 11, 50, 20, 21]), 99])
     })
 })
 
@@ -272,21 +283,19 @@ function settledTurnAround(rows: UiMessage[]): UiMessage[] {
 describe("splitters inside the settled region", () => {
     it.each(splitterCases)("never folds %s", (_name, rows, drawn) => {
         const messages = settledTurnAround(rows)
-        const expected: Layout[] = [1, { fold: [10, 11] }, ...drawn, { fold: [20, 21] }, 99]
-        expect(layoutAt(messages, "activity")).toEqual(expected)
-        expect(layoutAt(messages, "turn")).toEqual(expected)
+        expect(layoutAt(messages, "activity")).toEqual([1, { fold: [10, 11] }, ...drawn, { fold: [20, 21] }, 99])
+        expect(layoutAt(messages, "turn")).toEqual([1, turnFold([10, 11]), ...drawn, turnFold([20, 21]), 99])
     })
 
     it.each(settledCases)("folds %s with its neighbours", (_name, rows) => {
         const messages = settledTurnAround(rows)
-        const expected: Layout[] = [1, { fold: [10, 11, 50, 20, 21] }, 99]
-        expect(layoutAt(messages, "activity")).toEqual(expected)
-        expect(layoutAt(messages, "turn")).toEqual(expected)
+        expect(layoutAt(messages, "activity")).toEqual([1, { fold: [10, 11, 50, 20, 21] }, 99])
+        expect(layoutAt(messages, "turn")).toEqual([1, turnFold([10, 11, 50, 20, 21]), 99])
     })
 
     it("keeps the active interaction's ask out of a fold", () => {
         const messages = settledTurnAround([command(50)])
-        expect(layoutAt(messages, "turn", { activeAskTs: 50 })).toEqual([1, { fold: [10, 11] }, 50, { fold: [20, 21] }, 99])
+        expect(layoutAt(messages, "turn", { activeAskTs: 50 })).toEqual([1, turnFold([10, 11]), 50, turnFold([20, 21]), 99])
     })
 
     it("treats an ask that is the window's last row as a splitter", () => {
@@ -297,7 +306,7 @@ describe("splitters inside the settled region", () => {
     })
 })
 
-describe("the open tail after the last settled turn end", () => {
+describe("the round still running", () => {
     const levels: AggressiveRenderingLevel[] = ["activity", "turn"]
     const openTails: Array<[string, UiMessage[], UiMessage[]]> = [
         [
@@ -340,7 +349,8 @@ describe("the open tail after the last settled turn end", () => {
             expect(layoutAt(open, level)).toEqual(open.map((message) => message.ts))
             const [opener, ...rest] = layoutAt(settled, level)
             expect(opener).toBe(settled[0].ts)
-            expect(rest).toEqual([{ fold: settled.slice(1, -1).map((message) => message.ts) }, 99])
+            const members = settled.slice(1, -1).map((message) => message.ts)
+            expect(rest).toEqual([level === "turn" ? turnFold(members) : { fold: members }, 99])
         }
     })
 
@@ -349,7 +359,22 @@ describe("the open tail after the last settled turn end", () => {
         for (const level of levels) expect(layoutAt(open, level)).toEqual([1, 2, 3, 4])
 
         const settled = [...open, completion(99)]
-        for (const level of levels) expect(layoutAt(settled, level)).toEqual([1, { fold: [2, 3] }, 4, 99])
+        expect(layoutAt(settled, "activity")).toEqual([1, { fold: [2, 3] }, 4, 99])
+        expect(layoutAt(settled, "turn")).toEqual([1, turnFold([2, 3]), 4, 99])
+    })
+
+    it("folds a round as soon as a later round draws a row, before the turn ends", () => {
+        const running = [
+            task(1),
+            checkpoint(2),
+            request(3),
+            command(4),
+            checkpoint(5),
+            request(6, { request: "…" }),
+            command(7, {}),
+        ]
+        expect(layoutAt(running, "activity")).toEqual([1, { fold: [2, 4] }, 5, 7])
+        expect(layoutAt(running, "turn")).toEqual([1, turnFold([2, 4]), 5, 7])
     })
 
     it("does not let new_task set the cutoff (REVIEW-103 G1)", () => {
@@ -363,7 +388,8 @@ describe("the open tail after the last settled turn end", () => {
         for (const level of levels) expect(layoutAt(open, level)).toEqual([1, 2, 3, 4, 5])
 
         const settled = [...open, completion(99)]
-        for (const level of levels) expect(layoutAt(settled, level)).toEqual([1, { fold: [2, 3] }, 4, 5, 99])
+        expect(layoutAt(settled, "activity")).toEqual([1, { fold: [2, 3] }, 4, 5, 99])
+        expect(layoutAt(settled, "turn")).toEqual([1, turnFold([2, 3]), 4, 5, 99])
     })
 
     it("leaves a stopped tail without a turn end unfolded", () => {
@@ -378,17 +404,16 @@ describe("the open tail after the last settled turn end", () => {
 })
 
 describe("fold eligibility", () => {
-    it("leaves a single-row segment as it is", () => {
+    it("folds an ended round of a single row", () => {
         const messages = [task(1), command(2), completion(99)]
-        expect(layoutAt(messages, "activity")).toEqual([1, 2, 99])
-        expect(layoutAt(messages, "turn")).toEqual([1, 2, 99])
+        expect(layoutAt(messages, "activity")).toEqual([1, { fold: [2] }, 99])
+        expect(layoutAt(messages, "turn")).toEqual([1, turnFold([2]), 99])
     })
 
     it("never takes a user row into a fold", () => {
         const messages = [task(1), command(2), command(3), feedback(4), command(5), command(6), completion(99)]
-        for (const level of ["activity", "turn"] as const) {
-            expect(layoutAt(messages, level)).toEqual([1, { fold: [2, 3] }, 4, { fold: [5, 6] }, 99])
-        }
+        expect(layoutAt(messages, "activity")).toEqual([1, { fold: [2, 3] }, 4, { fold: [5, 6] }, 99])
+        expect(layoutAt(messages, "turn")).toEqual([1, turnFold([2, 3]), 4, turnFold([5, 6]), 99])
     })
 
     it("does not fold a run whose request round starts outside the window (REVIEW-097 A8)", () => {
@@ -398,7 +423,7 @@ describe("fold eligibility", () => {
 
         const paged = [task(0), request(1), readFile(2), ...windowed]
         expect(layoutAt(paged, "activity")).toEqual([0, { fold: ["group:tool:2", 4, 5] }, 6])
-        expect(layoutAt(paged, "turn")).toEqual([0, { fold: ["group:tool:2", 4, 5] }, 6])
+        expect(layoutAt(paged, "turn")).toEqual([0, turnFold(["group:tool:2", 4, 5]), 6])
     })
 
     it("expands back to the standard rows, each exactly once and in order", () => {
@@ -408,7 +433,7 @@ describe("fold eligibility", () => {
             const rows = groupChatRows(messages)
             for (const level of ["activity", "turn"] as const) {
                 const folded = foldActivity(rows, { level }, buildFoldContext(messages, rounds))
-                const expanded = folded.flatMap((row) => (Array.isArray(row) && isActivityFold(row) ? [...row._children] : [row]))
+                const expanded = folded.flatMap(expandFold)
                 expect(expanded).toHaveLength(rows.length)
                 for (const [index, row] of expanded.entries()) expect(row).toBe(rows[index])
                 for (const row of folded) {
@@ -423,13 +448,23 @@ describe("fold eligibility", () => {
 describe("fold identity", () => {
     const foldIds = (rows: ChatRow[]) => rows.filter((row) => Array.isArray(row) && isActivityFold(row)).map(rowIdentity)
 
-    it("is fold:<first member ts> and survives appended turns", () => {
+    it("is fold:<first member ts> for a round and turn:<first member ts> for a turn, surviving appended turns", () => {
         const firstTurn = [task(1), command(2), command(3), ask(4, "followup", { text: "Continue?" })]
-        expect(foldIds(rowsAt(firstTurn, "turn"))).toEqual(["fold:2"])
+        expect(foldIds(rowsAt(firstTurn, "turn"))).toEqual(["turn:2"])
 
         const secondTurn = [...firstTurn, feedback(5), command(6), command(7), completion(8)]
-        expect(foldIds(rowsAt(secondTurn, "turn"))).toEqual(["fold:2", "fold:6"])
+        expect(foldIds(rowsAt(secondTurn, "turn"))).toEqual(["turn:2", "turn:6"])
         expect(foldIds(rowsAt(secondTurn, "activity"))).toEqual(["fold:2", "fold:6"])
+    })
+
+    it("keeps a turn fold's identity while further rounds join it", () => {
+        const oneRound = [task(1), checkpoint(2), request(3), command(4), checkpoint(5), request(6, { request: "…" })]
+        const turn = rowsAt(oneRound, "turn").find((row) => Array.isArray(row) && isActivityFold(row))
+        const twoRounds = [...oneRound.slice(0, -1), request(6), command(7), checkpoint(8), request(9, { request: "…" })]
+        const grown = rowsAt(twoRounds, "turn").find((row) => Array.isArray(row) && isActivityFold(row))
+        expect(turn && rowIdentity(turn)).toBe("turn:2")
+        expect(grown && rowIdentity(grown)).toBe("turn:2")
+        expect(grown && isActivityFold(grown) ? grown._children.length : 0).toBe(2)
     })
 
     it("survives older rows being paged in ahead of a loaded round start", () => {
@@ -438,6 +473,6 @@ describe("fold identity", () => {
 
         const paged = [task(1), command(2), command(3), ask(4, "followup", { text: "Continue?" }), ...loaded]
         expect(foldIds(rowsAt(paged, "activity"))).toEqual(["fold:2", "fold:12"])
-        expect(foldIds(rowsAt(paged, "turn"))).toEqual(["fold:2", "fold:12"])
+        expect(foldIds(rowsAt(paged, "turn"))).toEqual(["turn:2", "turn:12"])
     })
 })

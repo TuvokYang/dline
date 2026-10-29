@@ -143,6 +143,7 @@ async function harness(kind: string, toolName: string, actionId: string, options
         submit: vi.fn(async () => ({ kind: "accepted" }) as unknown as EventSubmissionResult),
     }
     const fallback = { accepts: vi.fn(() => false), continue: vi.fn(async () => "declined" as const) }
+    const admitReply = vi.fn(async () => undefined)
     const continuation = new RestoredToolDialogContinuation(
         {
             state: () => state,
@@ -150,6 +151,7 @@ async function harness(kind: string, toolName: string, actionId: string, options
             journal,
             messages,
             nextPresentationId: () => ts++,
+            admitReply,
         },
         resumption,
         fallback,
@@ -171,6 +173,7 @@ async function harness(kind: string, toolName: string, actionId: string, options
         rows,
         messages,
         resumption,
+        admitReply,
         fallback,
         onTurnEndAwaiting,
         submitted,
@@ -188,6 +191,8 @@ describe("queued response restart continuation", () => {
         await h.owner.awaiting(h.boundary)
         expect(h.resumption.submit).toHaveBeenCalledOnce()
         expect(h.resumption.materialize).toHaveBeenCalledWith({})
+        // The queue admitted the answer when it was queued; admitting it again would grant its authority twice.
+        expect(h.admitReply).not.toHaveBeenCalled()
         expect(h.onTurnEndAwaiting).not.toHaveBeenCalled()
         expect(h.fallback.continue).not.toHaveBeenCalled()
         expect(h.state().intake.queued[0]?.state).toBe("consumed")

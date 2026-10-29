@@ -9,6 +9,7 @@ import type {
     ToolResultEnvelope,
     ToolTerminalManifestEnvelope,
 } from "../../stores/payload/TaskPayloadEnvelopes"
+import type { ToolDenial } from "../../tools/ToolExecutionResult"
 
 interface JournalPayloadEntry {
     readonly entry: JournalEntry & { readonly payloadRef: string }
@@ -51,13 +52,20 @@ function terminalText(phase: ToolTerminalPhase): string {
  * a file was not written, so the wording is resolved from its invocation.
  */
 export interface ToolDenialPort {
-    describe(invocationRef: string): Promise<string>
+    describe(invocationRef: string): Promise<ToolDenial>
 }
 
+/**
+ * The result a call that never produced its own reports.
+ *
+ * The block still did not take effect, so it is `failed` either way; only the
+ * model-facing `is_error` follows the denial, because a refusal that answers
+ * the call (New Task feedback) is not a failure the model should recover from.
+ */
 function syntheticResult(
     block: ToolTerminalManifest["blocks"][number],
     invocation: ToolInvocationEnvelope,
-    text: string = terminalText(block.phase),
+    { text, isError }: ToolDenial = { text: terminalText(block.phase), isError: true },
 ): ToolResultEnvelope {
     return {
         kind: "tool_result",
@@ -68,7 +76,7 @@ function syntheticResult(
                 function_id: invocation.functionId,
                 dline_tid: invocation.dlineTid,
                 content: [{ type: "text", text }],
-                is_error: true,
+                ...(isError ? { is_error: true } : {}),
             },
             toolResultReplayOf(invocation),
         ),
@@ -109,13 +117,33 @@ async function estimateManifestTokens(
     return documents.length === 0 ? textTokens : textTokens + estimateContextValueBreakdown(documents).totalTokens
 }
 
-/** Persist the kernel's ordered terminal view and report its projected request growth. */
+/** What persisting one turn's terminal view adds to the next request. */
+export interface MaterializedToolTerminals {
+    /** Projected request growth of the terminal content. */
+    readonly tokens: number
+    /** Admitted answers the manifest records; see {@link ToolTerminalManifestEnvelope.feedbackInputRefs}. */
+    readonly feedbackInputRefs: readonly string[]
+}
+
+async function materialized(
+    manifest: ToolTerminalManifestEnvelope,
+    payloads: Pick<TaskPayloadStore, "read">,
+): Promise<MaterializedToolTerminals> {
+    return {
+        tokens: await estimateManifestTokens(manifest, payloads),
+        feedbackInputRefs: manifest.feedbackInputRefs ?? [],
+    }
+}
+
+/** Persist the kernel's ordered terminal view and report what it adds to the next request. */
 export async function materializeToolTerminalManifest(input: {
     readonly manifest: ToolTerminalManifest
     readonly payloads: TaskPayloadStore
     readonly journal: ConversationJournal
     readonly denial?: ToolDenialPort
-}): Promise<number> {
+    /** Admitted inputs that answered a call of this turn without a result of their own. */
+    readonly feedbackInputRefs?: readonly string[]
+}): Promise<MaterializedToolTerminals> {
     const operationId = `tool.terminal_manifest:${input.manifest.turnId}`
     const existing = await input.journal.findByOperation(operationId)
     if (existing) {
@@ -124,7 +152,7 @@ export async function materializeToolTerminalManifest(input: {
         const payload = decodeTaskPayload<ToolTerminalManifestEnvelope>(await input.payloads.read(existing.payloadRef))
         if (payload.kind !== "tool_terminal_manifest" || payload.turnId !== input.manifest.turnId)
             throw new Error("InvalidToolTerminalManifestPayload")
-        return estimateManifestTokens(payload, input.payloads)
+        return materialized(payload, input.payloads)
     }
 
     const rawResults = new Map<string, JournalPayloadEntry>()
@@ -151,6 +179,7 @@ export async function materializeToolTerminalManifest(input: {
     }
 
     const superseded = new Set<string>()
+    const feedbackInputRefs = new Set<string>(input.feedbackInputRefs)
     const results: ToolTerminalManifestEnvelope["results"][number][] = []
     for (const block of input.manifest.blocks) {
         const invocation = decodeTaskPayload<ToolInvocationEnvelope>(await input.payloads.read(block.invocationRef))
@@ -166,6 +195,7 @@ export async function materializeToolTerminalManifest(input: {
             : (block.phase === "completed" || block.phase === "failed") && raw
               ? raw.payload
               : await terminalResult(block, invocation, input.denial)
+        for (const ref of result.feedbackInputRefs ?? []) feedbackInputRefs.add(ref)
         const feedbackRef = block.approvalFeedbackRef ?? recordedFeedback
         results.push({
             blockId: block.blockId,
@@ -182,6 +212,7 @@ export async function materializeToolTerminalManifest(input: {
         turnId: input.manifest.turnId,
         results,
         supersededPayloadRefs: [...superseded],
+        ...(feedbackInputRefs.size === 0 ? {} : { feedbackInputRefs: [...feedbackInputRefs] }),
     }
     await input.journal.append({
         operationId,
@@ -189,5 +220,5 @@ export async function materializeToolTerminalManifest(input: {
         source: "tool",
         causation: { turnId: input.manifest.turnId },
     })
-    return estimateManifestTokens(envelope, input.payloads)
+    return materialized(envelope, input.payloads)
 }

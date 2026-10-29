@@ -301,7 +301,8 @@ Preserve this instruction body exactly.\n`
                     customMarker,
                     "# Required Completion Protocol",
                     "Plain assistant text cannot complete a subagent run",
-                    "Call attempt_completion with a non-empty result",
+                    // Only the recovery request carries the text-only diagnosis.
+                    "The previous response contained text but no tool call",
                 ],
             },
             {
@@ -333,7 +334,12 @@ Preserve this instruction body exactly.\n`
         expect(JSON.stringify(childInitialRequest.requestBody)).toContain("# Required Completion Protocol")
         expect(JSON.stringify(childInitialRequest.requestBody)).toContain("Plain assistant text cannot complete a subagent run")
         expect(childRecoveryRequest.contractError).toBeUndefined()
-        expect(JSON.stringify(childRecoveryRequest.requestBody)).toContain("Call attempt_completion with a non-empty result")
+        expect(JSON.stringify(childInitialRequest.requestBody)).not.toContain(
+            "The previous response contained text but no tool call",
+        )
+        expect(JSON.stringify(childRecoveryRequest.requestBody)).toContain(
+            "The previous response contained text but no tool call",
+        )
         expect(requestToolNames(childRecoveryRequest)).toContain("attempt_completion")
         expect(consumptions[3].contractError).toBeUndefined()
         await expect(sidebar.getByText(/Native tool 'use_subagent' was not available/, { exact: false })).toHaveCount(0)

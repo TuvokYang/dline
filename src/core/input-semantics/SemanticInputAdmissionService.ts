@@ -2,6 +2,7 @@ import { type AdmittedInputPart, appendAdmittedPart, trimAdmittedParts } from "@
 import {
     authorizedTools,
     type CatalogConflict,
+    commandTriggersOf,
     type InputSemanticCatalog,
     type InputSemanticDescriptor,
 } from "@shared/input-semantics/catalog"
@@ -458,8 +459,9 @@ function mentionNodeMismatch(node: MentionInputNode): ((documentId: string) => S
  */
 function commandNodeMismatch(node: SlashCommandInputNode, descriptor: InputSemanticDescriptor): string | undefined {
     if (descriptor.kind !== "command") return "does not name a command"
-    const triggers = [descriptor.trigger, ...(descriptor.aliases ?? [])]
-    if (!triggers.includes(node.sourceText)) return `was typed as ${node.sourceText}, which is not one of its triggers`
+    if (!commandTriggersOf(descriptor).includes(node.sourceText)) {
+        return `was typed as ${node.sourceText}, which is not one of its triggers`
+    }
     const expected = descriptor.lifecycle === "task" ? "lifecycle_barrier" : "composable"
     if (node.compositionMode !== expected) return `declares ${node.compositionMode} composition, expected ${expected}`
     return undefined

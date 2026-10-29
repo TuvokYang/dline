@@ -88,4 +88,10 @@ describe("row aggregation keys", () => {
         expect(trajectoryToolKey(p.say("tool", "not json"))).toBeUndefined()
         expect(trajectoryToolKey({ ...p.tool("readFile"), partial: true })).toBeUndefined()
     })
+
+    it("counts rows still written under a renamed tool's former key under its current name", () => {
+        const p = new ProducerRows()
+        expect(trajectoryToolKey(p.tool("actModeRespond"))).toBe("working_respond")
+        expect(trajectoryToolKey(p.tool("statusUpdate"))).toBe("phase_report")
+    })
 })

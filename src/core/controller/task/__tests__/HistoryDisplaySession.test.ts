@@ -187,8 +187,12 @@ describe("HistoryDisplaySession", () => {
                 status: "awaiting",
                 stateRevision: 0,
                 anchorVerified: true,
+                anchorSynthetic: true,
             })
             expect(session.getMessages()).toEqual([expect.objectContaining({ ts: 10, type: "say", say: "task" })])
+            // The flag tells the Webview no page holds the anchor, which must stay true.
+            const latest = await session.fetchMessages(-1, 200)
+            expect(latest.messages.map((message) => message.ts)).not.toContain(view.activeInteraction?.askMessageTs)
             expect(session.accepts(requestFor(session))).toBe(true)
             expect(session.accepts(requestFor(session, { stateRevision: 1 }))).toBe(false)
             expect(session.accepts(requestFor(session, { interactionId: "stale-interaction" }))).toBe(false)
@@ -585,6 +589,8 @@ describe("HistoryDisplaySession", () => {
                 stateRevision: 7,
                 anchorVerified: true,
             })
+            // A durable anchor row is served, so the Webview must still recover it.
+            expect(session.getViewState().activeInteraction?.anchorSynthetic).toBeUndefined()
             expect(session.getMessages()).toHaveLength(1)
             expect(session.accepts(requestFor(session))).toBe(true)
         } finally {

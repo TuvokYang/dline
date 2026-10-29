@@ -1,6 +1,6 @@
 import type { AggressiveRenderingLevel } from "@shared/AggressiveRendering"
 import type { UiMessage, UiSayTool } from "@shared/ExtensionMessage"
-import { type ActivityFold, isBrowserSession } from "./chatRowKinds"
+import { type ActivityFold, type ActivityFoldKind, isBrowserSession } from "./chatRowKinds"
 import { type FoldContext, rowState } from "./foldContext"
 import { isSettledTurnEnd, isTurnEndRow } from "./turnEndRows"
 
@@ -18,11 +18,11 @@ export const STANDARD_FOLD: FoldOptions = { level: "standard" }
  * How the fold step treats a row.
  *
  * - `user`: a message the user wrote; folds never cross it and never take it in.
- * - `turn_end`: a turn-ending interaction; it ends a turn unit and stays outside.
- * - `assistant`: an assistant message; it stays visible at the `activity` level.
+ * - `turn_end`: a turn-ending interaction; it ends a turn and stays outside.
+ * - `assistant`: an assistant message; it folds with the rest of its round.
  * - `splitter`: a row that is still running, failed, or is a restore point the
  *   user checked out; it is never folded and cuts the block it would sit in.
- * - `activity`: everything else, which is what the `activity` level folds.
+ * - `activity`: everything else.
  */
 export type FoldRowClass = "user" | "turn_end" | "assistant" | "splitter" | "activity"
 
@@ -30,21 +30,31 @@ export type FoldRowClass = "user" | "turn_end" | "assistant" | "splitter" | "act
 const ASSISTANT_TOOLS = new Set<string>(["actModeRespond", "statusUpdate"] satisfies UiSayTool["tool"][])
 
 /**
- * Fold the finished rows of each turn into collapsible blocks.
+ * Fold the rows of every ended request round into collapsible blocks.
  *
  * Runs last, after every other grouping step, on rows it never mutates. With
  * `standard` it returns the very same array.
  *
- * Only rows before the last settled turn-end row fold: that row is written after
- * the turn's tool execution drained, so everything before it is finished work.
- * The open tail after it is drawn as it is while it streams, runs or waits.
+ * Folding follows the task as it runs: a round folds as soon as it has ended,
+ * that is once a later round has started or a settled turn end follows it. The
+ * round still running is drawn as it is while it streams, runs or waits.
+ *
+ * - `activity`: each ended round folds into its own block.
+ * - `turn`: every ended round between a user message and the turn end folds
+ *   into one block, which takes in each further round when that round ends.
+ *   Inside it, each round is folded on its own, as at the `activity` level.
  */
 export function foldActivity(rows: ChatRow[], options: FoldOptions, context: FoldContext): ChatRow[] {
     if (options.level === "standard") return rows
     const classes = rows.map((row, index) => classifyFoldRow(row, index === rows.length - 1, options, context))
-    const cutoff = settledCutoff(rows)
-    const spans = options.level === "activity" ? activitySpans(rows, classes, cutoff, context) : turnSpans(classes, cutoff)
-    return applySpans(rows, spans)
+    const rounds = roundOfRows(rows, classes, context)
+    const ended = endedRows(rows, classes, rounds)
+    if (options.level === "activity") {
+        return applySpans(rows, roundSpans(classes, rounds, ended), (span) =>
+            buildFold(rows.slice(span.start, span.end), "round"),
+        )
+    }
+    return applySpans(rows, turnSpans(classes, ended), (span) => buildFold(roundFoldsOf(rows, rounds, span), "turn"))
 }
 
 export function classifyFoldRow(row: ChatRow, isLastRow: boolean, options: FoldOptions, context: FoldContext): FoldRowClass {
@@ -90,13 +100,62 @@ function isSplitterGroup(group: UiMessage[], isLastRow: boolean, options: FoldOp
     return group.some((message) => isSplitterMessage(message, options, context))
 }
 
-/** Index of the last settled turn-end row, or -1 when the window holds none. */
-function settledCutoff(rows: readonly ChatRow[]): number {
+function isFoldable(rowClass: FoldRowClass): boolean {
+    return rowClass === "activity" || rowClass === "assistant"
+}
+
+function isRestorePoint(row: ChatRow): boolean {
+    return !Array.isArray(row) && row.say === "checkpoint_created"
+}
+
+/**
+ * The request round each row belongs to.
+ *
+ * A group takes the latest round among its members, since an exploration run
+ * spans the read-only rounds it joined. A restore point is written before the
+ * request it protects, so it heads the round of the row after it; as the last
+ * row it heads a round that has drawn nothing yet.
+ */
+function roundOfRows(rows: readonly ChatRow[], classes: readonly FoldRowClass[], context: FoldContext): number[] {
+    const rounds = rows.map((row) => memberRound(row, context))
     for (let index = rows.length - 1; index >= 0; index -= 1) {
-        const row = rows[index]
-        if (!Array.isArray(row) && isSettledTurnEnd(row)) return index
+        if (!isRestorePoint(rows[index])) continue
+        const next = index + 1
+        if (next === rows.length) rounds[index] += 1
+        else if (classes[next] !== "user" && classes[next] !== "turn_end") rounds[index] = rounds[next]
     }
-    return -1
+    return rounds
+}
+
+function memberRound(row: ChatRow, context: FoldContext): number {
+    const members = Array.isArray(row) ? row : [row]
+    let round = 0
+    for (const member of members) {
+        if (Array.isArray(row) && member.say === "checkpoint_created") continue
+        round = Math.max(round, context.rounds.get(member.ts) ?? 0)
+    }
+    return round
+}
+
+/**
+ * Whether each row's round has ended: a later round has drawn a row, or a
+ * settled turn end follows. A settled turn end is only written after the turn's
+ * tool execution drained, so everything before it is finished work.
+ *
+ * A user row alone proves nothing: an approval note is written while the call
+ * it approves may still be running.
+ */
+function endedRows(rows: readonly ChatRow[], classes: readonly FoldRowClass[], rounds: readonly number[]): boolean[] {
+    const ended = new Array<boolean>(rows.length).fill(false)
+    let latestRoundAhead = Number.NEGATIVE_INFINITY
+    let settledTurnEndAhead = false
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+        ended[index] = settledTurnEndAhead || latestRoundAhead > rounds[index]
+        const row = rows[index]
+        if (!Array.isArray(row) && isSettledTurnEnd(row)) settledTurnEndAhead = true
+        if (classes[index] !== "user") latestRoundAhead = Math.max(latestRoundAhead, rounds[index])
+    }
+    return ended
 }
 
 /** A half-open range `[start, end)` of row indexes that folds into one block. */
@@ -105,89 +164,93 @@ interface Span {
     readonly end: number
 }
 
-const MIN_FOLD_ROWS = 2
-
 /**
- * `activity`: each maximal run of activity rows before the cutoff, of at least
- * two rows, whose opener is stable.
+ * `activity`: the ended rows of each round, cut by splitters.
+ *
+ * Round 0 is the partial round `indexRequestRounds` assigns to rows before the
+ * first round start in the window. Its rows are left alone, so a fold keeps its
+ * identity while older rows are paged in ahead of it.
  */
-function activitySpans(rows: readonly ChatRow[], classes: readonly FoldRowClass[], cutoff: number, context: FoldContext): Span[] {
+function roundSpans(classes: readonly FoldRowClass[], rounds: readonly number[], ended: readonly boolean[]): Span[] {
     const spans: Span[] = []
-    let index = 0
-    while (index < cutoff) {
-        if (classes[index] !== "activity") {
-            index += 1
+    let start = -1
+    const close = (end: number) => {
+        if (start >= 0) spans.push({ start, end })
+        start = -1
+    }
+    for (let index = 0; index < classes.length; index += 1) {
+        if (!isFoldable(classes[index]) || !ended[index] || rounds[index] === 0) {
+            close(index)
             continue
         }
-        const start = index
-        while (index < cutoff && classes[index] === "activity") index += 1
-        if (index - start >= MIN_FOLD_ROWS && hasStableOpener(rows, start, context)) spans.push({ start, end: index })
+        if (start >= 0 && rounds[index] !== rounds[start]) close(index)
+        if (start < 0) start = index
     }
+    close(classes.length)
     return spans
 }
 
 /**
- * The row before a run opens it. It must be in the window, and so must the
- * start of its request round: grouping inside a round depends only on that
- * round's rows, so a fold keeps its identity while older rows are paged in
- * ahead of it. `indexRequestRounds` numbers a leading partial round 0.
+ * `turn`: the ended rows strictly between a user row and the next turn-end or
+ * user row, cut by splitters. A user row always opens a request round, so the
+ * block keeps its identity as further rounds join it.
  */
-function hasStableOpener(rows: readonly ChatRow[], runStart: number, context: FoldContext): boolean {
-    if (runStart === 0) return false
-    const opener = rows[runStart - 1]
-    const openerTs = Array.isArray(opener) ? opener[0]?.ts : opener.ts
-    const round = openerTs === undefined ? undefined : context.rounds.get(openerTs)
-    return round !== undefined && round > 0
-}
-
-/**
- * `turn`: the rows strictly between a user row and the next turn-end or user
- * row, cut by splitters into segments of at least two rows. A user row always
- * opens a request round, so the opener is stable by construction.
- */
-function turnSpans(classes: readonly FoldRowClass[], cutoff: number): Span[] {
+function turnSpans(classes: readonly FoldRowClass[], ended: readonly boolean[]): Span[] {
     const spans: Span[] = []
-    const pushSegment = (start: number, end: number) => {
-        if (end - start >= MIN_FOLD_ROWS) spans.push({ start, end })
-    }
     let index = 0
-    while (index < cutoff) {
+    while (index < classes.length) {
         if (classes[index] !== "user") {
             index += 1
             continue
         }
-        let segmentStart = index + 1
-        let cursor = segmentStart
-        while (cursor < cutoff && classes[cursor] !== "user" && classes[cursor] !== "turn_end") {
-            if (classes[cursor] === "splitter") {
-                pushSegment(segmentStart, cursor)
-                segmentStart = cursor + 1
+        let start = -1
+        let cursor = index + 1
+        for (; cursor < classes.length && classes[cursor] !== "user" && classes[cursor] !== "turn_end"; cursor += 1) {
+            if (isFoldable(classes[cursor]) && ended[cursor]) {
+                if (start < 0) start = cursor
+                continue
             }
-            cursor += 1
+            if (start >= 0) spans.push({ start, end: cursor })
+            start = -1
         }
-        pushSegment(segmentStart, cursor)
+        if (start >= 0) spans.push({ start, end: cursor })
         index = cursor
     }
     return spans
 }
 
-function applySpans(rows: readonly ChatRow[], spans: readonly Span[]): ChatRow[] {
+/** One round fold for each run of rows of the same round inside a turn span; every row in it has ended. */
+function roundFoldsOf(rows: readonly ChatRow[], rounds: readonly number[], span: Span): ActivityFold[] {
+    const folds: ActivityFold[] = []
+    let start = span.start
+    for (let index = span.start + 1; index <= span.end; index += 1) {
+        if (index < span.end && rounds[index] === rounds[start]) continue
+        folds.push(buildFold(rows.slice(start, index), "round"))
+        start = index
+    }
+    return folds
+}
+
+function applySpans(rows: readonly ChatRow[], spans: readonly Span[], build: (span: Span) => ActivityFold): ChatRow[] {
     if (spans.length === 0) return rows as ChatRow[]
     const result: ChatRow[] = []
     let index = 0
     for (const span of spans) {
         while (index < span.start) result.push(rows[index++])
-        result.push(buildFold(rows.slice(span.start, span.end)))
+        result.push(build(span))
         index = span.end
     }
     while (index < rows.length) result.push(rows[index++])
     return result
 }
 
-function buildFold(children: readonly ChatRow[]): ActivityFold {
+const FOLD_ID_PREFIX: Record<ActivityFoldKind, string> = { round: "fold", turn: "turn" }
+
+function buildFold(children: readonly ChatRow[], kind: ActivityFoldKind): ActivityFold {
     const fold = children.flatMap((row) => (Array.isArray(row) ? row : [row])) as ActivityFold
     fold._isActivityFold = true
-    fold._activityFoldId = `fold:${fold[0].ts}`
+    fold._foldKind = kind
+    fold._activityFoldId = `${FOLD_ID_PREFIX[kind]}:${fold[0].ts}`
     fold._children = children
     return fold
 }

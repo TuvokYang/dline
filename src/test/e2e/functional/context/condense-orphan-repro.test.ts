@@ -193,8 +193,15 @@ async function observeWebviewErrors(app: ElectronApplication): Promise<{
 }> {
     const page = await app.firstWindow()
     const errors: string[] = []
-    const onConsole = (message: { type(): string; text(): string }) => {
-        if (message.type() === "error") errors.push(`console: ${message.text()}`)
+    const onConsole = (message: {
+        type(): string
+        text(): string
+        location(): { url: string; lineNumber: number; columnNumber: number }
+    }) => {
+        // The source location is diagnostic only: an unattributed resource failure names its URL.
+        if (message.type() === "error") {
+            errors.push(`console: ${message.text()}\nlocation: ${JSON.stringify(message.location())}`)
+        }
     }
     const onPageError = (error: Error) => errors.push(`pageerror: ${error.stack ?? error.message}`)
     page.on("console", onConsole)
@@ -766,15 +773,50 @@ e2e(
             const completedPass = sidebar.getByTestId("compaction-pass").filter({ hasText: summary }).last()
             await expect(completedPass).toHaveAttribute("data-compaction-status", "completed")
             await completedPass.scrollIntoViewIfNeeded()
-            const restoreControl = completedPass.locator("svg.lucide-bookmark").locator("..")
-            await expect(restoreControl).toBeVisible()
-            await restoreControl.hover()
-            const restoreButton = completedPass.getByRole("button", { name: "Restore", exact: true })
-            await expect(restoreButton).toBeVisible()
+            // The durable pre-compaction checkpoint row owns Chat Restore, so the card carries no fallback control.
+            await expect(completedPass.locator("svg.lucide-bookmark")).toHaveCount(0)
+            await expect(completedPass.getByRole("button", { name: "Restore", exact: true })).toHaveCount(0)
+
+            // The owner is the nearest checkpoint row drawn before the completed card (rows render in ts order).
+            const ownerCheckpointTs = await sidebar.locator("[data-message-ts]").evaluateAll((rows, summaryText) => {
+                let cardIndex = -1
+                rows.forEach((row, index) => {
+                    const cards = Array.from(row.querySelectorAll('[data-testid="compaction-pass"]'))
+                    if (cards.some((card) => card.textContent?.includes(summaryText))) cardIndex = index
+                })
+                for (let index = cardIndex - 1; index >= 0; index--) {
+                    const row = rows[index]
+                    if (row.querySelector("svg.lucide-bookmark") && !row.querySelector('[data-testid="compaction-pass"]')) {
+                        return row.getAttribute("data-message-ts")
+                    }
+                }
+                return null
+            }, summary)
+            expect(ownerCheckpointTs, "a durable checkpoint row must precede the completed compaction").not.toBeNull()
+            const ownerRow = sidebar.locator(`[data-message-ts="${ownerCheckpointTs}"]`)
+            const ownerCheckpoint = ownerRow.locator("svg.lucide-bookmark").locator("..")
+            await ownerCheckpoint.scrollIntoViewIfNeeded()
+            await expect(ownerCheckpoint).toBeVisible()
+            await ownerCheckpoint.hover()
+            const restoreButton = ownerRow.getByRole("button", { name: "Restore", exact: true })
+            await expect(restoreButton).toBeVisible({ timeout: 30_000 })
             await restoreButton.focus()
             await expect(restoreButton).toBeVisible()
             await restoreButton.click()
+            const moreOptions = sidebar.getByText("More options", { exact: true })
             const restoreTaskButton = sidebar.getByRole("button", { name: "Restore Task Only", exact: true })
+            await expect
+                .poll(
+                    async () =>
+                        (await moreOptions.isVisible())
+                            ? "more-options"
+                            : (await restoreTaskButton.isVisible())
+                              ? "task-only"
+                              : "pending",
+                    { timeout: 5_000 },
+                )
+                .toMatch(/^(more-options|task-only)$/)
+            if (await moreOptions.isVisible()) await moreOptions.click()
             await expect(restoreTaskButton).toBeVisible()
             await restoreTaskButton.click()
 
@@ -784,6 +826,7 @@ e2e(
             const messageTimeline = sidebar.getByTestId("virtuoso-item-list")
             await expect(messageTimeline.getByText("E2E_COMPACTION_RESTORE_TASK", { exact: true })).toBeVisible()
             await expect(messageTimeline.getByText("E2E_COMPACTION_RESTORE_HISTORY", { exact: true })).toBeVisible()
+            await expect(messageTimeline.getByText("E2E_COMPACTION_RESTORE_TRIGGER", { exact: true })).toBeVisible()
             await expect(sidebar.locator('vscode-button[aria-label="Condense Conversation"]')).toHaveCount(0)
             await expect(sidebar.locator('vscode-button[aria-label="Regenerate Summary"]')).toHaveCount(0)
             await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(4)
@@ -828,7 +871,8 @@ e2e(
             const resumedRequestText = JSON.stringify(resumedRequest.requestBody)
             expect(resumedRequestText).not.toContain("E2E_COMPACTION_RESTORE_TASK")
             expect(resumedRequestText).toContain("E2E_COMPACTION_RESTORE_AFTER_RESTORE")
-            expect(resumedRequestText).not.toContain("E2E_COMPACTION_RESTORE_TRIGGER")
+            // The checkpoint predates the rewrite, not the accepted reply that triggered it.
+            expect(resumedRequestText).toContain("E2E_COMPACTION_RESTORE_TRIGGER")
             expect(resumedRequestText).toContain("The previous task session was closed and has now been restored.")
             expect(resumedRequestText).not.toContain(summary)
             expect(resumedRequestText).toContain(restoredSummary)

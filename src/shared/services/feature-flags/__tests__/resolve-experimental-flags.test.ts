@@ -69,6 +69,9 @@ describe("resolveExperimentalFlag", () => {
     it("turns on only the switches with a development default in a development build", () => {
         expect(resolveExperimentalFlag(ExperimentalFeatureFlag.ACCOUNT, {}, true)).toBe(true)
         expect(resolveExperimentalFlag(ExperimentalFeatureFlag.ACCOUNT, {}, false)).toBe(false)
+        // A development build offers the chat folding setting without waiting for the rollout service.
+        expect(resolveExperimentalFlag(ExperimentalFeatureFlag.AGGRESSIVE_RENDERING, {}, true)).toBe(true)
+        expect(resolveExperimentalFlag(ExperimentalFeatureFlag.AGGRESSIVE_RENDERING, {}, false)).toBe(false)
         // Switches without one keep their static default, so development bundles
         // and the E2E runs built from them do not change behavior.
         expect(resolveExperimentalFlag(WORKTREES, {}, true)).toBe(false)

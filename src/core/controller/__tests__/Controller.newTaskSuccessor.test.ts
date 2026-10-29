@@ -32,12 +32,13 @@ describe("Controller New Task successor ownership", () => {
             undefined,
             { mode: "act", planModeProfile: "plan-old", actModeProfile: "act-old" },
             // Opened like a spawned task: the task as `<task>`, the context as `<context>`, nothing else.
-            // The handoff source only names the opening, so the Webview can recognise its successor.
+            // The handoff source names the kernel approval the user answered (`approval:<dlineTid>`),
+            // the same id the Webview captured the unsent draft under, so it recognises its successor.
             {
                 context: ["Successor context"],
                 startInBackground: true,
                 skipInitialClear: true,
-                handoffSource: { taskId: "task-old", interactionId: "tid-1" },
+                handoffSource: { taskId: "task-old", interactionId: "approval:tid-1" },
             },
         )
     })

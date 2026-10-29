@@ -42,8 +42,14 @@ interface ReviewedReplyFixture {
     readonly document?: SemanticInputDocument
     readonly parts?: readonly AdmittedInputPart[]
     readonly claimedBarrier?: string
+    readonly carriesInput?: true
     readonly commit: () => void
     readonly performAlone?: () => Promise<boolean>
+}
+
+interface InputQueueFixture {
+    readonly awaitsTurnEnd: (interactionId: string) => boolean
+    readonly mutate: (mutation: unknown) => Promise<{ accepted: boolean; result: string }>
 }
 
 interface ControllerOptions {
@@ -64,6 +70,8 @@ interface ControllerOptions {
     readonly draftAttachments?: DraftAttachmentPort
     /** Whether the interaction owner actually carried an unowned answer on. */
     readonly continuationAccepted?: boolean
+    /** The session's canonical input queue, which admits a reply carrying input like a submission. */
+    readonly inputQueue?: InputQueueFixture
 }
 
 function controller(taskState: TaskState = state(), options: ControllerOptions = {}) {
@@ -124,6 +132,7 @@ function controller(taskState: TaskState = state(), options: ControllerOptions =
                 task: { respond },
                 payloads: { put },
                 inputs: { reviewReply },
+                inputQueue: options.inputQueue,
                 approvalFeedback,
                 messages: { clineMessages, beginDurableClineMessage },
                 owners: { interactions: { resolve }, toolExecution: { presentDenial } },
@@ -289,6 +298,66 @@ describe("dispatchInteraction", () => {
             selection: { values: ["item-1"] },
         })
         expect(result).toMatchObject({ accepted: true, result: "accepted" })
+    })
+
+    describe("a reply naming a command or mention", () => {
+        const reportBug = { text: "/cmd:reportbug the panel froze", carriesInput: true as const, commit: () => {} }
+        function queue(awaiting: boolean, outcome = { accepted: true, result: "entry-1" }) {
+            return {
+                awaitsTurnEnd: vi.fn((_interactionId: string) => awaiting),
+                mutate: vi.fn(async (_mutation: unknown) => outcome),
+            }
+        }
+
+        it("is admitted as a submission and answers the waiting dialog through the queue", async () => {
+            const inputQueue = queue(true)
+            const host = controller(state("completion", "reply"), { reviewed: reportBug, inputQueue })
+
+            const result = await dispatchInteraction(host.value as never, compactReply("/cmd:reportbug the panel froze"))
+
+            expect(result).toMatchObject({ accepted: true, result: "accepted" })
+            expect(inputQueue.awaitsTurnEnd).toHaveBeenCalledWith("interaction-1")
+            expect(inputQueue.mutate).toHaveBeenCalledWith({
+                kind: "enqueue",
+                draft: { text: "/cmd:reportbug the panel froze", images: [], files: [] },
+            })
+            // The literal text never becomes a dialog draft the model would read as feedback.
+            expect(host.put).not.toHaveBeenCalled()
+            expect(host.respond).not.toHaveBeenCalled()
+            expect(host.resolve).not.toHaveBeenCalled()
+        })
+
+        it("refuses instead of sending the command as literal feedback when the queue refuses it", async () => {
+            const inputQueue = queue(true, { accepted: false, result: "persist_failed" })
+            const host = controller(state(), { reviewed: reportBug, inputQueue })
+
+            const result = await dispatchInteraction(host.value as never, compactReply("/cmd:reportbug the panel froze"))
+
+            expect(result).toMatchObject({ accepted: false, result: "command_refused" })
+            expect(host.put).not.toHaveBeenCalled()
+            expect(host.respond).not.toHaveBeenCalled()
+        })
+
+        it("answers the dialog directly when no live receiver awaits the queue", async () => {
+            const inputQueue = queue(false)
+            const host = controller(state(), { reviewed: reportBug, inputQueue })
+
+            const result = await dispatchInteraction(host.value as never, compactReply("/cmd:reportbug the panel froze"))
+
+            expect(result).toMatchObject({ accepted: true, result: "accepted" })
+            expect(inputQueue.mutate).not.toHaveBeenCalled()
+            expect(host.respond).toHaveBeenCalledTimes(1)
+        })
+
+        it("leaves an approval note on the approval instead of queueing it", async () => {
+            const inputQueue = queue(true)
+            const host = controller(approvalState(), { reviewed: reportBug, inputQueue })
+
+            await dispatchInteraction(host.value as never, approveWith("/cmd:reportbug the panel froze"))
+
+            expect(inputQueue.mutate).not.toHaveBeenCalled()
+            expect(host.respond).toHaveBeenCalledTimes(1)
+        })
     })
 
     describe("Start New Task", () => {

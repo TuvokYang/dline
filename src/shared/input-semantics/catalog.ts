@@ -8,7 +8,7 @@
  * renamed trigger or a localized label can never change admission behavior.
  */
 
-import type { CapabilityCommandRef } from "./command-namespace"
+import { type CapabilityCommandRef, commandNamespaceOf, namespacedCommandTrigger } from "./command-namespace"
 
 /** Which trigger family a descriptor belongs to. */
 export type InputSemanticKind = "command" | "mention"
@@ -85,7 +85,7 @@ export const BUILTIN_INPUT_SEMANTICS: readonly InputSemanticDescriptor[] = [
         id: "command.compact",
         kind: "command",
         trigger: "/compact",
-        aliases: ["/smol", "/cmd:compact", "/cmd:smol"],
+        aliases: ["/smol"],
         payload: "none",
         composition: "exclusive",
         lifecycle: "task",
@@ -95,7 +95,6 @@ export const BUILTIN_INPUT_SEMANTICS: readonly InputSemanticDescriptor[] = [
         id: "command.new_task",
         kind: "command",
         trigger: "/newtask",
-        aliases: ["/cmd:newtask"],
         payload: "text",
         composition: "exclusive",
         lifecycle: "task",
@@ -105,7 +104,6 @@ export const BUILTIN_INPUT_SEMANTICS: readonly InputSemanticDescriptor[] = [
         id: "command.new_rule",
         kind: "command",
         trigger: "/newrule",
-        aliases: ["/cmd:newrule"],
         payload: "text",
         composition: "exclusive",
         lifecycle: "task",
@@ -115,7 +113,6 @@ export const BUILTIN_INPUT_SEMANTICS: readonly InputSemanticDescriptor[] = [
         id: "command.report_bug",
         kind: "command",
         trigger: "/reportbug",
-        aliases: ["/cmd:reportbug"],
         payload: "text",
         composition: "exclusive",
         lifecycle: "task",
@@ -125,7 +122,6 @@ export const BUILTIN_INPUT_SEMANTICS: readonly InputSemanticDescriptor[] = [
         id: "command.deep_planning",
         kind: "command",
         trigger: "/deep-planning",
-        aliases: ["/cmd:deep-planning"],
         payload: "text",
         composition: "exclusive",
         lifecycle: "task",
@@ -135,7 +131,6 @@ export const BUILTIN_INPUT_SEMANTICS: readonly InputSemanticDescriptor[] = [
         id: "command.explain_changes",
         kind: "command",
         trigger: "/explain-changes",
-        aliases: ["/cmd:explain-changes"],
         payload: "none",
         composition: "exclusive",
         lifecycle: "turn",
@@ -212,9 +207,27 @@ export function isCommandTrigger(trigger: string): boolean {
     return COMMAND_TRIGGER.test(trigger)
 }
 
-/** Every trigger a command descriptor answers to: the canonical one first, then its aliases. */
+/**
+ * Every trigger a command descriptor answers to: the canonical one first, then
+ * its aliases, then - for a built-in command - each of those spelled in the
+ * `cmd` namespace.
+ *
+ * The composer menu inserts the namespaced spelling (`/cmd:reportbug`) for a
+ * built-in the user picked by its bare name, so that spelling is derived from
+ * the namespace rule rather than listed by hand: a built-in added later can
+ * never be offered by the menu yet refused as plain text.
+ */
 export function commandTriggersOf(descriptor: InputSemanticDescriptor): readonly string[] {
-    return descriptor.kind === "command" ? [descriptor.trigger, ...(descriptor.aliases ?? [])] : []
+    if (descriptor.kind !== "command") return []
+    const spelled = [descriptor.trigger, ...(descriptor.aliases ?? [])]
+    if (commandNamespaceOf(descriptor.id) !== "cmd") return spelled
+    const namespaced = spelled.filter(isBareTrigger).map((trigger) => namespacedCommandTrigger("cmd", trigger.slice(1)))
+    return [...spelled, ...namespaced.filter((trigger) => !spelled.includes(trigger))]
+}
+
+/** A trigger written without a namespace, such as `/compact` rather than `/cmd:compact`. */
+function isBareTrigger(trigger: string): boolean {
+    return trigger.startsWith("/") && !trigger.includes(":")
 }
 
 /**

@@ -1,4 +1,5 @@
-import type { UiAsk, UiMessage, UiSay } from "@shared/ExtensionMessage"
+import type { UiAsk, UiMessage, UiSay, UiSayTool } from "@shared/ExtensionMessage"
+import { DlineDefaultTool } from "@shared/tools"
 
 /**
  * The single rule set that divides committed chat rows into user turns and
@@ -78,6 +79,17 @@ const COMPACTION_TOOL_NAME = "summarizeTask"
 
 /** Tool rows that are not tool calls the user made the model perform. */
 const EXCLUDED_TOOL_NAMES: ReadonlySet<string> = new Set([COMPACTION_TOOL_NAME])
+
+/**
+ * Row keys that still carry the name of a tool that has since been renamed.
+ *
+ * Their handlers keep writing the former key so recorded and new rows render
+ * alike, but the rail reports the tool the model actually calls today.
+ */
+const RENAMED_TOOL_ROW_KEYS: Readonly<Partial<Record<UiSayTool["tool"], DlineDefaultTool>>> = {
+    actModeRespond: DlineDefaultTool.WORKING_RESPOND,
+    statusUpdate: DlineDefaultTool.PHASE_REPORT,
+}
 
 /** Context the rules need from rows before the one being classified. */
 export interface TurnContext {
@@ -179,7 +191,8 @@ export function trajectoryToolKey(row: UiMessage): string | undefined {
 
 function toolNameOf(text: string | undefined): string | undefined {
     const name = declaredToolName(text)
-    return name === undefined || EXCLUDED_TOOL_NAMES.has(name) ? undefined : name
+    if (name === undefined || EXCLUDED_TOOL_NAMES.has(name)) return undefined
+    return RENAMED_TOOL_ROW_KEYS[name as UiSayTool["tool"]] ?? name
 }
 
 /** The `tool` field of a generic tool row's JSON body, or undefined when it has none. */

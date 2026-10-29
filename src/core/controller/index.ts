@@ -124,6 +124,7 @@ import type { TaskActivityStore } from "../task/activity/TaskActivityStore"
 import { TaskSessionCompositionService } from "../task/composition/TaskSessionCompositionService"
 import type { NewTaskHandoff } from "../task/new-task/new-task-handoff"
 import type { ActiveTaskSession, CheckpointRestoreFence } from "../task/session/ActiveTaskSession"
+import { approvalInteractionId } from "../task/tools/approval-interaction"
 import { KernelTaskViewPort } from "../task/view/KernelTaskViewPort"
 import { type OpeningTrajectoryAccess, openingTrajectoryAccess } from "../trajectory/OpeningTrajectoryAccess"
 import { TrajectoryAdmission } from "../trajectory/TrajectorySource"
@@ -3800,7 +3801,8 @@ export class Controller {
                 context: [handoff.context],
                 startInBackground: true,
                 skipInitialClear: true,
-                handoffSource: { taskId: source.taskId, interactionId: handoff.source.dlineTid },
+                // The user answered the kernel approval of this call, so the successor names that interaction.
+                handoffSource: { taskId: source.taskId, interactionId: approvalInteractionId(handoff.source.dlineTid) },
             })
         })
     }

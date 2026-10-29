@@ -80,17 +80,29 @@ export function isBrowserSession(item: UiMessage | UiMessage[]): item is Browser
 }
 
 /**
- * Finished rows of one turn folded into one collapsible block by the aggressive
- * rendering levels.
+ * What a fold holds: the rows of one ended request round, or every ended round
+ * of one turn, each folded on its own.
+ */
+export type ActivityFoldKind = "round" | "turn"
+
+/**
+ * Finished rows folded into one collapsible block by the aggressive rendering
+ * levels.
  *
  * Like the other groups, the array holds every member message in transcript
  * order, so a lookup by timestamp still finds a member. `_children` keeps the
  * member rows exactly as standard grouping produced them, so an expanded block
- * draws each of them the way the standard level does.
+ * draws each of them the way the standard level does; a turn fold's children
+ * are its round folds.
  */
 export type ActivityFold = UiMessage[] & {
     _isActivityFold: true
-    /** Stable identity: `fold:<ts of the first member>`, which appended members never replace. */
+    _foldKind: ActivityFoldKind
+    /**
+     * Stable identity: `fold:<ts of the first member>` for a round and
+     * `turn:<ts of the first member>` for a turn, which appended members never
+     * replace. The prefixes keep a turn apart from its first round.
+     */
     _activityFoldId: string
     _children: readonly (UiMessage | UiMessage[])[]
 }

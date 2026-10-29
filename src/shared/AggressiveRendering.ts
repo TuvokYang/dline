@@ -1,9 +1,15 @@
 /**
  * How aggressively the chat folds a turn's activity rows into expandable blocks.
  *
+ * Folding follows the running task: a request round folds once it has ended,
+ * while the round still running stays drawn as it is.
+ *
  * - `standard`: today's rendering; nothing is folded.
- * - `activity`: runs of tool activity fold; assistant messages stay visible.
- * - `turn`: everything between a user message and the turn's end folds.
+ * - `activity`: each request round folds into its own block when it ends.
+ * - `turn`: the ended rounds between a user message and the turn's end fold into
+ *   one block, which takes in each further round as it ends.
+ *
+ * The stored values are a persisted contract; only the labels describe them.
  */
 export const AGGRESSIVE_RENDERING_LEVELS = ["standard", "activity", "turn"] as const
 
@@ -12,9 +18,9 @@ export type AggressiveRenderingLevel = (typeof AGGRESSIVE_RENDERING_LEVELS)[numb
 export const DEFAULT_AGGRESSIVE_RENDERING: AggressiveRenderingLevel = "standard"
 
 export const AGGRESSIVE_RENDERING_LABELS: Record<AggressiveRenderingLevel, string> = {
-    standard: "Standard",
-    activity: "Fold tool activity, keep assistant messages",
-    turn: "Fold each turn",
+    standard: "Standard (no folding)",
+    activity: "Fold each round when it ends",
+    turn: "Fold the whole turn into one block",
 }
 
 /**

@@ -164,13 +164,20 @@ async function enableSubagents(dlineDir: string): Promise<void> {
     await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf8")
 }
 
-async function sendTask(sidebar: Frame, text: string): Promise<number> {
+/**
+ * Submit text and wait until the conversation shows it.
+ *
+ * A reply to a completion appears only after that completion's checkpoint
+ * settles, which in a 1000-file workspace can take longer than the default
+ * expect timeout; the caller passes the budget its own timing sample enforces.
+ */
+async function sendTask(sidebar: Frame, text: string, echoTimeoutMs = 5_000): Promise<number> {
     const input = sidebar.getByTestId("chat-input")
     await expect(input).toBeEnabled()
     await input.fill(text)
     const submittedAtMs = Date.now()
     await sidebar.getByTestId("send-button").click()
-    await expect(sidebar.getByText(text, { exact: true }).first()).toBeVisible()
+    await expect(sidebar.getByText(text, { exact: true }).first()).toBeVisible({ timeout: echoTimeoutMs })
     return submittedAtMs
 }
 
@@ -330,7 +337,7 @@ e2e(
                 timing(childConsumptions, "subagent-read-file-round-trip", 1, 2, TOOL_ROUND_TRIP_BUDGET_MS),
             ]
 
-            const followUpSubmittedAtMs = await sendTask(sidebar, FOLLOW_UP_TEXT)
+            const followUpSubmittedAtMs = await sendTask(sidebar, FOLLOW_UP_TEXT, FOLLOW_UP_REQUEST_BUDGET_MS)
             await expect(sidebar.getByText(FOLLOW_UP_COMPLETION_TEXT, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
             await expect.poll(() => server.getRequestCount("openai-compatible-chat")).toBe(5)
             const allParentConsumptions = server.getMockConsumptions("openai-compatible-chat")

@@ -24,6 +24,7 @@ import { applyPatch } from "diff"
 import { telemetryService } from "@/services/telemetry"
 import { Logger } from "@/shared/services/Logger"
 import { DlineDefaultTool } from "@/shared/tools"
+import type { ToolDenial } from "../ToolExecutionResult"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
 import type { ToolValidator } from "../ToolValidator"
@@ -68,7 +69,11 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
      * state. Reporting that state keeps the model from assuming a partial edit
      * landed and retrying against content that was never written.
      */
-    async describeDenial(config: TaskConfig, block: ToolUse): Promise<string> {
+    async describeDenial(config: TaskConfig, block: ToolUse): Promise<ToolDenial> {
+        return { text: await this.describeDeniedWrite(config, block), isError: true }
+    }
+
+    private async describeDeniedWrite(config: TaskConfig, block: ToolUse): Promise<string> {
         const rawRelPath = resolveToolPathParam(block.params).param?.value
         if (!rawRelPath) return formatResponse.toolDenied()
         const pathResult = resolveWorkspacePath(config, rawRelPath, "WriteToFileToolHandler.describeDenial")

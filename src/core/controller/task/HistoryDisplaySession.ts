@@ -580,7 +580,12 @@ export class HistoryDisplaySession {
         const syntheticAnchor = historyDisplayAnchorRow(display.synthetic, durableMessages)
         // The synthetic row is interaction evidence, not conversation history. It
         // must not enter paging or rendering, where its empty text becomes a blank row.
-        return { messages: durableMessages, view: this.projectView(display.state, [...durableMessages, syntheticAnchor]) }
+        const view = this.projectView(display.state, [...durableMessages, syntheticAnchor])
+        const interaction = view.activeInteraction
+        // Marked so the Webview does not page through the whole history looking
+        // for a row that no page will ever contain.
+        if (interaction?.askMessageTs !== syntheticAnchor.ts) return { messages: durableMessages, view }
+        return { messages: durableMessages, view: { ...view, activeInteraction: { ...interaction, anchorSynthetic: true } } }
     }
 
     private projectView(state: TaskState, messages: readonly UiMessage[]): TaskViewState {

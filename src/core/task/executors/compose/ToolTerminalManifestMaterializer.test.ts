@@ -1,6 +1,10 @@
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
 import { parseDurableToolResult, serializeDurableToolResult } from "../../DurableToolResult"
+import type { ExplicitInstructionDeclaration } from "../../explicit-instructions/types"
 import { createInitialTaskState, type ToolTerminalManifest } from "../../kernel"
+import { declinedNewTaskDenialResponse } from "../../new-task/new-task-answer"
+import { deriveNewTaskFeedbackContinuationFromConversation } from "../../new-task/new-task-continuation"
 import { InMemoryConversationJournal, InMemoryTaskPayloadStore } from "../../stores"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
 import type {
@@ -21,6 +25,7 @@ const TURN_ID = "turn-tools"
 type MaterializedContent = {
     readonly type: string
     readonly dline_tid?: string
+    readonly is_error?: boolean
     readonly content?: string | readonly { readonly type: string; readonly text?: string }[]
     readonly text?: string
 }
@@ -74,6 +79,57 @@ function resultText(block: MaterializedContent): string {
     return (block.content ?? []).flatMap((part) => (part.type === "text" && part.text ? [part.text] : [])).join("\n")
 }
 
+describe("ToolTerminalManifestMaterializer feedback inputs", () => {
+    // A queued answer never lands as intake; without the manifest's record a later
+    // round of the same work lost the authority the user's command granted.
+    it("records admitted answers so later rounds read their authority without rendering them again", async () => {
+        const payloads = new InMemoryTaskPayloadStore()
+        const journal = new InMemoryConversationJournal()
+        const invocationRef = await payloads.put(encodeTaskPayload(invocation("b0")))
+        await appendRawResult(journal, payloads, "b0", "answered")
+        const declaration = {
+            type: "report_bug",
+            source: "slash_command",
+            targetTool: DlineDefaultTool.REPORT_BUG,
+            operationId: "op-report",
+        } as ExplicitInstructionDeclaration
+        const answerRef = await payloads.put(
+            encodeTaskPayload({ kind: "user_input", text: "/cmd:reportbug details", explicitInstructions: [declaration] }),
+        )
+        const manifest = { turnId: TURN_ID, blocks: [{ blockId: "b0", phase: "completed", invocationRef }] } as never
+
+        const first = await materializeToolTerminalManifest({ manifest, payloads, journal, feedbackInputRefs: [answerRef] })
+        const replay = await materializeToolTerminalManifest({ manifest, payloads, journal })
+
+        expect(first.feedbackInputRefs).toEqual([answerRef])
+        expect(replay).toEqual(first)
+        const entry = await journal.findByOperation(`tool.terminal_manifest:${TURN_ID}`)
+        const materialized = await new ProviderJournalMessageMaterializer(payloads).materializeEntry(entry!.payloadRef!)
+        expect(materialized.explicitInstructions).toEqual([declaration])
+        const blockTypes = materialized.messages.flatMap((message) =>
+            Array.isArray(message.content) ? message.content.map((block) => block.type) : [],
+        )
+        expect(blockTypes).toEqual(["tool_result"])
+    })
+
+    it("writes no feedback record when nothing answered the turn", async () => {
+        const payloads = new InMemoryTaskPayloadStore()
+        const journal = new InMemoryConversationJournal()
+        const invocationRef = await payloads.put(encodeTaskPayload(invocation("b0")))
+        await appendRawResult(journal, payloads, "b0", "answered")
+        const manifest = { turnId: TURN_ID, blocks: [{ blockId: "b0", phase: "completed", invocationRef }] } as never
+
+        const terminals = await materializeToolTerminalManifest({ manifest, payloads, journal })
+
+        expect(terminals.feedbackInputRefs).toEqual([])
+        const entry = await journal.findByOperation(`tool.terminal_manifest:${TURN_ID}`)
+        const envelope = decodeTaskPayload<ToolTerminalManifestEnvelope>(await payloads.read(entry!.payloadRef!))
+        expect(envelope.feedbackInputRefs).toBeUndefined()
+        const materialized = await new ProviderJournalMessageMaterializer(payloads).materializeEntry(entry!.payloadRef!)
+        expect(materialized.explicitInstructions).toBeUndefined()
+    })
+})
+
 describe("ToolTerminalManifestMaterializer refusal wording", () => {
     it("reports a user refusal in the tool's own words and keeps a policy refusal generic", async () => {
         const payloads = new InMemoryTaskPayloadStore()
@@ -95,19 +151,78 @@ describe("ToolTerminalManifestMaterializer refusal wording", () => {
             denial: {
                 describe: async (invocationRef) => {
                     described.push(invocationRef)
-                    return "The user denied this operation. The file was not updated."
+                    return { text: "The user denied this operation. The file was not updated.", isError: true }
                 },
             },
         })
 
         const entry = await journal.findByOperation(`tool.terminal_manifest:${TURN_ID}`)
         const envelope = decodeTaskPayload<ToolTerminalManifestEnvelope>(await payloads.read(entry!.payloadRef!))
-        const texts = envelope.results.map((terminal) =>
-            resultText(parseDurableToolResult(terminal.content) as unknown as MaterializedContent),
+        const results = envelope.results.map(
+            (terminal) => parseDurableToolResult(terminal.content) as unknown as MaterializedContent,
         )
         expect(described).toEqual([userRef])
-        expect(texts[0]).toBe("The user denied this operation. The file was not updated.")
-        expect(texts[1]).toBe("Tool call rejected; it was not admitted or executed.")
+        expect(results.map(resultText)).toEqual([
+            "The user denied this operation. The file was not updated.",
+            "Tool call rejected; it was not admitted or executed.",
+        ])
+        expect(results.map((result) => result.is_error)).toEqual([true, true])
+    })
+
+    // A declined New Task answers the call with the user's feedback. Materialized
+    // as an error, the next round refused the continuation, so the model's second
+    // proposal failed with `explicit_instruction_missing` and Start New Task never
+    // opened the successor.
+    it("materializes a declined New Task so the next round may propose it again", async () => {
+        const payloads = new InMemoryTaskPayloadStore()
+        const journal = new InMemoryConversationJournal()
+        const call: ToolInvocationEnvelope = {
+            ...invocation("b0"),
+            toolName: "new_task",
+            input: { task: "Successor task", context: "Successor context" },
+        }
+        const invocationRef = await payloads.put(encodeTaskPayload(call))
+        const feedbackRef = await payloads.put(
+            encodeTaskPayload<DialogDraftEnvelope>({ kind: "dialog_draft", text: "KEEP_COMPATIBILITY", images: [], files: [] }),
+        )
+        const adapter = new ProductionComposeAdapter({
+            payloads,
+            journal,
+            readState: () => createInitialTaskState("task-1"),
+            toolDenial: { describe: async () => ({ text: declinedNewTaskDenialResponse(), isError: false }) },
+        })
+
+        const composed = await adapter.compose({
+            turnId: "turn-next",
+            admittedEntryIds: [],
+            toolTerminals: {
+                turnId: TURN_ID,
+                blocks: [
+                    { blockId: "b0", phase: "rejected", invocationRef, deniedByUser: true, approvalFeedbackRef: feedbackRef },
+                ],
+            },
+            signal: new AbortController().signal,
+        })
+        if (!("draftRef" in composed)) throw new Error("Expected a provider draft")
+        const draft = decodeTaskPayload<ProviderDraftEnvelope>(await payloads.read(composed.draftRef))
+        const view = new JournalConversationView(journal, new ProviderJournalMessageMaterializer(payloads))
+        const messages = await view.messages(draft.journalThrough)
+        const [declined] = messages
+            .flatMap((message) => (message.content ?? []) as readonly MaterializedContent[])
+            .filter((block) => block.type === "tool_result")
+
+        expect(declined?.is_error).not.toBe(true)
+        expect(resultText(declined!)).toContain("KEEP_COMPATIBILITY")
+        const assistant = {
+            role: "assistant" as const,
+            content: [
+                { type: "tool_use" as const, name: "new_task", function_id: call.functionId, dline_tid: "b0", input: call.input },
+            ],
+        }
+        expect(deriveNewTaskFeedbackContinuationFromConversation([assistant, ...messages] as never)).toMatchObject({
+            type: "new_task",
+            operationId: "new-task-feedback:b0",
+        })
     })
 })
 
@@ -277,7 +392,7 @@ describe("ToolTerminalManifestMaterializer", () => {
         })
         const manifest = { turnId: TURN_ID, blocks: [{ blockId: "b0", phase: "completed", invocationRef }] } as never
 
-        const growth = await materializeToolTerminalManifest({ manifest, payloads, journal })
+        const { tokens: growth } = await materializeToolTerminalManifest({ manifest, payloads, journal })
 
         const manifestEntry = await journal.findByOperation(`tool.terminal_manifest:${TURN_ID}`)
         const envelope = decodeTaskPayload<ToolTerminalManifestEnvelope>(await payloads.read(manifestEntry!.payloadRef!))
@@ -285,7 +400,8 @@ describe("ToolTerminalManifestMaterializer", () => {
         const textOnly = Math.ceil(Buffer.byteLength(plain.content, "utf8") / 4)
         expect(growth).toBeGreaterThan(textOnly)
         // A replayed manifest reports the same growth instead of dropping the documents.
-        await expect(materializeToolTerminalManifest({ manifest, payloads, journal })).resolves.toBe(growth)
+        const replayed = await materializeToolTerminalManifest({ manifest, payloads, journal })
+        expect(replayed.tokens).toBe(growth)
     })
 
     // A completion's dialog is keyed by its block, so the dialog's own presentation

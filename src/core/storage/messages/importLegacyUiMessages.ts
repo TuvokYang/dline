@@ -3,7 +3,7 @@ import path from "node:path"
 import { normalizeStoredCheckpointMessage } from "@shared/checkpoints"
 import type { UiMessage } from "@/shared/ExtensionMessage"
 import { Logger } from "@/shared/services/Logger"
-import { readJsonl, readJsonlHeadValues, readJsonlTailValues } from "../backend/jsonl/jsonl-utils"
+import { readJsonl } from "../backend/jsonl/jsonl-utils"
 import type { UiMessageRowStore } from "./UiMessageRowStore"
 import { isStorableMessage, type UiMessageRecord } from "./UiMessageRows"
 
@@ -68,33 +68,6 @@ export async function readLegacyUiMessages(instanceRoot: string): Promise<Legacy
     const file = await firstLegacyFile(instanceRoot)
     if (!file) return undefined
     return { file, messages: latestPerTimestamp((await readJsonl<unknown>(file)).filter(isStorableMessage)) }
-}
-
-/**
- * Read only the title and a bounded recent window from a legacy JSONL history.
- *
- * A legacy JSON array returns undefined so its compatibility reader can keep the
- * existing full-document semantics. The canonical Task writer still performs
- * the complete import when the user promotes the History display.
- */
-export async function readLegacyUiMessageWindow(
-    instanceRoot: string,
-    recentMessageCount: number,
-): Promise<LegacyUiMessages | undefined> {
-    const file = await firstLegacyFile(instanceRoot)
-    if (!file || path.extname(file) !== ".jsonl") return undefined
-    const tailLineCount = Math.max(1, Math.trunc(recentMessageCount)) * 4
-    const [head, tail] = await Promise.all([
-        readJsonlHeadValues<unknown>(file, 1),
-        readJsonlTailValues<unknown>(file, tailLineCount),
-    ])
-    if (!head || !tail) return undefined
-
-    const messages = latestPerTimestamp([...head, ...tail].filter(isStorableMessage))
-    if (messages.length <= recentMessageCount + 1) return { file, messages }
-    const title = messages[0]
-    const recent = messages.slice(-recentMessageCount)
-    return { file, messages: recent.some((message) => message.ts === title.ts) ? recent : [title, ...recent] }
 }
 
 /**

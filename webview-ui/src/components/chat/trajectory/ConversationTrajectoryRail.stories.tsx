@@ -183,7 +183,7 @@ function MockTurn({ turn: chatTurn }: { turn: TrajectoryTurn }) {
             <ul className="m-0 mt-2 flex list-none flex-col gap-1 p-0">
                 {chatTurn.toolUsage.map(({ tool, count }) => (
                     <li className="truncate font-mono text-xs text-description" key={tool}>
-                        {tool} ×{count}
+                        {tool} {count}
                     </li>
                 ))}
             </ul>

@@ -252,6 +252,13 @@ export interface ToolResultEnvelope {
      * places them after the result instead of inside it.
      */
     readonly documentPayloadRefs?: readonly string[]
+    /**
+     * See {@link ToolTerminalManifestEnvelope.feedbackInputRefs}. A result the
+     * answer to a restored tool dialog recorded is journaled on its own, so it
+     * carries the admitted reply here; a live result carries the ref until a
+     * manifest pairs it.
+     */
+    readonly feedbackInputRefs?: readonly string[]
 }
 
 /** One PDF the user attached, stored once and referenced by the result it belongs to. */
@@ -274,6 +281,14 @@ export interface ToolTerminalManifestEnvelope {
     }[]
     /** Raw result and approval-feedback payloads replaced by this ordered projection. */
     readonly supersededPayloadRefs: readonly string[]
+    /**
+     * Admitted `user_input` payloads that answered a call of this turn. Their
+     * model text already rides in the results above, so they are read only
+     * for admission metadata (explicit-instruction authority, lifecycle) and
+     * never rendered a second time. Absent on manifests written before
+     * answers carried admission, which simply grant nothing later.
+     */
+    readonly feedbackInputRefs?: readonly string[]
 }
 
 /**

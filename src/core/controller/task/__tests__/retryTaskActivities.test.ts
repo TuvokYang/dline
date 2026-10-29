@@ -23,6 +23,64 @@ function request(activityIds: string[], taskInstanceId = "open-1") {
 }
 
 describe("retryTaskActivities", () => {
+    it("loads persisted activities before deciding a reopened activity is retryable", async () => {
+        // A promoted runtime starts with an empty store; the record only exists after hydrate.
+        let hydrated = false
+        let liveRetryControl = false
+        const hydrate = vi.fn(async () => {
+            hydrated = true
+        })
+        const restoreSubagentActivityRetry = vi.fn(async () => {
+            liveRetryControl = true
+            return true
+        })
+        const retry = vi.fn(async (activityIds: string[]) => (liveRetryControl ? activityIds : []))
+        const session = createSessionFixture({
+            taskId: "task-1",
+            taskInstanceId: "open-1",
+            owners: {
+                activities: {
+                    hydrate,
+                    hasLiveRetryControl: vi.fn(() => liveRetryControl),
+                    isRetryable: vi.fn(() => hydrated),
+                    retry,
+                },
+                toolExecution: { restoreSubagentActivityRetry },
+            },
+        })
+
+        const response = await retryTaskActivities(controllerWith({ task: session }) as never, request(["subagent-reopened"]))
+
+        expect(response.retriedActivityIds).toEqual(["subagent-reopened"])
+        expect(hydrate).toHaveBeenCalledTimes(1)
+        expect(restoreSubagentActivityRetry).toHaveBeenCalledWith("subagent-reopened")
+    })
+
+    it("does not retry when a same-ID replacement opens while activities load", async () => {
+        let release!: () => void
+        const retry = vi.fn(async (activityIds: string[]) => activityIds)
+        const owners = {
+            activities: {
+                hydrate: vi.fn(
+                    () =>
+                        new Promise<void>((resolve) => {
+                            release = resolve
+                        }),
+                ),
+                hasLiveRetryControl: () => true,
+                isRetryable: () => true,
+                retry,
+            },
+        }
+        const session = createSessionFixture({ taskId: "task-1", taskInstanceId: "open-1", owners })
+        const controller = controllerWith<typeof session>({ task: session })
+        const pending = retryTaskActivities(controller as never, request(["job"]))
+        controller.task = createSessionFixture({ taskId: "task-1", taskInstanceId: "open-2", owners })
+        release()
+        await expect(pending).resolves.toMatchObject({ retriedActivityIds: [] })
+        expect(retry).not.toHaveBeenCalled()
+    })
+
     it("restores a persisted retry control before retrying a reopened activity", async () => {
         let liveRetryControl = false
         const restoreSubagentActivityRetry = vi.fn(async () => {
@@ -35,6 +93,7 @@ describe("retryTaskActivities", () => {
             taskInstanceId: "open-1",
             owners: {
                 activities: {
+                    hydrate: vi.fn(async () => undefined),
                     hasLiveRetryControl: vi.fn(() => liveRetryControl),
                     isRetryable: vi.fn(() => true),
                     retry,
@@ -57,7 +116,12 @@ describe("retryTaskActivities", () => {
             taskId: "task-1",
             taskInstanceId: "open-2",
             owners: {
-                activities: { hasLiveRetryControl: vi.fn(() => true), isRetryable: vi.fn(() => true), retry },
+                activities: {
+                    hydrate: vi.fn(async () => undefined),
+                    hasLiveRetryControl: vi.fn(() => true),
+                    isRetryable: vi.fn(() => true),
+                    retry,
+                },
                 toolExecution: { restoreSubagentActivityRetry: vi.fn(async () => true) },
             },
         })
@@ -94,6 +158,7 @@ describe("retryTaskActivities", () => {
             taskInstanceId: "open-1",
             owners: {
                 activities: {
+                    hydrate: vi.fn(async () => undefined),
                     hasLiveRetryControl: vi.fn(() => true),
                     isRetryable: vi.fn(() => true),
                     retry,
@@ -113,7 +178,9 @@ describe("retryTaskActivities", () => {
         const session = createSessionFixture({
             taskId: "task-1",
             taskInstanceId: "open-2",
-            owners: { activities: { hasLiveRetryControl: () => true, isRetryable: () => true, retry } },
+            owners: {
+                activities: { hydrate: async () => undefined, hasLiveRetryControl: () => true, isRetryable: () => true, retry },
+            },
         })
 
         const response = await retryTaskActivities(controllerWith({ task: session }) as never, request(["job"], "open-1"))
@@ -126,7 +193,7 @@ describe("retryTaskActivities", () => {
         let release!: () => void
         const retry = vi.fn(async (activityIds: string[]) => activityIds)
         const owners = {
-            activities: { hasLiveRetryControl: () => false, isRetryable: () => true, retry },
+            activities: { hydrate: async () => undefined, hasLiveRetryControl: () => false, isRetryable: () => true, retry },
             toolExecution: {
                 restoreSubagentActivityRetry: vi.fn(
                     () =>
@@ -139,6 +206,7 @@ describe("retryTaskActivities", () => {
         const session = createSessionFixture({ taskId: "task-1", taskInstanceId: "open-1", owners })
         const controller = controllerWith<typeof session>({ task: session })
         const pending = retryTaskActivities(controller as never, request(["job"]))
+        await vi.waitFor(() => expect(owners.toolExecution.restoreSubagentActivityRetry).toHaveBeenCalled())
         controller.task = createSessionFixture({ taskId: "task-1", taskInstanceId: "open-2", owners })
         release()
         await expect(pending).resolves.toMatchObject({ retriedActivityIds: [] })

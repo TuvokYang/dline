@@ -99,7 +99,7 @@ const CLAUDE_CODE_MOCK_TOKEN_EXPIRY_MS = 4_102_444_800_000
  * hands the command to a terminal whose output cannot be captured; that would make
  * command-output assertions measure host speed instead of the behavior under test.
  */
-const E2E_SHELL_INTEGRATION_TIMEOUT_MS = 30_000
+export const E2E_SHELL_INTEGRATION_TIMEOUT_MS = 30_000
 
 const PROVIDER_CONFIG_FIELDS: Record<string, string> = {
     anthropic: "anthropic",
