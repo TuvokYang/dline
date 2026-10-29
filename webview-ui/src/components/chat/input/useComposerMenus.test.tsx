@@ -164,18 +164,51 @@ describe("useComposerMenus slash menu", () => {
 
     it("closes on blur unless the blur came from clicking the menu", () => {
         const { view, type } = setup()
+        const editor = focusableEditor()
         type("/comp")
+        // Focus went to the body, as when the user clicks blank space in the webview.
+        editor.blur()
 
         act(() => {
             view.result.current.onMenuMouseDown()
-            view.result.current.onEditorBlur()
+            view.result.current.onEditorBlur(blurOf(editor))
         })
         expect(view.result.current.slash.open).toBe(true)
 
-        act(() => view.result.current.onEditorBlur())
+        act(() => view.result.current.onEditorBlur(blurOf(editor)))
+        expect(view.result.current.slash.open).toBe(false)
+    })
+
+    it("stays open when only the editor's window or frame loses focus", () => {
+        const { view, type } = setup()
+        const editor = focusableEditor()
+        editor.focus()
+        type("/comp")
+
+        // Another window taking focus blurs the editor but leaves it the document's focused element.
+        act(() => view.result.current.onEditorBlur(blurOf(editor)))
+        expect(view.result.current.slash.open).toBe(true)
+
+        const other = document.createElement("button")
+        document.body.append(other)
+        other.focus()
+        act(() => view.result.current.onEditorBlur(blurOf(editor, other)))
         expect(view.result.current.slash.open).toBe(false)
     })
 })
+
+/** A focusable stand-in for the editor root, attached so the document can focus it. */
+function focusableEditor(): HTMLElement {
+    const editor = document.createElement("div")
+    editor.tabIndex = 0
+    document.body.append(editor)
+    return editor
+}
+
+/** The blur React delivers for the editor, with the element focus moved to, if any. */
+function blurOf(editor: HTMLElement, relatedTarget: Element | null = null): React.FocusEvent<HTMLElement> {
+    return { currentTarget: editor, relatedTarget } as unknown as React.FocusEvent<HTMLElement>
+}
 
 describe("useComposerMenus mention menu", () => {
     it("opens on @ with the File row preselected", () => {

@@ -417,6 +417,12 @@ export class McpOAuthManager {
     private readonly creatingProviders = new Map<string, Promise<OAuthClientProvider>>()
     private readonly loopback = new McpOAuthLoopback()
     private readonly activeFlows = new Map<string, { coordinator: LocalOAuthFlowCoordinator<OAuthTokens>; flowId: string }>()
+    /**
+     * The latest coordinator per server, kept after its flow settles. A settled
+     * flow may still be closing its callback server, and the next flow binds the
+     * same registered port, so it waits for that release first.
+     */
+    private readonly lastCoordinators = new Map<string, LocalOAuthFlowCoordinator<OAuthTokens>>()
     private readonly leaseFor: (serverHash: string) => OAuthFlowLease
     private readonly openBrowser: (url: string) => Promise<void>
     private readonly onAuthorizationRequired: McpOAuthManagerOptions["onAuthorizationRequired"]
@@ -552,6 +558,8 @@ export class McpOAuthManager {
 
     async dispose(): Promise<void> {
         await Promise.all([...this.activeFlows.keys()].map((serverHash) => this.cancelActiveFlow(serverHash)))
+        await Promise.all([...this.lastCoordinators.values()].map((coordinator) => coordinator.dispose()))
+        this.lastCoordinators.clear()
         this.loopback.clear()
     }
 
@@ -595,11 +603,13 @@ export class McpOAuthManager {
         }
 
         await this.cancelActiveFlow(serverHash)
+        await this.lastCoordinators.get(serverHash)?.dispose()
         const coordinator = new LocalOAuthFlowCoordinator(strategy, {
             lease: this.leaseFor(serverHash),
             openExternal: this.openBrowser,
             timeoutMs: AUTHORIZATION_TIMEOUT_MS,
         })
+        this.lastCoordinators.set(serverHash, coordinator)
         let started: Awaited<ReturnType<typeof coordinator.startFlow>>
         try {
             started = await coordinator.startFlow({ profileId: serverHash })

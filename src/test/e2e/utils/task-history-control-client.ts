@@ -7,9 +7,25 @@ import type {
     TaskHistoryControlRequestInput,
     TaskHistoryControlResponse,
 } from "@/test/e2e-control/task-history-control"
-import { E2ETestHelper } from "./helpers"
 
 const CONTROL_RESPONSE_TIMEOUT_MS = 60_000
+/**
+ * The response is polled at a fixed short interval because callers time the round
+ * trip: a backed-off poll would round every measurement up to the next doubling of
+ * its wait, so a 640 ms response would read as about 1270 ms.
+ */
+const CONTROL_RESPONSE_POLL_MS = 10
+
+/** The parsed response, or undefined while it is absent or still being written. */
+async function readControlResponse(responsePath: string): Promise<TaskHistoryControlResponse | undefined> {
+    const content = await readFile(responsePath, "utf8").catch(() => undefined)
+    if (!content?.endsWith("\n")) return undefined
+    try {
+        return JSON.parse(content) as TaskHistoryControlResponse
+    } catch {
+        return undefined
+    }
+}
 
 export async function requestTaskHistoryControl(
     controlDirectory: string,
@@ -22,10 +38,13 @@ export async function requestTaskHistoryControl(
     const responsePath = path.join(controlDirectory, `${requestId}.response.json`)
     await writeFile(requestPath, `${JSON.stringify({ id: requestId, ...input })}\n`, "utf8")
     try {
-        return await E2ETestHelper.waitForValue(async () => {
-            const content = await readFile(responsePath, "utf8").catch(() => undefined)
-            return content ? (JSON.parse(content) as TaskHistoryControlResponse) : undefined
-        }, timeoutMs)
+        const deadline = Date.now() + timeoutMs
+        for (;;) {
+            const response = await readControlResponse(responsePath)
+            if (response) return response
+            if (Date.now() > deadline) throw new Error(`Task history control did not respond within ${timeoutMs}ms`)
+            await new Promise((resolve) => setTimeout(resolve, CONTROL_RESPONSE_POLL_MS))
+        }
     } finally {
         await Promise.all([rm(requestPath, { force: true }), rm(responsePath, { force: true })])
     }

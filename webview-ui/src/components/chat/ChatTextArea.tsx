@@ -508,8 +508,8 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
                         composerId={draftId}
                         decorate={decorate}
                         engine={engine}
-                        onBlur={() => {
-                            menus.onEditorBlur()
+                        onBlur={(event) => {
+                            menus.onEditorBlur(event)
                             setIsFocused(false)
                             onFocusChange?.(false)
                         }}

@@ -1,7 +1,7 @@
 // English prompts — key-value pairs only, no code logic.
 const prompts: Record<string, string> = {
     description:
-        "Request to edit an existing file using SEARCH/REPLACE blocks. PREFER this tool for all edits to existing files. Only use write_to_file for creating new files.",
+        "Request to edit an existing file using SEARCH/REPLACE blocks. Every file line matched by SEARCH is replaced in full by the REPLACE lines, so each REPLACE line must be the complete final line. PREFER this tool for all edits to existing files.",
     pathInstruction: `The workspace-relative path of the existing file to modify. @WORKSPACE_PATH_RULE@@MULTI_ROOT_HINT@ Use '..' segments only when the user has authorized a target outside every workspace.`,
     pathUsage: "Relative file path here",
     baseDiffInstructions: `One or more SEARCH/REPLACE blocks following this exact format:
@@ -21,8 +21,11 @@ Critical rules:
     * A block that matches several locations is rejected and the candidate line numbers are returned. Add more leading characters or a distinctive adjacent line, then retry.
     * Use multiple SEARCH/REPLACE blocks for multiple changes. List them in the order they appear in the file; they must not overlap.
 3. Every matched line is replaced in full, and REPLACE is inserted verbatim:
-    * Write every replacement line completely, including its exact indentation.
+    * A SEARCH line that is only a line prefix still selects the WHOLE file line. Everything after the prefix is deleted unless REPLACE writes it again.
+    * Write every REPLACE line as the complete final line: its exact indentation, the changed text, and the unchanged rest of the line. Never write only the changed fragment.
+    * Example: for the file line \`    retries: 3, // keep in sync with server.ts\`, SEARCH \`    retries: 3,\` with REPLACE \`    retries: 5,\` leaves \`    retries: 5,\` and deletes the comment. The correct REPLACE is \`    retries: 5, // keep in sync with server.ts\`.
     * Nothing from the matched lines is kept automatically: neither the indentation nor the unwritten rest of a prefix line.
+    * After editing a long line, re-read it and confirm that its ending is intact.
 4. SKIP ranges delete or rewrite a long range without copying it (saves output tokens):
     * In SEARCH, write the head line(s), then one line that is exactly \`....... SKIP\` (as many dots as your delimiter length), then the tail line(s):
 ------- SEARCH
@@ -81,7 +84,7 @@ replacement lines
 Rules:
 - Each SEARCH line must be a complete file line or the beginning of one (leading indentation may be omitted); never start in the middle of a line
 - Each SEARCH block must match exactly one location in the file
-- Matched lines are replaced in full, so REPLACE must contain complete lines with their indentation
+- Matched lines are replaced in full even when SEARCH gives only a line prefix, so each REPLACE line must be the complete final line, including its indentation and the unchanged rest of the line
 - You can include multiple SEARCH/REPLACE blocks in a single diff parameter
 - If you're unsure of the exact content, use read_file first to see the current file
 - If the diff was not empty but the operation still failed, re-read the file with read_file and copy the lines from it - never guess or reconstruct from memory.`,

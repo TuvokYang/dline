@@ -182,6 +182,7 @@
 - 新任务（new_task）审批等待期间重启 VS Code 后，重新打开任务并批准即可正常打开后继任务，不再被拒绝后由原任务继续执行
 - 新任务（new_task）交接时，原任务输入框中尚未发送的内容会带到后继任务的输入框
 - 在问题或任务完成的回复中输入 `/cmd:reportbug` 会正常进入问题报告流程，即使模型在提交前继续追问
+- 斜杠命令与 @ 提及菜单在焦点暂时移到其他窗口或 VS Code 其他区域时保持打开，回到输入框后可继续选择，不必重新输入
 
 ### Release
 - Insiders draft 每次生成后只保留最新一个并展示当前累计 dev 变更；pre-release 与 production Release notes 从对应 changelog 版本段落生成，缺失或为空时停止发布，并校验 production Release 只有一个正确命名且非空的 VSIX
