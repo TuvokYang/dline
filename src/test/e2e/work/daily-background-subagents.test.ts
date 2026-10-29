@@ -39,6 +39,8 @@ const TERMINAL_CAPTURE_MARKER = "WORK_VSCODE_TERMINAL_CAPTURE"
 const TERMINAL_REUSE_MARKER = "WORK_VSCODE_TERMINAL_REUSE"
 const FOREGROUND_COMMAND = `node -e "console.log('WORK_FOREGROUND_COMMAND_START'); console.log('WORK_FOREGROUND_COMMAND_END')"`
 const BACKGROUND_COMMAND = `node -e "console.log('WORK_BACKGROUND_COMMAND_START'); setTimeout(()=>console.log('WORK_BACKGROUND_COMMAND_END'),30000)"`
+/** Covers the pool's 60 s minimum warm-up budget plus one retry of a slow shell start. */
+const WARM_TERMINAL_READY_TIMEOUT_MS = 90_000
 
 interface TerminalPoolEvent {
     readonly index: number
@@ -505,6 +507,14 @@ e2e(
             await sendWorkMessage(sidebar, TASK_TEXT)
             taskStarted = true
             await expect(sidebar.getByText("WORK_DAILY_BACKGROUND_READY", { exact: true })).toBeVisible({ timeout: 60_000 })
+            // The journey asserts warm-pool reuse, so it starts once the pooled terminal is ready.
+            // A cold Windows PowerShell can take over 30 s to report shell integration on a fresh
+            // runner, far beyond the 4 s acquire window the terminal settings above configure.
+            await expect
+                .poll(async () => parseTerminalEvents(await E2ETestHelper.readDlineOutput(userDataDir), "warm").length, {
+                    timeout: WARM_TERMINAL_READY_TIMEOUT_MS,
+                })
+                .toBeGreaterThan(0)
 
             await sendWorkMessage(sidebar, TERMINAL_CAPTURE_REQUEST)
             await expectWorkMessageVisible(sidebar, "WORK_VSCODE_TERMINAL_CAPTURE_OK", { timeout: 60_000 })
