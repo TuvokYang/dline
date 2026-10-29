@@ -2,7 +2,7 @@ import { readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
-import { prepareWorkSession, sendWorkMessage, setWorkAutoApproveAction } from "@e2e/utils/work/session"
+import { expectWorkMessageVisible, prepareWorkSession, sendWorkMessage, setWorkAutoApproveAction } from "@e2e/utils/work/session"
 import { expect } from "@playwright/test"
 
 const TARGET = "openai-compatible-chat" as const
@@ -239,9 +239,7 @@ e2e(
         await expect(sidebar.locator('vscode-button[aria-label="Start New Task"]')).toBeVisible({
             timeout: 60_000,
         })
-        const scrollToBottom = sidebar.getByRole("button", { name: "Scroll to bottom", exact: true })
-        if (await scrollToBottom.isVisible()) await scrollToBottom.click()
-        await expect(sidebar.getByText(COMPLETE, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+        await expectWorkMessageVisible(sidebar, COMPLETE, { exact: false, timeout: 60_000 })
         await expect(resume).toHaveCount(0)
         await expect(cancel).toHaveCount(0)
 
@@ -253,9 +251,7 @@ e2e(
         await expect(historyRow).toBeVisible({ timeout: 60_000 })
         await historyRow.click()
         await expect(sidebar.getByText(TASK_TEXT, { exact: true }).first()).toBeVisible({ timeout: 60_000 })
-        const historyScrollToBottom = sidebar.getByRole("button", { name: "Scroll to bottom", exact: true })
-        if (await historyScrollToBottom.isVisible()) await historyScrollToBottom.click({ timeout: 60_000 })
-        await expect(sidebar.getByText(COMPLETE, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+        await expectWorkMessageVisible(sidebar, COMPLETE, { exact: false, timeout: 60_000 })
         await expect.poll(() => server.getRequestCount(TARGET)).toBe(12)
         const consumptions = server.getMockConsumptions(TARGET)
         expect(consumptions.map((entry) => entry.toolName)).toEqual([
