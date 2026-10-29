@@ -3,6 +3,7 @@ import * as path from "node:path"
 import type { MockApiConsumption } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { openSubagentCard, subagentCardByTask } from "@e2e/utils/subagent-card"
 import { expect, type Frame } from "@playwright/test"
 
 interface ProviderScenario {
@@ -160,15 +161,15 @@ for (const scenario of PROVIDER_SCENARIOS) {
 
         await sendTask(sidebar, `Run the ${scenario.title} provider-parity subagent.`)
         const approveButton = sidebar.getByText("Approve", { exact: true })
-        const subagentTaskRow = sidebar.getByRole("heading", { name: subagentTask, exact: true }).last()
-        await expect(approveButton.or(subagentTaskRow)).toBeVisible({ timeout: 60_000 })
+        const subagentCard = subagentCardByTask(sidebar, subagentTask)
+        await expect(approveButton.or(subagentCard)).toBeVisible({ timeout: 60_000 })
         if (await approveButton.isVisible()) await approveButton.click()
         await expect(sidebar.getByText(parentResult, { exact: false }).last()).toBeVisible({ timeout: 120_000 })
 
-        const subagentCard = subagentTaskRow.locator("xpath=ancestor::*[@data-testid='subagent-item'][1]")
         await expect(subagentCard.getByTestId("subagent-metrics")).toContainText("3 tools")
         await expect(subagentCard.getByTestId("subagent-metrics")).toContainText("In:30")
         await expect(subagentCard.getByTestId("subagent-metrics")).toContainText("Out:6")
+        await openSubagentCard(subagentCard)
         await expect(subagentCard.getByRole("button", { name: "Collapse subagent tools" })).toContainText("Tools (3)")
         const toolSteps = subagentCard.getByTestId("subagent-tool-step")
         await expect(toolSteps).toHaveCount(3)
@@ -269,15 +270,15 @@ e2e(
 
             await sendTask(sidebar, "Run the Anthropic XML provider-parity subagent.")
             const approveButton = sidebar.getByText("Approve", { exact: true })
-            const subagentTaskRow = sidebar.getByRole("heading", { name: subagentTask, exact: true }).last()
-            await expect(approveButton.or(subagentTaskRow)).toBeVisible({ timeout: 60_000 })
+            const subagentCard = subagentCardByTask(sidebar, subagentTask)
+            await expect(approveButton.or(subagentCard)).toBeVisible({ timeout: 60_000 })
             if (await approveButton.isVisible()) await approveButton.click()
             await expect(sidebar.getByText(parentResult, { exact: false }).last()).toBeVisible({ timeout: 120_000 })
 
-            const subagentCard = subagentTaskRow.locator("xpath=ancestor::*[@data-testid='subagent-item'][1]")
             await expect(subagentCard.getByTestId("subagent-metrics")).toContainText("3 tools")
             await expect(subagentCard.getByTestId("subagent-metrics")).toContainText("In:30")
             await expect(subagentCard.getByTestId("subagent-metrics")).toContainText("Out:6")
+            await openSubagentCard(subagentCard)
             await expect(subagentCard.getByRole("button", { name: "Collapse subagent tools" })).toContainText("Tools (3)")
             const toolSteps = subagentCard.getByTestId("subagent-tool-step")
             await expect(toolSteps).toHaveCount(3)

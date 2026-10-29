@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { subagentCardByTask, subagentCardOpenControl } from "@e2e/utils/subagent-card"
 import {
     expectWorkMessageVisible,
     openWorkActivities,
@@ -117,8 +118,8 @@ async function switchToBackgroundExec(page: Page, sidebar: Frame): Promise<void>
 
 async function approveSubagentIfRequested(sidebar: Frame, task: string): Promise<void> {
     const approve = sidebar.getByRole("contentinfo").getByText("Approve", { exact: true })
-    const taskHeading = sidebar.getByRole("heading", { name: task, exact: true }).last()
-    await expect(approve.or(taskHeading)).toBeVisible({ timeout: 60_000 })
+    const card = subagentCardByTask(sidebar, task)
+    await expect(approve.or(card)).toBeVisible({ timeout: 60_000 })
     if (await approve.isVisible()) await approve.click()
 }
 
@@ -224,20 +225,26 @@ async function expectCompletedSubagentCard(
     result: string,
     executionMode: "Foreground" | "Background",
 ): Promise<Locator> {
-    const taskHeading = sidebar.getByRole("heading", { name: task, exact: true }).last()
-    await expect(taskHeading).toBeVisible({ timeout: 60_000 })
-    const card = taskHeading.locator("xpath=ancestor::*[@data-testid='subagent-item'][1]")
+    const card = subagentCardByTask(sidebar, task)
+    await expect(card).toBeVisible({ timeout: 60_000 })
     await expect(card.getByTestId("subagent-name")).toHaveText(AGENT_NAME)
     await expect(card.getByTestId("subagent-execution-mode")).toHaveText(executionMode)
+    // Cards open folded; open this one the way a reader does before reading its Work sections.
+    const openCard = subagentCardOpenControl(card)
+    const opened = await openCard.isVisible()
+    if (opened) {
+        await revealAndClickInChat(sidebar, openCard)
+    }
+    await expect(card.getByRole("heading", { name: task, exact: true })).toBeVisible()
     await expect(card.getByTestId("subagent-context-content")).toContainText(contextMarker)
     await expect(card.getByTestId("subagent-tool-step-name")).toHaveText(["read_file", "attempt_completion"])
     const showOutput = card.getByRole("button", { name: "Show subagent output", exact: true })
-    const revealed = await showOutput.isVisible()
-    if (revealed) {
+    const revealedOutput = await showOutput.isVisible()
+    if (revealedOutput) {
         await revealAndClickInChat(sidebar, showOutput)
     }
     await expect(card.getByTestId("subagent-output")).toContainText(result)
-    if (revealed) {
+    if (opened || revealedOutput) {
         await returnToLiveTail(sidebar)
     }
     return card
@@ -574,9 +581,8 @@ e2e(
             await sendWorkMessage(sidebar, BACKGROUND_SUBAGENT_REQUEST)
             await approveSubagentIfRequested(sidebar, BACKGROUND_CHILD_TASK)
             await expectWorkMessageVisible(sidebar, "WORK_BACKGROUND_SUBAGENT_STARTED", { timeout: 60_000 })
-            const backgroundTaskHeading = sidebar.getByRole("heading", { name: BACKGROUND_CHILD_TASK, exact: true }).last()
-            await expect(backgroundTaskHeading).toBeVisible()
-            const backgroundCard = backgroundTaskHeading.locator("xpath=ancestor::*[@data-testid='subagent-item'][1]")
+            const backgroundCard = subagentCardByTask(sidebar, BACKGROUND_CHILD_TASK)
+            await expect(backgroundCard).toBeVisible()
             await expect(backgroundCard.getByTestId("subagent-execution-mode")).toHaveText("Background")
 
             activities = await openWorkActivities(sidebar)

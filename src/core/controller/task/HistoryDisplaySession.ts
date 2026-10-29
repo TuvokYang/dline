@@ -9,7 +9,7 @@ import type { TaskActivityRecord } from "@shared/task-activity"
 import type { TaskLockStatus as CoreTaskLockStatus } from "@/core/locks/TaskLockService"
 import { InstanceDatabase, instanceDatabaseExists, openInstanceStorage, resolveInstanceLayout } from "@/core/storage/instance"
 import { UIMessage } from "@/core/storage/UIMessage"
-import type { UIMessageWindowPage, UIMessageWindowReader } from "@/core/storage/UIMessageWindowReader"
+import { centredPageStart, type UIMessageWindowPage, type UIMessageWindowReader } from "@/core/storage/UIMessageWindowReader"
 import { isInterruptedCommandRow } from "@/core/task/activity/interruptedCommandRows"
 import { TaskActivityPersistence } from "@/core/task/activity/TaskActivityPersistence"
 import { TaskActivityStore } from "@/core/task/activity/TaskActivityStore"
@@ -226,6 +226,21 @@ export class HistoryDisplaySession {
     /** Retained input projected from the same immutable snapshot as the history interaction. */
     getInputQueue(): readonly QueuedInputEntry[] {
         return this.inputQueue
+    }
+
+    /**
+     * The page of `count` messages centred on the one with `anchorTs`, located in
+     * the very sequence {@link fetchMessages} serves; an absent anchor yields an empty page.
+     */
+    async fetchAnchoredPage(anchorTs: number, count: number): Promise<UIMessageWindowPage & { anchorFound: boolean }> {
+        const totalCount = this.getMessageCount()
+        const anchor =
+            this.syntheticMessage?.ts === anchorTs
+                ? this.durableMessageCount
+                : await this.messageReader?.ordinalOfTimestamp(anchorTs)
+        if (anchor === undefined) return { messages: [], totalCount, startIndex: 0, anchorFound: false }
+        const start = centredPageStart(anchor, Math.max(0, Math.trunc(count)), totalCount)
+        return { ...(await this.fetchMessages(start, count)), anchorFound: true }
     }
 
     async fetchMessages(referenceIndex: number, count: number): Promise<UIMessageWindowPage> {

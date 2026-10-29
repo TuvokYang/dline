@@ -1,6 +1,7 @@
 import { Controller } from "@core/controller"
 import { TaskTeardownRecovery } from "@core/controller/task/TaskTeardownRecovery"
 import { OrchestratorController } from "@core/orchestrator/OrchestratorController"
+import { TrajectoryAdmission } from "@core/trajectory/TrajectorySource"
 import Mutex from "p-mutex"
 import { describe, expect, it, vi } from "vitest"
 
@@ -20,6 +21,7 @@ function closingController(dispose: () => Promise<void>) {
         task,
         taskLifecycleMutex: new Mutex(),
         taskTeardownRecovery: new TaskTeardownRecovery(),
+        trajectoryAdmission: new TrajectoryAdmission(),
         taskLockAcquired: true,
         lockPollGeneration: 0,
         lockTakeoverTimers: new Set(),

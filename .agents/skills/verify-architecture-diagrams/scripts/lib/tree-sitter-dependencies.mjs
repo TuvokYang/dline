@@ -7,10 +7,6 @@ import { languageForPath, supportedExtensions } from "./tree-sitter-runtime.mjs"
 
 const EXTENSIONS = supportedExtensions()
 
-function normalized(value) {
-    return value.replaceAll("\\", "/")
-}
-
 function isUnder(candidate, root) {
     const relative = path.relative(root, candidate)
     return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))
@@ -77,10 +73,126 @@ function classify(language, text) {
     return "unknown"
 }
 
-function candidateBases(repoRoot, importer, language, specifier) {
+// Copy JSONC text outside-string characters through `onCode`, string literals verbatim. tsconfig
+// path patterns such as "@/*" and targets such as "./a,}" must never be read as syntax.
+function scanJsonc(text, onCode) {
+    let output = ""
+    for (let index = 0; index < text.length; index++) {
+        const char = text[index]
+        if (char !== '"') {
+            const consumed = onCode(text, index)
+            output += consumed.emit
+            index = consumed.next
+            continue
+        }
+        let end = index + 1
+        while (end < text.length && text[end] !== '"') end += text[end] === "\\" ? 2 : 1
+        output += text.slice(index, end + 1)
+        index = end
+    }
+    return output
+}
+
+function stripComment(text, index) {
+    if (text[index] === "/" && text[index + 1] === "/") {
+        const end = text.indexOf("\n", index)
+        return end < 0 ? { emit: "", next: text.length } : { emit: "\n", next: end }
+    }
+    if (text[index] === "/" && text[index + 1] === "*") {
+        const end = text.indexOf("*/", index + 2)
+        return { emit: "", next: end < 0 ? text.length : end + 1 }
+    }
+    return { emit: text[index], next: index }
+}
+
+// Runs after comments are gone, so only whitespace can separate a trailing comma from its closer.
+function stripTrailingComma(text, index) {
+    if (text[index] !== ",") return { emit: text[index], next: index }
+    let ahead = index + 1
+    while (ahead < text.length && /\s/.test(text[ahead])) ahead++
+    return { emit: text[ahead] === "}" || text[ahead] === "]" ? "" : ",", next: index }
+}
+
+function parseJsonc(text) {
+    return JSON.parse(scanJsonc(scanJsonc(text, stripComment), stripTrailingComma))
+}
+
+function tsconfigPathEntries(dir) {
+    let names
+    try {
+        names = fs.readdirSync(dir).filter((name) => /^tsconfig(?:\..+)?\.json$/.test(name))
+    } catch {
+        return null
+    }
+    // tsconfig.json first, then siblings by name, so resolution order is stable.
+    names.sort((left, right) => (left === "tsconfig.json" ? -1 : right === "tsconfig.json" ? 1 : left.localeCompare(right)))
+    let entries = null
+    for (const name of names) {
+        let options
+        try {
+            options = parseJsonc(fs.readFileSync(path.join(dir, name), "utf8"))?.compilerOptions
+        } catch {
+            continue
+        }
+        if (!options?.paths || typeof options.paths !== "object") continue
+        const baseDir = path.resolve(dir, typeof options.baseUrl === "string" ? options.baseUrl : ".")
+        for (const [pattern, targets] of Object.entries(options.paths)) {
+            if (!Array.isArray(targets)) continue
+            entries ??= []
+            entries.push({
+                pattern,
+                targets: targets.filter((target) => typeof target === "string").map((target) => path.resolve(baseDir, target)),
+            })
+        }
+    }
+    return entries
+}
+
+// TypeScript `compilerOptions.paths` aliases come from the importer's nearest ancestor directory
+// that declares any. Every tsconfig*.json in that directory contributes, because solution-style
+// roots keep the real mapping in a sibling such as tsconfig.app.json. `extends` is not followed.
+function createAliasResolver(repoRoot) {
+    const byDirectory = new Map()
+    const entriesFor = (importer) => {
+        for (let dir = path.dirname(importer); isUnder(dir, repoRoot); ) {
+            if (!byDirectory.has(dir)) byDirectory.set(dir, tsconfigPathEntries(dir))
+            const entries = byDirectory.get(dir)
+            if (entries) return entries
+            const parent = path.dirname(dir)
+            if (parent === dir) break
+            dir = parent
+        }
+        return []
+    }
+    // Like TypeScript, one pattern wins (an exact pattern first, otherwise the wildcard with the
+    // longest prefix) and only that pattern's targets are tried, in order. A less specific pattern
+    // is never a fallback, so a winning alias whose targets are missing stays unresolved.
+    return (importer, specifier) => {
+        let winner = null
+        for (const { pattern, targets } of entriesFor(importer)) {
+            const star = pattern.indexOf("*")
+            if (star < 0) {
+                if (specifier === pattern) return targets
+                continue
+            }
+            const prefix = pattern.slice(0, star)
+            const suffix = pattern.slice(star + 1)
+            if (specifier.length < prefix.length + suffix.length) continue
+            if (!specifier.startsWith(prefix) || !specifier.endsWith(suffix)) continue
+            if (winner && winner.prefix.length >= prefix.length) continue
+            winner = { prefix, targets, captured: specifier.slice(prefix.length, specifier.length - suffix.length) }
+        }
+        return winner ? winner.targets.map((target) => path.resolve(target.replace("*", winner.captured))) : []
+    }
+}
+
+const NO_ALIASES = () => []
+
+function candidateBases(repoRoot, importer, language, specifier, aliasBases = NO_ALIASES) {
     const importerDir = path.dirname(importer)
     if (specifier.startsWith(".")) return [path.resolve(importerDir, specifier)]
     if (path.isAbsolute(specifier)) return [path.resolve(specifier)]
+    if (["typescript", "tsx", "javascript"].includes(language)) return aliasBases(importer, specifier)
     if (["c", "cpp", "ruby"].includes(language) && !specifier.includes(":")) {
         return [path.resolve(importerDir, specifier), path.resolve(repoRoot, specifier)]
     }
@@ -114,8 +226,8 @@ function suffixes(language) {
     return EXTENSIONS
 }
 
-function resolveWorkspace(repoRoot, importer, language, specifier) {
-    for (const base of candidateBases(repoRoot, importer, language, specifier)) {
+function resolveWorkspace(repoRoot, importer, language, specifier, aliasBases = NO_ALIASES) {
+    for (const base of candidateBases(repoRoot, importer, language, specifier, aliasBases)) {
         const candidates = [
             base,
             ...suffixes(language).map((suffix) => `${base}${suffix}`),
@@ -174,6 +286,7 @@ export async function buildDependencyClosure({ repoRoot = process.cwd(), seeds, 
     const facts = []
     const imports = []
     const diagnostics = []
+    const aliasBases = createAliasResolver(absoluteRoot)
     while (queue.length > 0) {
         const current = queue.shift()
         if (visited.has(current.file)) continue
@@ -205,7 +318,7 @@ export async function buildDependencyClosure({ repoRoot = process.cwd(), seeds, 
         for (const fact of importFacts(scan.facts)) {
             for (const specifier of specifiers(scan.file.language, fact.text)) {
                 const classification = classify(scan.file.language, fact.text)
-                const resolved = resolveWorkspace(absoluteRoot, current.file, scan.file.language, specifier)
+                const resolved = resolveWorkspace(absoluteRoot, current.file, scan.file.language, specifier, aliasBases)
                 const edge = Object.freeze({
                     importer: scan.file.path,
                     line: fact.start.line,
@@ -216,7 +329,7 @@ export async function buildDependencyClosure({ repoRoot = process.cwd(), seeds, 
                         ? Object.freeze({ kind: "workspace", path: canonicalSourcePath(absoluteRoot, resolved) })
                         : Object.freeze({
                               kind:
-                                  candidateBases(absoluteRoot, current.file, scan.file.language, specifier).length > 0
+                                  candidateBases(absoluteRoot, current.file, scan.file.language, specifier, aliasBases).length > 0
                                       ? "unresolved"
                                       : "external",
                               specifier,
@@ -226,8 +339,13 @@ export async function buildDependencyClosure({ repoRoot = process.cwd(), seeds, 
                 if (resolved && !visited.has(resolved)) queue.push({ file: resolved, depth: current.depth + 1 })
             }
         }
-        queue.sort((left, right) =>
-            canonicalSourcePath(absoluteRoot, left.file).localeCompare(canonicalSourcePath(absoluteRoot, right.file)),
+        // Breadth-first by depth, then path: an alphabetical-only order lets the dependencies of an early
+        // seed exhaust maxFiles before a later seed is ever scanned, which turns a truncated closure into
+        // missing facts for explicitly bound artifacts.
+        queue.sort(
+            (left, right) =>
+                left.depth - right.depth ||
+                canonicalSourcePath(absoluteRoot, left.file).localeCompare(canonicalSourcePath(absoluteRoot, right.file)),
         )
     }
     imports.sort(

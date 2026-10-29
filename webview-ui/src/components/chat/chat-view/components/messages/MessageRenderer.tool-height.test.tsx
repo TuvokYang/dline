@@ -3,7 +3,8 @@ import { render, screen } from "@testing-library/react"
 import React from "react"
 import { describe, expect, it, vi } from "vitest"
 import type { MessageHandlers } from "../../types/chatTypes"
-import { MessageRenderer } from "./MessageRenderer"
+import { ROW_TS_ATTRIBUTE } from "../../utils/viewportRowAnchor"
+import { createMessageRenderer, MessageRenderer } from "./MessageRenderer"
 
 void React
 
@@ -102,5 +103,31 @@ describe("MessageRenderer tool-group height boundary", () => {
 
         expect(screen.getByTestId("tool-group-scroll")).toHaveClass("max-h-[60vh]", "overflow-y-auto", "overscroll-x-contain")
         expect(screen.getByTestId("tool-group-renderer")).toBeInTheDocument()
+    })
+
+    it("places a grouped row in the conversation by its first message, which the row itself does not name", () => {
+        const group: UiMessage[] = [
+            { ts: 41, type: "say", say: "tool", text: JSON.stringify({ tool: "readFile", path: "a.ts" }) },
+            { ts: 42, type: "say", say: "tool", text: JSON.stringify({ tool: "readFile", path: "b.ts" }) },
+        ]
+        const renderRow = createMessageRenderer(
+            [group],
+            group,
+            {},
+            vi.fn(),
+            vi.fn(),
+            vi.fn(),
+            vi.fn(),
+            vi.fn(async () => undefined),
+            messageHandlers,
+            false,
+        )
+
+        const { container } = render(renderRow(0, group))
+
+        const rows = container.querySelectorAll(`[${ROW_TS_ATTRIBUTE}]`)
+        expect([...rows].map((row) => row.getAttribute(ROW_TS_ATTRIBUTE))).toEqual(["41"])
+        expect(rows[0]).toContainElement(screen.getByTestId("tool-group-renderer"))
+        expect(container.querySelector("[data-message-ts]")).toBeNull()
     })
 })

@@ -1,3 +1,4 @@
+import { type AggressiveRenderingLevel, DEFAULT_AGGRESSIVE_RENDERING } from "@shared/AggressiveRendering"
 import { AutoApprovalSettings, DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
 import { ApiProvider } from "@shared/api"
 import {
@@ -241,6 +242,8 @@ const USER_SETTINGS_FIELDS = {
     accountEnabled: { default: false as boolean },
     preferredLanguage: { default: "English" as string },
     chatInputSendShortcut: { default: DEFAULT_CHAT_INPUT_SEND_SHORTCUT as ChatInputSendShortcut },
+    // The user's chat folding level; effective only while the aggressive_rendering rollout flag is on.
+    aggressiveRendering: { default: DEFAULT_AGGRESSIVE_RENDERING as AggressiveRenderingLevel },
     mode: { default: "act" as Mode },
     focusChainSettings: { default: DEFAULT_FOCUS_CHAIN_SETTINGS as FocusChainSettings },
     customPrompt: { default: undefined as "compact" | undefined },

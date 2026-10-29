@@ -20,6 +20,7 @@ import { clearRemoteConfig } from "@/core/storage/remote-config/utils"
 import { accountFeatureGate } from "@/services/account/accountFeatureGate"
 import { recordPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
+import { isAggressiveRenderingLevel } from "@/shared/AggressiveRendering"
 import { isChatInputSendShortcut } from "@/shared/ChatInputSendShortcut"
 import { McpDisplayMode } from "@/shared/McpDisplayMode"
 import { Logger } from "@/shared/services/Logger"
@@ -185,6 +186,13 @@ export async function updateSettings(controller: Controller, request: UpdateSett
                 throw new Error(`Invalid chat input send shortcut: ${request.chatInputSendShortcut}`)
             }
             controller.stateManager.setGlobalState("chatInputSendShortcut", request.chatInputSendShortcut)
+        }
+
+        if (request.aggressiveRendering !== undefined) {
+            if (!isAggressiveRenderingLevel(request.aggressiveRendering)) {
+                throw new Error(`Invalid aggressive rendering level: ${request.aggressiveRendering}`)
+            }
+            controller.stateManager.setGlobalState("aggressiveRendering", request.aggressiveRendering)
         }
 
         // Update terminal timeout setting

@@ -249,6 +249,7 @@ message Settings {
   optional bool account_enabled = 255;
   optional string workspace_mcp_tool_auto_approve = 256;
   optional bool external_file_checkpoints_enabled = 257;
+  optional string aggressive_rendering = 258;
 }
 
 // Account usage quota for rate-limited providers (e.g., Codex, Copilot)
@@ -521,6 +522,7 @@ message UpdateSettingsRequest {
   optional bool mcp_tools_on_demand_enabled = 65;
   optional bool account_enabled = 66;
   optional bool external_file_checkpoints_enabled = 67;
+  optional string aggressive_rendering = 68;
 }
 
 message UpdateTerminalConnectionTimeoutRequest {

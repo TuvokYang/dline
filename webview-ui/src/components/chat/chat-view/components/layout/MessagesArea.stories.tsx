@@ -88,6 +88,7 @@ function ScrollFixture({ initialMessages = INITIAL_MESSAGES }: ScrollFixtureProp
                 totalCount: messages.length,
                 taskId,
                 taskInstanceId,
+                anchorFound: false,
             }
         }
         return () => {

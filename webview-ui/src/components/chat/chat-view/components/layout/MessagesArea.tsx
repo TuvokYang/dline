@@ -4,15 +4,17 @@ import type React from "react"
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { Virtuoso } from "react-virtuoso"
 import { StickyUserMessage } from "@/components/chat/task-header/StickyUserMessage"
+import { TrajectoryRailOverlay } from "@/components/chat/trajectory/TrajectoryRailOverlay"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { preferHeldCopies } from "@/context/messageWindowSync"
 import { cn } from "@/lib/utils"
-import { fetchTaskMessages, getTaskViewKey } from "@/services/task-messages"
+import { fetchAnchoredTaskMessages, fetchTaskMessages, getTaskViewKey } from "@/services/task-messages"
 import { isApiReqActive } from "@/utils/streaming"
 
 import { useBrowsingScrollAnchor } from "../../hooks/useBrowsingScrollAnchor"
-import type { ChatState, MessageHandlers, ScrollBehavior } from "../../types/chatTypes"
+import type { ChatState, FoldExpansion, MessageHandlers, ScrollBehavior } from "../../types/chatTypes"
 import { isToolActivityRow } from "../../utils/chatRowKinds"
+import { createMessageWindowGeneration } from "../../utils/messageWindowGeneration"
 import {
     DEFAULT_MESSAGE_WINDOW_LIMITS,
     isWholeConversationLoaded,
@@ -30,6 +32,7 @@ import { nestedScrollerConsumesWheel } from "../../utils/scrollUtils"
 import { findFirstVisibleMessage } from "../../utils/viewportRowAnchor"
 import { decideWindowGrowth, SCROLL_SETTLE_MS } from "../../utils/windowGrowthTiming"
 import { createMessageRenderer } from "../messages/MessageRenderer"
+import { type AnchoredPage, type JumpAlign, type JumpToMessagePort, useJumpToMessage } from "./useJumpToMessage"
 
 const LOAD_COUNT = DEFAULT_MESSAGE_WINDOW_LIMITS.loadCount
 /**
@@ -141,7 +144,8 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
         scheduleRestore: scheduleBrowsingViewportAnchorRestore,
         release: releaseBrowsingViewportAnchor,
     } = useBrowsingScrollAnchor(clineMessages, taskKey, scroller, scrollBehavior)
-    const windowVersionRef = useRef(0)
+    // Paging captures it, navigation advances it; see messageWindowGeneration.
+    const [windowGeneration] = useState(createMessageWindowGeneration)
     const edgeJumpInFlightRef = useRef<ScrollEdge | null>(null)
 
     // Floating scroll-to-bottom/top button state
@@ -171,7 +175,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
     useLayoutEffect(() => {
         void taskKey
         scrollBehavior.disableAutoScrollRef.current = false
-        windowVersionRef.current += 1
+        windowGeneration.advance()
         inflightRef.current.clear()
         pendingEdgeScrollRef.current = null
         pendingMergeAnchorRef.current = null
@@ -181,14 +185,15 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
         tailMessageSnapshotRef.current = null
         scrollBehavior.cancelProgrammaticScroll()
         return () => {
-            windowVersionRef.current += 1
+            windowGeneration.advance()
         }
-    }, [taskKey, scrollBehavior.cancelProgrammaticScroll, scrollBehavior.disableAutoScrollRef])
+    }, [taskKey, scrollBehavior.cancelProgrammaticScroll, scrollBehavior.disableAutoScrollRef, windowGeneration])
 
     const {
         virtuosoRef,
         scrollContainerRef,
         toggleRowExpansion,
+        toggleFoldExpansion,
         handleRowHeightChange,
         setIsAtBottom,
         setShowScrollToBottom,
@@ -513,18 +518,11 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
         }
     }, [currentMessageWindow, disableAutoScrollRef, scrollToLoadedEdge, tailMessageSnapshot])
 
-    const scrolledPastUserMessageRowOffset = useMemo(() => {
-        if (!scrolledPastUserMessage) return -1
-        return findRowOffsetByMessageTs(scrolledPastUserMessage.ts)
-    }, [findRowOffsetByMessageTs, scrolledPastUserMessage])
-
-    const handleScrollToUserMessage = useCallback(() => {
-        if (scrolledPastUserMessageRowOffset >= 0) {
-            scrollToRowOffset(scrolledPastUserMessageRowOffset, "center")
-        }
-    }, [scrolledPastUserMessageRowOffset, scrollToRowOffset])
-
-    const { expandedRows, setActiveQuote, setInputValue } = chatState
+    const { expandedRows, expandedFolds, setActiveQuote, setInputValue } = chatState
+    const foldExpansion = useMemo<FoldExpansion>(
+        () => ({ expanded: expandedFolds, toggle: toggleFoldExpansion }),
+        [expandedFolds, toggleFoldExpansion],
+    )
     const addToInput = useCallback(
         (text: string) => setInputValue((current) => (current ? `${current}\n${text}\n` : `${text}\n`)),
         [setInputValue],
@@ -589,6 +587,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
             onFollowupOptionSelect,
             messageHandlers,
             false,
+            foldExpansion,
         )
 
         // Wrap to handle the empty placeholder row — returns a 1px invisible
@@ -616,6 +615,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
         setActiveQuote,
         onFollowupOptionSelect,
         messageHandlers,
+        foldExpansion,
     ])
 
     const virtuosoComponents = useMemo(
@@ -649,11 +649,13 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 
     const fetchAndMerge = useCallback(
         async (start: number, count: number, side: WindowSide) => {
+            // A page cut for the window being replaced could only be dropped or merged into the wrong one.
+            if (windowGeneration.replacementPending) return false
             const key = `${start}:${count}`
             if (inflightRef.current.has(key)) return false
 
             inflightRef.current.add(key)
-            const requestVersion = windowVersionRef.current
+            const requestVersion = windowGeneration.capture()
 
             try {
                 const resp = await fetchTaskMessages(taskViewState, start, count)
@@ -661,7 +663,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                 const msgs = resp.messages.map((message) => convertProtoToClineMessage(message))
                 const si = resp.startIndex
 
-                if (requestVersion !== windowVersionRef.current) return false
+                if (!windowGeneration.isCurrent(requestVersion)) return false
                 if (msgs.length === 0) return false
 
                 // Read immediately before the state update so the anchor matches
@@ -705,7 +707,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                 if (taskKeyRef.current === taskKey) inflightRef.current.delete(key)
             }
         },
-        [readMergeAnchor, setClineMessages, setFirstItemIndex, taskViewState, taskKey],
+        [readMergeAnchor, setClineMessages, setFirstItemIndex, taskViewState, taskKey, windowGeneration],
     )
 
     const requestWindowExtensions = useCallback(
@@ -796,13 +798,26 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
         }
     }, [])
 
+    /** Replace the loaded window with a page that is not adjacent to it. */
+    const replaceMessageWindow = useCallback(
+        (messages: UiMessage[], startIndex: number) => {
+            const nextFirstItemIndex = Math.max(0, startIndex)
+            firstItemIndexRef.current = nextFirstItemIndex
+            clineMessagesLengthRef.current = messages.length
+            // The page is a snapshot older than its arrival: a row the stream
+            // already moved past keeps that copy.
+            setClineMessages((prev) => preferHeldCopies(prev, messages))
+            setFirstItemIndex(nextFirstItemIndex)
+        },
+        [setClineMessages, setFirstItemIndex],
+    )
+
     const jumpToEdge = useCallback(
         async (edge: ScrollEdge) => {
             if (edgeJumpInFlightRef.current === edge) return
 
             edgeJumpInFlightRef.current = edge
-            windowVersionRef.current += 1
-            const requestVersion = windowVersionRef.current
+            const requestVersion = windowGeneration.replace()
             inflightRef.current.clear()
             latestVisibleMessageRangeRef.current = null
             latestExtensionRangeRef.current = null
@@ -811,37 +826,112 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 
             try {
                 const resp = await fetchTaskMessages(taskViewState, edge === "top" ? 0 : -1, LOAD_COUNT)
-                if (taskKeyRef.current !== taskKey || requestVersion !== windowVersionRef.current) return
+                if (taskKeyRef.current !== taskKey || !windowGeneration.isCurrent(requestVersion)) return
 
                 const converted = resp.messages.map((message) => convertProtoToClineMessage(message))
-                const nextFirstItemIndex = Math.max(0, resp.startIndex)
-
-                firstItemIndexRef.current = nextFirstItemIndex
-                clineMessagesLengthRef.current = converted.length
-                // The jump replaces the window, but the page is a snapshot older than
-                // its arrival: a row the stream already moved past keeps that copy.
-                setClineMessages((prev) => preferHeldCopies(prev, converted))
-                setFirstItemIndex(nextFirstItemIndex)
+                replaceMessageWindow(converted, resp.startIndex)
 
                 if (converted.length === 0) {
                     pendingEdgeScrollRef.current = null
                 }
             } catch (e) {
-                if (taskKeyRef.current !== taskKey || requestVersion !== windowVersionRef.current) return
+                if (taskKeyRef.current !== taskKey || !windowGeneration.isCurrent(requestVersion)) return
                 pendingEdgeScrollRef.current = null
                 console.error("fetchMessage:", e)
             } finally {
+                windowGeneration.settle(requestVersion)
                 if (
                     taskKeyRef.current === taskKey &&
-                    requestVersion === windowVersionRef.current &&
+                    windowGeneration.isCurrent(requestVersion) &&
                     edgeJumpInFlightRef.current === edge
                 ) {
                     edgeJumpInFlightRef.current = null
                 }
             }
         },
-        [setClineMessages, setFirstItemIndex, taskViewState, taskKey],
+        [replaceMessageWindow, taskViewState, taskKey, windowGeneration],
     )
+
+    const enterBrowsingForJump = useCallback(() => {
+        userScrollIntentRef.current = null
+        disableAutoScrollRef.current = true
+        cancelProgrammaticScroll()
+        // The jump owns the position now; a restore queued for the old view would pull it back.
+        releaseBrowsingViewportAnchor()
+        edgeJumpInFlightRef.current = null
+        pendingEdgeScrollRef.current = null
+        pendingMergeAnchorRef.current = null
+        latestVisibleMessageRangeRef.current = null
+        latestExtensionRangeRef.current = null
+        deferredGrowthRef.current = null
+        inflightRef.current.clear()
+    }, [cancelProgrammaticScroll, disableAutoScrollRef, releaseBrowsingViewportAnchor])
+
+    // Read when a scroll retry runs, which can be after the rows have changed again.
+    const findRowOffsetByMessageTsRef = useRef(findRowOffsetByMessageTs)
+    findRowOffsetByMessageTsRef.current = findRowOffsetByMessageTs
+
+    const scrollToMessage = useCallback(
+        (ts: number, behavior: "auto" | "smooth", align: JumpAlign, isStillWanted: () => boolean) => {
+            // Only a row the list has laid out has a measured position. A smooth scroll towards
+            // any other row travels through estimated heights and can stop short, so it jumps
+            // and keeps re-targeting while the rows it passes are measured, as a replaced window does.
+            const smooth = behavior === "smooth" && scroller?.querySelector(`[data-message-ts="${ts}"]`) != null
+            requestProgrammaticScroll({
+                run: () => {
+                    const rowOffset = findRowOffsetByMessageTsRef.current(ts)
+                    if (rowOffset >= 0) scrollToRowOffset(rowOffset, align, smooth ? "smooth" : "auto")
+                },
+                priority: smooth ? "user" : "layout",
+                retryDelaysMs: smooth ? undefined : LAYOUT_SETTLE_RETRY_MS,
+                isStillWanted,
+            })
+        },
+        [requestProgrammaticScroll, scrollToRowOffset, scroller],
+    )
+
+    const isMessageLoaded = useCallback((ts: number) => findRowOffsetByMessageTs(ts) >= 0, [findRowOffsetByMessageTs])
+
+    const fetchAnchoredPage = useCallback(
+        async (anchorTs: number): Promise<AnchoredPage> => {
+            const resp = await fetchAnchoredTaskMessages(taskViewState, anchorTs, LOAD_COUNT)
+            return {
+                messages: resp.messages.map((message) => convertProtoToClineMessage(message)),
+                startIndex: resp.startIndex,
+                anchorFound: resp.anchorFound,
+            }
+        },
+        [taskViewState],
+    )
+
+    const jumpPort = useMemo<JumpToMessagePort>(
+        () => ({
+            taskKey,
+            generation: windowGeneration,
+            isLoaded: isMessageLoaded,
+            scrollToMessage,
+            fetchAnchoredPage,
+            replaceWindow: (page) => replaceMessageWindow(page.messages, page.startIndex),
+            enterBrowsing: enterBrowsingForJump,
+        }),
+        [
+            enterBrowsingForJump,
+            fetchAnchoredPage,
+            isMessageLoaded,
+            replaceMessageWindow,
+            scrollToMessage,
+            taskKey,
+            windowGeneration,
+        ],
+    )
+    const jumpToMessage = useJumpToMessage(jumpPort)
+
+    const selectTrajectoryTurn = useCallback((anchorTs: number) => void jumpToMessage(anchorTs), [jumpToMessage])
+
+    // A jump like the rail's, so a rail jump still fetching is superseded instead of replacing the window afterwards.
+    const handleScrollToUserMessage = useCallback(() => {
+        if (scrolledPastUserMessage) void jumpToMessage(scrolledPastUserMessage.ts, "center")
+    }, [jumpToMessage, scrolledPastUserMessage])
 
     const handleRangeChanged = useCallback(
         (range: { startIndex: number; endIndex: number }) => {
@@ -1081,6 +1171,13 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                     style={{ overflowAnchor: "none" }}
                     totalCount={visibleGroupedMessages.length}
                     totalListHeightChanged={handleMeasuredLayoutChange}
+                />
+
+                <TrajectoryRailOverlay
+                    onSelectTurn={selectTrajectoryTurn}
+                    scroller={scroller}
+                    taskId={taskViewState?.taskId}
+                    taskInstanceId={taskViewState?.taskInstanceId}
                 />
 
                 {/* Floating scroll direction button — dims after 5s idle, stays armed */}

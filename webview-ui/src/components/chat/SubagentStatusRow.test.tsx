@@ -52,6 +52,13 @@ function makeMsg(overrides: Partial<UiMessage> = {}): UiMessage {
     }
 }
 
+/** Work cards open folded to their header; open each one so its Task, Tools, and Output render. */
+function openWorkCards() {
+    for (const header of screen.getAllByTestId("subagent-item-header")) {
+        fireEvent.click(within(header).getByRole("button", { name: /^Expand subagent / }))
+    }
+}
+
 describe("SubagentStatusRow", () => {
     beforeEach(() => {
         cancelTaskActivities.mockClear()
@@ -166,6 +173,48 @@ describe("SubagentStatusRow", () => {
         expect(rows).toHaveLength(2)
         expect(rows[0].textContent).toContain("Subagent 'missing-agent' was not found.")
         expect(rows[1].textContent).not.toContain("Subagent 'missing-agent' was not found.")
+    })
+
+    it("opens every Work card folded to a header that names its task", () => {
+        const items = [
+            { index: 1, jobId: "job-parser", prompt: "parser", task: "Inspect the parser", context: "ctx a" },
+            { index: 2, jobId: "job-lexer", prompt: "lexer", task: "Inspect the lexer", context: "ctx b" },
+        ].map((item) => ({
+            ...item,
+            status: "running",
+            toolCalls: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            totalCost: 0,
+            currency: "USD",
+            contextTokens: 0,
+            contextWindow: 0,
+            contextUsagePercentage: 0,
+        }))
+        const msg = makeMsg({ say: "subagent", text: JSON.stringify({ status: "running", items }) })
+
+        render(<SubagentStatusRow isLast={true} message={msg} />)
+
+        // The batch stays open; only each card folds.
+        expect(screen.getByRole("button", { name: "Collapse subagent status" })).toBeInTheDocument()
+        const cards = screen.getAllByTestId("subagent-item")
+        expect(cards).toHaveLength(2)
+        for (const card of cards) {
+            expect(within(card).queryByTestId("subagent-item-body")).not.toBeInTheDocument()
+            expect(within(card).getByTestId("subagent-name")).toHaveTextContent("default")
+        }
+        // Both cards carry the same subagent name, so only the summary tells them apart.
+        expect(cards.map((card) => within(card).getByTestId("subagent-item-summary").textContent)).toEqual([
+            "Inspect the parser",
+            "Inspect the lexer",
+        ])
+
+        fireEvent.click(within(cards[1]).getByRole("button", { name: "Expand subagent default" }))
+        expect(within(cards[1]).getByTestId("subagent-item-body")).toBeInTheDocument()
+        expect(within(cards[1]).getByRole("heading", { name: "Inspect the lexer" })).toBeInTheDocument()
+        // An open card shows its task in the body, so the header no longer repeats it.
+        expect(within(cards[1]).queryByTestId("subagent-item-summary")).not.toBeInTheDocument()
+        expect(within(cards[0]).queryByTestId("subagent-item-body")).not.toBeInTheDocument()
     })
 
     it("uses canonical live activity to keep cancellation available after resume", () => {
@@ -511,6 +560,7 @@ describe("SubagentStatusRow", () => {
         })
 
         render(<SubagentStatusRow isLast={true} message={msg} />)
+        openWorkCards()
 
         const item = screen.getByTestId("subagent-item")
         const name = screen.getByTestId("subagent-name")
@@ -590,6 +640,8 @@ describe("SubagentStatusRow", () => {
         })
 
         const { rerender } = render(<SubagentStatusRow isLast={true} message={msg} />)
+        openWorkCards()
+        expect(screen.getByTestId("subagent-item-body")).toBeInTheDocument()
         expect(screen.queryByText("read_file(path=README.md)")).not.toBeInTheDocument()
         expect(screen.queryAllByTestId("subagent-tool-step")).toHaveLength(0)
 
@@ -693,6 +745,7 @@ describe("SubagentStatusRow", () => {
         })
 
         render(<SubagentStatusRow isLast={true} message={msg} />)
+        openWorkCards()
 
         const toolSteps = screen.getAllByTestId("subagent-tool-step")
         expect(toolSteps).toHaveLength(2)
@@ -752,6 +805,7 @@ describe("SubagentStatusRow", () => {
         })
 
         render(<SubagentStatusRow isLast={true} message={msg} />)
+        openWorkCards()
         const item = screen.getByTestId("subagent-item")
         const tools = screen.getByRole("button", { name: "Collapse subagent tools" })
         const toggle = screen.getByRole("button", { name: "Show subagent output" })
@@ -822,6 +876,7 @@ describe("SubagentStatusRow", () => {
         })
 
         render(<SubagentStatusRow isLast={true} message={msg} />)
+        openWorkCards()
         const item = screen.getByTestId("subagent-item")
         const metrics = within(item).getByTestId("subagent-metrics")
         expect(metrics).toHaveClass("basis-full", "pl-8")
@@ -984,6 +1039,7 @@ describe("SubagentStatusRow", () => {
         })
 
         render(<SubagentStatusRow isLast={true} message={msg} />)
+        openWorkCards()
         const item = screen.getByTestId("subagent-item")
         const body = within(item).getByTestId("subagent-item-body")
         expect(body).toHaveClass("flex", "min-h-0", "flex-[0_1_auto]", "flex-col", "overflow-hidden")
@@ -1126,6 +1182,7 @@ describe("SubagentStatusRow", () => {
         })
 
         render(<SubagentStatusRow isLast={true} message={msg} />)
+        openWorkCards()
         const item = screen.getByTestId("subagent-item")
         expect(within(item).getByTestId("subagent-metrics")).toHaveTextContent("1 tool")
         expect(within(item).getByTestId("subagent-retry-unavailable-reason")).toHaveTextContent("no longer enabled")
@@ -1139,7 +1196,7 @@ describe("SubagentStatusRow", () => {
         expect(retryTimeline).not.toHaveTextContent("Retry 1/5")
     })
 
-    it("bounds and independently collapses each Work card while keeping controls available", async () => {
+    it("bounds and independently opens each folded Work card while keeping controls available", async () => {
         taskActivities.push(
             {
                 activityId: "job-runner",
@@ -1196,19 +1253,9 @@ describe("SubagentStatusRow", () => {
 
         expect(runner).toHaveClass("flex", "max-h-[30vh]", "flex-col", "overflow-hidden")
         expect(within(runner).getByTestId("subagent-item-header")).toHaveClass("shrink-0")
-        expect(within(runner).getByTestId("subagent-item-body")).toHaveClass(
-            "flex",
-            "min-h-0",
-            "flex-[0_1_auto]",
-            "flex-col",
-            "overflow-hidden",
-        )
-        expect(within(runner).getByTestId("subagent-item-body")).not.toHaveClass("overflow-y-auto")
-        expect(within(retryer).getByTestId("subagent-item-body")).toBeInTheDocument()
-
-        fireEvent.click(within(runner).getByRole("button", { name: "Collapse subagent runner" }))
+        // Both cards open folded, and a folded card keeps its status and controls.
         expect(within(runner).queryByTestId("subagent-item-body")).not.toBeInTheDocument()
-        expect(within(retryer).getByTestId("subagent-item-body")).toBeInTheDocument()
+        expect(within(retryer).queryByTestId("subagent-item-body")).not.toBeInTheDocument()
         expect(within(runner).getByTestId("subagent-name")).toHaveTextContent("runner")
         expect(within(runner).getByTestId("subagent-execution-mode")).toHaveTextContent("Foreground")
         expect(runner.querySelector(".lucide-loader-circle")).not.toBeNull()
@@ -1218,15 +1265,20 @@ describe("SubagentStatusRow", () => {
         fireEvent.click(within(runner).getByRole("button", { name: "Cancel" }))
         expect(finishTaskActivities).toHaveBeenCalledWith("task-1", ["job-runner"], "task-instance-1")
         expect(cancelTaskActivities).toHaveBeenCalledWith("task-1", ["job-runner"], "task-instance-1")
-        expect(within(runner).queryByTestId("subagent-item-body")).not.toBeInTheDocument()
-
-        fireEvent.click(within(retryer).getByRole("button", { name: "Collapse subagent retryer" }))
         const retryButton = within(retryer).getByRole("button", { name: "Retry" })
         fireEvent.click(retryButton)
         expect(retryTaskActivities).toHaveBeenCalledWith("task-1", ["job-retryer"], "task-instance-1")
+        expect(within(runner).queryByTestId("subagent-item-body")).not.toBeInTheDocument()
         expect(within(retryer).queryByTestId("subagent-item-body")).not.toBeInTheDocument()
-        fireEvent.click(within(retryer).getByRole("button", { name: "Expand subagent retryer" }))
-        expect(within(retryer).getByTestId("subagent-item-body")).toBeInTheDocument()
+
+        fireEvent.click(within(runner).getByRole("button", { name: "Expand subagent runner" }))
+        const runnerBody = within(runner).getByTestId("subagent-item-body")
+        expect(runnerBody).toHaveClass("flex", "min-h-0", "flex-[0_1_auto]", "flex-col", "overflow-hidden")
+        expect(runnerBody).not.toHaveClass("overflow-y-auto")
+        expect(within(retryer).queryByTestId("subagent-item-body")).not.toBeInTheDocument()
+
+        fireEvent.click(within(runner).getByRole("button", { name: "Collapse subagent runner" }))
+        expect(within(runner).queryByTestId("subagent-item-body")).not.toBeInTheDocument()
         await waitFor(() => {
             expect(finishButton).not.toBeDisabled()
             expect(retryButton).not.toBeDisabled()
@@ -1258,6 +1310,7 @@ describe("SubagentStatusRow", () => {
         })
 
         render(<SubagentStatusRow isLast={true} message={msg} />)
+        openWorkCards()
         fireEvent.click(screen.getByRole("button", { name: "Show subagent output" }))
 
         expect(screen.getByTestId("subagent-output").parentElement).toHaveClass("min-h-0", "overflow-y-auto")

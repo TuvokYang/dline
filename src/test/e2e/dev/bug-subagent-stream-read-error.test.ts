@@ -3,6 +3,7 @@ import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { type ComposerTextReaderWindow, installComposerTextReader } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { openSubagentCard, subagentCardByTask } from "@e2e/utils/subagent-card"
 import { expect, type Frame } from "@playwright/test"
 
 async function writeResponsesSubagent(workspaceDir: string, agentName: string): Promise<void> {
@@ -162,7 +163,7 @@ e2e(
 
         await sendTask(sidebar, "Reproduce the subagent stream_read_error lifecycle.")
         const approveButton = sidebar.getByText("Approve", { exact: true })
-        const childHeading = sidebar.getByRole("heading", { name: childTask, exact: true }).last()
+        const subagentCard = subagentCardByTask(sidebar, childTask)
         await expect(approveButton).toBeVisible({ timeout: 60_000 })
         const input = sidebar.getByTestId("chat-input")
         await input.fill(approvalFeedback)
@@ -176,11 +177,11 @@ e2e(
         const draftState = await stopReboundObserver(sidebar)
         expect(draftState.rebound).toBe(false)
         expect(draftState.inputValue).toBe("")
-        await expect(childHeading).toBeVisible()
-        const subagentCard = childHeading.locator("xpath=ancestor::*[@data-testid='subagent-item'][1]")
+        await expect(subagentCard).toBeVisible()
         await expect(subagentCard.getByRole("button", { name: "Retry", exact: true })).toHaveCount(0)
         await expect(subagentCard.getByRole("button", { name: "Finish", exact: true })).toHaveCount(0)
 
+        await openSubagentCard(subagentCard)
         const showOutput = subagentCard.getByRole("button", { name: "Show subagent output", exact: true })
         await expect(showOutput).toBeVisible()
         await showOutput.click()
@@ -280,17 +281,17 @@ e2e(
 
         await sendTask(sidebar, "Reproduce stream_read_error after visible subagent output.")
         const approveButton = sidebar.getByText("Approve", { exact: true })
-        const childHeading = sidebar.getByRole("heading", { name: childTask, exact: true }).last()
-        await expect(approveButton.or(childHeading)).toBeVisible({ timeout: 60_000 })
+        const subagentCard = subagentCardByTask(sidebar, childTask)
+        await expect(approveButton.or(subagentCard)).toBeVisible({ timeout: 60_000 })
         if (await approveButton.isVisible()) await approveButton.click()
         await expect(sidebar.getByText("E2E_STREAM_READ_ERROR_DIRECT_EXIT_OBSERVED", { exact: true })).toBeVisible({
             timeout: 60_000,
         })
 
-        const subagentCard = childHeading.locator("xpath=ancestor::*[@data-testid='subagent-item'][1]")
-        await expect(childHeading).toBeVisible()
+        await expect(subagentCard).toBeVisible()
         const retryButton = subagentCard.getByRole("button", { name: "Retry", exact: true })
         await expect(retryButton).toBeVisible()
+        await openSubagentCard(subagentCard)
         const showOutput = subagentCard.getByRole("button", { name: "Show subagent output", exact: true })
         await expect(showOutput).toBeVisible()
         await showOutput.click()

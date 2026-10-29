@@ -6,14 +6,55 @@ import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
 import { runWithSignalSpan, type SignalSpanHandle, startSignalSpan } from "@/services/telemetry/service/pipeline-port"
 import { currentSignalSpan } from "@/services/telemetry/service/trace-scope"
 import { Logger } from "@/shared/services/Logger"
+import { stableJsonStringify } from "@/shared/stable-json"
 import type { EntityFieldRef } from "../api/EntitySchema"
 import type {
     BufferedUnifyStoreChangeListener,
     BufferedUnifyStore as BufferedUnifyStoreContract,
     StagedTimestampMerge,
     UnifyStore,
+    UnifyStoreWriteHint,
 } from "../api/UnifyStore"
 import { asc } from "../api/UnifyStoreQuery"
+
+/**
+ * The replaceAll hint for writing `next` over `previous`, both encoded entities.
+ *
+ * `previous` must be what the committing transaction itself read: a local
+ * baseline may be stale, and an index past the real first change would hide
+ * that change from every derived projection.
+ */
+function writeHintAgainst<TEntity>(previous: readonly TEntity[], next: readonly TEntity[]): UnifyStoreWriteHint {
+    const shared = Math.min(previous.length, next.length)
+    for (let index = 0; index < shared; index++) {
+        if (previous[index] === next[index]) continue
+        if (stableJsonStringify(previous[index]) !== stableJsonStringify(next[index])) return { firstChangedIndex: index }
+    }
+    return { firstChangedIndex: shared }
+}
+
+/**
+ * Encodes the rows a transaction read before anything can touch them.
+ *
+ * A mapping may hand out its stored payload by reference (UI messages do), so a
+ * transform that edits an item in place also rewrites the entity it came from.
+ * Comparing against the entities after the transform would then see no change
+ * at the edited row and report a first change that is too late.
+ */
+function encodePreimage<TEntity>(entities: readonly TEntity[]): readonly string[] {
+    return entities.map((entity) => stableJsonStringify(entity))
+}
+
+function writeHintAgainstPreimage<TEntity>(preimage: readonly string[], next: readonly TEntity[]): UnifyStoreWriteHint {
+    const shared = Math.min(preimage.length, next.length)
+    for (let index = 0; index < shared; index++) {
+        if (preimage[index] !== stableJsonStringify(next[index])) return { firstChangedIndex: index }
+    }
+    return { firstChangedIndex: shared }
+}
+
+/** A rewrite whose baseline cannot be trusted describes nothing about what it replaced. */
+const UNTRUSTED_BASELINE_HINT: UnifyStoreWriteHint = Object.freeze({ firstChangedIndex: 0 })
 
 const L2_MAX_SIZE = 500
 const DEFAULT_FLUSH_INTERVAL_MS = 1_000
@@ -483,9 +524,11 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
             let result: TItem[] = []
             await this.store.transaction(async (transaction) => {
                 const entities = await transaction.query({ orderBy: [asc(this.mapping.ordinal)] })
+                const preimage = encodePreimage(entities)
                 const committed = this.projectReadItems(entities.map((entity) => this.mapping.toItem(entity))).items
                 result = transform(committed)
-                await transaction.replaceAll(result.map((item, ordinal) => this.mapping.toEntity(item, ordinal)))
+                const next = result.map((item, ordinal) => this.mapping.toEntity(item, ordinal))
+                await transaction.replaceAll(next, writeHintAgainstPreimage(preimage, next))
             })
             this.setCommittedState(result)
             this.projectedPersistedRows = false
@@ -792,7 +835,10 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
      * its line is gone.
      */
     private async rewriteFromMemory(): Promise<CommitOutcome<TItem>> {
-        await this.store.replaceAll(this.items.map((item, ordinal) => this.mapping.toEntity(item, ordinal)))
+        await this.store.replaceAll(
+            this.items.map((item, ordinal) => this.mapping.toEntity(item, ordinal)),
+            UNTRUSTED_BASELINE_HINT,
+        )
         this.projectedPersistedRows = false
         recordDiagnostic(DiagnosticDomain.Storage, "baseline_diverged", DiagnosticOutcome.Recovered, {
             reason: "interrupted_write",
@@ -827,7 +873,8 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
                 return { commit: "append", rewriteReason: "none", committed: merged, changed: true }
             }
             const rewriteReason = this.classifyRewriteReason(committed, merged)
-            await transaction.replaceAll(merged.map((item, ordinal) => this.mapping.toEntity(item, ordinal)))
+            const next = merged.map((item, ordinal) => this.mapping.toEntity(item, ordinal))
+            await transaction.replaceAll(next, writeHintAgainst(entities, next))
             this.projectedPersistedRows = false
             return { commit: "rewrite", rewriteReason, committed: merged, changed: true }
         })

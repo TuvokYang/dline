@@ -1,3 +1,4 @@
+import { DEFAULT_AGGRESSIVE_RENDERING_SETTING } from "@shared/AggressiveRendering"
 import { DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
 import {
     DEFAULT_AUTO_CONDENSE_MAX_CONTEXT_TOKENS,
@@ -370,6 +371,7 @@ export const ExtensionStateContextProvider: React.FC<{
         focusChainSettings: DEFAULT_FOCUS_CHAIN_SETTINGS,
         preferredLanguage: "English",
         chatInputSendShortcut: DEFAULT_CHAT_INPUT_SEND_SHORTCUT,
+        aggressiveRendering: DEFAULT_AGGRESSIVE_RENDERING_SETTING,
         mode: "act",
         platform: DEFAULT_PLATFORM,
         environment: Environment.production,

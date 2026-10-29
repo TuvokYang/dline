@@ -20,12 +20,15 @@ export enum ExperimentalFeatureFlag {
     ACCOUNT = "account",
     // Checkpoint roots outside the open workspace; runtime wiring is intentionally deferred
     EXTERNAL_FILE_CHECKPOINTS = "checkpoint-external-files",
+    // Folding a turn's activity rows in the chat; the rollout offers the setting, the user picks the level
+    AGGRESSIVE_RENDERING = "aggressive_rendering",
 }
 
 export const ExperimentalFeatureFlagDefaultValue: Partial<Record<ExperimentalFeatureFlag, FeatureFlagPayload>> = {
     [ExperimentalFeatureFlag.WORKTREES]: false,
     [ExperimentalFeatureFlag.ACCOUNT]: false,
     [ExperimentalFeatureFlag.EXTERNAL_FILE_CHECKPOINTS]: false,
+    [ExperimentalFeatureFlag.AGGRESSIVE_RENDERING]: false,
 }
 
 /**
@@ -50,6 +53,7 @@ export const REMOTE_ROLLOUT_FEATURE_FLAGS: readonly ExperimentalFeatureFlag[] = 
     ExperimentalFeatureFlag.ACCOUNT,
     ExperimentalFeatureFlag.WORKTREES,
     ExperimentalFeatureFlag.EXTERNAL_FILE_CHECKPOINTS,
+    ExperimentalFeatureFlag.AGGRESSIVE_RENDERING,
 ]
 
 export const EXPERIMENTAL_FEATURE_FLAGS = Object.values(ExperimentalFeatureFlag)

@@ -21,6 +21,12 @@ export interface ChatViewProps {
     showHistoryView: () => void
 }
 
+/** Which activity folds are expanded, and the toggle a fold header calls with its fold id. */
+export interface FoldExpansion {
+    expanded: Readonly<Record<string, boolean>>
+    toggle: (foldId: string) => void
+}
+
 /**
  * Chat state interface
  */
@@ -48,6 +54,9 @@ export interface ChatState {
     setSecondaryButtonText: React.Dispatch<React.SetStateAction<string | undefined>>
     expandedRows: Record<number, boolean>
     setExpandedRows: React.Dispatch<React.SetStateAction<Record<number, boolean>>>
+    /** Expansion of activity folds, keyed by fold id; separate from `expandedRows`, which is keyed by message ts. */
+    expandedFolds: Record<string, boolean>
+    setExpandedFolds: React.Dispatch<React.SetStateAction<Record<string, boolean>>>
 
     // Refs
     composerRef: React.RefObject<SemanticComposerEditorHandle>
@@ -113,6 +122,8 @@ export interface ScrollBehavior {
     scrollToBottomAuto: () => void
     scrollToMessage: (messageIndex: number) => void
     toggleRowExpansion: (ts: number, origin?: RowExpansionOrigin) => void
+    /** Toggles an activity fold by id; the reader takes the viewport first. */
+    toggleFoldExpansion: (foldId: string) => void
     handleRowHeightChange: (isTaller: boolean) => void
     showScrollToBottom: boolean
     setShowScrollToBottom: React.Dispatch<React.SetStateAction<boolean>>

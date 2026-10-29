@@ -12,12 +12,26 @@ export interface UnifyStoreResult<TEntity extends object> {
     readonly stats: UnifyStoreStats
 }
 
+/**
+ * Optional description of a `replaceAll`, computed by a caller that already holds
+ * the previous contents.
+ *
+ * `firstChangedIndex` is the first position whose record differs from what the
+ * collection held before the write in the same transaction; it equals the shorter
+ * length when one sequence is a prefix of the other. The hint never changes what
+ * is stored: a store must produce the same result with or without it, and a store
+ * that maintains derived state treats a missing hint as 0.
+ */
+export interface UnifyStoreWriteHint {
+    readonly firstChangedIndex: number
+}
+
 export interface UnifyStoreTransaction<TEntity extends object> {
     query(query?: UnifyStoreQuery<TEntity>): Promise<TEntity[]>
     insert(records: readonly TEntity[]): Promise<void>
     /** Insert records or replace the stored record with the same primary key; later duplicates in one batch win. */
     upsert(records: readonly TEntity[]): Promise<void>
-    replaceAll(records: readonly TEntity[]): Promise<void>
+    replaceAll(records: readonly TEntity[], hint?: UnifyStoreWriteHint): Promise<void>
 }
 
 /**
@@ -42,7 +56,7 @@ export interface UnifyStore<TEntity extends object> {
     insert(records: readonly TEntity[]): Promise<void>
     /** Insert records or replace the stored record with the same primary key; later duplicates in one batch win. */
     upsert(records: readonly TEntity[]): Promise<void>
-    replaceAll(records: readonly TEntity[]): Promise<void>
+    replaceAll(records: readonly TEntity[], hint?: UnifyStoreWriteHint): Promise<void>
     transaction<TResult>(operation: (transaction: UnifyStoreTransaction<TEntity>) => TResult | Promise<TResult>): Promise<TResult>
     stats(): Promise<UnifyStoreStats>
     close(): Promise<void>

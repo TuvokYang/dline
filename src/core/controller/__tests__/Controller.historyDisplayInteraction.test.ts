@@ -1,6 +1,7 @@
 import { Controller } from "@core/controller"
 import { TaskTeardownRecovery } from "@core/controller/task/TaskTeardownRecovery"
 import { createInitialTaskState, type TaskState } from "@core/task/kernel"
+import { TrajectoryAdmission } from "@core/trajectory/TrajectorySource"
 import { DispatchInteractionRequest, DispatchInteractionResponse } from "@shared/proto/dline/task"
 import Mutex from "p-mutex"
 import { describe, expect, it, vi } from "vitest"
@@ -56,6 +57,7 @@ function createPromotingController(continuation: Promise<void>): Controller {
     Object.assign(controller as unknown as Record<string, unknown>, {
         taskLifecycleMutex: new Mutex(),
         taskTeardownRecovery: new TaskTeardownRecovery(),
+        trajectoryAdmission: new TrajectoryAdmission(),
         historyDisplaySession: {
             taskId: "task-history",
             taskInstanceId: "opening-display",

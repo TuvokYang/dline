@@ -3,6 +3,7 @@ import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { openSubagentCard, subagentCardByTask } from "@e2e/utils/subagent-card"
 import { readTaskActivities, readTaskConversationText } from "@e2e/utils/task-instance-store"
 import { startFooterActionStabilityObserver, stopFooterActionStabilityObserver } from "@e2e/utils/ui-stability"
 import { expect, type Frame, type Page } from "@playwright/test"
@@ -1653,9 +1654,8 @@ e2e(
             timeout: 60_000,
         })
 
-        const taskHeading = sidebar.getByRole("heading", { name: subagentTask, exact: true }).last()
-        await expect(taskHeading).toBeVisible()
-        const subagentCard = taskHeading.locator("xpath=ancestor::*[@data-testid='subagent-item'][1]")
+        const subagentCard = subagentCardByTask(sidebar, subagentTask)
+        await expect(subagentCard).toBeVisible()
         await expect(subagentCard.getByTestId("subagent-name")).toHaveText("default")
         // A single foreground run is identified by its agent name; the "#n" index
         // only distinguishes items inside a batch.
@@ -1666,10 +1666,14 @@ e2e(
         await expect(itemHeader.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0)
         await expect(subagentCard.getByRole("button", { name: "Continue in Background", exact: true })).toHaveCount(0)
 
+        // The card opens folded to its header; its Work sections render once opened.
+        await expect(subagentCard.getByTestId("subagent-item-body")).toHaveCount(0)
+        await openSubagentCard(subagentCard)
+
         // TODO(BUGFIX-049): the Task block layout contract predates the
         // SubagentStatusRow popover rework and no longer matches the rendered DOM.
         // Redefine it against the current component before re-enabling.
-        await expect(taskHeading).toBeVisible()
+        await expect(subagentCard.getByRole("heading", { name: subagentTask, exact: true })).toBeVisible()
 
         const context = subagentCard.getByTestId("subagent-context")
         await expect(context).toContainText("Context")
@@ -2101,6 +2105,8 @@ Remain active until cancelled.`,
         await cancelButton.click()
         await expect(sidebar.getByText("Cancelled", { exact: true }).last()).toBeVisible({ timeout: 30_000 })
         await expect(sidebar.getByText("E2E_CANCELLED_BACKGROUND_SUBAGENT_MUST_NOT_COMPLETE", { exact: false })).toHaveCount(0)
+        // The output section lives in the card body, which opens on request.
+        await openSubagentCard(subagentCardByTask(sidebar, "E2E_BACKGROUND_SUBAGENT_CANCEL_TASK"))
         const showCancelledOutput = sidebar.getByRole("button", { name: "Show subagent output" }).last()
         await expect(showCancelledOutput).toBeVisible({ timeout: 30_000 })
         await showCancelledOutput.click()

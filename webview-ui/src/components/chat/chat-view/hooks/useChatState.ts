@@ -23,6 +23,8 @@ export function useChatState(messages: UiMessage[], taskId?: string): ChatState 
     const [primaryButtonText, setPrimaryButtonText] = useState<string | undefined>("Approve")
     const [secondaryButtonText, setSecondaryButtonText] = useState<string | undefined>("Reject")
     const [expandedRows, setExpandedRows] = useState<Record<number, boolean>>({})
+    // Fold ids are not message timestamps, so fold expansion has a key space of its own.
+    const [expandedFolds, setExpandedFolds] = useState<Record<string, boolean>>({})
 
     // Refs
     const composerRef = useRef<SemanticComposerEditorHandle>(null)
@@ -34,6 +36,7 @@ export function useChatState(messages: UiMessage[], taskId?: string): ChatState 
 
     const clearExpandedRows = useCallback(() => {
         setExpandedRows({})
+        setExpandedFolds({})
     }, [])
 
     // Reset state when starting new conversation
@@ -105,6 +108,8 @@ export function useChatState(messages: UiMessage[], taskId?: string): ChatState 
         setSecondaryButtonText,
         expandedRows,
         setExpandedRows,
+        expandedFolds,
+        setExpandedFolds,
 
         // Refs
         composerRef,

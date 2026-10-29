@@ -66,6 +66,8 @@ function createChatState(): ChatState {
         setSecondaryButtonText: vi.fn(),
         expandedRows: {},
         setExpandedRows: vi.fn(),
+        expandedFolds: {},
+        setExpandedFolds: vi.fn(),
         composerRef: { current: null },
         lastMessage: undefined,
         secondLastMessage: undefined,

@@ -27,6 +27,14 @@ describe("rowIdentity", () => {
 
         expect(rowIdentity(after)).toBe(rowIdentity(before))
     })
+
+    it("identifies an activity fold by its fold id, even when it starts with a tool group", () => {
+        const fold = [message(4), message(5), message(6)] as UiMessage[] & { _activityFoldId: string; _toolGroupId: string }
+        fold._activityFoldId = "fold:4"
+        fold._toolGroupId = "tool:4"
+
+        expect(rowIdentity(fold)).toBe("fold:4")
+    })
 })
 
 describe("leadingRowShift", () => {

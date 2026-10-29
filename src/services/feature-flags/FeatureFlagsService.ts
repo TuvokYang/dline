@@ -69,6 +69,10 @@ export class FeatureFlagsService {
         return this.getBooleanFlagEnabled(ExperimentalFeatureFlag.EXTERNAL_FILE_CHECKPOINTS)
     }
 
+    public getAggressiveRenderingEnabled(): boolean {
+        return this.getBooleanFlagEnabled(ExperimentalFeatureFlag.AGGRESSIVE_RENDERING)
+    }
+
     /**
      * Get the feature flags provider instance
      * @returns The current feature flags provider

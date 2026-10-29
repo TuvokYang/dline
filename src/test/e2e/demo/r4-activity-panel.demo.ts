@@ -4,6 +4,7 @@ import { expectComposerText } from "@e2e/utils/composer"
 import { expect } from "@playwright/test"
 import { E2E_PROFILE_NAMES } from "../utils/api-profile"
 import { E2ETestHelper } from "../utils/helpers"
+import { subagentCardByTask } from "../utils/subagent-card"
 import { demo } from "./utils/demo-fixture"
 import { STEP_SETTLE_MS, WINDOW_RECORDING } from "./utils/recording-presets"
 
@@ -105,8 +106,8 @@ demo(
             await expectComposerText(input, "")
 
             const approveButton = sidebar.getByText("Approve", { exact: true })
-            const childHeading = sidebar.getByRole("heading", { name: CHILD_TASK, exact: true }).last()
-            await expect(approveButton.or(childHeading)).toBeVisible({ timeout: 60_000 })
+            const childCard = subagentCardByTask(sidebar, CHILD_TASK)
+            await expect(approveButton.or(childCard)).toBeVisible({ timeout: 60_000 })
             if (await approveButton.isVisible()) await approveButton.click()
 
             await expect

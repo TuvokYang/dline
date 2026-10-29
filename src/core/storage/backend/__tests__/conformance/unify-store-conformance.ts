@@ -185,6 +185,33 @@ export function runUnifyStoreConformance(harness: UnifyStoreConformanceHarness):
         }
     })
 
+    it("stores the same records for replaceAll with and without a write hint", async () => {
+        try {
+            const plain = await open("replace-all-plain")
+            const hinted = await open("replace-all-hinted")
+            const initial = [new ConformanceEntity("a", "g", 10, 1, "a"), new ConformanceEntity("b", "g", 20, 1, "b")]
+            const next = [new ConformanceEntity("a", "g", 10, 1, "a"), new ConformanceEntity("c", "g", 30, 1, "c")]
+            await plain.insert(initial)
+            await hinted.insert(initial)
+
+            await plain.replaceAll(next)
+            // A deliberately wrong hint proves the store does not use it to skip work.
+            await hinted.replaceAll(next, { firstChangedIndex: 2 })
+            await plain.transaction((transaction) => transaction.replaceAll(initial))
+            await hinted.transaction((transaction) => transaction.replaceAll(initial, { firstChangedIndex: 1 }))
+
+            const project = (records: ConformanceEntity[]) => records.map((record) => [record.id, record.value])
+            const plainRecords = project((await plain.query()).records)
+            expect(plainRecords).toEqual([
+                ["a", "a"],
+                ["b", "b"],
+            ])
+            expect(project((await hinted.query()).records)).toEqual(plainRecords)
+        } finally {
+            await closeOpened()
+        }
+    })
+
     it("rolls back upserts made inside a failed transaction", async () => {
         try {
             const store = await open("upsert-rollback")

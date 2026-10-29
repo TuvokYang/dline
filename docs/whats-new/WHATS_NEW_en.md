@@ -15,6 +15,12 @@ Format rules, enforced by webview-ui/vite-whats-new.ts at build time:
   Unit tests enforce both.
 -->
 
+## 0.11.2
+
+- **Conversation trajectory rail**: while the chat scrolls, a column of short bars on the right marks each user turn; hover one to preview the turn and click it to jump there, even outside the loaded range.
+- **Manual compaction anywhere**: `/compact` shows one card per compaction and works while a task runs or a dialog waits, without sending an empty message.
+- **Unified task runtime and recovery**: task state is driven by runtime events and a reducer, so interruption, resume and handoff follow an explicit state machine instead of being inferred when a history task reopens.
+
 ## 0.11.1
 
 - **Unified task runtime and recovery**: task state is driven by runtime events and a reducer, so interruption, resume and handoff follow an explicit state machine instead of being inferred when a history task reopens.

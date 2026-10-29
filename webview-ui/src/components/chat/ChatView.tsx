@@ -44,7 +44,6 @@ import {
     ChatLayout,
     convertHtmlToMarkdown,
     filterVisibleMessages,
-    groupChatRows,
     InputSection,
     MessagesArea,
     TaskSection,
@@ -57,6 +56,7 @@ import {
 // Import utilities and hooks from the new structure
 import { PendingApprovalCard } from "./chat-view/components/messages/PendingApprovalCard"
 import { useComposerDraftKeepAlive } from "./chat-view/hooks/useComposerDraftKeepAlive"
+import { useGroupedChatRows } from "./chat-view/hooks/useGroupedChatRows"
 import { useSuccessorDraftTransfer } from "./chat-view/hooks/useSuccessorDraftTransfer"
 import { isTransitionRunning, useTransitionDraftRestore } from "./chat-view/hooks/useTransitionDraftRestore"
 import { withoutFooterOwnedApproval } from "./chat-view/utils/footerOwnedApproval"
@@ -106,6 +106,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         transitionDraft,
         modeSwitch,
         profileSwitch,
+        aggressiveRendering,
     } = useExtensionState()
     const [contentTab, setContentTab] = useState<TaskContentTab>("chat")
     const [focusedActivityId, setFocusedActivityId] = useState<string>()
@@ -190,7 +191,8 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
     // Retained input the user typed while the task was busy. The backend owns it;
     // this only projects it and forwards the user's changes.
     const inputQueue = useInputQueue(taskId)
-    const { composer, activeQuote, setActiveQuote, restoreDraft, expandedRows, setExpandedRows, composerRef } = chatState
+    const { composer, activeQuote, setActiveQuote, restoreDraft, expandedRows, setExpandedRows, setExpandedFolds, composerRef } =
+        chatState
     useStoppedReasoningExpansion(messages, taskViewState?.phase, taskId, setExpandedRows)
     const semanticCatalog = useInputSemanticCatalog()
     const draftSegments = composer.state.segments
@@ -516,10 +518,22 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         return focusChainSettings.enabled && !lastProgressMessageText
     }, [focusChainSettings.enabled, lastProgressMessageText])
 
-    const groupedMessages = useMemo(() => groupChatRows(modifiedMessages, visibleMessages), [modifiedMessages, visibleMessages])
+    const groupedMessages = useGroupedChatRows(
+        modifiedMessages,
+        visibleMessages,
+        aggressiveRendering,
+        taskViewState?.activeInteraction?.askMessageTs,
+    )
 
     // Use scroll behavior hook
-    const scrollBehavior = useScrollBehavior(messages, visibleMessages, groupedMessages, expandedRows, setExpandedRows)
+    const scrollBehavior = useScrollBehavior(
+        messages,
+        visibleMessages,
+        groupedMessages,
+        expandedRows,
+        setExpandedRows,
+        setExpandedFolds,
+    )
 
     // Use message handlers hook (must come after scrollBehavior so we can pass disableAutoScrollRef)
     const messageHandlers = useMessageHandlers(messages, chatState, scrollBehavior.disableAutoScrollRef, taskId)

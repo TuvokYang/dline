@@ -1,13 +1,15 @@
 import { normalizeStoredCheckpointMessage } from "@shared/checkpoints"
 import path from "path"
+import { type CommittedUiMessages, CommittedUiMessagesMissing } from "@/core/trajectory/CommittedUiMessages"
 import { UiMessage } from "@/shared/ExtensionMessage"
+import { Logger } from "@/shared/services/Logger"
 import type { BufferedUnifyStore } from "./backend/api/UnifyStore"
 import { BufferedUnifyStore as BufferedStore } from "./backend/core/BufferedUnifyStore"
 import { dedupeClineMessagesByTs } from "./disk"
 import { ensureInstanceLayout, InstanceDatabase, resolveInstanceLayout } from "./instance"
 import { importLegacyUiMessages } from "./messages/importLegacyUiMessages"
-import { openUiMessageRows, UI_MESSAGE_WRITER } from "./messages/openUiMessageRows"
-import { UI_MESSAGE_ORDINAL, UI_MESSAGE_TIMESTAMP } from "./messages/UiMessageRowStore"
+import { openStoredUiMessageRows, openUiMessageRows, UI_MESSAGE_WRITER } from "./messages/openUiMessageRows"
+import { subscribeUiMessageCommits, UI_MESSAGE_ORDINAL, UI_MESSAGE_TIMESTAMP } from "./messages/UiMessageRowStore"
 import type { UiMessageRecord } from "./messages/UiMessageRows"
 import { UIMessageWindowReader } from "./UIMessageWindowReader"
 
@@ -62,7 +64,13 @@ export class UIMessage {
         const hasLegacyCheckpointHash = stored.some(
             (message) => typeof (message as { lastCheckpointHash?: unknown }).lastCheckpointHash === "string",
         )
-        if (new Set(stored.map((message) => message.ts)).size !== stored.length || hasLegacyCheckpointHash) {
+        const duplicateTimestamps = stored.length - new Set(stored.map((message) => message.ts)).size
+        if (duplicateTimestamps > 0) {
+            // A final ts must identify one row; reaching here means an earlier write broke that,
+            // so record it before the repair below hides the evidence.
+            Logger.warn(`[messages.db] UiMessagePersistedDuplicateTs: task=${taskId} duplicates=${duplicateTimestamps}`)
+        }
+        if (duplicateTimestamps > 0 || hasLegacyCheckpointHash) {
             await store.mutate((current) => dedupeClineMessagesByTs(current).map(normalizeStoredCheckpointMessage))
         }
         return new UIMessage(store)
@@ -77,6 +85,36 @@ export class UIMessage {
     static async openWindow(taskId: string): Promise<UIMessageWindowReader> {
         const layout = await resolveInstanceLayout({ taskId })
         return await UIMessageWindowReader.open(layout)
+    }
+
+    /**
+     * Committed chat rows of a task for derived projections such as the trajectory.
+     *
+     * Reads go through a reader handle and never claim `messages.db`, and nothing
+     * comes from a writer's in-memory buffer, so the view is the same in every
+     * window. The signal wakes on every committed row transaction in this process.
+     *
+     * Only an existing `messages.db` is opened, and nothing in it is created: a
+     * history written before the commit log existed reads as an empty log. Without
+     * stored rows it throws `CommittedUiMessagesMissing` rather than create an empty
+     * database that would shadow a legacy history the lock holder has not imported yet.
+     */
+    static async openCommittedUiMessages(taskId: string): Promise<CommittedUiMessages> {
+        const layout = await resolveInstanceLayout({ taskId })
+        const rows = await openStoredUiMessageRows(layout.root)
+        if (!rows) throw new CommittedUiMessagesMissing(taskId)
+        return {
+            log: {
+                head: () => rows.commitLog.head(),
+                since: (seq) => rows.commitLog.since(seq),
+            },
+            rows: {
+                readRange: async (start, end) =>
+                    (await rows.readRange(start, end)).map(({ ordinal, message }) => ({ ordinal, message })),
+            },
+            signals: { subscribe: (listener) => subscribeUiMessageCommits(layout.root, listener) },
+            close: () => rows.close(),
+        }
     }
 
     // ── Read ──

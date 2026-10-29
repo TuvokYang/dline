@@ -2,7 +2,7 @@
     "name": "dline",
     "displayName": "Dline",
     "description": "Independent coding agent for VS Code with separate task panels, per-task model Profiles, persistent state, MCP, subagents, and configurable tool approvals.",
-    "version": "0.11.1",
+    "version": "0.11.2",
     "icon": "assets/icons/icon.png",
     "engines": {
         "vscode": "^1.134.0"

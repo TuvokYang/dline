@@ -4,8 +4,14 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 ## [Unreleased]
 
+## [0.11.2]
+
+### Added
+- Conversation trajectory rail: while the chat scrolls, a column of short separate bars appears on the right, one per user turn, white on dark themes and gray on light themes, with attempts set apart by their background. Hovering a bar previews that turn's user message, round count and tool calls; clicking it jumps to the user message, even when it is outside the loaded range. The trajectory is kept separately in the task's `trajectory.db`, linked back to the chat by message ts, and updated incrementally as messages arrive, without reading or rewriting the whole chat; it follows checkpoint restores and context compaction
+
 ### Changed
-- Each terminal partition keeps one idle terminal warm instead of three; up to three commands still run at once, and a command beyond the warm terminal waits for a new one to warm up
+- Subagent cards start collapsed; click the header to expand one
+- Each terminal partition keeps one idle terminal warm
 - After a rate limit or telemetry pause (HTTP 429), the refused telemetry batch is kept unchanged and sent first once the wait ends, with the same request ID and content, instead of rejoining the pending data under a new request ID; data gathered during the wait forms its own batch, and neither the 429 nor its wait counts toward the 12-attempt and 24-hour retry limits
 - The Account rollout is fetched only while both usage statistics and error reporting are on; turning either off, including in another window, leaves the rollout at once and deletes the rollout answers stored on the device instead of keeping them
 - A model is custom only by its settings: Use custom model ID checked with the ID typed in, or Custom selected in the Bedrock model list; a model picked from the list is no longer custom, even on Ollama, LM Studio, or LiteLLM, behind a custom base URL, or outside the built-in catalog. Usage statistics and error reports name every model by its normalized model ID, custom models included, instead of replacing a custom model with `_custom`, so a typed ID is sent too (for example the region and AWS account ID in a Bedrock inference profile ARN); a custom model is additionally marked `custom: true` in usage statistics and has `model.custom` set to `true` in error reports

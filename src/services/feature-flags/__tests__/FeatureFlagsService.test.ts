@@ -39,6 +39,24 @@ describe("FeatureFlagsService", () => {
         expect(service.getExternalFileCheckpointsEnabled()).toBe(true)
     })
 
+    it("keeps aggressive rendering off until the rollout offers it", () => {
+        expect(new FeatureFlagsService(providerReturning({})).getAggressiveRenderingEnabled()).toBe(false)
+        expect(REMOTE_ROLLOUT_FEATURE_FLAGS).toContain(ExperimentalFeatureFlag.AGGRESSIVE_RENDERING)
+
+        const offered = new FeatureFlagsService(providerReturning({ aggressive_rendering: true }))
+        expect(offered.getAggressiveRenderingEnabled()).toBe(true)
+    })
+
+    it("resolves the aggressive rendering switch from its environment override", () => {
+        const enabled = new FeatureFlagsService(
+            new LocalFeatureFlagsProvider({ DLINE_EXPERIMENTAL_AGGRESSIVE_RENDERING: "true" }),
+        )
+        const disabled = new FeatureFlagsService(new LocalFeatureFlagsProvider({}))
+
+        expect(enabled.getAggressiveRenderingEnabled()).toBe(true)
+        expect(disabled.getAggressiveRenderingEnabled()).toBe(false)
+    })
+
     it("falls back to defaults instead of propagating a provider failure", () => {
         const failing: IFeatureFlagsProvider = {
             resolveFlags: () => {

@@ -3,6 +3,7 @@ import * as path from "node:path"
 import type { MockApiConsumption } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { openSubagentCard, subagentCardByTask } from "@e2e/utils/subagent-card"
 import { readTaskActivities } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator, type Page, type TestInfo } from "@playwright/test"
 
@@ -193,10 +194,10 @@ e2e(
             await sendTask(sidebar, parentTask)
             await expect(sidebar.getByText(parentResult, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
             const taskMarker = childTask.split("\n", 1)[0]
-            const taskHeading = sidebar.getByRole("heading", { name: new RegExp(taskMarker) }).last()
-            await expect(taskHeading).toBeVisible()
-            const card = taskHeading.locator("xpath=ancestor::*[@data-testid='subagent-item'][1]")
-            await expect(card).toHaveCount(1)
+            const card = subagentCardByTask(sidebar, taskMarker)
+            await expect(card).toBeVisible()
+            await openSubagentCard(card)
+            await expect(card.getByRole("heading", { name: new RegExp(taskMarker) })).toBeVisible()
             return card
         }
 
@@ -289,9 +290,10 @@ e2e(
 
         await sendTask(sidebar, "Render a completed subagent with a long Task and one tool.")
         await expect(sidebar.getByText(parentResult, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-        const taskHeading = sidebar.getByRole("heading", { name: /E2E_SUBAGENT_WORK_LAYOUT_LONG_TASK/ }).last()
-        await expect(taskHeading).toBeVisible()
-        const mixedCard = taskHeading.locator("xpath=ancestor::*[@data-testid='subagent-item'][1]")
+        const mixedCard = subagentCardByTask(sidebar, "E2E_SUBAGENT_WORK_LAYOUT_LONG_TASK")
+        await expect(mixedCard).toBeVisible()
+        await openSubagentCard(mixedCard)
+        await expect(mixedCard.getByRole("heading", { name: /E2E_SUBAGENT_WORK_LAYOUT_LONG_TASK/ })).toBeVisible()
         await mixedCard.evaluate((element) => {
             element.style.width = "900px"
         })
@@ -394,8 +396,7 @@ e2e(
 
         await sendTask(sidebar, "Start a subagent, then preserve its findings when Finish is requested.")
 
-        const taskHeading = sidebar.getByRole("heading", { name: new RegExp(taskMarker) }).last()
-        await expect(taskHeading).toBeVisible({ timeout: 60_000 })
+        await expect(subagentCardByTask(sidebar, taskMarker)).toBeVisible({ timeout: 60_000 })
         await expect
             .poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 60_000 })
             .toBe(readToolCount + 1)
@@ -414,6 +415,9 @@ e2e(
         await expect(workMetrics).toContainText(/In:\S+/)
         await expect(workMetrics).toContainText(/Out:\S+/)
         await expect(workMetrics).toContainText(/\$/)
+        // The card opens folded with its controls and metrics; its Work sections render once opened.
+        await expect(workBody).toHaveCount(0)
+        await openSubagentCard(subagentCard)
         await expect(subagentCard.getByTestId("subagent-tool-step")).toHaveCount(readToolCount)
         const workToolButton = subagentCard.getByTestId("subagent-tool-step").first().getByRole("button")
         await expect(workToolButton).toBeDisabled()
@@ -516,6 +520,8 @@ e2e(
         await expect(sidebar.getByText("E2E_SUBAGENT_FINISH_PARENT_DONE", { exact: false }).last()).toBeVisible({
             timeout: 60_000,
         })
+        // Returning to Work may remount the row, which folds the card again.
+        await openSubagentCard(subagentCard)
         await subagentCard.getByRole("button", { name: "Show subagent output" }).click()
         const workOutputScroll = subagentCard.getByTestId("subagent-output-scroll")
         await expect(workOutputScroll).toBeVisible()
@@ -694,8 +700,7 @@ e2e(
             timeout: 120_000,
         })
 
-        const taskHeading = sidebar.getByRole("heading", { name: childTask, exact: true })
-        await expect(taskHeading).toHaveCount(1)
+        await expect(sidebar.getByTestId("subagent-item").filter({ hasText: childTask })).toHaveCount(1)
         await sidebar.getByRole("tab", { name: /^Activities(?: \d+)?$/ }).click()
         await sidebar.getByRole("button", { name: "All", exact: true }).first().click()
         const activity = sidebar.getByTestId("activity-item").filter({ hasText: agentName })
@@ -799,12 +804,12 @@ e2e(
 
         await expect(sidebar.getByText("E2E_SUBAGENT_RETRY_READY", { exact: true })).toBeVisible({ timeout: 180_000 })
         await expect.poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 180_000 }).toBe(6)
-        const taskHeading = sidebar.getByRole("heading", { name: childTask, exact: true }).last()
-        const subagentCard = taskHeading.locator("xpath=ancestor::*[@data-testid='subagent-item'][1]")
-        await expect(taskHeading).toBeVisible()
+        const subagentCard = subagentCardByTask(sidebar, childTask)
+        await expect(subagentCard).toBeVisible()
         const workRetry = subagentCard.getByRole("button", { name: "Retry", exact: true })
         await expect(workRetry).toBeVisible()
         await expect(subagentCard.getByRole("button", { name: "Finish", exact: true })).toHaveCount(0)
+        await openSubagentCard(subagentCard)
         await subagentCard.getByRole("button", { name: "Show subagent output" }).click()
         const workRetryOutput = subagentCard.getByTestId("subagent-output-scroll")
         await expect(workRetryOutput.getByTestId("subagent-retry-attempt")).toHaveCount(5)
@@ -967,10 +972,10 @@ e2e(
 
         await expect(sidebar.getByText("E2E_STREAM_READ_ERROR_READY", { exact: true })).toBeVisible({ timeout: 240_000 })
 
-        const taskHeading = sidebar.getByRole("heading", { name: childTask, exact: true }).last()
-        const subagentCard = taskHeading.locator("xpath=ancestor::*[@data-testid='subagent-item'][1]")
-        await expect(taskHeading).toBeVisible()
+        const subagentCard = subagentCardByTask(sidebar, childTask)
+        await expect(subagentCard).toBeVisible()
         await expect(subagentCard.getByRole("button", { name: "Retry", exact: true })).toBeVisible()
+        await openSubagentCard(subagentCard)
         await subagentCard.getByRole("button", { name: "Show subagent output" }).click()
         const retryOutput = subagentCard.getByTestId("subagent-output-scroll")
         await expect(retryOutput.getByTestId("subagent-retry-attempt")).toHaveCount(5)

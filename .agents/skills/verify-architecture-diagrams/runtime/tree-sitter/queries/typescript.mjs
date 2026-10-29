@@ -4,6 +4,8 @@
 - abstract method signatures
 - class declarations (including abstract classes)
 - module declarations
+- interface, type alias and enum declarations
+- module-level const/let declarations (top-level or exported, never function locals)
 */
 export default `
 (function_signature
@@ -29,4 +31,23 @@ export default `
 
 (class_declaration
   name: (type_identifier) @name.definition.class) @definition.class
+
+(interface_declaration
+  name: (type_identifier) @name.definition.interface) @definition.interface
+
+(type_alias_declaration
+  name: (type_identifier) @name.definition.type) @definition.type
+
+(enum_declaration
+  name: (identifier) @name.definition.enum) @definition.enum
+
+(program
+  (lexical_declaration
+    (variable_declarator
+      name: (identifier) @name.definition.constant)) @definition.constant)
+
+(export_statement
+  declaration: (lexical_declaration
+    (variable_declarator
+      name: (identifier) @name.definition.constant)) @definition.constant)
 `

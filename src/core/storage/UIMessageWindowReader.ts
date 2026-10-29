@@ -1,14 +1,44 @@
 import { normalizeStoredCheckpointMessage } from "@shared/checkpoints"
 import type { UiMessage } from "@/shared/ExtensionMessage"
-import { InstanceDatabase, type InstanceLayout, instanceDatabaseExists } from "./instance"
+import type { InstanceLayout } from "./instance"
 import { readLegacyUiMessages, readLegacyUiMessageWindow } from "./messages/importLegacyUiMessages"
-import { openUiMessageRows, UI_MESSAGE_READER } from "./messages/openUiMessageRows"
+import { openStoredUiMessageRows } from "./messages/openUiMessageRows"
 import type { UiMessageRowStore } from "./messages/UiMessageRowStore"
 
 export interface UIMessageWindowPage {
     messages: UiMessage[]
     totalCount: number
     startIndex: number
+}
+
+/** First index of a page of `pageSize` items centred on `anchor` in a sequence of `total`, clamped to the sequence. */
+export function centredPageStart(anchor: number, pageSize: number, total: number): number {
+    return Math.max(0, Math.min(anchor - Math.floor(pageSize / 2), total - pageSize))
+}
+
+/** Index of the last message carrying `timestamp`, which is the one a ts-deduplicating reader keeps. */
+export function lastIndexOfTimestamp(messages: readonly UiMessage[], timestamp: number): number | undefined {
+    for (let index = messages.length - 1; index >= 0; index--) {
+        if (messages[index].ts === timestamp) return index
+    }
+    return undefined
+}
+
+/**
+ * The page of `messages` centred on the message with `anchorTs`, located in
+ * the very sequence the page is cut from; an absent anchor yields an empty page.
+ */
+export function anchoredPage(
+    messages: readonly UiMessage[],
+    anchorTs: number,
+    count: number,
+): UIMessageWindowPage & { anchorFound: boolean } {
+    const pageSize = Math.max(0, Math.trunc(count))
+    const totalCount = messages.length
+    const anchor = lastIndexOfTimestamp(messages, anchorTs)
+    if (anchor === undefined) return { messages: [], totalCount, startIndex: 0, anchorFound: false }
+    const startIndex = centredPageStart(anchor, pageSize, totalCount)
+    return { messages: messages.slice(startIndex, startIndex + pageSize), totalCount, startIndex, anchorFound: true }
 }
 
 /** Where a window reads its messages from. */
@@ -18,6 +48,8 @@ interface WindowSource {
     readonly canonicalIndexes: boolean
     read(start: number, end: number): Promise<UiMessage[]>
     findByTimestamp(timestamp: number): Promise<UiMessage | undefined>
+    /** Position of the last row stored with `timestamp`, the one the chat shows for it. */
+    ordinalOfTimestamp(timestamp: number): Promise<number | undefined>
     findLastAsk(interactionId: string): Promise<UiMessage | undefined>
     close(): Promise<void>
 }
@@ -33,6 +65,10 @@ class RowSource implements WindowSource {
 
     async read(start: number, end: number): Promise<UiMessage[]> {
         return (await this.rows.readRange(start, end)).map((record) => normalizeStoredCheckpointMessage(record.message))
+    }
+
+    async ordinalOfTimestamp(timestamp: number): Promise<number | undefined> {
+        return (await this.rows.findLastByTimestamp(timestamp))?.ordinal
     }
 
     async findByTimestamp(timestamp: number): Promise<UiMessage | undefined> {
@@ -61,6 +97,10 @@ class LegacySource implements WindowSource {
 
     async read(start: number, end: number): Promise<UiMessage[]> {
         return this.messages.slice(start, end)
+    }
+
+    async ordinalOfTimestamp(timestamp: number): Promise<number | undefined> {
+        return lastIndexOfTimestamp(this.messages, timestamp)
     }
 
     async findByTimestamp(timestamp: number): Promise<UiMessage | undefined> {
@@ -102,10 +142,8 @@ export class UIMessageWindowReader {
 
     /** Opening never creates the instance directory or `messages.db`; absent storage reads as empty. */
     static async open(layout: InstanceLayout): Promise<UIMessageWindowReader> {
-        if (!(await instanceDatabaseExists(layout, InstanceDatabase.Messages))) {
-            return new UIMessageWindowReader(await openLegacySource(layout.root))
-        }
-        const rows = await openUiMessageRows(layout.root, UI_MESSAGE_READER)
+        const rows = await openStoredUiMessageRows(layout.root)
+        if (!rows) return new UIMessageWindowReader(await openLegacySource(layout.root))
         try {
             const count = await rows.count()
             if (count > 0) return new UIMessageWindowReader(new RowSource(rows, count))
@@ -157,6 +195,12 @@ export class UIMessageWindowReader {
     async getByTimestamp(timestamp: number): Promise<UiMessage | undefined> {
         this.assertOpen()
         return await this.source.findByTimestamp(timestamp)
+    }
+
+    /** Position of the durable row with `timestamp` in the window's sequence, or undefined when none has it. */
+    async ordinalOfTimestamp(timestamp: number): Promise<number | undefined> {
+        this.assertOpen()
+        return await this.source.ordinalOfTimestamp(timestamp)
     }
 
     /**

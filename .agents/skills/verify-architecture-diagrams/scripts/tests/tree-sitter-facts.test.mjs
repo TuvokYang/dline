@@ -9,6 +9,27 @@ import {
     TREE_SITTER_FACT_SCHEMA_VERSION,
 } from "../lib/tree-sitter-facts.mjs"
 
+test("captures TypeScript type-level and module-level value declarations but not function locals", async () => {
+    const repoRoot = process.cwd()
+    const result = await scanTreeSitterSource({
+        repoRoot,
+        filePath: path.join(repoRoot, "fixtures", "contracts.ts"),
+        source: [
+            "export interface Port { run(): void }",
+            "export type Revision = number",
+            "export enum Phase { Idle }",
+            "export const Registry = { a: 1 }",
+            "const internalLimit = 2",
+            "export function make() { const local = 3; return local }",
+        ].join("\n"),
+    })
+    const names = result.facts
+        .filter((fact) => fact.category === "declarations" && fact.capture.startsWith("name."))
+        .map((fact) => fact.text)
+        .sort()
+    assert.deepEqual(names, ["Phase", "Port", "Registry", "Revision", "internalLimit", "make", "run"])
+})
+
 test("normalizes captures into immutable source-positioned facts", async () => {
     const repoRoot = process.cwd()
     const filePath = path.join(repoRoot, "fixtures", "service.ts")

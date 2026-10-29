@@ -20,8 +20,19 @@ export interface RowCoordinate {
 /** Identify a virtual row by its stable logical owner, falling back to membership for ordinary groups. */
 export function rowIdentity(row: UiMessage | UiMessage[]): string {
     if (!Array.isArray(row)) return String(row.ts)
-    const group = row as UiMessage[] & { _toolGroupId?: string; _explorationRunId?: string; _browserSessionId?: string }
-    return group._explorationRunId ?? group._toolGroupId ?? group._browserSessionId ?? row.map((message) => message.ts).join(",")
+    const group = row as UiMessage[] & {
+        _activityFoldId?: string
+        _toolGroupId?: string
+        _explorationRunId?: string
+        _browserSessionId?: string
+    }
+    return (
+        group._activityFoldId ??
+        group._explorationRunId ??
+        group._toolGroupId ??
+        group._browserSessionId ??
+        row.map((message) => message.ts).join(",")
+    )
 }
 
 /**

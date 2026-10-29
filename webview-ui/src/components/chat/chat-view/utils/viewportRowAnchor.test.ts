@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { findFirstVisibleMessage } from "./viewportRowAnchor"
+import { findFirstVisibleMessage, findFirstVisibleRow } from "./viewportRowAnchor"
 
 type Box = { top: number; height: number }
 type RowSpec = Box & {
     /** Timestamp the row renders; omitted for rows such as tool groups. */
     ts?: number
+    /** Row identity every rendered row carries, grouped rows included. */
+    rowTs?: number
     /** Offset of the message element inside its row. */
     inset?: number
 }
@@ -26,6 +28,7 @@ function createScroller(rows: RowSpec[]): HTMLElement {
         boxes.set(row, spec)
         const content = document.createElement("div")
         if (spec.ts !== undefined) content.dataset.messageTs = String(spec.ts)
+        if (spec.rowTs !== undefined) content.dataset.rowTs = String(spec.rowTs)
         const inset = spec.inset ?? 0
         boxes.set(content, { top: spec.top + inset, height: spec.height - inset })
         row.appendChild(content)
@@ -71,6 +74,17 @@ describe("findFirstVisibleMessage", () => {
         expect(findFirstVisibleMessage(scroller)).toEqual({ ts: 7, viewportOffset: 30 })
     })
 
+    it("skips a row that shows less than the requested height below the viewport top", () => {
+        const scroller = createScroller([
+            // Only 4px of the previous turn's last row remain in view.
+            { ts: 8, top: 40, height: 64 },
+            { ts: 9, top: 104, height: 44 },
+        ])
+
+        expect(findFirstVisibleMessage(scroller)).toEqual({ ts: 8, viewportOffset: -60 })
+        expect(findFirstVisibleMessage(scroller, { minVisiblePx: 8 })).toEqual({ ts: 9, viewportOffset: 4 })
+    })
+
     it("returns null when no message intersects the viewport", () => {
         const above = createScroller([{ ts: 1, top: 20, height: 80 }])
         expect(findFirstVisibleMessage(above)).toBeNull()
@@ -78,5 +92,23 @@ describe("findFirstVisibleMessage", () => {
 
         const below = createScroller([{ ts: 1, top: 600, height: 80 }])
         expect(findFirstVisibleMessage(below)).toBeNull()
+    })
+})
+
+describe("findFirstVisibleRow", () => {
+    afterEach(() => {
+        vi.restoreAllMocks()
+    })
+
+    it("reports a grouped row at the viewport top, which the message anchor skips", () => {
+        const scroller = createScroller([
+            { rowTs: 10, ts: 10, top: 20, height: 60 },
+            // A tool group: it places the reader at its first call, but names no single message.
+            { rowTs: 20, top: 90, height: 120 },
+            { rowTs: 30, ts: 30, top: 210, height: 40 },
+        ])
+
+        expect(findFirstVisibleRow(scroller, { minVisiblePx: 8 })).toEqual({ ts: 20, viewportOffset: -10 })
+        expect(findFirstVisibleMessage(scroller, { minVisiblePx: 8 })).toEqual({ ts: 30, viewportOffset: 110 })
     })
 })

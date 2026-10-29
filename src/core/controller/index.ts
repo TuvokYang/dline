@@ -43,6 +43,7 @@ import { cleanupLegacyCheckpoints } from "@integrations/checkpoints/CheckpointMi
 import { type OpenAiCodexRuntimeMutationEvent, openAiCodexOAuthManager } from "@integrations/openai-codex/oauth"
 import { ClineAccountService } from "@services/account/ClineAccountService"
 import { McpHub } from "@services/mcp/McpHub"
+import { projectAggressiveRendering } from "@shared/AggressiveRendering"
 import type { ModelInfo } from "@shared/api"
 import type { ChatContent } from "@shared/ChatContent"
 import { resolveMaxParallelSubagents, resolveMaxParallelToolCalls } from "@shared/concurrency-limits"
@@ -117,12 +118,15 @@ import { clearRemoteConfig } from "../storage/remote-config/utils"
 import { type PersistenceErrorEvent, StateManager } from "../storage/StateManager"
 import { pruneTaskCommandLogs } from "../storage/task-temp"
 import { UIMessage } from "../storage/UIMessage"
+import { anchoredPage } from "../storage/UIMessageWindowReader"
 import type { ActiveTaskDescriptor } from "../task/active-tasks/ActiveTaskContextProvider"
 import type { TaskActivityStore } from "../task/activity/TaskActivityStore"
 import { TaskSessionCompositionService } from "../task/composition/TaskSessionCompositionService"
 import type { NewTaskHandoff } from "../task/new-task/new-task-handoff"
 import type { ActiveTaskSession, CheckpointRestoreFence } from "../task/session/ActiveTaskSession"
 import { KernelTaskViewPort } from "../task/view/KernelTaskViewPort"
+import { type OpeningTrajectoryAccess, openingTrajectoryAccess } from "../trajectory/OpeningTrajectoryAccess"
+import { TrajectoryAdmission } from "../trajectory/TrajectorySource"
 import { readDiscoveredToggles } from "./file/capability-discovery-cache"
 import {
     getWorkspaceHistoryManager,
@@ -524,6 +528,9 @@ export class Controller {
     private lockHeartbeatPending?: Promise<void>
     // Whether the current task has an active lock
     private taskLockAcquired = false
+    // Whether this window may maintain a task's trajectory cache. Flipped
+    // synchronously with the lock, so a lost lock stops writes before close runs.
+    private readonly trajectoryAdmission = new TrajectoryAdmission()
     // Account usage data (refreshed every 60s, zero overhead on state push)
     private _accountUsage?: AccountUsage
     private accountUsageProfileKey?: string
@@ -985,21 +992,54 @@ export class Controller {
         return this.task?.owners.messages.clineMessages.length ?? this.historyDisplaySession?.getMessageCount() ?? 0
     }
 
+    /**
+     * A page of the message sequence the current surface serves. With `anchorTs`,
+     * `referenceIndex` is ignored and the page is centred on the message with that
+     * ts, located in the same sequence; an absent anchor yields an empty page.
+     */
     async fetchCurrentTaskMessages(
         referenceIndex: number,
         count: number,
-    ): Promise<{ messages: UiMessage[]; totalCount: number; startIndex: number }> {
+        anchorTs?: number,
+    ): Promise<{ messages: UiMessage[]; totalCount: number; startIndex: number; anchorFound: boolean }> {
+        const pageSize = Math.max(0, Math.trunc(count))
         const historyDisplay = this.historyDisplaySession
-        if (historyDisplay) return await historyDisplay.fetchMessages(referenceIndex, count)
+        if (historyDisplay) {
+            if (anchorTs !== undefined) return historyDisplay.fetchAnchoredPage(anchorTs, count)
+            return { ...(await historyDisplay.fetchMessages(referenceIndex, count)), anchorFound: false }
+        }
 
         const messages = [...(this.task?.owners.messages.clineMessages ?? [])]
         const totalCount = messages.length
-        const pageSize = Math.max(0, Math.trunc(count))
+        if (anchorTs !== undefined) return anchoredPage(messages, anchorTs, count)
         const startIndex =
             referenceIndex === -1
                 ? Math.max(0, totalCount - pageSize)
                 : Math.max(0, Math.min(Math.trunc(referenceIndex), totalCount))
-        return { messages: messages.slice(startIndex, Math.min(startIndex + pageSize, totalCount)), totalCount, startIndex }
+        return {
+            messages: messages.slice(startIndex, Math.min(startIndex + pageSize, totalCount)),
+            totalCount,
+            startIndex,
+            anchorFound: false,
+        }
+    }
+
+    /**
+     * Whether `opening` may maintain its task's trajectory cache: it must stay
+     * current and hold the task lock, or, as a history display, find the task
+     * ownerless. Every lock flip and every opening change notifies listeners.
+     */
+    trajectoryAccess(opening: TaskOpening): OpeningTrajectoryAccess {
+        const { taskId } = opening
+        const isHistoryDisplay = opening === this.historyDisplaySession
+        return openingTrajectoryAccess({
+            taskId,
+            isCurrent: () => !this.disposed && this.currentOpening() === opening,
+            admission: this.trajectoryAdmission,
+            inspectOwnerless: isHistoryDisplay
+                ? async () => (await inspectHistoryTaskLock(this.lockService, taskId)).ownerless
+                : undefined,
+        })
     }
 
     /** Return whether the current surface is a lightweight history display. */
@@ -1220,6 +1260,7 @@ export class Controller {
             this.taskLockAcquired = await this.lockService.acquireTaskLock(taskId)
             if (this.taskLockAcquired) {
                 Logger.debug(`[Task ${taskId}] Task lock acquired`)
+                this.trajectoryAdmission.admit(taskId)
                 this.startLockHeartbeat(taskId)
                 await this.pruneOwnedCommandLogs(taskId)
                 // Holding the lock means no other window writes here, so stale temp files are a crashed writer's.
@@ -1720,6 +1761,8 @@ export class Controller {
         await this.openingHandoff.run(
             async () => {
                 this.historyDisplaySession = undefined
+                // initTask admits the runtime again once it holds the lock.
+                this.trajectoryAdmission.revoke()
                 // A read-only display may own a lock poll. initTask acquires the lock
                 // itself, so leaving that round armed would let it take the same lock
                 // concurrently and then activate a surface this promotion replaced.
@@ -3255,6 +3298,10 @@ export class Controller {
                 user: this.stateManager.getGlobalSettingsKey("externalFileCheckpointsEnabled"),
                 featureFlag: featureFlagsService.getExternalFileCheckpointsEnabled(),
             },
+            aggressiveRendering: projectAggressiveRendering(
+                this.stateManager.getGlobalSettingsKey("aggressiveRendering"),
+                featureFlagsService.getAggressiveRenderingEnabled(),
+            ),
             accountEnabled: readAccountFeatureSetting(this.stateManager),
             hooksEnabled: getHooksEnabledSafe(this.stateManager.getGlobalSettingsKey("hooksEnabled")),
             remoteConfigSettings: this.stateManager.getRemoteConfigSettings(),
@@ -3549,6 +3596,7 @@ export class Controller {
             return
         }
         this.taskLockAcquired = true
+        this.trajectoryAdmission.admit(taskId)
         this.stopLockPoll()
         this.startLockHeartbeat(taskId)
         // Holding the lock means no other window writes here, so stale temp files are a crashed writer's.
@@ -3625,6 +3673,7 @@ export class Controller {
      */
     private async rollbackUnownedOpening(taskId: string, closeHistory: () => void): Promise<void> {
         this.stopLockPoll()
+        this.trajectoryAdmission.revoke()
         this.workspaceHistorySession = undefined
         try {
             closeHistory()
@@ -3659,6 +3708,8 @@ export class Controller {
                     if (held || this.lockHeartbeatLease !== lease || opening?.taskId !== taskId) return
                     // Another instance owns the lock now, so this opening must stop writing.
                     Logger.warn(`[Lock] Ownership lost for task ${taskId}`)
+                    // Before close is even queued: it may wait behind other lifecycle work.
+                    this.trajectoryAdmission.revoke()
                     void this.clearTask({ expectedOpening: opening, closeReason: "lock_lost" }).catch((error) =>
                         Logger.error("[Lock] Failed to close lock-lost task:", error),
                     )
@@ -3823,6 +3874,8 @@ export class Controller {
         task?.owners.prompt.beginDispose()
         this.task = undefined
         this.historyDisplaySession = undefined
+        // Ends trajectory streams of the detached opening; teardown may outlive it.
+        this.trajectoryAdmission.revoke()
         // A poll round must not take over a task this surface no longer shows.
         this.stopLockPoll()
         this.workspaceHistorySession = undefined

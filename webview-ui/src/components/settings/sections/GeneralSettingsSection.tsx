@@ -1,3 +1,4 @@
+import AggressiveRenderingSetting from "../AggressiveRenderingSetting"
 import ChatInputSendShortcutSetting from "../ChatInputSendShortcutSetting"
 import PreferredLanguageSetting from "../PreferredLanguageSetting"
 import Section from "../Section"
@@ -20,6 +21,7 @@ const GeneralSettingsSection = ({ renderSectionHeader }: GeneralSettingsSectionP
             <Section>
                 <PreferredLanguageSetting />
                 <ChatInputSendShortcutSetting />
+                <AggressiveRenderingSetting />
             </Section>
         </div>
     )

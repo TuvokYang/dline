@@ -31,6 +31,8 @@ export const InstanceDatabase = {
     Activities: "activities.db",
     /** API usage metrics written by the task performance services. */
     Metrics: "metrics.db",
+    /** Conversation trajectory derived from `messages.db`; a rebuildable cache, never an authority. */
+    Trajectory: "trajectory.db",
 } as const
 
 export type InstanceDatabase = (typeof InstanceDatabase)[keyof typeof InstanceDatabase]

@@ -79,6 +79,28 @@ export function isBrowserSession(item: UiMessage | UiMessage[]): item is Browser
     return group._isBrowserSession === true
 }
 
+/**
+ * Finished rows of one turn folded into one collapsible block by the aggressive
+ * rendering levels.
+ *
+ * Like the other groups, the array holds every member message in transcript
+ * order, so a lookup by timestamp still finds a member. `_children` keeps the
+ * member rows exactly as standard grouping produced them, so an expanded block
+ * draws each of them the way the standard level does.
+ */
+export type ActivityFold = UiMessage[] & {
+    _isActivityFold: true
+    /** Stable identity: `fold:<ts of the first member>`, which appended members never replace. */
+    _activityFoldId: string
+    _children: readonly (UiMessage | UiMessage[])[]
+}
+
+export function isActivityFold(item: UiMessage | UiMessage[]): item is ActivityFold {
+    if (!Array.isArray(item)) return false
+    const fold = item as UiMessage[] & { _isActivityFold?: boolean }
+    return fold._isActivityFold === true
+}
+
 /** Rows that draw low-stakes tool activity: the scroll and waiting policies treat both alike. */
 export function isToolActivityRow(item: UiMessage | UiMessage[]): item is ToolMessageGroup | ExplorationRun {
     return isToolGroup(item) || isExplorationRun(item)

@@ -185,6 +185,79 @@ export class UiMessageAttachmentRow {
     }
 }
 
+/**
+ * One committed row transaction of `messages.db`, written in that transaction.
+ *
+ * Derived projections read the log instead of the rows to learn where the
+ * history changed. Only the most recent entries are kept; older ones fold into
+ * the floor of {@link UiMessageCommitStateRow}.
+ */
+export class UiMessageCommitRow {
+    static readonly storage = defineEntity<UiMessageCommitRow>()({
+        schemaId: "task-ui-message-commit",
+        version: 1,
+        columns: {
+            seq: column.integer({ primary: true }),
+            firstChangedOrdinal: column.integer(),
+            committedLength: column.integer(),
+            tsViolation: column.real({ nullable: true }),
+        },
+        hydrate: (values) =>
+            new UiMessageCommitRow(values.seq, values.firstChangedOrdinal, values.committedLength, values.tsViolation),
+    })
+
+    constructor(
+        readonly seq: number,
+        /** First ordinal whose row this commit inserted, replaced or removed. */
+        readonly firstChangedOrdinal: number,
+        /** Number of rows after the commit. */
+        readonly committedLength: number,
+        /** A written ts that did not increase along ordinals, or null. */
+        readonly tsViolation: number | null,
+    ) {}
+}
+
+/** Key of the single {@link UiMessageCommitStateRow}. */
+export const UI_MESSAGE_COMMIT_STATE_KEY = "state"
+
+/** Head and retention floor of the commit log; one row per `messages.db`. */
+export class UiMessageCommitStateRow {
+    static readonly storage = defineEntity<UiMessageCommitStateRow>()({
+        schemaId: "task-ui-message-commit-state",
+        version: 1,
+        columns: {
+            key: column.text({ primary: true }),
+            logId: column.text(),
+            headSeq: column.integer(),
+            floorThroughSeq: column.integer(),
+            floorMinOrdinal: column.integer({ nullable: true }),
+            violationTs: column.real({ nullable: true }),
+        },
+        hydrate: (values) =>
+            new UiMessageCommitStateRow(
+                values.logId,
+                values.headSeq,
+                values.floorThroughSeq,
+                values.floorMinOrdinal,
+                values.violationTs,
+            ),
+    })
+
+    readonly key: string = UI_MESSAGE_COMMIT_STATE_KEY
+
+    constructor(
+        /** Created with the first commit; a replaced `messages.db` gets a new one. */
+        readonly logId: string,
+        readonly headSeq: number,
+        /** Entries up to this seq were trimmed. */
+        readonly floorThroughSeq: number,
+        /** Smallest `firstChangedOrdinal` among the trimmed entries, or null when none were trimmed. */
+        readonly floorMinOrdinal: number | null,
+        /** The first violating ts ever written; trimming and later repairs never clear it. */
+        readonly violationTs: number | null,
+    ) {}
+}
+
 /** A chat message at its position in the stored history. */
 export interface UiMessageRecord {
     readonly ordinal: number

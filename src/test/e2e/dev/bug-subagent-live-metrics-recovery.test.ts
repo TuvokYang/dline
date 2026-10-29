@@ -2,6 +2,7 @@ import { mkdir, readdir, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { subagentCardByTask } from "@e2e/utils/subagent-card"
 import { readTaskActivities } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Page, type TestInfo } from "@playwright/test"
 
@@ -200,10 +201,10 @@ e2e(
         await submitMessage(sidebar, resumeFeedback)
 
         const approveButton = sidebar.getByText("Approve", { exact: true })
-        const childHeading = sidebar.getByRole("heading", { name: childTask, exact: true }).last()
-        await expect(approveButton.or(childHeading)).toBeVisible({ timeout: 60_000 })
+        const liveCard = subagentCardByTask(sidebar, childTask)
+        await expect(approveButton.or(liveCard)).toBeVisible({ timeout: 60_000 })
         if (await approveButton.isVisible()) await approveButton.click()
-        await expect(childHeading).toBeVisible({ timeout: 60_000 })
+        await expect(liveCard).toBeVisible({ timeout: 60_000 })
 
         const taskId = await onlyTaskId(dlineDocsDir)
         const persistedMetrics = await readPersistedSubagentMetrics(dlineDocsDir, taskId, readToolCount)
@@ -213,7 +214,6 @@ e2e(
             outputTokens: readToolCount * 2,
         })
 
-        const liveCard = childHeading.locator("xpath=ancestor::*[@data-testid='subagent-item'][1]")
         const liveMetrics = liveCard.getByTestId("subagent-metrics")
         await expect(liveMetrics).toBeVisible()
         await flushWebviewRender(sidebar)

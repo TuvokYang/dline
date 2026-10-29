@@ -1,5 +1,6 @@
 import type { HistoryItem } from "@shared/HistoryItem"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { TrajectoryAdmission } from "../../trajectory/TrajectorySource"
 import { Controller } from "../index"
 import { OpeningHandoff } from "../task/OpeningHandoff"
 
@@ -100,6 +101,7 @@ function subject() {
         historyDisplayProfileBindings: new WeakMap(),
         openingHandoff: new OpeningHandoff(),
         taskLockAcquired: true,
+        trajectoryAdmission: new TrajectoryAdmission(),
         stateManager: {
             loadTaskSettings: vi.fn(async () => undefined),
             getApiConfigurationForTask: vi.fn(() => ({})),

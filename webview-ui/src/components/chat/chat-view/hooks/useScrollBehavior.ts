@@ -21,6 +21,7 @@ export function useScrollBehavior(
     groupedMessages: (UiMessage | UiMessage[])[],
     expandedRows: Record<number, boolean>,
     setExpandedRows: React.Dispatch<React.SetStateAction<Record<number, boolean>>>,
+    setExpandedFolds?: React.Dispatch<React.SetStateAction<Record<string, boolean>>>,
 ): ScrollBehavior & {
     showScrollToBottom: boolean
     setShowScrollToBottom: React.Dispatch<React.SetStateAction<boolean>>
@@ -384,6 +385,16 @@ export function useScrollBehavior(
         [groupedMessages, expandedRows, scrollToBottomAuto, isAtBottom, setExpandedRows],
     )
 
+    // A fold is only toggled by the reader, who takes the viewport before the
+    // block grows so the list does not follow the bottom while it is inspected.
+    const toggleFoldExpansion = useCallback(
+        (foldId: string) => {
+            disableAutoScrollRef.current = true
+            setExpandedFolds?.((prev) => ({ ...prev, [foldId]: !prev[foldId] }))
+        },
+        [setExpandedFolds],
+    )
+
     // Handle row height changes during streaming.
     // Throttled to max once per 120ms so rapid height changes (e.g. during
     // streaming or cancel) don't trigger cascading scrolls that cause jitter.
@@ -493,6 +504,7 @@ export function useScrollBehavior(
         scrollToBottomAuto,
         scrollToMessage,
         toggleRowExpansion,
+        toggleFoldExpansion,
         handleRowHeightChange,
         showScrollToBottom,
         setShowScrollToBottom,

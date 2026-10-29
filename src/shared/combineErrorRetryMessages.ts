@@ -10,7 +10,8 @@ const recoveredStreamSayTypes = new Set([
     "browser_action",
 ])
 
-function isTerminalRetryFailure(message: UiMessage): boolean {
+/** Whether an `error_retry` row reports that automatic retries were exhausted ("Automatic retry stopped"). */
+export function isTerminalRetryFailure(message: UiMessage): boolean {
     try {
         const retryInfo = JSON.parse(message.text || "{}") as { failed?: unknown }
         return retryInfo.failed === true

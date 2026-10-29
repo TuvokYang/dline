@@ -10,9 +10,12 @@ import type { TaskViewState, UiMessage, UiSayBrowserAction, UiSayTool } from "@s
 import { parseImageGenerationToolText } from "@shared/image-generation"
 import { FileIcon, FolderOpenDotIcon, FolderOpenIcon, SearchIcon, ShapesIcon, WrenchIcon } from "lucide-react"
 import React from "react"
+import { type FoldOptions, foldActivity, STANDARD_FOLD } from "./activityFolds"
 import type { BrowserSessionEnd, BrowserSessionGroup, ToolMessageGroup } from "./chatRowKinds"
 import { isRoundStartCheckpoint } from "./checkpointRows"
 import { groupExplorationRuns } from "./explorationRuns"
+import { buildFoldContext } from "./foldContext"
+import { isTurnEndRow } from "./turnEndRows"
 
 export { isToolGroup, type ToolMessageGroup } from "./chatRowKinds"
 
@@ -871,15 +874,22 @@ export function groupLowStakesTools(
  *
  * Grouping needs the request rounds of the full transcript, while only the
  * visible messages become rows; pass `visibleMessages` when the caller already
- * filtered `messages`. Read-only rounds fold into exploration runs last, so
- * each run is built from tool groups that already hold one round each.
+ * filtered `messages`. Read-only rounds fold into exploration runs after tool
+ * grouping, so each run is built from tool groups that already hold one round
+ * each. The aggressive rendering levels fold finished turns last; `standard`
+ * leaves the rows as they are.
  */
 export function groupChatRows(
     messages: UiMessage[],
     visibleMessages: UiMessage[] = filterVisibleMessages(messages),
+    options: FoldOptions = STANDARD_FOLD,
 ): (UiMessage | UiMessage[])[] {
     const rounds = indexRequestRounds(messages)
-    return groupExplorationRuns(groupLowStakesTools(groupMessages(placeTurnEndLast(visibleMessages, rounds), rounds), rounds))
+    const rows = groupExplorationRuns(
+        groupLowStakesTools(groupMessages(placeTurnEndLast(visibleMessages, rounds), rounds), rounds),
+    )
+    if (options.level === "standard") return rows
+    return foldActivity(rows, options, buildFoldContext(messages, rounds))
 }
 
 /** A turn-ending interaction owns the tail of its request round, never a row in its middle. */
@@ -894,15 +904,7 @@ function placeTurnEndLast(messages: UiMessage[], rounds: RequestRounds): UiMessa
             ending = undefined
             round = nextRound
         }
-        const kind = message.type === "ask" ? message.ask : message.say
-        if (
-            kind === "completion_result" ||
-            kind === "followup" ||
-            kind === "make_plan" ||
-            kind === "qna_respond" ||
-            kind === "generate_report" ||
-            kind === "new_task"
-        ) {
+        if (isTurnEndRow(message)) {
             // Execution admits only the first ending; a second preview is not another interaction.
             ending ??= message
         } else result.push(message)

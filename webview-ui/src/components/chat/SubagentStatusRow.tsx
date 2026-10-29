@@ -43,6 +43,12 @@ type DisplayStatus = SubagentExecutionStatus
 type SubagentRowStatus = SubagentExecutionStatus
 type SubagentWorkSectionKey = "task" | "tools" | "output"
 
+/**
+ * Each Work card opens folded to its header, so a batch reads one line per subagent;
+ * the reader opens the card whose Task, Tools, and Output they want.
+ */
+const WORK_CARD_COLLAPSED_BY_DEFAULT = true
+
 interface SubagentRowData {
     status: SubagentRowStatus
     items: SubagentDisplayItem[]
@@ -217,6 +223,15 @@ function parseSubagentRowData(message: UiMessage): SubagentRowData | null {
     }
 }
 
+/**
+ * One line naming what a folded card is doing. Cards of one batch often share a
+ * subagent name, and a refused item's prompt is its refusal, so the header alone
+ * cannot tell the cards apart.
+ */
+function workCardSummary(entry: SubagentDisplayItem): string {
+    return normalizeSubagentDisplayText(entry.task || entry.prompt)
+}
+
 function SubagentPromptText({ prompt, isExpanded, onShowMore }: SubagentPromptTextProps) {
     const promptRef = useRef<HTMLDivElement | null>(null)
     const [showMoreVisible, setShowMoreVisible] = useState(false)
@@ -279,6 +294,7 @@ function SubagentPromptText({ prompt, isExpanded, onShowMore }: SubagentPromptTe
 
 export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
     const [expandedPrompts, setExpandedPrompts] = useState<Record<number, boolean>>({})
+    // Holds only the reader's own choices; an absent key means the default fold.
     const [collapsedItems, setCollapsedItems] = useState<Record<string, boolean>>({})
     const [expandedSections, setExpandedSections] = useState<Record<string, Partial<Record<SubagentWorkSectionKey, boolean>>>>({})
     const [collapsed, setCollapsed] = useState(false)
@@ -383,7 +399,7 @@ export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
     const toggleCollapsedItem = (itemKey: string) => {
         setCollapsedItems((prev) => ({
             ...prev,
-            [itemKey]: !prev[itemKey],
+            [itemKey]: !(prev[itemKey] ?? WORK_CARD_COLLAPSED_BY_DEFAULT),
         }))
     }
     return (
@@ -417,7 +433,8 @@ export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
                     {data.items.map((entry, index) => {
                         const displayStatus: DisplayStatus = entry.status
                         const itemKey = entry.jobId ?? String(entry.index)
-                        const isItemCollapsed = collapsedItems[itemKey] === true
+                        const isItemCollapsed = collapsedItems[itemKey] ?? WORK_CARD_COLLAPSED_BY_DEFAULT
+                        const summary = isItemCollapsed ? workCardSummary(entry) : ""
                         const activityPresentation = buildSubagentActivityPresentation(entry.activityEvents, entry.currentAttempt)
                         const { retryAttempts, toolSteps, toolCount } = activityPresentation
                         const hasOutput = Boolean(
@@ -478,11 +495,19 @@ export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
                                         )}
                                         {statusIcon(displayStatus)}
                                         <div
-                                            className="min-w-0 flex-1 truncate text-[11px] font-semibold uppercase tracking-wide opacity-70"
+                                            className={`min-w-0 truncate text-[11px] font-semibold uppercase tracking-wide opacity-70 ${summary ? "max-w-[50%] shrink-0" : "flex-1"}`}
                                             data-testid="subagent-name"
                                             title={displaySubagentName}>
                                             {displaySubagentName}
                                         </div>
+                                        {summary && (
+                                            <div
+                                                className="min-w-0 flex-1 truncate text-[11px] text-description"
+                                                data-testid="subagent-item-summary"
+                                                title={summary}>
+                                                {summary}
+                                            </div>
+                                        )}
                                     </button>
                                     <div className="flex shrink-0 items-center gap-2">
                                         {executionModeIndicator}

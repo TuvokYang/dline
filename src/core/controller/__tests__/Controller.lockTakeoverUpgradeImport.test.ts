@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { TrajectoryAdmission } from "@/core/trajectory/TrajectorySource"
 import { ShowMessageType } from "@/shared/proto/dline/host/window"
 import { Controller } from "../index"
 import { OpeningHandoff } from "../task/OpeningHandoff"
@@ -37,6 +38,7 @@ function subject(upgradeImportPending: boolean) {
     const controller = {
         disposed: false,
         taskLockAcquired: false,
+        trajectoryAdmission: new TrajectoryAdmission(),
         historyDisplaySession: undefined,
         currentOpening: () => owner,
         task: {
@@ -137,6 +139,7 @@ describe("Controller lock takeover of a task with data from an earlier version",
 function failedOpening(lockAcquired: boolean) {
     const controller = {
         taskLockAcquired: lockAcquired,
+        trajectoryAdmission: new TrajectoryAdmission(),
         workspaceHistorySession: { taskId: "task-1" } as unknown,
         stopLockPoll: vi.fn(),
         stopLockHeartbeat: vi.fn(async () => undefined),

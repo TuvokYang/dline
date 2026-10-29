@@ -1,7 +1,6 @@
 import type { UiMessage } from "@/shared/ExtensionMessage"
-import { InstanceDatabase, InstanceLayout, instanceDatabaseExists } from "../instance"
 import { readLegacyUiMessages } from "./importLegacyUiMessages"
-import { openUiMessageRows, UI_MESSAGE_READER } from "./openUiMessageRows"
+import { openStoredUiMessageRows } from "./openUiMessageRows"
 
 /**
  * Reads the whole chat history of one instance without claiming its writer.
@@ -11,8 +10,8 @@ import { openUiMessageRows, UI_MESSAGE_READER } from "./openUiMessageRows"
  * database is not created, so reading never leaves files behind.
  */
 export async function readUiMessages(instanceRoot: string): Promise<UiMessage[]> {
-    if (await instanceDatabaseExists(new InstanceLayout(instanceRoot), InstanceDatabase.Messages)) {
-        const rows = await openUiMessageRows(instanceRoot, UI_MESSAGE_READER)
+    const rows = await openStoredUiMessageRows(instanceRoot)
+    if (rows) {
         try {
             if ((await rows.count()) > 0) return (await rows.query()).records.map((record) => record.message)
         } finally {

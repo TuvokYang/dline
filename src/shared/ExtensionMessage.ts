@@ -3,6 +3,7 @@
 import { WorkspaceRoot } from "@shared/multi-root/types"
 import { RemoteConfigFields } from "@shared/storage/state-keys"
 import type { Environment } from "../config"
+import type { AggressiveRenderingSetting } from "./AggressiveRendering"
 import { AutoApprovalSettings } from "./AutoApprovalSettings"
 import { ApiConfiguration } from "./api"
 import { BrowserSettings } from "./BrowserSettings"
@@ -164,6 +165,8 @@ export interface ExtensionState {
     worktreesEnabled?: DlineFeatureSettings
     /** Future checkpoint roots outside the workspace; setting only, runtime wiring is intentionally deferred. */
     externalFileCheckpoints?: DlineFeatureSettings
+    /** Chat folding level: the rollout offers the setting, the user picks the level. */
+    aggressiveRendering?: AggressiveRenderingSetting
     /** Account sign-in and views: the rollout offers the setting, the user's setting turns the views on. */
     accountEnabled?: DlineFeatureSettings
     focusChainSettings: FocusChainSettings

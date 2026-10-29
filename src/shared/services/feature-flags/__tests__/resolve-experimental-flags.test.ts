@@ -102,6 +102,7 @@ describe("resolveExperimentalFlags", () => {
             [ExperimentalFeatureFlag.WORKTREES]: false,
             [ExperimentalFeatureFlag.ACCOUNT]: false,
             [ExperimentalFeatureFlag.EXTERNAL_FILE_CHECKPOINTS]: false,
+            [ExperimentalFeatureFlag.AGGRESSIVE_RENDERING]: false,
         })
     })
 
@@ -110,6 +111,7 @@ describe("resolveExperimentalFlags", () => {
             [ExperimentalFeatureFlag.WORKTREES]: true,
             [ExperimentalFeatureFlag.ACCOUNT]: true,
             [ExperimentalFeatureFlag.EXTERNAL_FILE_CHECKPOINTS]: true,
+            [ExperimentalFeatureFlag.AGGRESSIVE_RENDERING]: true,
         })
     })
 })
