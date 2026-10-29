@@ -759,25 +759,38 @@ e2e(
             const expandTaskHeader = sidebar.getByLabel("Expand task header")
             if (await expandTaskHeader.isVisible()) await expandTaskHeader.click()
             await expect(sidebar.getByTestId("context-window-indicator")).toBeVisible({ timeout: 60_000 })
+            const progress = sidebar.getByTestId("context-window-segmented-progress")
+            const occupancy = () =>
+                progress.evaluate((element) => {
+                    const segments = Array.from(element.querySelectorAll<HTMLElement>("[data-segment]"))
+                    const tokens = (kind: string) =>
+                        Number(segments.find((segment) => segment.dataset.segment === kind)?.dataset.authoritativeTokens ?? 0)
+                    return {
+                        activeTokens: tokens("active"),
+                        durableTokens: tokens("durable"),
+                        totalTokens: segments.reduce(
+                            (total, segment) => total + Number(segment.dataset.authoritativeTokens ?? 0),
+                            0,
+                        ),
+                    }
+                })
+            // A question is part of the run (isRunAtRest), so the figure stays in flight on the
+            // Provider's measured count until the reply continues the same conversation.
+            await expect.poll(async () => (await occupancy()).totalTokens, { timeout: 30_000 }).toBeGreaterThanOrEqual(442_600)
+            await expect(progress).toHaveAttribute("data-phase", "receiving")
+            const measured = await occupancy()
 
             await sendTask(sidebar, continuationMarker)
-            const progress = sidebar.getByTestId("context-window-segmented-progress")
             await expect(progress).toHaveAttribute("data-phase", "sending", { timeout: 30_000 })
-            const hiddenPass = await progress.evaluate((element) => {
-                const segments = Array.from(element.querySelectorAll<HTMLElement>("[data-segment]"))
-                const tokens = (kind: string) =>
-                    Number(segments.find((segment) => segment.dataset.segment === kind)?.dataset.authoritativeTokens ?? 0)
-                return {
-                    activeTokens: tokens("active"),
-                    durableTokens: tokens("durable"),
-                    totalTokens: segments.reduce((total, segment) => total + Number(segment.dataset.authoritativeTokens ?? 0), 0),
-                }
-            })
-            expect(hiddenPass.activeTokens).toBeGreaterThan(0)
-            expect(hiddenPass.durableTokens).toBeLessThan(442_600)
-            expect(hiddenPass.totalTokens).toBeLessThan(442_600)
+            // The hidden Pass sends the conversation the Provider measured, so the bar keeps that
+            // figure rather than a smaller local estimate of the same history, and adds no staged tail.
+            const hiddenPass = await occupancy()
+            expect(hiddenPass.activeTokens).toBe(0)
+            expect(hiddenPass.totalTokens).toBe(measured.totalTokens)
 
             await expect(sidebar.getByText("E2E_442_7K_OK", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+            // Only the landed summary lowers the figure.
+            await expect.poll(async () => (await occupancy()).totalTokens, { timeout: 30_000 }).toBeLessThan(measured.totalTokens)
 
             await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(3)
             const requests = server.getMockConsumptions("openai-compatible-responses")
@@ -1778,7 +1791,7 @@ for (const providerCase of ROLLING_MERGE_PROVIDER_CASES) {
             const protectedTurnMarker = "E2E_ROLLING_PROTECTED_TURN_C"
             const continuationMarker = "E2E_ROLLING_CONTINUATION"
             const firstSummary = "E2E_ROLLING_SUMMARY_ONE covers only turn A."
-            const secondSummary = "E2E_ROLLING_SUMMARY_TWO cumulatively covers turns A, B and C."
+            const secondSummary = "E2E_ROLLING_SUMMARY_TWO cumulatively covers turns A and B."
             // W is 272K, so the trigger T is 258,340, a turn crossing T may join a Pass up to 262,420
             // (half the 8,160 reserve), and compaction stops below 217,600. Ordinary requests project
             // from the reported usage plus about a quarter token per new character; a Pass is estimated
@@ -1787,10 +1800,10 @@ for (const providerCase of ROLLING_MERGE_PROVIDER_CASES) {
             // Both estimates land within a few percent, and every boundary below keeps a wider margin.
             const turnAResponse = `${turnAMarker}:${"A".repeat(520_000)}`
             const turnBResponse = `${turnBMarker}:${"B".repeat(520_000)}`
-            // Turn C is complete, so once turn A is summarized it joins turn B in the second Pass:
-            // a Pass takes every consecutive complete turn that fits. Turns B and C keep the history
-            // near 240K after the first Pass, above the stop line and within T, so the second Pass is
-            // required and carries both whole. Only the continuation stays verbatim.
+            // Turn C's call is answered only by the continuation, a reply the model has not read yet,
+            // so the call stays verbatim with it (WS-010 §2). After turn A is summarized, turn B plus
+            // the protected turn C keep the history near 240K, above the stop line and within T, so a
+            // second Pass is required and carries turn B whole. The summary plus turn C then fits.
             const protectedTurnResponse = `${protectedTurnMarker}:${"C".repeat(360_000)}`
 
             server.enqueueResponses(
@@ -1823,7 +1836,7 @@ for (const providerCase of ROLLING_MERGE_PROVIDER_CASES) {
                     arguments: { response: protectedTurnResponse },
                     // Above the trigger line, so the continuation compacts. With turn B's low sample this
                     // keeps the learned ratio near 0.25 token per byte, so the first Pass carries turn A
-                    // only and the second Pass fits turns B and C.
+                    // only and the second Pass carries turn B.
                     usage: { inputTokens: 380_000, outputTokens: 100 },
                     expectedRequestIncludes: [turnBMarker, "E2E_ROLLING_USER_TURN_C"],
                     matchRequestContract: true,
@@ -1854,9 +1867,8 @@ for (const providerCase of ROLLING_MERGE_PROVIDER_CASES) {
                         firstSummary,
                         "E2E_ROLLING_USER_TURN_B",
                         turnBMarker,
-                        protectedTurnMarker,
                     ],
-                    expectedRequestExcludes: [turnAMarker, continuationMarker],
+                    expectedRequestExcludes: [turnAMarker, protectedTurnMarker, continuationMarker],
                     matchRequestContract: true,
                 },
                 {
@@ -1864,13 +1876,12 @@ for (const providerCase of ROLLING_MERGE_PROVIDER_CASES) {
                     id: "call_rolling_complete",
                     name: "attempt_completion",
                     arguments: { result: "E2E_ROLLING_MERGE_OK" },
-                    expectedRequestIncludes: [secondSummary, continuationMarker],
+                    expectedRequestIncludes: [secondSummary, protectedTurnMarker, continuationMarker],
                     expectedRequestExcludes: [
                         "The current conversation is rapidly running out of context",
                         firstSummary,
                         turnAMarker,
                         turnBMarker,
-                        protectedTurnMarker,
                     ],
                     matchRequestContract: true,
                 },
@@ -1961,7 +1972,9 @@ e2e(
                 id: "call_rolling_restart_protected",
                 name: "qna_respond",
                 arguments: { response: `${protectedMarker}:${"C".repeat(300_000)}` },
-                usage: { inputTokens: 270_000, outputTokens: 100 },
+                // Above the trigger line with the same margin as the rolling merge case, so the
+                // learned ratio stays near 0.25 token per byte and the first Pass carries turn A only.
+                usage: { inputTokens: 380_000, outputTokens: 100 },
             },
             {
                 type: "tool",

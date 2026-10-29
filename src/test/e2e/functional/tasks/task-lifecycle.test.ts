@@ -3,7 +3,7 @@ import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { type ComposerTextReaderWindow, expectComposerText, installComposerTextReader } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
-import { readTaskConversationText, readTaskUiMessagesText } from "@e2e/utils/task-instance-store"
+import { readTaskConversationText, readTaskUiMessagesText, waitForTaskRelease } from "@e2e/utils/task-instance-store"
 import {
     readBlankMessageRows,
     startFooterActionStabilityObserver,
@@ -92,7 +92,10 @@ async function reopenTask(sidebar: Frame, taskText: string): Promise<void> {
     const historyTask = sidebar.getByText(taskText, { exact: true }).last()
     await expect(historyTask).toBeVisible({ timeout: 30_000 })
     await historyTask.click()
-    await expect(sidebar.getByText(taskText, { exact: true }).first()).toBeVisible()
+    // Readiness must come from the task view: the Recent history item carries the same text
+    // (so follow-up input could still land in the Home composer), and the reopened task's
+    // first message may sit outside the rendered message window.
+    await expect(sidebar.getByRole("button", { name: "Close Task", exact: true })).toBeVisible({ timeout: 30_000 })
 }
 
 async function onlyTaskId(dlineDocsDir: string): Promise<string> {
@@ -1225,6 +1228,9 @@ e2e(
                     timeout: 30_000,
                 })
                 .toBe(true)
+            // The closing runtime still settles rows (the round's checkpoint) until it releases the
+            // task, so the baseline must be taken from the released task.
+            await waitForTaskRelease(dlineDocsDir, taskId)
 
             const [uiBefore, apiBefore] = await Promise.all([
                 readTaskUiMessagesText(dlineDocsDir, taskId),

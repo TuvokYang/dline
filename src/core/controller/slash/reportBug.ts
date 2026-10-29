@@ -15,11 +15,17 @@ function recentTaskError(controller: Controller): string | undefined {
     return state?.flow.error
 }
 
-/** Open the same durable preview locally when no usable Provider request can carry the command. */
+/**
+ * Open the same durable preview locally when no usable Provider request can carry the command.
+ *
+ * `request.value` carries only the details the user wrote around the command:
+ * the composer removes the command node from its semantic document, so this
+ * handler never re-parses a command spelling out of raw text.
+ */
 export async function reportBug(controller: Controller, request: StringRequest): Promise<Empty> {
     const mode = controller.stateManager.getGlobalSettingsKey("mode") ?? "act"
     const provider = resolveProvider(controller.stateManager.getApiConfiguration(), mode) ?? "unavailable"
-    const details = request.value.replace(/^\s*\/(?:cmd:)?reportbug\b\s*/i, "").trim()
+    const details = request.value.trim()
     const recentError = recentReportBugError(recentTaskError(controller))
     const content: ReportBugContent = {
         title: "Dline bug report",

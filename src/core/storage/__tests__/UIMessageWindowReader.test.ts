@@ -156,32 +156,39 @@ describe("UIMessage history windows", () => {
         expect((await fs.readdir(taskDirectory)).filter((name) => name.startsWith("messages.db"))).toEqual([])
     })
 
-    it("opens a large legacy JSONL history from a bounded title and tail window", async () => {
+    it("serves the whole of a long not-yet-imported legacy JSONL history at its absolute positions", async () => {
         const taskId = "large-legacy-window"
         const taskDirectory = await ensureTaskDirectoryExists(taskId)
         const legacyFile = path.join(taskDirectory, GlobalFileNames.uiMessages)
+        const OLD_ASK_TS = 11
         await writeJsonl(
             legacyFile,
-            Array.from({ length: 1_000 }, (_, index) => ({
-                ts: index + 1,
-                type: "say",
-                say: index === 0 ? "task" : "text",
-                text: `message-${index + 1}`,
-            })),
+            Array.from({ length: 1_000 }, (_, index) => {
+                const ts = index + 1
+                if (ts === OLD_ASK_TS) return { ts, type: "ask", ask: "followup", interactionId: "old-ask", text: "?" }
+                return { ts, type: "say", say: index === 0 ? "task" : "text", text: `message-${ts}` }
+            }),
         )
-        const fullRead = vi.spyOn(fs, "readFile")
 
         const reader = await UIMessage.openWindow(taskId)
         try {
-            expect(reader.count).toBe(401)
+            expect(reader.count).toBe(1_000)
             await expect(reader.getPage(0, 1)).resolves.toMatchObject({ messages: [{ ts: 1, say: "task" }] })
+            const middle = await reader.getPage(500, 3)
+            expect(middle.startIndex).toBe(500)
+            expect(middle.totalCount).toBe(1_000)
+            expect(middle.messages.map((message) => message.ts)).toEqual([501, 502, 503])
             expect((await reader.getLatest(200)).map((message) => message.ts)).toEqual(
                 Array.from({ length: 200 }, (_, index) => 801 + index),
             )
-            expect(fullRead).not.toHaveBeenCalledWith(legacyFile, "utf8")
+            await expect(reader.ordinalOfTimestamp(5)).resolves.toBe(4)
+            await expect(reader.getLastAsk("old-ask")).resolves.toMatchObject({ ts: OLD_ASK_TS })
         } finally {
             await reader.close()
         }
+        // Reading is not the import: the file keeps its name and no database appears.
+        await expect(fs.access(legacyFile)).resolves.toBeUndefined()
+        expect((await fs.readdir(taskDirectory)).filter((name) => name.startsWith("messages.db"))).toEqual([])
     })
 
     it("uses a bounded reader for new tasks and rejects reads after close", async () => {

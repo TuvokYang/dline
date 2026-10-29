@@ -5,7 +5,13 @@ import {
     hasResourceParts,
 } from "@shared/input-semantics/admitted-parts"
 import { semanticInputDiagnostic } from "@shared/input-semantics/diagnostics"
-import { isResourceNode, type SemanticInputDocument } from "@shared/input-semantics/document"
+import {
+    isActiveEntity,
+    isMentionNode,
+    isResourceNode,
+    isSlashCommandNode,
+    type SemanticInputDocument,
+} from "@shared/input-semantics/document"
 import { documentKeptByTurn } from "@shared/input-semantics/document-slice"
 import { presentationTextOfNode } from "@shared/input-semantics/presentation"
 import type { TaskInput } from "../shell/TaskShell"
@@ -14,6 +20,7 @@ import { encodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
 import type { UserInputEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
 import {
     type AdmittedLifecycleBarrier,
+    type AdmittedReply,
     type AdmittedTaskInput,
     type LifecycleBarrierPort,
     type ReviewedReply,
@@ -81,17 +88,7 @@ export class TaskInputMaterializer {
         if (!result.ok) throw new SemanticInputRejectedError(result.diagnostics)
 
         const owned = this.ownedBarrier(result.admitted)
-        if (!owned) {
-            // Admission is the only author of the projection: the text the model
-            // reads and the authority the turn holds come from the same review.
-            return {
-                semanticInput: result.admitted.document,
-                admittedText: result.admitted.admittedText,
-                ...partsField(result.admitted.parts),
-                authorizedTools: result.admitted.authorizedTools,
-                explicitInstructions: result.admitted.explicitInstructions,
-            }
-        }
+        if (!owned) return projectionOf(result.admitted)
         // An owned barrier leaves the turn entirely - its text, its authority and
         // its tools - and travels with the input instead, so it only acts once
         // the kernel accepted the input and a round admitted it.
@@ -111,11 +108,13 @@ export class TaskInputMaterializer {
      * A reply is the same user input as a submission, so a lifecycle command in
      * it must act rather than reach the model as literal feedback. Returns the
      * text the reply keeps once an owned command and its premessage are taken
-     * out, or undefined when nothing was owned and the reply stands as typed.
+     * out, or undefined when nothing acts and the reply stands as typed.
      *
-     * The kept text is what the user typed, not its expansion: a reply grants no
-     * command authority, so expanded instructions would arrive without the tools
-     * they name. A refused legacy reply stays literal too - the user answered a
+     * Any other command or mention the reply names is flagged with
+     * {@link ReviewedReply.carriesInput}: the caller carries the reply as a
+     * submission, whose admission expands, resolves and authorizes it. The text
+     * returned here never holds an expansion, because a dialog draft carries no
+     * authority. A refused legacy reply stays literal - the user answered a
      * question, and dropping that answer would be worse than sending it as is.
      * A structured reply is different: it was composed to be read exactly as
      * sent, so a refusal throws {@link SemanticInputRejectedError} instead of
@@ -128,7 +127,7 @@ export class TaskInputMaterializer {
     async reviewReply(reply: Omit<UserInputEnvelope, "kind">): Promise<ReviewedReply | undefined> {
         const structured = reply.semanticInput
         const resourceDocument = structured?.nodes.some(isResourceNode) ? structured : undefined
-        if (!resourceDocument && (!this.barriers || !reply.text)) return undefined
+        if (!resourceDocument && !reply.text) return undefined
         const result = await this.admission.admit(reply)
         if (!result.ok) {
             if (structured) throw new SemanticInputRejectedError(result.diagnostics)
@@ -136,6 +135,15 @@ export class TaskInputMaterializer {
         }
         const owned = this.ownedBarrier(result.admitted)
         if (!owned) {
+            if (namesActiveEntity(result.admitted.document)) {
+                return {
+                    text: reply.text ?? "",
+                    document: result.admitted.document,
+                    parts: [],
+                    carriesInput: true,
+                    commit: () => {},
+                }
+            }
             if (!resourceDocument) return undefined
             // Nothing was taken out, so the reply and its structure stand as sent.
             const parts = replyPartsOf(resourceDocument, result.admitted.parts)
@@ -160,10 +168,60 @@ export class TaskInputMaterializer {
         }
     }
 
+    /**
+     * Admit a reply to a restored tool dialog when it names a command or mention that acts.
+     *
+     * The dialog's tool is gone, so the reply cannot ride the queue to it; it
+     * becomes the tool's recorded result instead. The admission is stored as a
+     * payload with no intake identity, so it never renders as a turn of its own,
+     * and it keeps the catalog revision the reply was accepted under, like any
+     * answer. Returns undefined when nothing in the reply acts, so it stands as
+     * typed, and refuses like {@link reviewReply}: a legacy reply admission
+     * rejects stays literal, a structured one throws {@link SemanticInputRejectedError}.
+     *
+     * A lifecycle command such as `/compact` has no owner on this path, so a
+     * reply holding one stands as typed rather than acting half-way.
+     */
+    async admitReply(reply: Omit<UserInputEnvelope, "kind">): Promise<AdmittedReply | undefined> {
+        const structured = reply.semanticInput
+        if (!structured && !reply.text) return undefined
+        const result = await this.admission.admit(reply, { pinnedRevision: true })
+        if (!result.ok) {
+            if (structured) throw new SemanticInputRejectedError(result.diagnostics)
+            return undefined
+        }
+        if (this.ownedBarrier(result.admitted) || !namesActiveEntity(result.admitted.document)) return undefined
+        const payloadRef = await this.payloads.put(
+            encodeTaskPayload<UserInputEnvelope>({ kind: "user_input", ...reply, ...projectionOf(result.admitted) }),
+        )
+        return { payloadRef, modelText: result.admitted.admittedText, document: result.admitted.document }
+    }
+
     private ownedBarrier(admitted: AdmittedTaskInput): AdmittedLifecycleBarrier | undefined {
         const barrier = admitted.barrier
         return barrier && this.barriers?.owns(barrier.commandId) ? barrier : undefined
     }
+}
+
+/**
+ * What an admitted input contributes to its envelope.
+ *
+ * Admission is the only author of the projection: the text the model reads and
+ * the authority the turn holds come from the same review.
+ */
+function projectionOf(admitted: AdmittedTaskInput): Partial<UserInputEnvelope> {
+    return {
+        semanticInput: admitted.document,
+        admittedText: admitted.admittedText,
+        ...partsField(admitted.parts),
+        authorizedTools: admitted.authorizedTools,
+        explicitInstructions: admitted.explicitInstructions,
+    }
+}
+
+/** Whether admission recognized a command or mention that acts, as opposed to text the user typed. */
+function namesActiveEntity(document: SemanticInputDocument): boolean {
+    return document.nodes.some((node) => (isSlashCommandNode(node) || isMentionNode(node)) && isActiveEntity(node))
 }
 
 /**

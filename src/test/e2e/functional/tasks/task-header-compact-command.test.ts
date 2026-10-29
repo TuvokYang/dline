@@ -155,6 +155,7 @@ e2e(
             const input = sidebar.getByTestId("chat-input")
             await expect(input).toBeEnabled()
             await input.fill("E2E_TASK_HEADER_COMPACT_PRESERVED_DRAFT")
+            await E2ETestHelper.dismissWorkbenchHover(await app.firstWindow())
             const expandTaskHeader = sidebar.getByLabel("Expand task header")
             if (await expandTaskHeader.isVisible()) await expandTaskHeader.click()
             const compactButton = sidebar.getByRole("button", { name: "Compact task" })
@@ -266,6 +267,7 @@ for (const provider of [OPENAI_RESPONSES_CASE, DEEPSEEK_CHAT_CASE]) {
                 const startNewTask = sidebar.locator('vscode-button[aria-label="Start New Task"]')
                 await expect(startNewTask).toBeVisible({ timeout: 60_000 })
 
+                await E2ETestHelper.dismissWorkbenchHover(await app.firstWindow())
                 const expandTaskHeader = sidebar.getByLabel("Expand task header")
                 if (await expandTaskHeader.isVisible()) await expandTaskHeader.click()
                 const compactButton = sidebar.getByRole("button", { name: "Compact task" })

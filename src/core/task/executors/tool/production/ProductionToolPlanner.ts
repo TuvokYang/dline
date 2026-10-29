@@ -1,7 +1,14 @@
 import { randomUUID } from "node:crypto"
 import type { ToolUse } from "@core/assistant-message"
 import { isTurnEndingToolUse } from "../../../assistant-message-order"
-import { type ProviderTurnApproval, type ProviderTurnBlockPlan, resolveLaneContext, resolveToolLanes } from "../../../kernel"
+import { getInteraction, specializedToolApprovalKind } from "../../../interaction/InteractionRegistry"
+import {
+    type DialogActionRule,
+    type ProviderTurnApproval,
+    type ProviderTurnBlockPlan,
+    resolveLaneContext,
+    resolveToolLanes,
+} from "../../../kernel"
 import { approvalInteractionId } from "../../../tools/approval-interaction"
 import type { ToolExecutorCoordinator } from "../../../tools/ToolExecutorCoordinator"
 import type { ToolAdmissionSnapshot } from "../ToolAdmissionRegistry"
@@ -20,6 +27,22 @@ function riskFacts(
     if (scope?.isToolAutoApproveEnabled !== undefined) facts.isToolAutoApproveEnabled = scope.isToolAutoApproveEnabled
     if (admission.inheritsApproval !== undefined) facts.inheritsApproval = admission.inheritsApproval
     return facts
+}
+
+const GENERIC_APPROVAL_RULES: readonly DialogActionRule[] = [
+    { actionId: "approve", payloadPolicy: "draft" },
+    { actionId: "reject", payloadPolicy: "draft" },
+]
+
+/**
+ * Action rules of a manual approval. A specialized approval such as NEW_TASK
+ * takes its rules from its own interaction definition, so Start New Task
+ * carries no payload and leaves the unsent draft for the successor.
+ */
+function approvalActionRules(ask: string | undefined): readonly DialogActionRule[] {
+    const specialized = specializedToolApprovalKind(ask)
+    if (!specialized) return GENERIC_APPROVAL_RULES
+    return getInteraction(specialized).actions.map((action) => ({ actionId: action.type, payloadPolicy: action.payloadPolicy }))
 }
 
 function approval(
@@ -44,10 +67,7 @@ function approval(
         presentationRef: result.presentation?.body ?? JSON.stringify(block.params),
         ...(result.presentation?.ask === undefined ? {} : { presentationAsk: result.presentation.ask }),
         ...(typeof block.ts === "number" ? { presentationRow: block.ts } : {}),
-        actionRules: [
-            { actionId: "approve", payloadPolicy: "draft" },
-            { actionId: "reject", payloadPolicy: "draft" },
-        ],
+        actionRules: approvalActionRules(result.presentation?.ask),
     }
 }
 

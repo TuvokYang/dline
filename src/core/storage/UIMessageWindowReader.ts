@@ -1,7 +1,7 @@
 import { normalizeStoredCheckpointMessage } from "@shared/checkpoints"
 import type { UiMessage } from "@/shared/ExtensionMessage"
 import type { InstanceLayout } from "./instance"
-import { readLegacyUiMessages, readLegacyUiMessageWindow } from "./messages/importLegacyUiMessages"
+import { readLegacyUiMessages } from "./messages/importLegacyUiMessages"
 import { openStoredUiMessageRows } from "./messages/openUiMessageRows"
 import type { UiMessageRowStore } from "./messages/UiMessageRowStore"
 
@@ -84,9 +84,14 @@ class RowSource implements WindowSource {
     }
 }
 
-/** A legacy history that has not been imported yet because the task was not opened since the upgrade. */
+/**
+ * A legacy history that has not been imported yet because the task was not opened since the upgrade.
+ *
+ * The whole file is served: a display holds no task lock, so it may never see the
+ * import, and a truncated sequence would hide older history and older anchors for good.
+ */
 class LegacySource implements WindowSource {
-    /** The import renumbers the rows, and a first-surface window holds only the latest of them. */
+    /** The writer's import commits the rows anew and can keep the file when it disagrees with `messages.db`. */
     readonly canonicalIndexes = false
 
     constructor(private readonly messages: readonly UiMessage[]) {}
@@ -118,11 +123,7 @@ class LegacySource implements WindowSource {
     async close(): Promise<void> {}
 }
 
-const LEGACY_FIRST_SURFACE_MESSAGE_COUNT = 400
-
 async function openLegacySource(instanceRoot: string): Promise<LegacySource> {
-    const window = await readLegacyUiMessageWindow(instanceRoot, LEGACY_FIRST_SURFACE_MESSAGE_COUNT)
-    if (window) return new LegacySource(window.messages)
     const legacy = await readLegacyUiMessages(instanceRoot)
     return new LegacySource(legacy?.messages ?? [])
 }
@@ -147,11 +148,6 @@ export class UIMessageWindowReader {
         try {
             const count = await rows.count()
             if (count > 0) return new UIMessageWindowReader(new RowSource(rows, count))
-            const legacyWindow = await readLegacyUiMessageWindow(layout.root, LEGACY_FIRST_SURFACE_MESSAGE_COUNT)
-            if (legacyWindow) {
-                await rows.close()
-                return new UIMessageWindowReader(new LegacySource(legacyWindow.messages))
-            }
             const legacy = await readLegacyUiMessages(layout.root)
             if (!legacy) return new UIMessageWindowReader(new RowSource(rows, 0))
             await rows.close()

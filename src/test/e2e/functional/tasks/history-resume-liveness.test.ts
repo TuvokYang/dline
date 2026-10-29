@@ -131,7 +131,7 @@ e2e(
 
         const taskText = "E2E_HISTORY_RESUME_LIVENESS_TASK"
         await sendTask(sidebar, taskText)
-        await expect(sidebar.getByText("Dline read 1 file:", { exact: true })).toBeVisible({ timeout: 60_000 })
+        await expect(sidebar.getByText("Dline read 1 file", { exact: true })).toBeVisible({ timeout: 60_000 })
         await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(2)
         await closeCurrentTask(sidebar)
 
@@ -145,12 +145,16 @@ e2e(
         await historyTask.click()
 
         await expect(sidebar.getByText(taskText, { exact: true }).first()).toBeVisible({ timeout: 5_000 })
-        await expect(sidebar.getByText("Dline read 1 file:", { exact: true })).toBeVisible({ timeout: 5_000 })
+        await expect(sidebar.getByText("Dline read 1 file", { exact: true })).toBeVisible({ timeout: 5_000 })
         const browserMessageSurfaceMs = Math.round(performance.now() - historyClickedAt)
         const footer = sidebar.getByRole("contentinfo")
         const resumeButton = footer.locator('[data-testid="send-button"][data-action="resume"]')
         await expect(resumeButton).toBeVisible({ timeout: 5_000 })
-        await expect(sidebar.getByRole("button", { name: "Resume", exact: true })).toHaveCount(0)
+        // A history task also keeps the full-width footer Resume (task-actions.ts), so
+        // it is offered once there beside the composer's resume action.
+        const footerResume = footer.locator('vscode-button[aria-label="Resume"]')
+        await expect(footerResume).toHaveCount(1)
+        await expect(footerResume).toBeVisible()
         const browserSurfaceMs = Math.round(performance.now() - historyClickedAt)
 
         // Resume immediately, while the intentionally large activity maintenance

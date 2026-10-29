@@ -247,6 +247,32 @@ export async function dispatchInteraction(
         })
         return response(true, "accepted")
     }
+    // A reply that names a command or mention is user input, not typed feedback.
+    // The canonical queue admits it like a submission - expanding the command,
+    // resolving the mention, recording the authority it grants - and delivers
+    // the admitted text to this waiting dialog as its answer, exactly as it does
+    // for the same text typed while the turn was still running.
+    if (
+        reviewed?.carriesInput &&
+        request.draft &&
+        answersWithText(interaction.kind, request.actionId) &&
+        session.inputQueue.awaitsTurnEnd?.(request.interactionId)
+    ) {
+        const queued = await session.inputQueue.mutate({
+            kind: "enqueue",
+            draft: {
+                text: request.draft.text,
+                images: [...request.draft.images],
+                files: [...request.draft.files],
+                ...(draftDocument === undefined ? {} : { semanticInput: draftDocument }),
+            },
+        })
+        if (!queued.accepted) {
+            Logger.warn(`dispatchInteraction: reply to ${request.interactionId} carrying input was refused: ${queued.result}`)
+            return response(false, "command_refused")
+        }
+        return response(true, "accepted")
+    }
     const draftText = request.draft ? (reviewed?.text ?? request.draft.text) : undefined
     // A structured reply persists its verified resources as parts; a receiver that
     // reads flat lists resolves them only when it consumes the draft.

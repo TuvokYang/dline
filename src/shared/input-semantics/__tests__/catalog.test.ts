@@ -131,7 +131,44 @@ describe("input semantic catalog", () => {
         const compact = findDescriptor(catalog(), "command.compact")
 
         expect(compact?.trigger).toBe("/compact")
-        expect(compact?.aliases).toContain("/smol")
-        expect(compact?.aliases).toContain("/cmd:compact")
+        expect(resolveCommandTrigger(catalog(), "/smol")?.id).toBe("command.compact")
+    })
+
+    // The composer menu inserts the cmd-namespaced spelling of whatever built-in
+    // the user picked; each must resolve to the same command as its bare trigger.
+    it.each([
+        ["/cmd:compact", "command.compact"],
+        ["/cmd:smol", "command.compact"],
+        ["/cmd:newtask", "command.new_task"],
+        ["/cmd:newrule", "command.new_rule"],
+        ["/cmd:reportbug", "command.report_bug"],
+        ["/cmd:deep-planning", "command.deep_planning"],
+        ["/cmd:explain-changes", "command.explain_changes"],
+    ])("resolves the namespaced built-in %s", (trigger, id) => {
+        expect(resolveCommandTrigger(catalog(), trigger)?.id).toBe(id)
+    })
+
+    it("gives every built-in command a namespaced spelling of each bare trigger", () => {
+        for (const descriptor of BUILTIN_INPUT_SEMANTICS.filter((candidate) => candidate.kind === "command")) {
+            for (const bare of [descriptor.trigger, ...(descriptor.aliases ?? [])]) {
+                expect(resolveCommandTrigger(catalog(), `/cmd:${bare.slice(1)}`)?.id).toBe(descriptor.id)
+            }
+        }
+    })
+
+    it("does not invent a cmd spelling for a discovered capability", () => {
+        const skill = {
+            id: "command.skill.lint",
+            kind: "command" as const,
+            trigger: "/skills:lint",
+            payload: "text" as const,
+            composition: "combinable" as const,
+            lifecycle: "turn" as const,
+            discovered: true,
+        }
+        const withSkill: InputSemanticCatalog = { revision: 1, descriptors: [...BUILTIN_INPUT_SEMANTICS, skill] }
+
+        expect(resolveCommandTrigger(withSkill, "/skills:lint")?.id).toBe("command.skill.lint")
+        expect(resolveCommandTrigger(withSkill, "/cmd:skills:lint")).toBeUndefined()
     })
 })

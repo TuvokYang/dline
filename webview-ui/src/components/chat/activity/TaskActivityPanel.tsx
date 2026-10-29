@@ -223,6 +223,7 @@ export function TaskActivityPanel({
                         : undefined
                     const subagentDetail = isSubagent ? parseSubagentActivityDetail(activity.detail) : undefined
                     const ExecutionModeIcon = activity.executionMode === "background" ? SendToBackIcon : BringToFrontIcon
+                    const executionModeLabel = activity.executionMode === "background" ? "Background" : "Foreground"
                     const environmentLabel = activity.kind === "command" ? getCommandEnvironmentLabel(activity.output) : undefined
                     const activitySummary =
                         activity.kind === "command"
@@ -275,7 +276,7 @@ export function TaskActivityPanel({
                                                     data-testid="activity-environment-mode">
                                                     {environmentLabel && (
                                                         <span
-                                                            className="inline-block min-w-0 max-w-[60%] flex-auto truncate rounded-xs bg-code/70 px-1.5 py-0.5 font-mono text-[10px] text-foreground"
+                                                            className="inline-block min-w-0 max-w-[60%] flex-1 truncate rounded-xs bg-code/70 px-1.5 py-0.5 font-mono text-[10px] text-foreground"
                                                             data-testid="activity-environment-label"
                                                             title={`Environment: ${environmentLabel}`}>
                                                             ({environmentLabel})
@@ -283,16 +284,20 @@ export function TaskActivityPanel({
                                                     )}
                                                     <span
                                                         className={cn(
-                                                            "inline-flex shrink-0 items-center gap-1 rounded-xs px-1.5 py-0.5",
+                                                            // The mode yields width last and ellipsizes only when nothing else can shrink.
+                                                            "inline-flex min-w-0 items-center gap-1 rounded-xs px-1.5 py-0.5",
                                                             {
                                                                 "bg-editor-warning-foreground/10 text-editor-warning-foreground":
                                                                     activity.executionMode === "background",
                                                                 "bg-info/10 text-info": activity.executionMode !== "background",
                                                             },
                                                         )}
-                                                        data-testid="activity-execution-mode">
+                                                        data-testid="activity-execution-mode"
+                                                        title={executionModeLabel}>
                                                         <ExecutionModeIcon aria-hidden="true" className="size-2.5 shrink-0" />
-                                                        {activity.executionMode === "background" ? "Background" : "Foreground"}
+                                                        <span className="truncate" data-testid="activity-execution-mode-label">
+                                                            {executionModeLabel}
+                                                        </span>
                                                     </span>
                                                 </span>
                                             ) : (

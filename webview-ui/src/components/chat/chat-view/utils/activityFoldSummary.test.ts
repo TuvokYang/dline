@@ -37,13 +37,21 @@ describe("summarizeActivityFold", () => {
     it("counts the tool calls, command, restore points and message of a finished turn", () => {
         const summary = summaryOf(finishedTurnTranscript)
 
-        // readFile at 13, 33 and 34; searchFiles at 23; the command at 42; restore points 10, 20, 30, 40; the text at 32.
+        // Rounds open at the requests 11, 21, 31 and 41; readFile at 13, 33 and 34; searchFiles at 23;
+        // the command at 42; thoughts at 12 and 22; restore points 10, 20, 30, 40; the text at 32.
         expect(Array.from(summary.toolCalls)).toEqual([
             ["readFile", 3],
             ["searchFiles", 1],
         ])
-        expect(summary).toMatchObject({ commands: 1, fileEdits: 0, checkpoints: 4, assistantMessages: 1 })
-        expect(describeActivityFold(summary)).toBe("4 tool calls · 1 command · 4 checkpoints · 1 message")
+        expect(summary).toMatchObject({
+            rounds: 4,
+            commands: 1,
+            fileEdits: 0,
+            thoughts: 2,
+            checkpoints: 4,
+            assistantMessages: 1,
+        })
+        expect(describeActivityFold(summary)).toBe("4 rounds · 4 tool calls · 1 command · 2 thoughts · 4 checkpoints · 1 message")
         expect(describeToolCalls(summary)).toBe("readFile ×3, searchFiles ×1")
     })
 
@@ -60,8 +68,8 @@ describe("summarizeActivityFold", () => {
         ])
 
         expect(summary.toolCalls.size).toBe(0)
-        expect(summary).toMatchObject({ commands: 0, fileEdits: 2, checkpoints: 1, assistantMessages: 1 })
-        expect(describeActivityFold(summary)).toBe("2 file edits · 1 checkpoint · 1 message")
+        expect(summary).toMatchObject({ rounds: 1, commands: 0, fileEdits: 2, checkpoints: 1, assistantMessages: 1 })
+        expect(describeActivityFold(summary)).toBe("1 round · 2 file edits · 1 checkpoint · 1 message")
     })
 
     it("counts a restore point attached to an edit once", () => {
@@ -110,7 +118,7 @@ describe("summarizeActivityFold", () => {
             ["docs:search", 2],
             ["docs:resource", 1],
         ])
-        expect(describeActivityFold(summary)).toBe("3 tool calls · 1 checkpoint")
+        expect(describeActivityFold(summary)).toBe("1 round · 3 tool calls · 1 checkpoint")
     })
 
     it("counts a browser launch and each action as steps, not their results", () => {
@@ -139,12 +147,30 @@ describe("summarizeActivityFold", () => {
             ["browser:click", 1],
             ["browser:close", 1],
         ])
-        expect(describeActivityFold(summary)).toBe("3 tool calls · 1 checkpoint")
+        expect(describeActivityFold(summary)).toBe("1 round · 3 tool calls · 1 checkpoint")
+    })
+
+    it("states no round count for a round fold", () => {
+        const roundFold = turnFold(finishedTurnTranscript)._children.find(isActivityFold)
+        if (!roundFold) throw new Error("expected the turn fold to hold round folds")
+
+        const summary = summarizeActivityFold(roundFold, indexPreEditCheckpointAttachments(finishedTurnTranscript))
+
+        // The first round: restore point 10, thought 12, readFile 13.
+        expect(summary.rounds).toBeUndefined()
+        expect(describeActivityFold(summary)).toBe("1 tool call · 1 thought · 1 checkpoint")
     })
 
     it("names a fold with nothing countable as finished steps", () => {
         expect(
-            describeActivityFold({ toolCalls: new Map(), commands: 0, fileEdits: 0, checkpoints: 0, assistantMessages: 0 }),
+            describeActivityFold({
+                toolCalls: new Map(),
+                commands: 0,
+                fileEdits: 0,
+                checkpoints: 0,
+                thoughts: 0,
+                assistantMessages: 0,
+            }),
         ).toBe("Finished steps")
     })
 })

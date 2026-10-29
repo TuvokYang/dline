@@ -260,6 +260,7 @@ export class ProviderTextPresenter implements ProviderTextPresentationPort {
     ): Promise<void> {
         const key = rowKey(transientId, row)
         const existing = this.rows.get(key)
+        const drawn = this.shown.has(key)
         this.rows.delete(key)
         this.shown.delete(key)
         if (!text.trim()) {
@@ -268,8 +269,14 @@ export class ProviderTextPresenter implements ProviderTextPresentationPort {
             if (existing !== undefined) this.messages.removeTransientClineMessage(existing)
             return
         }
+        const ts = existing ?? this.nextPresentationId()
+        // drain() drops a frame that was never drawn, so a chunk that arrived just
+        // before the turn settled (reasoning streamed after the last tool call, for
+        // instance) has no transient row yet. Open it under its reserved id so the
+        // commit has a row to make durable instead of failing the whole turn.
+        if (!drawn) this.messages.upsertTransientClineMessage({ ts, type: "say", say, text, partial: true })
         const committed = await this.messages.commitTransientClineMessage({
-            ts: existing ?? this.nextPresentationId(),
+            ts,
             type: "say",
             say,
             text,

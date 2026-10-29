@@ -87,6 +87,8 @@ async function sendTask(sidebar: Frame, text: string): Promise<void> {
     await input.fill(text)
     await sidebar.getByTestId("send-button").click()
     await expectComposerText(input, "")
+    // Submission retires the composer before asynchronous task presentation finishes.
+    await expect(sidebar.getByRole("button", { name: "Close Task", exact: true })).toBeVisible({ timeout: 30_000 })
     await expect(sidebar.getByText(text, { exact: true }).first()).toBeVisible()
 }
 
@@ -438,22 +440,24 @@ e2e(
             await expect(imageModel.getByRole("option", { name: "GPT Image 2", exact: true })).toBeEnabled()
             await expect(imageModel.getByRole("option", { name: "GPT Image 2.5", exact: true })).toBeEnabled()
             await expect(imageModel.getByRole("option", { name: "GPT Image 2 (Subscription)", exact: true })).toHaveCount(0)
+            const profilesPath = path.join(dlineDir, "data", "settings", "api_profiles.json")
+            const waitForImageModel = (imageModelId: string) =>
+                E2ETestHelper.waitForValue(async () => {
+                    const profiles = JSON.parse(await readFile(profilesPath, "utf8")) as Array<Record<string, unknown>>
+                    return profiles.find(
+                        (profile) =>
+                            profile.name === E2E_PROFILE_NAMES.mockOpenAiResponses &&
+                            profile.imageSource === "IMAGE_GENERATION_SOURCE_GPT_SUBSCRIPTION" &&
+                            profile.imageModelId === imageModelId,
+                    )
+                }, 30_000)
             await imageModel.selectOption("gpt-image-1")
             await expect(imageModel).toHaveValue("gpt-image-1")
+            // Otherwise the final poll can match the source selection's earlier default write.
+            await waitForImageModel("gpt-image-1")
             await imageModel.selectOption("gpt-image-2.5")
             await expect(imageModel).toHaveValue("gpt-image-2.5")
-            const profilesPath = path.join(dlineDir, "data", "settings", "api_profiles.json")
-            await E2ETestHelper.waitUntil(async () => {
-                const profiles = JSON.parse(await readFile(profilesPath, "utf8")) as Array<Record<string, unknown>>
-                return profiles.some(
-                    (profile) =>
-                        profile.name === E2E_PROFILE_NAMES.mockOpenAiResponses &&
-                        profile.imageSource === "IMAGE_GENERATION_SOURCE_GPT_SUBSCRIPTION" &&
-                        profile.imageModelId === "gpt-image-2.5",
-                )
-            })
-            const persistedProfiles = JSON.parse(await readFile(profilesPath, "utf8")) as Array<Record<string, unknown>>
-            const persistedProfile = persistedProfiles.find((profile) => profile.name === E2E_PROFILE_NAMES.mockOpenAiResponses)
+            const persistedProfile = await waitForImageModel("gpt-image-2.5")
             expect(persistedProfile).toMatchObject({
                 modelId: "gpt-5.6-sol",
                 imageSource: "IMAGE_GENERATION_SOURCE_GPT_SUBSCRIPTION",
@@ -543,7 +547,7 @@ e2e(
                 "tool",
                 "hosted-image-generation",
             ])
-            await expect(sidebar.getByText("Dline read 1 file:", { exact: false })).toHaveCount(0)
+            await expect(sidebar.getByText("Dline read 1 file", { exact: false })).toHaveCount(0)
             const preReadTaskTextFiles = (await listFilesRecursively(taskDirectory)).filter((filePath) =>
                 /\.(?:json|jsonl|md|txt)$/i.test(filePath),
             )

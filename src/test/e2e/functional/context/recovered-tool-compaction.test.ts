@@ -43,15 +43,22 @@ async function configureResponsesAutoCompaction(dlineDir: string): Promise<void>
     })
 }
 
+/**
+ * A 100K working window: room for the system prompt, tools and one compaction Pass, while the
+ * 200K the setup turn reports keeps the resumed request above the trigger line.
+ */
 async function configureForcedCompaction(dlineDir: string): Promise<void> {
     await configureCompactionSettings(dlineDir, {
         contextWindow: 752_000,
         triggerPercent: 97,
         minReserveTokens: 5_000,
         maxReserveTokens: 30_000,
-        maxContextTokens: 30_000,
+        maxContextTokens: 100_000,
     })
 }
+
+/** Usage the last setup turn reports, above the forced window so the resumed request compacts. */
+const FORCED_COMPACTION_SETUP_USAGE = { inputTokens: 200_000, outputTokens: 100 }
 
 async function configureCompactionSettings(
     dlineDir: string,
@@ -317,7 +324,7 @@ e2e(
                         contentIncludes: ["Command executed successfully (exit code 0).", commandMarker],
                     },
                 ],
-                usage: { inputTokens: 60_000, outputTokens: 100 },
+                usage: FORCED_COMPACTION_SETUP_USAGE,
             },
             {
                 type: "message",
@@ -341,11 +348,13 @@ e2e(
             await setAutoApproveAction(first.sidebar, "Execute safe commands", true)
             await sendTask(first.sidebar, setupTask)
             await expect(first.sidebar.getByText(commandMarker, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+            // The command row is drawn before its approval controls, so wait for whichever comes
+            // next instead of sampling the button once.
             const approveButton = first.sidebar.getByText("Approve", { exact: true }).last()
+            const setupDone = first.sidebar.getByText("E2E_RECOVERED_SETUP_DONE", { exact: false }).last()
+            await expect(approveButton.or(setupDone)).toBeVisible({ timeout: 60_000 })
             if (await approveButton.isVisible()) await approveButton.click()
-            await expect(first.sidebar.getByText("E2E_RECOVERED_SETUP_DONE", { exact: false }).last()).toBeVisible({
-                timeout: 60_000,
-            })
+            await expect(setupDone).toBeVisible({ timeout: 60_000 })
             await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(2)
 
             await closeCurrentTask(first.sidebar)
@@ -403,7 +412,7 @@ e2e(
                 id: "call_recovered_resume_ready",
                 name: "qna_respond",
                 arguments: { response: "E2E_RECOVERED_RESUME_READY" },
-                usage: { inputTokens: 60_000, outputTokens: 100 },
+                usage: FORCED_COMPACTION_SETUP_USAGE,
             },
             { type: "error", status: 400, message: failureMessage },
             {

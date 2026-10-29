@@ -876,8 +876,11 @@ export function groupLowStakesTools(
  * visible messages become rows; pass `visibleMessages` when the caller already
  * filtered `messages`. Read-only rounds fold into exploration runs after tool
  * grouping, so each run is built from tool groups that already hold one round
- * each. The aggressive rendering levels fold finished turns last; `standard`
+ * each. The aggressive rendering levels fold ended rounds last; `standard`
  * leaves the rows as they are.
+ *
+ * Folding replaces exploration runs: a run takes the running read-only round in
+ * with the ended ones, which would keep ended rounds open until the run breaks.
  */
 export function groupChatRows(
     messages: UiMessage[],
@@ -885,10 +888,8 @@ export function groupChatRows(
     options: FoldOptions = STANDARD_FOLD,
 ): (UiMessage | UiMessage[])[] {
     const rounds = indexRequestRounds(messages)
-    const rows = groupExplorationRuns(
-        groupLowStakesTools(groupMessages(placeTurnEndLast(visibleMessages, rounds), rounds), rounds),
-    )
-    if (options.level === "standard") return rows
+    const rows = groupLowStakesTools(groupMessages(placeTurnEndLast(visibleMessages, rounds), rounds), rounds)
+    if (options.level === "standard") return groupExplorationRuns(rows)
     return foldActivity(rows, options, buildFoldContext(messages, rounds))
 }
 

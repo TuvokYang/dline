@@ -62,6 +62,23 @@ function define(
     return { kind, taskAsk, presentationKind, input, actions, continuation }
 }
 
+/**
+ * Interactions approved through the generic manual tool approval that still
+ * present their own footer contract.
+ *
+ * NEW_TASK approval is planned outside its handler (approval-kind.ts forces it
+ * to manual), so the kernel opens a `tool_approval` dialog. The user is still
+ * choosing between starting the successor and regenerating its context, and
+ * Start New Task must keep the unsent draft for the successor, so both the
+ * planned action rules and the footer follow the NEW_TASK definition.
+ */
+const SPECIALIZED_TOOL_APPROVALS: ReadonlySet<string> = new Set<InteractionKind>(["new_task"])
+
+/** The interaction whose contract a manual tool approval presents, keyed by its presentation ask. */
+export function specializedToolApprovalKind(ask: string | undefined): InteractionKind | undefined {
+    return ask !== undefined && SPECIALIZED_TOOL_APPROVALS.has(ask) ? (ask as InteractionKind) : undefined
+}
+
 const REPLY_INPUT: InputPolicy = { ...DRAFT_INPUT, enterAction: "reply" }
 const RESUME_INPUT: InputPolicy = { ...DRAFT_INPUT, enterAction: "resume" }
 const NO_INPUT: InputPolicy = { enabled: false, acceptsText: false, acceptsImages: false, acceptsFiles: false }

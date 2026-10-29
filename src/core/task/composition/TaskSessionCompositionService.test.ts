@@ -7,6 +7,7 @@ import type { TaskPersistenceAssembly } from "../shell/TaskPersistenceAssembly"
 import { InMemoryConversationJournal } from "../stores/InMemoryRuntimeStores"
 import {
     cancelRunningActivities,
+    closeTaskActivities,
     type OpenTaskSessionCompositionOptions,
     TaskSessionCompositionService,
 } from "./TaskSessionCompositionService"
@@ -333,5 +334,29 @@ describe("cancelRunningActivities", () => {
         await cancelRunningActivities(store)
 
         expect(cancel).not.toHaveBeenCalled()
+    })
+})
+
+describe("closeTaskActivities", () => {
+    // Closing a task must stop a background subagent through its own canceller;
+    // settling first marked it interrupted and dropped the canceller, so the run
+    // kept streaming and was reported as interrupted instead of cancelled.
+    it("cancels running work through its canceller before settling what remains", async () => {
+        const store = new TaskActivityStore("task-close")
+        const abortSubagent = vi.fn(async () => undefined)
+        store.create({
+            activityId: "background-subagent",
+            kind: "subagent",
+            executionMode: "background",
+            cancellationOwner: "explicit",
+            title: "Investigate",
+            cancel: abortSubagent,
+        })
+        const messages = { clineMessages: [], updateClineMessage: vi.fn(async () => undefined) }
+
+        await closeTaskActivities(store, messages)
+
+        expect(abortSubagent).toHaveBeenCalledOnce()
+        expect(store.get("background-subagent")?.status).toBe("cancelled")
     })
 })

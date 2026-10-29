@@ -64,7 +64,7 @@ export function trajectoryRail(sidebar: Frame) {
                 const [name, count] = Array.from(item.querySelectorAll("span"))
                 return {
                     tool: name?.textContent?.trim() ?? "",
-                    count: Number((count?.textContent ?? "").replace("×", "").trim()),
+                    count: Number((count?.textContent ?? "").trim()),
                 }
             })
             // A turn without rounds draws no summary section at all.

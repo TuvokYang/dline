@@ -147,6 +147,8 @@ e2e(
             timeout: 60_000,
         })
         await expect(sidebar.getByText("Approve", { exact: true })).toHaveCount(0)
+        // A settled MCP call renders folded; its request card opens on demand.
+        await sidebar.getByRole("button", { name: "Expand MCP call" }).click()
         const requestCard = sidebar.getByTestId("mcp-request-card")
         await expect(requestCard).toHaveCount(1)
         await expect(sidebar.getByText(`Dline is using the ${MCP_NAME} MCP server:`, { exact: true })).toBeVisible()

@@ -3,13 +3,13 @@ import { projectUsageThinking } from "@/services/telemetry/remote/contracts/thin
 
 export type ProviderAttemptTerminalStatus = "completed" | "failed" | "cancelled" | "aborted"
 export type ProviderAttemptThinking = string | number
+/**
+ * Bounded Usage role of a provider attempt, mirrored by the schema 4 `USAGE_ROLES` contract.
+ *
+ * `reviewer` is reserved in that contract and no current caller emits it; every
+ * subagent run reports `subagent` regardless of its configured name.
+ */
 export type ProviderTelemetryRole = "task" | "subagent" | "compaction" | "reviewer" | "other"
-
-/** Map a resolved subagent identity to a bounded role; never expose the free-form name as telemetry. */
-export function providerTelemetryRoleForSubagent(name: string): "subagent" | "reviewer" {
-    const normalized = name.trim().toLowerCase()
-    return /(?:^|[._-])reviewer(?:$|[._-])/.test(normalized) ? "reviewer" : "subagent"
-}
 
 /** Identity known only after the Provider-specific encoder has formed the real wire request. */
 export interface ProviderAttemptIdentity {

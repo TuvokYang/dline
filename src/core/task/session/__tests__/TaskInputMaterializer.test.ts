@@ -8,6 +8,7 @@ import {
     type AdmittedLifecycleBarrier,
     type LifecycleBarrierPort,
     SemanticInputRejectedError,
+    type TaskInputAdmissionOptions,
     type TaskInputAdmissionPort,
 } from "../TaskInputAdmission"
 import { TaskInputMaterializer } from "../TaskInputMaterializer"
@@ -354,15 +355,120 @@ describe("TaskInputMaterializer", () => {
             expect(barriers.requested).toEqual([])
         })
 
-        it("leaves the reply as typed when no domain owns the barrier", async () => {
+        it("leaves the reply as typed when admission recognized nothing that acts", async () => {
             const materializer = new TaskInputMaterializer(
                 recordingPayloads().payloads,
                 identity,
-                admittingBarrier,
+                admittingPlainText,
                 recordingBarriers(false).port,
             )
 
-            expect(await materializer.reviewReply({ text: "/compact keep the audit" })).toBeUndefined()
+            expect(await materializer.reviewReply({ text: "looks good, ship it" })).toBeUndefined()
+        })
+
+        describe("naming a command or mention no lifecycle owner takes", () => {
+            /** "/cmd:reportbug the panel froze": the canonical form the composer menu inserts for /reportbug. */
+            const reportBugReply: SemanticInputDocument = {
+                ...document,
+                rawText: "/cmd:reportbug the panel froze",
+                nodes: [
+                    {
+                        kind: "slash_command",
+                        entityId: "report-1",
+                        commandId: "command.report_bug",
+                        sourceText: "/cmd:reportbug",
+                        canonicalName: "reportbug",
+                        namespace: "cmd",
+                        compositionMode: "composable",
+                        state: "recognized",
+                    },
+                    { kind: "text", text: " the panel froze" },
+                ],
+            }
+            const mentionReply: SemanticInputDocument = {
+                ...document,
+                rawText: "see @/src/app.ts",
+                nodes: [
+                    { kind: "text", text: "see " },
+                    {
+                        kind: "mention",
+                        entityId: "m-1",
+                        mentionKind: "file",
+                        sourceText: "@/src/app.ts",
+                        canonicalRef: "/src/app.ts",
+                        state: "recognized",
+                    },
+                ],
+            }
+            const admittingDocument = (admitted: SemanticInputDocument): TaskInputAdmissionPort => ({
+                admit: async () => ({
+                    ok: true,
+                    admitted: {
+                        document: admitted,
+                        admittedText: "<expanded>",
+                        parts: [{ kind: "text", text: "<expanded>" }],
+                        authorizedTools: [],
+                        explicitInstructions: [],
+                    },
+                }),
+            })
+
+            it("asks for the reply to be carried as a submission instead of literal feedback", async () => {
+                const barriers = recordingBarriers(false)
+                const materializer = new TaskInputMaterializer(
+                    recordingPayloads().payloads,
+                    identity,
+                    admittingDocument(reportBugReply),
+                    barriers.port,
+                )
+
+                const reviewed = await materializer.reviewReply({ text: "/cmd:reportbug the panel froze" })
+
+                expect(reviewed?.carriesInput).toBe(true)
+                // The typed form is what the submission re-admits; the expansion never rides on a draft.
+                expect(reviewed?.text).toBe("/cmd:reportbug the panel froze")
+                expect(reviewed?.document).toBe(reportBugReply)
+                expect(reviewed?.claimedBarrier).toBeUndefined()
+                expect(reviewed?.performAlone).toBeUndefined()
+                reviewed?.commit()
+                expect(barriers.requested).toEqual([])
+            })
+
+            it("carries a recognized mention the same way", async () => {
+                const materializer = new TaskInputMaterializer(
+                    recordingPayloads().payloads,
+                    identity,
+                    admittingDocument(mentionReply),
+                )
+
+                expect((await materializer.reviewReply({ text: "see @/src/app.ts" }))?.carriesInput).toBe(true)
+            })
+
+            it("leaves a command shape admission did not recognize as typed", async () => {
+                const unresolved: SemanticInputDocument = {
+                    ...reportBugReply,
+                    nodes: reportBugReply.nodes.map((node) =>
+                        node.kind === "slash_command" ? { ...node, state: "unresolved" as const } : node,
+                    ),
+                }
+                const materializer = new TaskInputMaterializer(
+                    recordingPayloads().payloads,
+                    identity,
+                    admittingDocument(unresolved),
+                )
+
+                expect(await materializer.reviewReply({ text: "/cmd:reportbug the panel froze" })).toBeUndefined()
+            })
+
+            it("carries it even in an assembly without a barrier owner", async () => {
+                const materializer = new TaskInputMaterializer(
+                    recordingPayloads().payloads,
+                    identity,
+                    admittingDocument(reportBugReply),
+                )
+
+                expect((await materializer.reviewReply({ text: "/cmd:reportbug the panel froze" }))?.carriesInput).toBe(true)
+            })
         })
 
         it("keeps a refused reply literal instead of dropping the user's answer", async () => {
@@ -516,18 +622,132 @@ describe("TaskInputMaterializer", () => {
             })
         })
 
-        it("reviews nothing in an assembly without a barrier owner", async () => {
+        it("reviews nothing for an empty reply", async () => {
             let admitted = 0
             const counting: TaskInputAdmissionPort = {
                 admit: async (input) => {
                     admitted++
-                    return admittingBarrier.admit(input)
+                    return admittingPlainText.admit(input)
                 },
             }
             const materializer = new TaskInputMaterializer(recordingPayloads().payloads, identity, counting)
 
-            expect(await materializer.reviewReply({ text: "/compact" })).toBeUndefined()
+            expect(await materializer.reviewReply({ text: "" })).toBeUndefined()
             expect(admitted).toBe(0)
+        })
+    })
+
+    describe("admitReply", () => {
+        /** "/cmd:reportbug the panel froze", typed as the answer to a restored follow-up. */
+        const reportBugReply: SemanticInputDocument = {
+            ...document,
+            rawText: "/cmd:reportbug the panel froze",
+            nodes: [
+                {
+                    kind: "slash_command",
+                    entityId: "report-1",
+                    commandId: "command.report_bug",
+                    sourceText: "/cmd:reportbug",
+                    canonicalName: "reportbug",
+                    namespace: "cmd",
+                    compositionMode: "composable",
+                    state: "recognized",
+                },
+                { kind: "text", text: " the panel froze" },
+            ],
+        }
+        // A restored reply becomes the tool's result, so taking an intake identity would be a defect.
+        const noIntakeIdentity = {
+            nextEntryId: (): string => {
+                throw new Error("a restored reply must not take an intake entry")
+            },
+            nextSequence: (): number => {
+                throw new Error("a restored reply must not take an intake sequence")
+            },
+        }
+        function storing() {
+            const stored: Uint8Array[] = []
+            const payloads = {
+                put: async (payload: Uint8Array) => {
+                    stored.push(payload)
+                    return `ref-${stored.length}`
+                },
+                read: async () => undefined,
+            } as unknown as TaskPayloadStore
+            return { payloads, stored }
+        }
+        function admittingReportBug(options: TaskInputAdmissionOptions[]): TaskInputAdmissionPort {
+            return {
+                admit: async (_input, admissionOptions) => {
+                    options.push(admissionOptions ?? {})
+                    return {
+                        ok: true,
+                        admitted: {
+                            document: reportBugReply,
+                            admittedText: "<report-bug-instructions> the panel froze",
+                            parts: [{ kind: "text", text: "<report-bug-instructions> the panel froze" }],
+                            authorizedTools: ["report_bug"],
+                            explicitInstructions: [{ type: "skill", source: "skill_injection" }],
+                        },
+                    }
+                },
+            }
+        }
+
+        it("stores the admission of a reply that names a command without taking an intake entry", async () => {
+            const store = storing()
+            const options: TaskInputAdmissionOptions[] = []
+            const materializer = new TaskInputMaterializer(store.payloads, noIntakeIdentity, admittingReportBug(options))
+
+            const admitted = await materializer.admitReply({ text: "/cmd:reportbug the panel froze" })
+
+            expect(admitted).toEqual({
+                payloadRef: "ref-1",
+                modelText: "<report-bug-instructions> the panel froze",
+                document: reportBugReply,
+            })
+            // The reply was durable before the restore, so its catalog revision stays pinned.
+            expect(options).toEqual([{ pinnedRevision: true }])
+            expect(store.stored).toHaveLength(1)
+            const envelope = decodeTaskPayload<UserInputEnvelope>(store.stored[0])
+            expect(envelope).toMatchObject({
+                kind: "user_input",
+                text: "/cmd:reportbug the panel froze",
+                admittedText: "<report-bug-instructions> the panel froze",
+                authorizedTools: ["report_bug"],
+                explicitInstructions: [{ type: "skill", source: "skill_injection" }],
+            })
+            expect(envelope.semanticInput?.documentId).toBe(reportBugReply.documentId)
+        })
+
+        it("leaves a reply in which nothing acts as typed and stores nothing", async () => {
+            const store = storing()
+            const materializer = new TaskInputMaterializer(store.payloads, noIntakeIdentity, admittingPlainText)
+
+            expect(await materializer.admitReply({ text: "looks good, ship it" })).toBeUndefined()
+            expect(await materializer.admitReply({ text: "" })).toBeUndefined()
+            expect(store.stored).toHaveLength(0)
+        })
+
+        it("leaves a lifecycle command this path cannot carry out as typed instead of half-acting", async () => {
+            const store = storing()
+            const barriers = recordingBarriers(true)
+            const materializer = new TaskInputMaterializer(store.payloads, noIntakeIdentity, admittingBarrier, barriers.port)
+
+            expect(await materializer.admitReply({ text: "/explain then /compact keep the audit" })).toBeUndefined()
+            expect(store.stored).toHaveLength(0)
+            expect(barriers.requested).toEqual([])
+        })
+
+        it("keeps a refused legacy reply literal and refuses a structured one", async () => {
+            const store = storing()
+            const materializer = new TaskInputMaterializer(store.payloads, noIntakeIdentity, refusing)
+
+            expect(await materializer.admitReply({ text: "/cmd:reportbug the panel froze" })).toBeUndefined()
+            await expect(
+                materializer.admitReply({ text: reportBugReply.rawText, semanticInput: reportBugReply }),
+            ).rejects.toBeInstanceOf(SemanticInputRejectedError)
+            expect(store.stored).toHaveLength(0)
         })
     })
 })

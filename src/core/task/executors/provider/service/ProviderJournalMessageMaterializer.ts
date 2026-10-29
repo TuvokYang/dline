@@ -76,11 +76,32 @@ function appendSubmissionContext(text: string | undefined, context: string | und
     return text ? `${text}\n\n${trimmedContext}` : trimmedContext
 }
 
+/** Declarations an admitted user input persisted; any other payload grants nothing. */
+function declarationsOf(payload: JournalPayload): readonly ExplicitInstructionDeclaration[] {
+    return payload.kind === "user_input" ? ((payload as UserInputEnvelope).explicitInstructions ?? []) : []
+}
+
+/**
+ * Admitted inputs whose text a tool payload already carries, read only for the authority they granted.
+ *
+ * Undefined for any other payload, and for a tool payload that names none, so
+ * an entry written before the field existed reads as it always did.
+ */
+function feedbackInputRefsOf(payload: JournalPayload): readonly string[] | undefined {
+    if (payload.kind === "tool_terminal_manifest") return (payload as ToolTerminalManifestEnvelope).feedbackInputRefs
+    if (payload.kind === "tool_result") return (payload as ToolResultEnvelope).feedbackInputRefs
+    return undefined
+}
+
 /** What one journal payload contributes to the provider conversation. */
 export interface MaterializedPayload {
     /** Payload kind, which is what says who wrote a user-role message. */
     readonly kind: string
-    /** Trusted declarations carried by this durable input, never reconstructed from rendered text. */
+    /**
+     * Trusted declarations carried by this durable input, never reconstructed
+     * from rendered text. A terminal manifest carries those of the admitted
+     * answers its results already render.
+     */
     readonly explicitInstructions?: readonly ExplicitInstructionDeclaration[]
     /**
      * Usually one message. A summary carrying a reply the model has not
@@ -115,8 +136,7 @@ export class ProviderJournalMessageMaterializer {
         const declarations: ExplicitInstructionDeclaration[] = []
         for (const payloadRef of payloadRefs) {
             const payload = decodeTaskPayload<JournalPayload>(await this.payloads.read(payloadRef))
-            if (payload.kind !== "user_input") continue
-            declarations.push(...((payload as UserInputEnvelope).explicitInstructions ?? []))
+            declarations.push(...declarationsOf(payload))
         }
         return declarations
     }
@@ -140,8 +160,8 @@ export class ProviderJournalMessageMaterializer {
             payload.kind === "tool_terminal_manifest"
                 ? (payload as ToolTerminalManifestEnvelope).supersededPayloadRefs
                 : undefined
-        const explicitInstructions =
-            payload.kind === "user_input" ? (payload as UserInputEnvelope).explicitInstructions : undefined
+        const feedbackInputRefs = feedbackInputRefsOf(payload)
+        const explicitInstructions = feedbackInputRefs ? await this.collectAuthority(feedbackInputRefs) : declarationsOf(payload)
         return {
             kind: payload.kind,
             messages,

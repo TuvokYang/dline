@@ -87,6 +87,20 @@ export interface TaskResumptionPort {
 }
 
 /**
+ * The submission a dialog draft is admitted as.
+ *
+ * A structured draft's flat lists and text only project its resources for
+ * receivers that read no structure ("look[shot.png]"). Admitting the document
+ * again restores them, and admission requires a structured submission's text
+ * to be its document's own, so the document is the one authority for both.
+ */
+export function dialogAnswerOf(draft: InteractionOutcome["draft"]): ResumptionInput {
+    return draft?.semanticInput === undefined
+        ? { text: draft?.text, images: draft?.images, files: draft?.files }
+        : { text: draft.semanticInput.rawText, semanticInput: draft.semanticInput }
+}
+
+/**
  * Hands the request a Retry opens to the user instead of an automatic sequence.
  *
  * Retry answers a request that already failed, so the request it opens belongs
@@ -157,15 +171,7 @@ export class ResumeDialogContinuation implements UnownedDialogContinuationPort {
             ? getPrompt("toolHandlers", "processAnywayContext")
             : createResumeSubmissionContext(resolution.kind)
         const manualRetry = resolution.kind === "error_retry" && resolution.outcome.actionId === "retry"
-        // A structured draft's flat lists and text only project its resources for
-        // receivers that read no structure ("look[shot.png]"). Admitting the
-        // document again restores them, and admission requires a structured
-        // submission's text to be its document's own, so the document is the one
-        // authority for both.
-        const answer =
-            draft?.semanticInput === undefined
-                ? { text: draft?.text, images: draft?.images, files: draft?.files }
-                : { text: draft.semanticInput.rawText, semanticInput: draft.semanticInput }
+        const answer = dialogAnswerOf(draft)
         try {
             const input = await this.resumption.materializeAnswer({
                 ...answer,

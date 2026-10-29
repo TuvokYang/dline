@@ -1,5 +1,6 @@
 import { createInitialTaskState, transition } from "@core/task/kernel"
 import { projectCanonicalTaskView } from "@core/task/view/canonical/projectCanonicalTaskView"
+import type { UiAsk } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 import { adaptCanonicalTaskView } from "../TaskViewMessageAdapter"
 
@@ -41,6 +42,60 @@ describe("adaptCanonicalTaskView", () => {
             anchorVerified: true,
         })
         expect(view.input).toMatchObject({ enabled: true, enterAction: "reply" })
+    })
+
+    /** A manual tool approval as the kernel plans it, anchored on a row of the given ask. */
+    function manualToolApproval(ask: UiAsk, actionRules: { actionId: string; payloadPolicy: "none" | "draft" }[]) {
+        const projection = projectCanonicalTaskView({
+            ...createInitialTaskState("task-1"),
+            revision: 7,
+            flow: { phase: "paused" },
+            dialog: {
+                approvalsByBlock: {},
+                primary: {
+                    interactionId: "approval-1",
+                    turnId: "turn-1",
+                    kind: "tool_approval",
+                    status: "awaiting",
+                    createdRevision: 6,
+                    presentationRef: "{}",
+                    presentationAsk: ask,
+                    receiverGeneration: 0,
+                    actionRules,
+                },
+            },
+        })
+        return adaptCanonicalTaskView(projection, [{ type: "ask", ask, ts: 200, text: "{}", interactionId: "approval-1" }])
+    }
+
+    it("presents a NEW_TASK tool approval with its own choices and semantic kind", () => {
+        const view = manualToolApproval("new_task", [
+            { actionId: "approve", payloadPolicy: "none" },
+            { actionId: "reject", payloadPolicy: "draft" },
+        ])
+
+        // The webview keeps the successor draft only for a `new_task` interaction.
+        expect(view.activeInteraction).toMatchObject({ interactionId: "approval-1", kind: "new_task", taskAsk: "new_task" })
+        // Placement still follows the approval the kernel opened, so the preview stays in the approval panel.
+        expect(view.activeInteraction?.presentationKind).toBe("tool_approval")
+        expect(view.footer.actions.map(({ type, label, payloadPolicy }) => ({ type, label, payloadPolicy }))).toEqual([
+            { type: "approve", label: "Start New Task", payloadPolicy: "none" },
+            { type: "reject", label: "Regenerate Context", payloadPolicy: "draft" },
+        ])
+        expect(view.input).toMatchObject({ enabled: true, enterAction: "reject" })
+    })
+
+    it("keeps generic Approve and Reject for an ordinary tool approval", () => {
+        const view = manualToolApproval("tool", [
+            { actionId: "approve", payloadPolicy: "draft" },
+            { actionId: "reject", payloadPolicy: "draft" },
+        ])
+
+        expect(view.activeInteraction).toMatchObject({ kind: "tool_approval", presentationKind: "tool_approval" })
+        expect(view.footer.actions.map(({ type, label }) => ({ type, label }))).toEqual([
+            { type: "approve", label: "Approve" },
+            { type: "reject", label: "Reject" },
+        ])
     })
 
     it("renders a legacy running completion as completed instead of streaming", () => {

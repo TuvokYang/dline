@@ -578,6 +578,11 @@ export interface ActiveInteractionView {
     presentationText?: string
     /** Backend registered the exact ask anchor in durable write order even if the Webview window has not loaded it yet. */
     anchorVerified?: boolean
+    /**
+     * The anchor exists only in the backend projection of a recovery dialog and
+     * is never served as a chat row, so no page of the conversation contains it.
+     */
+    anchorSynthetic?: boolean
 }
 
 /** Footer content owned exclusively by the backend task projection. */

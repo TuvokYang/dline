@@ -537,12 +537,15 @@ export const ExtensionStateContextProvider: React.FC<{
     const lastInteractionFetchKeyRef = useRef<string | undefined>(undefined)
     const inFlightInteractionFetchRef = useRef<string | undefined>(undefined)
     const projectedInteraction = state.taskViewState?.activeInteraction
+    // A synthetic anchor is never served as a chat row, so no page contains it.
+    // Recovering it would walk the whole history and still find nothing.
+    const recoverableInteraction = projectedInteraction?.anchorSynthetic ? undefined : projectedInteraction
     // Whether this window has loaded the chat row the interaction anchors to.
     // `anchorVerified` only says the backend holds that row, which is enough for
     // the footer to dispatch but not for the chat to show it; treating it as
     // loaded skipped the recovery fetch and left an answered row off screen.
-    const projectedInteractionAnchorLoaded = projectedInteraction
-        ? hasExactInteractionAnchor(clineMessages, projectedInteraction)
+    const projectedInteractionAnchorLoaded = recoverableInteraction
+        ? hasExactInteractionAnchor(clineMessages, recoverableInteraction)
         : true
     const localTailMessage = clineMessages.at(-1)
 
@@ -805,7 +808,7 @@ export const ExtensionStateContextProvider: React.FC<{
             prevMessageWindowRevisionRef.current = messageWindowRevision
             prevMessageIndexSpaceRef.current = messageIndexSpace
             if (total > 0) {
-                fetchLatestWindow(currentTaskViewKey, projectedInteraction)
+                fetchLatestWindow(currentTaskViewKey, recoverableInteraction)
             }
             return
         }
@@ -844,7 +847,7 @@ export const ExtensionStateContextProvider: React.FC<{
             return
         }
         if (prevTotalRef.current === 0 && total > 0 && clineMessages.length === 0) {
-            fetchLatestWindow(currentTaskViewKeyRef.current, projectedInteraction)
+            fetchLatestWindow(currentTaskViewKeyRef.current, recoverableInteraction)
             prevTotalRef.current = total
             return
         }
@@ -891,7 +894,7 @@ export const ExtensionStateContextProvider: React.FC<{
             }
         }
 
-        const activeInteraction = projectedInteraction
+        const activeInteraction = recoverableInteraction
         // A verified anchor keeps the footer usable meanwhile, so its row is
         // recovered once the first window has landed instead of racing it. The
         // in-flight key below already prevents duplicate recoveries, so an
@@ -917,7 +920,7 @@ export const ExtensionStateContextProvider: React.FC<{
         state.messageWindowRevision,
         state.messageIndexSpace,
         state.taskViewState?.footer.actions,
-        projectedInteraction,
+        recoverableInteraction,
         projectedInteractionAnchorLoaded,
         clineMessages.length,
         localTailMessage,

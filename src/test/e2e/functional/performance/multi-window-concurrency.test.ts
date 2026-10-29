@@ -1177,8 +1177,12 @@ e2e(
         const checkpointLabels = panelA.getByText("Checkpoint", { exact: true })
         await expect.poll(() => checkpointLabels.count()).toBeGreaterThan(0)
         const initialCheckpoint = checkpointLabels.first().locator("..").locator("..")
-        await initialCheckpoint.hover()
-        await initialCheckpoint.getByRole("button", { name: "Restore", exact: true }).click()
+        // Restore is revealed on hover; the row can still shift while the completed turn settles,
+        // which drops the hover and hides the button, so re-hover until the click lands.
+        await expect(async () => {
+            await initialCheckpoint.hover()
+            await initialCheckpoint.getByRole("button", { name: "Restore", exact: true }).click({ timeout: 2_000 })
+        }).toPass({ timeout: 30_000 })
         const restoreAllButton = panelA.getByRole("button", { name: "Restore Files & Task", exact: true })
         await expect(restoreAllButton).toBeVisible()
         await restoreAllButton.click()
@@ -1426,6 +1430,11 @@ e2e(
         if (!panelTaskId) throw new Error("Panel task ID was not persisted")
 
         await sidebar.getByRole("button", { name: "Close Task", exact: true }).click()
+        // Close returns the surface before the detached task drops its lock. A panel
+        // opened earlier sees a foreign lock and stays read-only until the lock poll.
+        await expect
+            .poll(() => pathExists(path.join(dlineDocsDir, "tasks", panelTaskId, ".lock")), { timeout: 30_000 })
+            .toBe(false)
         await page.getByRole("button", { name: "History", exact: true }).click()
         await E2ETestHelper.dismissWhatsNewModal(sidebar)
         const historyItem = sidebar.locator(".history-item").filter({ hasText: panelTask })

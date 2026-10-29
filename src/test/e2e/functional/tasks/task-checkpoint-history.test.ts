@@ -10,6 +10,7 @@ import {
     rewriteTaskActivities,
     rewriteTaskConversation,
     rewriteTaskUiMessages,
+    waitForTaskRelease,
 } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator } from "@playwright/test"
 import type { UiMessage } from "@shared/ExtensionMessage"
@@ -484,6 +485,7 @@ e2e(
         })
 
         await closeCurrentTask(sidebar)
+        await waitForTaskRelease(dlineDocsDir, taskId)
         await simulateIncompleteTurnEndContinuation(dlineDocsDir, taskId)
         await reopenTask(sidebar, taskText)
         await expect(sidebar.getByText("E2E_MISSING_QNA_PROMPT", { exact: true })).toBeVisible()

@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
+import type { OpenAiMockResponse } from "@e2e/fixtures/server"
 import { getE2EWorkspaceMcpUrl } from "@e2e/fixtures/server/workspace-mcp"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
@@ -60,7 +61,9 @@ const MIN_SEARCH_CALLS_PER_TURN = 2
 const MAX_SEARCH_CALLS_PER_TURN = 4
 const CORPUS_FILE_CHARS = 57 * 1024
 const SIX_CYCLE_CORPUS_FILE_CHARS = 55 * 1024
-const CONSECUTIVE_CORPUS_FILE_CHARS = 60 * 1024
+// The large turn must cross the ordinary trigger once fully delivered while staying under the
+// last-complete-turn Pass ceiling; 60 KiB reads plus their framing land on that ceiling.
+const CONSECUTIVE_CORPUS_FILE_CHARS = 58 * 1024
 // Leave headroom for frozen-prefix growth while keeping the complete provider request above the 446.4K trigger boundary.
 const LARGE_TURN_CORPUS_FILE_CHARS = 56 * 1024
 // The pending-completed scenario must fit the history turn plus the latest turn in the first hidden Pass for every seed.
@@ -71,6 +74,12 @@ const LARGE_TURN_EXTRA_FILE_CHARS = 8 * 1024
 const CONSECUTIVE_LARGE_TURN_EXTRA_FILE_CHARS = 512
 const CORPUS_USER_CHARS = 120 * 1024
 const CORPUS_SOURCE_PATH = "dist/extension.js.map"
+// read_file bounds each physical line (2 KiB once a 1,000-line read is planned); the source map's
+// slices are one physical line, so corpus files are wrapped to deliver their full content.
+const CORPUS_LINE_CHARS = 1024
+// A single provider round may add only part of the remaining window in tool results, so a large
+// corpus turn is delivered across several scripted tool rounds of at most this many reads each.
+const CORPUS_READ_CALLS_PER_BATCH = 10
 const CACHE_SCENARIO_SEED_ENV = "DLINE_E2E_CACHE_SCENARIO_SEED"
 
 type CorpusToolName = "read_file" | "search_files"
@@ -158,6 +167,14 @@ function resolveScenarioSeed(): number {
         throw new Error(`${CACHE_SCENARIO_SEED_ENV} must be an unsigned 32-bit integer`)
     }
     return parsed >>> 0
+}
+
+function wrapCorpusPayload(text: string): string {
+    const lines: string[] = []
+    for (let offset = 0; offset < text.length; offset += CORPUS_LINE_CHARS) {
+        lines.push(text.slice(offset, offset + CORPUS_LINE_CHARS))
+    }
+    return lines.join("\n")
 }
 
 function hashText(value: string): string {
@@ -340,7 +357,7 @@ async function prepareScenario(
                 [
                     searchToken,
                     `Source: ${CORPUS_SOURCE_PATH}; character range: ${fileStart}-${fileStart + corpusFileChars}`,
-                    source.slice(fileStart, fileStart + corpusFileChars),
+                    wrapCorpusPayload(source.slice(fileStart, fileStart + corpusFileChars)),
                 ].join("\n"),
                 "utf8",
             )
@@ -404,6 +421,49 @@ async function prepareScenario(
         })
     }
     return { seed, seedHex, runtimeOverrides, turns }
+}
+
+/**
+ * Split one corpus operation into delivery rounds. Searches go first with the first reads so the small
+ * results share the roomiest round; reads keep their seeded order.
+ */
+function corpusToolBatches(calls: readonly CorpusToolCall[]): CorpusToolCall[][] {
+    const searches = calls.filter(({ name }) => name === "search_files")
+    const reads = calls.filter(({ name }) => name === "read_file")
+    const batches: CorpusToolCall[][] = []
+    for (let offset = 0; offset < reads.length; offset += CORPUS_READ_CALLS_PER_BATCH) {
+        batches.push(reads.slice(offset, offset + CORPUS_READ_CALLS_PER_BATCH))
+    }
+    batches[0] = [...searches, ...(batches[0] ?? [])]
+    return batches
+}
+
+function expectedResultsOf(calls: readonly CorpusToolCall[]) {
+    return calls.map((toolCall) => ({ callId: toolCall.id, contentIncludes: toolCall.expectedResultIncludes }))
+}
+
+/**
+ * Script the ordinary provider rounds that deliver one corpus operation. Each round requests one batch;
+ * every later round requires the previous batch's results, so the extra rounds carry real corpus rather
+ * than reported pressure.
+ */
+function corpusDeliveryRounds(
+    batches: readonly (readonly CorpusToolCall[])[],
+    expectedRequestIncludes: readonly string[],
+    firstRoundToolResults?: ReturnType<typeof expectedResultsOf>,
+): OpenAiMockResponse[] {
+    return batches.map((batch, index) => {
+        const expectedToolResults = index > 0 ? expectedResultsOf(batches[index - 1]) : firstRoundToolResults
+        return {
+            type: "tools",
+            tools: batch.map(({ id, name, arguments: toolArguments }) => ({ id, name, arguments: toolArguments })),
+            expectedRequestIncludes,
+            expectedRequestExcludes: [COMPACTION_MARKER],
+            ...(expectedToolResults ? { expectedToolResults } : {}),
+            requireCompleteToolPairing: true,
+            matchRequestContract: true,
+        }
+    })
 }
 
 async function openSidebar(app: ElectronApplication, helper: E2ETestHelper): Promise<Frame> {
@@ -518,21 +578,17 @@ e2e(
             callId: toolCall.id,
             contentIncludes: toolCall.expectedResultIncludes,
         }))
+        const deliveryRounds = corpusDeliveryRounds(corpusToolBatches(largeTurnToolCalls), [
+            turn.marker,
+            RULE_MARKER,
+            SKILL_NAME,
+            WORKFLOW_NAME,
+            MCP_TOOL_NAME,
+        ])
         server.resetOpenAiMock()
         server.enqueueResponses(
             "openai-compatible-responses",
-            {
-                type: "tools",
-                tools: largeTurnToolCalls.map((toolCall) => ({
-                    id: toolCall.id,
-                    name: toolCall.name,
-                    arguments: toolCall.arguments,
-                })),
-                expectedRequestIncludes: [turn.marker, RULE_MARKER, SKILL_NAME, WORKFLOW_NAME, MCP_TOOL_NAME],
-                expectedRequestExcludes: [COMPACTION_MARKER],
-                requireCompleteToolPairing: true,
-                matchRequestContract: true,
-            },
+            ...deliveryRounds,
             {
                 type: "tool",
                 id: `call_large_turn_summary_${scenario.seedHex}`,
@@ -566,15 +622,17 @@ e2e(
             await waitForPromptCatalog(sidebar)
             await setAutoApproveRead(sidebar)
             await send(sidebar, turn.userText)
-            await expect.poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 180_000 }).toBe(3)
+            await expect
+                .poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 180_000 })
+                .toBe(deliveryRounds.length + 2)
             await expect(sidebar.getByText(completion, { exact: true })).toBeVisible({ timeout: 60_000 })
             const footer = sidebar.getByRole("contentinfo")
             await expect(footer.getByText("Start New Task", { exact: true })).toBeVisible({ timeout: 60_000 })
 
             const requests = server.getMockConsumptions("openai-compatible-responses")
-            const summaryRequest = requests[1]
+            const summaryRequest = requests[deliveryRounds.length]
             expect(requests.map(({ responseType, toolName }) => toolName ?? responseType)).toEqual([
-                "tools",
+                ...deliveryRounds.map(() => "tools"),
                 "summarize_task",
                 "attempt_completion",
             ])
@@ -630,21 +688,17 @@ e2e(
             contentIncludes: toolCall.expectedResultIncludes,
         }))
 
+        const historyRounds = corpusDeliveryRounds(corpusToolBatches(historyToolCalls), [
+            historyTurn.marker,
+            RULE_MARKER,
+            SKILL_NAME,
+            WORKFLOW_NAME,
+            MCP_TOOL_NAME,
+        ])
         server.resetOpenAiMock()
         server.enqueueResponses(
             "openai-compatible-responses",
-            {
-                type: "tools",
-                tools: historyToolCalls.map((toolCall) => ({
-                    id: toolCall.id,
-                    name: toolCall.name,
-                    arguments: toolCall.arguments,
-                })),
-                expectedRequestIncludes: [historyTurn.marker, RULE_MARKER, SKILL_NAME, WORKFLOW_NAME, MCP_TOOL_NAME],
-                expectedRequestExcludes: [COMPACTION_MARKER],
-                requireCompleteToolPairing: true,
-                matchRequestContract: true,
-            },
+            ...historyRounds,
             {
                 type: "tool",
                 id: `call_pending_completed_history_ready_${scenario.seedHex}`,
@@ -706,11 +760,13 @@ e2e(
             await expect(sidebar.getByText(historyReady, { exact: true })).toBeVisible({ timeout: 180_000 })
             await send(sidebar, latestUserMarker)
             await expect(sidebar.getByText(completed, { exact: true })).toBeVisible({ timeout: 180_000 })
-            await expect.poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 180_000 }).toBe(5)
+            await expect
+                .poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 180_000 })
+                .toBe(historyRounds.length + 4)
 
             const requests = server.getMockConsumptions("openai-compatible-responses")
-            const summaryRequest = requests[3]
-            const postCompactionRequest = requests[4]
+            const summaryRequest = requests[historyRounds.length + 2]
+            const postCompactionRequest = requests[historyRounds.length + 3]
             const summaryRequestText = JSON.stringify(summaryRequest.requestBody)
             const postCompactionRequestText = JSON.stringify(postCompactionRequest.requestBody)
             if (!summaryRequest.cacheDiagnostic) throw new Error("Missing pending-completed-turn cache diagnostic")
@@ -737,7 +793,7 @@ e2e(
             })
 
             expect(requests.map(({ responseType, toolName }) => toolName ?? responseType)).toEqual([
-                "tools",
+                ...historyRounds.map(() => "tools"),
                 "qna_respond",
                 "tools",
                 "summarize_task",
@@ -817,21 +873,25 @@ e2e(
             contentType: "application/json",
         })
 
+        const historyRounds = corpusDeliveryRounds(corpusToolBatches(historyTurn.toolCalls), [
+            historyTurn.marker,
+            RULE_MARKER,
+            SKILL_NAME,
+            WORKFLOW_NAME,
+            MCP_TOOL_NAME,
+        ])
+        const largeRounds = corpusDeliveryRounds(corpusToolBatches(largeTurnToolCalls), [
+            largeTurn.marker,
+            firstSummary,
+            RULE_MARKER,
+            SKILL_NAME,
+            WORKFLOW_NAME,
+            MCP_TOOL_NAME,
+        ])
         server.resetOpenAiMock()
         server.enqueueResponses(
             "openai-compatible-responses",
-            {
-                type: "tools",
-                tools: historyTurn.toolCalls.map((toolCall) => ({
-                    id: toolCall.id,
-                    name: toolCall.name,
-                    arguments: toolCall.arguments,
-                })),
-                expectedRequestIncludes: [historyTurn.marker, RULE_MARKER, SKILL_NAME, WORKFLOW_NAME, MCP_TOOL_NAME],
-                expectedRequestExcludes: [COMPACTION_MARKER],
-                requireCompleteToolPairing: true,
-                matchRequestContract: true,
-            },
+            ...historyRounds,
             {
                 type: "tool",
                 id: `call_consecutive_cache_history_ready_${scenario.seedHex}`,
@@ -860,18 +920,7 @@ e2e(
                 requireCompleteToolPairing: true,
                 matchRequestContract: true,
             },
-            {
-                type: "tools",
-                tools: largeTurnToolCalls.map((toolCall) => ({
-                    id: toolCall.id,
-                    name: toolCall.name,
-                    arguments: toolCall.arguments,
-                })),
-                expectedRequestIncludes: [largeTurn.marker, firstSummary, RULE_MARKER, SKILL_NAME, WORKFLOW_NAME, MCP_TOOL_NAME],
-                expectedRequestExcludes: [COMPACTION_MARKER],
-                requireCompleteToolPairing: true,
-                matchRequestContract: true,
-            },
+            ...largeRounds,
             {
                 type: "tool",
                 id: `call_consecutive_cache_summary_${scenario.seedHex}_2_carry`,
@@ -975,11 +1024,19 @@ e2e(
                 contentType: "application/json",
             })
             expect(terminalState).toBe("ready")
-            expect([6, 7]).toContain(requests.length)
+            const scriptedRounds = historyRounds.length + largeRounds.length
+            expect([scriptedRounds + 4, scriptedRounds + 5]).toContain(requests.length)
             const requestSequence = requests.map(({ responseType, toolName }) => toolName ?? responseType)
-            expect(requestSequence.slice(0, 4)).toEqual(["tools", "qna_respond", "summarize_task", "tools"])
-            expect(requestSequence.slice(4, -1).every((response) => response === "summarize_task")).toBe(true)
-            expect([1, 2]).toContain(requestSequence.slice(4, -1).length)
+            const largeTurnStart = historyRounds.length + 2
+            const largeTurnEnd = largeTurnStart + largeRounds.length
+            expect(requestSequence.slice(0, largeTurnEnd)).toEqual([
+                ...historyRounds.map(() => "tools"),
+                "qna_respond",
+                "summarize_task",
+                ...largeRounds.map(() => "tools"),
+            ])
+            expect(requestSequence.slice(largeTurnEnd, -1).every((response) => response === "summarize_task")).toBe(true)
+            expect([1, 2]).toContain(requestSequence.slice(largeTurnEnd, -1).length)
             expect(requestSequence.at(-1)).toBe("qna_respond")
             expect(requests.every(({ contractError }) => contractError === undefined)).toBe(true)
             expect(requests.every(({ requestToolPairing }) => requestToolPairing.complete)).toBe(true)
@@ -1024,7 +1081,8 @@ e2e(
                 return cacheDiagnostic
             })
             const baseline = diagnostics[0]
-            const historyProviderDiagnostic = diagnostics[1]
+            // The history reads arrive in batches; the usage-bearing reply follows the last batch.
+            const historyProviderDiagnostic = diagnostics[historyRounds.length]
             const baselineRequestBody = requests[0].requestBody as { prompt_cache_key?: string }
             expect(baselineRequestBody.prompt_cache_key).toBeTruthy()
             expect(baseline.stablePrefixTokens).toBeGreaterThanOrEqual(30_000)
@@ -1085,6 +1143,7 @@ e2e(
         })
 
         server.resetOpenAiMock()
+        const deliveryRoundCounts: number[] = []
         for (let turnIndex = 0; turnIndex < ORDINARY_TURN_COUNT; turnIndex++) {
             if (turnIndex > 0) {
                 const cycle = turnIndex
@@ -1108,39 +1167,26 @@ e2e(
                 })
             }
             const turn = turns[turnIndex]
-            server.enqueueResponses(
-                "openai-compatible-responses",
-                {
-                    type: "tools",
-                    tools: turn.toolCalls.map((toolCall) => ({
-                        id: toolCall.id,
-                        name: toolCall.name,
-                        arguments: toolCall.arguments,
-                    })),
-                    expectedRequestIncludes: [
-                        turn.marker,
-                        ...(turnIndex === 0 ? [RULE_MARKER, SKILL_NAME, WORKFLOW_NAME, MCP_TOOL_NAME] : []),
-                        ...(turnIndex > 0 ? [summaryMarker(scenario.seedHex, turnIndex)] : []),
-                    ],
-                    expectedRequestExcludes: [COMPACTION_MARKER],
-                    requireCompleteToolPairing: true,
-                    matchRequestContract: true,
-                },
-                {
-                    type: "tool",
-                    id: `call_auto_cache_${scenario.seedHex}_turn_${turnIndex + 1}_ready`,
-                    name: "qna_respond",
-                    arguments: { response: readyMarker(scenario.seedHex, turnIndex + 1) },
-                    usage: { inputTokens: AUTO_COMPACTION_PROVIDER_INPUT_TOKENS, outputTokens: 100 },
-                    expectedToolResults: turn.toolCalls.map((toolCall) => ({
-                        callId: toolCall.id,
-                        contentIncludes: toolCall.expectedResultIncludes,
-                    })),
-                    expectedRequestExcludes: [COMPACTION_MARKER],
-                    requireCompleteToolPairing: true,
-                    matchRequestContract: true,
-                },
-            )
+            const deliveryRounds = corpusDeliveryRounds(corpusToolBatches(turn.toolCalls), [
+                turn.marker,
+                ...(turnIndex === 0 ? [RULE_MARKER, SKILL_NAME, WORKFLOW_NAME, MCP_TOOL_NAME] : []),
+                ...(turnIndex > 0 ? [summaryMarker(scenario.seedHex, turnIndex)] : []),
+            ])
+            deliveryRoundCounts.push(deliveryRounds.length)
+            server.enqueueResponses("openai-compatible-responses", ...deliveryRounds, {
+                type: "tool",
+                id: `call_auto_cache_${scenario.seedHex}_turn_${turnIndex + 1}_ready`,
+                name: "qna_respond",
+                arguments: { response: readyMarker(scenario.seedHex, turnIndex + 1) },
+                usage: { inputTokens: AUTO_COMPACTION_PROVIDER_INPUT_TOKENS, outputTokens: 100 },
+                expectedToolResults: turn.toolCalls.map((toolCall) => ({
+                    callId: toolCall.id,
+                    contentIncludes: toolCall.expectedResultIncludes,
+                })),
+                expectedRequestExcludes: [COMPACTION_MARKER],
+                requireCompleteToolPairing: true,
+                matchRequestContract: true,
+            })
         }
 
         const app = await openVSCode(workspaceDir)
@@ -1168,11 +1214,22 @@ e2e(
             }
 
             const requests = server.getMockConsumptions("openai-compatible-responses")
-            expect(requests).toHaveLength(ORDINARY_TURN_COUNT * 2 + AUTO_COMPACTION_COUNT)
-            const expectedRequestSequence = ["tools", "qna_respond"]
-            for (let cycleIndex = 0; cycleIndex < AUTO_COMPACTION_COUNT; cycleIndex++) {
-                expectedRequestSequence.push("summarize_task", "tools", "qna_respond")
+            const expectedRequestSequence: string[] = []
+            const turnStartIndexes: number[] = []
+            const summaryIndexes: number[] = []
+            for (let turnIndex = 0; turnIndex < ORDINARY_TURN_COUNT; turnIndex++) {
+                if (turnIndex > 0) {
+                    summaryIndexes.push(expectedRequestSequence.length)
+                    expectedRequestSequence.push("summarize_task")
+                }
+                turnStartIndexes.push(expectedRequestSequence.length)
+                expectedRequestSequence.push(
+                    ...Array.from({ length: deliveryRoundCounts[turnIndex] }, () => "tools"),
+                    "qna_respond",
+                )
             }
+            expect(summaryIndexes).toHaveLength(AUTO_COMPACTION_COUNT)
+            expect(requests).toHaveLength(expectedRequestSequence.length)
             expect(requests.map(({ responseType, toolName }) => toolName ?? responseType)).toEqual(expectedRequestSequence)
             const diagnostics = requests.map(({ cacheDiagnostic }) => {
                 if (!cacheDiagnostic) throw new Error("Missing OpenAI cache diagnostic")
@@ -1205,12 +1262,16 @@ e2e(
                 }
             }
             for (let turnIndex = 0; turnIndex < ORDINARY_TURN_COUNT; turnIndex++) {
-                const toolsRequestIndex = turnIndex === 0 ? 0 : turnIndex * 3
-                const relatedRequests =
-                    turnIndex === 0 ? requests.slice(0, 2) : requests.slice(toolsRequestIndex - 1, toolsRequestIndex + 2)
+                const turnStart = turnStartIndexes[turnIndex]
+                const turnEnd = turnStart + deliveryRoundCounts[turnIndex]
+                const deliveryRequests = requests.slice(turnStart, turnEnd)
+                // The summary before the turn and the ready reply after it run under the same overrides.
+                const relatedRequests = requests.slice(turnIndex === 0 ? 0 : turnStart - 1, turnEnd + 1)
                 const step = runtimeOverrides[turnIndex]
-                expect(requests[toolsRequestIndex].responseToolCalls).toHaveLength(turns[turnIndex].toolCalls.length)
-                expect(requests[toolsRequestIndex].requestToolPairing.complete).toBe(true)
+                expect(deliveryRequests.flatMap(({ responseToolCalls }) => responseToolCalls)).toHaveLength(
+                    turns[turnIndex].toolCalls.length,
+                )
+                for (const request of deliveryRequests) expect(request.requestToolPairing.complete).toBe(true)
                 for (const request of relatedRequests) {
                     const requestBody = request.requestBody as { reasoning?: { effort?: string }; service_tier?: string }
                     expect(requestBody.reasoning?.effort).toBe(step.reasoningEffort)
@@ -1220,8 +1281,8 @@ e2e(
             const summaryRequests = requests.filter(({ toolName }) => toolName === "summarize_task")
             expect(summaryRequests).toHaveLength(AUTO_COMPACTION_COUNT)
             for (let cycleIndex = 0; cycleIndex < AUTO_COMPACTION_COUNT; cycleIndex++) {
-                const summaryRequest = requests[cycleIndex * 3 + 2]
-                const postCompactionOrdinary = requests[cycleIndex * 3 + 3]
+                const summaryRequest = requests[summaryIndexes[cycleIndex]]
+                const postCompactionOrdinary = requests[summaryIndexes[cycleIndex] + 1]
                 expect(summaryRequest.toolCallId).toBe(`call_auto_cache_summary_${scenario.seedHex}_${cycleIndex + 1}`)
                 expect(postCompactionOrdinary.responseType).toBe("tools")
                 if (!summaryRequest.cacheDiagnostic || !postCompactionOrdinary.cacheDiagnostic) {

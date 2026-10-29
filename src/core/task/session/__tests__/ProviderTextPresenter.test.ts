@@ -130,6 +130,25 @@ describe("ProviderTextPresenter", () => {
         ])
     })
 
+    // A chunk can arrive just before the turn settles (reasoning streamed after
+    // the last tool call). Its frame is dropped undrawn, and committing a row that
+    // was never opened used to fail the whole provider turn.
+    it("commits reasoning whose only frame was never drawn before the turn settled", async () => {
+        const { presenter, handler, rows, committed } = createPresenter()
+        const strict = handler as unknown as { commitTransientClineMessage: (message: UiMessage) => Promise<UiMessage> }
+        const commitDrawn = strict.commitTransientClineMessage
+        // The real store refuses to commit a transient row it does not hold.
+        strict.commitTransientClineMessage = async (message) => {
+            if (!rows.has(message.ts)) throw new Error(`Transient message ${message.ts} is unavailable for durable commit`)
+            return commitDrawn(message)
+        }
+
+        presenter.showPartial({ transientId: "provider:turn-1", text: "", reasoning: "LATE_THOUGHT" })
+        await presenter.commit({ transientId: "provider:turn-1", text: "", reasoning: "LATE_THOUGHT" })
+
+        expect(committed.map((row) => [row.say, row.text, row.partial])).toEqual([["reasoning", "LATE_THOUGHT", false]])
+    })
+
     // Encrypted-only reasoning has no text to show, yet the chat must still read
     // it as thinking; the contentless row is withdrawn once the turn settles.
     it("opens a contentless reasoning row for empty reasoning and withdraws it on commit", async () => {

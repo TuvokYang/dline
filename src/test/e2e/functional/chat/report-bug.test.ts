@@ -155,6 +155,140 @@ e2e(
 )
 
 e2e(
+    "Report bug - a /cmd:reportbug typed as a question reply is parsed and authorizes the report",
+    async ({ helper, server, sidebar, userDataDir }) => {
+        e2e.setTimeout(180_000)
+        const question = "E2E_REPORT_BUG_REPLY_QUESTION"
+        const details = "E2E_REPORT_BUG_REPLY_DETAILS"
+        server.resetOpenAiMock()
+        server.enqueueOpenAiResponses(
+            { type: "tool", id: "call_reply_question", name: "ask_followup_question", arguments: { question } },
+            {
+                type: "tool",
+                id: "call_reply_report_bug",
+                name: "report_bug",
+                expectedToolResults: [{ callId: "call_reply_question", contentIncludes: details }],
+                arguments: {
+                    title: "E2E reply bug title",
+                    what_happened: "E2E reply description",
+                    steps_to_reproduce: "E2E reply steps",
+                    api_request_output: "E2E reply request output",
+                    additional_context: "E2E reply context",
+                },
+            },
+            {
+                type: "tool",
+                id: "call_reply_done",
+                name: "attempt_completion",
+                arguments: { result: "E2E_REPORT_BUG_REPLY_DONE" },
+                // A reply kept as literal text grants nothing: report_bug would be refused here.
+                expectedRequestIncludes: ["The editable GitHub issue form was opened"],
+                expectedRequestExcludes: ["explicit_instruction_missing"],
+            },
+        )
+        await helper.signin(sidebar)
+
+        await submit(sidebar, "Start a task that asks a question")
+        await expect(sidebar.getByText(question, { exact: true })).toBeVisible({ timeout: 60_000 })
+
+        await submit(sidebar, `/cmd:reportbug ${details}`)
+        await confirmReport(sidebar, server)
+
+        const visit = await waitForSingleExternalVisit(server)
+        expect(visit.query).toMatchObject({
+            template: "bug_report.yml",
+            title: "E2E reply bug title",
+            "what-happened": "E2E reply description",
+        })
+        await expect(sidebar.getByText("E2E_REPORT_BUG_REPLY_DONE", { exact: false }).last()).toBeVisible({
+            timeout: 60_000,
+        })
+
+        const consumptions = server.getMockConsumptions("openai-compatible-chat")
+        expect(consumptions.map((consumption) => consumption.toolName)).toEqual([
+            "ask_followup_question",
+            "report_bug",
+            "attempt_completion",
+        ])
+        expect(consumptions.every((consumption) => consumption.contractError === undefined)).toBe(true)
+        await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+    },
+)
+
+e2e(
+    "Report bug - a /cmd:reportbug question reply still authorizes a report filed rounds later",
+    async ({ helper, server, sidebar, userDataDir }) => {
+        e2e.setTimeout(180_000)
+        const firstQuestion = "E2E_REPORT_BUG_LATER_FIRST_QUESTION"
+        const secondQuestion = "E2E_REPORT_BUG_LATER_SECOND_QUESTION"
+        const details = "E2E_REPORT_BUG_LATER_DETAILS"
+        const supplement = "E2E_REPORT_BUG_LATER_SUPPLEMENT"
+        server.resetOpenAiMock()
+        server.enqueueOpenAiResponses(
+            {
+                type: "tool",
+                id: "call_later_first_question",
+                name: "ask_followup_question",
+                arguments: { question: firstQuestion },
+            },
+            {
+                type: "tool",
+                id: "call_later_second_question",
+                name: "ask_followup_question",
+                expectedToolResults: [{ callId: "call_later_first_question", contentIncludes: details }],
+                arguments: { question: secondQuestion },
+            },
+            {
+                type: "tool",
+                id: "call_later_report_bug",
+                name: "report_bug",
+                // The plain second reply grants nothing; the authority comes from the first reply's record.
+                expectedToolResults: [{ callId: "call_later_second_question", contentIncludes: supplement }],
+                arguments: {
+                    title: "E2E later bug title",
+                    what_happened: "E2E later description",
+                    steps_to_reproduce: "E2E later steps",
+                    api_request_output: "E2E later request output",
+                    additional_context: "E2E later context",
+                },
+            },
+            {
+                type: "tool",
+                id: "call_later_done",
+                name: "attempt_completion",
+                arguments: { result: "E2E_REPORT_BUG_LATER_DONE" },
+                expectedRequestIncludes: ["The editable GitHub issue form was opened"],
+                expectedRequestExcludes: ["explicit_instruction_missing"],
+            },
+        )
+        await helper.signin(sidebar)
+
+        await submit(sidebar, "Start a task that asks two questions")
+        await expect(sidebar.getByText(firstQuestion, { exact: true })).toBeVisible({ timeout: 60_000 })
+        await submit(sidebar, `/cmd:reportbug ${details}`)
+        await expect(sidebar.getByText(secondQuestion, { exact: true })).toBeVisible({ timeout: 60_000 })
+        await submit(sidebar, supplement)
+        await confirmReport(sidebar, server)
+
+        const visit = await waitForSingleExternalVisit(server)
+        expect(visit.query).toMatchObject({ template: "bug_report.yml", title: "E2E later bug title" })
+        await expect(sidebar.getByText("E2E_REPORT_BUG_LATER_DONE", { exact: false }).last()).toBeVisible({
+            timeout: 60_000,
+        })
+
+        const consumptions = server.getMockConsumptions("openai-compatible-chat")
+        expect(consumptions.map((consumption) => consumption.toolName)).toEqual([
+            "ask_followup_question",
+            "ask_followup_question",
+            "report_bug",
+            "attempt_completion",
+        ])
+        expect(consumptions.every((consumption) => consumption.contractError === undefined)).toBe(true)
+        await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+    },
+)
+
+e2e(
     "Report bug - the real /cmd menu command keeps authority across follow-up turns",
     async ({ helper, server, sidebar, userDataDir }) => {
         e2e.setTimeout(180_000)

@@ -237,7 +237,24 @@ export class TaskEnvironmentProjection {
                 this.options.workspace.ignoreController,
             )
         }
-        return details
+        return details + (await this.workspaceConfigurationSection())
+    }
+
+    /**
+     * Workspace roots with their VCS identity (remote, latest commit), so the
+     * agent knows which repository and revision it works in. Only requests that
+     * carry file details include it; a failing VCS probe must not fail the request.
+     */
+    private async workspaceConfigurationSection(): Promise<string> {
+        try {
+            const workspacesJson = await this.options.workspace.manager?.buildWorkspacesJson()
+            return workspacesJson ? `\n\n# Workspace Configuration\n${workspacesJson}` : ""
+        } catch (error) {
+            Logger.warn(
+                `[TaskEnvironmentProjection] ${this.options.identity.taskId}: workspace configuration unavailable: ${error instanceof Error ? error.message : String(error)}`,
+            )
+            return ""
+        }
     }
 
     private formatFileDetailsHeader(): string {

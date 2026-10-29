@@ -5,10 +5,12 @@ import { ToolPromptGenerator } from "@core/prompts/generators/ToolPromptGenerato
 import { resolveFrozenPromptRuntime } from "@core/prompts/system-prompt-cache/FrozenPromptRuntime"
 import type { StateManager } from "@core/storage/StateManager"
 import { DEFAULT_API_PROVIDER } from "@shared/api"
+import type { ClineStorageMessage } from "@shared/messages/content"
 import { ServerTool } from "@shared/proto/dline/models/metadata"
+import { DlineDefaultTool } from "@shared/tools"
 import { startPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
-import type { JournalConversationView } from "../executors/provider/service/JournalConversationView"
+import type { ConversationViewEntry, JournalConversationView } from "../executors/provider/service/JournalConversationView"
 import type { ProviderJournalMessageMaterializer } from "../executors/provider/service/ProviderJournalMessageMaterializer"
 import type {
     PreparedProviderRequest,
@@ -21,11 +23,15 @@ import type { ProductionToolHandlerRuntime } from "../executors/tool/production/
 import { planProductionTool } from "../executors/tool/production/ProductionToolPlanner"
 import type { ToolAdmissionSnapshot } from "../executors/tool/ToolAdmissionRegistry"
 import type { TaskTurnAuthority } from "../explicit-instructions/TurnAuthority"
+import type { ExplicitInstructionDeclaration } from "../explicit-instructions/types"
+import type { TaskState } from "../kernel"
 import { deriveNewTaskFeedbackContinuationFromConversation } from "../new-task/new-task-continuation"
+import { admittedDeclarationsOf, locateRestoredNewTaskApproval } from "../new-task/restored-new-task-approval"
 import type { TaskPromptContextOwner } from "../prompt/TaskPromptContextOwner"
 import type { TaskPromptLifecycle } from "../prompt/TaskPromptLifecycle"
 import { createRequestApiScope, type NativeToolCallsPredicate } from "../RequestApiScope"
 import { deriveReportBugContinuationFromEntries } from "../report-bug/report-bug-continuation"
+import type { TaskPayloadStore } from "../stores"
 import type { ProviderDraftEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
 import type { TaskStateManager } from "../TaskStateManager"
 import type { TaskApiHandlerOwner } from "./TaskApiHandlerOwner"
@@ -83,18 +89,12 @@ export class TaskProviderRequestFactory implements ProviderRequestFactory, Provi
         const frame = await this.requestFrame(signal)
         const [messages, entries] = await Promise.all([this.conversationOf(draft), this.conversationEntriesOf(draft)])
         const turnId = draft.turnId ?? randomUUID()
-        // Authority is derived from durable admitted input and trusted continuation
-        // evidence, so a recovered turn grants what the user still intends and no
-        // rendered prompt text can mint access. New Task feedback re-authorizes its
-        // paired handoff; an unfinished report intent re-authorizes report_bug until
-        // the durable conversation records that tool call.
-        const newTaskContinuation = deriveNewTaskFeedbackContinuationFromConversation(messages)
-        const reportBugContinuation = deriveReportBugContinuationFromEntries(entries)
-        const authority = this.options.authority.grant(turnId, [
-            ...(await this.options.messages.collectAuthority(draft.inputPayloadRefs)),
-            ...(newTaskContinuation ? [newTaskContinuation] : []),
-            ...(reportBugContinuation ? [reportBugContinuation] : []),
-        ])
+        const authority = this.grantFromEvidence(
+            turnId,
+            await this.options.messages.collectAuthority(draft.inputPayloadRefs),
+            messages,
+            entries,
+        )
         return {
             ...frame,
             messages,
@@ -111,6 +111,63 @@ export class TaskProviderRequestFactory implements ProviderRequestFactory, Provi
             planTool: async (tool: ToolUse) =>
                 planProductionTool(this.options.tools.coordinator, tool, this.options.readAdmissionSnapshot(tool)),
         }
+    }
+
+    /**
+     * Re-grant the authority a New Task approval restored after a restart needs.
+     *
+     * The approved call runs under the turn that planned it, but the grant that
+     * turn received lived only in memory. The request it was planned from is
+     * rebuilt from the journal and derives authority exactly as it did when sent,
+     * limited to `new_task`: the one explicit-only call a restored kernel
+     * approval can still execute. No evidence, no grant, so the call is denied.
+     */
+    async restoreNewTaskApproval(state: Readonly<TaskState>, payloads: TaskPayloadStore): Promise<void> {
+        const turnId = state.turn.turnId
+        if (turnId === undefined || this.options.authority.read(turnId) !== undefined) return
+        const restored = await locateRestoredNewTaskApproval(state, await this.options.conversation.entries(), payloads)
+        if (!restored) return
+        const [messages, entries] = await Promise.all([
+            this.options.conversation.providerMessages(restored.through),
+            this.options.conversation.entries(restored.through),
+        ])
+        this.grantFromEvidence(
+            restored.turnId,
+            admittedDeclarationsOf(entries, restored.turnId),
+            messages,
+            entries,
+            DlineDefaultTool.NEW_TASK,
+        )
+    }
+
+    /**
+     * Grant one turn the authority its durable evidence carries.
+     *
+     * Authority is derived from durable admitted input and trusted continuation
+     * evidence, so a recovered turn grants what the user still intends and no
+     * rendered prompt text can mint access. New Task feedback re-authorizes its
+     * paired handoff; an unfinished report intent re-authorizes report_bug until
+     * the durable conversation records that tool call. `onlyTool` narrows the
+     * grant to the declarations targeting that tool.
+     */
+    private grantFromEvidence(
+        turnId: string,
+        admitted: readonly ExplicitInstructionDeclaration[],
+        messages: readonly ClineStorageMessage[],
+        entries: readonly ConversationViewEntry[],
+        onlyTool?: DlineDefaultTool,
+    ) {
+        const newTaskContinuation = deriveNewTaskFeedbackContinuationFromConversation(messages)
+        const reportBugContinuation = deriveReportBugContinuationFromEntries(entries)
+        const declarations = [
+            ...admitted,
+            ...(newTaskContinuation ? [newTaskContinuation] : []),
+            ...(reportBugContinuation ? [reportBugContinuation] : []),
+        ]
+        return this.options.authority.grant(
+            turnId,
+            onlyTool === undefined ? declarations : declarations.filter((declaration) => declaration.targetTool === onlyTool),
+        )
     }
 
     private async rebuildApi(): Promise<void> {

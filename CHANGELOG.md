@@ -170,6 +170,18 @@
 - 修复 MCP 同一次调用的多个响应显示为多张卡片并重复产生 checkpoint；响应现在聚合为一张可折叠卡，执行态与审批态文案分离
 - 修复加密或删减后的 reasoning 泄漏到可见文本、产生多个 Thinking/checkpoint 行，或完成后遗留空 Thinking 占位的问题
 - 修复 Background Edit 抢占编辑器焦点、历史任务打开失败进入错误任务表面，以及恢复后的空白输入行和过期 Context Window/Focus Chain 展示
+- 修复升级后从未打开过的旧任务在 History 中只显示最近一段聊天、对话轨迹条缺少更早轮次的问题：尚未导入的旧聊天记录现在完整显示
+- 对话轨迹条的悬停预览按模型当前调用的工具名统计工具调用，不再显示已改名工具的旧名称
+- 新任务（new_task）的审批重新提供 Start New Task 与 Regenerate Context；用 Regenerate Context 反馈后，再次提议时点 Start New Task 会正常打开后继任务
+- Close Task 会取消任务中仍在运行的命令和 subagent
+- 回合结束前最后流入的推理内容（例如最后一次工具调用之后的推理）不再导致整轮失败
+- 带文件详情的请求重新包含工作区根目录及其版本库信息（远程地址与最新提交）
+- 重新打开的任务中，活动面板里的 Retry 可以正常重试
+- 活动面板在窄布局下的模式标记不再溢出
+- 使用统计中 subagent 的请求一律以 role `subagent` 上报，不再因 subagent 名称中含 `reviewer` 而记为 `reviewer`
+- 新任务（new_task）审批等待期间重启 VS Code 后，重新打开任务并批准即可正常打开后继任务，不再被拒绝后由原任务继续执行
+- 新任务（new_task）交接时，原任务输入框中尚未发送的内容会带到后继任务的输入框
+- 在问题或任务完成的回复中输入 `/cmd:reportbug` 会正常进入问题报告流程，即使模型在提交前继续追问
 
 ### Release
 - Insiders draft 每次生成后只保留最新一个并展示当前累计 dev 变更；pre-release 与 production Release notes 从对应 changelog 版本段落生成，缺失或为空时停止发布，并校验 production Release 只有一个正确命名且非空的 VSIX

@@ -4,7 +4,6 @@ import {
     type ProviderAttemptIdentity,
     type ProviderAttemptObserver,
     type ProviderTelemetryRole,
-    providerTelemetryRoleForSubagent,
     withProviderAttemptIdentity,
 } from "@shared/provider-attempt-observer"
 import { describe, expect, it, vi } from "vitest"
@@ -207,9 +206,6 @@ describe("Task Provider request round admission", () => {
         for (const source of sources) owner.admit({ source }).createAttemptObserver(0)
 
         expect(observedRoles).toEqual(sources)
-        expect(providerTelemetryRoleForSubagent("reviewer-opus")).toBe("reviewer")
-        expect(providerTelemetryRoleForSubagent("code_reviewer")).toBe("reviewer")
-        expect(providerTelemetryRoleForSubagent("web-researcher")).toBe("subagent")
     })
 
     it("completes a Provider-only execution when no tool turn was registered", () => {

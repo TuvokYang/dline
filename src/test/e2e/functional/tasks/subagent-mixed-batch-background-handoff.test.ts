@@ -1,4 +1,5 @@
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { showSubagentOutput, subagentCardByTask } from "@e2e/utils/subagent-card"
 import { expect, type Frame } from "@playwright/test"
 
 async function setAutoApproveAction(sidebar: Frame, label: string, enabled: boolean): Promise<void> {
@@ -90,14 +91,13 @@ e2e(
         await expect(approveButton).toBeVisible({ timeout: 60_000 })
         await approveButton.click()
 
-        const settledTaskRow = sidebar.getByText(settledTask, { exact: true }).last()
-        const runningTaskRow = sidebar.getByText(runningTask, { exact: true }).last()
-        await expect(settledTaskRow).toBeVisible({ timeout: 60_000 })
-        await expect(runningTaskRow).toBeVisible()
-        await expect(sidebar.getByText(settledResult, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+        const settledCard = subagentCardByTask(sidebar, settledTask)
+        const runningCard = subagentCardByTask(sidebar, runningTask)
+        await expect(settledCard).toBeVisible({ timeout: 60_000 })
+        await expect(runningCard).toBeVisible()
+        await expect(await showSubagentOutput(settledCard)).toContainText(settledResult, { timeout: 60_000 })
         await expect.poll(() => server.openAiRequestCount).toBe(3)
 
-        const runningCard = runningTaskRow.locator("xpath=ancestor::*[@data-testid='subagent-item'][1]")
         const runningHeader = runningCard.getByTestId("subagent-item-header")
         await expect(runningHeader.getByTestId("subagent-execution-mode")).toHaveText("Foreground")
         const handoffButton = sidebar.getByRole("contentinfo").locator('vscode-button[aria-label="Continue in Background"]')
@@ -107,7 +107,7 @@ e2e(
 
         await expect(sidebar.getByText(question, { exact: true })).toBeVisible({ timeout: 60_000 })
         await expect(runningHeader.getByTestId("subagent-execution-mode")).toHaveText("Background")
-        await expect(sidebar.getByText(backgroundResult, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+        await expect(await showSubagentOutput(runningCard)).toContainText(backgroundResult, { timeout: 60_000 })
         const optionButton = sidebar.getByRole("button", { name: option, exact: true })
         await expect(optionButton).toBeEnabled()
         await optionButton.click()

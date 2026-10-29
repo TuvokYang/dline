@@ -38,7 +38,7 @@ import {
     projectInternalMessagesForProvider,
 } from "@shared/messages"
 import { splitResumedHostedResults } from "@shared/messages/hosted-tool-deferral"
-import { type ProviderTelemetryRole, providerTelemetryRoleForSubagent } from "@shared/provider-attempt-observer"
+import type { ProviderTelemetryRole } from "@shared/provider-attempt-observer"
 import { resolvePromptProfile } from "@shared/resolve-prompt-profile"
 import { Logger } from "@shared/services/Logger"
 import { ClineTool, DlineDefaultTool } from "@shared/tools"
@@ -85,6 +85,13 @@ import { observeSubagentToolExecution, reportSubagentPlainTextWarning } from "./
  * other unusable responses count immediately, and a successful tool clears all.
  */
 const MAX_CONSECUTIVE_TURN_FAILURES = 5
+/**
+ * Every subagent run reports Usage under one role, whatever the subagent is named.
+ *
+ * Subagent names are free-form user configuration; deriving a role from them
+ * would let a name such as `reviewer-opus` relabel ordinary subagent spend.
+ */
+const SUBAGENT_TELEMETRY_ROLE = "subagent" satisfies ProviderTelemetryRole
 /**
  * How many times one run may hand a hosted-tool stream failure back to the model.
  *
@@ -477,7 +484,6 @@ export class SubagentRunner {
     private readonly apiHandler: ApiHandler
     private readonly allowedTools: DlineDefaultTool[]
     private readonly identityFactory = createIdentityFactory()
-    private readonly providerRequestSource: Extract<ProviderTelemetryRole, "subagent" | "reviewer">
     private activeApiAbort: (() => void) | undefined
     private activeRetryAbortController: AbortController | undefined
     private abortRequested = false
@@ -521,7 +527,6 @@ export class SubagentRunner {
         agentConfig?: AgentBaseConfig,
         private readonly options: SubagentRunnerOptions = {},
     ) {
-        this.providerRequestSource = providerTelemetryRoleForSubagent(agentConfig?.name ?? subagentName)
         this.agent = new SubagentBuilder(baseConfig, subagentName, agentConfig)
         this.apiHandler = this.agent.getApiHandler()
         this.allowedTools = this.agent.getAllowedTools()
@@ -1869,7 +1874,7 @@ export class SubagentRunner {
         onProgress: (update: SubagentProgressUpdate) => void,
     ) {
         let cumulativeRetryDelayMs = 0
-        const telemetryRequestId = `${this.providerRequestSource}:${crypto.randomUUID()}`
+        const telemetryRequestId = `${SUBAGENT_TELEMETRY_ROLE}:${crypto.randomUUID()}`
         for (let attempt = 1; attempt <= MAX_INITIAL_STREAM_ATTEMPTS; attempt += 1) {
             // Only a pre-finish abort is expected; a later attempt is the finish turn and reports its real failure.
             const startedBeforeFinish = this.finishRequested === undefined
@@ -1904,7 +1909,7 @@ export class SubagentRunner {
                     serverTools: webSearchRoutingPlan.serverTools,
                     taskNamespace: this.baseConfig.taskId,
                     retryOwner: "subagent",
-                    telemetryRole: this.providerRequestSource,
+                    telemetryRole: SUBAGENT_TELEMETRY_ROLE,
                     telemetryRequestId,
                     telemetryAttempt: attempt - 1,
                 }),

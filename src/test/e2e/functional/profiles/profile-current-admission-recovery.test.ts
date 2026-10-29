@@ -180,7 +180,7 @@ function profileError(profileName: string): string {
 }
 
 e2e(
-    "Current Profile admission - fixing Azure Identity on the same Profile lets Retry continue",
+    "Current Profile admission - fixing Azure Identity on the same Profile clears the error and the next Send continues",
     async ({ dlineDir, helper, page, server, sidebar, userDataDir }) => {
         e2e.setTimeout(180_000)
         const profileName = E2E_PROFILE_NAMES.mockOpenAi
@@ -198,13 +198,21 @@ e2e(
         expect(server.getRequestCount("openai-compatible-chat")).toBe(0)
 
         await setAzureIdentity(page, sidebar, dlineDir, profileName, false, null)
+        // Editing the active Profile clears its obsolete failure once the handler is rebuilt, but never resends.
+        await expect(sidebar.getByTestId("error-retry-box")).toHaveCount(0)
+        await expect(retry).toHaveCount(0)
+        await expect(sidebar.getByTestId("chat-input")).toBeEnabled()
+        await expect(sidebar.getByRole("button", { name: "Select model" })).toHaveText(profileName)
+        expect(server.getRequestCount("openai-compatible-chat")).toBe(0)
+
+        const followUp = "E2E_CURRENT_PROFILE_AZURE_RETRY_FOLLOWUP"
         server.enqueueResponses("openai-compatible-chat", {
             type: "tool",
             name: "attempt_completion",
             arguments: { result: completion },
-            expectedRequestIncludes: [taskText],
+            expectedRequestIncludes: [taskText, followUp],
         })
-        await retry.click()
+        await sendTask(sidebar, followUp)
 
         await expect(sidebar.getByText(completion, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
         await expect(sidebar.getByTestId("error-retry-box")).toHaveCount(0)

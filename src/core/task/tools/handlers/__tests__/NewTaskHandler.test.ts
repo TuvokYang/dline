@@ -109,13 +109,16 @@ describe("NewTaskHandler", () => {
         })
     })
 
-    it("describes an external rejection with the continuation marker", async () => {
+    // The decline is the user's answer: an error result would keep the next round
+    // from receiving the continuation that lets it propose the handoff again.
+    it("describes an external rejection as a non-error result with the continuation marker", async () => {
         const handler = new NewTaskHandler()
         const denial = await handler.describeDenial(createConfig({ actionId: "reject" }), createBlock(SUCCESSOR))
 
-        expect(denial).toBe(
-            `${NEW_TASK_FEEDBACK_CONTINUATION_MARKER}\nThe user provided feedback instead of creating a new task:\n<feedback>\n\n</feedback>`,
-        )
+        expect(denial).toEqual({
+            text: `${NEW_TASK_FEEDBACK_CONTINUATION_MARKER}\nThe user provided feedback instead of creating a new task:\n<feedback>\n\n</feedback>`,
+            isError: false,
+        })
     })
 
     it.each([

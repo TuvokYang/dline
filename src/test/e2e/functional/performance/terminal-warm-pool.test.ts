@@ -65,6 +65,12 @@ function parseTerminalAcquirePerfEvents(output: string): TerminalAcquirePerfEven
     }))
 }
 
+/**
+ * Idle terminals each partition keeps warm (DEFAULT_TERMINAL_STANDBY_COUNT). The
+ * host module imports `vscode`, so the value is restated here rather than imported.
+ */
+const STANDBY_TARGET = 1
+
 async function openTerminalSettings(page: Page, sidebar: Frame): Promise<void> {
     await page.getByRole("button", { name: "Settings", exact: true }).click()
     await expect(sidebar.getByRole("heading", { name: "API Configuration" })).toBeVisible({ timeout: 30_000 })
@@ -171,9 +177,9 @@ e2e(
                     const readyEvents = parseReadyEvents(output)
                     return readyEvents.some(
                         (event) =>
-                            readyEvents.filter((candidate) => candidate.partition === event.partition).length >= 3 &&
+                            readyEvents.filter((candidate) => candidate.partition === event.partition).length >= STANDBY_TARGET &&
                             new RegExp(
-                                `\\[TerminalPool\\] operation=ensureWarm partition=${event.partition} target=3 durationMs=\\d+ ready=3 warming=0`,
+                                `\\[TerminalPool\\] operation=ensureWarm partition=${event.partition} target=${STANDBY_TARGET} durationMs=\\d+ ready=${STANDBY_TARGET} warming=0`,
                             ).test(output),
                     )
                 },
@@ -245,7 +251,9 @@ e2e(
                 ),
             ).toBe(true)
         }
-        expect(parseReadyEvents(output).filter((event) => event.partition === partition).length).toBeGreaterThanOrEqual(3)
+        expect(parseReadyEvents(output).filter((event) => event.partition === partition).length).toBeGreaterThanOrEqual(
+            STANDBY_TARGET,
+        )
         expect(output).not.toContain("[TerminalPool] operation=fallback")
         expect(output).not.toContain("[TerminalPerf] phase=capability_failure")
         await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [/Error fetching OpenRouter models:.*Network Error/])

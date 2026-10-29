@@ -363,6 +363,20 @@ export class E2ETestHelper {
     }
 
     /**
+     * Close a workbench hover still floating over the sidebar. The activity item's hover can open
+     * after the pointer has already moved on, and it then stays until dismissed, covering the top of
+     * the sidebar where the task header controls are. Escape is sent to the hover itself so no
+     * workbench or webview control receives it.
+     */
+    public static async dismissWorkbenchHover(page: Page): Promise<void> {
+        const hover = page.locator(".context-view .monaco-hover")
+        if ((await hover.count()) === 0) return
+        await hover.first().focus()
+        await hover.first().press("Escape")
+        await expect(hover).toHaveCount(0, { timeout: 5_000 })
+    }
+
+    /**
      * Run one workbench command through the Command Palette. An asynchronous focus transfer into a
      * webview can close QuickInput before the option is chosen; nothing executes until the click, so
      * the palette is reopened instead of failing on a race the command never observed.

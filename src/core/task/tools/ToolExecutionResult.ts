@@ -15,6 +15,18 @@ export interface StartSuccessorTaskPostCommitDirective {
 
 export type ToolPostCommitDirective = StartSuccessorTaskPostCommitDirective
 
+/** What a call the user refused reports to the model, in its handler's own words. */
+export interface ToolDenial {
+    readonly text: string
+    /**
+     * Whether the model reads the refusal as a failed call.
+     *
+     * A refusal that is itself the user's answer, such as New Task feedback,
+     * is an ordinary result: the conversation continues from what the user said.
+     */
+    readonly isError: boolean
+}
+
 /** Extended handler result that preserves existing ToolResponse source compatibility. */
 export interface ToolExecutionResult {
     readonly response: ToolResponse

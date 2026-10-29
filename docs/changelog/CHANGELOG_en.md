@@ -170,6 +170,18 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Fixed multiple responses from one MCP call appearing as separate cards with repeated checkpoints; responses are now grouped into one collapsible card and execution copy is distinct from approval copy
 - Fixed encrypted or redacted reasoning leaking into visible text, producing multiple Thinking or checkpoint rows, or leaving an empty Thinking placeholder after completion
 - Fixed Background Edit taking editor focus, history-open failures entering the wrong task surface, and restored tasks showing blank input rows or stale Context Window and Focus Chain state
+- Fixed an older task never opened since the upgrade showing only its recent chat in History and missing earlier turns in the conversation trajectory rail: a legacy chat history that has not been imported yet is now shown in full
+- The trajectory rail's hover preview counts tool calls under the tool names the model calls today instead of the former names of renamed tools
+- The new_task approval offers Start New Task and Regenerate Context again; after feedback through Regenerate Context, Start New Task on the next proposal opens the successor task
+- Close Task cancels the commands and subagents still running in the task
+- Reasoning that streams in just before a turn settles, such as after the last tool call, no longer fails the whole turn
+- Requests that carry file details include the workspace roots with their repository identity (remote and latest commit) again
+- Retry in the Activities panel works on a reopened task
+- The Activities panel's mode badge no longer overflows in narrow layouts
+- Usage statistics report every subagent request with role `subagent` instead of `reviewer` when the subagent's name contains "reviewer"
+- A new_task approval still pending when VS Code restarts can be approved after reopening the task and opens the successor task, instead of being refused and the source task carrying on
+- On a new_task handoff, text not yet sent in the source task's composer carries over to the successor task's composer
+- Replying `/cmd:reportbug` to a question or a completed task starts the bug report, even when the model asks further questions before filing it
 
 ### Release
 - Each Insiders run now keeps only the latest draft and shows the current cumulative dev changes; pre-release and production notes come from the matching changelog version section, fail when that section is missing or empty, and verify that a production Release has exactly one correctly named, non-empty VSIX

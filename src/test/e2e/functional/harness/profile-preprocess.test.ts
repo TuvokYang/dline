@@ -5,7 +5,7 @@ import * as path from "node:path"
 import { getClaudeCodeProfileAuthFileName } from "@core/storage/secrets/ClaudeCodeProfileAuthPath"
 import { getOpenAiCodexProfileAuthFileName } from "@core/storage/secrets/OpenAiCodexProfileAuthPath"
 import { SETTINGS_MIGRATION_VERSION, SETTINGS_MIGRATION_VERSION_KEY } from "@core/storage/settings/settings-types"
-import { E2E_PROFILE_NAMES, prepareE2EState } from "@e2e/utils/api-profile"
+import { E2E_PROFILE_NAMES, E2E_SHELL_INTEGRATION_TIMEOUT_MS, prepareE2EState } from "@e2e/utils/api-profile"
 import { expect, test } from "@playwright/test"
 
 interface PreparedProfile {
@@ -300,6 +300,7 @@ test("live E2E profile preprocessing copies only api_profiles.json and secrets/*
             planModeProfile: E2E_PROFILE_NAMES.mockOpenAi,
             imageGenerationEnabled: false,
             enableParallelToolCalling: true,
+            shellIntegrationTimeout: E2E_SHELL_INTEGRATION_TIMEOUT_MS,
         })
 
         const globalState = await readJson<Record<string, unknown>>(path.join(dlineDir, "data", "globalState.json"))

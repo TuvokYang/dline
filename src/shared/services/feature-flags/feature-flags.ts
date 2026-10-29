@@ -40,6 +40,8 @@ export const ExperimentalFeatureFlagDefaultValue: Partial<Record<ExperimentalFea
  */
 export const ExperimentalFeatureFlagDevelopmentDefault: Partial<Record<ExperimentalFeatureFlag, boolean>> = {
     [ExperimentalFeatureFlag.ACCOUNT]: true,
+    // Only offers the setting; the effective level stays the user's choice, which defaults to standard.
+    [ExperimentalFeatureFlag.AGGRESSIVE_RENDERING]: true,
 }
 
 /**

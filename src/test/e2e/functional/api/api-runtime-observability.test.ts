@@ -539,12 +539,27 @@ for (const testCase of protocolCases) {
             if (testCase.exposesReasoningSummary) {
                 expect(visibleThinkingGroups).toBeGreaterThan(0)
                 expect(visibleThinkingGroups).toBeLessThanOrEqual(thinkingTexts.length)
-                const lastPresentedThinking = sidebar.getByRole("button", {
+                // The completion round keeps its thinking as the last standalone row.
+                const completionThinking = sidebar.getByRole("button", {
+                    name: thinkingTexts[thinkingTexts.length - 1],
+                    exact: true,
+                })
+                if (!(await completionThinking.isVisible())) await thinkingToggles.last().click()
+                await expect(completionThinking).toBeVisible()
+                // The search round only thinks and searches, so it folds into an exploration
+                // row whose expanded round shows its own thinking.
+                const searchRun = sidebar.getByTestId("exploration-run").last()
+                await searchRun.locator("button[aria-controls]").click()
+                const searchRound = searchRun.getByTestId("exploration-round")
+                await expect(searchRound).toHaveCount(1)
+                const searchThinking = searchRound.getByRole("button", {
                     name: thinkingTexts[thinkingTexts.length - 2],
                     exact: true,
                 })
-                if (!(await lastPresentedThinking.isVisible())) await thinkingToggles.last().click()
-                await expect(lastPresentedThinking).toBeVisible()
+                if (!(await searchThinking.isVisible())) {
+                    await searchRound.getByRole("button", { name: "Thinking", exact: true }).click()
+                }
+                await expect(searchThinking).toBeVisible()
             } else {
                 expect(visibleThinkingGroups).toBe(0)
             }
@@ -1056,10 +1071,6 @@ e2e(
             requestId,
             details: { type: "e2e_mock_error", target: "openai-compatible-chat", retryable: "true" },
         })
-        const copyErrorButton = sidebar.getByRole("button", { name: "Copy error" })
-        await expect(copyErrorButton).toBeVisible()
-        await copyErrorButton.click()
-        await expect(sidebar.getByRole("button", { name: "Copied" })).toBeVisible()
         const expectedCopiedError = [
             "API Request Failed",
             "",
@@ -1076,11 +1087,21 @@ e2e(
             "Target: openai-compatible-chat",
             "Retryable: true",
         ].join("\n")
-        await expect
-            .poll(async () => (await app.evaluate(({ clipboard }) => clipboard.readText())).replaceAll("\r\n", "\n"), {
-                timeout: 10_000,
-            })
-            .toBe(expectedCopiedError)
+        const errorCard = sidebar
+            .locator(
+                '[data-testid="api-error-box"], [data-testid="error-message-box"], [data-testid="error-presentation-box"], [data-testid="error-retry-box"]',
+            )
+            .first()
+        await expect(errorCard.getByRole("button", { name: "Copy error" })).toBeVisible()
+        const copyErrorButton = errorCard.getByRole("button", { name: /^(Copy error|Copied)$/ })
+        const readClipboard = async () => (await app.evaluate(({ clipboard }) => clipboard.readText())).replaceAll("\r\n", "\n")
+        // The OS clipboard is shared with the workbench and, on Windows, with every parallel worker,
+        // so another writer can replace one copy; copy again until the exact text lands.
+        await expect(async () => {
+            await copyErrorButton.click()
+            await expect(errorCard.getByRole("button", { name: "Copied" })).toBeVisible()
+            expect(await readClipboard()).toBe(expectedCopiedError)
+        }).toPass({ timeout: 30_000, intervals: [500, 1_000, 2_000] })
 
         server.enqueueResponses("openai-compatible-chat", {
             type: "tool",
@@ -1200,7 +1221,7 @@ e2e(
         const errorBox = sidebar.getByTestId("error-retry-box")
         await expect(errorBox).toContainText(retryAttemptLabel(1), { timeout: 90_000 })
         await expect(errorBox.getByTestId("error-retry-box-provider")).toHaveText("deepseek")
-        await expect(errorBox.getByTestId("error-retry-box-model")).toHaveText("deepseek-v4-flash")
+        await expect(errorBox.getByTestId("error-retry-box-model")).toHaveText("deepseek-flash")
         await expect(errorBox.getByTestId("error-retry-box-message")).toHaveText("Connection error.")
         await expect.poll(() => server.getRequestCount("deepseek-chat")).toBe(2)
         await expect(errorBox.getByText("Automatic retry in progress", { exact: true })).toBeVisible()
@@ -1529,11 +1550,15 @@ e2e(
         await expect(errorBox.getByText("Automatic retry in progress", { exact: true })).toBeVisible()
         await expect(countdown).toHaveText(new RegExp(`^${retryAttemptLabel(1)}\\s+Retrying now$`))
         await expect(countdown).not.toContainText("0s")
+        // Retry only releases a live countdown, so it leaves while the released attempt is in flight.
+        await expect(retryButton).toHaveCount(0)
         await expect(errorBox).toContainText(retryAttemptLabel(2), { timeout: 90_000 })
         await expect(errorBox.getByTestId("error-retry-box-code")).toHaveText("e2e_retry_override_2")
         await expect(errorBox.getByTestId("error-retry-box-message")).toHaveText(secondError)
+        await expect(retryButton).toBeVisible()
         const footerStabilityEvents = await stopFooterActionStabilityObserver(sidebar)
-        expect(footerStabilityEvents).toEqual([])
+        // One node through the first countdown, withdrawn once at release, back for the next countdown without flicker.
+        expect(footerStabilityEvents).toEqual(["Retry:removed"])
         const initialCountdown = await countdown.innerText()
         await expect.poll(() => countdown.innerText(), { timeout: 3_000 }).not.toBe(initialCountdown)
         const requestsBeforeManualRetry = server.getMockConsumptions("openai-compatible-chat").length

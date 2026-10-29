@@ -1786,8 +1786,8 @@ describe("SubagentRunner", () => {
         initializeHostProvider()
         const progress = vi.fn()
 
-        const result = await new SubagentRunner(createTaskConfig(false), "reviewer", {
-            name: "reviewer",
+        const result = await new SubagentRunner(createTaskConfig(false), "reviewer-opus", {
+            name: "reviewer-opus",
             description: "Review code",
             profile: "anthropic",
             tools: [DlineDefaultTool.ATTEMPT],
@@ -1795,6 +1795,11 @@ describe("SubagentRunner", () => {
         }).run("Review", progress)
 
         assert.equal(result.status, "completed", result.error)
+        // A subagent's name is free-form configuration and never selects its Usage role.
+        expect(createMessage.mock.calls[0]?.[3]).toMatchObject({
+            telemetryRole: "subagent",
+            telemetryRequestId: expect.stringMatching(SUBAGENT_REQUEST_ID),
+        })
         expect(progress.mock.calls[0]?.[0].runtime).toMatchObject({
             profileName: "anthropic",
             providerId: "anthropic",

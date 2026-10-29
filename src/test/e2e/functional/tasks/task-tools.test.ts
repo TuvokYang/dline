@@ -3,7 +3,7 @@ import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
-import { openSubagentCard, subagentCardByTask } from "@e2e/utils/subagent-card"
+import { openSubagentCard, showSubagentOutput, subagentCardByTask } from "@e2e/utils/subagent-card"
 import { readTaskActivities, readTaskConversationText } from "@e2e/utils/task-instance-store"
 import { startFooterActionStabilityObserver, stopFooterActionStabilityObserver } from "@e2e/utils/ui-stability"
 import { expect, type Frame, type Page } from "@playwright/test"
@@ -976,7 +976,7 @@ e2e(
         const approveButton = sidebar.getByText("Approve", { exact: true })
         await expect(approveButton).toBeVisible({ timeout: 60_000 })
         await approveButton.click()
-        await expect(sidebar.getByText("Dline read 1 file:", { exact: true })).toBeVisible({ timeout: 30_000 })
+        await expect(sidebar.getByText("Dline read 1 file", { exact: true })).toBeVisible({ timeout: 30_000 })
         await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(2)
 
         const taskFooter = sidebar.getByRole("contentinfo")
@@ -1285,9 +1285,16 @@ e2e(
         const commandActions = copyCommandButton.locator("xpath=ancestor::div[.//button[normalize-space()='Cancel']][1]")
         const commandCancelButton = commandActions.getByRole("button", { name: "Cancel", exact: true })
         await expect(commandCancelButton).toBeVisible({ timeout: 30_000 })
+        // An explicit background start reports "running" after the first output or after
+        // EXPLICIT_BACKGROUND_START_WINDOW_MS, whichever comes first. Windows PowerShell can spend
+        // longer than that loading the user profile under a parallel run, so READY does not prove the
+        // fixture is alive. Cancel only once the child has confirmed an emitted line; otherwise the
+        // kill lands on the shell before the fixture exists and there is no tail to drain. The short
+        // interval keeps pre-cancel output far inside the persisted activity output cap.
+        await expect.poll(readConfirmedSequence, { intervals: [50], timeout: 30_000 }).toBeGreaterThan(0)
         await commandCancelButton.click()
         await expect(commandCancelButton).toHaveCount(0, { timeout: 30_000 })
-        await expect.poll(readConfirmedSequence, { timeout: 10_000 }).toBeGreaterThan(0)
+        // Let the force-killed child's final confirmation settle before fixing the oracle bound.
         await page.waitForTimeout(500)
         const emittedSequence = await readConfirmedSequence()
 
@@ -1464,13 +1471,13 @@ e2e(
         await expect(approveButton).toBeVisible({ timeout: 60_000 })
         await approveButton.click()
 
-        await expect(sidebar.getByText("Dline requested command termination:", { exact: true })).toBeVisible({
-            timeout: 60_000,
-        })
         const killResult = sidebar.getByTestId("kill-command-result")
+        // The row follows the targeted command activity: it shows the request only until the
+        // activity's terminal status arrives, then the outcome the command reached.
+        await expect(killResult).toHaveAttribute("data-phase", "terminated", { timeout: 60_000 })
+        await expect(killResult.getByText("Command terminated", { exact: true })).toBeVisible()
         await expect(killResult.getByText(command, { exact: true })).toBeVisible()
         await expect(killResult.getByText(executeFunctionId, { exact: true })).toHaveCount(0)
-        await expect(killResult.getByText("Termination was requested for the running command.", { exact: true })).toBeVisible()
         await expect(sidebar.getByText("E2E_AI_KILL_COMMAND_OK", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
         await killResult.getByRole("button", { name: "View command activity", exact: true }).click()
         await expect(sidebar.getByRole("tab", { name: /Activities/ })).toHaveAttribute("aria-selected", "true")
@@ -1556,7 +1563,10 @@ Return only the highest-value findings.`,
             expectedRequestIncludes: [
                 yamlSystemPromptMarker,
                 "# Final Response Budget",
-                "Keep that final result within 1,024 tokens.",
+                // The figure lives in the per-request Context Budget section; the
+                // task prompt's Final Response Budget deliberately states no number.
+                "# Context Budget",
+                "may use about 1,024 tokens",
             ],
         })
 
@@ -1575,7 +1585,8 @@ Return only the highest-value findings.`,
         const childRequestText = JSON.stringify(childRequest.requestBody)
         expect(childRequestText).toContain(yamlSystemPromptMarker)
         expect(childRequestText).toContain("# Final Response Budget")
-        expect(childRequestText).toContain("Keep that final result within 1,024 tokens.")
+        expect(childRequestText).toContain("# Context Budget")
+        expect(childRequestText).toContain("may use about 1,024 tokens")
 
         const parentContinuation = server.getMockConsumptions("openai-compatible-chat")[1]
         expect(parentContinuation.contractError).toBeUndefined()
@@ -1854,10 +1865,11 @@ e2e(
         await expect(approveButton).toBeVisible({ timeout: 60_000 })
         await approveButton.click()
 
-        const subagentTask = sidebar.getByText("E2E_FOREGROUND_SUBAGENT_CANCEL_TASK", { exact: true }).last()
-        await expect(subagentTask).toBeVisible({ timeout: 60_000 })
+        // Work cards start folded; the truncated task summary can have no visible width while the
+        // running controls occupy the header, so readiness comes from the card itself.
+        const subagentCard = subagentCardByTask(sidebar, "E2E_FOREGROUND_SUBAGENT_CANCEL_TASK")
+        await expect(subagentCard).toBeVisible({ timeout: 60_000 })
         await expect.poll(() => server.openAiRequestCount).toBe(2)
-        const subagentCard = subagentTask.locator("xpath=ancestor::*[@data-testid='subagent-item'][1]")
         const itemHeader = subagentCard.getByTestId("subagent-item-header")
         await expect(itemHeader.getByTestId("subagent-execution-mode")).toHaveText("Foreground")
         const cancelButton = itemHeader.getByRole("button", { name: "Cancel", exact: true })
@@ -1955,22 +1967,23 @@ e2e("Tools - batch subagent Cancel keeps siblings active before Cancel all", asy
     await expect(approveButton).toBeVisible({ timeout: 60_000 })
     await approveButton.click()
 
-    const firstTask = sidebar.getByText("E2E_BATCH_CANCEL_ONE", { exact: true }).last()
-    await expect(firstTask).toBeVisible({ timeout: 60_000 })
-    await expect(sidebar.getByText("E2E_BATCH_CANCEL_TWO", { exact: true }).last()).toBeVisible()
-    await expect(sidebar.getByText("E2E_BATCH_CANCEL_THREE", { exact: true }).last()).toBeVisible()
+    const [firstCard, secondCard, thirdCard] = ["ONE", "TWO", "THREE"].map((suffix) =>
+        subagentCardByTask(sidebar, `E2E_BATCH_CANCEL_${suffix}`),
+    )
+    await expect(firstCard).toBeVisible({ timeout: 60_000 })
+    await expect(secondCard).toBeVisible()
+    await expect(thirdCard).toBeVisible()
     await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(4)
-    const batchRow = firstTask.locator(
+    const batchRow = firstCard.locator(
         "xpath=ancestor::div[.//button[@aria-label='Collapse subagent status' or @aria-label='Expand subagent status']][1]",
     )
     const rowCancelButtons = batchRow.getByRole("button", { name: "Cancel", exact: true })
     await expect(rowCancelButtons).toHaveCount(3)
 
-    const firstCard = firstTask.locator("xpath=ancestor::*[@data-testid='subagent-item'][1]")
     await firstCard.getByTestId("subagent-item-header").getByRole("button", { name: "Cancel", exact: true }).click()
     await expect(rowCancelButtons).toHaveCount(2)
-    await expect(sidebar.getByText("E2E_BATCH_CANCEL_TWO", { exact: true }).last()).toBeVisible()
-    await expect(sidebar.getByText("E2E_BATCH_CANCEL_THREE", { exact: true }).last()).toBeVisible()
+    await expect(secondCard).toBeVisible()
+    await expect(thirdCard).toBeVisible()
 
     const cancelAllButton = batchRow.getByRole("button", { name: "Cancel all", exact: true })
     await expect(cancelAllButton).toBeVisible()
@@ -2096,21 +2109,17 @@ Remain active until cancelled.`,
             timeout: 60_000,
         })
 
-        const subagentTask = sidebar.getByText("E2E_BACKGROUND_SUBAGENT_CANCEL_TASK", { exact: true }).last()
-        await expect(subagentTask).toBeVisible()
-        const subagentCard = subagentTask.locator("xpath=ancestor::div[.//button[normalize-space()='Cancel']][1]")
-        const cancelButton = subagentCard.getByRole("button", { name: "Cancel", exact: true })
+        const subagentCard = subagentCardByTask(sidebar, "E2E_BACKGROUND_SUBAGENT_CANCEL_TASK")
+        await expect(subagentCard).toBeVisible()
+        const cancelButton = subagentCard.getByTestId("subagent-item-header").getByRole("button", { name: "Cancel", exact: true })
         await expect(cancelButton).toBeVisible({ timeout: 30_000 })
         await expect.poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 60_000 }).toBe(1)
         await cancelButton.click()
         await expect(sidebar.getByText("Cancelled", { exact: true }).last()).toBeVisible({ timeout: 30_000 })
         await expect(sidebar.getByText("E2E_CANCELLED_BACKGROUND_SUBAGENT_MUST_NOT_COMPLETE", { exact: false })).toHaveCount(0)
         // The output section lives in the card body, which opens on request.
-        await openSubagentCard(subagentCardByTask(sidebar, "E2E_BACKGROUND_SUBAGENT_CANCEL_TASK"))
-        const showCancelledOutput = sidebar.getByRole("button", { name: "Show subagent output" }).last()
-        await expect(showCancelledOutput).toBeVisible({ timeout: 30_000 })
-        await showCancelledOutput.click()
-        await expect(sidebar.getByText("Subagent run cancelled.", { exact: true }).last()).toBeVisible()
+        await showSubagentOutput(subagentCard, 30_000)
+        await expect(subagentCard.getByText("Subagent run cancelled.", { exact: true })).toBeVisible()
 
         const input = sidebar.getByTestId("chat-input")
         await input.fill("E2E_BACKGROUND_SUBAGENT_CANCEL_FEEDBACK")

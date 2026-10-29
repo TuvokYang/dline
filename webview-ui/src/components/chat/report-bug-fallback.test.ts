@@ -2,7 +2,7 @@ import { BUILTIN_INPUT_SEMANTICS, type InputSemanticCatalog } from "@shared/inpu
 import { describe, expect, it } from "vitest"
 import type { ComposerTextSource } from "./input/semantic-composer/model"
 import { captureComposerSend } from "./input/semantic-composer/send-draft"
-import { isReportBugSemanticDocument, shouldUseLocalReportBugFallback } from "./report-bug-fallback"
+import { isReportBugSemanticDocument, reportBugDetails, shouldUseLocalReportBugFallback } from "./report-bug-fallback"
 
 const catalog: InputSemanticCatalog = { revision: 1, descriptors: BUILTIN_INPUT_SEMANTICS }
 
@@ -19,6 +19,19 @@ describe("report bug local fallback", () => {
         expect(command.semanticInput).toBeUndefined()
         expect(isReportBugSemanticDocument(command.semanticDocument)).toBe(true)
         expect(isReportBugSemanticDocument(capture("/reportbug provider failed").semanticDocument)).toBe(true)
+    })
+
+    it("sends the same details for every spelling of the command", () => {
+        const details = (text: string) => {
+            const document = capture(text).semanticDocument
+            if (!document) throw new Error("expected a semantic document")
+            return reportBugDetails(document)
+        }
+
+        expect(details("/cmd:reportbug provider failed")).toBe("provider failed")
+        expect(details("/reportbug provider failed")).toBe("provider failed")
+        expect(details("/cmd:reportbug")).toBe("")
+        expect(details("/reportbug cannot open @/src/app.ts")).toBe("cannot open @/src/app.ts")
     })
 
     it("does not activate pasted or literal report-looking text", () => {

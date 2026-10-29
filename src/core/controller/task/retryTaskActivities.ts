@@ -21,6 +21,10 @@ export async function retryTaskActivities(
     if (!task || task.taskId !== request.taskId || !task.writable) {
         return RetryTaskActivitiesResponse.create({ retriedActivityIds: [] })
     }
+    // A promoted or reopened runtime loads persisted activities lazily, after its first provider request;
+    // Retry has to see the stored record and its retry recipe before deciding anything.
+    await task.owners.activities.hydrate()
+    if (controller.task !== task) return RetryTaskActivitiesResponse.create({ retriedActivityIds: [] })
     for (const activityId of request.activityIds) {
         if (!task.owners.activities.hasLiveRetryControl(activityId) && task.owners.activities.isRetryable(activityId)) {
             await task.owners.toolExecution.restoreSubagentActivityRetry(activityId)

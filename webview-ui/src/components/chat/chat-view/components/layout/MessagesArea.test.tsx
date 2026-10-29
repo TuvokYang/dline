@@ -936,7 +936,7 @@ describe("MessagesArea with real folding", () => {
 
     /**
      * Row of turn 2's user message once turn-level folding has run, listed by
-     * hand: 1, fold:10, 53, fold:60, 64, 70. Unfolded it would be row 26.
+     * hand: 1, turn:10, 53, turn:60, 64, 70. Unfolded it would be row 26.
      */
     const TURN_TWO_FOLDED_ROW = 5
     const TURN_ANCHORS = [1, 70, 90]
@@ -1048,7 +1048,8 @@ describe("MessagesArea with real folding", () => {
     it("stops following the bottom once the reader opens a fold, and grows that open fold in place", async () => {
         const running = withCommand33("running")
         renderChat(running)
-        expect(drawnChildren("fold:10")).toEqual([])
+        // The running command 33 is live, so turn 1 folds only its rounds before it.
+        expect(drawnChildren("turn:10")).toEqual([])
 
         // While nothing is open, new output is followed to the bottom.
         await settleScrolls()
@@ -1058,13 +1059,16 @@ describe("MessagesArea with real folding", () => {
         await waitFor(() => expect(bottomScrolls()).toBeGreaterThan(scrolls))
         await settleScrolls()
 
-        // Opening the fold does not jump the list to the bottom.
+        // Opening the turn fold and its last round does not jump the list to the bottom.
         scrolls = bottomScrolls()
-        openFold("fold:10")
+        openFold("turn:10")
+        openFold("fold:30")
         await settleScrolls()
         expect(bottomScrolls()).toBe(scrolls)
-        expect(header("fold:10")).toHaveAttribute("aria-expanded", "true")
-        const openElement = fold("fold:10")
+        expect(header("turn:10")).toHaveAttribute("aria-expanded", "true")
+        expect(header("fold:30")).toHaveAttribute("aria-expanded", "true")
+        const openTurn = fold("turn:10")
+        const openRound = fold("fold:30")
 
         // Once the reader opened a fold, new output is no longer followed.
         const grown = [...followed, userFeedback(51, "And the parser tests.")]
@@ -1072,44 +1076,52 @@ describe("MessagesArea with real folding", () => {
         await settleScrolls()
         expect(bottomScrolls()).toBe(scrolls)
 
-        // The background command finishes: the same open fold takes it in.
-        expect(drawnChildren("fold:10")).toEqual([10, 12, 20, 22, 30, 32])
+        // The background command finishes: the same open round of the same open turn takes it in.
+        expect(drawnChildren("turn:10")).toEqual([30, 32])
         deliver(grown.map((message) => (message.ts === 33 ? { ...message, commandStatus: "completed", exitCode: 0 } : message)))
-        expect(fold("fold:10")).toBe(openElement)
-        expect(header("fold:10")).toHaveAttribute("aria-expanded", "true")
-        expect(drawnChildren("fold:10")).toEqual([10, 12, 20, 22, 30, 32, 33])
+        expect(fold("turn:10")).toBe(openTurn)
+        expect(fold("fold:30")).toBe(openRound)
+        expect(header("turn:10")).toHaveAttribute("aria-expanded", "true")
+        expect(header("fold:30")).toHaveAttribute("aria-expanded", "true")
+        expect(drawnChildren("turn:10")).toEqual([30, 32, 33])
     })
 
     it("keeps an open fold open, with its remaining members, through a workspace restore", () => {
         renderChat(withCommand33("completed"))
+        openFold("turn:10")
         openFold("fold:10")
-        expect(drawnChildren("fold:10")).toEqual([10, 12, 20, 22, 30, 32, 33])
+        openFold("fold:30")
+        expect(drawnChildren("turn:10")).toEqual([10, 12, 30, 32, 33])
 
         // A workspace restore keeps the opening and its rows; only the checkout markers change.
         deliver(checkOutFileTree(withCommand33("completed"), "tree-b"))
 
-        expect(header("fold:10")).toHaveAttribute("aria-expanded", "true")
-        expect(drawnChildren("fold:10")).toEqual([10, 12])
-        expect(header("fold:22")).toHaveAttribute("aria-expanded", "false")
+        // The checked-out restore point 20 cuts turn 1: its first round stays open in place,
+        // and the rounds after the cut move to a turn fold of their own, folded.
+        expect(header("turn:10")).toHaveAttribute("aria-expanded", "true")
+        expect(drawnChildren("turn:10")).toEqual([10, 12])
+        expect(header("turn:22")).toHaveAttribute("aria-expanded", "false")
+        expect(drawnChildren("turn:22")).toEqual([])
         expect(document.querySelector('[data-row-ts="20"] [data-message-ts="20"]')).not.toBeNull()
     })
 
     it("starts the reopened task after a chat restore with every fold collapsed", () => {
         const held = withCommand33("completed")
         renderChat(held)
+        openFold("turn:10")
         openFold("fold:10")
-        expect(drawnChildren("fold:10")).toEqual([10, 12, 20, 22, 30, 32, 33])
+        expect(drawnChildren("turn:10")).toEqual([10, 12])
 
         // Editing the second message restores the task only: the chat keeps the
         // rows through 35, records the discarded requests, says the edited text
-        // again and reopens the task. Turn 1 keeps its end, so fold:10 exists again.
+        // again and reopens the task. Turn 1 keeps its end, so turn:10 exists again.
         const kept = held.slice(0, held.findIndex(({ ts }) => ts === 35) + 1)
         mocks.taskInstanceId = "task-instance-2"
         deliver([...kept, discardedRequests(100), userFeedback(101, "Split the lexer and its tokens.")])
 
-        expect(fold("fold:10")).not.toBeNull()
-        expect(header("fold:10")).toHaveAttribute("aria-expanded", "false")
-        expect(drawnChildren("fold:10")).toEqual([])
+        expect(fold("turn:10")).not.toBeNull()
+        expect(header("turn:10")).toHaveAttribute("aria-expanded", "false")
+        expect(drawnChildren("turn:10")).toEqual([])
         expect(document.querySelector('[data-row-ts="101"] [data-message-ts="101"]')).not.toBeNull()
         expect(document.querySelector('[data-message-ts="100"]')).toBeNull()
     })
@@ -1166,7 +1178,8 @@ describe("MessagesArea with real folding", () => {
             expect.objectContaining({ index: TURN_TWO_FOLDED_ROW, align: "start" }),
         )
         expectStandaloneUserRowAt(TURN_TWO_FOLDED_ROW, 70)
-        expect(document.querySelectorAll("[data-fold-id]")).toHaveLength(3)
+        // turn:10 and turn:60 in turn 1, turn:71 and turn:82 in turn 2; turn 3 has not ended.
+        expect(document.querySelectorAll("[data-fold-id]")).toHaveLength(4)
     })
 
     it("lands on the drawn user row of a turn fetched into a new window", async () => {
@@ -1191,6 +1204,6 @@ describe("MessagesArea with real folding", () => {
             expect.objectContaining({ index: TURN_TWO_FOLDED_ROW, align: "start" }),
         )
         expectStandaloneUserRowAt(TURN_TWO_FOLDED_ROW, 70)
-        expect(document.querySelectorAll("[data-fold-id]")).toHaveLength(3)
+        expect(document.querySelectorAll("[data-fold-id]")).toHaveLength(4)
     })
 })

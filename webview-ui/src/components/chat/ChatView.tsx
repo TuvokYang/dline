@@ -68,7 +68,7 @@ import { type ComposerSegment, isBlankDraft, trimSegments } from "./input/semant
 import { composeComposerSubmission } from "./input/semantic-composer/projection"
 import { composerSendBlock } from "./input/semantic-composer/send-draft"
 import { useInputQueue } from "./input/useInputQueue"
-import { isReportBugSemanticDocument, shouldUseLocalReportBugFallback } from "./report-bug-fallback"
+import { isReportBugSemanticDocument, reportBugDetails, shouldUseLocalReportBugFallback } from "./report-bug-fallback"
 import { resolveProfileDisplayState } from "./task-header/profileDisplayState"
 
 interface ChatViewProps {
@@ -396,14 +396,15 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         [profiles, apiConfiguration, mode],
     )
     const submitLocalReportBug = useCallback(
-        async (draft: InteractionDraft, semanticDocument = draftSubmission.projection.document): Promise<boolean> => {
+        async (_draft: InteractionDraft, semanticDocument = draftSubmission.projection.document): Promise<boolean> => {
             if (
+                !semanticDocument ||
                 !isReportBugSemanticDocument(semanticDocument) ||
                 !shouldUseLocalReportBugFallback(profileDisplay, taskViewState?.activeInteraction?.kind)
             ) {
                 return false
             }
-            await SlashServiceClient.reportBug(StringRequest.create({ value: draft.text }))
+            await SlashServiceClient.reportBug(StringRequest.create({ value: reportBugDetails(semanticDocument) }))
             return true
         },
         [draftSubmission.projection.document, profileDisplay, taskViewState?.activeInteraction?.kind],

@@ -369,6 +369,21 @@ describe("CanonicalInputQueueApplication", () => {
         expect(delivery?.presentationDraft.text).not.toContain("sent by the user while work was in progress")
     })
 
+    it("reports a dialog as awaiting input only until a delivery answers it", async () => {
+        const h = harness()
+        h.durable.resolve()
+
+        expect(h.application.awaitsTurnEnd("interaction-1")).toBe(false)
+        h.application.onTurnEndAwaiting({ turnId: "turn-1", interactionId: "interaction-1", kind: "completion" })
+        expect(h.application.awaitsTurnEnd("interaction-1")).toBe(true)
+        expect(h.application.awaitsTurnEnd("interaction-2")).toBe(false)
+
+        // A reply carried as input is the delivery that answers the dialog.
+        await h.application.mutate({ kind: "enqueue", draft: { text: "/cmd:reportbug froze", images: [], files: [] } })
+        await vi.waitFor(() => expect(h.deliverTurnEnd).toHaveBeenCalledOnce())
+        await vi.waitFor(() => expect(h.application.awaitsTurnEnd("interaction-1")).toBe(false))
+    })
+
     it("wraps a steering batch with one shared instruction and one ordered message block per entry", async () => {
         const h = harness()
         h.durable.resolve()

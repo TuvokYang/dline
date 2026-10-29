@@ -151,6 +151,15 @@ describe("account rollout precedence", () => {
         expect(serviceWith({}, true, providerReturning({ account: false })).getAccountEnabled()).toBe(true)
     })
 
+    it("offers chat folding in a development build even when the service says no", () => {
+        expect(serviceWith({}, true, providerReturning({ aggressive_rendering: false })).getAggressiveRenderingEnabled()).toBe(
+            true,
+        )
+        expect(serviceWith({}, false, providerReturning({ aggressive_rendering: false })).getAggressiveRenderingEnabled()).toBe(
+            false,
+        )
+    })
+
     it("lets an explicit variable override both", () => {
         const env = { DLINE_EXPERIMENTAL_ACCOUNT: "false" }
         expect(serviceWith(env, true, providerReturning({ account: true })).getAccountEnabled()).toBe(false)

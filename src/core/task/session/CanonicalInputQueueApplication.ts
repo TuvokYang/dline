@@ -202,6 +202,10 @@ export class CanonicalInputQueueApplication implements InputQueueApplicationPort
         this.requestTurnEndDrain()
     }
 
+    awaitsTurnEnd(interactionId: string): boolean {
+        return this.awaitingTurnEnd?.interactionId === interactionId
+    }
+
     private requestTurnEndDrain(): void {
         this.drainRequested = true
         if (this.drainPromise) return
