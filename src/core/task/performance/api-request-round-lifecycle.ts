@@ -39,6 +39,14 @@ export interface ApiRequestRoundScopeInput {
 export class ApiRequestRoundLifecycle {
     /** Latest terminal attempt of each logical request, awaiting its logical settlement. */
     private readonly pendingCompletedExecution = new Map<string, ApiRequestRoundHandle>()
+    /**
+     * Logical requests whose tools run after the Provider stream ends.
+     *
+     * The owning caller declares this before it sends, so it is request-scoped
+     * state: an attempt handle exists only once that send starts, and every retry
+     * of the request inherits the same deferral.
+     */
+    private readonly toolsExpectedRequests = new Set<string>()
     /** The `gen_ai.client.operation` span of each open send. */
     private readonly sendSpans = new WeakMap<ApiRequestRoundHandle, SignalSpanHandle>()
 
@@ -54,6 +62,7 @@ export class ApiRequestRoundLifecycle {
                 this.completeSupersededExecution(input.logicalRequestId)
                 const handle = this.tracker.beginRound({ ...input, ...identity })
                 this.executions?.begin(handle)
+                if (this.toolsExpectedRequests.has(input.logicalRequestId)) this.executions?.expectTools(handle)
                 const span = startProviderSendSpan(handle)
                 if (span) this.sendSpans.set(handle, span)
                 return handle
@@ -85,11 +94,30 @@ export class ApiRequestRoundLifecycle {
         this.publish({ kind: "tokens_final", roundId: handle.roundId })
     }
 
+    /**
+     * End a request at its Provider terminal only when nothing follows it.
+     *
+     * A request whose tools run afterwards is still open: taking its handle here
+     * would drop the only reference a later settlement needs to find it.
+     */
     completeProviderOnly(logicalRequestId: string): void {
+        if (this.toolsExpectedRequests.has(logicalRequestId)) return
         const handle = this.takePendingExecution(logicalRequestId)
         if (!handle) return
         this.executions?.completeProviderOnly(handle)
         this.publishLogicalExecution(handle)
+    }
+
+    /**
+     * Declare that this request runs tools after its Provider stream ends.
+     *
+     * A declaration that arrives after a send already reached its terminal still
+     * defers that send, which is why the handle is marked as well as the request.
+     */
+    expectTools(logicalRequestId: string): void {
+        this.toolsExpectedRequests.add(logicalRequestId)
+        const handle = this.pendingCompletedExecution.get(logicalRequestId)
+        if (handle) this.executions?.expectTools(handle)
     }
 
     completeTools(
@@ -97,6 +125,7 @@ export class ApiRequestRoundLifecycle {
         summary: ApiResponseExecutionToolSummary,
         toolCalls?: readonly UsageToolCall[],
     ): void {
+        this.toolsExpectedRequests.delete(logicalRequestId)
         const handle = this.takePendingExecution(logicalRequestId)
         if (!handle) return
         this.executions?.completeTools(handle, summary)
@@ -108,6 +137,7 @@ export class ApiRequestRoundLifecycle {
         summary: ApiResponseExecutionToolSummary,
         toolCalls?: readonly UsageToolCall[],
     ): void {
+        this.toolsExpectedRequests.delete(logicalRequestId)
         const handle = this.takePendingExecution(logicalRequestId)
         if (!handle) return
         this.executions?.completeTurnEndAwaitingUser(handle, summary)
@@ -172,12 +202,35 @@ export class ApiRequestRoundLifecycle {
     private takeUnsettledExecutions(): ApiRequestRoundHandle[] {
         const unsettled = [...this.pendingCompletedExecution.values()]
         this.pendingCompletedExecution.clear()
+        this.toolsExpectedRequests.clear()
         return unsettled
     }
 
+    /**
+     * A retried send supersedes the attempt that already reached its Provider
+     * terminal, because only the last attempt of a request produces the result.
+     *
+     * A request that runs tools after its stream is different: the retry
+     * interrupted it before those tools could run, so reporting it as a
+     * completed request that happened to use none would be a false claim.
+     */
     private completeSupersededExecution(logicalRequestId: string): void {
-        const handle = this.takePendingExecution(logicalRequestId)
-        if (handle) this.executions?.completeProviderOnly(handle)
+        const handle = this.pendingCompletedExecution.get(logicalRequestId)
+        if (!handle) return
+        if (!this.toolsExpectedRequests.has(logicalRequestId)) {
+            this.executions?.completeProviderOnly(handle)
+            this.pendingCompletedExecution.delete(logicalRequestId)
+            return
+        }
+        try {
+            this.executions?.abortExecution(handle)
+        } catch (error) {
+            Logger.debug(`[usage] superseded execution of ${handle.roundId} could not be aborted: ${String(error)}`)
+            return
+        }
+        this.pendingCompletedExecution.delete(logicalRequestId)
+        // The interrupted send is a real execution, so its fact is still reported.
+        this.publishLogicalExecution(handle)
     }
 
     private publishLogicalExecution(handle: ApiRequestRoundHandle, toolCalls?: readonly UsageToolCall[]): void {

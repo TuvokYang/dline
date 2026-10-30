@@ -14,6 +14,7 @@ interface ProviderRequestRoundLifecyclePort {
     createObserver(input: ApiRequestRoundScopeInput): ProviderAttemptObserver<ApiRequestRoundHandle>
     attachExactUsage(handle: ApiRequestRoundHandle, usage: ApiRequestRoundUsage): void
     finalizeTokens(handle: ApiRequestRoundHandle): void
+    expectTools(logicalRequestId: string): void
     completeProviderOnly(logicalRequestId: string): void
     completeTools(logicalRequestId: string, summary: ApiResponseExecutionToolSummary, toolCalls?: readonly UsageToolCall[]): void
     completeTurnEndAwaitingUser(
@@ -94,6 +95,7 @@ export class TaskProviderRequestRoundOwner {
                 this.options.lifecycle.attachExactUsage(latestTerminal, usage)
                 this.options.lifecycle.finalizeTokens(latestTerminal)
             },
+            expectTools: () => this.options.lifecycle.expectTools(logicalRequestId),
             completeProviderOnly: () => this.options.lifecycle.completeProviderOnly(logicalRequestId),
             completeTools: (summary, toolCalls) => this.options.lifecycle.completeTools(logicalRequestId, summary, toolCalls),
             completeTurnEndAwaitingUser: (summary, toolCalls) =>

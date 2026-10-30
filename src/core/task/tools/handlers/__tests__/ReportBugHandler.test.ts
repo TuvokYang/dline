@@ -13,7 +13,11 @@ const environment = {
 }
 
 const reporting = vi.hoisted(() => ({ collect: vi.fn(async () => environment), open: vi.fn(async () => undefined) }))
-const support = vi.hoisted(() => ({ create: vi.fn(async () => undefined) }))
+const support = vi.hoisted(() => ({
+    issue: vi.fn(async () => "SUP-ABCD-1234"),
+    open: vi.fn(async () => undefined),
+    discard: vi.fn(async () => undefined),
+}))
 const responses = vi.hoisted(() => ({
     reportBugOpened: vi.fn(() => "opened"),
     reportBugCancelled: vi.fn(() => "cancelled"),
@@ -26,7 +30,11 @@ vi.mock("@core/reporting/ReportBugIssue", async () => {
     return { ...actual, collectReportBugEnvironment: reporting.collect, openReportBugIssue: reporting.open }
 })
 vi.mock("@/services/support/SupportTelemetryService", () => ({
-    getSupportTelemetryService: () => ({ createAuthorizationAndOpenIssue: support.create }),
+    getSupportTelemetryService: () => ({
+        issueAuthorization: support.issue,
+        openAuthorizedIssue: support.open,
+        discardAuthorization: support.discard,
+    }),
 }))
 vi.mock("@core/prompts/responses", () => ({ formatResponse: responses }))
 
@@ -56,7 +64,7 @@ function config(actionId: "approve" | "reject", consent = false): TaskConfig {
             additionalContext: "Edited context",
         },
         environment,
-        consent,
+        consent ? "SUP-ABCD-1234" : undefined,
     )
     return {
         mode: "act",
@@ -76,7 +84,8 @@ function config(actionId: "approve" | "reject", consent = false): TaskConfig {
 describe("ReportBugHandler", () => {
     beforeEach(() => vi.clearAllMocks())
 
-    it("uses the edited canonical preview for an ordinary issue", async () => {
+    it("uses the edited canonical preview for an ordinary issue after authorization fails", async () => {
+        support.issue.mockRejectedValueOnce(new Error("production_token_stopped"))
         const taskConfig = config("approve")
         const result = await new ReportBugHandler().execute(taskConfig, block())
 
@@ -91,22 +100,28 @@ describe("ReportBugHandler", () => {
             expect.objectContaining({ title: "Edited title", additionalContext: "Edited context" }),
             environment,
         )
-        expect(support.create).not.toHaveBeenCalled()
+        expect(support.issue).toHaveBeenCalledOnce()
+        expect(support.open).not.toHaveBeenCalled()
         expect(result).toBe("opened")
     })
 
-    it("cancels without external side effects", async () => {
+    it("cancels without opening an issue and discards the prepared ticket", async () => {
         const result = await new ReportBugHandler().execute(config("reject"), block())
 
         expect(reporting.open).not.toHaveBeenCalled()
-        expect(support.create).not.toHaveBeenCalled()
+        expect(support.open).not.toHaveBeenCalled()
+        expect(support.issue).toHaveBeenCalledOnce()
+        expect(support.discard).toHaveBeenCalledWith("SUP-ABCD-1234")
         expect(result).toBe("cancelled")
     })
 
     it("routes consent only through the support service", async () => {
         const result = await new ReportBugHandler().execute(config("approve", true), block())
 
-        expect(support.create).toHaveBeenCalledWith(expect.objectContaining({ temporaryTelemetryConsent: true }))
+        expect(support.issue).toHaveBeenCalledOnce()
+        expect(support.open).toHaveBeenCalledWith(
+            expect.objectContaining({ supportCode: "SUP-ABCD-1234", temporaryTelemetryConsent: true }),
+        )
         expect(reporting.open).not.toHaveBeenCalled()
         expect(result).toBe("opened")
     })

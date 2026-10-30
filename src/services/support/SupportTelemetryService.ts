@@ -1,5 +1,6 @@
 import { openReportBugIssue } from "@core/reporting/ReportBugIssue"
 import type { ReportBugDraft } from "@shared/report-bug"
+import { Logger } from "@shared/services/Logger"
 import { DeviceCredentialRepository, type StoredDeviceToken } from "@/core/storage/telemetry-remote/DeviceCredentialRepository"
 import { type IssueCredentialRecord, IssueCredentialRepository } from "@/core/storage/telemetry-remote/IssueCredentialRepository"
 import { resolveOtelStorageLayout } from "@/core/storage/telemetry-remote/OtelStorageLayout"
@@ -53,7 +54,7 @@ export interface SupportStatusProjection {
     readonly resolution: ReportResolution
 }
 
-/** A ReportBug with temporary telemetry could not obtain its authorization; no Issue was opened. */
+/** A preview could not obtain temporary telemetry authorization; ordinary issue reporting remains available. */
 export class SupportAuthorizationError extends Error {
     constructor(readonly code: string) {
         super(`Temporary support telemetry could not be authorized (${code})`)
@@ -102,13 +103,40 @@ export class SupportTelemetryService {
         })
     }
 
-    /** Issue a ticket, then open the Issue Form carrying its public code; nothing opens when issuance fails. */
-    async createAuthorizationAndOpenIssue(draft: ReportBugDraft): Promise<SupportStatusProjection> {
-        if (!draft.temporaryTelemetryConsent) throw new Error("Temporary telemetry was not consented to")
+    /**
+     * Issue a ticket for a report that is about to be previewed and return its public code.
+     *
+     * Issuance happens before the preview renders so the Issue Form button never
+     * waits on OTel: a failure here only means the preview offers no telemetry choice.
+     */
+    async issueAuthorization(): Promise<string> {
         const record = await this.runOperation(() => this.issueTicket())
-        await openReportBugIssue(draft.content, draft.environment, { supportCode: record.publicCode })
+        return record.publicCode
+    }
+
+    /**
+     * Open the Issue Form carrying the public code the preview already showed.
+     *
+     * No network request happens here. When the stored ticket no longer matches
+     * the draft (expired, replaced or deleted since the preview), the ordinary
+     * form opens without a code instead of a code nobody can resolve.
+     */
+    async openAuthorizedIssue(draft: ReportBugDraft): Promise<void> {
+        const supportCode = await this.availableSupportCode(draft)
+        if (!supportCode) {
+            await openReportBugIssue(draft.content, draft.environment)
+            return
+        }
+        await openReportBugIssue(draft.content, draft.environment, { supportCode })
         this.startPolling()
-        return project(record)
+    }
+
+    /** Local delete of an authorization the user declined or never submitted; a newer ticket is left alone. */
+    async discardAuthorization(publicCode: string): Promise<void> {
+        await this.runOperation(async () => {
+            const record = (await this.credentials.read()).record
+            if (record?.publicCode === publicCode) await this.deleteTicket(record.authorizationCode)
+        })
     }
 
     /** The stored projection; no network. */
@@ -139,6 +167,26 @@ export class SupportTelemetryService {
 
     dispose(): void {
         this.stopPolling("support_disposed")
+    }
+
+    /** Only an unexpired, unlinked authorization can be attached to a new Issue; ticket retention is independent. */
+    private async availableSupportCode(draft: ReportBugDraft): Promise<string | undefined> {
+        if (!draft.temporaryTelemetryConsent || !draft.supportCode) return undefined
+        try {
+            const record = await this.runOperation(() => this.currentTicket())
+            if (
+                record?.publicCode === draft.supportCode &&
+                record.state === "awaiting_issue" &&
+                record.issueState === "unlinked" &&
+                record.authorizationExpiresAt > this.clock()
+            ) {
+                return record.publicCode
+            }
+            Logger.error("ReportBug telemetry authorization is no longer available; opening the issue without it")
+        } catch (error) {
+            Logger.error("ReportBug telemetry authorization could not be checked; opening the issue without it", error)
+        }
+        return undefined
     }
 
     private async issueTicket(): Promise<IssueCredentialRecord> {

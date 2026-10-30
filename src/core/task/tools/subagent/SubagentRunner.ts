@@ -8,7 +8,7 @@ import {
     type WebSearchRoutingPlan,
 } from "@core/api/server-tools"
 import { createIdentityFactory, type IdentityFactory } from "@core/api/transform/block-identity"
-import type { ApiProviderStreamChunk, ApiStopReason } from "@core/api/transform/stream"
+import type { ApiStopReason } from "@core/api/transform/stream"
 import { createStreamNormalizer, normalizeApiStream } from "@core/api/transform/stream-identity-normalizer"
 import { ApiUsageAccumulator } from "@core/api/transform/usage-accumulator"
 import { declaredAnthropicHostedToolNames } from "@core/api/utils/messages_api_support"
@@ -58,6 +58,7 @@ import { boundToolText, MAX_TOOL_RESULT_TEXT_BYTES } from "@/shared/content-limi
 import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
 import { calculateApiCostAnthropic } from "@/utils/cost"
 import { isNativeToolCallingConfig, isNextGenModelFamily } from "@/utils/model-utils"
+import type { UsageToolCall } from "../../telemetry/UsageToolCalls"
 import { canonicalizeAttemptCompletionParams } from "../attempt-completion-params"
 import { partitionDeferredHostedCalls } from "../deferred-hosted-rows"
 import { type DeferredServerToolCall, ServerToolLifecycle } from "../ServerToolLifecycle"
@@ -67,6 +68,7 @@ import { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
 import { resolveToolResultBudget } from "../utils/tool-result-budget"
 import type { AgentBaseConfig } from "./AgentConfigLoader"
+import { forwardProviderAttempt, producesUnreplayableOutput } from "./SubagentAttemptForwarding"
 import { SUBAGENT_COMPLETION_CONTRACT, SubagentBuilder } from "./SubagentBuilder"
 import { buildContextBudgetSection, resolveFinalResultTokens } from "./SubagentContextBudget"
 import { buildContextUsageSection, buildFinishReminder, exceedsContextConvergenceThreshold } from "./SubagentConvergenceGate"
@@ -78,6 +80,7 @@ import {
 } from "./SubagentOutputBudget"
 import { SubagentProseStream } from "./SubagentProseStream"
 import { type FrozenSubagentRoundContext, SubagentRoundContextProjection } from "./SubagentRoundContextProjection"
+import { SubagentRoundUsageSettlement } from "./SubagentRoundUsageSettlement"
 import { observeSubagentToolExecution, reportSubagentPlainTextWarning } from "./SubagentTurnHealth"
 
 /**
@@ -339,32 +342,6 @@ function formatToolCallPreview(toolName: string, params: Partial<Record<string, 
  * Treating every non-usage chunk as observable disabled the whole backoff sequence for
  * adaptive-thinking models, because the scaffolding always precedes the failure.
  */
-function isAttemptCommitChunk(
-    chunk: ApiProviderStreamChunk,
-): chunk is Extract<ApiProviderStreamChunk, { type: "usage" | "tool_calls" }> {
-    return chunk.type === "usage" || chunk.type === "tool_calls"
-}
-
-function producesUnreplayableOutput(chunk: ApiProviderStreamChunk): boolean {
-    switch (chunk.type) {
-        // Attempt-local accounting and native tool deltas are committed only after EOF.
-        case "usage":
-        case "tool_calls":
-            return false
-        // Forwarded to progress only and never written back into the conversation.
-        case "reasoning":
-            return false
-        // Whitespace-only text is a block separator, not an answer.
-        case "text":
-            return (chunk.text ?? "").trim().length > 0
-        // A hosted tool lifecycle is observable from its first phase: the started event is
-        // already forwarded to progress and counted in the tool-call stats, so replaying the
-        // attempt would duplicate both the rendered row and the count.
-        case "server_tool":
-            return true
-    }
-}
-
 function waitForSubagentRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) {
         return Promise.reject(signal.reason ?? new Error("Subagent retry wait was aborted."))
@@ -497,6 +474,8 @@ export class SubagentRunner {
     private activeCommandExecutions = 0
     private abortingCommands = false
     private apiLogRequestIndex = 0
+    /** The instrumented Usage request of the turn in flight; each turn runs its own tools. */
+    private readonly roundUsage: SubagentRoundUsageSettlement
     private interruptionController: AbortController | undefined
     private activeToolState: DefaultToolHandlerState | undefined
     /** Capture the parent's operation scope once; a later rearm cannot revive this run. */
@@ -530,6 +509,25 @@ export class SubagentRunner {
         this.agent = new SubagentBuilder(baseConfig, subagentName, agentConfig)
         this.apiHandler = this.agent.getApiHandler()
         this.allowedTools = this.agent.getAllowedTools()
+        // Built here, not in a field initializer: `baseConfig` is a constructor
+        // parameter property, so it does not exist while initializers run.
+        this.roundUsage = new SubagentRoundUsageSettlement(baseConfig.taskId, SUBAGENT_TELEMETRY_ROLE)
+    }
+
+    /**
+     * Settle the turn that just ran its tools.
+     *
+     * The Provider stream reported its usage; the tools it asked for are only
+     * known now, so this is where the request's logical execution closes with
+     * real tool outcomes instead of a zero-tool Provider-only claim.
+     */
+    private settleRoundToolExecution(toolCalls: readonly UsageToolCall[]): void {
+        this.roundUsage.settleTools(toolCalls)
+    }
+
+    /** End the turn's deferred settlement when its Provider stream asked for no tool. */
+    private releaseRoundToolDeferral(): void {
+        this.roundUsage.release()
     }
 
     async abort(): Promise<void> {
@@ -1419,6 +1417,8 @@ export class SubagentRunner {
                         this.allowedTools,
                     )
                     turnFailures.record(failure)
+                    // This send asked for no tool, so its deferred settlement is over.
+                    this.releaseRoundToolDeferral()
                     if (failure.kind === "text_only")
                         reportSubagentPlainTextWarning(
                             providerInfo.providerId,
@@ -1455,6 +1455,7 @@ export class SubagentRunner {
                 }
 
                 const toolResultBlocks = [] as ClineUserContent[]
+                const toolOutcomes: UsageToolCall[] = []
                 for (const call of finalizedToolCalls) {
                     const toolName = call.name as DlineDefaultTool
                     const toolCallParams = toToolUseParams(call.input)
@@ -1513,8 +1514,10 @@ export class SubagentRunner {
                             },
                         })
                         stats.toolCalls += 1
+                        toolOutcomes.push({ outcome: "completed", toolName })
                         onProgress({ stats: { ...stats } })
                         onProgress({ status: "completed", result: boundedCompletionResult, stats: { ...stats } })
+                        this.settleRoundToolExecution(toolOutcomes)
                         return { status: "completed", result: boundedCompletionResult, stats }
                     }
 
@@ -1608,6 +1611,7 @@ export class SubagentRunner {
                     }
 
                     stats.toolCalls += 1
+                    toolOutcomes.push({ outcome: toolError ? "failed" : "completed", toolName })
                     onProgress({ stats: { ...stats } })
 
                     if (!toolError) turnFailures.reset()
@@ -1653,6 +1657,7 @@ export class SubagentRunner {
                     role: "user",
                     content: toolResultBlocks,
                 })
+                this.settleRoundToolExecution(toolOutcomes)
 
                 await Promise.resolve()
             }
@@ -1874,8 +1879,12 @@ export class SubagentRunner {
         onProgress: (update: SubagentProgressUpdate) => void,
     ) {
         let cumulativeRetryDelayMs = 0
+        // One logical request per turn: its Provider send and the tools that send
+        // asked for settle together under this identity.
         const telemetryRequestId = `${SUBAGENT_TELEMETRY_ROLE}:${crypto.randomUUID()}`
+        this.roundUsage.begin(telemetryRequestId)
         for (let attempt = 1; attempt <= MAX_INITIAL_STREAM_ATTEMPTS; attempt += 1) {
+            this.roundUsage.attemptChanged(attempt - 1)
             // Only a pre-finish abort is expected; a later attempt is the finish turn and reports its real failure.
             const startedBeforeFinish = this.finishRequested === undefined
             const truncatedConversation = contextState.roundContexts.project(
@@ -1914,36 +1923,13 @@ export class SubagentRunner {
                     telemetryAttempt: attempt - 1,
                 }),
             )
-            const iterator = stream[Symbol.asyncIterator]()
-            const bufferedCommitChunks: Array<Extract<ApiProviderStreamChunk, { type: "usage" | "tool_calls" }>> = []
             let didYieldUnreplayableOutput = false
             try {
-                while (true) {
-                    const nextChunk = await iterator.next()
-                    if (nextChunk.done) {
-                        for (const bufferedChunk of bufferedCommitChunks) yield bufferedChunk
-                        return
-                    }
-                    if (isAttemptCommitChunk(nextChunk.value)) {
-                        // Native tool deltas have no business side effects until the complete
-                        // response is finalized. Keep them before the normalizer so a failed
-                        // attempt cannot pollute tool identity, parser or Session state.
-                        bufferedCommitChunks.push(nextChunk.value)
-                        continue
-                    }
-                    if (!producesUnreplayableOutput(nextChunk.value)) {
-                        // Forward replayable scaffolding for live progress. The caller resets
-                        // attempt-local accumulators if a retry discards the attempt.
-                        yield nextChunk.value
-                        continue
-                    }
-
-                    didYieldUnreplayableOutput = true
-                    for (const bufferedChunk of bufferedCommitChunks) yield bufferedChunk
-                    yield nextChunk.value
-                    yield* { [Symbol.asyncIterator]: () => iterator }
-                    return
+                for await (const chunk of forwardProviderAttempt(stream[Symbol.asyncIterator]())) {
+                    if (producesUnreplayableOutput(chunk)) didYieldUnreplayableOutput = true
+                    yield chunk
                 }
+                return
             } catch (error) {
                 if (startedBeforeFinish && this.finishRequested && !this.shouldAbort()) {
                     if (!didYieldUnreplayableOutput) onReplayableAttemptDiscarded()

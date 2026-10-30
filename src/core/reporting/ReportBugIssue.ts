@@ -1,9 +1,4 @@
-import {
-    createReportBugDraft,
-    type ReportBugContent,
-    type ReportBugEnvironment,
-    serializeReportBugDraft,
-} from "@shared/report-bug"
+import type { ReportBugContent, ReportBugEnvironment } from "@shared/report-bug"
 import { createAndOpenGitHubIssue } from "@utils/github-url-utils"
 import * as os from "os"
 import { HostProvider } from "@/hosts/host-provider"
@@ -40,11 +35,6 @@ export async function collectReportBugEnvironment(providerAndModel: string): Pro
 export function recentReportBugError(error: string | undefined): string | undefined {
     const redacted = error ? redactDiagnosticString(error).trim() : ""
     return redacted ? redacted.slice(0, RECENT_ERROR_LIMIT) : undefined
-}
-
-/** Canonical safe payload rendered and edited by every ReportBug preview. */
-export function reportBugPresentation(content: ReportBugContent, environment: ReportBugEnvironment): string {
-    return serializeReportBugDraft(createReportBugDraft(content, environment))
 }
 
 function reportBugE2ECaptureUrl(env: NodeJS.ProcessEnv): string | undefined {

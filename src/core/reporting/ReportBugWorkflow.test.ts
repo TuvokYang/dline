@@ -1,10 +1,14 @@
-import { createReportBugDraft, reportBugDraftSelection } from "@shared/report-bug"
+import type { InteractionOutcome } from "@core/task/interaction/InteractionProtocol"
+import { createReportBugDraft, parseReportBugDraft, reportBugDraftSelection, serializeReportBugDraft } from "@shared/report-bug"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { executeReportBugOutcome, openReportBugPreview } from "./ReportBugWorkflow"
 
 const effects = vi.hoisted(() => ({
     openIssue: vi.fn(async () => undefined),
-    createSupport: vi.fn(async () => ({ publicCode: "SUP-ABCD-1234" })),
+    issue: vi.fn(async () => "SUP-ABCD-1234"),
+    openAuthorized: vi.fn(async () => undefined),
+    discard: vi.fn(async () => undefined),
+    logError: vi.fn(),
 }))
 
 vi.mock("./ReportBugIssue", async () => {
@@ -13,8 +17,14 @@ vi.mock("./ReportBugIssue", async () => {
 })
 
 vi.mock("@/services/support/SupportTelemetryService", () => ({
-    getSupportTelemetryService: () => ({ createAuthorizationAndOpenIssue: effects.createSupport }),
+    getSupportTelemetryService: () => ({
+        issueAuthorization: effects.issue,
+        openAuthorizedIssue: effects.openAuthorized,
+        discardAuthorization: effects.discard,
+    }),
 }))
+
+vi.mock("@shared/services/Logger", () => ({ Logger: { error: effects.logError, warn: vi.fn() } }))
 
 const content = {
     title: "Provider failed",
@@ -30,64 +40,163 @@ const environment = {
     dlineVersion: "1.2.3",
 }
 
-function outcome(actionId: "approve" | "reject", consent: boolean) {
-    return {
-        actionId,
-        selection: { values: reportBugDraftSelection(createReportBugDraft(content, environment, consent)) },
-    }
+function approve(draft = createReportBugDraft(content, environment)): InteractionOutcome {
+    return { actionId: "approve", selection: { values: reportBugDraftSelection(draft) } }
+}
+
+/** Open a preview whose interaction resolves with `answer`, returning the presented draft. */
+async function preview(answer: (presented: string) => InteractionOutcome) {
+    let presented = ""
+    const open = vi.fn(async (request: { presentation: string }) => {
+        presented = request.presentation
+        return answer(request.presentation)
+    })
+    const outcome = await openReportBugPreview({
+        interactions: { open },
+        turnId: "turn-1",
+        interactionId: "report-1",
+        content,
+        environment,
+    })
+    return { outcome, draft: parseReportBugDraft(presented) }
 }
 
 describe("ReportBugWorkflow", () => {
     beforeEach(() => {
-        effects.openIssue.mockClear()
-        effects.createSupport.mockClear()
+        for (const effect of Object.values(effects)) effect.mockClear()
+        effects.issue.mockImplementation(async () => "SUP-ABCD-1234")
     })
 
-    it("does nothing external until the durable preview resolves", async () => {
-        let resolve!: (value: ReturnType<typeof outcome>) => void
-        const open = vi.fn(
-            () =>
-                new Promise<ReturnType<typeof outcome>>((done) => {
-                    resolve = done
-                }),
+    it("does not render or open a browser while authorization is pending", async () => {
+        let issueTicket!: (code: string) => void
+        effects.issue.mockReturnValueOnce(
+            new Promise<string>((resolve) => {
+                issueTicket = resolve
+            }),
         )
+        const open = vi.fn(async (request: { presentation: string }) => {
+            const draft = parseReportBugDraft(request.presentation)
+            expect(draft).toMatchObject({ supportCode: "SUP-ABCD-1234", temporaryTelemetryConsent: true })
+            return { actionId: "reject" as const }
+        })
 
         const pending = openReportBugPreview({
-            interactions: { open } as never,
+            interactions: { open },
             turnId: "turn-1",
             interactionId: "report-1",
             content,
             environment,
         })
 
-        expect(open).toHaveBeenCalledWith(expect.objectContaining({ kind: "report_bug" }))
+        expect(effects.issue).toHaveBeenCalledOnce()
+        expect(open).not.toHaveBeenCalled()
         expect(effects.openIssue).not.toHaveBeenCalled()
-        expect(effects.createSupport).not.toHaveBeenCalled()
-        resolve(outcome("reject", false))
+        expect(effects.openAuthorized).not.toHaveBeenCalled()
+        issueTicket("SUP-ABCD-1234")
         await expect(pending).resolves.toBe("cancelled")
-        expect(effects.openIssue).not.toHaveBeenCalled()
-        expect(effects.createSupport).not.toHaveBeenCalled()
+        expect(open).toHaveBeenCalledOnce()
     })
 
-    it("opens only the ordinary Issue when confirmed without telemetry consent", async () => {
-        await expect(executeReportBugOutcome(outcome("approve", false) as never)).resolves.toBe("opened")
+    it("issues the authorization before rendering and presents it checked", async () => {
+        const { outcome, draft } = await preview((presented) => ({
+            actionId: "approve",
+            selection: { values: [`report_bug_draft:${presented}`] },
+        }))
+
+        expect(effects.issue).toHaveBeenCalledOnce()
+        expect(draft).toMatchObject({ supportCode: "SUP-ABCD-1234", temporaryTelemetryConsent: true })
+        expect(outcome).toBe("opened")
+        expect(effects.openAuthorized).toHaveBeenCalledWith(draft)
+        expect(effects.discard).not.toHaveBeenCalled()
+    })
+
+    it("renders no telemetry choice and logs an error when issuance fails", async () => {
+        effects.issue.mockRejectedValueOnce(new Error("production_token_stopped"))
+
+        const { outcome, draft } = await preview((presented) => ({
+            actionId: "approve",
+            selection: { values: [`report_bug_draft:${presented}`] },
+        }))
+
+        expect(draft?.supportCode).toBeUndefined()
+        expect(draft?.temporaryTelemetryConsent).toBe(false)
+        expect(effects.logError).toHaveBeenCalledWith(expect.any(String), expect.any(Error))
+        expect(outcome).toBe("opened")
+        expect(effects.openIssue).toHaveBeenCalledWith(content, environment)
+        expect(effects.openAuthorized).not.toHaveBeenCalled()
+    })
+
+    it("discards the issued authorization when the preview is cancelled", async () => {
+        const { outcome } = await preview(() => ({ actionId: "reject" }))
+
+        expect(outcome).toBe("cancelled")
+        expect(effects.discard).toHaveBeenCalledWith("SUP-ABCD-1234")
+        expect(effects.openIssue).not.toHaveBeenCalled()
+        expect(effects.openAuthorized).not.toHaveBeenCalled()
+    })
+
+    it("discards a restored preview's authorization when Cancel carries no selection", async () => {
+        const presented = serializeReportBugDraft(createReportBugDraft(content, environment, "SUP-ABCD-1234"))
+
+        await expect(executeReportBugOutcome({ actionId: "reject" }, presented)).resolves.toBe("cancelled")
+
+        expect(effects.discard).toHaveBeenCalledWith("SUP-ABCD-1234")
+        expect(effects.issue).not.toHaveBeenCalled()
+        expect(effects.openIssue).not.toHaveBeenCalled()
+        expect(effects.openAuthorized).not.toHaveBeenCalled()
+    })
+
+    it("discards an unchecked authorization and still opens the issue", async () => {
+        const unchecked = { ...createReportBugDraft(content, environment, "SUP-ABCD-1234"), temporaryTelemetryConsent: false }
+
+        await expect(executeReportBugOutcome(approve(unchecked))).resolves.toBe("opened")
+
+        expect(effects.discard).toHaveBeenCalledWith("SUP-ABCD-1234")
+        expect(effects.openAuthorized).toHaveBeenCalledWith(unchecked)
+    })
+
+    it("opens the ordinary issue for a draft without an authorization and never issues one on confirm", async () => {
+        await expect(executeReportBugOutcome(approve())).resolves.toBe("opened")
 
         expect(effects.openIssue).toHaveBeenCalledWith(content, environment)
-        expect(effects.createSupport).not.toHaveBeenCalled()
+        expect(effects.issue).not.toHaveBeenCalled()
+        expect(effects.openAuthorized).not.toHaveBeenCalled()
     })
 
-    it("delegates a consented confirmation only to SupportTelemetryService", async () => {
-        const draft = createReportBugDraft(content, environment, true)
+    it("discards the pre-issued ticket if opening the preview fails", async () => {
+        const error = new Error("interaction unavailable")
+        const open = vi.fn(async () => {
+            throw error
+        })
 
-        await expect(executeReportBugOutcome(outcome("approve", true) as never)).resolves.toBe("opened")
+        await expect(
+            openReportBugPreview({
+                interactions: { open },
+                turnId: "turn-1",
+                interactionId: "report-1",
+                content,
+                environment,
+            }),
+        ).rejects.toBe(error)
 
-        expect(effects.createSupport).toHaveBeenCalledWith(draft)
+        expect(effects.discard).toHaveBeenCalledWith("SUP-ABCD-1234")
         expect(effects.openIssue).not.toHaveBeenCalled()
+        expect(effects.openAuthorized).not.toHaveBeenCalled()
+    })
+
+    it("opens the issue despite local cleanup failure after an opt-out", async () => {
+        effects.discard.mockRejectedValueOnce(new Error("local cleanup failed"))
+        const unchecked = { ...createReportBugDraft(content, environment, "SUP-ABCD-1234"), temporaryTelemetryConsent: false }
+
+        await expect(executeReportBugOutcome(approve(unchecked))).resolves.toBe("opened")
+
+        expect(effects.openAuthorized).toHaveBeenCalledWith(unchecked)
+        expect(effects.issue).not.toHaveBeenCalled()
     })
 
     it("rejects a confirmed outcome without a canonical draft", async () => {
-        await expect(executeReportBugOutcome({ actionId: "approve" } as never)).resolves.toBe("invalid")
+        await expect(executeReportBugOutcome({ actionId: "approve" })).resolves.toBe("invalid")
         expect(effects.openIssue).not.toHaveBeenCalled()
-        expect(effects.createSupport).not.toHaveBeenCalled()
+        expect(effects.openAuthorized).not.toHaveBeenCalled()
     })
 })

@@ -54,6 +54,8 @@ export interface ProviderRequestRoundAdmission {
     createAttemptObserver(taskAttempt: number, adapter?: ProviderAttemptAdapterIdentity): ProviderAttemptObserver
     /** The send's accumulated exact usage, delivered once when its stream closes; it also finalizes the tokens. */
     attachExactUsage(usage: ApiRequestRoundUsage): void
+    /** The caller executes work after the Provider terminal, so only its own settlement ends the request. */
+    expectTools?(): void
     completeProviderOnly(): void
     completeTools(summary: ApiResponseExecutionToolSummary, toolCalls?: readonly UsageToolCall[]): void
     completeTurnEndAwaitingUser(summary: ApiResponseExecutionToolSummary, toolCalls?: readonly UsageToolCall[]): void

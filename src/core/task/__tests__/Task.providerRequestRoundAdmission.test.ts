@@ -53,6 +53,7 @@ function createAdmission(): ProviderRequestRoundAdmission {
     return {
         createAttemptObserver: () => ({ beginAttempt: () => undefined, finishAttempt: () => undefined }),
         attachExactUsage: vi.fn(),
+        expectTools: vi.fn(),
         completeProviderOnly: vi.fn(),
         completeTools: vi.fn(),
         completeTurnEndAwaitingUser: vi.fn(),
@@ -74,6 +75,7 @@ function createOwner(
             })),
             attachExactUsage: vi.fn(),
             finalizeTokens: vi.fn(),
+            expectTools: vi.fn(),
             completeProviderOnly: vi.fn(),
             completeTools: vi.fn(),
             completeTurnEndAwaitingUser: vi.fn(),
@@ -106,6 +108,7 @@ describe("Task Provider request round admission", () => {
                 finalizeTokens: vi.fn((handle) => {
                     finalizedHandles.push(handle)
                 }),
+                expectTools: vi.fn(),
                 completeProviderOnly: vi.fn(),
                 completeTools: vi.fn(),
                 completeTurnEndAwaitingUser: vi.fn(),
@@ -157,6 +160,7 @@ describe("Task Provider request round admission", () => {
                 })),
                 attachExactUsage: vi.fn(),
                 finalizeTokens: vi.fn(),
+                expectTools: vi.fn(),
                 completeProviderOnly: vi.fn(),
                 completeTools: vi.fn(),
                 completeTurnEndAwaitingUser: vi.fn(),
@@ -194,6 +198,7 @@ describe("Task Provider request round admission", () => {
                 }),
                 attachExactUsage: vi.fn(),
                 finalizeTokens: vi.fn(),
+                expectTools: vi.fn(),
                 completeProviderOnly: vi.fn(),
                 completeTools: vi.fn(),
                 completeTurnEndAwaitingUser: vi.fn(),

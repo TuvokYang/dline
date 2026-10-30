@@ -105,8 +105,9 @@ const ReportBugPreview: React.FC<ReportBugPreviewProps> = ({ data, editable = fa
                     </dl>
                 </details>
 
-                {editable ? (
-                    <div className="rounded border border-(--vscode-panel-border) p-2">
+                {/* Only an authorization issued before rendering offers the choice; it starts checked. */}
+                {editable && draft.supportCode ? (
+                    <div className="rounded border border-(--vscode-panel-border) p-2" data-testid="report-bug-telemetry">
                         <VSCodeCheckbox
                             checked={draft.temporaryTelemetryConsent}
                             onChange={(event) =>
@@ -118,8 +119,8 @@ const ReportBugPreview: React.FC<ReportBugPreviewProps> = ({ data, editable = fa
                             Temporarily share high-density diagnostics for this issue
                         </VSCodeCheckbox>
                         <p className="mt-1 text-xs text-description">
-                            Optional. If unchecked, Dline only opens the normal GitHub issue form and creates no support
-                            authorization or diagnostic polling.
+                            Support code <code>{draft.supportCode}</code> is added to the issue form. If unchecked, Dline discards
+                            this authorization and opens the normal GitHub issue form without diagnostic polling.
                         </p>
                     </div>
                 ) : null}

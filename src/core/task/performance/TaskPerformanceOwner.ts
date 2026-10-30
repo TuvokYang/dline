@@ -186,6 +186,9 @@ export class TaskPerformanceOwner {
         // request label would revive stale operation state from an earlier run.
         if (existing && input.taskAttempt > 0) return existing
         const admission = this.rounds.admit({ source: input.role })
+        // A subagent executes its tools after the Provider stream is drained, so the
+        // stream's own completion cannot stand for the request's settlement.
+        if (input.role === "subagent") admission.expectTools?.()
         if (key) this.auxiliaryAdmissions.set(key, admission)
         return admission
     }
@@ -201,9 +204,57 @@ export class TaskPerformanceOwner {
         this.auxiliaryAdmissions.get(`${input.role}:${input.logicalRequestId}`)?.attachExactUsage(input.usage)
     }
 
+    /**
+     * Settle a subagent logical request with the tools its send asked for.
+     *
+     * The Provider stream only produced the calls; the Runner executed them, so
+     * this is the boundary that can report the request's tools at all.
+     */
+    providerLogicalToolsSettled(input: ProviderAttemptUsageInput, toolCalls: readonly UsageToolCall[]): void {
+        if (input.role === "task" || !input.logicalRequestId) return
+        const key = `${input.role}:${input.logicalRequestId}`
+        const admission = this.auxiliaryAdmissions.get(key)
+        if (!admission) return
+        this.auxiliaryAdmissions.delete(key)
+        if (toolCalls.length === 0) {
+            // The send asked for no tool, so its stream was already the whole request.
+            admission.completeProviderOnly()
+            return
+        }
+        const completed = toolCalls.filter((call) => call.outcome === "completed").length
+        const failed = toolCalls.filter((call) => call.outcome === "failed").length
+        const cancelled = toolCalls.filter((call) => call.outcome === "cancelled").length
+        admission.completeTools(
+            {
+                toolCount: toolCalls.length,
+                completedToolCount: completed,
+                failedToolCount: failed,
+                cancelledToolCount: cancelled,
+            },
+            toolCalls,
+        )
+    }
+
+    /**
+     * The subagent stream ended without asking for a tool.
+     *
+     * Deferral was only waiting for tools that never came, so the request ends at
+     * its Provider terminal instead of staying open for the rest of the run.
+     */
+    providerLogicalToolsExpected(input: ProviderAttemptScopeInput): void {
+        if (input.role !== "subagent" || !input.logicalRequestId) return
+        const key = `${input.role}:${input.logicalRequestId}`
+        const admission = this.auxiliaryAdmissions.get(key)
+        if (!admission) return
+        this.auxiliaryAdmissions.delete(key)
+        admission.completeProviderOnly()
+    }
+
     /** Complete an auxiliary logical request at the mandatory ApiHandler terminal boundary. */
     providerRequestCompleted(input: ProviderAttemptScopeInput): void {
-        if (input.role === "task" || !input.logicalRequestId) return
+        // A subagent request owns its tools past the Provider stream; only its own
+        // settlement may end it, so the stream boundary is not its terminal.
+        if (input.role === "task" || input.role === "subagent" || !input.logicalRequestId) return
         const key = `${input.role}:${input.logicalRequestId}`
         const admission = this.auxiliaryAdmissions.get(key)
         if (!admission) return

@@ -16,6 +16,12 @@ interface MutableExecutionState {
     readonly handle: ApiRequestRoundHandle
     providerTerminal?: ApiRequestRoundRecord
     terminalRecord?: ApiResponseExecutionRecord
+    /**
+     * The owning caller executes work after the Provider terminal (a subagent runs
+     * its tools once the stream is drained). Until that caller settles the request,
+     * a Provider-only terminal would claim it ran no tool.
+     */
+    toolsExpected?: boolean
 }
 
 export interface ApiResponseExecutionLifecycleOptions {
@@ -31,6 +37,17 @@ const NO_TOOLS: ApiResponseExecutionToolSummary = {
     completedToolCount: 0,
     failedToolCount: 0,
     cancelledToolCount: 0,
+}
+
+/**
+ * Tools a closing host never saw settle. The cancelled count keeps the totals
+ * conserving without claiming the caller confirmed that nothing ran.
+ */
+const UNREPORTED_TOOLS: ApiResponseExecutionToolSummary = {
+    toolCount: 1,
+    completedToolCount: 0,
+    failedToolCount: 0,
+    cancelledToolCount: 1,
 }
 
 /** Coordinates Provider transport facts with Task-owned complete execution terminals. */
@@ -95,10 +112,22 @@ export class ApiResponseExecutionLifecycle {
         }
     }
 
+    /**
+     * Declare that this logical request runs tools after its Provider stream ends.
+     *
+     * The terminal boundary then belongs to the caller's tools, not to the stream:
+     * `completeProviderOnly` keeps the execution open, and a Provider failure still
+     * ends it because no tool can follow a failed send.
+     */
+    expectTools(handle: ApiRequestRoundHandle): void {
+        this.requireState(handle).toolsExpected = true
+    }
+
     completeProviderOnly(handle: ApiRequestRoundHandle): void {
         const state = this.requireState(handle)
         if (state.terminalRecord) return
         const provider = this.requireProviderTerminal(state)
+        if (state.toolsExpected && provider.status === "completed") return
         this.finishAtProviderTerminal(state, provider.status)
     }
 
@@ -108,6 +137,13 @@ export class ApiResponseExecutionLifecycle {
 
     completeTurnEndAwaitingUser(handle: ApiRequestRoundHandle, summary: ApiResponseExecutionToolSummary): void {
         this.finishAtCurrentTime(handle, "turn_end_awaiting_user", summary)
+    }
+
+    /** End one execution as interrupted; a superseded retry attempt uses this. */
+    abortExecution(handle: ApiRequestRoundHandle): void {
+        const state = this.requireState(handle)
+        if (state.terminalRecord) return
+        this.abort(state)
     }
 
     /** Return the immutable terminal record after the owning completion boundary has run. */
@@ -211,7 +247,9 @@ export class ApiResponseExecutionLifecycle {
                 executionDurationMs: Math.max(providerDurationMs, elapsed),
                 status: "aborted",
                 terminalKind: "provider_only",
-                summary: NO_TOOLS,
+                // A caller that runs tools never reports them when the host closes
+                // mid-flight: the request was interrupted, not proven tool-free.
+                summary: state.toolsExpected ? UNREPORTED_TOOLS : NO_TOOLS,
             }),
         )
     }
@@ -298,7 +336,8 @@ function statusFrom(
 ): ApiResponseExecutionStatus {
     if (providerStatus !== "completed") return providerStatus
     if (summary.failedToolCount > 0) return "failed"
-    if (summary.cancelledToolCount === summary.toolCount) return "cancelled"
+    // A request that ran no tool is completed, not cancelled by 0 === 0.
+    if (summary.toolCount > 0 && summary.cancelledToolCount === summary.toolCount) return "cancelled"
     return "completed"
 }
 
@@ -342,7 +381,8 @@ function assertToolSummary(summary: ApiResponseExecutionToolSummary): void {
             throw new Error(`API response execution ${name} must be a non-negative integer`)
         }
     }
-    if (summary.toolCount === 0) throw new Error("API response execution tool summary must contain a tool")
+    // A settled zero-tool summary is a real outcome: a caller that executed its
+    // tools reports "none ran", which is not the same claim as Provider-only.
     if (summary.completedToolCount + summary.failedToolCount + summary.cancelledToolCount !== summary.toolCount) {
         throw new Error("API response execution tool summary must be fully settled")
     }

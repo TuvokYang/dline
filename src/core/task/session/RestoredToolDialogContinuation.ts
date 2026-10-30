@@ -117,8 +117,8 @@ export interface RestoredToolDialogPorts {
      * such an answer cannot take effect, so the dialog stays answerable instead.
      */
     readonly publishPostCommit?: PostCommitPublisher
-    /** Replays the report's confirmed external effect before recording its restored tool result. */
-    readonly reportBug?: (outcome: InteractionOutcome) => Promise<boolean>
+    /** Replays the report's effect; cancellation needs the persisted preview because it carries no selection. */
+    readonly reportBug?: (outcome: InteractionOutcome, presentation?: string) => Promise<boolean>
     /**
      * Admit a reply that names a command or mention, as `TaskInputMaterializer.admitReply` does.
      *
@@ -184,7 +184,7 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
             if (
                 target.kind === "report_bug" &&
                 target.recorded === "none" &&
-                !(await this.ports.reportBug?.(resolution.outcome))
+                !(await this.ports.reportBug?.(resolution.outcome, this.reportBugPresentation(resolution.interactionId)))
             ) {
                 return false
             }
@@ -387,6 +387,13 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
         return this.ports
             .state()
             .turn.blocks.find((block) => block.blockId === resolution.interactionId && block.phase === "cancelled")
+    }
+
+    /** The exact report's persisted preview owns its pre-issued public code, including after restart. */
+    private reportBugPresentation(interactionId: string): string | undefined {
+        return this.ports.messages.clineMessages.find(
+            (row) => row.type === "ask" && row.ask === "report_bug" && row.interactionId === interactionId,
+        )?.text
     }
 
     /** Show the answer as the live handler does: the picked option and one feedback row. */

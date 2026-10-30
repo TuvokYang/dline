@@ -372,7 +372,8 @@ export class TaskSessionCompositionService {
                     nextPresentationId: () => nextPresentationId(),
                     publishRow: (row) => options.prompt.ports.presentation.publish(row),
                     publishPostCommit: postCommit,
-                    reportBug: async (outcome) => (await executeReportBugOutcome(outcome)) !== "invalid",
+                    reportBug: async (outcome, presentation) =>
+                        (await executeReportBugOutcome(outcome, presentation)) !== "invalid",
                     admitReply: (reply) => this.requireSession(session).inputs.admitReply(reply),
                 },
                 resumption,
@@ -402,6 +403,8 @@ export class TaskSessionCompositionService {
             (state) => performance?.committed(state, isRunAtRest(state)),
             (input) => performance?.providerAttemptUsage(input),
             (input) => performance?.providerRequestCompleted(input),
+            (input, toolCalls) => performance?.providerLogicalToolsSettled(input, toolCalls),
+            (input) => performance?.providerLogicalToolsExpected(input),
         )
         taskTelemetry.registerAlias(taskIncarnationId)
         resources.add({ release: async () => taskTelemetry.dispose() })
