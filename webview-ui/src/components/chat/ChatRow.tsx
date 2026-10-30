@@ -58,6 +58,7 @@ import { CommandOutputContent, CommandOutputRow } from "./CommandOutputRow"
 import { CompletionOutputRow } from "./CompletionOutputRow"
 import { CheckpointMarker } from "./chat-view/components/messages/CheckpointMarker"
 import type { RowExpansionOrigin } from "./chat-view/types/chatTypes"
+import { attemptElapsedMs, formatElapsedDuration } from "./chat-view/utils/attemptElapsed"
 import { collectMcpResponseTexts, resolveApiErrorMessage } from "./chat-view/utils/messageUtils"
 import { describeCompactionFailure } from "./compaction-failure-label"
 import { CHAT_ROW_HEADER_CLASSNAMES, TOOL_RESPONSE_SCROLL_CLASS } from "./constants"
@@ -465,6 +466,14 @@ export const ChatRowContent = memo(
                     return [null, null]
             }
         }, [type, isMcpServerResponding, message.text, mcpMarketplaceCatalog])
+
+        // Counted from the user input that started this attempt, so a later
+        // attempt in the same task measures its own turn instead of the task.
+        const attemptElapsedLabel = useMemo(() => {
+            if (message.ask !== "completion_result" && message.say !== "completion_result") return undefined
+            const elapsedMs = attemptElapsedMs(clineMessages, message.ts)
+            return elapsedMs === undefined ? undefined : formatElapsedDuration(elapsedMs)
+        }, [clineMessages, message.ask, message.say, message.ts])
 
         const tool = useMemo(() => {
             if (message.ask === "tool" || message.say === "tool") {
@@ -1299,6 +1308,7 @@ export const ChatRowContent = memo(
 
                         return (
                             <CompletionOutputRow
+                                elapsedLabel={attemptElapsedLabel}
                                 explainChangesDisabled={explainChangesDisabled}
                                 handleQuoteClick={handleQuoteClick}
                                 headClassNames={HEADER_CLASSNAMES}
@@ -1426,6 +1436,7 @@ export const ChatRowContent = memo(
                             const { hasChanges, text } = readCompletionChanges(message)
                             return (
                                 <CompletionOutputRow
+                                    elapsedLabel={attemptElapsedLabel}
                                     explainChangesDisabled={explainChangesDisabled}
                                     handleQuoteClick={handleQuoteClick}
                                     headClassNames={HEADER_CLASSNAMES}

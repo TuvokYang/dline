@@ -22,6 +22,12 @@ interface CompletionOutputRowProps {
     explainChangesDisabled: boolean
     setExplainChangesDisabled: (value: boolean) => void
     messageTs: number
+    /**
+     * How long this attempt waited, counted from the user input that started
+     * it. Absent when no input precedes the attempt, so the title stays bare
+     * instead of claiming a figure it cannot know.
+     */
+    elapsedLabel?: string
 }
 
 export const CompletionOutputRow = memo(
@@ -35,6 +41,7 @@ export const CompletionOutputRow = memo(
         explainChangesDisabled,
         setExplainChangesDisabled,
         messageTs,
+        elapsedLabel,
         handleQuoteClick,
     }: CompletionOutputRowProps) => {
         return (
@@ -45,6 +52,14 @@ export const CompletionOutputRow = memo(
                         <div className="flex gap-2 items-center">
                             <CheckIcon className="size-3 text-success" />
                             <span className="text-success font-bold">Task Completed</span>
+                            {elapsedLabel && (
+                                <span
+                                    className="text-success/70 text-xs tabular-nums"
+                                    data-testid="completion-output-elapsed"
+                                    title="From your input to this attempt completing">
+                                    {elapsedLabel}
+                                </span>
+                            )}
                         </div>
                         <CopyButton className="text-success" textToCopy={text} />
                     </div>
