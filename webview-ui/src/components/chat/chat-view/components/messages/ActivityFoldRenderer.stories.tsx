@@ -3,6 +3,8 @@ import type { UiMessage } from "@shared/ExtensionMessage"
 import type { Meta, StoryObj } from "@storybook/react-vite"
 import { useEffect, useMemo, useState } from "react"
 import type { MessageHandlers } from "../../types/chatTypes"
+import { projectFoldExpansion } from "../../utils/activityFolds"
+import { isActivityFold } from "../../utils/chatRowKinds"
 import { groupChatRows } from "../../utils/messageUtils"
 import { rowIdentity } from "../../utils/rowCoordinate"
 import { liveTwoTurnSteps } from "./activityFoldStoryFixtures"
@@ -26,7 +28,8 @@ function ConversationRows({ level, messages }: { level: AggressiveRenderingLevel
     const [expandedRows, setExpandedRows] = useState<Record<number, boolean>>({})
     const [expandedFolds, setExpandedFolds] = useState<Record<string, boolean>>({})
     const transcript = messages as UiMessage[]
-    const rows = useMemo(() => groupChatRows(transcript, undefined, { level }), [transcript, level])
+    const folded = useMemo(() => groupChatRows(transcript, undefined, { level }), [transcript, level])
+    const rows = useMemo(() => projectFoldExpansion(folded, expandedFolds), [folded, expandedFolds])
     const renderRow = createMessageRenderer(
         rows,
         transcript,
@@ -45,6 +48,23 @@ function ConversationRows({ level, messages }: { level: AggressiveRenderingLevel
     )
     return (
         <div>
+            {level !== "none" && (
+                <div className="flex gap-3 px-4 py-1">
+                    <button
+                        className={controlButton}
+                        onClick={() =>
+                            setExpandedFolds(
+                                Object.fromEntries(folded.filter(isActivityFold).map((fold) => [fold._activityFoldId, true])),
+                            )
+                        }
+                        type="button">
+                        Expand all activity
+                    </button>
+                    <button className={controlButton} onClick={() => setExpandedFolds({})} type="button">
+                        Collapse all activity
+                    </button>
+                </div>
+            )}
             {rows.map((row, index) => (
                 <div key={rowIdentity(row)}>{renderRow(index, row)}</div>
             ))}
@@ -136,24 +156,14 @@ const meta = {
     title: "Chat/Activity Folding",
     component: LiveFoldingFixture,
     parameters: { layout: "fullscreen" },
-    args: { level: "standard" },
+    argTypes: { level: { table: { disable: true } } },
+    args: { level: "none" },
 } satisfies Meta<typeof LiveFoldingFixture>
 
 export default meta
 type Story = StoryObj<typeof meta>
 
-/** Level 1, today's rendering: nothing folds while the two turns play out. */
-export const Standard: Story = { args: { level: "standard" } }
-
-/**
- * Level 2: the running round stays open; the moment it ends, as the next round
- * starts or the turn completes, it folds into its own block.
- */
-export const EachRound: Story = { args: { level: "activity" } }
-
-/**
- * Level 3: every ended round between the user message and the completion folds
- * into one block, which takes in each further round as it ends. The running
- * round stays open below it, and the completion stays outside.
- */
-export const WholeTurn: Story = { args: { level: "turn" } }
+/** The same production pipeline at three independent, fixed levels. */
+export const Standard: Story = { name: "1 · Standard (no folding)", args: { level: "none" } }
+export const MessageSegments: Story = { name: "2 · Fold activity between messages", args: { level: "message_segment" } }
+export const WholeTurn: Story = { name: "3 · Fold the whole turn into one block", args: { level: "user_turn" } }

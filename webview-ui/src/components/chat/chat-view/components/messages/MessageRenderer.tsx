@@ -66,15 +66,7 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
 
     // A fold is an array row too, so it must be recognised before the browser-session fallback.
     if (isActivityFold(messageOrGroup)) {
-        return (
-            <ActivityFoldRenderer
-                {...context}
-                expandedFolds={foldExpansion.expanded}
-                fold={messageOrGroup}
-                isExpanded={foldExpansion.expanded[messageOrGroup._activityFoldId] === true}
-                onToggleFold={foldExpansion.toggle}
-            />
-        )
+        return <ActivityFoldRenderer {...context} fold={messageOrGroup} onToggleFold={foldExpansion.toggle} />
     }
 
     return <RowContent {...context} isLastRow={isLastMessage} isLastToolActivity={isLastToolActivity} row={messageOrGroup} />

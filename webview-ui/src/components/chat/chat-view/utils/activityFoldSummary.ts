@@ -1,15 +1,14 @@
 import type { UiAskUseMcpServer, UiMessage, UiSayBrowserAction } from "@shared/ExtensionMessage"
-import { type ActivityFold, isActivityFold } from "./chatRowKinds"
+import type { ActivityFold } from "./chatRowKinds"
 
 /**
  * Facts a fold header states about its members.
  *
  * Only facts present in the members and their attached checkpoints are
- * counted. A turn fold also states how many rounds it holds, which are its
- * round folds.
+ * counted. The fold records its distinct request rounds when it is built.
  */
 export interface ActivityFoldSummary {
-    /** Rounds in a turn fold; absent for a round fold, which is one round. */
+    /** Distinct request rounds in the block. */
     readonly rounds?: number
     /**
      * Tool calls by kind, in the order each kind first appears: built-in tools by
@@ -56,7 +55,7 @@ export function summarizeActivityFold(
             if (name) countCall(toolCalls, name)
         }
     }
-    const rounds = fold._foldKind === "turn" ? fold._children.filter(isActivityFold).length : undefined
+    const rounds = fold._roundCount
     return { rounds, toolCalls, commands, fileEdits, checkpoints, thoughts, assistantMessages }
 }
 

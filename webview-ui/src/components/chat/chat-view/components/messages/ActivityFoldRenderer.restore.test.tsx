@@ -4,6 +4,7 @@ import React from "react"
 import { describe, expect, it, vi } from "vitest"
 import { activeTurnAnchor } from "@/components/chat/trajectory/useActiveTurn"
 import type { MessageHandlers } from "../../types/chatTypes"
+import { projectFoldExpansion } from "../../utils/activityFolds"
 import { isActivityFold } from "../../utils/chatRowKinds"
 import { groupChatRows } from "../../utils/messageUtils"
 import { rowIdentity } from "../../utils/rowCoordinate"
@@ -68,20 +69,20 @@ interface FoldShape {
 }
 
 function turnRows(messages: UiMessage[]): ChatRow[] {
-    return groupChatRows(messages, undefined, { level: "turn" })
+    return groupChatRows(messages, undefined, { level: "user_turn" })
 }
 
 const foldsOf = (rows: ChatRow[]): FoldShape[] =>
     rows.filter(isActivityFold).map((fold) => ({ id: fold._activityFoldId, members: fold.map((message) => message.ts) }))
-/** The round folds of each turn fold, by turn fold id. */
-const roundsOf = (rows: ChatRow[]): Record<string, FoldShape[]> =>
-    Object.fromEntries(rows.filter(isActivityFold).map((fold) => [fold._activityFoldId, foldsOf(fold._children)]))
+const roundsOf = (rows: ChatRow[]): Record<string, number> =>
+    Object.fromEntries(rows.filter(isActivityFold).map((fold) => [fold._activityFoldId, fold._roundCount]))
 const unfoldedRowTs = (rows: ChatRow[]) => rows.filter((row) => !isActivityFold(row)).map((row) => rowTs(row))
 
 function renderRows(messages: UiMessage[], expandedFolds: Record<string, boolean>) {
     const rows = turnRows(messages)
+    const displayed = projectFoldExpansion(rows, expandedFolds)
     const renderRow = createMessageRenderer(
-        rows,
+        displayed,
         messages,
         {},
         vi.fn(),
@@ -95,7 +96,7 @@ function renderRows(messages: UiMessage[], expandedFolds: Record<string, boolean
     )
     const view = render(
         <div data-testid="list">
-            {rows.map((row, index) => (
+            {displayed.map((row, index) => (
                 <React.Fragment key={rowIdentity(row)}>{renderRow(index, row)}</React.Fragment>
             ))}
         </div>,
@@ -105,8 +106,6 @@ function renderRows(messages: UiMessage[], expandedFolds: Record<string, boolean
 
 const drawnMessageTimestamps = (root: ParentNode | null) =>
     Array.from(root?.querySelectorAll<HTMLElement>("[data-message-ts]") ?? []).map((element) => Number(element.dataset.messageTs))
-const openFoldChildren = (container: HTMLElement, foldId: string) =>
-    container.querySelector(`[data-fold-id="${foldId}"] [data-testid="activity-fold-children"]`)
 
 describe("activity folds across a checkpoint restore", () => {
     it("folds each finished turn before any restore", () => {
@@ -116,15 +115,7 @@ describe("activity folds across a checkpoint restore", () => {
             { id: "turn:10", members: [10, 12, 20, 22, 30, 32, 33] },
             { id: "turn:41", members: [41, 43] },
         ])
-        // Each round opens at its request (11, 21, 31; 42) behind its restore point.
-        expect(roundsOf(rows)).toEqual({
-            "turn:10": [
-                { id: "fold:10", members: [10, 12] },
-                { id: "fold:20", members: [20, 22] },
-                { id: "fold:30", members: [30, 32, 33] },
-            ],
-            "turn:41": [{ id: "fold:41", members: [41, 43] }],
-        })
+        expect(roundsOf(rows)).toEqual({ "turn:10": 3, "turn:41": 1 })
         expect(unfoldedRowTs(rows)).toEqual([1, 35, 40, 45])
     })
 
@@ -139,19 +130,15 @@ describe("activity folds across a checkpoint restore", () => {
             { id: "turn:22", members: [22, 30, 32, 33] },
             { id: "turn:41", members: [41, 43] },
         ])
-        // The checked-out restore point leaves the rest of its round as a round of its own.
-        expect(roundsOf(rows)["turn:22"]).toEqual([
-            { id: "fold:22", members: [22] },
-            { id: "fold:30", members: [30, 32, 33] },
-        ])
+        expect(roundsOf(rows)["turn:22"]).toBe(2)
         expect(unfoldedRowTs(rows)).toEqual([1, 20, 35, 40, 45])
-        expect(drawnMessageTimestamps(openFoldChildren(container, "turn:10"))).toEqual([10, 12])
+        expect(container.querySelector('[data-fold-id="turn:10"]')).toBeNull()
+        expect(drawnMessageTimestamps(container)).toEqual([1, 10, 12, 20, 35, 40, 45])
         // The activity level cuts at the same restore point.
-        expect(foldsOf(groupChatRows(restored, undefined, { level: "activity" })).map(({ id }) => id)).toEqual([
-            "fold:10",
-            "fold:22",
-            "fold:30",
-            "fold:41",
+        expect(foldsOf(groupChatRows(restored, undefined, { level: "message_segment" })).map(({ id }) => id)).toEqual([
+            "segment:10",
+            "segment:22",
+            "segment:41",
         ])
     })
 
@@ -202,7 +189,7 @@ describe("activity folds across a checkpoint restore", () => {
         const { container, rows } = renderRows(reopened, {})
 
         expect(foldsOf(rows)).toEqual([{ id: "turn:10", members: [10, 12, 20, 22] }])
-        expect(roundsOf(rows)["turn:10"].map(({ id }) => id)).toEqual(["fold:10", "fold:20"])
+        expect(roundsOf(rows)["turn:10"]).toBe(2)
         expect(unfoldedRowTs(rows)).toEqual([1, 30])
         expect(drawnMessageTimestamps(container)).toEqual([1, 30])
     })
@@ -211,10 +198,9 @@ describe("activity folds across a checkpoint restore", () => {
 describe("trajectory turns over activity folds", () => {
     /** The turn each fold of the multi-turn transcript belongs to, listed by hand. */
     const TURN_OF_FOLD: Record<string, number> = {
-        // Turn 1, cut by the failed lint run at 53.
+        // Whole turns split only at failures, checked-out restore points and live rows.
         "turn:10": 1,
         "turn:60": 1,
-        // Turn 2, cut by the checked-out restore point at 80; a single round folds too.
         "turn:71": 70,
         "turn:82": 70,
     }

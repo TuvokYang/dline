@@ -16,7 +16,7 @@ import { type ActivityFold, isActivityFold } from "./chatRowKinds"
 import { groupChatRows } from "./messageUtils"
 
 function turnFold(messages: UiMessage[]): ActivityFold {
-    const fold = groupChatRows(messages, undefined, { level: "turn" }).find(isActivityFold)
+    const fold = groupChatRows(messages, undefined, { level: "user_turn" }).find(isActivityFold)
     if (!fold) throw new Error("expected the transcript to fold one turn")
     return fold
 }
@@ -34,28 +34,17 @@ const preEditCheckpoint = (ts: number, toolTs: number): UiMessage => ({
 })
 
 describe("summarizeActivityFold", () => {
-    it("counts the tool calls, command, restore points and message of a finished turn", () => {
+    it("counts a whole turn including prose, using actual requests rather than nested wrappers", () => {
         const summary = summaryOf(finishedTurnTranscript)
-
-        // Rounds open at the requests 11, 21, 31 and 41; readFile at 13, 33 and 34; searchFiles at 23;
-        // the command at 42; thoughts at 12 and 22; restore points 10, 20, 30, 40; the text at 32.
+        expect(summary).toMatchObject({ rounds: 4, commands: 1, fileEdits: 0, thoughts: 2, checkpoints: 4, assistantMessages: 1 })
         expect(Array.from(summary.toolCalls)).toEqual([
             ["readFile", 3],
             ["searchFiles", 1],
         ])
-        expect(summary).toMatchObject({
-            rounds: 4,
-            commands: 1,
-            fileEdits: 0,
-            thoughts: 2,
-            checkpoints: 4,
-            assistantMessages: 1,
-        })
-        expect(describeActivityFold(summary)).toBe("4 rounds · 4 tool calls · 1 command · 2 thoughts · 4 checkpoints · 1 message")
         expect(describeToolCalls(summary)).toBe("readFile ×3, searchFiles ×1")
     })
 
-    it("counts edits and working_respond updates apart from ordinary tool calls", () => {
+    it("counts edits and the working_respond update inside the turn block", () => {
         const summary = summaryOf([
             userTask(1, "Add the docs"),
             restorePoint(10, "files-1"),
@@ -150,15 +139,9 @@ describe("summarizeActivityFold", () => {
         expect(describeActivityFold(summary)).toBe("1 round · 3 tool calls · 1 checkpoint")
     })
 
-    it("states no round count for a round fold", () => {
-        const roundFold = turnFold(finishedTurnTranscript)._children.find(isActivityFold)
-        if (!roundFold) throw new Error("expected the turn fold to hold round folds")
-
-        const summary = summarizeActivityFold(roundFold, indexPreEditCheckpointAttachments(finishedTurnTranscript))
-
-        // The first round: restore point 10, thought 12, readFile 13.
-        expect(summary.rounds).toBeUndefined()
-        expect(describeActivityFold(summary)).toBe("1 tool call · 1 thought · 1 checkpoint")
+    it("counts distinct requests in message segments too", () => {
+        const folds = groupChatRows(finishedTurnTranscript, undefined, { level: "message_segment" }).filter(isActivityFold)
+        expect(folds.map((fold) => summarizeActivityFold(fold, new Map()).rounds)).toEqual([2, 2])
     })
 
     it("names a fold with nothing countable as finished steps", () => {

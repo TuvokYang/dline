@@ -1,36 +1,17 @@
 import { ChevronRightIcon } from "lucide-react"
 import type React from "react"
 import { useMemo } from "react"
-import { cn } from "@/lib/utils"
 import { describeActivityFold, describeToolCalls, summarizeActivityFold } from "../../utils/activityFoldSummary"
-import { type ActivityFold, isActivityFold } from "../../utils/chatRowKinds"
-import { rowIdentity } from "../../utils/rowCoordinate"
-import { RowContent, type RowRenderContext } from "./RowContent"
+import type { ActivityFold } from "../../utils/chatRowKinds"
+import type { RowRenderContext } from "./RowContent"
 
 interface ActivityFoldRendererProps extends RowRenderContext {
     fold: ActivityFold
-    isExpanded: boolean
     onToggleFold: (foldId: string) => void
-    /** Expansion of the round folds a turn fold holds, by fold id. */
-    expandedFolds?: Readonly<Record<string, boolean>>
 }
 
-/**
- * A collapsible block of finished rows.
- *
- * Collapsed, it draws a one-line summary. Expanded, it draws each member row
- * exactly as the standard level does, so nested groups keep their own
- * expansion; a turn fold draws its round folds, each expanding on its own. A
- * fold only ever holds finished work, so no member is drawn as the list's last
- * row or as the newest tool activity.
- */
-export const ActivityFoldRenderer: React.FC<ActivityFoldRendererProps> = ({
-    fold,
-    isExpanded,
-    onToggleFold,
-    expandedFolds = {},
-    ...context
-}) => {
+/** Closed summary only. Open blocks are projected into the ordinary top-level renderer. */
+export const ActivityFoldRenderer: React.FC<ActivityFoldRendererProps> = ({ fold, onToggleFold, ...context }) => {
     const summary = useMemo(
         () => summarizeActivityFold(fold, context.checkpointAttachments),
         [fold, context.checkpointAttachments],
@@ -41,40 +22,16 @@ export const ActivityFoldRenderer: React.FC<ActivityFoldRendererProps> = ({
         <div data-fold-id={foldId} data-testid="activity-fold">
             <div className="px-4 py-1">
                 <button
-                    aria-expanded={isExpanded}
+                    aria-expanded={false}
                     className="flex w-full items-center gap-1.5 rounded-xs border-0 bg-transparent p-0 text-left text-xs text-description hover:text-foreground cursor-pointer"
                     data-testid="activity-fold-header"
                     onClick={() => onToggleFold(foldId)}
                     title={describeToolCalls(summary) || undefined}
                     type="button">
-                    <ChevronRightIcon className={cn("size-3 shrink-0 transition-transform", isExpanded && "rotate-90")} />
+                    <ChevronRightIcon className="size-3 shrink-0" />
                     <span className="truncate">{describeActivityFold(summary)}</span>
                 </button>
             </div>
-            {isExpanded && (
-                <div className={cn(fold._foldKind === "turn" && "pl-3")} data-testid="activity-fold-children">
-                    {fold._children.map((child) =>
-                        isActivityFold(child) ? (
-                            <ActivityFoldRenderer
-                                {...context}
-                                expandedFolds={expandedFolds}
-                                fold={child}
-                                isExpanded={expandedFolds[child._activityFoldId] === true}
-                                key={rowIdentity(child)}
-                                onToggleFold={onToggleFold}
-                            />
-                        ) : (
-                            <RowContent
-                                {...context}
-                                isLastRow={false}
-                                isLastToolActivity={false}
-                                key={rowIdentity(child)}
-                                row={child}
-                            />
-                        ),
-                    )}
-                </div>
-            )}
         </div>
     )
 }

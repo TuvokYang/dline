@@ -19,6 +19,11 @@ import { isTurnEndRow } from "./turnEndRows"
 
 export { isToolGroup, type ToolMessageGroup } from "./chatRowKinds"
 
+/** Preserve communication boundaries in the shared baseline before folding. */
+interface MessageGroupingOptions {
+    readonly keepAssistantMessages?: boolean
+}
+
 /**
  * Low-stakes tool types that should be grouped together
  */
@@ -212,13 +217,22 @@ function sameRound(rounds: RequestRounds, message: UiMessage, round: number | un
 }
 
 /** Remove the trailing lead rows of `owner`'s round from `rows`, in transcript order. */
-function takeRoundLeads(rows: (UiMessage | UiMessage[])[], owner: UiMessage, rounds?: RequestRounds): UiMessage[] {
+function takeRoundLeads(
+    rows: (UiMessage | UiMessage[])[],
+    owner: UiMessage,
+    rounds?: RequestRounds,
+    options: MessageGroupingOptions = {},
+): UiMessage[] {
     if (!rounds) return []
     const round = rounds.get(owner.ts)
     const leads: UiMessage[] = []
     const takeLast = () => leads.unshift(rows.pop() as UiMessage)
     const isLeadOfRound = (row: UiMessage | UiMessage[] | undefined): boolean =>
-        row !== undefined && !Array.isArray(row) && isRoundLead(row) && sameRound(rounds, row, round)
+        row !== undefined &&
+        !Array.isArray(row) &&
+        !(options.keepAssistantMessages && row.say === "text") &&
+        isRoundLead(row) &&
+        sameRound(rounds, row, round)
 
     while (isLeadOfRound(rows.at(-1))) takeLast()
     // The restore point is written before the round's request opens it, so the
@@ -248,18 +262,22 @@ function tagBrowserSession(messages: UiMessage[], end: BrowserSessionEnd): Brows
  * rounds: the restore point and thinking written before a launch join its
  * session, and those written before the call that ends a session leave it.
  */
-export function groupMessages(visibleMessages: UiMessage[], rounds?: RequestRounds): (UiMessage | UiMessage[])[] {
+export function groupMessages(
+    visibleMessages: UiMessage[],
+    rounds?: RequestRounds,
+    options: MessageGroupingOptions = {},
+): (UiMessage | UiMessage[])[] {
     const result: (UiMessage | UiMessage[])[] = []
     let session: UiMessage[] | undefined
 
     const endSession = (end: BrowserSessionEnd, next?: UiMessage) => {
         if (!session) return
-        const released = next ? takeRoundLeads(session as (UiMessage | UiMessage[])[], next, rounds) : []
+        const released = next ? takeRoundLeads(session as (UiMessage | UiMessage[])[], next, rounds, options) : []
         result.push(tagBrowserSession(session, end), ...released)
         session = undefined
     }
     const startSession = (message: UiMessage) => {
-        session = [...takeRoundLeads(result, message, rounds), message]
+        session = [...takeRoundLeads(result, message, rounds, options), message]
     }
 
     for (const message of visibleMessages) {
@@ -272,7 +290,7 @@ export function groupMessages(visibleMessages: UiMessage[], rounds?: RequestRoun
         } else if (message.say === "api_req_started" && isLastRequestCancelled(session)) {
             endSession("interrupted", message)
             result.push(message)
-        } else if (isBrowserSessionMessage(message)) {
+        } else if (isBrowserSessionMessage(message) && !(options.keepAssistantMessages && message.say === "text")) {
             session.push(message)
             if (isCloseAction(message)) endSession("closed")
         } else {
@@ -741,6 +759,7 @@ export function indexRequestRounds(messages: readonly UiMessage[]): RequestRound
 export function groupLowStakesTools(
     groupedMessages: (UiMessage | UiMessage[])[],
     rounds?: RequestRounds,
+    options: MessageGroupingOptions = {},
 ): (UiMessage | UiMessage[])[] {
     const result: (UiMessage | UiMessage[])[] = []
     let toolGroup: UiMessage[] = []
@@ -845,11 +864,12 @@ export function groupLowStakesTools(
             continue
         }
 
-        // Text - once a tool group is active, ignore additional text so it
-        // doesn't continue mutating the text row rendered above the group.
+        // The shared chat baseline preserves prose after tools. Direct callers
+        // without this option retain their existing grouping behavior.
         if (messageType === "text") {
             if (hasTools) {
-                continue
+                if (!options.keepAssistantMessages) continue
+                commitToolGroup()
             }
             flushPending()
             result.push(message)
@@ -876,11 +896,8 @@ export function groupLowStakesTools(
  * visible messages become rows; pass `visibleMessages` when the caller already
  * filtered `messages`. Read-only rounds fold into exploration runs after tool
  * grouping, so each run is built from tool groups that already hold one round
- * each. The aggressive rendering levels fold ended rounds last; `standard`
- * leaves the rows as they are.
- *
- * Folding replaces exploration runs: a run takes the running read-only round in
- * with the ended ones, which would keep ended rounds open until the run breaks.
+ * each. All modes use this same baseline, retaining communication in transcript
+ * order. Folding adds blocks last; expansion restores these original row objects.
  */
 export function groupChatRows(
     messages: UiMessage[],
@@ -888,8 +905,10 @@ export function groupChatRows(
     options: FoldOptions = STANDARD_FOLD,
 ): (UiMessage | UiMessage[])[] {
     const rounds = indexRequestRounds(messages)
-    const rows = groupLowStakesTools(groupMessages(placeTurnEndLast(visibleMessages, rounds), rounds), rounds)
-    if (options.level === "standard") return groupExplorationRuns(rows)
+    const grouping: MessageGroupingOptions = { keepAssistantMessages: true }
+    const rows = groupExplorationRuns(
+        groupLowStakesTools(groupMessages(placeTurnEndLast(visibleMessages, rounds), rounds, grouping), rounds, grouping),
+    )
     return foldActivity(rows, options, buildFoldContext(messages, rounds))
 }
 

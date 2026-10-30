@@ -4,6 +4,12 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 ## [Unreleased]
 
+### Changed
+- Aggressive rendering offers three levels: standard rows, activity between messages, and whole user turns. The second level breaks at ordinary messages, Reply, or Phase report and combines activity across model requests between those messages; the third folds across those messages within the user turn. All levels share the original grouping and message renderer, and expanding everything restores standard row order and layout without extra round headers or indentation. Bulk expand and collapse are available; live work, failures, the current approval, and checked-out checkpoints stay visible. Disabling the rollout keeps the saved choice, and legacy setting values remain readable
+
+### Fixed
+- Report Bug requests its temporary telemetry ticket before showing the preview and offers the diagnostics option, checked by default, only after issuance succeeds; an issuance failure goes only to the error log and existing error telemetry channel, hides that option, and does not prevent opening an ordinary GitHub issue. Open GitHub Issue no longer issues a ticket; cancelling or unchecking discards the matching ticket locally, and expired or unavailable authorizations are no longer attached to the issue
+
 ## [0.12.2]
 
 0.12.2 is the production release after 0.10.0. It includes every user-visible change from the 0.11.0, 0.11.1, and 0.11.2 pre-releases, summarized below by their final behavior.

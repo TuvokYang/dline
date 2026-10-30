@@ -16,7 +16,7 @@ function createController() {
 }
 
 describe("updateSettings aggressive rendering", () => {
-    it.each(["standard", "activity", "turn"] as const)("persists the %s level", async (level) => {
+    it.each(["none", "message_segment", "user_turn"] as const)("persists the %s level", async (level) => {
         const { controller, setGlobalState } = createController()
 
         await updateSettings(controller, UpdateSettingsRequest.create({ aggressiveRendering: level }))
@@ -24,11 +24,11 @@ describe("updateSettings aggressive rendering", () => {
         expect(setGlobalState).toHaveBeenCalledWith("aggressiveRendering", level)
     })
 
-    it("rejects an unknown level without writing it", async () => {
+    it.each(["standard", "activity", "turn", "round"])("rejects the non-canonical write %s", async (level) => {
         const { controller, setGlobalState } = createController()
 
-        await expect(updateSettings(controller, UpdateSettingsRequest.create({ aggressiveRendering: "round" }))).rejects.toThrow(
-            "Invalid aggressive rendering level: round",
+        await expect(updateSettings(controller, UpdateSettingsRequest.create({ aggressiveRendering: level }))).rejects.toThrow(
+            `Invalid aggressive rendering level: ${level}`,
         )
         expect(setGlobalState).not.toHaveBeenCalledWith("aggressiveRendering", expect.anything())
     })
@@ -58,9 +58,9 @@ describe("aggressive rendering settings round trip", () => {
     }
 
     it.each([
-        ["standard", { user: "standard", featureFlag: true }],
-        ["activity", { user: "activity", featureFlag: true }],
-        ["turn", { user: "turn", featureFlag: true }],
+        ["none", { user: "none", featureFlag: true }],
+        ["message_segment", { user: "message_segment", featureFlag: true }],
+        ["user_turn", { user: "user_turn", featureFlag: true }],
     ] as const)("projects a saved %s choice back to the webview", async (level, expected) => {
         const { controller, stored } = createStoredController()
 
@@ -71,10 +71,10 @@ describe("aggressive rendering settings round trip", () => {
 
     it("keeps the saved choice while the rollout is off and returns it when the rollout is back", async () => {
         const { controller, stored } = createStoredController()
-        await updateSettings(controller, UpdateSettingsRequest.create({ aggressiveRendering: "turn" }))
+        await updateSettings(controller, UpdateSettingsRequest.create({ aggressiveRendering: "user_turn" }))
 
-        expect(projectAggressiveRendering(stored(), false)).toEqual({ user: "turn", featureFlag: false })
-        expect(projectAggressiveRendering(stored(), true)).toEqual({ user: "turn", featureFlag: true })
+        expect(projectAggressiveRendering(stored(), false)).toEqual({ user: "user_turn", featureFlag: false })
+        expect(projectAggressiveRendering(stored(), true)).toEqual({ user: "user_turn", featureFlag: true })
     })
 
     it.each([
@@ -82,6 +82,6 @@ describe("aggressive rendering settings round trip", () => {
         ["a value from an older build", "round"],
         ["a value of the wrong type", 2],
     ])("projects %s as standard", (_case, storedValue) => {
-        expect(projectAggressiveRendering(storedValue, true)).toEqual({ user: "standard", featureFlag: true })
+        expect(projectAggressiveRendering(storedValue, true)).toEqual({ user: "none", featureFlag: true })
     })
 })

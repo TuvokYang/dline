@@ -395,6 +395,15 @@ export function useScrollBehavior(
         [setExpandedFolds],
     )
 
+    const replaceFoldExpansion = useCallback(
+        (expanded: Record<string, boolean>) => {
+            disableAutoScrollRef.current = true
+            cancelProgrammaticScroll()
+            setExpandedFolds?.(expanded)
+        },
+        [cancelProgrammaticScroll, setExpandedFolds],
+    )
+
     // Handle row height changes during streaming.
     // Throttled to max once per 120ms so rapid height changes (e.g. during
     // streaming or cancel) don't trigger cascading scrolls that cause jitter.
@@ -505,6 +514,7 @@ export function useScrollBehavior(
         scrollToMessage,
         toggleRowExpansion,
         toggleFoldExpansion,
+        replaceFoldExpansion,
         handleRowHeightChange,
         showScrollToBottom,
         setShowScrollToBottom,

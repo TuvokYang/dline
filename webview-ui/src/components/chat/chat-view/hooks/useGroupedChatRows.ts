@@ -1,7 +1,7 @@
 import { type AggressiveRenderingSetting, effectiveAggressiveRendering } from "@shared/AggressiveRendering"
 import type { UiMessage } from "@shared/ExtensionMessage"
 import { useMemo } from "react"
-import type { FoldOptions } from "../utils/activityFolds"
+import { type FoldOptions, projectFoldExpansion } from "../utils/activityFolds"
 import { groupChatRows } from "../utils/messageUtils"
 
 /**
@@ -16,8 +16,13 @@ export function useGroupedChatRows(
     visibleMessages: UiMessage[],
     aggressiveRendering: Partial<AggressiveRenderingSetting> | undefined,
     activeAskTs: number | undefined,
+    expandedFolds: Readonly<Record<string, boolean>> = {},
 ): (UiMessage | UiMessage[])[] {
     const level = effectiveAggressiveRendering(aggressiveRendering)
     const options = useMemo<FoldOptions>(() => ({ level, activeAskTs }), [level, activeAskTs])
-    return useMemo(() => groupChatRows(modifiedMessages, visibleMessages, options), [modifiedMessages, visibleMessages, options])
+    const folded = useMemo(
+        () => groupChatRows(modifiedMessages, visibleMessages, options),
+        [modifiedMessages, visibleMessages, options],
+    )
+    return useMemo(() => projectFoldExpansion(folded, expandedFolds), [folded, expandedFolds])
 }

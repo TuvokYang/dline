@@ -216,6 +216,20 @@ export const liveTwoTurnSteps: readonly LiveStep[] = playEvents([
     { caption: "Round 3 runs the linter", append: [runningCommand(34, "npm run lint")] },
     { caption: "The linter passes", update: [finishedCommand(34, "npm run lint")] },
     {
+        caption: "The next request replies after lint completed",
+        update: [finishedRequest(31)],
+        append: [finishedRequest(35), workingRespond(36, "Lint passes. I will verify the final diff.")],
+    },
+    {
+        caption: "The following request runs a diff check",
+        append: [finishedRequest(37), runningCommand(38, "git diff --check")],
+    },
+    { caption: "The diff check finishes", update: [finishedCommand(38, "git diff --check")] },
+    {
+        caption: "A later request reports the verification phase",
+        append: [finishedRequest(39), tool(39.5, { tool: "statusUpdate", content: "Lint and diff checks passed." })],
+    },
+    {
         caption: "Round 3 ends as round 4 starts",
         update: [finishedRequest(31)],
         append: [
@@ -256,7 +270,7 @@ export const liveTwoTurnSteps: readonly LiveStep[] = playEvents([
     },
 ])
 
-/** A single finished turn whose activity folds into one block at the `turn` level. */
+/** A finished turn with assistant prose separating its turn-level activity blocks. */
 export const finishedTurnTranscript: UiMessage[] = [
     userTask(1, "Fix the failing lint step"),
     restorePoint(10, "files-1"),

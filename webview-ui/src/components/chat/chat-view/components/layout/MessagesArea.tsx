@@ -1,3 +1,4 @@
+import { effectiveAggressiveRendering } from "@shared/AggressiveRendering"
 import type { UiMessage } from "@shared/ExtensionMessage"
 import { convertProtoToClineMessage } from "@shared/proto-conversions/cline-message"
 import type React from "react"
@@ -13,7 +14,7 @@ import { isApiReqActive } from "@/utils/streaming"
 
 import { useBrowsingScrollAnchor } from "../../hooks/useBrowsingScrollAnchor"
 import type { ChatState, FoldExpansion, MessageHandlers, ScrollBehavior } from "../../types/chatTypes"
-import { isToolActivityRow } from "../../utils/chatRowKinds"
+import { isActivityFold, isToolActivityRow } from "../../utils/chatRowKinds"
 import { createMessageWindowGeneration } from "../../utils/messageWindowGeneration"
 import {
     DEFAULT_MESSAGE_WINDOW_LIMITS,
@@ -110,8 +111,18 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
     messageHandlers,
     onFollowupOptionSelect,
 }) => {
-    const { clineMessages, setClineMessages, totalMessageCount, firstItemIndex, setFirstItemIndex, taskViewState } =
-        useExtensionState()
+    const {
+        clineMessages,
+        setClineMessages,
+        totalMessageCount,
+        firstItemIndex,
+        setFirstItemIndex,
+        taskViewState,
+        aggressiveRendering,
+    } = useExtensionState()
+    const closedFolds = useMemo(() => groupedMessages.filter(isActivityFold), [groupedMessages])
+    const foldingEnabled = effectiveAggressiveRendering(aggressiveRendering) !== "none"
+    const hasOpenFolds = Object.values(chatState.expandedFolds).some(Boolean)
     const taskKey = getTaskViewKey(taskViewState)
     const taskKeyRef = useRef(taskKey)
     taskKeyRef.current = taskKey
@@ -1096,6 +1107,31 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 
     return (
         <div className="overflow-hidden flex flex-col h-full relative">
+            {foldingEnabled && (closedFolds.length > 0 || hasOpenFolds) && (
+                <div
+                    className="flex shrink-0 justify-end gap-3 px-4 py-1 text-xs text-description"
+                    data-testid="folding-controls">
+                    <button
+                        className="border-0 bg-transparent p-0 cursor-pointer disabled:opacity-40"
+                        disabled={closedFolds.length === 0}
+                        onClick={() =>
+                            scrollBehavior.replaceFoldExpansion({
+                                ...chatState.expandedFolds,
+                                ...Object.fromEntries(closedFolds.map((fold) => [fold._activityFoldId, true])),
+                            })
+                        }
+                        type="button">
+                        Expand all activity
+                    </button>
+                    <button
+                        className="border-0 bg-transparent p-0 cursor-pointer disabled:opacity-40"
+                        disabled={!hasOpenFolds}
+                        onClick={() => scrollBehavior.replaceFoldExpansion({})}
+                        type="button">
+                        Collapse all activity
+                    </button>
+                </div>
+            )}
             <div
                 className={cn(
                     "pointer-events-none absolute top-0 left-0 right-0 z-10 pl-[15px] pr-[14px] bg-background",
