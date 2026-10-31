@@ -12,6 +12,7 @@ import {
 } from "@/services/telemetry/remote/auth/exchangeRuntime"
 import { ISSUE_EXCHANGE_DELETE_CODES } from "@/services/telemetry/remote/auth/RecoverableIssueExchangeCoordinator"
 import type { PublishedReportTicket } from "@/services/telemetry/remote/auth/ReportAuthorizationCoordinator"
+import type { WireResponse } from "@/services/telemetry/remote/contracts/classification"
 import {
     parseReportAuthorizationStatus,
     type ReportAuthorizationState,
@@ -19,12 +20,17 @@ import {
     type ReportIssueState,
     type ReportResolution,
 } from "@/services/telemetry/remote/contracts/reportAuthorization"
-import { parseServiceError } from "@/services/telemetry/remote/contracts/wire"
+import {
+    parseServiceError,
+    type ReportQueryRefusalReason,
+    type ServiceError,
+    serverWaitMs,
+} from "@/services/telemetry/remote/contracts/wire"
 import {
     purgeIssueDiagnosticsOverlay,
     refreshIssueDiagnosticsOverlay,
 } from "@/services/telemetry/remote/remoteDiagnosticsRuntime"
-import { DlineOtelHttpClient } from "@/services/telemetry/remote/transport/DlineOtelHttpClient"
+import { DlineOtelHttpClient, DlineOtelTransportError } from "@/services/telemetry/remote/transport/DlineOtelHttpClient"
 
 /** Floor of automatic status polling, whatever interval the service asks for. */
 const MIN_POLL_INTERVAL_MS = 30_000
@@ -32,8 +38,41 @@ const MIN_POLL_INTERVAL_MS = 30_000
 const LIVE_STATES: ReadonlySet<ReportAuthorizationState> = new Set(["awaiting_issue", "pending_approval", "approved"])
 /** Status refusals after which the ticket is unusable (telemetry-exchange-flow §5.4). */
 const STATUS_DELETE_CODES: ReadonlySet<string> = new Set(["report_authorization_not_found", "device_revoked"])
+/** A refusal that named no delay still may not be retried at once (design §12.4). */
+const MIN_REFUSAL_WAIT_MS = 5_000
 
 type CaptureSealReason = "revoked" | "expired" | "deleted"
+
+/**
+ * How the last query attempt ended, for the settings surface.
+ *
+ * `idle` is never projected, so a projection without `refresh` is byte for byte
+ * the object it always was. `waiting` means the service refused this query and
+ * named when asking again is worth trying; `stale` means the query never
+ * reached the service, so the shown state is older than the countdown implies.
+ */
+export type SupportRefreshState = "idle" | "waiting" | "stale"
+
+export interface SupportRefresh {
+    readonly state: SupportRefreshState
+    /** Local epoch milliseconds; the service's own gate translated onto the local clock. */
+    readonly nextQueryAt?: number
+    readonly reason?: ReportQueryRefusalReason
+}
+
+/**
+ * What one status exchange established.
+ *
+ * `refused` keeps the HTTP answer so the caller can tell a refusal from a
+ * refusal to delete, and `unreachable` means the service never answered at all.
+ * Neither is a failure of the authorization (telemetry-exchange-flow §5.4).
+ */
+type StatusQuery =
+    | { readonly kind: "answered"; readonly status: ReportAuthorizationStatus; readonly token: StoredDeviceToken }
+    | { readonly kind: "refused"; readonly httpStatus: number; readonly error: ServiceError }
+    | { readonly kind: "unreachable" }
+    /** The device grant is backing off; the query has not been attempted at all. */
+    | { readonly kind: "deferred"; readonly retryAt: number }
 
 export interface SupportTelemetryServiceOptions {
     readonly dataDir: string
@@ -52,11 +91,17 @@ export interface SupportStatusProjection {
     readonly captureExpiresAt?: number
     readonly issueState: ReportIssueState
     readonly resolution: ReportResolution
+    /** Present only after a refusal or an unreachable service; an ordinary projection omits it. */
+    readonly refresh?: SupportRefresh
 }
 
 /** A preview could not obtain temporary telemetry authorization; ordinary issue reporting remains available. */
 export class SupportAuthorizationError extends Error {
-    constructor(readonly code: string) {
+    constructor(
+        readonly code: string,
+        /** Set only for a deferral: the local epoch milliseconds the device grant asked to be retried at. */
+        readonly retryAt?: number,
+    ) {
         super(`Temporary support telemetry could not be authorized (${code})`)
         this.name = "SupportAuthorizationError"
     }
@@ -79,6 +124,11 @@ export class SupportTelemetryService {
     private readonly runtime: ReportAuthorizationRuntime
     private polling: AbortController | undefined
     private operationTail: Promise<unknown> = Promise.resolve()
+    /** Outcome of the last query attempt; `idle` is never projected. */
+    private refreshState: SupportRefreshState = "idle"
+    /** Local epoch milliseconds before which another automatic query cannot succeed. */
+    private nextQueryAt: number | undefined
+    private refusalReason: ReportQueryRefusalReason | undefined
 
     constructor(options: SupportTelemetryServiceOptions) {
         this.clock = options.clock ?? Date.now
@@ -139,12 +189,15 @@ export class SupportTelemetryService {
         })
     }
 
-    /** The stored projection; no network. */
+    /**
+     * The stored projection; no network.
+     *
+     * It carries the pending wait as well, because this is the RPC the settings
+     * page reads: a refusal recorded by startup or by automatic polling has to
+     * be visible without another query.
+     */
     async status(): Promise<SupportStatusProjection | undefined> {
-        return this.runOperation(async () => {
-            const record = await this.currentTicket()
-            return record ? project(record) : undefined
-        })
+        return this.runOperation(() => this.projectStored())
     }
 
     async checkNow(signal?: AbortSignal): Promise<SupportStatusProjection | undefined> {
@@ -215,28 +268,101 @@ export class SupportTelemetryService {
     private async refreshStatus(signal?: AbortSignal): Promise<SupportStatusProjection | undefined> {
         const current = await this.currentTicket()
         if (!current) return undefined
-        let token = await this.productionToken(undefined, signal)
-        let response = await this.transport.queryReportAuthorization(current.authorizationCode, token.accessToken, signal)
-        if (response.status === 401) {
-            token = await this.productionToken(token.accessToken, signal)
-            response = await this.transport.queryReportAuthorization(current.authorizationCode, token.accessToken, signal)
-        }
-        if (response.status !== 200) {
-            const code = parseServiceError(response.json, response.retryAfter, this.clock()).code ?? `http_${response.status}`
+        const outcome = await this.queryTicketStatus(current, signal)
+        if (outcome.kind === "refused") {
+            const { error } = outcome
+            const code = error.code ?? `http_${outcome.httpStatus}`
             if (STATUS_DELETE_CODES.has(code)) {
                 await this.deleteTicket(current.authorizationCode)
                 return undefined
             }
-            throw new Error(`Report authorization status is unavailable (${code})`)
+            // A refusal is "ask again later", not an authorization failure
+            // (telemetry-exchange-flow §5.4). The ticket, the token and an active
+            // capture all survive it, and the wait is recorded so polling and the
+            // settings countdown both describe the same gate.
+            if (!isTransientStatus(outcome.httpStatus)) {
+                throw new Error(`Report authorization status is unavailable (${code})`)
+            }
+            this.enterRefreshWait(waitMsForRefusal(error), "waiting", error)
+            return this.projectStored()
         }
-        const status = parseReportAuthorizationStatus(response.json)
-        if (!status) throw new Error("Report authorization status response is malformed")
-        const updated = await this.credentials.update(current.authorizationCode, (record) => withStatus(record, status))
+        if (outcome.kind === "unreachable") {
+            this.enterRefreshWait(MIN_REFUSAL_WAIT_MS, "stale")
+            return this.projectStored()
+        }
+        if (outcome.kind === "deferred") {
+            // The device grant asked for a later attempt; nothing was refused by
+            // the report service, so the projection only gains the wait.
+            this.enterRefreshWait(Math.max(MIN_REFUSAL_WAIT_MS, outcome.retryAt - this.clock()), "stale")
+            return this.projectStored()
+        }
+        const updated = await this.credentials.update(current.authorizationCode, (record) => withStatus(record, outcome.status))
+        this.refreshState = "idle"
+        this.nextQueryAt = undefined
+        this.refusalReason = undefined
         // The ticket was replaced or deleted meanwhile; the answer belongs to no stored ticket.
         if (!updated) return this.projectStored()
-        if (updated.state === "approved") await this.exchangeApproved(updated, token, signal)
+        if (updated.state === "approved") await this.exchangeApproved(updated, outcome.token, signal)
         else if (updated.state === "revoked" || updated.state === "expired") await this.sealCapture(updated.state)
         return this.projectStored()
+    }
+
+    /**
+     * One status exchange, including the single token refresh a 401 earns.
+     *
+     * A transport fault is not a failure of the authorization either: the
+     * service never saw the query, so the answer is "unknown", not "gone".
+     */
+    private async queryTicketStatus(current: IssueCredentialRecord, signal?: AbortSignal): Promise<StatusQuery> {
+        try {
+            let token = await this.productionToken(undefined, signal)
+            let response = await this.transport.queryReportAuthorization(current.authorizationCode, token.accessToken, signal)
+            if (response.status === 401) {
+                token = await this.productionToken(token.accessToken, signal)
+                response = await this.transport.queryReportAuthorization(current.authorizationCode, token.accessToken, signal)
+            }
+            return this.readStatusAnswer(response, token, signal)
+        } catch (error) {
+            if (error instanceof DlineOtelTransportError) {
+                // An aborted query is this process stopping, not the service answering.
+                if (error.failure === "aborted") throw error
+                return { kind: "unreachable" }
+            }
+            // A device token the broker could not refresh yet is the same kind of
+            // answer: the service was never asked, so nothing was lost. Only a
+            // device the service actually refused stays a real failure.
+            if (error instanceof SupportAuthorizationError && error.retryAt !== undefined) {
+                return { kind: "deferred", retryAt: error.retryAt }
+            }
+            throw error
+        }
+    }
+
+    private readStatusAnswer(response: WireResponse, token: StoredDeviceToken, signal?: AbortSignal): StatusQuery {
+        if (response.status !== 200) {
+            return {
+                kind: "refused",
+                httpStatus: response.status,
+                error: parseServiceError(response.json, response.retryAfter, this.clock()),
+            }
+        }
+        const status = parseReportAuthorizationStatus(response.json)
+        // A 200 this client cannot read is a broken contract, not a wait: it stays a failure.
+        if (!status) throw new Error("Report authorization status response is malformed")
+        void signal
+        return { kind: "answered", status, token }
+    }
+
+    /** Record the gate a refusal named, so polling honours it instead of hammering the service. */
+    private enterRefreshWait(waitMs: number, state: SupportRefreshState = "waiting", error?: ServiceError): void {
+        this.nextQueryAt = this.clock() + waitMs
+        this.refreshState = state
+        this.refusalReason = error?.reason
+    }
+
+    /** Local milliseconds until another query can succeed; `0` when nothing is pending. */
+    private pendingWaitMs(): number {
+        return this.nextQueryAt === undefined ? 0 : Math.max(0, this.nextQueryAt - this.clock())
     }
 
     private async exchangeApproved(record: IssueCredentialRecord, token: StoredDeviceToken, signal?: AbortSignal): Promise<void> {
@@ -288,12 +414,29 @@ export class SupportTelemetryService {
 
     private async projectStored(): Promise<SupportStatusProjection | undefined> {
         const record = (await this.credentials.read()).record
-        return record ? project(record) : undefined
+        return record ? { ...project(record), ...this.refreshProjection() } : undefined
+    }
+
+    /** The wait the surface still has to observe, omitting `idle` so an ordinary projection is unchanged. */
+    private refreshProjection(): { refresh?: SupportRefresh } {
+        if (this.refreshState === "idle") return {}
+        return {
+            refresh: {
+                state: this.refreshState,
+                ...(this.nextQueryAt === undefined ? {} : { nextQueryAt: this.nextQueryAt }),
+                ...(this.refusalReason === undefined ? {} : { reason: this.refusalReason }),
+            },
+        }
     }
 
     private async productionToken(rejectedAccessToken?: string, signal?: AbortSignal): Promise<StoredDeviceToken> {
         const acquisition = await this.deviceTokens.acquire("production", { rejectedAccessToken, signal })
-        if (acquisition.status !== "ready") throw new SupportAuthorizationError(`production_token_${acquisition.status}`)
+        if (acquisition.status !== "ready") {
+            // A deferral is the broker's own wait, not a refusal: carry its
+            // deadline so a query can report it instead of failing.
+            const retryAt = acquisition.status === "deferred" ? acquisition.retryAt : undefined
+            throw new SupportAuthorizationError(`production_token_${acquisition.status}`, retryAt)
+        }
         return acquisition.token
     }
 
@@ -301,7 +444,13 @@ export class SupportTelemetryService {
         return LIVE_STATES.has(record.state) && record.authorizationExpiresAt > this.clock()
     }
 
-    /** Poll at the service's interval while the authorization is live (§5.4); after that only on demand. */
+    /**
+     * Poll at the service's interval while the authorization is live (§5.4).
+     *
+     * The service's `poll_after_ms` only schedules the next attempt; a refusal
+     * extends it instead of ending the loop, because ending it would leave a
+     * live authorization unobserved until the next manual click.
+     */
     private startPolling(): void {
         this.stopPolling("support_poll_replaced")
         const controller = new AbortController()
@@ -310,7 +459,15 @@ export class SupportTelemetryService {
             while (!controller.signal.aborted) {
                 const record = (await this.credentials.read()).record
                 if (!record || !this.isLive(record)) return
-                await wait(Math.max(MIN_POLL_INTERVAL_MS, record.pollAfterMs), controller.signal)
+                await wait(Math.max(MIN_POLL_INTERVAL_MS, record.pollAfterMs, this.pendingWaitMs()), controller.signal)
+                // A manual query or an earlier refusal may have recorded a later
+                // gate while this timer slept; sleeping again keeps the loop from
+                // querying ahead of the wait it just learned about.
+                const remaining = this.pendingWaitMs()
+                if (remaining > 0) {
+                    await wait(remaining, controller.signal)
+                    continue
+                }
                 await this.checkNow(controller.signal).catch(() => undefined)
             }
         })()
@@ -382,6 +539,22 @@ function project(record: IssueCredentialRecord): SupportStatusProjection {
         issueState: record.issueState,
         resolution: { ...record.resolution },
     }
+}
+
+/** Rate limits and upstream faults mean "retry later", so they never surface as failures. */
+function isTransientStatus(status: number): boolean {
+    return status === 408 || status === 429 || status >= 500
+}
+
+/**
+ * How long to wait before asking again.
+ *
+ * The service's own elapsed measurement wins, then its absolute body delay; a
+ * refusal that stated nothing falls back to the floor, because a zero wait
+ * would turn "not now" into an immediate retry.
+ */
+function waitMsForRefusal(error: ServiceError): number {
+    return Math.max(MIN_REFUSAL_WAIT_MS, serverWaitMs(error) ?? 0)
 }
 
 function wait(milliseconds: number, signal: AbortSignal): Promise<void> {

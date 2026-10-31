@@ -100,6 +100,35 @@ describe("SupportTelemetryStatus", () => {
         expect(screen.getByTestId("support-resolution-summary")).toHaveTextContent("Retry now keeps the provider identity.")
     })
 
+    it("shows a refusal as a neutral wait with a countdown, not a failure", async () => {
+        mocks.getStatus.mockResolvedValue({
+            ...active,
+            refresh: { state: "waiting", nextQueryAt: 1_700_000_045_000, reason: "device_window" },
+        })
+
+        render(<SupportTelemetryStatus />)
+
+        const notice = await screen.findByTestId("support-telemetry-refresh")
+        expect(notice).toHaveTextContent("This device asked too often in a short window")
+        expect(notice).toHaveTextContent("Next query in 45s")
+        // A refusal keeps the authorization readable and is not an error row.
+        expect(screen.getByTestId("support-public-code")).toHaveTextContent("DLN-BNKP-5RJG-NE6R-Y290")
+        expect(screen.queryByTestId("support-telemetry-error")).toBeNull()
+    })
+
+    it("renders a real failure as an error and no wait notice", async () => {
+        mocks.getStatus.mockResolvedValue(active)
+        mocks.checkNow.mockRejectedValue(new Error("Report authorization status is unavailable (device_revoked)"))
+
+        render(<SupportTelemetryStatus />)
+        await screen.findByTestId("support-public-code")
+
+        fireEvent.click(screen.getByRole("button", { name: "Check now" }))
+
+        expect(await screen.findByTestId("support-telemetry-error")).toHaveTextContent("device_revoked")
+        expect(screen.queryByTestId("support-telemetry-refresh")).toBeNull()
+    })
+
     it("requires explicit confirmation before local delete and revoke", async () => {
         mocks.getStatus.mockResolvedValueOnce(active).mockResolvedValueOnce(absent)
 

@@ -20,6 +20,14 @@ const ISSUE_STATE_LABELS: Record<string, string> = {
     closed: "Closed",
 }
 
+const REFRESH_REASON_LABELS: Record<string, string> = {
+    device_window: "This device asked too often in a short window",
+    device_day: "This device reached its daily query allowance",
+    global_query_day: "The service reached its daily query allowance",
+    query_ingress: "The service is busy with status queries",
+    read_budget: "The service is protecting its read budget",
+}
+
 const RESOLUTION_LABELS: Record<string, string> = {
     none: "No resolution yet",
     investigating: "Investigating",
@@ -34,6 +42,16 @@ function resolutionLabel(status: SupportStatus): string {
     if (!resolution) return RESOLUTION_LABELS.none
     const label = RESOLUTION_LABELS[resolution.state] ?? (resolution.state || "Unknown")
     return resolution.fixedInVersion ? `${label} in ${resolution.fixedInVersion}` : label
+}
+
+/** Neutral wording: a refused query is normal service behaviour, not a user-visible failure. */
+function refreshMessage(state: string, reason: string | undefined): string {
+    const cause = reason ? REFRESH_REASON_LABELS[reason] : undefined
+    const lead =
+        state === "stale"
+            ? "The last check did not reach the service, so this state may be older than shown."
+            : "The service asked Dline to wait before checking again."
+    return cause ? `${lead} ${cause}.` : lead
 }
 
 function formatCountdown(expiresAt: number | undefined, now: number): string {
@@ -128,6 +146,7 @@ export function SupportTelemetryStatus() {
     const stateLabel = STATE_LABELS[status.state] ?? (status.state || "Unknown")
     const issueLabel = ISSUE_STATE_LABELS[status.issueState] ?? (status.issueState || "Unknown")
     const summary = status.resolution?.summary
+    const refresh = status.refresh
 
     return (
         <div data-testid="support-telemetry-status">
@@ -176,6 +195,12 @@ export function SupportTelemetryStatus() {
                 <p className="mt-[5px] text-sm text-description">
                     Dline will stop local capture, clear issue-only access and delete the local authorization. Nothing is sent to
                     the service or the issue; the server ends the authorization when the issue closes or it expires.
+                </p>
+            )}
+            {refresh && (
+                <p className="mt-[5px] text-sm text-description" data-testid="support-telemetry-refresh">
+                    {refreshMessage(refresh.state, refresh.reason)}
+                    {refresh.nextQueryAt ? ` Next query in ${formatCountdown(refresh.nextQueryAt, now)}.` : ""}
                 </p>
             )}
             {error && (

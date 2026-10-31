@@ -266,6 +266,197 @@ describe("SupportTelemetryService", () => {
         await expect(support.status()).resolves.toMatchObject({ publicCode: PUBLIC_CODE })
     })
 
+    it("treats a status refusal as a wait, keeping the ticket and its capture", async () => {
+        const support = service()
+        await run(() => support.issueAuthorization())
+        otel.status = () => json(200, status())
+        await run(() => support.checkNow())
+        otel.status = () =>
+            json(429, {
+                ok: false,
+                retryable: true,
+                error: { code: "report_authorization_rate_limited" },
+                reason: "device_window",
+                server_time: NOW + 1_000,
+                retry_after_ms: 15_000,
+                next_eligible_at: NOW + 16_000,
+            })
+
+        const refused = await run(() => support.checkNow())
+
+        // 16 s after `server_time` is a 15 s wait, placed on the local clock.
+        expect(refused).toMatchObject({
+            state: "approved",
+            refresh: { state: "waiting", nextQueryAt: NOW + 15_000, reason: "device_window" },
+        })
+        // A refusal is not a delete: the ticket and the active capture both survive it.
+        await expect(support.status()).resolves.toMatchObject({ publicCode: PUBLIC_CODE, state: "approved" })
+        await expect(new IssueGrantRepository(layout(), { clock: () => NOW }).readActive(NOW, 1)).resolves.not.toBeNull()
+    })
+
+    it("measures the wait on the service clock so a skewed local clock cannot shorten it", async () => {
+        const now = NOW
+        const support = service(() => now)
+        await run(() => support.issueAuthorization())
+        // The service says "16 s from now" on its own clock while the local clock is a minute behind.
+        otel.status = () =>
+            json(429, {
+                ok: false,
+                error: { code: "report_authorization_rate_limited" },
+                reason: "device_day",
+                server_time: NOW + 60_000,
+                retry_after_ms: 1_000,
+                next_eligible_at: NOW + 76_000,
+            })
+
+        const refused = await run(() => support.checkNow())
+
+        expect(refused?.refresh?.nextQueryAt).toBe(NOW + 16_000)
+        expect(refused?.refresh?.reason).toBe("device_day")
+        expect(now).toBe(NOW)
+    })
+
+    it("falls back to the body delay and then to a floor when a refusal names no service clock", async () => {
+        const support = service()
+        await run(() => support.issueAuthorization())
+
+        otel.status = () => json(429, { ok: false, error: { code: "report_authorization_rate_limited" }, retry_after_ms: 30_000 })
+        expect((await run(() => support.checkNow()))?.refresh).toMatchObject({ nextQueryAt: NOW + 30_000 })
+
+        otel.status = () => json(429, { ok: false, error: { code: "report_authorization_rate_limited" } })
+        const floored = await run(() => support.checkNow())
+        expect(floored?.refresh?.nextQueryAt).toBe(NOW + 5_000)
+        expect(floored?.refresh?.reason).toBeUndefined()
+    })
+
+    it("accepts the exact body the service emits when it has a reason but no absolute gate", async () => {
+        const support = service()
+        await run(() => support.issueAuthorization())
+        // `reportRateLimitResponse` writes server_time and retry_after_ms for a
+        // reason-bearing refusal and omits next_eligible_at when the pool had none.
+        otel.status = () =>
+            json(429, {
+                ok: false,
+                retryable: true,
+                error: { code: "report_authorization_rate_limited", message: "busy" },
+                reason: "read_budget",
+                server_time: NOW,
+                retry_after_ms: 42_000,
+            })
+
+        const refused = await run(() => support.checkNow())
+
+        expect(refused?.refresh).toMatchObject({ state: "waiting", reason: "read_budget", nextQueryAt: NOW + 42_000 })
+    })
+
+    it("keeps the historical envelope from the mutation pools working, with no reason projected", async () => {
+        const support = service()
+        await run(() => support.issueAuthorization())
+        // Mutation/health refusals carry neither reason nor next_eligible_at.
+        otel.status = () => json(429, { ok: false, retryable: true, error: { code: "report_authorization_rate_limited" } })
+
+        const refused = await run(() => support.checkNow())
+
+        expect(refused?.refresh?.state).toBe("waiting")
+        expect(refused?.refresh?.reason).toBeUndefined()
+        expect(refused?.refresh?.nextQueryAt).toBe(NOW + 5_000)
+    })
+
+    it("ignores a reason outside the query vocabulary instead of failing the parse", async () => {
+        const support = service()
+        await run(() => support.issueAuthorization())
+        otel.status = () =>
+            json(429, {
+                ok: false,
+                error: { code: "report_authorization_rate_limited" },
+                reason: "something_new",
+                server_time: NOW,
+                retry_after_ms: 0,
+                next_eligible_at: NOW + 9_000,
+            })
+
+        const refused = await run(() => support.checkNow())
+
+        // A future reason must not turn a normal refusal into a terminal error.
+        expect(refused?.refresh).toMatchObject({ state: "waiting", nextQueryAt: NOW + 9_000 })
+        expect(refused?.refresh?.reason).toBeUndefined()
+    })
+
+    it("does not retry at once when a refusal states a zero wait", async () => {
+        const support = service()
+        await run(() => support.issueAuthorization())
+        otel.status = () =>
+            json(429, {
+                ok: false,
+                error: { code: "report_authorization_rate_limited" },
+                reason: "query_ingress",
+                server_time: NOW,
+                retry_after_ms: 0,
+                next_eligible_at: NOW,
+            })
+
+        const refused = await run(() => support.checkNow())
+
+        expect(refused?.refresh?.nextQueryAt).toBe(NOW + 5_000)
+    })
+
+    it("keeps the ticket when the service cannot be reached", async () => {
+        const support = service()
+        await run(() => support.issueAuthorization())
+        otel.status = async () => {
+            throw new Error("connection reset")
+        }
+
+        const stale = await run(() => support.checkNow())
+
+        expect(stale).toMatchObject({ state: "awaiting_issue", refresh: { state: "stale", nextQueryAt: NOW + 5_000 } })
+        await expect(support.status()).resolves.toMatchObject({ publicCode: PUBLIC_CODE })
+    })
+
+    it("still fails loudly on a status answer that is neither a wait nor a known refusal", async () => {
+        const support = service()
+        await run(() => support.issueAuthorization())
+        otel.status = () => json(403, { ok: false, error: { code: "not_allowed_to_read" } })
+
+        await expect(run(() => support.checkNow())).rejects.toThrow("not_allowed_to_read")
+    })
+
+    it("keeps the recorded wait visible on the stored projection the settings page reads", async () => {
+        const support = service()
+        await run(() => support.issueAuthorization())
+        otel.status = () =>
+            json(429, {
+                ok: false,
+                error: { code: "report_authorization_rate_limited" },
+                reason: "device_day",
+                server_time: NOW,
+                retry_after_ms: 20_000,
+                next_eligible_at: NOW + 20_000,
+            })
+        await run(() => support.checkNow())
+
+        // `getStatus` reads this projection, not checkNow's return value.
+        await expect(support.status()).resolves.toMatchObject({
+            refresh: { state: "waiting", nextQueryAt: NOW + 20_000, reason: "device_day" },
+        })
+    })
+
+    it("still clears the wait once an answer arrives", async () => {
+        const support = service()
+        await run(() => support.issueAuthorization())
+        otel.status = () => json(429, { ok: false, error: { code: "report_authorization_rate_limited" }, retry_after_ms: 9_000 })
+        await run(() => support.checkNow())
+        otel.status = () =>
+            json(200, status({ state: "awaiting_issue", authorization_revision: 0, capture_expires_at: undefined }))
+
+        const answered = await run(() => support.checkNow())
+
+        expect(answered?.refresh).toBeUndefined()
+        expect(Object.keys(answered ?? {}).sort()).toEqual(
+            ["authorizationExpiresAt", "issueState", "publicCode", "resolution", "state"].sort(),
+        )
+    })
+
     it("never projects an Issue identity even when the response carries one", async () => {
         const support = service()
         await run(() => support.issueAuthorization())

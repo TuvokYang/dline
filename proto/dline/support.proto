@@ -24,6 +24,17 @@ message SupportResolution {
   optional string summary = 3;
 }
 
+// How the last status query ended. Present only when the service refused the
+// query or could not be reached, so an ordinary status carries nothing here.
+message SupportRefresh {
+  // waiting | stale
+  string state = 1;
+  // Local epoch milliseconds; before this the service named the query as too early.
+  optional int64 next_query_at = 2;
+  // device_window | device_day | global_query_day | query_ingress | read_budget
+  optional string reason = 3;
+}
+
 // Safe projection only. The authorization code, issue tokens and any Issue
 // identity are never projected: OTel links the Issue and never returns it.
 message SupportStatus {
@@ -39,4 +50,5 @@ message SupportStatus {
   // unlinked | open | closed
   string issue_state = 7;
   optional SupportResolution resolution = 8;
+  optional SupportRefresh refresh = 9;
 }
