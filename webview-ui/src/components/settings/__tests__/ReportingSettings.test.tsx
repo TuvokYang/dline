@@ -118,6 +118,27 @@ describe("reporting consent placement", () => {
         expect((screen.getByTestId(ERROR_CHECKBOX) as HTMLInputElement).disabled).toBe(true)
     })
 
+    /**
+     * Each consent's explanation is scoped to its own switch.
+     *
+     * A single shared paragraph made the reader match sentences back to
+     * checkboxes, and it grew every time a channel was added. A merge back into
+     * one block leaves both switches without a description of their own, so the
+     * structure of the rendered panel is what distinguishes the two layouts.
+     */
+    it("scopes one explanation to each switch", () => {
+        const { container } = render(<AboutSection renderSectionHeader={renderSectionHeader} version="1.2.3" />)
+
+        const consents = Array.from(container.querySelectorAll("[data-consent]"))
+        expect(consents).toHaveLength(2)
+
+        // Every consent row owns exactly one description paragraph. With a
+        // shared block this count is zero for both rows.
+        for (const consent of consents) {
+            expect(consent.querySelectorAll("p")).toHaveLength(1)
+        }
+    })
+
     it("no longer duplicates the consent in general settings", () => {
         render(<GeneralSettingsSection renderSectionHeader={renderSectionHeader} />)
 

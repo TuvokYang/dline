@@ -36,38 +36,46 @@ function formatBytes(bytes: number): string {
  */
 function ConsentCheckbox({
     label,
+    description,
     setting,
     settingKey,
     organizationSetting,
     testId,
 }: {
     label: string
+    description: string
     setting: string
     settingKey: "usageReportingSetting" | "errorReportingSetting"
     organizationSetting: string | undefined
     testId: string
 }) {
     return (
-        <Tooltip>
-            <TooltipContent hidden={organizationSetting === undefined}>
-                This setting is managed by your organization's remote configuration
-            </TooltipContent>
-            <TooltipTrigger asChild>
-                <div className="flex items-center gap-2 mt-2">
-                    <VSCodeCheckbox
-                        checked={setting === "enabled"}
-                        data-testid={testId}
-                        disabled={organizationSetting === "disabled"}
-                        onChange={(e: any) => {
-                            const checked = e.target.checked === true
-                            updateSetting(settingKey, checked ? "enabled" : "disabled")
-                        }}>
-                        {label}
-                    </VSCodeCheckbox>
-                    {organizationSetting === "disabled" && <i className="codicon codicon-lock text-description text-sm" />}
-                </div>
-            </TooltipTrigger>
-        </Tooltip>
+        <div className="mt-2" data-consent={settingKey}>
+            <Tooltip>
+                <TooltipContent hidden={organizationSetting === undefined}>
+                    This setting is managed by your organization's remote configuration
+                </TooltipContent>
+                <TooltipTrigger asChild>
+                    <div className="flex items-center gap-2">
+                        <VSCodeCheckbox
+                            checked={setting === "enabled"}
+                            data-testid={testId}
+                            disabled={organizationSetting === "disabled"}
+                            onChange={(e: any) => {
+                                const checked = e.target.checked === true
+                                updateSetting(settingKey, checked ? "enabled" : "disabled")
+                            }}>
+                            {label}
+                        </VSCodeCheckbox>
+                        {organizationSetting === "disabled" && <i className="codicon codicon-lock text-description text-sm" />}
+                    </div>
+                </TooltipTrigger>
+            </Tooltip>
+            {/* The description belongs to its own switch: each consent answers a
+                different question, and a shared paragraph made the reader match
+                sentences to checkboxes. */}
+            <p className="text-sm mt-[2px] ml-6 text-description">{description}</p>
+        </div>
     )
 }
 
@@ -91,6 +99,7 @@ function ReportingConsent() {
             <h3 className="text-md font-semibold">Error and usage reporting</h3>
 
             <ConsentCheckbox
+                description="Aggregate request, token, cache, cost, and model statistics."
                 label="Allow usage reporting"
                 organizationSetting={remoteConfigSettings?.usageReportingSetting}
                 setting={usageReportingSetting}
@@ -98,6 +107,7 @@ function ReportingConsent() {
                 testId="usage-reporting-setting-checkbox"
             />
             <ConsentCheckbox
+                description="Allowlisted failure and runtime-health events."
                 label="Allow error reporting"
                 organizationSetting={remoteConfigSettings?.errorReportingSetting}
                 setting={errorReportingSetting}
@@ -105,12 +115,13 @@ function ReportingConsent() {
                 testId="error-reporting-setting-checkbox"
             />
 
-            <p className="text-sm mt-[5px] text-description">
-                Usage reporting and error reporting are both on by default and can be turned off independently here. Usage
-                reporting sends bounded aggregate request, token, cache, cost, provider, and model statistics to Dline's telemetry
-                service at otel.dline.cc. Error reporting sends allowlisted failure and runtime-health records. Ordinary reporting
-                excludes prompts, model responses, source code, file contents, paths, commands, terminal output, credentials, and
-                account identity. See our{" "}
+            {/* The privacy guarantee describes both consents, so it stays shared
+                instead of being repeated under each switch. The destination is
+                deliberately not named here: what matters to the reader is that
+                reported data is aggregated, not where it is posted. */}
+            <p className="text-sm mt-[8px] text-description">
+                Everything reported is aggregated and processed before it is sent. It never includes your conversations, prompts,
+                model responses, source code, files, or any other private project data. See our{" "}
                 <VSCodeLink
                     className="text-inherit"
                     href="https://docs.dline.cc/troubleshooting/telemetry/"

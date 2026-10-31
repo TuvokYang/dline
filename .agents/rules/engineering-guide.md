@@ -60,6 +60,15 @@ Every test must have an independent behavioral oracle and must fail for a plausi
 - Do not use tag-presence or string snapshots as a substitute for semantic verification. Parse structured output and assert its schema, ordering, identity, behavior, state transition, error path, or observable side effect. Repository-owned generated snapshots may record intentional aggregate output, but they do not replace focused behavioral assertions.
 - Prefer real inputs and outputs at the smallest stable boundary. A useful test distinguishes success from failure, covers meaningful edge or recovery paths, and proves ownership or side effects where those are the contract.
 - Before adding a test, state the defect or mutation it would catch. If no plausible incorrect implementation would make the assertion fail, omit the test.
+
+### Low-value assertion tests are deleted, not kept
+
+A test that restates a source literal is not coverage. Copying UI copy, an endpoint, a label, or a constant into an assertion and then asserting that the rendered output contains it proves only that the same string appears twice; it fails when the wording is edited, not when behavior breaks. The same applies to `expect(text).toContain("...")`, `toContain`, substring matching, and equivalent text lookups aimed at prose the implementation owns.
+
+- **Delete on sight.** When reviewing or touching a test file, remove any assertion of this kind instead of carrying it forward, even when it predates the current task. Do not preserve it as historical coverage and do not replace it with a slightly different string check.
+- **Replace only with a real invariant.** If a meaningful contract sits behind the assertion, assert the structure, state, side effect, ordering, or error path that a plausible defect would break. Otherwise leave the case uncovered and say so.
+- **Allowed exception.** An exact token may be asserted when that token is itself a parser, protocol, compatibility, or accessibility contract. The test must then demonstrate the boundary it protects, not that a prose sentence exists.
+- **Do not widen the rule into "never assert text".** Semantic contracts expressed through text, such as an error message a caller matches on, still deserve a behavioral test at the boundary that consumes them.
 - When a touched scope already contains a low-value assertion of these forms, remove it or replace it with a behavioral test; do not preserve it merely as historical coverage.
 
 ## E2E validation tiers
