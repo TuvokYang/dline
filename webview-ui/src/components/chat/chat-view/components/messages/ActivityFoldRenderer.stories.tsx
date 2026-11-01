@@ -6,8 +6,6 @@ import type { MessageHandlers } from "../../types/chatTypes"
 import { isActivityFold } from "../../utils/chatRowKinds"
 import { groupChatRows } from "../../utils/messageUtils"
 import { rowIdentity } from "../../utils/rowCoordinate"
-import { designFoldRows } from "../layout/foldingTrajectoryDesign"
-import { createFoldRoundUsage } from "../layout/foldingTrajectoryUsageFixture"
 import { liveTwoTurnSteps } from "./activityFoldStoryFixtures"
 import { createMessageRenderer } from "./MessageRenderer"
 
@@ -29,12 +27,8 @@ function ConversationRows({ level, messages }: { level: AggressiveRenderingLevel
     const [expandedRows, setExpandedRows] = useState<Record<number, boolean>>({})
     const [expandedFolds, setExpandedFolds] = useState<Record<string, boolean>>({})
     const transcript = messages as UiMessage[]
-    const roundUsage = useMemo(() => createFoldRoundUsage(transcript), [transcript])
-    // The reviewed policy, with the usage the fold headers state.
-    const rows = useMemo(
-        () => designFoldRows(transcript, groupChatRows(transcript, undefined, { level: "none" }), level, roundUsage),
-        [transcript, level, roundUsage],
-    )
+    // The production pipeline: the same call the chat makes, so the story cannot drift from it.
+    const rows = useMemo(() => groupChatRows(transcript, undefined, { level }), [transcript, level])
     const folded = rows
     const renderRow = createMessageRenderer(
         rows,
@@ -171,5 +165,6 @@ type Story = StoryObj<typeof meta>
 
 /** The same production pipeline at three independent, fixed levels. */
 export const Standard: Story = { name: "1 · Standard (no folding)", args: { level: "none" } }
-export const MessageSegments: Story = { name: "2 · Fold activity between messages", args: { level: "message_segment" } }
-export const WholeTurn: Story = { name: "3 · Fold the whole turn into one block", args: { level: "user_turn" } }
+export const RequestRounds: Story = { name: "2 · Fold activity within each request round", args: { level: "round" } }
+export const MessageSegments: Story = { name: "3 · Fold activity between messages", args: { level: "message_segment" } }
+export const WholeTurn: Story = { name: "4 · Fold the whole turn into one block", args: { level: "user_turn" } }

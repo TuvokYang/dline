@@ -1,6 +1,14 @@
 import type { AggressiveRenderingLevel } from "@shared/AggressiveRendering"
+import { type FoldRoundUsage, summarizeRoundsUsage } from "@shared/chat/foldUsage"
 import type { UiMessage, UiSayTool } from "@shared/ExtensionMessage"
-import { type ActivityFold, type ActivityFoldKind, type FoldFailureKind, isActivityFold, isBrowserSession } from "./chatRowKinds"
+import {
+    type ActivityFold,
+    type ActivityFoldKind,
+    type FoldFailureKind,
+    isActivityFold,
+    isBrowserSession,
+    isExplorationRun,
+} from "./chatRowKinds"
 import { type FoldContext, failedWorkKind, failedWorkUnits, isFoldableWorkEnd, rowState } from "./foldContext"
 import { isSettledTurnEnd, isTurnEndRow } from "./turnEndRows"
 
@@ -10,9 +18,51 @@ export interface FoldOptions {
     readonly level: AggressiveRenderingLevel
     /** The ask the footer is answering right now; it stays visible whatever its row says. */
     readonly activeAskTs?: number
+    /**
+     * The usage record of each provider round, in request-round order.
+     *
+     * The chat has no such records projected to it yet, so it omits this and the
+     * header states no figures. Stories and tests pass fixture records to exercise
+     * the same code path a projected transcript will use.
+     */
+    readonly roundUsage?: readonly FoldRoundUsage[]
 }
 
 export const STANDARD_FOLD: FoldOptions = { level: "none" }
+
+/**
+ * What each folding level does, in one table.
+ *
+ * Every level runs the same fold step; only these four facts differ, so a level
+ * can never silently mean something different from the one next to it.
+ *
+ * - `rounds`: which request rounds one block may hold. `single` keeps a block
+ *   inside one round; `any` lets it merge finished rounds the way the coarser
+ *   levels always have.
+ * - `userTurnOnly`: whether nothing before the first user message of a run folds.
+ * - `cutsAtAssistant`: whether prose and assistant updates end the block they
+ *   would otherwise join.
+ * - `splitsCrossRoundRuns`: whether a row whose own members span several rounds
+ *   (an exploration run of read-only rounds) is put back into one row per round
+ *   instead of being folded whole.
+ */
+interface FoldPolicy {
+    readonly rounds: "single" | "any"
+    readonly userTurnOnly: boolean
+    readonly cutsAtAssistant: boolean
+    readonly splitsCrossRoundRuns: boolean
+}
+
+export const FOLD_POLICIES: Record<Exclude<AggressiveRenderingLevel, "none">, FoldPolicy> = {
+    round: { rounds: "single", userTurnOnly: true, cutsAtAssistant: true, splitsCrossRoundRuns: true },
+    message_segment: { rounds: "any", userTurnOnly: false, cutsAtAssistant: true, splitsCrossRoundRuns: false },
+    user_turn: { rounds: "any", userTurnOnly: true, cutsAtAssistant: false, splitsCrossRoundRuns: false },
+}
+
+/** Whether a level's blocks keep to one request round. */
+export function foldsWithinOneRound(level: AggressiveRenderingLevel): boolean {
+    return level !== "none" && FOLD_POLICIES[level].rounds === "single"
+}
 
 /**
  * How the fold step treats a row.
@@ -40,18 +90,90 @@ const ASSISTANT_TOOLS = new Set<string>(["actModeRespond", "statusUpdate"] satis
  */
 export function foldActivity(rows: ChatRow[], options: FoldOptions, context: FoldContext): ChatRow[] {
     if (options.level === "none") return rows
-    const classes = rows.map((row, index) => classifyFoldRow(row, index === rows.length - 1, options, context))
-    const rounds = roundOfRows(rows, classes, context)
-    const ended = endedRows(rows, classes, rounds)
-    const spans = foldingSpans(classes, rounds, ended, options.level)
-    const kind = options.level === "message_segment" ? "segment" : "turn"
-    return applySpans(rows, spans, (span) => buildFold(rows.slice(span.start, span.end), kind, context))
+    const policy = FOLD_POLICIES[options.level]
+    const prepared = policy.splitsCrossRoundRuns ? splitCrossRoundRuns(rows) : rows
+    const classes = prepared.map((row, index) => classifyFoldRow(row, index === prepared.length - 1, options, context))
+    const rounds = roundOfRows(prepared, classes, context)
+    const ended = endedRows(prepared, classes, rounds)
+    const spans = foldingSpans(prepared, classes, rounds, ended, policy)
+    const kind = options.level === "user_turn" ? "turn" : "segment"
+    const folded = applySpans(prepared, spans, (span) => buildFold(prepared.slice(span.start, span.end), kind, context))
+    return options.roundUsage ? attachUsage(folded, context.rounds, options.roundUsage) : folded
 }
 
-/** Open folds into the exact original top-level rows, with no rendering wrapper. */
-export function projectFoldExpansion(rows: ChatRow[], expanded: Readonly<Record<string, boolean>>): ChatRow[] {
-    if (!rows.some((row) => isActivityFold(row) && expanded[row._activityFoldId])) return rows
-    return rows.flatMap((row) => (isActivityFold(row) && expanded[row._activityFoldId] ? [...row._children] : [row]))
+/**
+ * Attach each block the usage of the request rounds it holds.
+ *
+ * A block's members belong to request rounds, so the figures are looked up by
+ * those rounds rather than summed from message payloads. A block whose rounds
+ * have no record states no figures instead of guessing.
+ */
+function attachUsage(
+    rows: readonly ChatRow[],
+    rounds: ReadonlyMap<number, number>,
+    roundUsage: readonly FoldRoundUsage[],
+): ChatRow[] {
+    if (roundUsage.length === 0) return [...rows]
+    const byRound = indexUsageByRound(roundUsage, rounds)
+    return rows.map((row) => {
+        if (!isActivityFold(row)) return row
+        const covered = new Set<FoldRoundUsage>()
+        for (const member of row) {
+            // A round-start restore point belongs to the round it opens, so it
+            // must not pull in the previous round's figures.
+            if (member.say === "checkpoint_created") continue
+            const round = rounds.get(member.ts)
+            const usage = round === undefined ? undefined : byRound.get(round)
+            if (usage) covered.add(usage)
+        }
+        const usage = summarizeRoundsUsage([...covered])
+        if (usage) row._usage = usage
+        return row
+    })
+}
+
+/** Map a transcript round index onto its usage record, in provider-send order. */
+function indexUsageByRound(
+    roundUsage: readonly FoldRoundUsage[],
+    rounds: ReadonlyMap<number, number>,
+): ReadonlyMap<number, FoldRoundUsage> {
+    const providerRounds = [...new Set(rounds.values())].filter((round) => round > 0).sort((left, right) => left - right)
+    const byRound = new Map<number, FoldRoundUsage>()
+    providerRounds.forEach((round, position) => {
+        const usage = roundUsage[position]
+        if (usage) byRound.set(round, usage)
+    })
+    return byRound
+}
+
+/**
+ * Put a row that joined several read-only rounds back into one row per round.
+ *
+ * Standard grouping folds consecutive read-only rounds into a single exploration
+ * run, so that one row cannot honour a level whose blocks stay inside one round.
+ * A run whose rounds would contribute nothing keeps its own row, so no work
+ * disappears.
+ */
+function splitCrossRoundRuns(rows: readonly ChatRow[]): ChatRow[] {
+    return rows.flatMap((row) => {
+        if (!isExplorationRun(row)) return [row]
+        const perRound = row._rounds.map((round) => {
+            const roundRows: ChatRow[] = [...(round.checkpoint ? [round.checkpoint] : []), ...round.entries]
+            return roundRows
+        })
+        return perRound.some((roundRows) => roundRows.length === 0) ? [row] : perRound.flat()
+    })
+}
+
+/**
+ * The rows a fold holds, for callers that must reach a member through a block.
+ *
+ * The list never expands by projection: an open block keeps its header and draws
+ * its members beneath it, so one row stays one row and the control that opened it
+ * closes it again. This is only a view for lookups.
+ */
+export function foldChildren(row: ChatRow): readonly ChatRow[] {
+    return isActivityFold(row) ? row._children : [row]
 }
 
 export function classifyFoldRow(row: ChatRow, isLastRow: boolean, options: FoldOptions, context: FoldContext): FoldRowClass {
@@ -128,7 +250,13 @@ function roundOfRows(rows: readonly ChatRow[], classes: readonly FoldRowClass[],
         if (!isRestorePoint(rows[index])) continue
         const next = index + 1
         if (next === rows.length) rounds[index] += 1
-        else if (classes[next] !== "user" && classes[next] !== "turn_end") rounds[index] = rounds[next]
+        else if (classes[next] === "turn_end") {
+            // A restore point whose round drew nothing but its own turn end still
+            // opens that round: the turn it protects must stay foldable, or its
+            // Restore control would be left with no block to live in.
+            const ending = rows[next]
+            if (!Array.isArray(ending)) rounds[index] = memberRound(ending, context)
+        } else if (classes[next] !== "user") rounds[index] = rounds[next]
     }
     return rounds
 }
@@ -171,17 +299,23 @@ interface Span {
 }
 
 function foldingSpans(
+    rows: readonly ChatRow[],
     classes: readonly FoldRowClass[],
     rounds: readonly number[],
     ended: readonly boolean[],
-    level: Exclude<AggressiveRenderingLevel, "none">,
+    policy: FoldPolicy,
 ): Span[] {
     const spans: Span[] = []
     let start = -1
+    let blockRound = 0
     let inUserTurn = false
+    // A block is kept even when it holds only a restore point: the reader must be
+    // able to reach that checkpoint, and a turn whose work was a single marker
+    // would otherwise lose its Restore control behind no block at all.
     const close = (end: number) => {
         if (start >= 0) spans.push({ start, end })
         start = -1
+        blockRound = 0
     }
     for (let index = 0; index < classes.length; index += 1) {
         const kind = classes[index]
@@ -190,12 +324,21 @@ function foldingSpans(
             inUserTurn = kind === "user"
             continue
         }
-        const eligible = level === "message_segment" ? kind === "activity" : inUserTurn && isFoldable(kind)
+        const eligible = policy.cutsAtAssistant
+            ? kind === "activity" && (!policy.userTurnOnly || inUserTurn)
+            : policy.userTurnOnly
+              ? inUserTurn && isFoldable(kind)
+              : isFoldable(kind)
         if (!eligible || !ended[index] || rounds[index] === 0) {
             close(index)
             continue
         }
-        if (start < 0) start = index
+        // A level whose blocks stay inside one request round cuts at every round change.
+        if (policy.rounds === "single" && start >= 0 && rounds[index] !== blockRound) close(index)
+        if (start < 0) {
+            start = index
+            blockRound = rounds[index]
+        }
     }
     close(classes.length)
     return spans

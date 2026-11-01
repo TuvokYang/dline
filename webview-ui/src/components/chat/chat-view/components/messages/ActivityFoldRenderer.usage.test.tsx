@@ -5,7 +5,6 @@ import { useState } from "react"
 import { describe, expect, it, vi } from "vitest"
 import { isActivityFold } from "../../utils/chatRowKinds"
 import { groupChatRows, indexRequestRounds } from "../../utils/messageUtils"
-import { designFoldRows } from "../layout/foldingTrajectoryDesign"
 import { createFoldRoundUsage } from "../layout/foldingTrajectoryUsageFixture"
 import { ActivityFoldRenderer } from "./ActivityFoldRenderer"
 import {
@@ -38,9 +37,8 @@ vi.mock("@/services/grpc-client", () => ({ FileServiceClient: { openFileRelative
 /** The first fold of the finished-turn transcript, drawn with chat-owned expansion. */
 function Harness() {
     const [expanded, setExpanded] = useState(false)
-    const standard = groupChatRows(finishedTurnTranscript, undefined, { level: "none" })
     const roundUsage = createFoldRoundUsage(finishedTurnTranscript)
-    const fold = designFoldRows(finishedTurnTranscript, standard, "user_turn", roundUsage).find(isActivityFold)
+    const fold = groupChatRows(finishedTurnTranscript, undefined, { level: "user_turn", roundUsage }).find(isActivityFold)
     if (!fold) throw new Error("the fixture produces a block")
 
     return (
@@ -73,8 +71,7 @@ function failedHarness() {
         failedCommand(4, "npm run test", 2),
         completion(5, "Checks finished."),
     ]
-    const standard = groupChatRows(transcript, undefined, { level: "none" })
-    const fold = designFoldRows(transcript, standard, "user_turn").find(isActivityFold)
+    const fold = groupChatRows(transcript, undefined, { level: "user_turn" }).find(isActivityFold)
     if (!fold) throw new Error("the fixture produces a block")
     return fold
 }
@@ -105,10 +102,9 @@ describe("a folded block states what it cost", () => {
     })
 
     it("states figures the block's own rounds support", () => {
-        const standard = groupChatRows(finishedTurnTranscript, undefined, { level: "none" })
         const roundUsage = createFoldRoundUsage(finishedTurnTranscript)
         const rounds = indexRequestRounds(finishedTurnTranscript)
-        const fold = designFoldRows(finishedTurnTranscript, standard, "user_turn", roundUsage).find(isActivityFold)
+        const fold = groupChatRows(finishedTurnTranscript, undefined, { level: "user_turn", roundUsage }).find(isActivityFold)
         if (!fold?._usage) throw new Error("expected usage on the block")
 
         // Derive the expectation from the block's members independently of the
@@ -167,8 +163,7 @@ describe("a folded block states what it cost", () => {
     })
 
     it("draws no cost line when the chat has no usage for the block", () => {
-        const standard = groupChatRows(finishedTurnTranscript, undefined, { level: "none" })
-        const fold = designFoldRows(finishedTurnTranscript, standard, "user_turn").find(isActivityFold)
+        const fold = groupChatRows(finishedTurnTranscript, undefined, { level: "user_turn" }).find(isActivityFold)
         if (!fold) throw new Error("the fixture produces a block")
         expect(fold._usage).toBeUndefined()
     })

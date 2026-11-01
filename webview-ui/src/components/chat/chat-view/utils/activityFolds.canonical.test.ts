@@ -9,7 +9,7 @@ import {
     userTask,
     workingRespond,
 } from "../components/messages/activityFoldStoryFixtures"
-import { foldActivity, projectFoldExpansion } from "./activityFolds"
+import { foldActivity, foldChildren } from "./activityFolds"
 import { isActivityFold } from "./chatRowKinds"
 import { buildFoldContext } from "./foldContext"
 import { groupChatRows, indexRequestRounds } from "./messageUtils"
@@ -51,8 +51,8 @@ for (const level of ["message_segment", "user_turn"] as const) {
             const standard = groupChatRows(transcript, undefined, { level: "none" })
             const context = buildFoldContext(transcript, indexRequestRounds(transcript))
             const folded = foldActivity(standard, { level }, context)
-            const expanded = Object.fromEntries(folded.filter(isActivityFold).map((fold) => [fold._activityFoldId, true]))
-            const projected = projectFoldExpansion(folded, expanded)
+            // Reading a block's children returns exactly the Standard rows it took.
+            const projected = folded.flatMap(foldChildren)
             expect(projected).toHaveLength(standard.length)
             projected.forEach((row, index) => {
                 expect(row).toBe(standard[index])

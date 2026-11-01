@@ -50,21 +50,20 @@ describe("useGroupedChatRows", () => {
         }
     })
 
-    it("projects opened folds into ordinary top-level rows", () => {
-        const { result, rerender } = renderHook(
-            ({ expanded }) =>
-                useGroupedChatRows(
-                    finishedTurnTranscript,
-                    visible,
-                    { user: "user_turn", featureFlag: true },
-                    undefined,
-                    expanded,
-                ),
-            { initialProps: { expanded: {} as Record<string, boolean> } },
-        )
+    it("keeps one row per block whether the block is open or closed", () => {
+        // Expansion belongs to the renderer, which draws members beneath a header
+        // that stays in place. If grouping reacted to it, the header — and the
+        // control that closes the block — would leave the list.
+        const { result } = renderRows({ user: "user_turn", featureFlag: true })
         expect(layout(result.current)).toEqual(["1", "turn:10", "51"])
-        rerender({ expanded: { "turn:10": true } })
-        expect(layout(result.current)).toEqual(layout(renderRows({ user: "none", featureFlag: true }).result.current))
-        expect(result.current.some(isActivityFold)).toBe(false)
+        expect(result.current.filter(isActivityFold)).toHaveLength(1)
+    })
+
+    it("folds within one request round at the round level", () => {
+        const rows = renderRows({ user: "round", featureFlag: true }).result.current
+        const folds = rows.filter(isActivityFold)
+        expect(folds.length).toBeGreaterThan(0)
+        // A round-level block never holds two provider sends.
+        for (const fold of folds) expect(fold._roundCount).toBeLessThanOrEqual(1)
     })
 })

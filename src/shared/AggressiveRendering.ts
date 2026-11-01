@@ -4,13 +4,21 @@
  * Request completion makes content eligible for folding; it does not split a
  * block. Content from the running request stays drawn as it is.
  *
+ * The levels are cumulative: each one folds at least as much as the one before
+ * it, and `FOLD_POLICIES` in the Webview states exactly how, so the levels share
+ * one implementation instead of one implementation per level.
+ *
  * - `none`: standard rows without an additional folding layer.
- * - `message_segment`: finished activity between assistant messages is folded together.
- * - `user_turn`: finished content is folded across assistant messages, within a user turn.
+ * - `round`: finished activity is folded within one request round, so a block
+ *   never holds work from two provider sends.
+ * - `message_segment`: finished activity between assistant messages is folded
+ *   together, even when that spans several request rounds.
+ * - `user_turn`: finished content is folded across assistant messages, within a
+ *   user turn.
  *
  * Legacy persisted values are normalized on read; new writes use only canonical values.
  */
-export const AGGRESSIVE_RENDERING_LEVELS = ["none", "message_segment", "user_turn"] as const
+export const AGGRESSIVE_RENDERING_LEVELS = ["none", "round", "message_segment", "user_turn"] as const
 
 export type AggressiveRenderingLevel = (typeof AGGRESSIVE_RENDERING_LEVELS)[number]
 
@@ -18,6 +26,7 @@ export const DEFAULT_AGGRESSIVE_RENDERING: AggressiveRenderingLevel = "none"
 
 export const AGGRESSIVE_RENDERING_LABELS: Record<AggressiveRenderingLevel, string> = {
     none: "Standard (no folding)",
+    round: "Fold activity within each request round",
     message_segment: "Fold activity between messages",
     user_turn: "Fold the whole turn into one block",
 }

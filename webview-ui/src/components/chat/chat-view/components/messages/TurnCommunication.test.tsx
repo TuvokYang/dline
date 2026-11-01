@@ -4,7 +4,6 @@ import { fireEvent, render, screen } from "@testing-library/react"
 import React, { useState } from "react"
 import { describe, expect, it, vi } from "vitest"
 import type { MessageHandlers } from "../../types/chatTypes"
-import { projectFoldExpansion } from "../../utils/activityFolds"
 import { isActivityFold } from "../../utils/chatRowKinds"
 import { groupChatRows } from "../../utils/messageUtils"
 import { rowIdentity } from "../../utils/rowCoordinate"
@@ -41,7 +40,7 @@ const handlers: MessageHandlers = {
 
 function Harness({ messages }: { messages: UiMessage[] }) {
     const [expanded, setExpanded] = useState<Record<string, boolean>>({})
-    const rows = projectFoldExpansion(groupChatRows(messages, undefined, { level: "message_segment" }), expanded)
+    const rows = groupChatRows(messages, undefined, { level: "message_segment" })
     return (
         <>
             {rows.map((row, index) => (
@@ -93,10 +92,13 @@ describe("Message segments preserve communication", () => {
         for (const header of headers) expect(header).toHaveAttribute("aria-expanded", "false")
         fireEvent.click(headers[0])
         expect(drawn()).toEqual([1, 10, 20, 99])
-        expect(screen.getAllByTestId("activity-fold-header")).toHaveLength(1)
-        fireEvent.click(screen.getByTestId("activity-fold-header"))
-        expect(drawn()).toEqual([1, 10, 20, 30, 99])
-        expect(screen.queryByTestId("activity-fold-header")).toBeNull()
+        // The header stays, so the same control closes the block it opened.
+        expect(screen.getAllByTestId("activity-fold-header")).toHaveLength(2)
+        expect(screen.getAllByTestId("activity-fold-header")[0]).toHaveAttribute("aria-expanded", "true")
+        fireEvent.click(screen.getAllByTestId("activity-fold-header")[0])
+        expect(drawn()).toEqual([1, 20, 99])
+        expect(screen.getAllByTestId("activity-fold-header")).toHaveLength(2)
+        expect(screen.getAllByTestId("activity-fold-header")[0]).toHaveAttribute("aria-expanded", "false")
     })
 
     it("does not lose text written after a low-stakes tool group", () => {

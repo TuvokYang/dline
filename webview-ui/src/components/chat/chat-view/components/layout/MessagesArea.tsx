@@ -120,8 +120,13 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
         taskViewState,
         aggressiveRendering,
     } = useExtensionState()
-    const closedFolds = useMemo(() => groupedMessages.filter(isActivityFold), [groupedMessages])
+    // A fold keeps its row while open, so "closed" is a state of the block, not its absence.
+    const folds = useMemo(() => groupedMessages.filter(isActivityFold), [groupedMessages])
     const foldingEnabled = effectiveAggressiveRendering(aggressiveRendering) !== "none"
+    const closedFolds = useMemo(
+        () => folds.filter((fold) => chatState.expandedFolds[fold._activityFoldId] !== true),
+        [folds, chatState.expandedFolds],
+    )
     const hasOpenFolds = Object.values(chatState.expandedFolds).some(Boolean)
     const taskKey = getTaskViewKey(taskViewState)
     const taskKeyRef = useRef(taskKey)

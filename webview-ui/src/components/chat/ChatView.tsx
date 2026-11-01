@@ -525,7 +525,6 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         visibleMessages,
         aggressiveRendering,
         taskViewState?.activeInteraction?.askMessageTs,
-        chatState.expandedFolds,
     )
 
     // Use scroll behavior hook

@@ -1,4 +1,4 @@
-import { AGGRESSIVE_RENDERING_LABELS } from "@shared/AggressiveRendering"
+import { AGGRESSIVE_RENDERING_LABELS, type AggressiveRenderingLevel } from "@shared/AggressiveRendering"
 import type { TaskViewState, UiMessage } from "@shared/ExtensionMessage"
 import { TrajectoryState, TrajectoryTurnSummary, TrajectoryUpdate } from "@shared/proto/dline/task"
 import { convertClineMessageToProto } from "@shared/proto-conversions/cline-message"
@@ -11,16 +11,14 @@ import { useScrollBehavior } from "../../hooks/useScrollBehavior"
 import type { MessageHandlers } from "../../types/chatTypes"
 import { isActivityFold } from "../../utils/chatRowKinds"
 import { filterVisibleMessages, groupChatRows } from "../../utils/messageUtils"
-import { type DesignFoldingMode, designFoldRows } from "./foldingTrajectoryDesign"
 import { createFoldingTranscript } from "./foldingTrajectoryStoryFixtures"
-import { createFoldRoundUsage } from "./foldingTrajectoryUsageFixture"
 import { MessagesArea } from "./MessagesArea"
 
 type Expansion = "collapsed" | "partial" | "expanded"
 interface FixtureProps {
     initialExpansion: Expansion
     turnCount: number
-    initialLevel: DesignFoldingMode
+    initialLevel: AggressiveRenderingLevel
     /** Append a turn whose edit, command and subagent batch all failed. */
     withFailures?: boolean
 }
@@ -33,10 +31,11 @@ const HANDLERS: MessageHandlers = {
 const ignoreOption = async () => undefined
 const controlClass = "rounded border border-description/30 bg-background px-2 py-1 text-xs text-foreground"
 const DESIGN_FOLDING_LABELS = AGGRESSIVE_RENDERING_LABELS
-const DESIGN_FOLDING_HELP: Record<DesignFoldingMode, string> = {
+const DESIGN_FOLDING_HELP: Record<AggressiveRenderingLevel, string> = {
     none: "Original chat rows and groups, with no additional folding.",
+    round: "Fold finished activity inside each request round. A block never holds work from two provider sends.",
     message_segment:
-        "Fold activity between messages. Plain text, Reply, Phase report and every request boundary split the blocks; no row spans two rounds.",
+        "Fold finished activity between assistant messages, even across request rounds. Prose and assistant updates keep their own rows.",
     user_turn:
         "Fold the whole turn into one block. Completed content is grouped across assistant messages and request boundaries, until the user-turn boundary; live and failed rows stay visible.",
 }
@@ -128,14 +127,9 @@ function FoldingTrajectoryFixture({ initialExpansion, turnCount, initialLevel, w
     const width = 500
     const visible = useMemo(() => filterVisibleMessages(messages), [messages])
     const standardRows = useMemo(() => groupChatRows(messages, visible, { level: "none" }), [messages, visible])
-    const roundUsage = useMemo(() => createFoldRoundUsage(messages), [messages])
-    const foldedRows = useMemo(
-        () => designFoldRows(messages, standardRows, level, roundUsage),
-        [messages, standardRows, level, roundUsage],
-    )
+    // The production pipeline: the same call the chat makes, so the story cannot drift from it.
+    const rows = useMemo(() => groupChatRows(messages, visible, { level }), [messages, visible, level])
     const chat = useChatState(messages, taskId)
-    // An open fold keeps its header and draws its members beneath it.
-    const rows = foldedRows
     const matchesStandard = rows.length === standardRows.length && rows.every((row, index) => row === standardRows[index])
     const scroll = useScrollBehavior(messages, visible, rows, chat.expandedRows, chat.setExpandedRows, chat.setExpandedFolds)
     const ready = useFixtureTransport(taskId, messages)
@@ -160,7 +154,7 @@ function FoldingTrajectoryFixture({ initialExpansion, turnCount, initialLevel, w
     }
 
     const setExpansion = (expansion: Expansion) => {
-        scroll.replaceFoldExpansion(expansionState(foldedRows, expansion))
+        scroll.replaceFoldExpansion(expansionState(rows, expansion))
     }
     const { setExpandedFolds } = chat
     const initialFolds = useMemo(() => groupChatRows(initialMessages, undefined, { level }), [initialMessages, level])
@@ -242,9 +236,13 @@ const meta = {
 export default meta
 type Story = StoryObj<typeof meta>
 export const Standard: Story = { name: "1 · Standard (no folding)", args: { initialLevel: "none" } }
-export const MessageSegments: Story = { name: "2 · Fold activity between messages", args: { initialLevel: "message_segment" } }
-export const WholeTurn: Story = { name: "3 · Fold the whole turn into one block", args: { initialLevel: "user_turn" } }
+export const RequestRounds: Story = {
+    name: "2 · Fold activity within each request round",
+    args: { initialLevel: "round" },
+}
+export const MessageSegments: Story = { name: "3 · Fold activity between messages", args: { initialLevel: "message_segment" } }
+export const WholeTurn: Story = { name: "4 · Fold the whole turn into one block", args: { initialLevel: "user_turn" } }
 export const FailedWork: Story = {
-    name: "4 · Failed edits, commands and subagents are counted",
+    name: "5 · Failed edits, commands and subagents are counted",
     args: { initialLevel: "user_turn", turnCount: 2, withFailures: true },
 }

@@ -4,7 +4,6 @@ import { fireEvent, render, screen } from "@testing-library/react"
 import React, { useState } from "react"
 import { describe, expect, it, vi } from "vitest"
 import type { MessageHandlers } from "../../types/chatTypes"
-import { projectFoldExpansion } from "../../utils/activityFolds"
 import { isActivityFold } from "../../utils/chatRowKinds"
 import { groupChatRows } from "../../utils/messageUtils"
 import { rowIdentity } from "../../utils/rowCoordinate"
@@ -37,7 +36,7 @@ const messageHandlers: MessageHandlers = {
 function Harness({ level = "user_turn" }: { level?: "none" | "message_segment" | "user_turn" }) {
     const [expandedRows, setExpandedRows] = useState<Record<number, boolean>>({})
     const [expandedFolds, setExpandedFolds] = useState<Record<string, boolean>>({})
-    const rows = projectFoldExpansion(groupChatRows(finishedTurnTranscript, undefined, { level }), expandedFolds)
+    const rows = groupChatRows(finishedTurnTranscript, undefined, { level })
     return (
         <>
             <button onClick={() => setExpandedFolds({})} type="button">
@@ -86,29 +85,57 @@ describe("ActivityFoldRenderer", () => {
     it.each([
         "message_segment",
         "user_turn",
-    ] as const)("%s fully expands to the Standard row order without wrappers or indentation", (level) => {
+    ] as const)("%s opens every block and draws each block's own members beneath it", (level) => {
         const standard = render(<Harness level="none" />)
-        const expected = renderedRows(standard.container)
+        const expectedRowCount = renderedRows(standard.container).length
         standard.unmount()
         const folded = render(<Harness level={level} />)
-        while (screen.queryAllByTestId("activity-fold-header").length > 0)
-            fireEvent.click(screen.getAllByTestId("activity-fold-header")[0])
-        expect(renderedRows(folded.container)).toEqual(expected)
-        expect(folded.container.querySelector("[data-fold-id]")).toBeNull()
-        expect(folded.container.querySelector('[data-testid="activity-fold-children"]')).toBeNull()
-        expect(
-            folded.container.querySelector('[data-message-ts="32"]')?.closest("[data-row-ts]")?.getAttribute("data-row-ts"),
-        ).toBe("32")
+        const blocks = groupChatRows(finishedTurnTranscript, undefined, { level }).filter(isActivityFold)
+        expect(blocks.length).toBeGreaterThan(0)
+        // Closed: no member is drawn, but every header is.
+        expect(folded.container.querySelectorAll('[data-testid="activity-fold-children"]')).toHaveLength(0)
+        expect(screen.getAllByTestId("activity-fold-header")).toHaveLength(blocks.length)
+
+        for (const header of screen.getAllByTestId("activity-fold-header")) fireEvent.click(header)
+        const opened = folded.container.querySelectorAll('[data-testid="activity-fold-children"]')
+        expect(opened).toHaveLength(blocks.length)
+        // Each open block draws exactly the members it holds, and nothing else.
+        blocks.forEach((block, index) => {
+            const drawnTs = Array.from(opened[index].querySelectorAll<HTMLElement>("[data-message-ts]"), (row) =>
+                Number(row.dataset.messageTs),
+            )
+            const ownTs = (Array.isArray(block) ? block : [block]).map(({ ts }) => ts)
+            for (const ts of drawnTs) expect(ownTs).toContain(ts)
+            // A member that drew a plain message must be present.
+            for (const member of Array.isArray(block) ? block : [block]) {
+                if (Array.isArray(member)) continue
+                if (member.say === "checkpoint_created" || member.say === "reasoning") continue
+                if (member.say === "tool" || member.ask === "tool") continue
+                expect(drawnTs).toContain(member.ts)
+            }
+        })
+        // The list still holds one row per block, plus the rows no block took.
+        const topLevel = blocks.length + groupChatRows(finishedTurnTranscript, undefined, { level }).length - blocks.length
+        expect(renderedRows(folded.container).length).toBe(topLevel)
+        expect(expectedRowCount).toBeGreaterThan(0)
     })
 
-    it("opens one segment without opening its neighbours, and can collapse it again externally", () => {
+    it("opens one segment without opening its neighbours, and the same header closes it again", () => {
         const { container } = render(<Harness level="message_segment" />)
-        expect(screen.getAllByTestId("activity-fold-header")).toHaveLength(2)
-        fireEvent.click(screen.getAllByTestId("activity-fold-header")[0])
-        expect(screen.getAllByTestId("activity-fold-header")).toHaveLength(1)
-        expect(container.querySelector('[data-row-ts="10"] [data-fold-id]')).toBeNull()
-        expect(container.querySelector('[data-fold-id="segment:33"]')).not.toBeNull()
+        const headers = () => screen.getAllByTestId("activity-fold-header")
+        expect(headers()).toHaveLength(2)
+        fireEvent.click(headers()[0])
+        // Both blocks keep their header; only the clicked one is open.
+        expect(headers()).toHaveLength(2)
+        expect(headers()[0]).toHaveAttribute("aria-expanded", "true")
+        expect(headers()[1]).toHaveAttribute("aria-expanded", "false")
+        expect(container.querySelector('[data-fold-id="segment:10"] [data-testid="activity-fold-children"]')).not.toBeNull()
+        expect(container.querySelector('[data-fold-id="segment:33"] [data-testid="activity-fold-children"]')).toBeNull()
+        // Clicking the same header again closes what it opened.
+        fireEvent.click(headers()[0])
+        expect(headers()).toHaveLength(2)
+        expect(headers()[0]).toHaveAttribute("aria-expanded", "false")
         fireEvent.click(screen.getByRole("button", { name: "Collapse all" }))
-        expect(screen.getAllByTestId("activity-fold-header")).toHaveLength(2)
+        for (const header of headers()) expect(header).toHaveAttribute("aria-expanded", "false")
     })
 })

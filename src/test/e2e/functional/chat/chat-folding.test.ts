@@ -10,6 +10,7 @@ import type { ElectronApplication } from "playwright"
 
 const LABELS = {
     none: "Standard (no folding)",
+    round: "Fold activity within each request round",
     message_segment: "Fold activity between messages",
     user_turn: "Fold the whole turn into one block",
 } as const
@@ -150,9 +151,12 @@ e2e(
             await chooseLevel(page, sidebar, dlineDir, "none")
             const baseline = [0, 2, 4, 5, 7, 8, 10, 12, 14, 16].map((offset) => String(base + offset))
             await expect.poll(() => renderedOrder(sidebar)).toEqual(baseline)
-            for (const level of ["message_segment", "user_turn"] as const) {
+            for (const level of ["round", "message_segment", "user_turn"] as const) {
                 await chooseLevel(page, sidebar, dlineDir, level)
-                const expectedCount = level === "message_segment" ? 4 : 1
+                // `round` keeps one block per request round that holds foldable
+                // activity: the command rounds only. Its reply and phase-report
+                // rounds cut at the assistant message and hold nothing to fold.
+                const expectedCount = level === "message_segment" ? 4 : level === "round" ? 5 : 1
                 await expect(sidebar.getByTestId("activity-fold-header")).toHaveCount(expectedCount)
                 if (level === "message_segment") {
                     for (const offset of [5, 8, 12]) {
@@ -160,12 +164,29 @@ e2e(
                         await expect(row).toBeAttached()
                         expect(await row.evaluate((element) => element.closest("[data-fold-id]") === null)).toBe(true)
                     }
+                } else if (level === "round") {
+                    // Every block holds one request round, so prose and replies keep their own rows.
+                    for (const offset of [5, 8, 12]) {
+                        const row = sidebar.locator(`[data-row-ts="${base + offset}"]`)
+                        await expect(row).toBeAttached()
+                        expect(await row.evaluate((element) => element.closest("[data-fold-id]") === null)).toBe(true)
+                    }
                 } else await expect(sidebar.locator(`[data-message-ts="${base + 5}"]`)).toHaveCount(0)
                 await sidebar.getByRole("button", { name: "Expand all activity", exact: true }).click()
-                await expect(sidebar.locator("[data-fold-id]")).toHaveCount(0)
-                await expect.poll(() => renderedOrder(sidebar)).toEqual(baseline)
+                // Every block keeps its row and header while open, so the reader
+                // can close it again with the same control.
+                await expect(sidebar.locator("[data-fold-id]")).toHaveCount(expectedCount)
+                await expect(sidebar.getByTestId("activity-fold-header")).toHaveCount(expectedCount)
+                for (const header of await sidebar.getByTestId("activity-fold-header").all())
+                    await expect(header).toHaveAttribute("aria-expanded", "true")
+                // Every block draws its members; they are not promoted to top-level rows,
+                // which is why the header stays available to close them again.
+                await expect(sidebar.locator('[data-testid="activity-fold-children"]')).toHaveCount(expectedCount)
                 await sidebar.getByRole("button", { name: "Collapse all activity", exact: true }).click()
                 await expect(sidebar.getByTestId("activity-fold-header")).toHaveCount(expectedCount)
+                for (const header of await sidebar.getByTestId("activity-fold-header").all())
+                    await expect(header).toHaveAttribute("aria-expanded", "false")
+                await expect(sidebar.locator('[data-testid="activity-fold-children"]')).toHaveCount(0)
             }
             // Reopening clears ephemeral expansion, but the canonical user choice persists.
             await sidebar.getByRole("button", { name: "Expand all activity", exact: true }).click()
@@ -217,6 +238,57 @@ e2e(
             const consumptions = server.getMockConsumptions("openai-compatible-chat")
             expect(consumptions).toHaveLength(1)
             for (const consumption of consumptions) expect(consumption.contractError).toBeUndefined()
+            await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+        } finally {
+            await app.close()
+        }
+    },
+)
+
+/**
+ * The reviewed block behaviour: a header is drawn whether its block is open or
+ * closed, so the same control closes what it opened. Before the fix the header
+ * left the list with the block, and only the bulk control could close anything.
+ */
+e2e(
+    "Folding - one header opens its block and closes it again",
+    async ({ dlineDir, dlineDocsDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+        e2e.setTimeout(180_000)
+        const task = "E2E_FOLDING_TOGGLE"
+        const before = await taskIds(dlineDocsDir)
+        server.resetOpenAiMock()
+        server.enqueueOpenAiResponses({ type: "tool", name: "attempt_completion", arguments: { result: "FOLDING_TOGGLE_SEED" } })
+        const app = await openVSCode(workspaceDir, { DLINE_EXPERIMENTAL_AGGRESSIVE_RENDERING: "true" })
+        try {
+            const { page, sidebar } = await openSidebar(app, helper)
+            await send(sidebar, task)
+            await expect(sidebar.getByText("FOLDING_TOGGLE_SEED", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+            const taskId = await E2ETestHelper.waitForValue(
+                async () => (await taskIds(dlineDocsDir)).find((id) => !before.includes(id)),
+                30_000,
+            )
+            await closeTask(sidebar, dlineDocsDir, taskId)
+            const base = Date.now()
+            await rewriteTaskUiMessages(dlineDocsDir, taskId, () => fixtureTurn(base, task, true))
+            await reopen(sidebar, task)
+            await chooseLevel(page, sidebar, dlineDir, "user_turn")
+
+            const header = sidebar.getByTestId("activity-fold-header")
+            await expect(header).toHaveCount(1)
+            const closedLabel = await header.textContent()
+
+            await header.click()
+            // The block is open: its members are drawn beneath the header.
+            await expect(header).toHaveCount(1)
+            await expect(header).toHaveAttribute("aria-expanded", "true")
+            await expect(sidebar.locator(`[data-message-ts="${base + 5}"]`)).toBeVisible({ timeout: 30_000 })
+
+            await header.click()
+            // The same control closes it and the header keeps stating what it holds.
+            await expect(header).toHaveCount(1)
+            await expect(header).toHaveAttribute("aria-expanded", "false")
+            await expect(sidebar.locator(`[data-message-ts="${base + 5}"]`)).toHaveCount(0)
+            expect(await header.textContent()).toBe(closedLabel)
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
         } finally {
             await app.close()
@@ -375,7 +447,8 @@ e2e(
             await expect(sidebar.getByText("FOLDING_RESTORE_DONE", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
             await send(sidebar, followup)
             await expect(sidebar.getByText("FOLDING_FOLLOWUP_DONE", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-            // Both turns have a round-start checkpoint, including the completion-only follow-up.
+            // Both turns are expected to have a round-start checkpoint, including the
+            // completion-only follow-up.
             await expect(sidebar.getByTestId("activity-fold-header")).toHaveCount(2)
             const rail = trajectoryRail(sidebar)
             await expect.poll(() => rail.prompts()).toEqual([[task], [followup]])

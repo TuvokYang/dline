@@ -4,7 +4,6 @@ import React from "react"
 import { describe, expect, it, vi } from "vitest"
 import { activeTurnAnchor } from "@/components/chat/trajectory/useActiveTurn"
 import type { MessageHandlers } from "../../types/chatTypes"
-import { projectFoldExpansion } from "../../utils/activityFolds"
 import { isActivityFold } from "../../utils/chatRowKinds"
 import { groupChatRows } from "../../utils/messageUtils"
 import { rowIdentity } from "../../utils/rowCoordinate"
@@ -80,7 +79,7 @@ const unfoldedRowTs = (rows: ChatRow[]) => rows.filter((row) => !isActivityFold(
 
 function renderRows(messages: UiMessage[], expandedFolds: Record<string, boolean>) {
     const rows = turnRows(messages)
-    const displayed = projectFoldExpansion(rows, expandedFolds)
+    const displayed = rows
     const renderRow = createMessageRenderer(
         displayed,
         messages,
@@ -132,7 +131,8 @@ describe("activity folds across a checkpoint restore", () => {
         ])
         expect(roundsOf(rows)["turn:22"]).toBe(2)
         expect(unfoldedRowTs(rows)).toEqual([1, 20, 35, 40, 45])
-        expect(container.querySelector('[data-fold-id="turn:10"]')).toBeNull()
+        // The open block keeps its header and draws its members beneath it.
+        expect(container.querySelector('[data-fold-id="turn:10"]')).not.toBeNull()
         expect(drawnMessageTimestamps(container)).toEqual([1, 10, 12, 20, 35, 40, 45])
         // The activity level cuts at the same restore point.
         expect(foldsOf(groupChatRows(restored, undefined, { level: "message_segment" })).map(({ id }) => id)).toEqual([

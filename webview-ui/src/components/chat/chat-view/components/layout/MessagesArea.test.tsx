@@ -7,7 +7,6 @@ import { getTaskViewKey } from "@/services/task-messages"
 import { useChatState } from "../../hooks/useChatState"
 import { useScrollBehavior } from "../../hooks/useScrollBehavior"
 import type { ChatState, FoldExpansion, MessageHandlers, ScrollBehavior } from "../../types/chatTypes"
-import { projectFoldExpansion } from "../../utils/activityFolds"
 import { groupChatRows } from "../../utils/messageUtils"
 import {
     checkOutFileTree,
@@ -977,10 +976,7 @@ describe("MessagesArea with real folding", () => {
         harness.setMessages = setMessages
         const chatState = useChatState(messages, getTaskViewKey({ taskId: "task-1", taskInstanceId: mocks.taskInstanceId }))
         const folded = React.useMemo(() => groupChatRows(messages, undefined, { level: "user_turn" }), [messages])
-        const groupedMessages = React.useMemo(
-            () => projectFoldExpansion(folded, chatState.expandedFolds),
-            [folded, chatState.expandedFolds],
-        )
+        const groupedMessages = React.useMemo(() => folded, [folded])
         const scroll = useScrollBehavior(
             messages,
             messages,
@@ -1061,14 +1057,15 @@ describe("MessagesArea with real folding", () => {
         openFold("turn:10")
         await settleScrolls()
         expect(bottomScrolls()).toBe(scrolls)
-        expect(fold("turn:10")).toBeNull()
+        // The open block keeps its header, so it can be closed again.
+        expect(header("turn:10")).toHaveAttribute("aria-expanded", "true")
         expect(drawn()).toEqual(expect.arrayContaining([10, 12, 20, 22, 30, 32, 33]))
         const grown = [...followed, userFeedback(51, "And the parser tests.")]
         deliver(grown)
         await settleScrolls()
         expect(bottomScrolls()).toBe(scrolls)
         deliver(grown.map((message) => (message.ts === 33 ? { ...message, commandStatus: "completed", exitCode: 0 } : message)))
-        expect(fold("turn:10")).toBeNull()
+        expect(header("turn:10")).toHaveAttribute("aria-expanded", "true")
         expect(drawn()).toEqual(expect.arrayContaining([10, 12, 20, 22, 30, 32, 33]))
     })
 
@@ -1077,7 +1074,8 @@ describe("MessagesArea with real folding", () => {
         openFold("turn:10")
         expect(drawn()).toEqual(expect.arrayContaining([10, 12, 20, 22, 30, 32, 33]))
         deliver(checkOutFileTree(withCommand33("completed"), "tree-b"))
-        expect(fold("turn:10")).toBeNull()
+        // The open block keeps its header; the restore point it must protect is now drawn inside it.
+        expect(header("turn:10")).toHaveAttribute("aria-expanded", "true")
         expect(drawn()).toEqual(expect.arrayContaining([10, 12, 20]))
         expect(header("turn:22")).toHaveAttribute("aria-expanded", "false")
         expect(drawn()).not.toContain(22)
@@ -1101,7 +1099,8 @@ describe("MessagesArea with real folding", () => {
     it("offers bulk expand and collapse outside the list without changing Standard row order", () => {
         renderChat(twoTurnTranscript)
         fireEvent.click(screen.getByRole("button", { name: "Expand all activity" }))
-        expect(document.querySelectorAll("[data-fold-id]")).toHaveLength(0)
+        // Every block stays, with its header, and draws its members beneath it.
+        expect(document.querySelectorAll("[data-fold-id]")).toHaveLength(2)
         expect(drawn()).toEqual([1, 10, 12, 20, 22, 30, 32, 33, 35, 40, 41, 43, 45])
         fireEvent.click(screen.getByRole("button", { name: "Collapse all activity" }))
         expect(document.querySelectorAll("[data-fold-id]")).toHaveLength(2)
