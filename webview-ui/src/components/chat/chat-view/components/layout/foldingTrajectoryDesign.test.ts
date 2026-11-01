@@ -1,6 +1,6 @@
 import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
-import { isActivityFold, isBrowserSession, isExplorationRun } from "../../utils/chatRowKinds"
+import { isActivityFold, isExplorationRun } from "../../utils/chatRowKinds"
 import { groupChatRows } from "../../utils/messageUtils"
 import { rowIdentity } from "../../utils/rowCoordinate"
 import {
@@ -14,7 +14,7 @@ import {
     userTask,
     workingRespond,
 } from "../messages/activityFoldStoryFixtures"
-import { DESIGN_FOLDING_MODES, designFoldRows, openDesignRows } from "./foldingTrajectoryDesign"
+import { DESIGN_FOLDING_MODES, designFoldRows } from "./foldingTrajectoryDesign"
 import { createFoldingTranscript } from "./foldingTrajectoryStoryFixtures"
 
 const browser = (ts: number, action: string): UiMessage => ({
@@ -35,40 +35,60 @@ const browserTranscript = [
     completion(7, "Inspection complete."),
 ]
 
-const allOpen = (rows: (UiMessage | UiMessage[])[]) =>
-    Object.fromEntries(rows.filter(isActivityFold).map((row) => [row._activityFoldId, true]))
-
-function expectOriginalRows(actual: (UiMessage | UiMessage[])[], expected: (UiMessage | UiMessage[])[]) {
-    expect(actual).toHaveLength(expected.length)
-    actual.forEach((row, index) => {
-        expect(row).toBe(expected[index])
-    })
+/** Every message the rows draw, in order, so nothing is lost or reordered by folding. */
+function drawnTimestamps(rows: readonly (UiMessage | UiMessage[])[]): number[] {
+    return rows.flatMap((row) => (Array.isArray(row) ? row : [row]).map((message) => message.ts))
 }
 
+const foldMembers = (rows: readonly (UiMessage | UiMessage[])[]) =>
+    rows.filter(isActivityFold).map((fold) => fold.map((message) => message.ts))
+
 describe("Storybook folding design", () => {
-    // Catches dropping, reordering, cloning or regrouping Standard rows, including tagged groups.
+    // Catches dropping, reordering or duplicating rows.
     for (const level of ["message_segment", "user_turn"] as const) {
         for (const [name, messages] of [
             ["finished", finishedTurnTranscript],
             ["live / failed / checked-out", multiTurnTranscript],
             ["browser", browserTranscript],
         ] as const) {
-            it(`${level} fully opens to the original ${name} Standard rows, not nested fold renderers`, () => {
+            it(`${level} keeps every ${name} row exactly once, in order`, () => {
                 const standard = groupChatRows([...messages], undefined, { level: "none" })
-                const proposed = designFoldRows([...messages], standard, level)
-                expect(proposed.some(isActivityFold)).toBe(true)
-                expectOriginalRows(openDesignRows(proposed, allOpen(proposed)), standard)
-                for (const fold of proposed.filter(isActivityFold)) {
-                    expect(fold._children.some(isActivityFold)).toBe(false)
-                    fold._children.forEach((child) => {
-                        expect(standard.includes(child)).toBe(true)
-                    })
-                }
+                const folded = designFoldRows([...messages], standard, level)
+                const drawn = drawnTimestamps(folded)
+                expect(drawn).toEqual(drawnTimestamps(standard))
+                expect(new Set(drawn).size).toBe(drawn.length)
             })
         }
     }
 
-    it("message-segment blocks stop at communication and user boundaries without moving those rows", () => {
+    // The defect the review is about: a row that reports several request rounds.
+    for (const level of ["message_segment", "user_turn"] as const) {
+        it(`${level} never draws an exploration run that spans request rounds`, () => {
+            const messages = createFoldingTranscript(2)
+            const standard = groupChatRows(messages, undefined, { level: "none" })
+            const folded = designFoldRows(messages, standard, level)
+            expect(folded.some(isExplorationRun)).toBe(false)
+            expect(folded.some((row) => isActivityFold(row) && row._roundCount > (level === "user_turn" ? 99 : 1))).toBe(false)
+        })
+    }
+
+    it("message level keeps every block inside one request round", () => {
+        const messages = createFoldingTranscript(2)
+        const standard = groupChatRows(messages, undefined, { level: "none" })
+        const folds = designFoldRows(messages, standard, "message_segment").filter(isActivityFold)
+        expect(folds.length).toBeGreaterThan(0)
+        for (const fold of folds) expect(fold._roundCount).toBe(1)
+    })
+
+    it("turn level merges the rounds of one turn into a single block", () => {
+        const messages = finishedTurnTranscript
+        const standard = groupChatRows(messages, undefined, { level: "none" })
+        const folds = designFoldRows(messages, standard, "user_turn").filter(isActivityFold)
+        expect(folds).toHaveLength(1)
+        expect(folds[0]._roundCount).toBeGreaterThan(1)
+    })
+
+    it("message-segment blocks stop at communication and user boundaries", () => {
         const messages = [
             userTask(1, "Run the checks"),
             finishedRequest(2),
@@ -84,12 +104,8 @@ describe("Storybook folding design", () => {
         const standard = groupChatRows(messages, undefined, { level: "none" })
         const proposed = designFoldRows(messages, standard, "message_segment")
         expect(proposed.map(rowIdentity)).toEqual(["1", "segment:3", "4", "segment:5", "6", "7", "segment:9", "10"])
-        const folds = proposed.filter(isActivityFold)
-        expect(folds.map((fold) => fold.map((message) => message.ts))).toEqual([[3], [5], [9]])
-        const partial = openDesignRows(proposed, { [folds[0]._activityFoldId]: true })
-        expect(partial.map(rowIdentity)).toEqual(["1", "3", "4", "segment:5", "6", "7", "segment:9", "10"])
-        expect(partial[1]).toBe(standard[1])
-        expect(partial[2]).toBe(standard[2])
+        // Every fold holds activity only; the Reply row stays its own row.
+        expect(foldMembers(proposed)).toEqual([[3], [5], [9]])
     })
 
     for (const hasToolBetweenMessages of [false, true]) {
@@ -113,10 +129,8 @@ describe("Storybook folding design", () => {
             expect(proposed.map(rowIdentity)).toEqual(
                 hasToolBetweenMessages ? ["1", "3", "segment:4", "5", "6"] : ["1", "3", "5", "6"],
             )
-            expect(proposed.filter(isActivityFold).map((fold) => fold.map((message) => message.ts))).toEqual(
-                hasToolBetweenMessages ? [[4]] : [],
-            )
-            expectOriginalRows(openDesignRows(proposed, allOpen(proposed)), standard)
+            expect(foldMembers(proposed)).toEqual(hasToolBetweenMessages ? [[4]] : [])
+            expect(drawnTimestamps(proposed)).toEqual(drawnTimestamps(standard))
         })
     }
 
@@ -142,10 +156,12 @@ describe("Storybook folding design", () => {
             const standard = groupChatRows(messages, undefined, { level: "none" })
             const proposed = designFoldRows(messages, standard, mode)
             if (mode === "message_segment") {
+                // Each request round is its own block: 4 and 6 no longer share one.
                 expect(proposed.map(rowIdentity)).toEqual([
                     "1",
                     "3",
                     "segment:4",
+                    "segment:6",
                     "7",
                     "segment:8",
                     "9",
@@ -155,22 +171,13 @@ describe("Storybook folding design", () => {
                     "segment:14",
                     "15",
                 ])
-                // No message separates requests 2 and 5, so their commands stay in one block.
-                expect(proposed.filter(isActivityFold).map((fold) => fold.map((message) => message.ts))).toEqual([
-                    [4, 6],
-                    [8],
-                    [10],
-                    [14],
-                ])
+                expect(foldMembers(proposed)).toEqual([[4], [6], [8], [10], [14]])
             } else {
                 expect(proposed.map(rowIdentity)).toEqual(["1", "turn:3", "11", "12", "turn:14", "15"])
-                // The original whole-turn policy does not split at plain text, Reply or Phase report.
-                expect(proposed.filter(isActivityFold).map((fold) => fold.map((message) => message.ts))).toEqual([
-                    [3, 4, 6, 7, 8, 9, 10],
-                    [14],
-                ])
+                // The turn level keeps the assistant message inside the turn's block.
+                expect(foldMembers(proposed)).toEqual([[3, 4, 6, 7, 8, 9, 10], [14]])
             }
-            expectOriginalRows(openDesignRows(proposed, allOpen(proposed)), standard)
+            expect(drawnTimestamps(proposed)).toEqual(drawnTimestamps(standard))
         })
     }
 
@@ -206,27 +213,19 @@ describe("Storybook folding design", () => {
     })
 
     for (const mode of DESIGN_FOLDING_MODES) {
-        it(`the actual ${mode} story fixture opens back to the same Standard rows`, () => {
+        it(`the actual ${mode} story fixture draws every Standard message once`, () => {
             const messages = createFoldingTranscript(2)
             const standard = groupChatRows(messages, undefined, { level: "none" })
             const proposed = designFoldRows(messages, standard, mode)
-            expectOriginalRows(openDesignRows(proposed, allOpen(proposed)), standard)
+            expect(drawnTimestamps(proposed)).toEqual(drawnTimestamps(standard))
         })
     }
 
-    it("retains the original exploration and browser group objects, including their internal metadata", () => {
-        for (const [messages, guard] of [
-            [finishedTurnTranscript, isExplorationRun],
-            [browserTranscript, isBrowserSession],
-        ] as const) {
-            const standard = groupChatRows(messages, undefined, { level: "none" })
-            const groups = standard.filter(guard)
-            expect(groups.length).toBeGreaterThan(0)
-            const proposed = designFoldRows(messages, standard, "message_segment")
-            const open = openDesignRows(proposed, allOpen(proposed))
-            groups.forEach((group) => {
-                expect(open.find((row) => row === group)).toBe(group)
-            })
-        }
+    it("never turns a browser row into an exploration run", () => {
+        const standard = groupChatRows(browserTranscript, undefined, { level: "none" })
+        const proposed = designFoldRows(browserTranscript, standard, "message_segment")
+        // Only read-only exploration runs are split by round; a browser card is left alone.
+        expect(proposed.some(isExplorationRun)).toBe(false)
+        expect(drawnTimestamps(proposed)).toEqual(drawnTimestamps(standard))
     })
 })

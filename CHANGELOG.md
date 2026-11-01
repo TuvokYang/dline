@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Added
+- 新增 OpenCode 服务商：一个 Profile 即可覆盖其付费文本模型，支持按量余额与 Go、Go Plus、Go Teams 订阅；同一模型可用 OpenAI Chat Completions、OpenAI Responses 或 Anthropic Messages 三种协议访问。声明的 Plan 决定 Profile 读取哪份模型目录与价格，网关会为它未原生接收的协议做转换
+- 新增灰度控制的 Away Mode：在 Settings → Features → Experimental 开启后，用 `/away` 加任务正文让当前任务继续工作；可独立开启自动进入，新问题十分钟无人回答后进入。底栏 Stop Away Mode 只退出模式，不取消运行中的命令或请求，也不读取或清空草稿；发送正常内容或关闭主设置同样退出，下一次正常模型请求附带独立退出通知。Away 中的问题自动反馈，项目内命令免审批，项目外工作目录命令仍需人工审批，一分钟无人处理则拒绝；这不是 shell 副作用沙箱，原有权限、禁用、ignore 和 hook 约束保持有效。两个用户选项默认关闭，关闭主设置保留自动选项的选择
+
 ### Changed
 - Aggressive rendering 提供三档：标准展示、按消息间隔折叠活动、按整用户回合折叠。第二档遇普通消息、Reply 或 Phase report 断开，消息之间的活动可跨多个模型请求合并；第三档跨这些消息合并整个用户回合。三档共用原分组与消息渲染，全部展开后恢复标准行顺序和布局，不再保留额外的轮次标题或缩进；支持批量展开与收起，进行中、失败、当前审批及已检出的检查点保持可见。灰度关闭时保留用户选择，旧设置值兼容读取
 

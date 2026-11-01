@@ -233,7 +233,7 @@ function checkInterLevelDeclared(coarse, fine, context) {
     // New lifetime scopes may not appear below L0.
     for (const subgraph of fine.subgraphs) {
         const known = coarse.subgraphs.some((candidate) => normalize(candidate.label) === normalize(subgraph.label))
-        if (!known && coarseLayer > 0) {
+        if (!known) {
             findings.push({
                 ...finding(
                     "unverifiable",
@@ -247,7 +247,7 @@ function checkInterLevelDeclared(coarse, fine, context) {
         }
     }
 
-    for (const nodeId of declared) {
+    for (const nodeId of context?.coverageCheckedAtSet ? [] : declared) {
         if (coarse.noteNodes.has(nodeId)) continue
         if ([...resolved.values()].includes(nodeId)) continue
         findings.push({
@@ -261,6 +261,68 @@ function checkInterLevelDeclared(coarse, fine, context) {
         })
     }
 
+    return findings
+}
+
+// Coverage is a property of the declared refinement set. A selective view need
+// not repeat every sibling view, but both nodes and relationships need witnesses.
+// Inferred pairs cannot discharge an explicit coverage obligation.
+export function checkRefinementCoverage(diagrams, pairs) {
+    const findings = []
+    for (const coarse of diagrams) {
+        if (!pairs.some((pair) => pair.coarse === coarse)) continue
+        const descendants = new Set()
+        const pending = [coarse]
+        for (let index = 0; index < pending.length; index++) {
+            for (const pair of pairs) {
+                if (!pair.declared || pair.coarse !== pending[index] || descendants.has(pair.fine)) continue
+                descendants.add(pair.fine)
+                pending.push(pair.fine)
+            }
+        }
+        for (const node of coarse.nodes.values()) {
+            if (coarse.noteNodes.has(node.id)) continue
+            const covered = [...descendants].some((fine) =>
+                [...fine.nodes.values()].some(
+                    (candidate) =>
+                        !fine.localOnly.has(candidate.id) &&
+                        !fine.noteNodes.has(candidate.id) &&
+                        resolveNode(candidate, coarse, fine).node?.id === node.id,
+                ),
+            )
+            if (!covered)
+                findings.push(
+                    finding(
+                        "not-checked",
+                        coarse,
+                        node,
+                        "coarse-node-not-refined",
+                        `${coarse.layer} node ${node.id} has no node in any declared descendant refinement`,
+                    ),
+                )
+        }
+        for (const edge of coarse.edges) {
+            if (coarse.noteNodes.has(edge.from) || coarse.noteNodes.has(edge.to)) continue
+            const covered = [...descendants].some((fine) => {
+                const mapped = [...fine.nodes.values()]
+                    .filter((node) => !fine.localOnly.has(node.id) && !fine.noteNodes.has(node.id))
+                    .map((node) => ({ id: node.id, parent: resolveNode(node, coarse, fine).node?.id }))
+                const sources = mapped.filter((node) => node.parent === edge.from).map((node) => node.id)
+                const targets = mapped.filter((node) => node.parent === edge.to).map((node) => node.id)
+                return hasRefinementPath(fine, sources, targets, edge.style)
+            })
+            if (!covered)
+                findings.push(
+                    finding(
+                        "unverifiable",
+                        coarse,
+                        edge,
+                        "coarse-edge-not-refined",
+                        `${coarse.layer} ${edge.style} edge ${edge.from} -> ${edge.to} has no nonzero same-style path in any declared descendant refinement`,
+                    ),
+                )
+        }
+    }
     return findings
 }
 

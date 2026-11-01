@@ -3,6 +3,7 @@ import { ApiFormat, type ThinkingConfig } from "@shared/proto/dline/models/metad
 import { type ImageGenerationProfile, ImageGenerationSource } from "@shared/proto/dline/profile"
 import { AnthropicProviderConfig } from "@shared/proto/dline/provider/anthropic"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
+import { readCurrency, readPriceSet } from "@shared/providers/pricing-shape"
 import { PROFILE_PROVIDER_KEYS, resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import { clampThinkingBudget, resolveThinkingBudgetBounds } from "@shared/providers/thinking-budget"
 import type { Mode } from "@shared/storage/types"
@@ -14,7 +15,7 @@ import { ProfileField, ProfileForm, ProfileSection } from "../profile-ui"
 import { formatDeepSeekThinkingSummary } from "./deepseek-thinking"
 import { ProfileCapabilityIcons } from "./ProfileCapabilityIcons"
 import { ProfileUsageBadges } from "./ProfileUsageBadges"
-import type { ApiProfile } from "./ProviderProfile"
+import { type ApiProfile, defaultProviderConfig } from "./ProviderProfile"
 import ApiProfileEditor from "./ProviderProfileEditor"
 import { getCachedProviderDefaultImageModelId, getCachedProviderDefaultModelId, useProviderModels } from "./useProviderModels"
 import { WebToolsModeControl } from "./WebToolsModeControl"
@@ -143,11 +144,10 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
         if (mi.capabilities?.contextWindow)
             tooltipLines.push(`Context: ${mi.capabilities?.contextWindow.toLocaleString()} tokens`)
         if (mi.capabilities?.maxTokens) tooltipLines.push(`Max output: ${mi.capabilities.maxTokens.toLocaleString()} tokens`)
-        if (mi.pricing?.inputPrice != null) {
-            const currencySymbol = getCurrencySymbol(mi.pricing.currency)
-            tooltipLines.push(
-                `In: ${currencySymbol}${mi.pricing.inputPrice}/M | Out: ${currencySymbol}${mi.pricing.outputPrice ?? "?"}/M`,
-            )
+        if (mi.pricing?.metered?.strategy?.flat) {
+            const rates = readPriceSet(mi.pricing.metered.strategy.flat.prices)
+            const currencySymbol = getCurrencySymbol(readCurrency(mi.pricing) ?? "USD")
+            tooltipLines.push(`In: ${currencySymbol}${rates.inputPrice}/M | Out: ${currencySymbol}${rates.outputPrice}/M`)
         }
         if (mi.capabilities?.supportsReasoning)
             tooltipLines.push(`Reasoning: ${mi.capabilities?.thinking?.effortLevels?.join(", ") || "supported"}`)
@@ -257,6 +257,7 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
                                 if (e.target.value === "anthropic") {
                                     updates.anthropic = AnthropicProviderConfig.create({ enableLongContext: true })
                                 }
+                                Object.assign(updates, defaultProviderConfig(provider))
                                 onUpdate(updates)
                             }}
                             value={profile.provider}>

@@ -1,6 +1,12 @@
 import { estimateContextValueBreakdown } from "@core/context/context-management/context-window-projection"
 import type { ClineStorageMessage } from "@shared/messages/content"
-import { mistakeLimit, type TaskState, type TurnContinuationReason } from "../../kernel"
+import {
+    mistakeLimit,
+    type RoundMaterialPlan,
+    roundMaterialReceipt,
+    type TaskState,
+    type TurnContinuationReason,
+} from "../../kernel"
 import type { ConversationJournal, JournalWatermark } from "../../stores"
 import type { TaskPayloadStore } from "../../stores/contracts"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
@@ -16,6 +22,7 @@ import type {
 import type { ComposePort, ComposeRoundInput, ComposeRoundResult } from "./ComposeCommandExecutor"
 import { type RetainedBatchReceipt, RetainedInputJournalBatch } from "./RetainedInputJournalBatch"
 import type { RetainedInputPresentationCommit, RetainedInputPresentationPort } from "./RetainedInputPresentationPort"
+import { RoundMaterialComposer } from "./RoundMaterialComposer"
 import { materializeToolTerminalManifest, type ToolDenialPort } from "./ToolTerminalManifestMaterializer"
 
 /** Why a round opened only to carry out lifecycle commands, such as a bare `/compact`, settled without a request. */
@@ -155,16 +162,19 @@ export interface ProductionComposeAdapterOptions {
     readonly conversation?: ComposeConversationPort
     /** Words a user's refusal as the refused tool does; absent, refusals keep the generic wording. */
     readonly toolDenial?: ToolDenialPort
+    readonly subagentsAvailable?: (signal: AbortSignal) => Promise<boolean>
 }
 
 /** Materializes admitted intake entries into one immutable provider draft. */
 export class ProductionComposeAdapter implements ComposePort {
     private readonly retainedBatches: RetainedInputJournalBatch
+    private readonly materials: RoundMaterialComposer
     /** Journal position the last draft of this session fixed, which the last request carried. */
     private draftedThrough: JournalWatermark | undefined
 
     constructor(private readonly options: ProductionComposeAdapterOptions) {
         this.retainedBatches = new RetainedInputJournalBatch(options.payloads, options.journal)
+        this.materials = new RoundMaterialComposer(options.payloads, options.journal)
     }
 
     async preparePresentation(input: ComposeRoundInput): Promise<RetainedInputPresentationCommit | undefined> {
@@ -179,6 +189,7 @@ export class ProductionComposeAdapter implements ComposePort {
     }
 
     async rollbackRetainedQueue(input: ComposeRoundInput): Promise<"released"> {
+        if (input.composeCommandId) await this.materials.discardAttempt(input.composeCommandId)
         if (!input.queueDelivery) return "released"
         const evidence = await this.retainedBatches.inspect(input.queueDelivery.deliveryId)
         if (evidence.kind === "absent" || evidence.kind === "retracted") return "released"
@@ -191,6 +202,10 @@ export class ProductionComposeAdapter implements ComposePort {
 
     async compose(input: ComposeRoundInput): Promise<ComposeRoundResult> {
         if (input.signal.aborted) throw input.signal.reason
+        if (input.composeCommandId) {
+            const prepared = await this.materials.prepared(input.composeCommandId)
+            if (prepared) return prepared
+        }
         const admitted = [...this.admittedEntries(input), ...(input.respondedQueue?.entries ?? [])]
         const inputs = await this.userInputsOf(admitted)
         const lifecycle = inputs.flatMap((payload) => (payload.lifecycle ? [payload.lifecycle] : []))
@@ -232,6 +247,10 @@ export class ProductionComposeAdapter implements ComposePort {
         // Read again: the compaction advanced the revision this round is keyed by.
         const state = this.options.readState()
         const entries = this.admittedEntries(input)
+        if (input.freezeMaterial) {
+            const plan = await input.freezeMaterial()
+            return this.composeMaterialPlan(input, plan, entries)
+        }
 
         await this.appendContinuation(input, state)
         // Tool feedback carries its model text in the paired result. These original
@@ -299,6 +318,70 @@ export class ProductionComposeAdapter implements ComposePort {
                           journalWatermark: queueReceipt.watermark,
                       },
                   }),
+        }
+    }
+
+    private async composeMaterialPlan(
+        input: ComposeRoundInput,
+        plan: RoundMaterialPlan,
+        entries: ReturnType<ProductionComposeAdapter["admittedEntries"]>,
+    ): Promise<ComposeRoundResult> {
+        try {
+            await this.appendContinuation(input, this.options.readState())
+            await this.materials.appendBody(plan, input.signal)
+            let queueJournalReceipt
+            if (input.queueDelivery) {
+                const receipt = await this.retainedBatches.stage({
+                    deliveryId: input.queueDelivery.deliveryId,
+                    entries: entries
+                        .filter((entry) => entry.queue !== undefined)
+                        .map(({ entryId, payloadRef }) => ({ entryId, payloadRef })),
+                    generation: input.queueDelivery.generation,
+                    turnId: input.turnId,
+                    signal: input.signal,
+                    roundMaterialOwned: true,
+                })
+                queueJournalReceipt = {
+                    deliveryId: receipt.deliveryId,
+                    entries: receipt.entries,
+                    journalWatermark: receipt.watermark,
+                }
+            }
+            const environment = await this.options.environment?.render({ turnId: input.turnId, signal: input.signal })
+            const admission = (await this.options.contextWindowGuard?.admit({ signal: input.signal, environment })) ?? {
+                kind: "ready" as const,
+                environment,
+            }
+            if (admission.kind !== "ready") {
+                await this.materials.discard(plan)
+                return admission.kind === "withdrawn" ? { withdrawn: { reason: admission.reason } } : { failed: admission }
+            }
+            const subagentsAvailable = plan.activeAway
+                ? ((await this.options.subagentsAvailable?.(input.signal)) ?? false)
+                : false
+            await this.materials.appendTail(plan, admission.environment, subagentsAvailable, input.signal)
+            input.signal.throwIfAborted()
+            const result = await this.materials.prepare(
+                input.composeCommandId!,
+                {
+                    kind: "provider_draft",
+                    turnId: input.turnId,
+                    admittedEntryIds: input.admittedEntryIds,
+                    inputPayloadRefs: [...new Set(plan.inputs.map((item) => item.payloadRef))],
+                    ...(input.continuation ? { continuation: input.continuation } : {}),
+                    materialPlan: plan,
+                    materialReceipt: roundMaterialReceipt(plan),
+                },
+                queueJournalReceipt,
+            )
+            const draft = decodeTaskPayload<ProviderDraftEnvelope>(await this.options.payloads.read(result.draftRef))
+            this.draftedThrough = draft.journalThrough
+            return result
+        } catch (error) {
+            const prepared = await this.materials.prepared(input.composeCommandId!)
+            if (prepared) return prepared
+            await this.materials.discard(plan)
+            throw error
         }
     }
 

@@ -90,6 +90,12 @@ export const BASE_SLASH_COMMANDS: SlashCommand[] = [
         section: "default",
         cliCompatible: true,
     },
+    {
+        name: "away",
+        description: "Continue this task while you are away",
+        section: "default",
+        cliCompatible: true,
+    },
 ]
 
 // VS Code-only slash commands

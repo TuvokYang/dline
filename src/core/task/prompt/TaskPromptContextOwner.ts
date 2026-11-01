@@ -19,6 +19,7 @@ import type { StateManager } from "@core/storage/StateManager"
 import { isMultiRootEnabled } from "@core/workspace/multi-root-utils"
 import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
 import { DEFAULT_LANGUAGE_SETTINGS, getLanguageKey, type LanguageDisplay } from "@shared/Languages"
+import type { ApiFormat } from "@shared/proto/dline/models/metadata"
 import { resolvePromptProfile } from "@shared/resolve-prompt-profile"
 import type { Mode } from "@shared/storage/types"
 import { serializeTaskCapabilityToggles, type TaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
@@ -70,6 +71,7 @@ export class TaskPromptContextOwner {
         providerInfo: Readonly<ApiProviderInfo>,
         webToolsEnabled: boolean,
         webSearchRoutingPlan: WebSearchRoutingPlan,
+        selectedApiFormat?: ApiFormat,
     ): Promise<SystemPromptContext> {
         const startedAt = performance.now()
         let stageStartedAt = startedAt
@@ -256,6 +258,10 @@ export class TaskPromptContextOwner {
             workspaceRoots,
             isSubagentRun: false,
             isCliEnvironment,
+            // The request already resolved its wire protocol. Carrying it here keeps
+            // tool schemas, hosted tool routing and the prompt cache on one fact
+            // instead of three inferences from the provider name.
+            ...(selectedApiFormat === undefined ? {} : { selectedApiFormat }),
             enableNativeToolCalls: this.options.runtime.shouldUseNativeToolCalls(providerInfo),
             mcpToolsOnDemand: this.options.stateManager.getGlobalSettingsKey("mcpToolsOnDemandEnabled") === true,
             enableParallelToolCalling: this.options.runtime.resolveParallelToolCallingEnabled(providerInfo),

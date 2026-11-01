@@ -1,15 +1,27 @@
 import type { UiMessage } from "@shared/ExtensionMessage"
 import {
+    completion,
+    failedCommand,
+    failedEdit,
     finishedCommand,
     finishedRequest,
     finishedTurnTranscript,
     restorePoint,
+    subagentBatch,
+    userFeedback,
     workingRespond,
 } from "../messages/activityFoldStoryFixtures"
 
-/** A working update precedes execution; a phase report follows its result in a later request. */
-export function createFoldingTranscript(turnCount: number): UiMessage[] {
-    return Array.from({ length: turnCount }, (_, index) => {
+/**
+ * A working update precedes execution; a phase report follows its result in a
+ * later request.
+ *
+ * `withFailures` appends a turn whose edit, command and subagent batch all
+ * failed, so a story can show the error counts a block reports instead of only
+ * successful work.
+ */
+export function createFoldingTranscript(turnCount: number, withFailures = false): UiMessage[] {
+    const turns = Array.from({ length: turnCount }, (_, index) => {
         const offset = 1_000 + index * 100
         const messages = finishedTurnTranscript.map((message) => ({ ...message, ts: offset + message.ts }))
         messages[0] = {
@@ -42,4 +54,21 @@ export function createFoldingTranscript(turnCount: number): UiMessage[] {
         )
         return messages
     }).flat()
+    return withFailures ? [...turns, ...failedTurn(turnCount)] : turns
+}
+
+/** One finished turn whose edit, command and subagent batch all failed. */
+function failedTurn(index: number): UiMessage[] {
+    const offset = 1_000 + index * 100
+    return [
+        userFeedback(offset + 1, "Turn with failures: retry the checks that did not pass"),
+        restorePoint(offset + 10, "files-failed"),
+        finishedRequest(offset + 11),
+        failedEdit(offset + 12, "src/broken.ts"),
+        failedEdit(offset + 13, "src/also-broken.ts"),
+        failedCommand(offset + 14, "npm run test", 2),
+        subagentBatch(offset + 15, "failed", 2),
+        finishedRequest(offset + 16),
+        completion(offset + 17, "Three failures were reported."),
+    ]
 }

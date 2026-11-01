@@ -1,37 +1,41 @@
 import type { ModelPricing } from "@shared/api"
 import { UiMessage } from "@shared/ExtensionMessage"
+import { readBands, readPriceSet } from "@shared/providers/pricing-shape"
 import { COLOR_BEIGE, COLOR_BLUE, COLOR_DARK_GRAY, COLOR_GRAY, COLOR_GREEN, COLOR_PURPLE, COLOR_WHITE } from "../colors"
 
 export { formatTokenMetric } from "@/utils/format"
 
 const isNonZeroPrice = (price: number | undefined): boolean => price !== undefined && price !== 0
 
+/**
+ * True when the model publishes at least one rate above zero.
+ *
+ * Any non-zero rate is enough for the header to show a price, whether it sits in
+ * a flat rate, in one token band, or in one peak/off-peak rate. A plan or a free
+ * model publishes no per-token rate at all, so it has nothing to display here.
+ */
 export const hasNonZeroModelPricing = (pricing: ModelPricing | undefined): boolean => {
-    if (!pricing) {
+    const strategy = pricing?.metered?.strategy
+    if (!strategy) {
         return false
     }
 
-    if (
-        [
-            pricing.inputPrice,
-            pricing.outputPrice,
-            pricing.cacheWritesPrice,
-            pricing.cacheReadsPrice,
-            pricing.thinkingOutputPrice,
-        ].some(isNonZeroPrice)
-    ) {
-        return true
-    }
+    const timeOfDay = strategy.timeOfDay
+    const rateSets = [
+        strategy.flat?.prices,
+        ...readBands(pricing).map((band) => band.prices),
+        timeOfDay?.defaultPrices,
+        ...(timeOfDay?.defaultBands?.bands ?? []).map((band) => band.prices),
+        ...(timeOfDay?.timeWindows ?? []).flatMap((window) => [
+            window.prices,
+            ...(window.bands?.bands ?? []).map((band) => band.prices),
+        ]),
+    ]
 
-    if (
-        (pricing.tiers ?? []).some((tier) =>
-            [tier.inputPrice, tier.outputPrice, tier.cacheWritesPrice, tier.cacheReadsPrice].some(isNonZeroPrice),
-        )
-    ) {
-        return true
-    }
-
-    return (pricing.thinkingOutputPriceTiers ?? []).some((tier) => isNonZeroPrice(tier.price))
+    return rateSets.some((prices) => {
+        const rates = readPriceSet(prices)
+        return [rates.inputPrice, rates.outputPrice, rates.cacheWritePrice, rates.cacheReadPrice].some(isNonZeroPrice)
+    })
 }
 
 /**

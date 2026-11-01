@@ -1,5 +1,7 @@
 import fs from "node:fs/promises"
 import path from "node:path"
+import { WorkspacePathAdapter } from "@core/workspace/WorkspacePathAdapter"
+import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
 
 export interface ResolvedCommandWorkdirectory {
     path: string
@@ -10,6 +12,39 @@ export interface ResolveCommandWorkdirectoryOptions {
     cwd: string
     requestedPath?: string
     workspaceRoots?: readonly string[]
+}
+
+/** Shared by admission and execution so workspace hints never change permission scope. */
+export async function resolveCommandTarget(options: {
+    cwd: string
+    command: string
+    workdirectory?: string
+    isMultiRootEnabled?: boolean
+    workspaceManager?: WorkspaceRootManager
+}) {
+    const adapter = new WorkspacePathAdapter(options)
+    let actualCommand = options.command
+    let requestedPath = options.workdirectory
+    let workspaceHint: string | undefined
+    if (options.isMultiRootEnabled && options.workspaceManager) {
+        const commandHint = actualCommand.match(/^@(\w+):(.+)$/)
+        if (commandHint) {
+            workspaceHint = commandHint[1]
+            actualCommand = commandHint[2].trim()
+            requestedPath ??= adapter.resolvePath(".", workspaceHint)
+        }
+    }
+    const pathHint = requestedPath?.match(/^@([^:]+):(.*)$/)
+    if (pathHint && options.isMultiRootEnabled && options.workspaceManager) {
+        workspaceHint = pathHint[1]
+        requestedPath = adapter.resolvePath(pathHint[2] || ".", workspaceHint)
+    } else if (requestedPath) requestedPath = adapter.resolvePath(requestedPath)
+    const directory = await resolveCommandWorkdirectory({
+        cwd: options.cwd,
+        requestedPath,
+        workspaceRoots: options.workspaceManager?.getRoots().map((root) => root.path),
+    })
+    return { ...directory, actualCommand, workspaceHint, workspaceHintUsed: workspaceHint !== undefined }
 }
 
 /** Resolve and validate the directory used to execute one command. */

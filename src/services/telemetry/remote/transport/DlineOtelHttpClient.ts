@@ -62,6 +62,15 @@ interface AuthenticatedTelemetryDelivery {
     readonly requestId: string
     /** Exact bytes, sent unchanged on every attempt so a replay is answered as a duplicate (§1.7). */
     readonly body: Uint8Array
+    /**
+     * `User-Agent` frozen when the manifest was created. A replay keeps it even
+     * when a newer build runs, because the service fingerprints a request on the
+     * agent and refuses a body whose `client.version` disagrees with it.
+     * Absent for requests that are not replayed across versions.
+     */
+    readonly userAgent?: string
+    /** `X-Dline-Contract` frozen with the same manifest; defaults to this build's contract. */
+    readonly contract?: string
 }
 
 export interface UsageDelivery extends AuthenticatedTelemetryDelivery {}
@@ -193,7 +202,13 @@ export class DlineOtelHttpClient
     }
 
     sendUsage(delivery: UsageDelivery, signal?: AbortSignal): Promise<WireResponse> {
-        return this.post(USAGE_PATH, deliveryHeaders(delivery, CONTRACT), delivery.body, signal)
+        return this.post(
+            USAGE_PATH,
+            deliveryHeaders(delivery, delivery.contract ?? CONTRACT),
+            delivery.body,
+            signal,
+            delivery.userAgent,
+        )
     }
 
     sendLogs(delivery: DiagnosticDelivery, signal?: AbortSignal): Promise<WireResponse> {
@@ -213,6 +228,7 @@ export class DlineOtelHttpClient
         headers: Record<string, string>,
         body: string | Uint8Array,
         signal: AbortSignal | undefined,
+        userAgent = this.userAgent,
     ): Promise<WireResponse> {
         const deadline = new AbortController()
         const timer = setTimeout(() => deadline.abort(), this.timeoutMs)
@@ -222,7 +238,7 @@ export class DlineOtelHttpClient
             if (signal?.aborted) throw new DlineOtelTransportError("aborted")
             const response = await fetch(new URL(pathname, this.endpoint), {
                 method: "POST",
-                headers: { "User-Agent": this.userAgent, ...headers },
+                headers: { "User-Agent": userAgent, ...headers },
                 // fetch accepts only ArrayBuffer-backed views; the copy is at most one 64 KiB body.
                 body: typeof body === "string" ? body : Uint8Array.from(body),
                 redirect: "error",

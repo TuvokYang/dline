@@ -1,3 +1,4 @@
+import { reconcilePreparedRound } from "../executors/compose/PreparedRoundRecovery"
 import { settleRetainedQueueDeliveries } from "../executors/compose/RetainedQueueSettlement"
 import {
     type Command,
@@ -57,6 +58,7 @@ export interface OpenTaskShellOptions {
     readonly persistence?: TaskPersistenceAssembly
     /** Shows accepted submissions in chat; absent in headless assemblies. */
     readonly inputPresentation?: TaskInputPresentationPort
+    readonly awayConfiguration?: { bind(runtime: TaskRuntime): void; reconcile(): Promise<void> }
     /**
      * Hold recovered commands until `TaskShell.open()`. Set when the opening window does not
      * own the task lock, so recovery cannot write the databases another window is writing.
@@ -205,6 +207,9 @@ function createRuntimeQueueSettlement(
     return {
         settle: async () => {
             let state = runtime.getState()
+            // Termination seals this writer. Keep its checkpoint intact until a
+            // later lock-owning opening hydrates it into a recoverable state.
+            if (state.flow.phase === "terminated") return
             if (restorePending) {
                 restorePending = false
                 try {
@@ -219,6 +224,10 @@ function createRuntimeQueueSettlement(
                     })
                     return
                 }
+            }
+            if (state.flow.compose?.materialPlan) {
+                await reconcilePreparedRound(runtime, state, persistence.payloads, persistence.ports.journal)
+                state = runtime.getState()
             }
             const decisions = await inspectQueueSettlements(state, persistence, diagnostics)
             for (const decision of decisions) {
@@ -294,14 +303,26 @@ export async function openTaskShell(options: OpenTaskShellOptions): Promise<Open
         diagnostics: options.diagnostics,
         restoredOutbox,
         deferRestoredCommands: options.deferRestoredCommands,
+        holdRestoredCommands: options.awayConfiguration !== undefined,
     })
+    options.awayConfiguration?.bind(assembly.runtime)
+    if (assembly.runtime.isWritable() && options.awayConfiguration) {
+        await options.awayConfiguration.reconcile()
+        // The production session releases the bootstrap barrier only after its receivers bind.
+    }
     const retainedQueueSettlement = createRuntimeQueueSettlement(
         assembly.runtime,
         persistence,
         options.diagnostics,
         options.deferRestoredCommands === true,
     )
-    const shell = new TaskShell(assembly.runtime, assembly.halt, options.inputPresentation, retainedQueueSettlement)
+    const shell = new TaskShell(
+        assembly.runtime,
+        assembly.halt,
+        options.inputPresentation,
+        retainedQueueSettlement,
+        options.awayConfiguration,
+    )
     const checkpointRestore = new TaskCheckpointRestoreSuspension(assembly.runtime, retainedQueueSettlement)
     return {
         kind: "ready",

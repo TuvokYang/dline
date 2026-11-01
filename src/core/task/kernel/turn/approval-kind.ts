@@ -81,6 +81,8 @@ export interface ApprovalDecision {
  * that requires workspace knowledge the kernel deliberately does not have.
  */
 export interface PermissionScopeContext {
+    /** Canonical command workspace fact, present only under an effective task Away grant. */
+    awayCommand?: "workspace" | "external"
     /** True when the call's target lies outside every workspace root. */
     isExternalPath?: boolean
     /** True when the command matched the safe-command classifier. */
@@ -360,6 +362,12 @@ export function resolveApprovalKind(input: ApprovalKindInput): ApprovalDecision 
     const scope = resolvePermissionScope(input.toolName, input.context)
     const ceiling = resolveApprovalCeiling(scope, input.ceilings)
 
+    if (tool === KernelToolId.BASH && input.context?.awayCommand)
+        return {
+            kind: input.context.awayCommand === "external" ? "manual" : "none",
+            scope,
+            ceiling: input.context.awayCommand === "external" ? "manual_only" : ceiling,
+        }
     if (ceiling === "manual_only" || forcesManualApproval(tool)) {
         return { kind: "manual", scope, ceiling }
     }

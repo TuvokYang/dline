@@ -27,6 +27,88 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 }
 
 describe("WorkspaceHistoryManager", () => {
+    it("does not serialize one task's write behind another task's", async () => {
+        let cache: HistoryItem[] = []
+        const slow = deferred()
+        const writer = {
+            upsertTaskHistory: vi.fn(async (accepted: HistoryItem) => {
+                // Only the first task is held; the second must not wait for it.
+                if (accepted.id === "task-slow") await slow.promise
+                return accepted
+            }),
+            setCompletionState: vi.fn(async () => undefined),
+            flush: vi.fn(async () => undefined),
+        }
+        const manager = new WorkspaceHistoryManager("workspace", {
+            readCache: () => cache,
+            writeCache: (history) => {
+                cache = history
+            },
+            writer,
+            onError: vi.fn(),
+        })
+
+        await manager.publishMetadata(item({ id: "task-slow" }), manager.beginTask("task-slow"))
+        await manager.publishMetadata(item({ id: "task-fast" }), manager.beginTask("task-fast"))
+
+        // With one workspace-wide chain the fast write could not land until the
+        // slow one settled, so this assertion is what distinguishes the domains.
+        await vi.waitFor(() =>
+            expect(writer.upsertTaskHistory).toHaveBeenCalledWith(expect.objectContaining({ id: "task-fast" })),
+        )
+        expect(writer.upsertTaskHistory).toHaveBeenCalledTimes(2)
+
+        slow.resolve()
+    })
+
+    it("drains every task chain on flush", async () => {
+        let cache: HistoryItem[] = []
+        const pending = [deferred(), deferred()]
+        let releaseIndex = 0
+        const writer = {
+            upsertTaskHistory: vi.fn(async (accepted: HistoryItem) => {
+                const gate = pending[releaseIndex++]
+                if (gate) await gate.promise
+                return accepted
+            }),
+            setCompletionState: vi.fn(async () => undefined),
+            flush: vi.fn(async () => undefined),
+        }
+        const manager = new WorkspaceHistoryManager("workspace", {
+            readCache: () => cache,
+            writeCache: (history) => {
+                cache = history
+            },
+            writer,
+            onError: vi.fn(),
+        })
+
+        await manager.publishMetadata(item({ id: "task-a" }), manager.beginTask("task-a"))
+        await manager.publishMetadata(item({ id: "task-b" }), manager.beginTask("task-b"))
+
+        let drained = false
+        const flushing = manager.flush().then(() => {
+            drained = true
+        })
+        await Promise.resolve()
+        // Waiting for a single chain would let this resolve with task-b unwritten.
+        expect(drained).toBe(false)
+
+        // Releasing one gate at a time is what distinguishes "drains every chain"
+        // from "awaits whichever chain it happened to read first": with both gates
+        // released together, awaiting a single chain also lets the whole flush
+        // settle, because the other write has nothing left to wait for.
+        pending[0].resolve()
+        await vi.waitFor(() => expect(writer.upsertTaskHistory).toHaveBeenCalledTimes(2))
+        await Promise.resolve()
+        expect(drained).toBe(false)
+
+        pending[1].resolve()
+        await flushing
+        expect(drained).toBe(true)
+        expect(writer.flush).toHaveBeenCalledOnce()
+    })
+
     it("accepts metadata before the physical writer settles", async () => {
         let cache: HistoryItem[] = []
         const write = deferred()

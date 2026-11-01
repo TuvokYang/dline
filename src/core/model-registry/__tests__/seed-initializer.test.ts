@@ -51,7 +51,14 @@ const mockAllProviderModels = vi.hoisted(
                         supportsPromptCache: true,
                         supportsReasoning: true,
                     },
-                    pricing: { inputPrice: 3.0, outputPrice: 15.0, currency: "USD" },
+                    // Hoisted fixtures run before module initialization, so this rate is
+                    // written out rather than built by a helper the hoist cannot reach.
+                    pricing: {
+                        metered: {
+                            currency: "USD",
+                            strategy: { flat: { prices: { inputPrice: 3.0, outputPrice: 15.0 } } },
+                        },
+                    },
                     description: "A test model with optional fields",
                 },
             },
@@ -199,18 +206,17 @@ describe("seed-initializer", () => {
         // Present fields should exist
         expect(model.id).to.equal("opt-model")
         expect(model.description).to.equal("A test model with optional fields")
-        expect(model.pricing.currency).to.equal("USD")
+        expect(model.pricing.metered.currency).to.equal("USD")
         expect(model.capabilities.supportsReasoning).to.be.true
-        expect(model.pricing.inputPrice).to.equal(3.0)
-        expect(model.pricing.outputPrice).to.equal(15.0)
+        expect(model.pricing.metered.strategy.flat.prices.inputPrice).to.equal(3.0)
+        expect(model.pricing.metered.strategy.flat.prices.outputPrice).to.equal(15.0)
 
         // Undefined fields must not appear in the JSON
         expect("temperature" in model.capabilities).to.be.false
-        expect("cacheWritesPrice" in model.pricing).to.be.false
-        expect("cacheReadsPrice" in model.pricing).to.be.false
+        expect("cacheWritePrice" in model.pricing.metered.strategy.flat.prices).to.be.false
+        expect("cacheReadPrice" in model.pricing.metered.strategy.flat.prices).to.be.false
         expect("supportsGlobalEndpoint" in model.capabilities).to.be.false
         expect("apiFormat" in model).to.be.false
-        expect("tiers" in model).to.be.false
     })
 
     it("does not read or rewrite an existing deferred provider catalog during startup seeding", async () => {

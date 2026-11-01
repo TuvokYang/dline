@@ -1,67 +1,44 @@
 import { ModelInfo } from "@shared/api"
+import { billableTokens, costOf, type PricingFacts, resolvePrices, type UsageProfile } from "@shared/billing"
 
+/**
+ * Cost of one API call.
+ *
+ * The published pricing terms decide the rate; this module only supplies the
+ * request facts and the provider's token-counting convention. All price-shape
+ * interpretation lives in `@shared/billing`, so a new pricing strategy does not
+ * change this file.
+ *
+ * A model with no published terms has no cost. That is reported as zero rather
+ * than an error because caller reporting already distinguishes "no cost known"
+ * from "cost was zero" through its own presence checks.
+ */
 function calculateApiCostInternal(
     modelInfo: ModelInfo,
-    inputTokens: number, // Note: For OpenAI-style, this is non-cached tokens. For Anthropic-style, this is total input tokens.
+    profile: UsageProfile,
+    inputTokens: number,
     outputTokens: number,
     cacheCreationInputTokens: number,
     cacheReadInputTokens: number,
-    totalInputTokensForPricing?: number, // The *total* input tokens, used for tiered pricing lookup
-    thinkingBudgetTokens?: number, // Add thinking budget info
+    totalInputTokensForPricing: number | undefined,
+    thinkingBudgetTokens: number | undefined,
 ): number {
-    const usedThinkingBudget = thinkingBudgetTokens && thinkingBudgetTokens > 0
-
-    // Default prices
-    let effectiveInputPrice = modelInfo.pricing?.inputPrice || 0
-    let effectiveOutputPrice = modelInfo.pricing?.outputPrice || 0
-    let effectiveCacheReadsPrice = modelInfo.pricing?.cacheReadsPrice || 0
-    let effectiveCacheWritesPrice = modelInfo.pricing?.cacheWritesPrice || 0
-
-    // Handle usage-based tiered pricing: each tier's threshold is the maximum
-    // input-token usage for that price band (it controls pricing, not the window).
-    if (modelInfo.pricing?.tiers && modelInfo.pricing?.tiers.length > 0 && totalInputTokensForPricing !== undefined) {
-        // Ensure tiers are sorted by threshold ascending before finding
-        const sortedTiers = [...modelInfo.pricing.tiers].sort((a, b) => a.contextWindow - b.contextWindow)
-
-        // Find the first tier whose threshold covers the actual input-token usage
-        const tier = sortedTiers.find((t) => totalInputTokensForPricing <= t.contextWindow)
-
-        if (tier) {
-            // Apply all tiered price values if they exist
-            effectiveInputPrice = tier.inputPrice ?? effectiveInputPrice
-            effectiveOutputPrice = tier.outputPrice ?? effectiveOutputPrice
-            effectiveCacheReadsPrice = tier.cacheReadsPrice ?? effectiveCacheReadsPrice
-            effectiveCacheWritesPrice = tier.cacheWritesPrice ?? effectiveCacheWritesPrice
-        } else {
-            // Should ideally not happen if Infinity is used for the last tier, but fallback just in case
-            const lastTier = sortedTiers[sortedTiers.length - 1]
-            if (lastTier) {
-                effectiveInputPrice = lastTier.inputPrice ?? effectiveInputPrice
-                effectiveOutputPrice = lastTier.outputPrice ?? effectiveOutputPrice
-                effectiveCacheReadsPrice = lastTier.cacheReadsPrice ?? effectiveCacheReadsPrice
-                effectiveCacheWritesPrice = lastTier.cacheWritesPrice ?? effectiveCacheWritesPrice
-            }
-        }
+    const facts: PricingFacts = { totalInputTokens: totalInputTokensForPricing }
+    const resolved = resolvePrices(modelInfo.pricing, facts)
+    if (resolved.kind === "not-billable") {
+        return 0
     }
 
-    // Override output price for thinking mode if applicable
-    if (usedThinkingBudget && modelInfo.pricing?.thinkingOutputPrice !== undefined) {
-        effectiveOutputPrice = modelInfo.pricing.thinkingOutputPrice
-        // TODO: Add support for tiered thinking budget output pricing if needed in the future
-    }
-
-    const cacheWritesCost = (effectiveCacheWritesPrice / 1_000_000) * cacheCreationInputTokens
-    const cacheReadsCost = (effectiveCacheReadsPrice / 1_000_000) * cacheReadInputTokens
-
-    // Use effectiveInputPrice for baseInputCost. Note: 'inputTokens' here is the potentially adjusted count (e.g., non-cached for OpenAI)
-    const baseInputCost = (effectiveInputPrice / 1_000_000) * inputTokens
-
-    // Use effectiveOutputPrice for outputCost
-    const outputCost = (effectiveOutputPrice / 1_000_000) * outputTokens
-
-    const totalCost = cacheWritesCost + cacheReadsCost + baseInputCost + outputCost
-    return totalCost
+    const tokens = billableTokens(profile, {
+        inputTokens,
+        outputTokens,
+        cacheWriteTokens: cacheCreationInputTokens,
+        cacheReadTokens: cacheReadInputTokens,
+        thinkingTokens: thinkingBudgetTokens,
+    })
+    return costOf(resolved.prices, tokens)
 }
+
 // For Anthropic compliant usage, the input tokens count does NOT include the cached tokens
 export function calculateApiCostAnthropic(
     modelInfo: ModelInfo,
@@ -78,6 +55,7 @@ export function calculateApiCostAnthropic(
     // Anthropic style doesn't need totalInputTokensForPricing as its inputTokens already represents the total
     return calculateApiCostInternal(
         modelInfo,
+        "anthropic",
         inputTokens,
         outputTokens,
         cacheCreationInputTokensNum,
@@ -94,16 +72,15 @@ export function calculateApiCostOpenAI(
     outputTokens: number,
     cacheCreationInputTokens?: number,
     cacheReadInputTokens?: number,
-    thinkingBudgetTokens?: number, // Pass thinking budget info
+    thinkingBudgetTokens?: number,
 ): number {
     const cacheCreationInputTokensNum = cacheCreationInputTokens || 0
     const cacheReadInputTokensNum = cacheReadInputTokens || 0
-    // Calculate non-cached tokens for the internal function's 'inputTokens' parameter
-    const nonCachedInputTokens = Math.max(0, inputTokens - cacheCreationInputTokensNum - cacheReadInputTokensNum)
     // Pass the original 'inputTokens' as 'totalInputTokensForPricing' for tier lookup
     return calculateApiCostInternal(
         modelInfo,
-        nonCachedInputTokens,
+        "openai",
+        inputTokens,
         outputTokens,
         cacheCreationInputTokensNum,
         cacheReadInputTokensNum,
@@ -123,12 +100,11 @@ export function calculateApiCostQwen(
 ): number {
     const cacheCreationInputTokensNum = cacheCreationInputTokens || 0
     const cacheReadInputTokensNum = cacheReadInputTokens || 0
-    // Calculate non-cached tokens for the internal function's 'inputTokens' parameter
-    const nonCachedInputTokens = Math.max(0, inputTokens - cacheCreationInputTokensNum - cacheReadInputTokensNum)
     // Pass the original 'inputTokens' as 'totalInputTokensForPricing' for tier lookup
     return calculateApiCostInternal(
         modelInfo,
-        nonCachedInputTokens,
+        "qwen",
+        inputTokens,
         outputTokens,
         cacheCreationInputTokensNum,
         cacheReadInputTokensNum,

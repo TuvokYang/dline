@@ -3,6 +3,8 @@ import type { InteractionOutcome } from "../../interaction/InteractionProtocol"
 
 /** Feedback the user typed while approving or rejecting one tool block. */
 export interface ToolApprovalFeedback {
+    readonly admittedInputRef?: string
+    readonly roundMaterialOwned?: true
     readonly text?: string
     /** Legacy flat attachments; a structured note carries its resources as {@link admittedParts}. */
     readonly images?: readonly string[]

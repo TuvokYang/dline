@@ -44,7 +44,29 @@ See [Model configuration](/getting-started/authorizing-with-dline/) for the gene
 
 </Steps>
 
-The same **OpenAI** provider also connects to Azure OpenAI and other OpenAI-compatible services. See [OpenAI-compatible services](/provider-config/openai-compatible/).
+### Custom base URL
+
+Keep **Use custom base URL** unchecked to send requests to OpenAI. Check it to send them to another address instead, for example a self-hosted gateway or an OpenAI-compatible service.
+
+<Steps>
+
+1. Check **Use custom base URL** and enter the address the service exposes, such as `https://gateway.example.com/v1`. Enter the API address itself, not the provider's homepage.
+
+2. Paste the key that service issued into the **OpenAI API Key** field.
+
+3. Select a model under **Model**. If the service lists model IDs that are not built into Dline, check **Use custom model ID** and type the ID under **Model ID**.
+
+</Steps>
+
+<Aside>
+With a custom base URL, Dline sends the key only to the address you typed. Cost and pricing come from that service, not from OpenAI.
+</Aside>
+
+### Azure OpenAI
+
+- Enter your Azure OpenAI resource address under **Use custom base URL**.
+- To pin an API version, check **Set Azure API version** and enter it. The default is `2024-10-01-preview`.
+- Check **Use Azure Identity Authentication** to reuse an existing Azure managed identity. It does not start a sign-in; it only reuses an existing authentication state, such as `az login`.
 
 ## ChatGPT subscription
 

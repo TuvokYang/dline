@@ -13,11 +13,13 @@ export interface JournalWatermark {
 }
 
 export type ProviderTurnApproval =
-    | { readonly kind: "none" }
+    | { readonly kind: "none"; readonly awayCommand?: true }
     | {
           readonly kind: "manual"
           readonly interactionId: InteractionId
           readonly presentationRef: string
+          /** Planned by the canonical workspace classifier, never by command text inspection. */
+          readonly externalCommand?: true
           /** Surface ask that renders this approval; opaque to the kernel and carried as-is. */
           readonly presentationAsk?: string
           /** Chat row the call drew while it streamed; opaque to the kernel and carried as-is. */
@@ -33,6 +35,7 @@ export type ProviderTurnApproval =
 
 export interface ProviderTurnBlockPlan {
     readonly blockId: BlockId
+    readonly disposition?: "away_feedback_only"
     readonly attempt: AttemptId
     readonly index: number
     readonly lanes: readonly string[]
@@ -88,6 +91,8 @@ export interface ComposeFlowState extends CommandFlowState {
     readonly respondedQueue?: QueuedInputResponse
     /** Atomic journal handoff for the retained tool-round batch. */
     readonly queueJournalReceipt?: QueueJournalReceipt
+    readonly materialPlan?: RoundMaterialPlan
+    readonly draftRef?: string
 }
 
 export interface ProviderFlowState extends CommandFlowState {
@@ -154,6 +159,7 @@ export interface FlowState {
 
 export interface KernelBlock {
     readonly blockId: BlockId
+    readonly disposition?: "away_feedback_only"
     readonly index: number
     readonly phase: BlockPhase
     readonly attempt: AttemptId
@@ -163,6 +169,7 @@ export interface KernelBlock {
     readonly approvalFeedbackRef?: string
     /** The user, not the approval policy, refused this block. */
     readonly deniedByUser?: boolean
+    readonly approvalTimedOut?: true
     readonly policy?: PolicyEvaluationState
     /**
      * A turn-ending completion whose result is already on screen.
@@ -188,6 +195,7 @@ export interface ToolTerminalManifestEntry {
     readonly approvalFeedbackRef?: string
     /** The user refused the block, so its result is the tool's own denial wording. */
     readonly deniedByUser?: boolean
+    readonly approvalTimedOut?: true
 }
 
 export interface ToolTerminalManifest {
@@ -235,11 +243,15 @@ export interface QueueSettlementEvidence {
 }
 
 export interface DialogAcceptedResponse {
+    readonly origin?: "user" | "timeout"
+    readonly deadlineKind?: InteractionDeadline["kind"]
     readonly actionId: string
     readonly stateRevision: number
     readonly receiverGeneration: number
     readonly draftRef?: string
     readonly selectionRef?: string
+    readonly roundFeedbackRef?: string
+    readonly retryPreparedRound?: true
     readonly queuedInput?: QueuedInputResponse
 }
 
@@ -262,6 +274,7 @@ export interface DialogInteraction {
     readonly revealKey?: string
     readonly blockId?: BlockId
     readonly acceptedResponse?: DialogAcceptedResponse
+    readonly deadline?: InteractionDeadline
     readonly prepare?: CommandFlowState
     readonly reveal?: CommandFlowState
     readonly failure?: { readonly stage: "prepare" | "reveal"; readonly message: string }
@@ -299,6 +312,8 @@ export interface IntakeEntry {
         /** Durable owner of a delivery that has not yet settled. */
         readonly delivery?: InputQueueDeliveryReservation
     }
+    readonly acceptedRevision?: number
+    readonly userControl?: UserControl
     readonly state: "accepted" | "reserved" | "included" | "consumed" | "released" | "uncertain"
     readonly journalWatermark?: JournalWatermark
 }
@@ -345,6 +360,89 @@ export interface TransitionDraftFact {
     readonly interactionId: InteractionId
 }
 
+/** Trusted control intent emitted by input admission, never inferred from raw text here. */
+export interface UserControl {
+    readonly kind: "enter_away" | "user_returned"
+}
+
+export interface AwayConfigurationFact {
+    readonly enabled: boolean
+    readonly automatic: boolean
+    readonly modeRevocation: number
+    readonly automaticRevocation: number
+}
+
+export interface AwayMode {
+    readonly source: "command" | "ask_timeout"
+    readonly modeRevocation: number
+    readonly enteredRevision: number
+}
+
+export interface AwaySlice {
+    readonly configuration: AwayConfigurationFact
+    readonly mode?: AwayMode
+}
+
+export interface InteractionDeadline {
+    readonly kind: "ask" | "external_command"
+    readonly deadlineAt: number
+    readonly modeRevocation: number
+    readonly automaticRevocation: number
+}
+
+export interface RoundNotice {
+    readonly id: string
+    readonly kind: "away_exited"
+    readonly revision: number
+    readonly reason: "stopped" | "user_returned" | "configuration_revoked"
+}
+
+export interface RoundMaterialInput {
+    readonly id?: string
+    readonly payloadRef: string
+    readonly revision: number
+    readonly source: "intake" | "approval" | "dialog"
+    readonly entryId?: EntryId
+}
+
+export interface RoundMaterialState {
+    readonly notices: readonly RoundNotice[]
+    readonly feedback: readonly RoundMaterialInput[]
+}
+
+export interface RoundMaterialPlan {
+    readonly id: string
+    readonly frozenRevision: number
+    readonly notices: readonly RoundNotice[]
+    readonly inputs: readonly RoundMaterialInput[]
+    readonly activeAway?: AwayMode
+}
+
+export interface RoundMaterialReceipt {
+    readonly planId: string
+    readonly noticeIds: readonly string[]
+    readonly feedbackIds: readonly string[]
+}
+
+export interface PreparedRoundFact {
+    readonly draftRef: string
+    readonly plan: RoundMaterialPlan
+    readonly journalThrough: JournalWatermark
+    readonly queueJournalReceipt?: QueueJournalReceipt
+}
+
+export type AwayEvent =
+    | (EventBase & { readonly type: "away.configured"; readonly configuration: AwayConfigurationFact })
+    | (EventBase & { readonly type: "away.stopped" })
+    | (EventBase & {
+          readonly type: "away.deadline_due"
+          readonly interactionId: InteractionId
+          readonly turnId: TurnId
+          readonly receiverGeneration: number
+          readonly deadlineAt: number
+          readonly now: number
+      })
+
 export interface TaskState {
     readonly taskId: TaskId
     readonly revision: number
@@ -357,9 +455,13 @@ export interface TaskState {
     readonly halt: HaltSlice
     readonly journalWatermark?: JournalWatermark
     readonly transitionDraft?: TransitionDraftFact
+    readonly away?: AwaySlice
+    readonly roundMaterial?: RoundMaterialState
 }
 
 interface EventBase {
+    /** Supplied by the runtime boundary; the kernel never obtains time itself. */
+    readonly now?: number
     readonly generation: number
     readonly attempt?: AttemptId
 }
@@ -367,6 +469,7 @@ interface EventBase {
 export type UserEvent =
     | (EventBase & {
           readonly type: "user.submit"
+          readonly userControl?: UserControl
           readonly entryId: EntryId
           readonly payloadRef: string
           readonly mode?: "queued" | "steering"
@@ -378,6 +481,7 @@ export type UserEvent =
 export type InputQueueEvent =
     | (EventBase & {
           readonly type: "input_queue.enqueued"
+          readonly userControl?: UserControl
           readonly entryId: EntryId
           readonly payloadRef: string
           /**
@@ -391,6 +495,7 @@ export type InputQueueEvent =
     | (EventBase & { readonly type: "input_queue.edit_started"; readonly entryId: EntryId })
     | (EventBase & {
           readonly type: "input_queue.edit_committed"
+          readonly userControl?: UserControl
           readonly entryId: EntryId
           readonly payloadRef: string
       })
@@ -401,6 +506,12 @@ export type InputQueueEvent =
           readonly deliveryId: string
           readonly point: InputQueueDeliveryPoint
           readonly ownerId: string
+      })
+    | (EventBase & {
+          readonly type: "input_queue.delivery_accepted"
+          readonly deliveryId: string
+          readonly commandId: CommandId
+          readonly originRevision: number
       })
     | (EventBase & { readonly type: "input_queue.delivery_released"; readonly deliveryId: string })
     | (EventBase & {
@@ -457,6 +568,7 @@ export type ToolEvent =
       })
 interface DialogRequestEvent extends EventBase {
     readonly interactionId: InteractionId
+    readonly externalCommand?: true
     readonly turnId: TurnId
     readonly kind: string
     readonly presentationRef: string
@@ -482,6 +594,9 @@ export type DialogEvent =
       })
     | (EventBase & {
           readonly type: "dialog.responded"
+          readonly userControl?: UserControl
+          readonly roundFeedbackRef?: string
+          readonly retryPreparedRound?: true
           readonly taskId: TaskId
           readonly turnId: TurnId
           readonly interactionId: InteractionId
@@ -505,8 +620,12 @@ export type BackgroundEvent = EventBase & {
     readonly sequence?: number
 }
 export type ComposeEvent =
+    | (CommandFeedbackEvent & { readonly type: "compose.freeze_requested" })
+    | (CommandFeedbackEvent & PreparedRoundFact & { readonly type: "compose.prepared_restored" })
+    | (CommandFeedbackEvent & { readonly type: "compose.prepared_retired" })
     | (CommandFeedbackEvent & {
           readonly type: "compose.completed"
+          readonly materialReceipt?: RoundMaterialReceipt
           readonly draftRef: string
           readonly turnId?: TurnId
           readonly queueJournalReceipt?: QueueJournalReceipt
@@ -589,6 +708,7 @@ export type ApprovalEvent =
           readonly blockId: BlockId
           readonly interactionId: InteractionId
           readonly approved: boolean
+          readonly origin?: "timeout"
           readonly feedbackRef?: string
       })
     | (CommandFeedbackEvent & {
@@ -652,6 +772,7 @@ export type LifecycleEvent =
       })
 
 export type TaskEvent =
+    | AwayEvent
     | UserEvent
     | InputQueueEvent
     | ProviderEvent
@@ -670,6 +791,13 @@ interface CommandBase {
     readonly commandId: CommandId
     readonly originRevision: number
     readonly generation: number
+}
+
+export type DialogAutomaticResponseCommand = CommandBase & {
+    readonly type: "dialog.deliver_automatic"
+    readonly interactionId: InteractionId
+    readonly turnId: TurnId
+    readonly deadlineKind: InteractionDeadline["kind"]
 }
 
 export type ProviderStartCommand = CommandBase & {
@@ -755,6 +883,7 @@ export type Command =
     | ToolRunCommand
     | ToolRetireCommand
     | DialogCommand
+    | DialogAutomaticResponseCommand
     | ComposeRoundCommand
     | CompactionRunCommand
     | ApprovalEvaluateCommand

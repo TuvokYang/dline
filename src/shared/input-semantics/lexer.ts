@@ -1,5 +1,11 @@
 import { mentionRegex } from "../context-mentions"
-import { COMMAND_TRIGGER_CHARS, type InputSemanticCatalog, type InputSemanticDescriptor, resolveCommandTrigger } from "./catalog"
+import {
+    COMMAND_TRIGGER_CHARS,
+    commandCompositionOf,
+    type InputSemanticCatalog,
+    type InputSemanticDescriptor,
+    resolveCommandTrigger,
+} from "./catalog"
 import { commandNamespaceOf } from "./command-namespace"
 import {
     type MentionKind,
@@ -333,7 +339,7 @@ function nodeFor(
             sourceText: candidate.sourceText,
             canonicalName: canonicalNameOf(descriptor?.trigger ?? candidate.sourceText),
             namespace: descriptor ? commandNamespaceOf(descriptor.id) : "cmd",
-            compositionMode: descriptor?.lifecycle === "task" ? "lifecycle_barrier" : "composable",
+            compositionMode: commandCompositionOf(descriptor),
             state: stateFor(Boolean(descriptor), activation),
         }
     }

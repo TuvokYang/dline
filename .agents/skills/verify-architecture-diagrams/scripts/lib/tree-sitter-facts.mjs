@@ -7,6 +7,8 @@ import fs from "node:fs"
 import path from "node:path"
 
 import { QUERY_CATEGORIES } from "../../runtime/tree-sitter/queries/index.mjs"
+import { extractScriptBindings } from "./script-bindings.mjs"
+import { detachScriptNode } from "./script-model.mjs"
 import { disposeParsedSource, languageForPath, parseSource } from "./tree-sitter-runtime.mjs"
 
 export const TREE_SITTER_FACT_SCHEMA_VERSION = 1
@@ -214,6 +216,27 @@ export async function scanTreeSitterSource({
     const parsed = await parseSource(filePath, source, { categories: selectedCategories })
     try {
         const captured = captureFacts(parsed, sourcePath, selectedCategories)
+        const bindings = extractScriptBindings(parsed.tree.rootNode, languageName)
+        if (selectedCategories.includes("declarations")) {
+            for (const { name, node } of bindings?.members ?? []) {
+                const fact = {
+                    schemaVersion: TREE_SITTER_FACT_SCHEMA_VERSION,
+                    category: "declarations",
+                    capture: "name.qualified",
+                    path: sourcePath,
+                    language: languageName,
+                    nodeType: node.type,
+                    start: freezePoint(node.startPosition, node.startIndex),
+                    end: freezePoint(node.endPosition, node.endIndex),
+                    text: name,
+                    textHash: stableHash(name),
+                    truncated: false,
+                }
+                fact.id = stableHash(factIdentity(fact))
+                captured.facts.push(Object.freeze(fact))
+            }
+            captured.facts.sort(compareFacts)
+        }
         const diagnostics = [...syntaxDiagnostics(parsed.tree.rootNode, sourcePath, languageName), ...captured.diagnostics].sort(
             compareDiagnostics,
         )
@@ -227,6 +250,18 @@ export async function scanTreeSitterSource({
                 factCount: captured.facts.length,
             }),
             facts: Object.freeze(captured.facts),
+            scriptBindings:
+                diagnostics.some((entry) => entry.rule === "syntax-error" || entry.rule === "missing-syntax") || !bindings
+                    ? null
+                    : Object.freeze({
+                          imports: bindings.imports,
+                          exports: bindings.exports,
+                          declarations: bindings.declarations,
+                      }),
+            scriptModel:
+                bindings && !parsed.tree.rootNode.hasError && selectedCategories.includes("calls")
+                    ? detachScriptNode(parsed.tree.rootNode)
+                    : null,
             diagnostics: Object.freeze(diagnostics),
         })
     } finally {

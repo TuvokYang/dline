@@ -36,11 +36,25 @@ interface StoredProfile {
             contextWindowTiers?: Array<{ id: string; contextWindow: number; label?: string }>
         }
         pricing?: {
-            inputPrice?: number
-            outputPrice?: number
-            cacheWritesPrice?: number
-            cacheReadsPrice?: number
-            tiers?: Array<{ contextWindow: number; inputPrice?: number; outputPrice?: number }>
+            /**
+             * Metered prices as the editor persists them: rates live under
+             * `strategy.flat.prices`, and usage tiers under `strategy.contextWindow.bands`.
+             */
+            metered?: {
+                strategy?: {
+                    flat?: {
+                        prices?: {
+                            inputPrice?: number
+                            outputPrice?: number
+                            cacheWritePrice?: number
+                            cacheReadPrice?: number
+                        }
+                    }
+                    contextWindow?: {
+                        bands?: Array<{ maxInputTokens?: number }>
+                    }
+                }
+            }
         }
     }
     anthropic?: {
@@ -321,14 +335,17 @@ e2e(
             await waitForProfile(dlineDir, profileName, (profile) => profile.openai?.capabilities?.contextWindow === 234_567)
             await setTextField(card, "Max Output Tokens", "32768")
             await waitForProfile(dlineDir, profileName, (profile) => profile.openai?.capabilities?.maxTokens === 32_768)
+            // Metered prices persist nested under strategy.flat.prices; the retired
+            // flat `pricing.inputPrice` shape never appears in a written profile.
+            const flatPrices = (profile: StoredProfile) => profile.openai?.pricing?.metered?.strategy?.flat?.prices
             await setTextField(card, "Input Price ($/1M tokens)", "1.25")
-            await waitForProfile(dlineDir, profileName, (profile) => profile.openai?.pricing?.inputPrice === 1.25)
+            await waitForProfile(dlineDir, profileName, (profile) => flatPrices(profile)?.inputPrice === 1.25)
             await setTextField(card, "Output Price ($/1M tokens)", "2.5")
-            await waitForProfile(dlineDir, profileName, (profile) => profile.openai?.pricing?.outputPrice === 2.5)
+            await waitForProfile(dlineDir, profileName, (profile) => flatPrices(profile)?.outputPrice === 2.5)
             await setTextField(card, "Cache Writes ($/M)", "0.75")
-            await waitForProfile(dlineDir, profileName, (profile) => profile.openai?.pricing?.cacheWritesPrice === 0.75)
+            await waitForProfile(dlineDir, profileName, (profile) => flatPrices(profile)?.cacheWritePrice === 0.75)
             await setTextField(card, "Cache Reads ($/M)", "0.25")
-            await waitForProfile(dlineDir, profileName, (profile) => profile.openai?.pricing?.cacheReadsPrice === 0.25)
+            await waitForProfile(dlineDir, profileName, (profile) => flatPrices(profile)?.cacheReadPrice === 0.25)
             await expect(card.getByText("235K", { exact: true })).toBeVisible()
             await expectModelInfoValue(card, "Input:", "$1.25/M")
             await expectModelInfoValue(card, "Output:", "$2.50/M")
@@ -344,17 +361,17 @@ e2e(
                     profile.openai.capabilities.maxTokens === 32_768 &&
                     profile.openai.capabilities.supportsPromptCache === true &&
                     profile.openai.capabilities.supportsTools === true &&
-                    profile.openai?.pricing?.inputPrice === 1.25 &&
-                    profile.openai.pricing.outputPrice === 2.5 &&
-                    profile.openai.pricing.cacheWritesPrice === 0.75 &&
-                    profile.openai.pricing.cacheReadsPrice === 0.25,
+                    flatPrices(profile)?.inputPrice === 1.25 &&
+                    flatPrices(profile)?.outputPrice === 2.5 &&
+                    flatPrices(profile)?.cacheWritePrice === 0.75 &&
+                    flatPrices(profile)?.cacheReadPrice === 0.25,
             )
             expect(storedBeforeReasoning.openai?.capabilities?.contextWindow).toBe(234_567)
-            expect(storedBeforeReasoning.openai?.pricing).toMatchObject({
+            expect(storedBeforeReasoning.openai?.pricing?.metered?.strategy?.flat?.prices).toMatchObject({
                 inputPrice: 1.25,
                 outputPrice: 2.5,
-                cacheWritesPrice: 0.75,
-                cacheReadsPrice: 0.25,
+                cacheWritePrice: 0.75,
+                cacheReadPrice: 0.25,
             })
 
             await setCapability(card, "Enable Thinking", false)
@@ -389,10 +406,12 @@ e2e(
             await setCapability(card, "Set Azure API version", true)
             await setPlaceholderField(card, "Default: 2024-10-01-preview", "2025-04-01-preview")
             await setCapability(card, "Use Azure Identity Authentication", true)
-            await setCapability(card, "Include usage stats in stream responses", false)
             await waitForProfile(dlineDir, profileName, (profile) => profile.openai?.azureApiVersion === "2025-04-01-preview")
             await waitForProfile(dlineDir, profileName, (profile) => profile.openai?.azureIdentity === true)
-            await waitForProfile(dlineDir, profileName, (profile) => profile.openai?.streamIncludeUsage !== true)
+            // Stream usage and prompt caching are automatic, so the card offers no
+            // switch that could persist an opt-out the runtime would then honour.
+            await expect(card.getByText("Include usage stats in stream responses", { exact: true })).toHaveCount(0)
+            await expect(card.getByText("Use explicit prompt cache controls", { exact: true })).toHaveCount(0)
 
             await firstApp.close()
             firstApp = undefined
@@ -441,14 +460,10 @@ e2e(
                         .evaluate((element) => Boolean((element as HTMLInputElement).checked)),
                 )
                 .toBe(true)
-            await expect
-                .poll(() =>
-                    reopenedCard
-                        .locator("vscode-checkbox")
-                        .filter({ hasText: "Include usage stats in stream responses" })
-                        .evaluate((element) => Boolean((element as HTMLInputElement).checked)),
-                )
-                .toBe(false)
+            // Reopening a persisted profile must not resurrect either removed
+            // switch, which would let an old profile write an opt-out back.
+            await expect(reopenedCard.getByText("Include usage stats in stream responses", { exact: true })).toHaveCount(0)
+            await expect(reopenedCard.getByText("Use explicit prompt cache controls", { exact: true })).toHaveCount(0)
             await expect(reopenedCard.getByText("235K", { exact: true })).toBeVisible()
             await expectModelInfoValue(reopenedCard, "Input:", "$1.25/M")
             await expectModelInfoValue(reopenedCard, "Output:", "$2.50/M")
@@ -759,7 +774,13 @@ e2e(
         const addPricingTier = card.getByRole("button", { name: "Add Pricing Tier" })
         await expect(addPricingTier).toBeVisible()
         await addPricingTier.click()
-        await waitForProfile(dlineDir, profileName, (profile) => profile.openai?.pricing?.tiers?.length === 1)
+        // Usage-based tiers persist as context-window bands; the retired flat
+        // `pricing.tiers` array is not written by the tier editor.
+        await waitForProfile(
+            dlineDir,
+            profileName,
+            (profile) => profile.openai?.pricing?.metered?.strategy?.contextWindow?.bands?.length === 1,
+        )
 
         await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
     },

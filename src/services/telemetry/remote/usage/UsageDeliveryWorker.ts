@@ -3,7 +3,7 @@ import type { UsageObservationSpool } from "@/core/storage/telemetry-remote/Usag
 import type { UsageOutboxRepository, UsageSenderGrant } from "@/core/storage/telemetry-remote/UsageOutboxRepository"
 import type { DeviceTokenBroker } from "../auth/DeviceTokenBroker"
 import { classifyUsageResponse, type DeliveryOutcome, type StopScope } from "../contracts/classification"
-import { type ReplayBudget, usageReplayBudget } from "../contracts/pacing"
+import { type ReplayBudget, replayBudgetExhausted, usageReplayBudget } from "../contracts/pacing"
 import type { UsageBodyGrant, UsageClientWire } from "../contracts/usageBody"
 import type { DeliveryDisposition } from "../contracts/wire"
 import { DlineOtelTransportError, type UsageTransport } from "../transport/DlineOtelHttpClient"
@@ -17,6 +17,7 @@ import {
     type UsageAttemptObservationRejection,
     type UsageInflightResolution,
     usageBucketFitsGrant,
+    usageReplayIdentity,
 } from "./usageOutbox"
 
 export type UsageCycleResult =
@@ -177,7 +178,7 @@ export class UsageDeliveryWorker {
         if (!(await outbox.removeAttemptBodies(grant, next.keepRequestId))) return { kind: "fenced" }
         if (next.kind === "idle") return { kind: "idle" }
         if (next.kind === "rejected") return { kind: "rejected", violations: next.violations }
-        return this.deliverAttempt(grant, next.inflight, usageReplayBudget(attemptGrant.contract.maxRequestReplayAgeMs), signal)
+        return this.deliverAttempt(grant, next.inflight, attemptGrant, signal)
     }
 
     private prepareAttempts(grant: UsageSenderGrant, attemptGrant: UsageBodyGrant) {
@@ -219,12 +220,21 @@ export class UsageDeliveryWorker {
     private async deliverAttempt(
         grant: UsageSenderGrant,
         inflight: UsageAttemptInflight,
-        replayBudget: ReplayBudget,
+        attemptGrant: UsageBodyGrant,
         signal?: AbortSignal,
     ): Promise<UsageCycleResult> {
+        const replayBudget = usageReplayBudget(attemptGrant.contract.maxRequestReplayAgeMs)
         const body = await this.options.outbox.readBody(inflight)
         if (!body) return this.settleAttempt(grant, inflight, { kind: "body_lost" }, replayBudget)
-        const attempted = await this.attempt(inflight, body, signal)
+        // The horizon is absolute from the manifest's creation. It is checked here, before the
+        // token acquisition and the request, because a wait that crossed it may still leave
+        // `notBefore` in the past. An expired manifest costs zero HTTP (usage-contract §14).
+        if (replayBudgetExhausted(inflight.attempts, inflight.createdAt, this.clock(), replayBudget)) {
+            return this.settleAttempt(grant, inflight, { kind: "replay_expired" }, replayBudget)
+        }
+        const identity = usageReplayIdentity(inflight, body)
+        if (!identity) return this.settleAttempt(grant, inflight, { kind: "replay_identity_lost" }, replayBudget)
+        const attempted = await this.attempt(inflight, body, identity, signal)
         if (attempted.kind === "result") return attempted.result
         const { outcome } = attempted
         if (outcome.kind === "stop") return { kind: "stopped", scope: outcome.scope, code: outcome.code }
@@ -243,10 +253,12 @@ export class UsageDeliveryWorker {
             const next = settleUsageAttemptInflight(state, inflight.requestId, resolution, now, replayBudget, this.options.random)
             const violations = attemptLossViolations(resolution, state.inflight !== undefined && next.inflight === undefined)
             if (violations) {
+                const refusedPath = resolution.kind === "discard" ? resolution.path : undefined
                 await outbox.writeAttemptLoss({
                     kind: "delivery",
                     bucketIds: inflight.bucketIds,
                     violations,
+                    ...(refusedPath ? { refusedPath } : {}),
                     recordedAt: now,
                 })
             }
@@ -273,6 +285,10 @@ export class UsageDeliveryWorker {
                 return { kind: "discarded", requestId, code: resolution.code }
             case "body_lost":
                 return { kind: "discarded", requestId, code: "body_lost" }
+            case "replay_expired":
+                return { kind: "discarded", requestId, code: "replay_budget_exhausted" }
+            case "replay_identity_lost":
+                return { kind: "discarded", requestId, code: "replay_identity_lost" }
         }
     }
 
@@ -287,6 +303,7 @@ export class UsageDeliveryWorker {
     private async attempt(
         inflight: Pick<UsageAttemptInflight, "requestId">,
         body: Uint8Array,
+        identity: { readonly userAgent: string; readonly contract: string },
         signal?: AbortSignal,
     ): Promise<Attempt> {
         let rejectedAccessToken: string | undefined
@@ -305,7 +322,14 @@ export class UsageDeliveryWorker {
             let outcome: DeliveryOutcome
             try {
                 const response = await this.options.transport.sendUsage(
-                    { accessToken, requestId: inflight.requestId, body },
+                    {
+                        accessToken,
+                        requestId: inflight.requestId,
+                        body,
+                        // Only the bearer may change between attempts; the fingerprint fields may not.
+                        userAgent: identity.userAgent,
+                        contract: identity.contract,
+                    },
                     signal,
                 )
                 outcome = classifyUsageResponse(response, this.clock())
@@ -330,6 +354,10 @@ function attemptLossViolations(resolution: UsageInflightResolution, released: bo
             return [resolution.code]
         case "body_lost":
             return ["body_lost"]
+        case "replay_expired":
+            return ["replay_budget_exhausted"]
+        case "replay_identity_lost":
+            return ["replay_identity_lost"]
         case "replay":
             return ["replay_budget_exhausted"]
         case "acknowledged":

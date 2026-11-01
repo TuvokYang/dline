@@ -8,6 +8,7 @@ import {
     selectContextTier,
     updateSelectedContextWindow,
 } from "@shared/providers/effective-model-info"
+import { hasBands } from "@shared/providers/pricing-shape"
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import { useId } from "react"
@@ -137,7 +138,7 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
             anthropic: {
                 ...pc,
                 pricing: mergePricing(pc.pricing, updates),
-                ...(updates.tiers === undefined ? {} : { pricingTiersEnabled: true }),
+                ...(hasBands(updates) ? { pricingTiersEnabled: true } : {}),
             },
         })
     }

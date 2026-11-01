@@ -37,7 +37,7 @@ describe("TaskShell architecture", () => {
         expect({ oversizedConstructors, oversizedBundles }).toEqual({ oversizedConstructors: [], oversizedBundles: [] })
     })
 
-    it("exposes only the six task use cases on TaskShell", () => {
+    it("exposes only the task use cases and the secondary Away control on TaskShell", () => {
         const shell = project.getSourceFileOrThrow(path.join(ROOT, "TaskShell.ts")).getClassOrThrow("TaskShell")
         expect(
             shell
@@ -45,6 +45,6 @@ describe("TaskShell architecture", () => {
                 .filter((method) => !method.hasModifier(SyntaxKind.PrivateKeyword))
                 .map((method) => method.getName())
                 .sort(),
-        ).toEqual(["cancel", "open", "respond", "start", "submitInput", "terminate"])
+        ).toEqual(["cancel", "open", "respond", "start", "stopAway", "submitInput", "terminate"])
     })
 })

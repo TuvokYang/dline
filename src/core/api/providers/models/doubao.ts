@@ -3,6 +3,7 @@
  * Extracted from api.ts doubaoModels (lines 3013-3059).
  */
 import type { ModelInfo } from "@shared/api"
+import { flatPricing } from "./pricing"
 
 export const doubaoModels: Record<string, ModelInfo> = {
     "doubao-1-5-pro-256k-250115": {
@@ -14,12 +15,7 @@ export const doubaoModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.7,
-            outputPrice: 1.3,
-            cacheWritesPrice: 0,
-            cacheReadsPrice: 0,
-        },
+        pricing: flatPricing(0.7, 1.3, 0, 0),
     },
     "doubao-1-5-pro-32k-250115": {
         id: "doubao-1-5-pro-32k-250115",
@@ -30,12 +26,7 @@ export const doubaoModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.11,
-            outputPrice: 0.3,
-            cacheWritesPrice: 0,
-            cacheReadsPrice: 0,
-        },
+        pricing: flatPricing(0.11, 0.3, 0, 0),
     },
     "deepseek-v3-250324": {
         id: "deepseek-v3-250324",
@@ -46,12 +37,7 @@ export const doubaoModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.55,
-            outputPrice: 2.19,
-            cacheWritesPrice: 0,
-            cacheReadsPrice: 0,
-        },
+        pricing: flatPricing(0.55, 2.19, 0, 0),
     },
     "deepseek-r1-250120": {
         id: "deepseek-r1-250120",
@@ -62,12 +48,7 @@ export const doubaoModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.27,
-            outputPrice: 1.09,
-            cacheWritesPrice: 0,
-            cacheReadsPrice: 0,
-        },
+        pricing: flatPricing(0.27, 1.09, 0, 0),
     },
 }
 

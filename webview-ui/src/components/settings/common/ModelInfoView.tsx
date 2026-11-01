@@ -1,5 +1,6 @@
 import { geminiModels, ModelInfo } from "@shared/api"
-import type { PricingTier } from "@shared/providers/types"
+import type { ContextWindowBand } from "@shared/proto/dline/models/metadata"
+import { readBands, readCurrency, readPriceSet } from "@shared/providers/pricing-shape"
 import { VSCodeDropdown, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
 import { CheckIcon, MinusIcon } from "lucide-react"
 import { useId } from "react"
@@ -117,37 +118,38 @@ const formatCompactContext = (contextWindow: number | undefined): string => {
  * not the context window.
  */
 const formatTiers = (
-    tiers: PricingTier[],
-    priceType: "inputPrice" | "outputPrice" | "cacheReadsPrice" | "cacheWritesPrice",
+    bands: readonly ContextWindowBand[],
+    priceType: "inputPrice" | "outputPrice" | "cacheReadPrice" | "cacheWritePrice",
     currency?: string,
 ): JSX.Element[] => {
-    if (!tiers || tiers.length === 0) {
+    if (bands.length === 0) {
         return []
     }
 
-    return tiers
-        .map((tier, index, arr) => {
-            const prevLimit = index > 0 ? arr[index - 1].contextWindow : 0
-            const price = tier[priceType]
+    return bands
+        .map((band, index) => {
+            const prevLimit = index > 0 ? bands[index - 1].maxInputTokens : 0
+            const prices = readPriceSet(band.prices)
+            const price = prices[priceType]
 
             if (price === undefined) {
                 return null
             }
 
             return (
-                <span key={`tier-${tier.contextWindow}`} style={{ paddingLeft: "15px" }}>
+                <span key={`band-${index}`} style={{ paddingLeft: "15px" }}>
                     {formatCurrencyAmount(price, currency)}/million tokens (
-                    {tier.contextWindow === Number.POSITIVE_INFINITY || tier.contextWindow >= Number.MAX_SAFE_INTEGER ? (
+                    {band.maxInputTokens === undefined ? (
                         <span>
-                            {">"} {prevLimit.toLocaleString()} input tokens
+                            {">"} {(prevLimit ?? 0).toLocaleString()} input tokens
                         </span>
                     ) : (
                         <span>
-                            {"<="} {tier.contextWindow?.toLocaleString()} input tokens
+                            {"<="} {band.maxInputTokens.toLocaleString()} input tokens
                         </span>
                     )}
                     {")"}
-                    {index < arr.length - 1 && <br />}
+                    {index < bands.length - 1 && <br />}
                 </span>
             )
         })
@@ -179,9 +181,13 @@ export const ModelInfoView = ({
     const providerRoutingId = useId()
     const isGemini = Object.keys(geminiModels).includes(selectedModelId)
     const hasThinkingConfig = hasThinkingBudget(modelInfo)
-    const hasTiers = !!modelInfo.pricing?.tiers && modelInfo.pricing.tiers.length > 0
+    const bands = readBands(modelInfo.pricing)
+    const hasTiers = bands.length > 0
     const contextTiers = modelInfo.capabilities?.contextWindowTiers ?? []
-    const currency = modelInfo.pricing?.currency
+    const currency = readCurrency(modelInfo.pricing)
+    const flatPrices = modelInfo.pricing?.metered?.strategy?.flat?.prices
+    const flatRates = readPriceSet(flatPrices)
+    const thinkingOutputPrice = flatPrices?.thinkingOutputPrice
 
     // Capability checks
     const hasImages = supportsImages(modelInfo)
@@ -192,8 +198,7 @@ export const ModelInfoView = ({
         modelInfo.capabilities?.supportsReasoning === true || modelInfo.capabilities?.thinking?.supported === true
 
     // Check if we have cache pricing to show in Advanced section
-    const hasCachePricing =
-        modelInfo.capabilities?.supportsPromptCache && (modelInfo.pricing?.cacheWritesPrice || modelInfo.pricing?.cacheReadsPrice)
+    const hasCachePricing = modelInfo.capabilities?.supportsPromptCache && (flatRates.cacheWritePrice || flatRates.cacheReadPrice)
 
     return (
         <div className="min-w-0">
@@ -216,19 +221,19 @@ export const ModelInfoView = ({
                         <InfoValue>{formatCompactContext(modelInfo.capabilities.maxTokens)}</InfoValue>
                     </InfoItem>
                 )}
-                {modelInfo.pricing?.inputPrice !== undefined && (
+                {flatPrices?.inputPrice !== undefined && (
                     <InfoItem>
                         <InfoLabel>Input: </InfoLabel>
-                        <InfoValue>{formatCompactPrice(modelInfo.pricing.inputPrice, currency)}</InfoValue>
+                        <InfoValue>{formatCompactPrice(flatPrices.inputPrice, currency)}</InfoValue>
                     </InfoItem>
                 )}
-                {modelInfo.pricing?.outputPrice !== undefined && (
+                {flatPrices?.outputPrice !== undefined && (
                     <InfoItem>
                         <InfoLabel>Output: </InfoLabel>
                         <InfoValue>
-                            {hasThinkingConfig && modelInfo.pricing?.thinkingOutputPrice !== undefined
-                                ? formatCompactPrice(modelInfo.pricing.thinkingOutputPrice, currency)
-                                : formatCompactPrice(modelInfo.pricing.outputPrice, currency)}
+                            {hasThinkingConfig && thinkingOutputPrice !== undefined
+                                ? formatCompactPrice(thinkingOutputPrice, currency)
+                                : formatCompactPrice(flatPrices.outputPrice, currency)}
                         </InfoValue>
                     </InfoItem>
                 )}
@@ -275,46 +280,42 @@ export const ModelInfoView = ({
                 {/* Cache Pricing */}
                 {hasCachePricing && (
                     <>
-                        {modelInfo.pricing?.cacheReadsPrice !== undefined && (
+                        {flatPrices?.cacheReadPrice !== undefined && (
                             <AdvancedRow>
                                 <AdvancedLabel>Cache Reads</AdvancedLabel>
-                                <AdvancedValue>{formatCompactPrice(modelInfo.pricing?.cacheReadsPrice, currency)}</AdvancedValue>
+                                <AdvancedValue>{formatCompactPrice(flatPrices.cacheReadPrice, currency)}</AdvancedValue>
                             </AdvancedRow>
                         )}
-                        {modelInfo.pricing?.cacheWritesPrice !== undefined && (
+                        {flatPrices?.cacheWritePrice !== undefined && (
                             <AdvancedRow>
                                 <AdvancedLabel>Cache Writes</AdvancedLabel>
-                                <AdvancedValue>{formatCompactPrice(modelInfo.pricing?.cacheWritesPrice, currency)}</AdvancedValue>
+                                <AdvancedValue>{formatCompactPrice(flatPrices.cacheWritePrice, currency)}</AdvancedValue>
                             </AdvancedRow>
                         )}
                     </>
                 )}
 
                 {/* Tiered Pricing */}
-                {hasTiers && modelInfo.pricing?.tiers && (
+                {hasTiers && (
                     <div style={{ marginTop: 8 }}>
                         <div style={{ fontWeight: 500, marginBottom: 4 }}>Tiered Pricing:</div>
                         <AdvancedRow>
                             <AdvancedLabel>Input</AdvancedLabel>
-                            <AdvancedValue>{formatTiers(modelInfo.pricing.tiers, "inputPrice", currency)}</AdvancedValue>
+                            <AdvancedValue>{formatTiers(bands, "inputPrice", currency)}</AdvancedValue>
                         </AdvancedRow>
                         <AdvancedRow>
                             <AdvancedLabel>Output</AdvancedLabel>
-                            <AdvancedValue>{formatTiers(modelInfo.pricing.tiers, "outputPrice", currency)}</AdvancedValue>
+                            <AdvancedValue>{formatTiers(bands, "outputPrice", currency)}</AdvancedValue>
                         </AdvancedRow>
                         {modelInfo.capabilities?.supportsPromptCache && (
                             <>
                                 <AdvancedRow>
                                     <AdvancedLabel>Cache Writes</AdvancedLabel>
-                                    <AdvancedValue>
-                                        {formatTiers(modelInfo.pricing.tiers, "cacheWritesPrice", currency)}
-                                    </AdvancedValue>
+                                    <AdvancedValue>{formatTiers(bands, "cacheWritePrice", currency)}</AdvancedValue>
                                 </AdvancedRow>
                                 <AdvancedRow>
                                     <AdvancedLabel>Cache Reads</AdvancedLabel>
-                                    <AdvancedValue>
-                                        {formatTiers(modelInfo.pricing.tiers, "cacheReadsPrice", currency)}
-                                    </AdvancedValue>
+                                    <AdvancedValue>{formatTiers(bands, "cacheReadPrice", currency)}</AdvancedValue>
                                 </AdvancedRow>
                             </>
                         )}

@@ -3,10 +3,11 @@
  *
  * OTel issues the authorization ticket and owns the GitHub Issue association.
  * The parsers read only the fields declared here, so a status projection can
- * never carry the Issue repository, number, title or link onward even if a
- * response contained them.
+ * carry only the allowlisted private Issue URL, never raw repository coordinates,
+ * title, body or credential material. Older responses may omit the new metadata.
  */
 
+import { isReportIssueUrl } from "@shared/report-issue"
 import type { WireResponse } from "./classification"
 import { boundExchangeClientField, type ExchangeOperationRequest, validateExchangeRequestId } from "./exchangeOperation"
 import { isAuthorizationCode } from "./supportCode"
@@ -47,8 +48,23 @@ export interface IssuedReportAuthorization {
     readonly pollAfterMs: number
 }
 
+export interface ReportStatusVersion {
+    readonly grantSeq: number
+    readonly issueSeq: number
+}
+
+/** Optional for old servers; missing versions must never be treated as version zero. */
+export interface ReportStatusMetadata {
+    readonly serverTime?: number
+    readonly checkedAt?: number
+    readonly nextQueryAt?: number
+    readonly issueUrl?: string | null
+    readonly issueSnapshotAt?: number | null
+    readonly statusVersion?: ReportStatusVersion
+}
+
 /** Current ticket state (§5.4). */
-export interface ReportAuthorizationStatus {
+export interface ReportAuthorizationStatus extends ReportStatusMetadata {
     readonly state: ReportAuthorizationState
     readonly revision: number
     readonly authorizationExpiresAt: number
@@ -109,12 +125,79 @@ export function parseReportAuthorizationStatus(value: unknown): ReportAuthorizat
     if (!isTimestamp(authorizationExpiresAt) || !isTimestamp(ticketExpiresAt) || ticketExpiresAt < authorizationExpiresAt) {
         return undefined
     }
+    const metadata = parseReportStatusMetadata(value, issueState)
+    if (!metadata) return undefined
     if (state !== "approved") {
-        return { state, revision, authorizationExpiresAt, ticketExpiresAt, issueState, resolution, pollAfterMs }
+        return { state, revision, authorizationExpiresAt, ticketExpiresAt, issueState, resolution, pollAfterMs, ...metadata }
     }
     const captureExpiresAt = value.capture_expires_at
     if (revision === 0 || !isTimestamp(captureExpiresAt) || captureExpiresAt > authorizationExpiresAt) return undefined
-    return { state, revision, authorizationExpiresAt, captureExpiresAt, ticketExpiresAt, issueState, resolution, pollAfterMs }
+    return {
+        state,
+        revision,
+        authorizationExpiresAt,
+        captureExpiresAt,
+        ticketExpiresAt,
+        issueState,
+        resolution,
+        pollAfterMs,
+        ...metadata,
+    }
+}
+
+/** Shared wire/storage parser; a supplied malformed field is not an absent old-server field. */
+export function parseReportStatusMetadata(value: unknown, issueState?: ReportIssueState): ReportStatusMetadata | undefined {
+    if (!isRecord(value)) return undefined
+    for (const key of ["server_time", "checked_at", "next_query_at"] as const) {
+        if (value[key] !== undefined && !isTimestamp(value[key])) return undefined
+    }
+    if (value.issue_url !== undefined && value.issue_url !== null && !isReportIssueUrl(value.issue_url)) return undefined
+    if (value.issue_snapshot_at !== undefined && value.issue_snapshot_at !== null && !isTimestamp(value.issue_snapshot_at))
+        return undefined
+    const version = value.status_version
+    if (
+        version !== undefined &&
+        (!isRecord(version) || !isNonNegativeInteger(version.grant_seq) || !isNonNegativeInteger(version.issue_seq))
+    )
+        return undefined
+    if (
+        issueState === "unlinked" &&
+        (value.issue_url != null || value.issue_snapshot_at != null || (isRecord(version) && version.issue_seq !== 0))
+    )
+        return undefined
+    return {
+        ...(value.server_time === undefined ? {} : { serverTime: value.server_time as number }),
+        ...(value.checked_at === undefined ? {} : { checkedAt: value.checked_at as number }),
+        ...(value.next_query_at === undefined ? {} : { nextQueryAt: value.next_query_at as number }),
+        ...(value.issue_url === undefined ? {} : { issueUrl: value.issue_url as string | null }),
+        ...(value.issue_snapshot_at === undefined ? {} : { issueSnapshotAt: value.issue_snapshot_at as number | null }),
+        ...(version === undefined
+            ? {}
+            : {
+                  statusVersion: {
+                      grantSeq: (version as Record<string, number>).grant_seq,
+                      issueSeq: (version as Record<string, number>).issue_seq,
+                  },
+              }),
+    }
+}
+
+export function serializeReportStatusMetadata(value: ReportStatusMetadata): Record<string, unknown> {
+    return {
+        ...(value.serverTime === undefined ? {} : { server_time: value.serverTime }),
+        ...(value.checkedAt === undefined ? {} : { checked_at: value.checkedAt }),
+        ...(value.nextQueryAt === undefined ? {} : { next_query_at: value.nextQueryAt }),
+        ...(value.issueUrl === undefined ? {} : { issue_url: value.issueUrl }),
+        ...(value.issueSnapshotAt === undefined ? {} : { issue_snapshot_at: value.issueSnapshotAt }),
+        ...(value.statusVersion === undefined
+            ? {}
+            : {
+                  status_version: {
+                      grant_seq: value.statusVersion.grantSeq,
+                      issue_seq: value.statusVersion.issueSeq,
+                  },
+              }),
+    }
 }
 
 /** Wire form shared by the status response and the owner-only ticket store. */

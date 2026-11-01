@@ -1,4 +1,5 @@
 import type { ApiStopReason } from "@core/api/transform/stream"
+import type { UserInputControl } from "@shared/away"
 import type { AdmittedInputPart } from "@shared/input-semantics/admitted-parts"
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import type { ClineAssistantContent, ClineStorageMessage, ClineUserAttachedDocumentBlock } from "@shared/messages/content"
@@ -8,6 +9,9 @@ import type {
     JournalWatermark,
     ProviderTurnApproval,
     ProviderTurnPlan,
+    QueueJournalReceipt,
+    RoundMaterialPlan,
+    RoundMaterialReceipt,
     ToolTerminalPhase,
     TurnContinuationReason,
 } from "../../kernel"
@@ -27,6 +31,10 @@ export interface LifecycleCommand {
 
 export interface UserInputEnvelope {
     readonly kind: "user_input"
+    /** Written by trusted admission alongside the ordered body and resources. */
+    readonly userControl?: UserInputControl
+    /** A retained batch whose bodies are ordered separately by its material plan. */
+    readonly roundMaterialOwned?: true
     /** What the user sees: the raw submission text, used for the chat row and history. */
     readonly text?: string
     readonly images?: readonly string[]
@@ -62,6 +70,9 @@ export interface UserInputEnvelope {
 
 export interface DialogDraftEnvelope {
     readonly kind: "dialog_draft"
+    /** Trusted first admission, retained across response delivery and restart. */
+    readonly admittedInputRef?: string
+    readonly roundMaterialOwned?: true
     readonly text: string
     readonly images: readonly string[]
     readonly files: readonly string[]
@@ -126,6 +137,29 @@ export interface ProviderDraftEnvelope {
     readonly turnId?: string
     /** Present when the kernel opened this round instead of the user; see TurnContinuationEnvelope. */
     readonly continuation?: TurnContinuationReason
+    readonly materialPlan?: RoundMaterialPlan
+    readonly materialReceipt?: RoundMaterialReceipt
+}
+
+export interface RoundMaterialInputEnvelope {
+    readonly kind: "round_material_input"
+    readonly planId: string
+    readonly materialId: string
+    readonly inputRef: string
+}
+
+export interface RoundNoticeEnvelope {
+    readonly kind: "round_notice" | "round_active_away"
+    readonly planId: string
+    readonly text: string
+}
+
+/** Journal checkpoint commits the draft contents and the exact position they describe. */
+export interface RoundPreparedEnvelope {
+    readonly kind: "round_prepared"
+    readonly composeCommandId: string
+    readonly draft: Omit<ProviderDraftEnvelope, "journalThrough">
+    readonly queueJournalReceipt?: QueueJournalReceipt
 }
 
 /**
@@ -216,6 +250,7 @@ export interface ProviderFinalEnvelope {
 
 export interface ProviderBlockOutput {
     readonly blockId: string
+    readonly disposition?: "away_feedback_only"
     readonly attempt: string
     readonly index: number
     readonly lanes: readonly string[]
@@ -226,6 +261,9 @@ export interface ProviderBlockOutput {
 
 export interface ToolInvocationEnvelope {
     readonly kind: "tool_invocation"
+    readonly disposition?: "away_feedback_only"
+    /** The original admission grant; execution must not retain a workspace grant after Away stops. */
+    readonly awayCommandApproval?: "manual" | "workspace"
     readonly toolName: string
     readonly input: Readonly<Record<string, unknown>>
     readonly functionId: string

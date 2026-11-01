@@ -1,3 +1,4 @@
+import { acceptAwayDeadline, dueAwayInteraction, reduceAway, resumesAutomaticResponse } from "./away"
 import { reduceDialog, withoutAbandonedReview } from "./machines/dialog"
 import { composeRoundCommand, expireAbandonedCompaction, isPlainTextWarningTurn, reduceFlow } from "./machines/flow"
 import { ALL_HALT_PARTICIPANTS, reduceHalt, validateHaltEvent } from "./machines/halt"
@@ -14,6 +15,7 @@ import { settleTerminatedTurn } from "./machines/terminate"
 import { reduceTransitionDraft, validateTransitionDraftEvent } from "./machines/transition-draft"
 import { reduceTurn, toolTerminalManifestPayload } from "./machines/turn"
 import { mistakeLimitPresentation } from "./mistake-limit-presentation"
+import { reduceRoundMaterial, retriesPreparedRound, roundMaterialReceipt } from "./round-material"
 import {
     allBlocksTerminal,
     canOpenNextRound,
@@ -134,6 +136,26 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
         if (event.type !== "input_queue.removed" && entry.state !== "accepted" && entry.state !== "released")
             return { reason: "phase_invalid", message: `Retained input ${event.entryId} is not mutable from ${entry.state}` }
     }
+    if (event.type === "input_queue.delivery_accepted") {
+        const compose = state.flow.compose
+        const delivery = retainedQueueDeliveryEntries(state.intake, event.deliveryId)
+        if (state.halt.status !== "idle" || state.flow.phase !== "running" || compose?.status !== "running")
+            return { reason: "phase_invalid", message: "Queue acceptance requires an active compose round" }
+        if (
+            compose.commandId !== event.commandId ||
+            compose.originRevision !== event.originRevision ||
+            delivery.length === 0 ||
+            delivery.some(
+                (entry) =>
+                    entry.state !== "reserved" ||
+                    entry.queue?.delivery?.point !== "tool_round" ||
+                    entry.queue.delivery.ownerId !== event.commandId ||
+                    entry.queue.delivery.generation !== event.generation ||
+                    !compose.admittedEntryIds.includes(entry.entryId),
+            )
+        )
+            return { reason: "identity_mismatch", message: "Queue delivery does not belong to this compose round" }
+    }
     if (event.type === "input_queue.delivery_reconciled") {
         const delivery = retainedQueueDeliveryEntries(state.intake, event.deliveryId)
         if (delivery.length === 0)
@@ -248,7 +270,20 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
                 message: `Block ${event.blockId} cannot accept policy feedback from ${block.phase}`,
             }
     }
-    if (event.type === "compose.completed" || event.type === "compose.failed" || event.type === "compose.withdrawn") {
+    if (event.type === "compose.prepared_restored" || event.type === "compose.prepared_retired") {
+        if (
+            state.flow.compose?.commandId !== event.commandId ||
+            state.flow.compose.originRevision !== event.originRevision ||
+            (event.type === "compose.prepared_restored" && state.flow.compose.materialPlan?.id !== event.plan.id)
+        )
+            return { reason: "identity_mismatch", message: "Prepared round does not match the restored compose owner" }
+    }
+    if (
+        event.type === "compose.freeze_requested" ||
+        event.type === "compose.completed" ||
+        event.type === "compose.failed" ||
+        event.type === "compose.withdrawn"
+    ) {
         const owner = state.flow.compose
         if (!owner || owner.commandId !== event.commandId || owner.originRevision !== event.originRevision)
             return { reason: "identity_mismatch", message: `Compose feedback ${event.commandId} is not active` }
@@ -257,6 +292,11 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
         if (state.halt.status === "stopping" || state.flow.phase === "paused" || state.flow.phase === "terminated")
             return { reason: "phase_invalid", message: "Compose feedback arrived after task halt" }
         if (event.type === "compose.completed") {
+            if (
+                owner.materialPlan &&
+                JSON.stringify(event.materialReceipt) !== JSON.stringify(roundMaterialReceipt(owner.materialPlan))
+            )
+                return { reason: "identity_mismatch", message: "Compose receipt does not settle its frozen material plan" }
             if (event.draftRef.length === 0)
                 return { reason: "identity_mismatch", message: "Compose completion has no draft reference" }
             const retained = state.intake.queued
@@ -330,9 +370,13 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
             return { reason: "duplicate", message: `Interaction ${event.interactionId} already exists` }
         if (event.type === "dialog.requested" && state.dialog.primary)
             return { reason: "phase_invalid", message: `Primary interaction ${state.dialog.primary.interactionId} is active` }
+        const resumingAutomatic =
+            event.kind === "cancelled_resume" &&
+            state.flow.phase === "paused" &&
+            state.dialog.primary?.acceptedResponse?.origin === "timeout"
         if (
             event.type === "dialog.interrupt_requested" &&
-            (state.dialog.primary?.status !== "awaiting" || state.dialog.interrupted)
+            ((!resumingAutomatic && state.dialog.primary?.status !== "awaiting") || state.dialog.interrupted)
         )
             return { reason: "phase_invalid", message: "Only one awaiting primary interaction can be interrupted" }
     }
@@ -600,6 +644,22 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
                 haltId: event.haltId,
                 participantIds: ALL_HALT_PARTICIPANTS,
                 reason: event.type === "user.terminate" ? "terminate" : "cancel",
+            },
+        ]
+    }
+    if (event.type === "dialog.resolved" && retriesPreparedRound(previous, event.interactionId)) {
+        const compose = previous.flow.compose!
+        return [{ ...commandBase(next, 0), type: "provider.start", draftRef: compose.draftRef!, turnId: compose.turnId }]
+    }
+    if (event.type === "dialog.resolved" && resumesAutomaticResponse(previous, event.interactionId)) {
+        const interaction = next.dialog.primary!
+        return [
+            {
+                ...commandBase(next, 0),
+                type: "dialog.deliver_automatic",
+                interactionId: interaction.interactionId,
+                turnId: interaction.turnId,
+                deadlineKind: interaction.acceptedResponse!.deadlineKind!,
             },
         ]
     }
@@ -916,6 +976,24 @@ export function transition(state: TaskState, event: TaskEvent): TransitionResult
         return reject(state, "generation_mismatch", `Event generation ${event.generation} does not match ${state.generation}`)
     if (state.flow.phase === "terminated" && event.type !== "lifecycle.open")
         return reject(state, "phase_invalid", "Terminated tasks reject new events")
+    if (event.type === "away.deadline_due") {
+        const interaction = dueAwayInteraction(state, event)
+        if (!interaction) return reject(state, "identity_mismatch", "Away deadline is no longer eligible")
+        const next = acceptAwayDeadline({ ...state, revision: state.revision + 1 }, interaction)
+        return {
+            kind: "accepted",
+            state: next,
+            commands: [
+                {
+                    ...commandBase(next, 0),
+                    type: "dialog.deliver_automatic",
+                    interactionId: interaction.interactionId,
+                    turnId: interaction.turnId,
+                    deadlineKind: interaction.deadline!.kind,
+                },
+            ],
+        }
+    }
     const invalid = validateEvent(state, event) ?? validateTransitionDraftEvent(state, event)
     if (invalid) return reject(state, invalid.reason, invalid.message)
 
@@ -926,6 +1004,7 @@ export function transition(state: TaskState, event: TaskEvent): TransitionResult
     const intake = reduceIntake(state.intake, event, {
         admittedEntryIds: state.flow.compose?.admittedEntryIds,
         journalWatermark: state.journalWatermark,
+        acceptedRevision: nextRevision,
     })
     const halt = reduceHalt(state.halt, event)
     let next: TaskState = {
@@ -1012,7 +1091,13 @@ export function transition(state: TaskState, event: TaskEvent): TransitionResult
     ) {
         next = { ...next, flow: { phase: "waiting" } }
     }
-    next = reduceTransitionDraft(next, event)
+    if (event.type === "dialog.resolved" && resumesAutomaticResponse(state, event.interactionId)) {
+        next = { ...next, flow: { ...next.flow, phase: "waiting" } }
+    }
+    if (event.type === "dialog.resolved" && retriesPreparedRound(state, event.interactionId)) {
+        next = { ...next, flow: { ...next.flow, phase: "running", error: undefined } }
+    }
+    next = reduceRoundMaterial(state, reduceAway(reduceTransitionDraft(next, event), event), event)
     const commands = [
         ...flow.commands,
         ...turn.commands,

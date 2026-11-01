@@ -35,6 +35,8 @@ export interface ToolAdmissionSnapshot {
     blanket: { yoloMode?: boolean; approveAll?: boolean }
     inheritsApproval?: boolean
     mcpToolAutoApprove?: boolean
+    awayActive?: boolean
+    awayCommandScope?: "workspace" | "external"
 }
 
 /** Inputs supplied by the coordinator for one registered handler. */
@@ -267,13 +269,18 @@ function resolveScopeContext(
     const roots = projectRoots(snapshot)
     const absolutePaths = declaredPaths(block, toolName).map((candidate) => resolveLexicalPath(candidate, snapshot))
     const requiresApproval = String(parameterValue(block, "requires_approval") ?? "").toLowerCase() === "true"
+    const awayCommand = toolName === DlineDefaultTool.BASH && snapshot.awayActive ? snapshot.awayCommandScope : undefined
     return {
-        isExternalPath: absolutePaths.some(
-            (absolutePath) =>
-                absolutePath !== undefined &&
-                !isTrustedTaskRead(toolName, absolutePath, snapshot) &&
-                !roots.some((root) => isPathInsideRoot(absolutePath, root)),
-        ),
+        isExternalPath:
+            awayCommand !== undefined
+                ? awayCommand === "external"
+                : absolutePaths.some(
+                      (absolutePath) =>
+                          absolutePath !== undefined &&
+                          !isTrustedTaskRead(toolName, absolutePath, snapshot) &&
+                          !roots.some((root) => isPathInsideRoot(absolutePath, root)),
+                  ),
+        ...(awayCommand === undefined ? {} : { awayCommand }),
         isSafeCommand: toolName === DlineDefaultTool.BASH ? !requiresApproval : false,
         isToolAutoApproveEnabled: resolveToolAutoApprove(toolName, snapshot),
     }

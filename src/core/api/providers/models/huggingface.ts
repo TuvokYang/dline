@@ -3,6 +3,7 @@
  * Extracted from api.ts huggingFaceModels (lines 2244-2314).
  */
 import type { ModelInfo } from "@shared/api"
+import { flatPricing } from "./pricing"
 
 export const huggingFaceModels: Record<string, ModelInfo> = {
     "openai/gpt-oss-120b": {
@@ -16,10 +17,7 @@ export const huggingFaceModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "openai/gpt-oss-20b": {
         id: "openai/gpt-oss-20b",
@@ -32,10 +30,7 @@ export const huggingFaceModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "moonshotai/Kimi-K2-Instruct": {
         id: "moonshotai/Kimi-K2-Instruct",
@@ -47,10 +42,7 @@ export const huggingFaceModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "deepseek-ai/DeepSeek-V3-0324": {
         id: "deepseek-ai/DeepSeek-V3-0324",
@@ -62,10 +54,7 @@ export const huggingFaceModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "deepseek-ai/DeepSeek-R1": {
         id: "deepseek-ai/DeepSeek-R1",
@@ -77,10 +66,7 @@ export const huggingFaceModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "deepseek-ai/DeepSeek-R1-0528": {
         id: "deepseek-ai/DeepSeek-R1-0528",
@@ -92,10 +78,7 @@ export const huggingFaceModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "meta-llama/Llama-3.1-8B-Instruct": {
         id: "meta-llama/Llama-3.1-8B-Instruct",
@@ -107,10 +90,7 @@ export const huggingFaceModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
 }
 

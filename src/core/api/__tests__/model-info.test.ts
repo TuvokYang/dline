@@ -14,7 +14,7 @@ describe("getProfileModelInfo", () => {
 
     it("resolves provider registry metadata when top-level modelInfo is absent", () => {
         vi.spyOn(ModelRegistry, "getInstance").mockReturnValue({
-            getProviderModels: () => ({
+            getProviderCatalog: () => ({
                 provider: "deepseek",
                 providerName: "DeepSeek",
                 billingMode: "token",
@@ -38,7 +38,7 @@ describe("getProfileModelInfo", () => {
     // capability must reach the media resolver for one model and not the other.
     it("declares image input for deepseek-flash only", () => {
         vi.spyOn(ModelRegistry, "getInstance").mockReturnValue({
-            getProviderModels: () => ({
+            getProviderCatalog: () => ({
                 provider: "deepseek",
                 providerName: "DeepSeek",
                 billingMode: "token",

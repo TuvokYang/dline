@@ -147,6 +147,14 @@ export async function* handleResponsesApiStreamResponse(
         cacheWriteTokens: number,
         cacheReadTokens: number,
     ) => Promise<number>,
+    /**
+     * Read the amount the gateway itself charged from the raw usage event.
+     *
+     * A gateway that reports its own charge is authoritative: a price table
+     * cannot see peak-hour, long-context, or discount pricing. `undefined` falls
+     * back to `calculateCost`.
+     */
+    readReportedCost?: (usage: unknown) => number | undefined,
 ) {
     const identityRegistry = createResponsesRegistry("responses-api-support")
     const streamedArgumentItems = new Set<string>()
@@ -357,7 +365,9 @@ export async function* handleResponsesApiStreamResponse(
                 const reasoningTokens = usage.output_tokens_details?.reasoning_tokens || 0
                 const totalTokens = usage.total_tokens || 0
                 // Responses `output_tokens` already includes `reasoning_tokens`.
-                const totalCost = await calculateCost(modelInfo, inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens)
+                const reportedCost = readReportedCost?.(usage)
+                const totalCost =
+                    reportedCost ?? (await calculateCost(modelInfo, inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens))
                 Logger.log(`Total tokens from Responses API usage: ${totalTokens}`)
                 const nonCachedInputTokens = Math.max(0, inputTokens - cacheReadTokens - cacheWriteTokens)
                 const stopReason = normalizeResponsesStopReason(chunk.response.status)

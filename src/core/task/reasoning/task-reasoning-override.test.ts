@@ -1,5 +1,6 @@
 import type { ThinkingConfig } from "@shared/proto/dline/models/metadata"
-import type { ApiProfile } from "@shared/proto/dline/profile"
+import { ApiProfile } from "@shared/proto/dline/profile"
+import { OpenCodeMode, OpenCodeProviderConfig } from "@shared/proto/dline/provider/opencode"
 import { describe, expect, it } from "vitest"
 import {
     applyTaskReasoningOverride,
@@ -106,6 +107,19 @@ describe("Task reasoning override domain", () => {
             valid: false,
             error: "unsupported_budget",
         })
+    })
+
+    it("keeps a Task override inside a new OpenCode runtime config without changing the saved Profile", () => {
+        const profile = ApiProfile.create({
+            provider: "opencode",
+            opencode: OpenCodeProviderConfig.create({ mode: OpenCodeMode.OPEN_CODE_MODE_GO }),
+        })
+        const runtimeProfile = applyTaskReasoningOverride(profile, { kind: "budget", budgetTokens: 2048 })
+        const restored = ApiProfile.decode(ApiProfile.encode(ApiProfile.create(runtimeProfile)).finish())
+
+        expect(restored.opencode?.model?.reasoning).toMatchObject({ enableThinking: true, thinkingBudget: 2048 })
+        expect(restored.opencode?.mode).toBe(OpenCodeMode.OPEN_CODE_MODE_GO)
+        expect(profile.opencode?.model).toBeUndefined()
     })
 
     it("applies effort without mutating the Catalog Profile or retaining a budget", () => {

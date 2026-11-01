@@ -1,0 +1,91 @@
+---
+title: Moonshot
+description: Get a Moonshot API key and configure the Kimi models in Dline.
+---
+
+import { Steps, TabItem, Tabs } from "@astrojs/starlight/components"
+
+Moonshot AI serves the Kimi model family, with long context windows and separate thinking variants for reasoning-heavy work.
+
+**Website:** [platform.moonshot.ai](https://platform.moonshot.ai/) (international) | [platform.moonshot.cn](https://platform.moonshot.cn/) (mainland China)
+
+## Get an API key
+
+<Tabs>
+<TabItem label="International">
+
+<Steps>
+
+1. Go to [platform.moonshot.ai](https://platform.moonshot.ai/) and sign up or sign in.
+
+2. Open the API key management page in the console.
+
+3. Create a new API key.
+
+4. Copy the key immediately and store it securely.
+
+</Steps>
+
+</TabItem>
+<TabItem label="Mainland China">
+
+<Steps>
+
+1. Go to [platform.moonshot.cn](https://platform.moonshot.cn/) and sign up or sign in.
+
+2. Open the API key management page in the console.
+
+3. Create a new API key.
+
+4. Copy the key immediately and store it securely.
+
+</Steps>
+
+</TabItem>
+</Tabs>
+
+## Configure Dline
+
+See [Model configuration](/getting-started/authorizing-with-dline/) for the general flow.
+
+<Steps>
+
+1. Click the **Settings** button in the Dline panel title bar.
+
+2. Set **Provider** to **Moonshot**.
+
+3. Under **API Version**, keep `v1`, the current version of the Moonshot API.
+
+4. Paste the key into the **Moonshot API Key** field.
+
+5. Select a model under **Model**.
+
+</Steps>
+
+## API address
+
+Dline sends requests to `https://api.moonshot.ai/v1`, the international host of the Moonshot API. The mainland China platform at `platform.moonshot.cn` runs its own deployment with its own keys, so use a key issued by the console that matches the host above.
+
+## Models
+
+| Model | Context window | Notes |
+| --- | --- | --- |
+| `kimi-k2.5` | 262,144 | Accepts images and caches prompts. |
+| `kimi-k2-0905-preview` | 262,144 | Default model. |
+| `kimi-k2-0711-preview` | 131,072 | |
+| `kimi-k2-turbo-preview` | 262,144 | Faster variant of `kimi-k2-0905-preview`. |
+| `kimi-k2-thinking` | 262,144 | Streams reasoning content that Dline shows as thinking. |
+| `kimi-k2-thinking-turbo` | 262,144 | Faster variant of `kimi-k2-thinking`. |
+
+Only `kimi-k2.5` caches prompts, so the usage panel shows cache reads and writes for that model and reports the other Kimi models with plain input tokens.
+
+The Moonshot card has no thinking control. A thinking model always reasons before it answers, and the model decides on its own.
+
+## Troubleshooting
+
+| Problem | What to do |
+| --- | --- |
+| `401` on every request | The key was not accepted by the API host above. Confirm the key is active in the console you issued it from, and that the console matches `https://api.moonshot.ai/v1`. |
+| `404` on a model | The key has no access to that model ID. Pick another model, or check which models your account can call in the console. |
+| `429` | The account hit its rate limit or ran out of balance. Check the console and try again later. |
+| A long prompt is refused | The history exceeds the context window of the selected model. Start a new task, compact the context, or pick a model with a larger window. |

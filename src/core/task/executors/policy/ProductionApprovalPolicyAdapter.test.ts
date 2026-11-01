@@ -37,6 +37,26 @@ describe("ProductionApprovalPolicyAdapter", () => {
         await expect(manual.evaluate(input)).resolves.toEqual({ approved: false })
     })
 
+    it.each([
+        { awayCommand: "workspace", approved: true },
+        { awayCommand: "external", approved: false },
+    ])("uses the same $awayCommand command scope ahead of ordinary approval settings", async ({ awayCommand, approved }) => {
+        const adapter = new ProductionApprovalPolicyAdapter({
+            readSnapshot: () => ({ settings: { actions: {} }, blanket: { yoloMode: true, approveAll: true } }),
+        })
+        await expect(
+            adapter.evaluate({
+                ...input,
+                riskFacts: {
+                    toolName: "execute_command",
+                    awayCommand,
+                    isExternalPath: awayCommand === "external",
+                    inheritsApproval: true,
+                },
+            }),
+        ).resolves.toEqual({ approved })
+    })
+
     it("rejects malformed risk facts instead of guessing a tool identity", async () => {
         const adapter = new ProductionApprovalPolicyAdapter({
             readSnapshot: () => ({ settings: { actions: {} } }),

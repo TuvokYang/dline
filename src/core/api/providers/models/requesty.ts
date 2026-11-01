@@ -3,6 +3,7 @@
  */
 
 import type { ModelInfo } from "@shared/api"
+import { flatPricing } from "./pricing"
 
 /** Default model ID for Requesty provider */
 export const requestyDefaultModelId = "anthropic/claude-3-7-sonnet-latest"
@@ -17,10 +18,5 @@ export const requestyDefaultModelInfo: ModelInfo = {
         maxTokens: 64_000,
         contextWindow: 200_000,
     },
-    pricing: {
-        inputPrice: 3.0,
-        outputPrice: 15.0,
-        cacheWritesPrice: 3.75,
-        cacheReadsPrice: 0.3,
-    },
+    pricing: flatPricing(3.0, 15.0, 3.75, 0.3),
 }

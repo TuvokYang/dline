@@ -4,6 +4,7 @@
 
 import { resolveOpenRouterReasoning } from "@core/api/providers/openrouter/reasoning"
 import { resolveVercelReasoning } from "@core/api/providers/vercel-ai-gateway/reasoning"
+import { getAvailableModels } from "@core/controller/models/getAvailableModels"
 import { mockFetchForTesting } from "@shared/net"
 import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
 import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
@@ -158,7 +159,112 @@ describe("ModelRegistry", () => {
         })
     })
 
+    describe("leftover alternative catalog files", () => {
+        it("ignores a stored file whose id became another provider's catalog", async () => {
+            await fsPromises.writeFile(
+                path.join(tempDir, "opencode.json"),
+                JSON.stringify({
+                    provider: "opencode",
+                    providerName: "OpenCode",
+                    baseUrl: "https://opencode.ai/inference",
+                    billingMode: "console",
+                    models: { "claude-sonnet-5-5": { id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5" } },
+                }),
+            )
+            // Written by the build that registered the Go catalog as its own
+            // provider. Loading it would offer a second, selectable OpenCode.
+            await fsPromises.writeFile(
+                path.join(tempDir, "opencode-go.json"),
+                JSON.stringify({
+                    provider: "opencode-go",
+                    providerName: "OpenCode Go (leftover)",
+                    baseUrl: "https://leftover.invalid",
+                    billingMode: "console",
+                    models: { "go-only-model": { id: "go-only-model", name: "Go Only" } },
+                }),
+            )
+
+            await registry.initialize()
+            await registry.waitForDeferredProviders()
+
+            const providerIds = registry.getAllProviders().map((provider) => provider.provider)
+            expect(providerIds).to.include("opencode")
+            expect(providerIds).to.not.include("opencode-go")
+
+            // The leftover file must not shadow the entry that owns identity,
+            // base URL and billing for the Go catalog.
+            const resolved = registry.getProviderModels("opencode-go")
+            expect(resolved?.provider).to.equal("opencode")
+            expect(resolved?.baseUrl).to.equal("https://opencode.ai/inference")
+        })
+
+        it("ignores leftover mainland catalogs of Qwen and Z AI", async () => {
+            await fsPromises.writeFile(
+                path.join(tempDir, "qwen.json"),
+                JSON.stringify({
+                    provider: "qwen",
+                    providerName: "Alibaba Qwen",
+                    models: { "qwen-intl-model": { id: "qwen-intl-model", name: "Qwen Intl" } },
+                }),
+            )
+            await fsPromises.writeFile(
+                path.join(tempDir, "qwen-cn.json"),
+                JSON.stringify({
+                    provider: "qwen-cn",
+                    providerName: "Qwen Mainland (leftover)",
+                    models: { "qwen-cn-model": { id: "qwen-cn-model", name: "Qwen CN" } },
+                }),
+            )
+            await fsPromises.writeFile(
+                path.join(tempDir, "zai.json"),
+                JSON.stringify({
+                    provider: "zai",
+                    providerName: "Z AI",
+                    models: { "zai-intl-model": { id: "zai-intl-model", name: "Z AI Intl" } },
+                }),
+            )
+            await fsPromises.writeFile(
+                path.join(tempDir, "zai-cn.json"),
+                JSON.stringify({
+                    provider: "zai-cn",
+                    providerName: "Z AI Mainland (leftover)",
+                    models: { "zai-cn-model": { id: "zai-cn-model", name: "Z AI CN" } },
+                }),
+            )
+
+            await registry.initialize()
+
+            const providerIds = registry.getAllProviders().map((provider) => provider.provider)
+            expect(providerIds).to.include("qwen")
+            expect(providerIds).to.include("zai")
+            expect(providerIds).to.not.include("qwen-cn")
+            expect(providerIds).to.not.include("zai-cn")
+        })
+    })
+
     describe("getAllModels", () => {
+        it("projects an alternative catalog through the models RPC without creating a selectable provider", async () => {
+            await fsPromises.writeFile(
+                path.join(tempDir, "opencode.json"),
+                JSON.stringify({
+                    provider: "opencode",
+                    providerName: "OpenCode",
+                    billingMode: "console",
+                    models: { "console-only": { id: "console-only" } },
+                }),
+            )
+            await registry.initialize()
+            await registry.waitForDeferredProviders()
+
+            const response = await getAvailableModels({} as never)
+            expect(registry.getAllProviders().map((provider) => provider.provider)).to.deep.equal(["opencode"])
+            expect(response.providers.map((group) => group.provider)).to.deep.equal(["opencode", "opencode-go"])
+            expect(response.providers[0].models.map((model) => model.id)).to.deep.equal(["console-only"])
+            const go = response.providers[1]
+            expect(go.models.some((model) => model.id === "deepseek-v4-pro")).to.equal(true)
+            expect(go.models.some((model) => model.id === "console-only")).to.equal(false)
+        })
+
         it("loads vercel.json under the Vercel provider ID and ignores the legacy duplicate", async () => {
             const legacyConfig = {
                 provider: "vercel-ai-gateway",

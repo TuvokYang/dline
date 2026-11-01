@@ -4,8 +4,57 @@
  */
 import type { ModelInfo } from "@shared/api"
 import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
+import { priceSet, timeOfDayPricing } from "./pricing"
 
 export const DEEPSEEK_REASONING_EFFORT_OPTIONS = ["low", "high", "max"] as const
+
+/**
+ * The windows the seller bills at the full rate instead of the default.
+ *
+ * DeepSeek publishes 01:00-04:00 and 06:00-10:00 UTC on weekdays, excluding
+ * Chinese public holidays. Expressed as minutes from midnight in the seller's
+ * own UTC+8, that is 09:00-12:00 and 14:00-18:00 local. The two periods never
+ * overlap, so an instant bills at exactly one rate.
+ * @see https://api-docs.deepseek.com/quick_start/pricing/
+ */
+const DEEPSEEK_PEAK_WINDOWS = [
+    { startMinute: 9 * 60, endMinute: 12 * 60 },
+    { startMinute: 14 * 60, endMinute: 18 * 60 },
+]
+
+/**
+ * Peak/off-peak schedule for the direct DeepSeek endpoint.
+ *
+ * Off-peak is exactly half the peak rate, and the seller charges off-peak for
+ * whole public holidays, so the schedule names the CN calendar instead of the
+ * catalog restating the dates.
+ */
+function deepSeekSchedule() {
+    return {
+        timezoneOffsetMinutes: 8 * 60,
+        dayRule: 1,
+        defaultOnPublicHolidays: true,
+        holidayCalendar: "CN",
+    } as const
+}
+
+/**
+ * Time-of-day pricing in CNY with the seller's published peak rates.
+ *
+ * The seller publishes two daily peak periods, so both become windows over one
+ * default rate. Off-peak values are written out instead of derived from a
+ * multiplier: the catalog is the price authority, and a derived value cannot
+ * express a seller that discounts by anything other than half.
+ */
+function deepSeekPricing(inputPrice: number, outputPrice: number, cacheWritePrice: number, cacheReadPrice: number) {
+    const peak = priceSet(inputPrice, outputPrice, cacheWritePrice, cacheReadPrice)
+    return timeOfDayPricing({
+        schedule: deepSeekSchedule(),
+        defaultPrices: priceSet(inputPrice / 2, outputPrice / 2, cacheWritePrice / 2, cacheReadPrice / 2),
+        timeWindows: DEEPSEEK_PEAK_WINDOWS.map((window) => ({ ...window, prices: peak })),
+        currency: "CNY",
+    })
+}
 
 /** Declared thinking capability for the seeded DeepSeek models. */
 function thinkingCapabilities() {
@@ -48,13 +97,7 @@ export const deepSeekModels: Record<string, ModelInfo> = {
             tools: [ServerTool.WEB_SEARCH],
         },
         apiFormats: [ApiFormat.OPENAI_CHAT, ApiFormat.OPENAI_RESPONSES, ApiFormat.ANTHROPIC_CHAT],
-        pricing: {
-            inputPrice: 3,
-            outputPrice: 6,
-            cacheWritesPrice: 3,
-            cacheReadsPrice: 0.025,
-            currency: "CNY",
-        },
+        pricing: deepSeekPricing(3, 6, 3, 0.025),
     },
     "deepseek-flash": {
         id: "deepseek-flash",
@@ -71,13 +114,7 @@ export const deepSeekModels: Record<string, ModelInfo> = {
             // would route Auto to a hosted search that never runs and hide the local one.
         },
         apiFormats: [ApiFormat.OPENAI_CHAT, ApiFormat.OPENAI_RESPONSES, ApiFormat.ANTHROPIC_CHAT],
-        pricing: {
-            inputPrice: 1,
-            outputPrice: 2,
-            cacheWritesPrice: 1,
-            cacheReadsPrice: 0.02,
-            currency: "CNY",
-        },
+        pricing: deepSeekPricing(1, 2, 1, 0.02),
     },
 }
 

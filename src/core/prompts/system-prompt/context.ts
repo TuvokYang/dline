@@ -2,6 +2,7 @@ import type { CapabilityToggleState } from "@core/prompts/capabilities/Capabilit
 import type { CapabilitiesSnapshot } from "@core/prompts/capabilities/types"
 import type { PromptProfile } from "@core/prompts/profiles/types"
 import type { McpServer } from "@shared/mcp"
+import type { ApiFormat } from "@shared/proto/dline/models/metadata"
 import type { ApiProviderInfo } from "@/core/api"
 import type { WebSearchRoutingPlan } from "@/core/api/server-tools"
 import type { BrowserSettings } from "@/shared/BrowserSettings"
@@ -52,6 +53,15 @@ export interface SystemPromptContext {
     readonly isSubagentRun?: boolean
     readonly isCliEnvironment?: boolean
     readonly enableNativeToolCalls?: boolean
+    /**
+     * Wire protocol the current request will be sent with.
+     *
+     * Tool schemas are validated by the transport, not by the vendor: an
+     * Anthropic Messages endpoint rejects the OpenAI function wrapper no matter
+     * which provider is configured. When this is absent, projection falls back to
+     * the provider identity so every existing provider keeps its current shape.
+     */
+    readonly selectedApiFormat?: ApiFormat
     /**
      * MCP tools are reached through the capability catalog, load_mcp, and use_mcp_tool
      * instead of travelling as native tool definitions. Only `true` withholds them.

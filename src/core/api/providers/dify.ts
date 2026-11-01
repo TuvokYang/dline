@@ -1,4 +1,5 @@
 import { ModelInfo } from "@shared/api"
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { fetch, providerFetch } from "@/shared/net"
@@ -434,10 +435,7 @@ export class DifyHandler extends ApiHandler {
                     supportsImages: true,
                     supportsPromptCache: false,
                 },
-                pricing: {
-                    inputPrice: 0,
-                    outputPrice: 0,
-                },
+                pricing: flatMeteredPricing(0, 0),
             },
         }
     }

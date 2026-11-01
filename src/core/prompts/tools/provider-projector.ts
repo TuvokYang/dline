@@ -1,5 +1,6 @@
 import type { Tool as AnthropicTool } from "@anthropic-ai/sdk/resources/index"
 import { type FunctionDeclaration as GoogleTool, Type as GoogleType } from "@google/genai"
+import { ApiFormat } from "@shared/proto/dline/models/metadata"
 import type {
     ChatCompletionFunctionTool as OpenAIFunctionTool,
     ChatCompletionTool as OpenAITool,
@@ -124,17 +125,70 @@ function toGoogle(
 }
 
 /**
- * Providers that post to the Anthropic Messages API.
+ * Providers whose wire protocol is the Anthropic Messages API.
  *
- * The projection follows the wire protocol, not the vendor: that API validates
- * each tool by its `type` tag and rejects the OpenAI function wrapper, so any
- * provider speaking it needs the input-schema shape regardless of how its
- * credentials or catalog are obtained.
+ * This set exists only for requests that carry no protocol fact. It is the
+ * pre-existing behaviour, kept so that a context built without a selected format
+ * projects exactly what it projected before the format-first path existed.
  */
 const ANTHROPIC_PROTOCOL_PROVIDERS: ReadonlySet<string> = new Set(["anthropic", "claude-code", "bedrock", "minimax"])
 
-/** Projects one canonical profile spec to the active provider schema. */
+/**
+ * Projects one canonical profile spec to the schema of the wire protocol.
+ *
+ * The transport validates tool schemas, not the vendor: an Anthropic Messages
+ * endpoint rejects the OpenAI function wrapper whatever provider name is
+ * configured, and an OpenAI-compatible endpoint rejects `input_schema`. The
+ * request-level format therefore decides the shape whenever it is known, and the
+ * provider identity is only a fallback for contexts built without one.
+ *
+ * @param spec Canonical tool descriptor.
+ * @param context Prompt context, optionally carrying the request's API format.
+ * @param enabledToolIds Tools enabled for this task.
+ * @returns The tool in the shape the active protocol accepts.
+ */
 export function projectTool(
+    spec: ProfileToolSpec,
+    context: SystemPromptContext,
+    enabledToolIds: ReadonlySet<DlineDefaultTool>,
+): ClineTool {
+    if (context.selectedApiFormat !== undefined) {
+        const projected = projectByApiFormat(spec, context, enabledToolIds, context.selectedApiFormat)
+        if (projected) return projected
+    }
+    return projectByProviderId(spec, context, enabledToolIds)
+}
+
+/**
+ * Project by the protocol the request will be sent with.
+ *
+ * Returns `undefined` for a format this build does not know, so the caller falls
+ * back to the provider identity instead of guessing a wrapper. A newer format
+ * reaching an older projection must not silently become the OpenAI shape.
+ */
+function projectByApiFormat(
+    spec: ProfileToolSpec,
+    context: SystemPromptContext,
+    enabledToolIds: ReadonlySet<DlineDefaultTool>,
+    apiFormat: ApiFormat,
+): ClineTool | undefined {
+    switch (apiFormat) {
+        case ApiFormat.ANTHROPIC_CHAT:
+            return toAnthropic(spec, context, enabledToolIds)
+        case ApiFormat.GEMINI_CHAT:
+            return toGoogle(spec, context, enabledToolIds)
+        case ApiFormat.OPENAI_CHAT:
+        case ApiFormat.OPENAI_RESPONSES:
+        case ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE:
+        case ApiFormat.R1_CHAT:
+            return toOpenAI(spec, context, enabledToolIds)
+        default:
+            return undefined
+    }
+}
+
+/** Project by provider identity, for contexts that carry no protocol fact. */
+function projectByProviderId(
     spec: ProfileToolSpec,
     context: SystemPromptContext,
     enabledToolIds: ReadonlySet<DlineDefaultTool>,

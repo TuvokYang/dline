@@ -131,6 +131,46 @@ describe("ToolTerminalManifestMaterializer feedback inputs", () => {
 })
 
 describe("ToolTerminalManifestMaterializer refusal wording", () => {
+    it("keeps a timed-out command neutral, paired and distinct from a user refusal after terminal recovery", async () => {
+        const payloads = new InMemoryTaskPayloadStore()
+        const journal = new InMemoryConversationJournal()
+        const call = { ...invocation("b0"), toolName: "execute_command", input: { command: "echo done" } }
+        const invocationRef = await payloads.put(encodeTaskPayload(call))
+        const feedbackRef = await payloads.put(
+            encodeTaskPayload({ kind: "dialog_draft", text: "timeout", images: [], files: [] }),
+        )
+        const manifest: ToolTerminalManifest = {
+            turnId: TURN_ID,
+            blocks: [
+                { blockId: "b0", phase: "rejected", invocationRef, approvalTimedOut: true, approvalFeedbackRef: feedbackRef },
+            ],
+        }
+        let denied = false
+        const first = await materializeToolTerminalManifest({
+            manifest,
+            payloads,
+            journal,
+            denial: {
+                describe: async () => {
+                    denied = true
+                    return { text: "user refused", isError: true }
+                },
+            },
+        })
+        expect(await materializeToolTerminalManifest({ manifest, payloads, journal })).toEqual(first)
+        const entry = await journal.findByOperation(`tool.terminal_manifest:${TURN_ID}`)
+        const envelope = decodeTaskPayload<ToolTerminalManifestEnvelope>(await payloads.read(entry!.payloadRef!))
+        expect(envelope.results).toMatchObject([{ blockId: "b0", phase: "rejected", failed: false }])
+        expect(envelope.results[0].feedbackRef).toBeUndefined()
+        const result = parseDurableToolResult(envelope.results[0].content) as unknown as MaterializedContent & {
+            function_id: string
+        }
+        expect(result).toMatchObject({ type: "tool_result", function_id: "function:b0", dline_tid: "b0" })
+        expect(result.is_error).toBeUndefined()
+        expect(denied).toBe(false)
+        expect((await journal.read()).filter((item) => item.source === "tool")).toHaveLength(1)
+    })
+
     it("reports a user refusal in the tool's own words and keeps a policy refusal generic", async () => {
         const payloads = new InMemoryTaskPayloadStore()
         const journal = new InMemoryConversationJournal()

@@ -1,5 +1,6 @@
 import { ApiHandler } from "@core/api"
 import { findLastIndex } from "@shared/array"
+import { readCurrency, readPriceSet } from "@shared/providers/pricing-shape"
 import { showApprovalNotification } from "@/integrations/notifications"
 import { calculateApiUsageStatistics } from "@/shared/api-usage"
 import { UiApiReqCancelReason, UiApiReqInfo } from "@/shared/ExtensionMessage"
@@ -79,9 +80,9 @@ export const updateApiReqMsg = async (params: UpdateApiReqMsgParams): Promise<vo
                     params.cacheReadTokens,
                 ),
             cacheHitRate: Math.round(cacheHitRate * 100) / 100, // Round to 2 decimal places
-            currency: modelInfo.pricing?.currency || "USD",
-            inputPrice: modelInfo.pricing?.inputPrice,
-            outputPrice: modelInfo.pricing?.outputPrice,
+            currency: readCurrency(modelInfo.pricing) || "USD",
+            inputPrice: readPriceSet(modelInfo.pricing?.metered?.strategy?.flat?.prices).inputPrice,
+            outputPrice: readPriceSet(modelInfo.pricing?.metered?.strategy?.flat?.prices).outputPrice,
             cancelReason: params.cancelReason,
             streamingFailedMessage: params.streamingFailedMessage,
         } satisfies UiApiReqInfo),

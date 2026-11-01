@@ -169,6 +169,10 @@ export interface ExtensionState {
     aggressiveRendering?: AggressiveRenderingSetting
     /** Account sign-in and views: the rollout offers the setting, the user's setting turns the views on. */
     accountEnabled?: DlineFeatureSettings
+    awayModeEnabled?: boolean
+    autoAwayModeEnabled?: boolean
+    /** Rollout availability only; it never enables either user preference. */
+    awayModeGateEnabled?: boolean
     focusChainSettings: FocusChainSettings
     customPrompt?: string
     favoritedModelIds: string[]
@@ -532,6 +536,7 @@ export type TaskViewActionType =
     | "confirm_utility"
     | "continue_in_background"
     | "cancel"
+    | "stop_away"
 
 /** Payload required when dispatching one projected action. */
 export type TaskViewPayloadPolicy = "none" | "draft" | "selection" | "draft_and_selection"
@@ -583,6 +588,8 @@ export interface ActiveInteractionView {
      * is never served as a chat row, so no page of the conversation contains it.
      */
     anchorSynthetic?: boolean
+    /** Absolute backend deadline. The Webview only displays it and never settles it. */
+    deadline?: { kind: "ask" | "external_command"; deadlineAt: number }
 }
 
 /** Footer content owned exclusively by the backend task projection. */
@@ -613,6 +620,8 @@ export interface TaskViewState {
     phase: TaskViewPhase
     stateRevision: number
     activeInteraction?: ActiveInteractionView
+    /** Committed task-local mode, not a user setting or a Webview-owned toggle. */
+    away?: { source: "command" | "ask_timeout" }
     contextCompaction?: TaskContextCompactionViewState
     /** True only while terminal automatic-compaction recovery offers explicit history truncation. */
     forceTruncateAvailable?: boolean

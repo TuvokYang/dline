@@ -45,12 +45,11 @@ function compareProviders(left: ProviderModelsConfig, right: ProviderModelsConfi
 /**
  * Providers offered by the settings selector, derived from the model registry.
  *
- * Region variants are excluded: they carry their own catalog but are reached
- * through the parent provider's region option, not as separate entries. Adding a
- * provider therefore requires only a new registry entry — nothing here changes.
+ * Every registry entry is one selectable provider. Alternative catalogs are
+ * declared on the provider that serves them, so nothing has to be filtered and
+ * adding a provider requires only a new registry entry — nothing here changes.
  */
 export const PROVIDER_OPTIONS: readonly ProviderOption[] = Object.values(allProviderModels)
-    .filter((config) => config.regionVariantOf === undefined)
     .sort(compareProviders)
     .map((config) => ({ value: config.provider as ApiProvider, label: config.providerName }))
 

@@ -3,6 +3,7 @@ import type { ModelInfo } from "@shared/proto/dline/models"
 import { ApiFormat } from "@shared/proto/dline/models/metadata"
 import { ApiProfile as ProtoApiProfile } from "@shared/proto/dline/profile"
 import { BaseProviderConfig } from "@shared/proto/dline/provider/common"
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import { fireEvent, render, screen } from "@testing-library/react"
 import React from "react"
 import { describe, expect, it, vi } from "vitest"
@@ -27,13 +28,7 @@ const models = {
                 effortLevels: ["low", "high", "max"],
             },
         },
-        pricing: {
-            inputPrice: 3,
-            outputPrice: 6,
-            cacheWritesPrice: 3,
-            cacheReadsPrice: 0.025,
-            currency: "CNY",
-        },
+        pricing: flatMeteredPricing(3, 6, 3, 0.025, "CNY"),
     } as ModelInfo,
     "deepseek-flash": {
         id: "deepseek-flash",
@@ -51,13 +46,7 @@ const models = {
                 effortLevels: ["low", "high", "max"],
             },
         },
-        pricing: {
-            inputPrice: 1,
-            outputPrice: 2,
-            cacheWritesPrice: 1,
-            cacheReadsPrice: 0.02,
-            currency: "CNY",
-        },
+        pricing: flatMeteredPricing(1, 2, 1, 0.02, "CNY"),
     } as ModelInfo,
 }
 

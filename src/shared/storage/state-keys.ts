@@ -207,6 +207,8 @@ const USER_SETTINGS_FIELDS = {
     strictPlanModeEnabled: { default: false as boolean },
     hooksEnabled: { default: true as boolean },
     yoloModeToggled: { default: false as boolean },
+    awayModeEnabled: { default: false as boolean },
+    autoAwayModeEnabled: { default: false as boolean },
     autoApproveAllToggled: { default: false as boolean },
     useAutoCondense: { default: true as boolean },
     autoCondenseTriggerPercent: {
@@ -343,6 +345,7 @@ const SECRETS_KEYS = [
     "mcpOAuthSecrets",
     "searxngSearchToken",
     "wandbApiKey",
+    "opencodeApiKey",
 ] as const
 
 // WARNING, these are not ALL of the local state keys in practice. For example, FileContextTracker

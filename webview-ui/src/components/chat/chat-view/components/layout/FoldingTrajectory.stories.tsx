@@ -11,8 +11,9 @@ import { useScrollBehavior } from "../../hooks/useScrollBehavior"
 import type { MessageHandlers } from "../../types/chatTypes"
 import { isActivityFold } from "../../utils/chatRowKinds"
 import { filterVisibleMessages, groupChatRows } from "../../utils/messageUtils"
-import { type DesignFoldingMode, designFoldRows, openDesignRows } from "./foldingTrajectoryDesign"
+import { type DesignFoldingMode, designFoldRows } from "./foldingTrajectoryDesign"
 import { createFoldingTranscript } from "./foldingTrajectoryStoryFixtures"
+import { createFoldRoundUsage } from "./foldingTrajectoryUsageFixture"
 import { MessagesArea } from "./MessagesArea"
 
 type Expansion = "collapsed" | "partial" | "expanded"
@@ -20,6 +21,8 @@ interface FixtureProps {
     initialExpansion: Expansion
     turnCount: number
     initialLevel: DesignFoldingMode
+    /** Append a turn whose edit, command and subagent batch all failed. */
+    withFailures?: boolean
 }
 
 const HANDLERS: MessageHandlers = {
@@ -33,9 +36,9 @@ const DESIGN_FOLDING_LABELS = AGGRESSIVE_RENDERING_LABELS
 const DESIGN_FOLDING_HELP: Record<DesignFoldingMode, string> = {
     none: "Original chat rows and groups, with no additional folding.",
     message_segment:
-        "Fold activity between messages. Plain text, Reply and Phase report split the blocks; AI request boundaries do not.",
+        "Fold activity between messages. Plain text, Reply, Phase report and every request boundary split the blocks; no row spans two rounds.",
     user_turn:
-        "Keep the original whole-turn folding policy. Completed content is grouped across assistant messages, until the user-turn boundary; live and failed rows stay visible.",
+        "Fold the whole turn into one block. Completed content is grouped across assistant messages and request boundaries, until the user-turn boundary; live and failed rows stay visible.",
 }
 
 function foldIds(rows: readonly (UiMessage | UiMessage[])[]): string[] {
@@ -113,11 +116,11 @@ function useFixtureTransport(taskId: string, messages: UiMessage[]): boolean {
 }
 
 /** Full MessagesArea + real Virtuoso, row renderer, scroll policy and trajectory subscription. */
-function FoldingTrajectoryFixture({ initialExpansion, turnCount, initialLevel }: FixtureProps) {
+function FoldingTrajectoryFixture({ initialExpansion, turnCount, initialLevel, withFailures = false }: FixtureProps) {
     const base = useExtensionState()
     const id = useId()
     const taskId = `folding-trajectory-${id}`
-    const initialMessages = useMemo(() => createFoldingTranscript(turnCount), [turnCount])
+    const initialMessages = useMemo(() => createFoldingTranscript(turnCount, withFailures), [turnCount, withFailures])
     const [messages, setMessages] = useState(initialMessages)
     const [firstItemIndex, setFirstItemIndex] = useState(0)
     const level = initialLevel
@@ -125,9 +128,14 @@ function FoldingTrajectoryFixture({ initialExpansion, turnCount, initialLevel }:
     const width = 500
     const visible = useMemo(() => filterVisibleMessages(messages), [messages])
     const standardRows = useMemo(() => groupChatRows(messages, visible, { level: "none" }), [messages, visible])
-    const foldedRows = useMemo(() => designFoldRows(messages, standardRows, level), [messages, standardRows, level])
+    const roundUsage = useMemo(() => createFoldRoundUsage(messages), [messages])
+    const foldedRows = useMemo(
+        () => designFoldRows(messages, standardRows, level, roundUsage),
+        [messages, standardRows, level, roundUsage],
+    )
     const chat = useChatState(messages, taskId)
-    const rows = useMemo(() => openDesignRows(foldedRows, chat.expandedFolds), [foldedRows, chat.expandedFolds])
+    // An open fold keeps its header and draws its members beneath it.
+    const rows = foldedRows
     const matchesStandard = rows.length === standardRows.length && rows.every((row, index) => row === standardRows[index])
     const scroll = useScrollBehavior(messages, visible, rows, chat.expandedRows, chat.setExpandedRows, chat.setExpandedFolds)
     const ready = useFixtureTransport(taskId, messages)
@@ -236,3 +244,7 @@ type Story = StoryObj<typeof meta>
 export const Standard: Story = { name: "1 · Standard (no folding)", args: { initialLevel: "none" } }
 export const MessageSegments: Story = { name: "2 · Fold activity between messages", args: { initialLevel: "message_segment" } }
 export const WholeTurn: Story = { name: "3 · Fold the whole turn into one block", args: { initialLevel: "user_turn" } }
+export const FailedWork: Story = {
+    name: "4 · Failed edits, commands and subagents are counted",
+    args: { initialLevel: "user_turn", turnCount: 2, withFailures: true },
+}

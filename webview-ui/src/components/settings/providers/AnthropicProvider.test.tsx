@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import type { ModelInfo } from "@shared/proto/dline/models"
-import type { ModelCapabilities, ModelPricing } from "@shared/proto/dline/models/metadata"
+import type { ModelCapabilities } from "@shared/proto/dline/models/metadata"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import { AnthropicProviderConfig } from "@shared/proto/dline/provider/anthropic"
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import { fireEvent, render, screen } from "@testing-library/react"
 import React, { type ReactNode } from "react"
 import { describe, expect, it, vi } from "vitest"
@@ -21,11 +22,7 @@ const registryModel: ModelInfo = {
         supportsImages: true,
         supportsPromptCache: true,
     } as ModelCapabilities,
-    pricing: {
-        inputPrice: 3,
-        outputPrice: 15,
-        currency: "USD",
-    } as ModelPricing,
+    pricing: flatMeteredPricing(3, 15),
 }
 
 const nativeContextModel: ModelInfo = {
@@ -155,7 +152,7 @@ vi.mock("../common/ModelInfoView", () => ({
     ModelInfoView: ({ modelInfo }: { modelInfo: ModelInfo }) => (
         <div>
             <span>max:{modelInfo.capabilities?.maxTokens}</span>
-            <span>input:{modelInfo.pricing?.inputPrice}</span>
+            <span>input:{modelInfo.pricing?.metered?.strategy?.flat?.prices?.inputPrice}</span>
             <span>context:{modelInfo.capabilities?.contextWindow}</span>
         </div>
     ),
@@ -403,7 +400,7 @@ describe("AnthropicProvider", () => {
             anthropic: AnthropicProviderConfig.create({
                 customModelEnabled: true,
                 capabilities: { maxTokens: 64_000 } as ModelCapabilities,
-                pricing: { inputPrice: 0.5 } as ModelPricing,
+                pricing: flatMeteredPricing(0.5, 0),
             }),
         } as unknown as ApiProfile
 

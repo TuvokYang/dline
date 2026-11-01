@@ -154,11 +154,6 @@ const loadCapability = (status: string, nested: boolean) => {
 const splitterCases: Array<[string, UiMessage[], Layout[]]> = [
     ["a pending command", [command(50, { commandStatus: "pending" })], [50]],
     ["a running command", [command(50, { commandStatus: "running" })], [50]],
-    ["a failed command", [command(50, { commandStatus: "failed" })], [50]],
-    ["a cancelled command", [command(50, { commandStatus: "cancelled" })], [50]],
-    ["an interrupted command", [command(50, { commandStatus: "interrupted" })], [50]],
-    ["a completed command with a non-zero exit code", [command(50, { commandStatus: "completed", exitCode: 2 })], [50]],
-    ["a command without status that exited non-zero", [command(50, { exitCode: 1 })], [50]],
     ["a running hook", [hook("running")], [50]],
     ["a failed hook", [hook("failed")], [50]],
     ["a cancelled hook", [hook("cancelled")], [50]],
@@ -206,7 +201,6 @@ const splitterCases: Array<[string, UiMessage[], Layout[]]> = [
         [say(50, "error_retry", { text: JSON.stringify({ attempt: 3, maxAttempts: 3, failed: true }) })],
         [50],
     ],
-    ["an edit with a failed block", [edit(50, { blockErrors: [undefined, "SEARCH block not found"] })], [50]],
     ["a checked-out checkpoint", [checkpoint(50, { isCheckpointCheckedOut: true })], [50]],
     [
         "an edit that owns a checked-out pre-edit checkpoint",
@@ -249,6 +243,14 @@ const settledCases: Array<[string, UiMessage[]]> = [
     ["a transient retry notice", [say(50, "error_retry", { text: JSON.stringify({ attempt: 1, maxAttempts: 3, delaySec: 5 }) })]],
     ["an edit without block errors", [edit(50, { blockErrors: [undefined, ""] })]],
     ["a checkpoint that is not checked out", [checkpoint(50)]],
+    // A failed edit, command or subagent is one work item inside the turn, so it
+    // folds and is reported as an error count instead of cutting the block.
+    ["a failed command", [command(50, { commandStatus: "failed" })]],
+    ["a cancelled command", [command(50, { commandStatus: "cancelled" })]],
+    ["an interrupted command", [command(50, { commandStatus: "interrupted" })]],
+    ["a completed command with a non-zero exit code", [command(50, { commandStatus: "completed", exitCode: 2 })]],
+    ["a command without status that exited non-zero", [command(50, { exitCode: 1 })]],
+    ["an edit with a failed block", [edit(50, { blockErrors: [undefined, "SEARCH block not found"] })]],
 ]
 
 /** A settled turn with foldable control rows on both sides of the rows under test. */

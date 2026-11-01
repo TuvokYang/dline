@@ -25,6 +25,17 @@ const mockVSCodeDarkTheme = {
     "--vscode-font-family": '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
     "--vscode-font-size": "13px",
     "--vscode-focusBorder": "#007ACC",
+    // The toolkit's `vscode-dropdown` web component reads these three and falls
+    // back to its own dark defaults, so a light story needs them declared here
+    // or the control renders as an opaque dark box on a white page.
+    "--vscode-dropdown-background": "#3C3C3C",
+    "--vscode-dropdown-foreground": "#CCCCCC",
+    "--vscode-dropdown-border": "#3C3C3C",
+    // Same reason as the dropdown: `vscode-checkbox` reads only these three and
+    // keeps its dark defaults when they are absent.
+    "--vscode-checkbox-background": "#3C3C3C",
+    "--vscode-checkbox-border": "#3C3C3C",
+    "--vscode-checkbox-foreground": "#F0F0F0",
     "--vscode-input-border": "#6B6B6B",
     "--vscode-banner-background": "#007ACC",
     "--vscode-banner-foreground": "#FFFFFF",
@@ -91,6 +102,17 @@ const mockVSCodeLightTheme = {
     "--vscode-font-family": '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
     "--vscode-font-size": "13px",
     "--vscode-focusBorder": "#007ACC",
+    // The toolkit's `vscode-dropdown` web component reads these three and falls
+    // back to its own dark defaults, so a light story needs them declared here
+    // or the control renders as an opaque dark box on a white page.
+    "--vscode-dropdown-background": "#FFFFFF",
+    "--vscode-dropdown-foreground": "#3E3E42",
+    "--vscode-dropdown-border": "#CECECE",
+    // Same reason as the dropdown: `vscode-checkbox` reads only these three and
+    // keeps its dark defaults when they are absent.
+    "--vscode-checkbox-background": "#FFFFFF",
+    "--vscode-checkbox-border": "#CECECE",
+    "--vscode-checkbox-foreground": "#3E3E42",
     "--vscode-input-border": "#CECECE",
     "--vscode-banner-background": "#007ACC",
     "--vscode-banner-foreground": "#FFFFFF",
@@ -123,7 +145,58 @@ const mockVSCodeLightTheme = {
     "--vscode-widget-shadow": "#00000033",
     "--vscode-panel-border": "#D4D4D4",
     "--vscode-icon-foreground": "#3E3E42",
-    "--popover-foreground": "#D4D4D4",
+    // Copied from the dark palette by mistake: a light popover needs a dark
+    // foreground or its text disappears into the panel.
+    "--popover-foreground": "#000000",
+}
+
+/**
+ * Toolkit design tokens and the VS Code variable each one mirrors.
+ *
+ * The toolkit copies `--vscode-*` values into its own tokens from a listener
+ * registered on `window.load`, so a component first loaded later never receives
+ * them and keeps the dark defaults compiled into its stylesheet. Writing the
+ * token custom properties directly removes that dependency on load timing.
+ */
+export const TOOLKIT_TOKEN_MIRRORS: Readonly<Record<string, string>> = {
+    background: "--vscode-editor-background",
+    foreground: "--vscode-foreground",
+    "focus-border": "--vscode-focusBorder",
+    "font-family": "--vscode-font-family",
+    "font-weight": "--vscode-font-weight",
+    "type-ramp-base-font-size": "--vscode-font-size",
+    "badge-background": "--vscode-badge-background",
+    "badge-foreground": "--vscode-badge-foreground",
+    "button-border": "--vscode-button-border",
+    "button-primary-background": "--vscode-button-background",
+    "button-primary-foreground": "--vscode-button-foreground",
+    "button-primary-hover-background": "--vscode-button-hoverBackground",
+    "button-secondary-background": "--vscode-button-secondaryBackground",
+    "button-secondary-foreground": "--vscode-button-secondaryForeground",
+    "button-secondary-hover-background": "--vscode-button-secondaryHoverBackground",
+    "checkbox-background": "--vscode-checkbox-background",
+    "checkbox-border": "--vscode-checkbox-border",
+    "checkbox-foreground": "--vscode-checkbox-foreground",
+    "list-active-selection-background": "--vscode-list-activeSelectionBackground",
+    "list-active-selection-foreground": "--vscode-list-activeSelectionForeground",
+    "list-hover-background": "--vscode-list-hoverBackground",
+    "divider-background": "--vscode-settings-dropdownListBorder",
+    "dropdown-background": "--vscode-dropdown-background",
+    "dropdown-border": "--vscode-dropdown-border",
+    "dropdown-foreground": "--vscode-dropdown-foreground",
+    "input-background": "--vscode-input-background",
+    "input-foreground": "--vscode-input-foreground",
+    "input-placeholder-foreground": "--vscode-input-placeholderForeground",
+    "link-active-foreground": "--vscode-textLink-activeForeground",
+    "link-foreground": "--vscode-textLink-foreground",
+    "progress-background": "--vscode-progressBar-background",
+    "panel-tab-active-foreground": "--vscode-panelTitle-activeForeground",
+    "panel-tab-foreground": "--vscode-panelTitle-inactiveForeground",
+    "panel-view-background": "--vscode-panel-background",
+    "panel-view-border": "--vscode-panel-border",
+    // Checked-state fill for `vscode-checkbox`. Without it the box keeps the
+    // toolkit's dark fill even when its background and border are themed.
+    "checkbox-checked-background": "--vscode-checkbox-background",
 }
 
 // Mock VSCode theme variables for Storybook

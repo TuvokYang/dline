@@ -18,24 +18,24 @@ describe("provider selector options", () => {
         }
     })
 
-    it("offers every non-variant provider exactly once", () => {
-        const expected = Object.values(registry)
-            .filter((config) => config.regionVariantOf === undefined)
-            .map((config) => config.provider)
+    it("offers every registered provider exactly once", () => {
+        const expected = Object.values(registry).map((config) => config.provider)
 
         expect([...PROVIDER_OPTIONS].map((option) => option.value as string).sort()).toEqual([...expected].sort())
     })
 
-    // Region variants keep their own catalog but are reached through the parent's
-    // region control, so listing them separately would offer a duplicate provider.
-    it("hides region variants while keeping their catalogs reachable", () => {
-        const variants = Object.values(registry).filter((config) => config.regionVariantOf !== undefined)
-        expect(variants.length).toBeGreaterThan(0)
+    // An alternative catalog belongs to the provider that serves it, so it can
+    // never surface as a second selectable provider with its own base URL.
+    it("offers alternative catalogs only through the provider that serves them", () => {
+        const owners = Object.values(registry).filter((config) => Object.keys(config.catalogs ?? {}).length > 0)
+        expect(owners.length).toBeGreaterThan(0)
 
-        for (const variant of variants) {
-            expect(PROVIDER_OPTIONS.some((option) => (option.value as string) === variant.provider)).toBe(false)
-            expect(registry[variant.regionVariantOf as string], `${variant.provider} needs a parent`).toBeDefined()
-            expect(Object.keys(variant.models).length).toBeGreaterThan(0)
+        for (const owner of owners) {
+            expect(PROVIDER_OPTIONS.some((option) => (option.value as string) === owner.provider)).toBe(true)
+            for (const [catalogKey, catalog] of Object.entries(owner.catalogs ?? {})) {
+                expect(PROVIDER_OPTIONS.some((option) => (option.value as string) === catalogKey)).toBe(false)
+                expect(Object.keys(catalog.models).length).toBeGreaterThan(0)
+            }
         }
     })
 

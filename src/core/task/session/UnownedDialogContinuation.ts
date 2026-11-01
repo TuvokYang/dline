@@ -60,6 +60,8 @@ export interface UnownedDialogContinuationPort {
 
 /** One submission a continuation hands to the task. */
 export interface ResumptionInput {
+    /** Trusted first admission from an accepted dialog draft. */
+    readonly admittedInputRef?: string
     readonly text?: string
     readonly images?: readonly string[]
     readonly files?: readonly string[]
@@ -95,6 +97,7 @@ export interface TaskResumptionPort {
  * to be its document's own, so the document is the one authority for both.
  */
 export function dialogAnswerOf(draft: InteractionOutcome["draft"]): ResumptionInput {
+    if (draft?.admittedInputRef) return { admittedInputRef: draft.admittedInputRef }
     return draft?.semanticInput === undefined
         ? { text: draft?.text, images: draft?.images, files: draft?.files }
         : { text: draft.semanticInput.rawText, semanticInput: draft.semanticInput }

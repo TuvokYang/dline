@@ -1,4 +1,4 @@
-import type { BlockId, InteractionId, QueuePayloadIdentity, TaskId, TurnId } from "../kernel"
+import type { BlockId, InteractionId, QueuePayloadIdentity, TaskId, TurnId, UserControl } from "../kernel"
 
 interface DialogResponseFields {
     readonly taskId: TaskId
@@ -8,6 +8,9 @@ interface DialogResponseFields {
     readonly receiverGeneration: number
     readonly draftRef?: string
     readonly selectionRef?: string
+    readonly userControl?: UserControl
+    readonly roundFeedbackRef?: string
+    readonly retryPreparedRound?: true
     /** Retained queue delivery consumed atomically with a dialog response. */
     readonly queueDeliveryId?: string
     readonly queueDeliveryEntries?: readonly QueuePayloadIdentity[]

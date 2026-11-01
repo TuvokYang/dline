@@ -5,10 +5,16 @@ import type { AnthropicMessagesRequestBody } from "./request-builder"
 
 export const ANTHROPIC_FAST_MODE_BETA = "fast-mode-2026-02-01"
 
+/** Options captured by one logical request, shared by its continuations. */
+export interface AnthropicTransportOptions {
+    signal?: AbortSignal
+    timeout?: number
+}
+
 type AnthropicMessagesStream = AsyncIterable<AnthropicMessagesStreamEvent>
 type BetaCreate = (
     params: AnthropicMessagesRequestBody,
-    options?: { headers: Record<string, string> },
+    options?: AnthropicTransportOptions & { headers?: Record<string, string> },
 ) => Promise<AnthropicMessagesStream>
 
 /**
@@ -23,8 +29,9 @@ export interface AnthropicMessagesTransport {
 }
 
 /** Per-request headers stay off the client defaults: the identity version is resolved for each request. */
-function requestOptions(headers: Record<string, string>): { headers: Record<string, string> } | undefined {
-    return Object.keys(headers).length > 0 ? { headers } : undefined
+function requestOptions(headers: Record<string, string>, options?: AnthropicTransportOptions) {
+    const hasHeaders = Object.keys(headers).length > 0
+    return hasHeaders || options ? { ...options, ...(hasHeaders ? { headers } : {}) } : undefined
 }
 
 /**
@@ -37,6 +44,7 @@ export class ApiKeyAnthropicTransport implements AnthropicMessagesTransport {
     constructor(
         private readonly client: Anthropic,
         private readonly fastMode: boolean,
+        private readonly options?: AnthropicTransportOptions,
     ) {}
 
     open(body: AnthropicMessagesRequestBody, headers: Record<string, string>): Promise<AnthropicMessagesStream> {
@@ -47,10 +55,10 @@ export class ApiKeyAnthropicTransport implements AnthropicMessagesTransport {
                     betas: [ANTHROPIC_FAST_MODE_BETA],
                     speed: "fast",
                 },
-                requestOptions(headers),
+                requestOptions(headers, this.options),
             )
         }
-        return this.client.messages.create(body, requestOptions(headers)) as Promise<AnthropicMessagesStream>
+        return this.client.messages.create(body, requestOptions(headers, this.options)) as Promise<AnthropicMessagesStream>
     }
 }
 

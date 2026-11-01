@@ -134,6 +134,7 @@ export class ProductionProviderAdapter implements ProviderExecutionPort {
                     index: block.index,
                     lanes: block.lanes,
                     turnEnding: block.turnEnding,
+                    ...(block.disposition ? { disposition: block.disposition } : {}),
                     invocationRef: await this.options.payloads.put(encodeTaskPayload(block.invocation)),
                     approval: block.approval,
                 })),

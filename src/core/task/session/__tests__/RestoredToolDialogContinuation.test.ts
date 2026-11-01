@@ -13,7 +13,7 @@ import {
     type RestoredToolDialogPorts,
     selectedFollowupOption,
 } from "../RestoredToolDialogContinuation"
-import type { UnownedDialogContinuationPort } from "../UnownedDialogContinuation"
+import type { UnownedDialogContinuationPort, UnownedDialogResolution } from "../UnownedDialogContinuation"
 
 const TID = "tid-restored"
 
@@ -134,6 +134,25 @@ function harness(options: {
 }
 
 describe("RestoredToolDialogContinuation", () => {
+    it("records automatic feedback as the paired answer, without admission or a user-authored row", async () => {
+        const h = harness({ toolName: "ask_followup_question" })
+        const resolution: UnownedDialogResolution = {
+            interactionId: TID,
+            kind: "followup",
+            outcome: {
+                actionId: "reply",
+                origin: "timeout",
+                draft: { text: "Continue autonomously", images: [], files: [] },
+            },
+        }
+        expect(await h.continuation.continue(resolution)).toBe("continued")
+        expect(h.journal.append).toHaveBeenCalledOnce()
+        expect(h.admitReply).not.toHaveBeenCalled()
+        expect(h.messages.addToClineMessages).not.toHaveBeenCalled()
+        expect(h.journaledResult().blockId).toBe(TID)
+        expect(h.journaledResult().failed).toBeUndefined()
+        expect(h.resumption.materialize).toHaveBeenCalledWith({})
+    })
     it("runs a restored ReportBug effect only before its first durable result", async () => {
         const reportBug = vi.fn(async () => true)
         const h = harness({
@@ -389,6 +408,25 @@ describe("RestoredToolDialogContinuation", () => {
         expect(h.journal.append).not.toHaveBeenCalled()
         expect(h.messages.addToClineMessages).not.toHaveBeenCalled()
         expect(h.resumption.materialize).not.toHaveBeenCalled()
+    })
+
+    it("does not submit plan-owned restored feedback a second time through generic intake", async () => {
+        const h = harness({ toolName: "qna_respond", interrupted: true, fallbackAccepts: true })
+        const resolution: UnownedDialogResolution = {
+            interactionId: TID,
+            kind: "qna_response",
+            outcome: {
+                actionId: "reply",
+                roundMaterialOwned: true,
+                draft: { text: "ADMITTED_BODY", images: ["image"], files: [], admittedInputRef: "first-admission" },
+            },
+        }
+        await expect(h.continuation.continue(resolution)).resolves.toBe("continued")
+        expect(h.fallback.continue).not.toHaveBeenCalled()
+        expect(h.resumption.materialize).toHaveBeenCalledWith({})
+        expect(h.resumption.submit).toHaveBeenCalledOnce()
+        expect(h.messages.addToClineMessages).toHaveBeenCalledOnce()
+        expect(h.journal.append).not.toHaveBeenCalled()
     })
 
     // Termination keeps a shown completion answerable, so the failure it wrote

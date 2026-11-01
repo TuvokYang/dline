@@ -122,7 +122,7 @@ export async function checkAstForTask({ task, wsModules, repoRoot }) {
             .map((entry) => entry.trim())
             .filter(Boolean)
         const names = declarationNames(scan.facts, scan.file.path)
-        if (expected.length > 0 && !expected.some((symbol) => names.has(symbol) || names.has(symbol.split(".")[0]))) {
+        if (expected.length === 0 || expected.some((symbol) => !names.has(symbol))) {
             findings.push(
                 finding(
                     "unverifiable",

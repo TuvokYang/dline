@@ -1,9 +1,10 @@
 import { type ModelInfo, openAiModelInfoSaneDefaults } from "@shared/api"
 import { ApiFormat, type ModelCapabilities, type ModelPricing, ServerTool } from "@shared/proto/dline/models/metadata"
-import { OpenAiPromptCacheMode, OpenAiProviderConfig } from "@shared/proto/dline/provider/openai"
+import { OpenAiProviderConfig } from "@shared/proto/dline/provider/openai"
 import { openAiEndpointToApiFormat, resolveApiFormat } from "@shared/providers/api-format"
 import { buildEffectiveModelInfo, mergeCapabilities, mergePricing } from "@shared/providers/effective-model-info"
 import { DEFAULT_OPENAI_RESPONSES_STREAM_IDLE_TIMEOUT_SECONDS } from "@shared/providers/openai-stream"
+import { hasBands } from "@shared/providers/pricing-shape"
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import { VSCodeButton, VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import { useCallback, useId, useMemo } from "react"
@@ -155,7 +156,7 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
             openai: {
                 ...base,
                 pricing: mergePricing(base.pricing, updates),
-                ...(updates.tiers === undefined ? {} : { pricingTiersEnabled: true }),
+                ...(hasBands(updates) ? { pricingTiersEnabled: true } : {}),
             },
         })
     }
@@ -254,25 +255,6 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
                         onChange={(apiFormat) => onUpdate({ openai: { ...configToUpdate(), apiEndpoint: undefined, apiFormat } })}
                         selectedApiFormat={selectedApiFormat}
                     />
-
-                    <VSCodeCheckbox
-                        checked={pc.promptCacheMode === OpenAiPromptCacheMode.OPENAI_PROMPT_CACHE_MODE_EXPLICIT}
-                        onChange={(event: Event | React.FormEvent<HTMLElement>) =>
-                            onUpdate({
-                                openai: {
-                                    ...configToUpdate(),
-                                    promptCacheMode: (event.target as HTMLInputElement | null)?.checked
-                                        ? OpenAiPromptCacheMode.OPENAI_PROMPT_CACHE_MODE_EXPLICIT
-                                        : OpenAiPromptCacheMode.OPENAI_PROMPT_CACHE_MODE_AUTOMATIC,
-                                },
-                            })
-                        }>
-                        Use explicit prompt cache controls
-                    </VSCodeCheckbox>
-                    <p style={{ fontSize: 12, marginTop: 0, color: "var(--vscode-descriptionForeground)" }}>
-                        Enable only when the selected endpoint supports prompt_cache_breakpoint. Rejected controls fall back to
-                        automatic caching for the current task.
-                    </p>
 
                     <ProviderWebToolsSettings
                         hostedAvailable={hostedWebSearchAvailable}
@@ -396,19 +378,6 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
                     })
                 }>
                 Use Azure Identity Authentication
-            </VSCodeCheckbox>
-
-            <VSCodeCheckbox
-                checked={pc.streamIncludeUsage ?? true}
-                onChange={(event: Event | React.FormEvent<HTMLElement>) =>
-                    onUpdate({
-                        openai: {
-                            ...configToUpdate(),
-                            streamIncludeUsage: (event.target as HTMLInputElement | null)?.checked === true,
-                        },
-                    })
-                }>
-                Include usage stats in stream responses
             </VSCodeCheckbox>
 
             <ProfileField

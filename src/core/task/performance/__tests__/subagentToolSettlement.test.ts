@@ -193,7 +193,7 @@ describe("subagent logical execution settlement", () => {
         ])
     })
 
-    it("settles a superseded attempt as aborted instead of a successful zero-tool completion", async () => {
+    it("keeps a superseded attempt as local history without giving it the request's logical claim", async () => {
         const { lifecycle, events, settledExecutions } = createHarness()
         lifecycle.expectTools("request-c")
         const first = lifecycle.createObserver({
@@ -217,17 +217,79 @@ describe("subagent logical execution settlement", () => {
             taskAttempt: 1,
             role: "subagent",
         })
-        retry.beginAttempt({ provider: "openai", modelId: "gpt-4o", thinking: "state:off" })
+        const retryHandle = retry.beginAttempt({
+            provider: "anthropic",
+            modelId: "claude-opus-4-1",
+            thinking: "state:off",
+        }) as ApiRequestRoundHandle
         await lifecycle.waitForPersistence()
 
+        // The interrupted send is still real execution history.
         const superseded = settledExecutions.find((record) => record.executionId === firstHandle.roundId)
         expect(superseded).toMatchObject({ status: "aborted" })
-        expect(events).toContainEqual(
+        // It is not the request's result, so it must not publish a logical execution.
+        // Logical coverage is first-claim-wins, and a claim here would outlive the
+        // retry that actually produced the answer.
+        expect(events.filter((event) => event.kind === "logical_execution")).toEqual([])
+
+        // The retry that produces the result owns the one logical execution, even
+        // though it runs on a different provider and model.
+        retry.finishAttempt(retryHandle, "completed")
+        lifecycle.completeTools("request-c", {
+            toolCount: 0,
+            completedToolCount: 0,
+            failedToolCount: 0,
+            cancelledToolCount: 0,
+        })
+        await lifecycle.waitForPersistence()
+
+        const settled = events.filter((event) => event.kind === "logical_execution")
+        expect(settled).toHaveLength(1)
+        expect(settled[0]).toMatchObject({ handle: expect.objectContaining({ roundId: retryHandle.roundId }) })
+        expect(settledExecutions.filter((record) => record.terminalKind === "tools_settled")).toEqual([
+            expect.objectContaining({ executionId: retryHandle.roundId, status: "completed", toolCount: 0 }),
+        ])
+    })
+
+    it("settles a subagent that reported no tools through the explicit zero-tool release", async () => {
+        // The two "the send asked for no tool" paths used `completeProviderOnly`,
+        // which returns early on the still-declared deferral and left the request
+        // open until close, where it was recorded as aborted.
+        const { lifecycle, events, settledExecutions } = createHarness()
+        lifecycle.expectTools("request-e")
+        const observer = lifecycle.createObserver({
+            logicalRequestId: "request-e",
+            apiIndex: 0,
+            taskAttempt: 0,
+            role: "subagent",
+        })
+        const handle = observer.beginAttempt({
+            provider: "openai",
+            modelId: "gpt-4o",
+            thinking: "state:off",
+        }) as ApiRequestRoundHandle
+        observer.finishAttempt(handle, "completed")
+
+        lifecycle.completeTools("request-e", {
+            toolCount: 0,
+            completedToolCount: 0,
+            failedToolCount: 0,
+            cancelledToolCount: 0,
+        })
+        await lifecycle.waitForPersistence()
+
+        expect(settledExecutions).toEqual([
             expect.objectContaining({
-                kind: "logical_execution",
-                handle: expect.objectContaining({ roundId: firstHandle.roundId }),
+                executionId: handle.roundId,
+                terminalKind: "tools_settled",
+                status: "completed",
+                toolCount: 0,
             }),
-        )
+        ])
+        // Closing afterwards must not manufacture a second aborted execution.
+        await lifecycle.close()
+        expect(settledExecutions.filter((record) => record.status === "aborted")).toEqual([])
+        expect(events.filter((event) => event.kind === "logical_execution")).toHaveLength(1)
     })
 })
 

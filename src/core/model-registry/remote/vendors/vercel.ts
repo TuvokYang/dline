@@ -5,6 +5,7 @@
  * replaces the stored catalog. Reasoning tags declare coarse support only;
  * absent mode, effort and budget metadata stays unknown.
  */
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import type { ModelCapabilities, ModelPricing } from "@shared/providers/types"
 import type { ProviderModelReconciliationMode } from "../../provider-model-reconciliation"
 import { isRecord, ModelListingSource, readPerMillionPrice, readPositiveNumber, readString } from "../model-listing-source"
@@ -69,12 +70,12 @@ export class VercelAiGatewayModelSource extends ModelListingSource {
     }
 
     protected override readPricing(raw: unknown): ModelPricing {
-        return {
-            inputPrice: readPerMillionPrice(raw, "pricing.input") ?? 0,
-            outputPrice: readPerMillionPrice(raw, "pricing.output") ?? 0,
-            cacheWritesPrice: readPerMillionPrice(raw, "pricing.input_cache_write") ?? 0,
-            cacheReadsPrice: readPerMillionPrice(raw, "pricing.input_cache_read") ?? 0,
-        }
+        return flatMeteredPricing(
+            readPerMillionPrice(raw, "pricing.input") ?? 0,
+            readPerMillionPrice(raw, "pricing.output") ?? 0,
+            readPerMillionPrice(raw, "pricing.input_cache_write") ?? 0,
+            readPerMillionPrice(raw, "pricing.input_cache_read") ?? 0,
+        )
     }
 }
 

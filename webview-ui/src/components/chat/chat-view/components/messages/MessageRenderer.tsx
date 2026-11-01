@@ -65,8 +65,16 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
     }, [messageOrGroup, groupedMessages, index])
 
     // A fold is an array row too, so it must be recognised before the browser-session fallback.
+    // An open fold keeps its header and draws its members beneath it.
     if (isActivityFold(messageOrGroup)) {
-        return <ActivityFoldRenderer {...context} fold={messageOrGroup} onToggleFold={foldExpansion.toggle} />
+        return (
+            <ActivityFoldRenderer
+                {...context}
+                expanded={foldExpansion.expanded[messageOrGroup._activityFoldId] === true}
+                fold={messageOrGroup}
+                onToggleFold={foldExpansion.toggle}
+            />
+        )
     }
 
     return <RowContent {...context} isLastRow={isLastMessage} isLastToolActivity={isLastToolActivity} row={messageOrGroup} />

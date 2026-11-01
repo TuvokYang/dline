@@ -13,6 +13,7 @@ import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import AutoCondenseSettings from "../AutoCondenseSettings"
+import AwayModeSettings from "../AwayModeSettings"
 import Section from "../Section"
 import SettingsSlider from "../SettingsSlider"
 import { updateSetting } from "../utils/settingsHandlers"
@@ -276,6 +277,9 @@ const FeatureSettingsSection = ({ renderSectionHeader }: FeatureSettingsSectionP
         mcpDisplayMode,
         strictPlanModeEnabled,
         yoloModeToggled,
+        awayModeGateEnabled,
+        awayModeEnabled,
+        autoAwayModeEnabled,
         useAutoCondense,
         subagentsEnabled,
         mcpEnabled,
@@ -470,6 +474,12 @@ const FeatureSettingsSection = ({ renderSectionHeader }: FeatureSettingsSectionP
                         <div
                             className="relative p-3 pt-0 my-3 rounded-md border border-editor-widget-border/50 w-full"
                             id="experimental-features">
+                            <AwayModeSettings
+                                automatic={autoAwayModeEnabled ?? false}
+                                enabled={awayModeEnabled ?? false}
+                                gateEnabled={awayModeGateEnabled ?? false}
+                                onChange={updateSetting}
+                            />
                             {experimentalFeatures.map((feature) => (
                                 <FeatureRow
                                     checked={featureState[feature.stateKey]}

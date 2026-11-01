@@ -30,6 +30,7 @@ import "dline/provider/common.proto";
 import "dline/provider/fireworks.proto";
 import "dline/provider/openai_codex.proto";
 import "dline/provider/dify.proto";
+import "dline/provider/opencode.proto";
 
 enum ImageGenerationSource {
   IMAGE_GENERATION_SOURCE_UNSPECIFIED = 0;
@@ -121,6 +122,7 @@ message ApiProfile {
     dline.provider.BaseProviderConfig nous_research = 54;
     dline.provider.BaseProviderConfig wandb = 55;
     dline.provider.DifyProviderConfig dify = 56;
+    dline.provider.OpenCodeProviderConfig opencode = 57;
   }
 }
 

@@ -1,7 +1,7 @@
 import type { AggressiveRenderingLevel } from "@shared/AggressiveRendering"
 import type { UiMessage, UiSayTool } from "@shared/ExtensionMessage"
-import { type ActivityFold, type ActivityFoldKind, isActivityFold, isBrowserSession } from "./chatRowKinds"
-import { type FoldContext, rowState } from "./foldContext"
+import { type ActivityFold, type ActivityFoldKind, type FoldFailureKind, isActivityFold, isBrowserSession } from "./chatRowKinds"
+import { type FoldContext, failedWorkKind, failedWorkUnits, isFoldableWorkEnd, rowState } from "./foldContext"
 import { isSettledTurnEnd, isTurnEndRow } from "./turnEndRows"
 
 type ChatRow = UiMessage | UiMessage[]
@@ -20,9 +20,11 @@ export const STANDARD_FOLD: FoldOptions = { level: "none" }
  * - `user`: a message the user wrote; folds never cross it and never take it in.
  * - `turn_end`: a turn-ending interaction; it ends a turn and stays outside.
  * - `assistant`: a communication boundary in message mode, a member in turn mode.
- * - `splitter`: a row that is still running, failed, or is a restore point the
- *   user checked out; it is never folded and cuts the block it would sit in.
- * - `activity`: everything else.
+ * - `splitter`: a row that is still running, failed in a way the block cannot
+ *   account for, or is a restore point the user checked out; it is never folded
+ *   and cuts the block it would sit in.
+ * - `activity`: everything else, including a failed edit, command or subagent,
+ *   which folds into the block and is counted there.
  */
 export type FoldRowClass = "user" | "turn_end" | "assistant" | "splitter" | "activity"
 
@@ -32,8 +34,9 @@ const ASSISTANT_TOOLS = new Set<string>(["actModeRespond", "statusUpdate"] satis
 /**
  * Fold eligible Standard rows without regrouping their members. Request rounds
  * determine completion, never block boundaries. Message segments stop at prose,
- * replies and phase reports; user turns include those messages. Live, failed and
- * checked-out rows split both modes. Leading partial rounds stay visible.
+ * replies and phase reports; user turns include those messages. Live rows and
+ * checked-out restore points split both modes; a failed edit, command or
+ * subagent does not. Leading partial rounds stay visible.
  */
 export function foldActivity(rows: ChatRow[], options: FoldOptions, context: FoldContext): ChatRow[] {
     if (options.level === "none") return rows
@@ -83,7 +86,16 @@ function isSplitterMessage(message: UiMessage, options: FoldOptions, context: Fo
     if (message.ts === options.activeAskTs) return true
     if (message.say === "checkpoint_created" && message.isCheckpointCheckedOut) return true
     if (context.checkedOutOwners.has(message.ts)) return true
-    return rowState(message, context) !== "settled"
+    const state = rowState(message, context)
+    // A row that is still running is never finished work, so it can neither join
+    // a block nor be hidden behind it.
+    if (state === "live") return true
+    // A finished edit, command or subagent is one work item inside the turn, so
+    // it stays in the block whether it succeeded, failed or was cancelled. Any
+    // other failure is why the turn stopped; hiding it behind a header would
+    // misreport the transcript.
+    if (state === "settled") return false
+    return !isFoldableWorkEnd(message, context)
 }
 
 /** A group is only as finished as its least finished member. */
@@ -216,5 +228,17 @@ function buildFold(children: readonly ChatRow[], kind: ActivityFoldKind, context
             .map((member) => context.rounds.get(member.ts))
             .filter((round) => round !== undefined && round > 0),
     ).size
+    const failures = new Map<FoldFailureKind, number>()
+    const failedMemberTs = new Set<number>()
+    for (const member of fold) {
+        const kind = failedWorkKind(member, context)
+        if (!kind) continue
+        failures.set(kind, (failures.get(kind) ?? 0) + failedWorkUnits(member, context))
+        failedMemberTs.add(member.ts)
+    }
+    if (failures.size > 0) {
+        fold._failures = failures
+        fold._failedMemberTs = failedMemberTs
+    }
     return fold
 }

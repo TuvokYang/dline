@@ -5,6 +5,7 @@ import { DIFF_VIEW_URI_SCHEME } from "@hosts/vscode/VscodeDiffViewProvider"
 import { envFlagEnabled } from "@shared/env"
 import * as vscode from "vscode"
 import { Logger } from "@/shared/services/Logger"
+import { type AwaySettings, getAwaySettings } from "./core/controller/state/awaySettings"
 import { sendAccountButtonClickedEvent } from "./core/controller/ui/subscribeToAccountButtonClicked"
 import { sendChatButtonClickedEvent } from "./core/controller/ui/subscribeToChatButtonClicked"
 import { sendHistoryButtonClickedEvent } from "./core/controller/ui/subscribeToHistoryButtonClicked"
@@ -68,6 +69,7 @@ import { SharedUriHandler, TASK_URI_PATH } from "./services/uri/SharedUriHandler
 import { ShowMessageType } from "./shared/proto/dline/host/window"
 import { fileExistsAtPath } from "./utils/fs"
 
+let awaySettings: AwaySettings | undefined
 const RELOAD_WINDOW_ACTION = "Reload Window"
 const RELOAD_WINDOW_PROMPT_VERSION_KEY = "dlineReloadWindowPromptVersion"
 
@@ -158,6 +160,9 @@ export async function activate(context: vscode.ExtensionContext) {
         Logger.error("[Dline] Activation stopped because core storage initialization failed")
         return
     }
+    awaySettings = getAwaySettings(webview.controller.stateManager)
+    await awaySettings.reconcile()
+    context.subscriptions.push({ dispose: () => awaySettings?.beginClose() })
     void showReloadWindowPromptIfNeeded(context)
 
     // 5. Register WebviewPanelSerializer for Editor Tab panel restoration
@@ -950,6 +955,8 @@ async function getBinaryLocation(name: string): Promise<string> {
 
 // This method is called when your extension is deactivated
 export async function deactivate() {
+    await awaySettings?.dispose()
+    awaySettings = undefined
     // Dispose Non-VSCode-specific services
     await tearDown()
 

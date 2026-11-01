@@ -11,6 +11,7 @@ import type { TaskActivityStore } from "../activity/TaskActivityStore"
 import type { BackgroundResultDeliveryPort } from "../background/BackgroundResultDeliveryPort"
 import { approvalPolicySnapshotOf } from "../executors/policy/ProductionApprovalPolicyAdapter"
 import type { PeerTaskSpawnPort } from "../executors/spawn/PeerTaskSpawnPort"
+import { isAwayFeedbackTool } from "../executors/tool/production/AwayToolPolicy"
 import type {
     ProductionToolConfigFactory,
     ProductionToolConfigFactoryInput,
@@ -29,6 +30,7 @@ import type { TaskPayloadStore } from "../stores"
 import { decodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
 import type { ToolInvocationEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
 import type { TaskStateManager } from "../TaskStateManager"
+import { resolveCommandTarget } from "../tools/handlers/command-workdirectory"
 import type { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
 import { SubagentFanoutBudget, usableSubagentLimit } from "../tools/subagent/SubagentFanoutBudget"
 import { SubagentJobManager } from "../tools/subagent/SubagentJobManager"
@@ -53,6 +55,7 @@ export interface TaskToolExecutionOwnerOptions {
     readonly interactions: TaskInteractionPorts
     readonly callbacks: TaskCallbacks
     readonly readState: () => Readonly<TaskState>
+    readonly readAwayActive?: () => boolean
     readonly readCapabilityToggles: () => TaskCapabilityToggles
     /** One-shot authority granted by the turn a block belongs to, if any. */
     readonly readTurnAuthority: (turnId: string | undefined) => ExplicitInstructionConsumePort | undefined
@@ -135,8 +138,15 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
 
     /** Route one provider-owned incomplete block through its existing presentation handler. */
     presentPartial(block: ToolUse): Promise<void> {
+        if (this.options.readAwayActive?.() && isAwayFeedbackTool(block.name)) return Promise.resolve()
         const runtime = this.options.toolRuntime
         return runtime.coordinator.presentPartial(block, createUIHelpers(this.create({ coordinator: runtime.coordinator })))
+    }
+
+    /** Withdraw a preview drawn before this call acquired its feedback-only disposition. */
+    async settleAwayFeedback(block: ToolUse): Promise<void> {
+        const row = this.options.messages.clineMessages.find((message) => message.ts === block.ts)
+        if (row?.partial) await this.options.messages.removeMessagesByTs([row.ts])
     }
 
     /** The result a manually rejected tool reports to the model, in its handler's own words. */
@@ -218,6 +228,25 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
         }
     }
 
+    async prepareAdmissionSnapshot(block: ToolUse): Promise<ToolAdmissionSnapshot> {
+        const snapshot = this.readAdmissionSnapshot(block)
+        if (!snapshot.awayActive || block.name !== DlineDefaultTool.BASH || !block.params.command) return snapshot
+        try {
+            const target = await resolveCommandTarget({
+                cwd: this.options.cwd,
+                command: block.params.command,
+                workdirectory: block.params.workdirectory,
+                workspaceManager: this.options.workspaceManager,
+                isMultiRootEnabled: snapshot.isMultiRootEnabled,
+            })
+            if (!this.options.readAwayActive?.()) return this.readAdmissionSnapshot(block)
+            return { ...snapshot, awayCommandScope: target.isWithinWorkspace ? "workspace" : "external" }
+        } catch {
+            // Invalid targets retain ordinary admission and the handler's existing error result.
+            return { ...snapshot, awayCommandScope: undefined }
+        }
+    }
+
     readAdmissionSnapshot(block: ToolUse): ToolAdmissionSnapshot {
         const workspaceRoots = this.options.workspaceManager?.getRoots()
         const mcpToolAutoApprove =
@@ -243,6 +272,7 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
             settings: policy.settings,
             blanket: policy.blanket ?? {},
             mcpToolAutoApprove,
+            awayActive: this.options.readAwayActive?.() === true,
         }
     }
 

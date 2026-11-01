@@ -87,6 +87,7 @@ export class ActiveTaskSession {
     private checkpointRestoreFence: CheckpointRestoreFence | undefined
     private collaboration: TaskCollaborationSessionOwner | undefined
     private backgroundIngress: TaskBackgroundIngressOwner | undefined
+    private awayConfiguration?: { beginClose(): void }
 
     constructor(private readonly options: ActiveTaskSessionOptions) {
         this.task = options.task
@@ -154,7 +155,14 @@ export class ActiveTaskSession {
         return this.backgroundIngress?.activate() ?? Promise.resolve()
     }
 
+    bindAwayConfiguration(binding: { beginClose(): void }): void {
+        if (this.awayConfiguration) throw new Error("Away configuration is already bound")
+        this.awayConfiguration = binding
+    }
+
     beginClose(): void {
+        this.awayConfiguration?.beginClose()
+        this.assembly.runtime.beginClose()
         this.collaboration?.beginClose()
     }
 

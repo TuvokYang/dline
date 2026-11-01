@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import type { ToolUse } from "@core/assistant-message"
 import { collectContextWindowRequestPressures } from "@core/context/context-management/context-pressure"
 import { getContextWindowInfo } from "@core/context/context-management/context-window-utils"
+import { getAwaySettings } from "@core/controller/state/awaySettings"
 import type { IgnoreController } from "@core/ignore/IgnoreController"
 import type { InputResourceStore } from "@core/input-semantics/InputResourceStore"
 import { LegacyInputAdapter } from "@core/input-semantics/LegacyInputAdapter"
@@ -71,6 +72,7 @@ import { RestoredToolDialogContinuation } from "../session/RestoredToolDialogCon
 import { RetainedInputPresenter } from "../session/RetainedInputPresenter"
 import { SessionResourceScope } from "../session/SessionResourceScope"
 import { TaskApiHandlerOwner } from "../session/TaskApiHandlerOwner"
+import { TaskAwayConfigurationBinding } from "../session/TaskAwayConfigurationBinding"
 import { TaskBackgroundIngressOwner } from "../session/TaskBackgroundIngressOwner"
 import { TaskCollaborationSessionOwner } from "../session/TaskCollaborationSessionOwner"
 import { createTaskContextBudget } from "../session/TaskContextBudget"
@@ -207,6 +209,10 @@ export class TaskSessionCompositionService {
         if (options.deferRestoredCommands) upgradeImportPending = await taskUpgradeImportPending(upgrade)
         else await importTaskUpgrade(upgrade)
         const settings = new TaskStateManager(options.taskId, options.stateManager)
+        const awayConfiguration = new TaskAwayConfigurationBinding(getAwaySettings(options.stateManager), (error) =>
+            Logger.error(`[Task ${options.taskId}] Away configuration failed`, error),
+        )
+        resources.add(awayConfiguration)
         const toolState = new DefaultToolHandlerState()
         // One view per task: requests, compaction and every conversation reader
         // share it, and each journal payload is rendered once rather than once per round.
@@ -465,7 +471,12 @@ export class TaskSessionCompositionService {
                 options.stateManager.getCanonicalSettingsKey("imageGenerationEnabled") === true,
                 options.prompt.shouldUseNativeToolCalls,
             )
-            return promptContext.build(scope.providerInfo, scope.webToolsEnabled, scope.webSearchRoutingPlan)
+            return promptContext.build(
+                scope.providerInfo,
+                scope.webToolsEnabled,
+                scope.webSearchRoutingPlan,
+                scope.selectedApiFormat,
+            )
         }
         const usesNativeToolCalls = () =>
             options.prompt.shouldUseNativeToolCalls(
@@ -628,6 +639,7 @@ export class TaskSessionCompositionService {
             interactions,
             callbacks: tool.callbacks,
             readState,
+            readAwayActive: () => awayConfiguration.isActive(),
             readCapabilityToggles: options.prompt.readCapabilityToggles,
             readTurnAuthority: (turnId) => turnAuthority.read(turnId),
             workspaceManager: options.prompt.workspaceManager,
@@ -666,7 +678,7 @@ export class TaskSessionCompositionService {
             messages: journalMessages,
             authority: turnAuthority,
             tools: toolRuntime,
-            readAdmissionSnapshot: (block) => toolExecution.readAdmissionSnapshot(block),
+            readAdmissionSnapshot: (block) => toolExecution.prepareAdmissionSnapshot(block),
             usesNativeToolCalls: options.prompt.shouldUseNativeToolCalls,
         })
         const realtimeMessages: RealtimeMessagePublisher = {
@@ -799,6 +811,8 @@ export class TaskSessionCompositionService {
         })
         const opened = await openActiveTaskSession({
             taskId: options.taskId,
+            awayConfiguration,
+            automaticResponses: { deliver: (command) => interactions.deliverAutomatic(command) },
             approvalFeedback,
             openReason: options.openReason,
             deferRestoredCommands: options.deferRestoredCommands,
@@ -1009,6 +1023,7 @@ export class TaskSessionCompositionService {
                 // A continued round has to say why it exists, and the wording
                 // depends on how tools were offered for the current provider.
                 continuation: new TurnContinuationRenderer({ usesNativeToolCalls }),
+                subagentsAvailable: async (signal) => (await providerRequests.frame(signal)).delegationAvailable === true,
                 // Compaction shares the ordinary request's frame, so the summary is
                 // requested against the prefix the provider already cached.
                 compaction: new ProviderCompactionService({
@@ -1069,6 +1084,8 @@ export class TaskSessionCompositionService {
         })
         if (options.collaboration.writable) collaboration.activate()
         interactions.bind(session)
+        opened.bindAwayConfiguration(awayConfiguration)
+        await awayConfiguration.activate()
         return session
     }
 

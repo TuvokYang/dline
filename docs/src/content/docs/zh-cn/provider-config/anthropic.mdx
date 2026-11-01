@@ -42,9 +42,25 @@ Dline 提供两种使用 Claude 的方式：
 
 4. 在 **Model** 中搜索或选择 Claude 模型。
 
-5. （可选）需要走代理网关时，勾选 **Use custom base URL** 并填写地址。默认地址为 `https://api.anthropic.com`，大多数用户不需要修改。
+5. （可选）需要走网关时设置自定义 Base URL，见下一节。
 
 </Steps>
+
+### 自定义 Base URL
+
+保持 **Use custom base URL** 未勾选时，请求发送到 Anthropic。勾选后，请求改为发送到你填写的其他地址，例如位于 Anthropic API 前的网关或代理。
+
+<Steps>
+
+1. 勾选 **Use custom base URL**，填入网关提供的地址，例如 `https://gateway.example.com`。填写 API 地址本身，而不是网关的控制台页面。
+
+2. **Anthropic API Key** 中填写该网关接受的 Key。如果网关用自有 Key 认证，这里要填网关的 Key，而不是 Anthropic 的 Key。
+
+3. 在 **Model** 中选择模型，模型 ID 必须是该网关接受的 ID。
+
+</Steps>
+
+默认地址为 `https://api.anthropic.com`，大多数用户不需要修改。Dline 只会把 Key 发送到你填写的地址，因此该网关必须接受 Anthropic 的 Messages API 形式。
 
 ## Claude Code（订阅）
 

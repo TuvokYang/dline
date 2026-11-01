@@ -27,6 +27,8 @@ import { nousResearchModels } from "./nousresearch"
 import { openAiDefaultModelId, openAiModels } from "./openai"
 import { openAiCodexModels } from "./openai-codex"
 import { openAIDefaultImageModelId, openAIImageModels } from "./openai-image"
+import { openCodeModels } from "./opencode"
+import { openCodeGoModels } from "./opencode-go"
 import { mainlandQwenModels } from "./qwen-cn"
 import { qwenCodeModels } from "./qwen-code"
 import { internationalQwenModels } from "./qwen-intl"
@@ -44,6 +46,23 @@ const emptyModels: Record<string, any> = {}
 const firstKey = <T extends Record<string, unknown>>(obj: T): string => Object.keys(obj)[0] || ""
 
 export const allProviderModels: Record<string, ProviderModelsConfig> = {
+    // One selectable provider. The Go plan serves a different model set, so it
+    // is a second catalog of this provider reached through the Profile's mode.
+    opencode: {
+        provider: "opencode",
+        providerName: "OpenCode",
+        baseUrl: "https://opencode.ai/inference",
+        billingUrl: "https://opencode.ai/console",
+        billingMode: "console",
+        models: openCodeModels,
+        defaultModelId: "claude-sonnet-5-5",
+        catalogs: {
+            "opencode-go": {
+                models: openCodeGoModels,
+                defaultModelId: "kimi-k3",
+            },
+        },
+    },
     anthropic: {
         provider: "anthropic",
         providerName: "Anthropic",
@@ -130,15 +149,15 @@ export const allProviderModels: Record<string, ProviderModelsConfig> = {
         billingMode: "token",
         models: internationalQwenModels,
         defaultModelId: firstKey(internationalQwenModels),
-    },
-    "qwen-cn": {
-        provider: "qwen-cn",
-        providerName: "Alibaba Qwen (Mainland China)",
-        regionVariantOf: "qwen",
-        baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        billingMode: "token",
-        models: mainlandQwenModels,
-        defaultModelId: firstKey(mainlandQwenModels),
+        // The mainland endpoint serves its own model set; the region option on
+        // the Profile selects it, so it is a catalog here rather than a second
+        // selectable provider.
+        catalogs: {
+            "qwen-cn": {
+                models: mainlandQwenModels,
+                defaultModelId: firstKey(mainlandQwenModels),
+            },
+        },
     },
     doubao: {
         provider: "doubao",
@@ -259,15 +278,12 @@ export const allProviderModels: Record<string, ProviderModelsConfig> = {
         billingMode: "token",
         models: internationalZAiModels,
         defaultModelId: firstKey(internationalZAiModels),
-    },
-    "zai-cn": {
-        provider: "zai-cn",
-        providerName: "Z AI (Mainland China)",
-        regionVariantOf: "zai",
-        baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-        billingMode: "token",
-        models: mainlandZAiModels,
-        defaultModelId: firstKey(mainlandZAiModels),
+        catalogs: {
+            "zai-cn": {
+                models: mainlandZAiModels,
+                defaultModelId: firstKey(mainlandZAiModels),
+            },
+        },
     },
     fireworks: {
         provider: "fireworks",

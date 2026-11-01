@@ -14,6 +14,20 @@ export const DropdownContainer = styled.div.attrs<{ zIndex?: number }>(({ zIndex
 }))`
 	position: relative;
 
+	/**
+	 * The toolkit's \`vscode-dropdown\` renders inside a shadow root whose
+	 * stylesheet resolves \`--vscode-dropdown-*\` at the host element. A value
+	 * written on \`document.documentElement\` does not cross that boundary, so the
+	 * host would keep falling back to the toolkit's own dark defaults in every
+	 * theme. Declaring the three properties on the host itself is what makes the
+	 * control follow the surrounding theme.
+	 */
+	& vscode-dropdown {
+		--vscode-dropdown-background: var(--vscode-input-background, #3c3c3c);
+		--vscode-dropdown-foreground: var(--vscode-input-foreground, #cccccc);
+		--vscode-dropdown-border: var(--vscode-input-border, #3c3c3c);
+	}
+
 	// Force dropdowns to open downward
 	& vscode-dropdown::part(listbox) {
 		position: absolute !important;

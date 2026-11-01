@@ -88,6 +88,8 @@ async function persistApprovalFeedback(options: ProductionToolAdapterOptions, co
     if (!feedback) return
     const envelope: DialogDraftEnvelope = {
         kind: "dialog_draft",
+        ...(feedback.admittedInputRef === undefined ? {} : { admittedInputRef: feedback.admittedInputRef }),
+        ...(feedback.roundMaterialOwned ? { roundMaterialOwned: true as const } : {}),
         text: feedback.text ?? "",
         images: [...(feedback.images ?? [])],
         files: [...(feedback.files ?? [])],

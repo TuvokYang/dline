@@ -3,6 +3,7 @@
  * Extracted from api.ts nebiusModels (lines 3349-3531).
  */
 import type { ModelInfo } from "@shared/api"
+import { flatPricing } from "./pricing"
 
 export const nebiusModels: Record<string, ModelInfo> = {
     "deepseek-ai/DeepSeek-V3": {
@@ -14,10 +15,7 @@ export const nebiusModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.5,
-            outputPrice: 1.5,
-        },
+        pricing: flatPricing(0.5, 1.5),
     },
     "deepseek-ai/DeepSeek-V3-0324-fast": {
         id: "deepseek-ai/DeepSeek-V3-0324-fast",
@@ -28,10 +26,7 @@ export const nebiusModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 2,
-            outputPrice: 6,
-        },
+        pricing: flatPricing(2, 6),
     },
     "deepseek-ai/DeepSeek-R1": {
         id: "deepseek-ai/DeepSeek-R1",
@@ -42,10 +37,7 @@ export const nebiusModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.8,
-            outputPrice: 2.4,
-        },
+        pricing: flatPricing(0.8, 2.4),
     },
     "deepseek-ai/DeepSeek-R1-fast": {
         id: "deepseek-ai/DeepSeek-R1-fast",
@@ -56,10 +48,7 @@ export const nebiusModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 2,
-            outputPrice: 6,
-        },
+        pricing: flatPricing(2, 6),
     },
     "deepseek-ai/DeepSeek-R1-0528": {
         id: "deepseek-ai/DeepSeek-R1-0528",
@@ -70,10 +59,7 @@ export const nebiusModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.8,
-            outputPrice: 2.4,
-        },
+        pricing: flatPricing(0.8, 2.4),
     },
     "meta-llama/Llama-3.3-70B-Instruct-fast": {
         id: "meta-llama/Llama-3.3-70B-Instruct-fast",
@@ -84,10 +70,7 @@ export const nebiusModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.25,
-            outputPrice: 0.75,
-        },
+        pricing: flatPricing(0.25, 0.75),
     },
     "Qwen/Qwen2.5-32B-Instruct-fast": {
         id: "Qwen/Qwen2.5-32B-Instruct-fast",
@@ -98,10 +81,7 @@ export const nebiusModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.13,
-            outputPrice: 0.4,
-        },
+        pricing: flatPricing(0.13, 0.4),
     },
     "Qwen/Qwen2.5-Coder-32B-Instruct-fast": {
         id: "Qwen/Qwen2.5-Coder-32B-Instruct-fast",
@@ -112,10 +92,7 @@ export const nebiusModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.1,
-            outputPrice: 0.3,
-        },
+        pricing: flatPricing(0.1, 0.3),
     },
     "Qwen/Qwen3-4B-fast": {
         id: "Qwen/Qwen3-4B-fast",
@@ -126,10 +103,7 @@ export const nebiusModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.08,
-            outputPrice: 0.24,
-        },
+        pricing: flatPricing(0.08, 0.24),
     },
     "Qwen/Qwen3-30B-A3B-fast": {
         id: "Qwen/Qwen3-30B-A3B-fast",
@@ -140,10 +114,7 @@ export const nebiusModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.3,
-            outputPrice: 0.9,
-        },
+        pricing: flatPricing(0.3, 0.9),
     },
     "Qwen/Qwen3-235B-A22B": {
         id: "Qwen/Qwen3-235B-A22B",
@@ -154,10 +125,7 @@ export const nebiusModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.2,
-            outputPrice: 0.6,
-        },
+        pricing: flatPricing(0.2, 0.6),
     },
     "openai/gpt-oss-120b": {
         id: "openai/gpt-oss-120b",
@@ -168,10 +136,7 @@ export const nebiusModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.15,
-            outputPrice: 0.6,
-        },
+        pricing: flatPricing(0.15, 0.6),
     },
     "moonshotai/Kimi-K2-Instruct": {
         id: "moonshotai/Kimi-K2-Instruct",
@@ -182,10 +147,7 @@ export const nebiusModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0.5,
-            outputPrice: 2.4,
-        },
+        pricing: flatPricing(0.5, 2.4),
     },
     "Qwen/Qwen3-Coder-480B-A35B-Instruct": {
         id: "Qwen/Qwen3-Coder-480B-A35B-Instruct",
@@ -196,10 +158,7 @@ export const nebiusModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.4,
-            outputPrice: 1.8,
-        },
+        pricing: flatPricing(0.4, 1.8),
     },
     "openai/gpt-oss-20b": {
         id: "openai/gpt-oss-20b",
@@ -210,10 +169,7 @@ export const nebiusModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.05,
-            outputPrice: 0.2,
-        },
+        pricing: flatPricing(0.05, 0.2),
     },
     "zai-org/GLM-4.5": {
         id: "zai-org/GLM-4.5",
@@ -224,10 +180,7 @@ export const nebiusModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0.6,
-            outputPrice: 2.2,
-        },
+        pricing: flatPricing(0.6, 2.2),
     },
     "zai-org/GLM-4.5-Air": {
         id: "zai-org/GLM-4.5-Air",
@@ -238,10 +191,7 @@ export const nebiusModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0.2,
-            outputPrice: 1.2,
-        },
+        pricing: flatPricing(0.2, 1.2),
     },
     "deepseek-ai/DeepSeek-R1-0528-fast": {
         id: "deepseek-ai/DeepSeek-R1-0528-fast",
@@ -252,10 +202,7 @@ export const nebiusModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 2.0,
-            outputPrice: 6.0,
-        },
+        pricing: flatPricing(2.0, 6.0),
     },
     "Qwen/Qwen3-235B-A22B-Instruct-2507": {
         id: "Qwen/Qwen3-235B-A22B-Instruct-2507",
@@ -266,10 +213,7 @@ export const nebiusModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.2,
-            outputPrice: 0.6,
-        },
+        pricing: flatPricing(0.2, 0.6),
     },
     "Qwen/Qwen3-30B-A3B": {
         id: "Qwen/Qwen3-30B-A3B",
@@ -280,10 +224,7 @@ export const nebiusModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.1,
-            outputPrice: 0.3,
-        },
+        pricing: flatPricing(0.1, 0.3),
     },
     "Qwen/Qwen3-32B": {
         id: "Qwen/Qwen3-32B",
@@ -294,10 +235,7 @@ export const nebiusModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.1,
-            outputPrice: 0.3,
-        },
+        pricing: flatPricing(0.1, 0.3),
     },
     "Qwen/Qwen3-32B-fast": {
         id: "Qwen/Qwen3-32B-fast",
@@ -308,10 +246,7 @@ export const nebiusModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.2,
-            outputPrice: 0.6,
-        },
+        pricing: flatPricing(0.2, 0.6),
     },
 }
 

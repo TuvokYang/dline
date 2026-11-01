@@ -42,7 +42,8 @@ const AggressiveRenderingSetting = () => {
                 ))}
             </VSCodeDropdown>
             <p className="text-xs text-(--vscode-descriptionForeground) mt-1">
-                Folded blocks show a summary and expand on click. Rows that are still running or that failed always stay visible.
+                Folded blocks show a summary and expand on click. Work that is still running stays visible; failed edits, commands
+                and subagents join the block, and its summary states how many errors it holds.
             </p>
         </div>
     )

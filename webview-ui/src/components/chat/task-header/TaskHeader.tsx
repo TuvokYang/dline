@@ -1,5 +1,6 @@
 import type { ModelPricing } from "@shared/api"
 import { UiMessage } from "@shared/ExtensionMessage"
+import { readPriceSet } from "@shared/providers/pricing-shape"
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import React, { useCallback, useLayoutEffect, useState } from "react"
 import Thumbnails from "@/components/common/Thumbnails"
@@ -187,7 +188,11 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
                                     className={BUTTON_CLASS}
                                     currency={currency}
                                     estimatedInputTokens={currentContextTokens}
-                                    inputPrice={pricing?.inputPrice}
+                                    inputPrice={
+                                        pricing?.metered?.strategy?.flat
+                                            ? readPriceSet(pricing.metered.strategy.flat.prices).inputPrice
+                                            : undefined
+                                    }
                                     promptFreshness={promptFreshness}
                                     taskId={taskId}
                                 />

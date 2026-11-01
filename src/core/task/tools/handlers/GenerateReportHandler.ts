@@ -7,7 +7,7 @@ import { type ToolHandlerResult, withToolDocuments } from "../ToolExecutionResul
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
 import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { attachToolFeedbackFiles, sayFeedbackOnce } from "../utils/UserFeedbackUtils"
+import { attachToolFeedbackFiles, sayFeedbackOnce, separateRoundFeedback } from "../utils/UserFeedbackUtils"
 
 export class GenerateReportHandler implements IToolHandler, IPartialBlockHandler {
     readonly name = DlineDefaultTool.GENERATE_REPORT
@@ -60,6 +60,8 @@ export class GenerateReportHandler implements IToolHandler, IPartialBlockHandler
         const files = outcome.draft?.files
 
         config.taskState.isAwaitingPlanResponse = false
+        const separated = await separateRoundFeedback(config, outcome)
+        if (separated) return separated
         const attachments = await attachToolFeedbackFiles(files)
         const fileContentString = attachments.text
 

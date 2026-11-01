@@ -100,15 +100,16 @@ Two graphs are built from one diagram, and which one must be acyclic depends on 
 | Nodes with no edge at all and not declared `%% note-node:` | blocking, one finding per diagram |
 | Solid edge without a label | blocking, one finding per diagram |
 | A structure diagram at L0 or L1 whose solid labels use **none** of the declared categories | blocking, one finding per diagram |
-| Solid labels that are descriptive while the diagram does use declared categories | not checked |
-| Solid labels of a flow diagram or a diagram below L1 | not checked; the declared categories do not bind them |
+| A descriptive label begins with an exact declared category followed by whitespace | checked as that category; substring matches do not qualify |
+| Other descriptive labels while the diagram uses declared categories | not checked; no category is guessed |
+| Explicitly typed flow diagrams or diagrams below L1 | ownership vocabulary is not an applicable obligation; labels, fact semantics, cycles and refinement are still checked |
 | Dotted label that is an instruction | blocking |
 | Dotted label that is neither a fact nor a constraint | unverifiable |
 | Solid edge crossing unrelated lifetimes without commit or write semantics | not checked, for review |
 
 Three decisions are deliberate:
 
-1. **The normative label sentence names meaning categories, not an exhaustive vocabulary.** Requiring every label to be one of five literals rejects ordinary descriptive architecture labels and produces one finding per edge. The verifier instead requires that each diagram actually uses the declared categories, and accepts descriptive labels as detail.
+1. **The normative label sentence names meaning categories, not an exhaustive vocabulary.** An exact leading category such as `injects immutable configuration` has a mechanically checked category identity; `notinjects` does not. Other descriptive labels are not silently promoted to checked categories.
 2. **The sentence binds ownership and control composition, which only L0 and L1 structure diagrams express.** A hot-path, failure or delivery diagram describes behaviour and is not held to it.
 3. **Lifetime containment is not declared by the spec.** Two subgraphs in one diagram may legitimately nest. Crossing them is therefore a review item rather than a defect.
 
@@ -128,7 +129,9 @@ Pairing comes from `%% refines:`. When a diagram declares none, the verifier pai
 | Coarse solid command drawn as a fine fact edge | blocking |
 | Coarse fact edge drawn as a fine command edge | blocking |
 | Fine subgraph introduces a lifetime absent from the coarse layer | unverifiable |
-| Coarse node never appears below | not checked |
+| Coarse node never appears in any declared descendant refinement | not checked; sibling selective views are evaluated collectively, inferred pairs do not prove coverage |
+| Coarse edge has no nonzero same-style path in any declared descendant refinement | unverifiable; placing the endpoints in disconnected selective views does not prove the relationship |
+| Additional fine fact has no coarse fact counterpart | not checked; reverse direction and a fact/constraint label do not prove a missing coarse contract |
 | A layer is skipped | unverifiable |
 
 ## 7. Stage 4: B2 task diagram against the Workstream
@@ -161,23 +164,25 @@ The plan's Task Graph is checked first: when B depends on A, a solid path throug
 
 ## 9. Stage 6: recorded implementation gate
 
-The gate decides whether code checking is meaningful. It never invents a defect, because an unfinished task has not claimed implementation.
+The gate separates **read-only implementation inspection** from **readiness for conformance**. An implemented Task may be checked before its status becomes completed; otherwise requiring conformance before completion creates a record cycle. The verifier never changes Task status, clears blockers, or converts inspection into completion.
 
 | Condition | Effect |
 | --- | --- |
-| `progress.md` `status` is not `completed` | implementation checks postponed |
-| `blockers` is not empty | postponed; an honest blocker is not a design defect |
+| `progress.md` `status` is not `active`, `blocked` or `completed` | implementation checks postponed |
+| `blockers` is not empty | conformance remains pending; read-only inspection may run to establish the evidence needed to resolve the blocker |
 | `waiting_for` is not empty | postponed; coordination is normal |
 | a `Depends On` task is not `completed` | postponed |
 | a `required_verification` id has no `progress.md` record | postponed |
-| a recorded result differs from `required_result` | postponed |
+| no required record has `required_result` and a nonempty conclusion | postponed; the conclusion must support the declared claim, subject to evidence review |
 
-Only a task that passes every condition is code-checked, and then:
+Inspection requires an implementation status, no coordination wait, completed upstream dependencies, and all required verification records. A blocker does not suppress that inspection, but still produces pending findings and prevents conformance. After the owning checks actually resolve a blocker, update the authoritative progress record and rerun; never predeclare completion to enable checking.
+
+The code checks are:
 
 | Check | Severity |
 | --- | --- |
 | `owns[].path` with `kind: module` does not exist | unverifiable |
-| `owns[]` with `kind: symbol`: a declaration fact matches | proven; an absent capture is unverifiable, never inferred missing |
+| `owns[]` with `kind: symbol`: every exact qualified selector has a declaration fact | proven; an empty selector or absent capture is unverifiable; a class declaration never substitutes for its member |
 | `%% module:` binding points at a missing module | unverifiable |
 | A drawn solid edge whose source module never imports the target module | not checked; dependency inversion is the prescribed shape, so the edge is proven by the task's execution ledger (emit side, receive side, breaking test), not by an import |
 | `kind: structured_node` / `section` / `line_range` / `whole_file` | checked for path existence only |
@@ -187,17 +192,31 @@ Record contradictions are reported with `[record]` attribution and are blocking,
 
 - `status: completed` but a required verification is not satisfied;
 - `status: completed` with a non-empty `blockers` or `waiting_for`;
-- `progress.md` verification naming an id absent from `goals.yaml`.
+Additional diagnostic verification IDs are allowed and do not create completion requirements. They cannot satisfy a differently named required check; Architecture Evidence still rejects an edge proof ID absent from `required_verification`.
 
 A stale `status.yml` projection is **not** a defect. `progress.md` is authoritative; the mismatch is listed under stale projections and never changes the exit code.
 
 ## 10. Bounded diagram-code conformance
 
-The default aggregate reads only the target Workstream and artifacts bound by `%% artifact:`, `%% module:`, Task `owns|reads`, or schema-v2 `## Architecture Evidence`. From those explicit seeds it builds a bounded dependency closure with vendored Tree-sitter grammars; it needs no target package, tsconfig, Python or product source, and never enumerates sibling or historical Workstreams.
+The verification unit is the architectural relationships inside the declared Workstream boundary, not every source edit. It includes responsibility and state ownership, dependency direction, interfaces and injection, data and control flow, lifetimes, actual calls and their order, and relationships missing from the diagram. These are not a closed checklist: check both the drawn claims and the actual architecture within the boundary.
 
-Architecture Evidence is the sole Task-local diagram-to-code fact source. Schema v2 gives every node artifact a Workstream-stable `id`; each edge endpoint is `{node, artifact}` and must resolve to the edge's source/target node and the required role (`emitter`, `receiver`, `declaration` contract or `assembly`). Endpoint-local paths or symbols are rejected so an unrelated file cannot prove an edge. Schema v1 remains readable only for migration and cannot establish completed conformance. Evidence validates exact diagram edge identity and supports `direct_import`, `injected_port`, `composition`, `event`, `callback` and canonical Proto `rpc` proofs. `owns` is write permission, not artifact existence or writer authority.
+Workstream and Task module/function/interface mappings define the inspection subjects. Exact function symbols select their actual source definitions; a module binding selects its declared module. Missing, incorrectly qualified or ambiguous symbols remain unverifiable. Actual dependencies originating inside a bound subject are compared with diagram/interface contracts, so a relationship need not have been drawn to be detected. Shared-file references retain the emitting Task identity and cannot inherit another Task's read contract.
 
-Completed expectation, direct-runtime contradiction, prohibited runtime SCC, conflicting completed writer claims and computable completed boundary overlaps block. Unfinished expectations warn. Direct import and observable composition wiring may be proven structurally; injected-port, event, callback and RPC prerequisites that do not prove runtime delivery are `unverifiable`. Actual code edges absent from the current WS contract warn; type-only and external-package facts never become runtime writer/cycle blockers.
+Architecture Evidence artifacts default to `inspection: subject`. An explicit `inspection: support` keeps endpoint existence, exact definitions, edge identity, wiring, direction and writer checks, but does not turn an existing integration container into an audit emitter for unrelated implementation dependencies. Unknown inspection modes are invalid. A subject directory expands to its production source files; tests/fixtures and build/dependency directories are excluded unless mapped as explicit files. A support directory does not imply recursive source inspection; proof endpoints must name their concrete source file.
+
+Task `changed_files` and `changed_regions` are implementation records, not mandatory diagram-verifier input. The verifier does not require a per-edit AST registry, interpret prose scope descriptions as code selectors, or promote unrelated tests/tooling into subjects merely because they changed. `owns` remains write permission; `reads` supplies supporting interfaces, not additional audit emitters. A code-only caller without diagram artifacts may supply explicit module/whole-file boundaries; this does not interpret prose sections as executable selectors.
+
+From bound sources and explicit supporting interfaces, the Skill builds a bounded Tree-sitter closure for binding provenance and cycle-closing context. Support code is not recursively promoted into audit subjects. A cycle containing an in-boundary reference remains checked even when it closes through a supporting interface; unrelated support-only components do not become findings. Unknown references, missing definitions, reversed dependencies and conflicting authorities remain actionable. No target module is executed, and no target compiler/package is required.
+
+Architecture Evidence is the sole Task-local diagram-to-code fact source. Every node and relationship in the selected Task diagram, including dotted result/data flows, must have a mapping; checking an evidence subset does not cover the rest of the graph. Schema v2 gives every node artifact a Workstream-stable `id`; each edge endpoint is `{node, artifact}` and must resolve to the edge's source/target node and the required role (`emitter`, `receiver`, `declaration` contract or `assembly`). Endpoint-local paths or symbols are rejected so an unrelated file cannot prove an edge. Schema v1 remains readable only for migration and cannot establish completed conformance. Evidence validates exact diagram edge identity and supports `direct_import`, `injected_port`, `composition`, `event`, `callback` and canonical Proto `rpc` proofs. `owns` is write permission, not artifact existence or writer authority.
+
+Completed expectation, direct-runtime contradiction, prohibited runtime SCC, conflicting completed writer claims and computable completed boundary overlaps block. Unfinished expectations warn. A `direct_import` can prove its structural import relation, never a runtime delivery claim. Composition imports alone cannot prove construction or connected instance identity. Missing direct imports do not contradict contextual or injected bindings; unsupported composition, injected-port, event, callback and RPC delivery remains `unverifiable`. Actual code edges absent from the current WS contract warn; type-only and external-package facts never become runtime writer/cycle blockers.
+
+Diagram dependency counterparts and Task `reads` contracts are matched to the actual emitting Task, not merged into a Workstream-global permission set. Internal dependencies within one explicitly mapped module/node do not require invented cross-node arrows; they remain subject to cycle checks. File or directory paths cover only their exact path or descendants at a path-segment boundary; `contracts` does not cover `contracts-old`. This records a declared read dependency, not execution, injection or write authority. A shared-file Task cannot inherit another Task's counterpart/read contract merely because their importer path is the same. A `direct_import` with an exact emitting symbol checks uses inside that definition, not imports borrowed from sibling functions; it still proves only a structural dependency, not a method call or delivery.
+
+Canonical RPC prerequisites require a unique service and method, the exact service declaration file, and request/response message identities resolved through Proto namespace and import visibility. An unimported same-name type, ambiguous declaration or enum cannot satisfy a message identity. These facts are necessary prerequisites, never endpoint delivery evidence.
+
+Script wiring certificates admit only explicitly checked syntax subsets. The constructed-event subset requires inert module initialization, a straight-line local construction with an empty constructor, and a direct typed call with the original parameter. The JSX subset requires a directly returned mount, exact component binding, directly returned consumer markup and callback registration at a supported intrinsic event attribute. A tree-wide occurrence is not registration or invocation evidence. General call/value exploration is diagnostic: unknown branches, Promise settlement, abrupt completion, object escapes and unmodelled mutation cannot issue a delivery certificate. Unsupported real code remains unverifiable until a sound adapter covers its actual circuit; never rewrite product code to fit the subset.
 
 Identity is shared by every stage: concept, exact id, then NFKC/lowercase Unicode letter-number label. Multiple candidates are ambiguity, never a guess. Depends On requires an artifact-owned upstream node to reach an artifact-owned downstream node through at least one solid edge.
 

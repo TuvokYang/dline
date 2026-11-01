@@ -62,6 +62,7 @@ export const ProviderToApiKeyMap: Partial<Record<ApiProvider, keyof Secrets | (k
     nousResearch: "nousResearchApiKey",
     sapaicore: ["sapAiCoreClientId", "sapAiCoreClientSecret"],
     wandb: "wandbApiKey",
+    opencode: "opencodeApiKey",
 } as const
 
 const ProviderDefaultModelMap: Partial<Record<ApiProvider, string>> = {
@@ -93,6 +94,7 @@ const ProviderDefaultModelMap: Partial<Record<ApiProvider, string>> = {
     qwen: internationalQwenDefaultModelId,
     deepseek: deepSeekDefaultModelId,
     wandb: wandbDefaultModelId,
+    opencode: "claude-sonnet-5-5",
 } as const
 
 export function getProviderDefaultModelId(provider: ApiProvider): string | null {

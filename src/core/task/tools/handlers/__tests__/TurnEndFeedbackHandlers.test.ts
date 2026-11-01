@@ -6,8 +6,13 @@ import { describe, expect, it, vi } from "vitest"
 import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 import type { TaskConfig } from "../../types/TaskConfig"
 import { AskFollowupQuestionToolHandler } from "../AskFollowupQuestionToolHandler"
+import { AttemptCompletionHandler } from "../AttemptCompletionHandler"
 import { GenerateReportHandler } from "../GenerateReportHandler"
 import { MakePlanHandler } from "../MakePlanHandler"
+import { QnaRespondHandler } from "../QnaRespondHandler"
+
+// Provider construction is not part of feedback handling; only telemetry reads its identity.
+vi.mock("@core/api", () => ({ resolveProvider: () => "test-provider" }))
 
 vi.mock("@/services/telemetry", () => ({
     telemetryService: {
@@ -223,7 +228,7 @@ describe("turn-ending feedback handlers", () => {
         })
         expect(config.callbacks.say).toHaveBeenCalledOnce()
         expect(config.callbacks.say).toHaveBeenCalledWith("user_feedback", response, [], [])
-        expect(result).toContain(`<feedback>\n${response}\n</feedback>`)
+        expect(typeof result === "string" ? /^<feedback>\n([\s\S]*)\n<\/feedback>$/.exec(result)?.[1] : undefined).toBe(response)
     })
 
     it("keeps retained model guidance out of feedback rows owned by a causal presenter", async () => {
@@ -241,7 +246,7 @@ describe("turn-ending feedback handlers", () => {
                 draft: { text, images: [], files: [] },
                 feedbackPresented: true,
             })
-            expect(JSON.stringify(result)).toContain("internal guidance")
+            expect(typeof result === "string" ? /^<feedback>\n([\s\S]*)\n<\/feedback>$/.exec(result)?.[1] : undefined).toBe(text)
             expect(config.callbacks.say).not.toHaveBeenCalled()
         }
     })
@@ -269,8 +274,7 @@ describe("turn-ending feedback handlers", () => {
 
         expect(config.callbacks.say).not.toHaveBeenCalledWith("user_feedback", "请按方案二调整", [], [])
         assert.ok(typeof result === "string")
-        assert.match(result, /<feedback>\n请按方案二调整\n<\/feedback>/)
-        assert.doesNotMatch(result, /<user_message>/)
+        expect(/^<feedback>\n([\s\S]*)\n<\/feedback>$/.exec(result)?.[1]).toBe("请按方案二调整")
     })
 
     it("generate_report returns feedback wrapper and avoids duplicate UI feedback", async () => {
@@ -284,8 +288,7 @@ describe("turn-ending feedback handlers", () => {
 
         expect(config.callbacks.say).not.toHaveBeenCalledWith("user_feedback", "报告里补充风险", [], [])
         assert.ok(typeof result === "string")
-        assert.match(result, /<feedback>\n报告里补充风险\n<\/feedback>/)
-        assert.doesNotMatch(result, /<user_message>/)
+        expect(/^<feedback>\n([\s\S]*)\n<\/feedback>$/.exec(result)?.[1]).toBe("报告里补充风险")
     })
 
     it("ask_followup_question returns feedback wrapper and avoids duplicate UI feedback", async () => {
@@ -296,7 +299,86 @@ describe("turn-ending feedback handlers", () => {
 
         expect(config.callbacks.say).not.toHaveBeenCalledWith("user_feedback", "我选择自定义答案", [], [])
         assert.ok(typeof result === "string")
-        assert.match(result, /<feedback>\n我选择自定义答案\n<\/feedback>/)
-        assert.doesNotMatch(result, /<answer>/)
+        expect(/^<feedback>\n([\s\S]*)\n<\/feedback>$/.exec(result)?.[1]).toBe("我选择自定义答案")
+    })
+
+    // Owned bodies and attachments are delivered by the material plan, not by a
+    // second handler renderer; a file access or image returned here is a defect.
+    it.each([
+        { handler: new AskFollowupQuestionToolHandler(), tool: DlineDefaultTool.ASK },
+        { handler: new MakePlanHandler(), tool: DlineDefaultTool.MAKE_PLAN },
+        { handler: new GenerateReportHandler(), tool: DlineDefaultTool.GENERATE_REPORT },
+        { handler: new QnaRespondHandler(), tool: DlineDefaultTool.QNA_RESPOND },
+    ])("keeps $tool owned feedback out of the paired result and consumes its Mode flag once", async ({ handler, tool }) => {
+        const feedback = "Use option two"
+        const config = createConfig(feedback)
+        config.taskState.ackedFeedback = undefined
+        config.taskState.isAwaitingPlanResponse = true
+        config.taskState.didRespondToPlanAskBySwitchingMode = true
+        const outcome = {
+            actionId: "reply" as const,
+            draft: { text: feedback, images: ["data:image/png;base64,cGl4ZWxz"], files: ["must-not-read.pdf"] },
+            roundMaterialOwned: true as const,
+        }
+        const switched = await handler.continueInteraction(config, createBlock(tool, { options: "[]" }), outcome)
+        expect(config.callbacks.say).toHaveBeenCalledExactlyOnceWith(
+            "user_feedback",
+            feedback,
+            outcome.draft.images,
+            outcome.draft.files,
+        )
+        expect(config.taskState.didRespondToPlanAskBySwitchingMode).toBe(false)
+        if (tool !== DlineDefaultTool.ASK) expect(config.taskState.isAwaitingPlanResponse).toBe(false)
+        const other = createConfig(feedback)
+        const ordinary = await handler.continueInteraction(other, createBlock(tool, { options: "[]" }), outcome)
+        expect(switched).not.toEqual(ordinary)
+        expect(typeof switched).toBe("string")
+        expect(String(switched).match(/Use option two/g)).toBeNull()
+    })
+
+    it("completion runs the real feedback Hook once without duplicating its body or image in the result", async () => {
+        const config = createConfig("Revise the result")
+        config.taskState.ackedFeedback = undefined
+        const hook = vi
+            .mocked(config.callbacks.runUserPromptSubmitHook)
+            .mockResolvedValue({ contextModification: "Hook context" })
+        const result = await new AttemptCompletionHandler().continueInteraction(
+            config,
+            createBlock(DlineDefaultTool.ATTEMPT, {}),
+            {
+                actionId: "reply",
+                roundMaterialOwned: true,
+                draft: { text: "Revise the result", images: ["data:image/png;base64,cGl4ZWxz"], files: [] },
+            },
+        )
+        expect(hook).toHaveBeenCalledExactlyOnceWith(
+            [
+                { type: "text", text: "<user_message>\nRevise the result\n</user_message>" },
+                { type: "image", source: { type: "base64", media_type: "image/png", data: "cGl4ZWxz" } },
+            ],
+            "feedback",
+        )
+        expect(config.callbacks.say).toHaveBeenCalledTimes(1)
+        expect(result).toEqual([
+            { type: "text", text: "[attempt_completion] Result: Done" },
+            { type: "text", text: '<hook_context source="UserPromptSubmit">\nHook context\n</hook_context>' },
+        ])
+    })
+
+    it("keeps completion Hook cancellation authoritative for owned feedback", async () => {
+        const config = createConfig("Do not continue")
+        vi.mocked(config.callbacks.runUserPromptSubmitHook).mockResolvedValue({ cancel: true })
+        const result = await new AttemptCompletionHandler().continueInteraction(
+            config,
+            createBlock(DlineDefaultTool.ATTEMPT, {}),
+            {
+                actionId: "reply",
+                roundMaterialOwned: true,
+                draft: { text: "Do not continue", images: [], files: [] },
+            },
+        )
+        expect(typeof result).toBe("string")
+        expect(config.callbacks.runUserPromptSubmitHook).toHaveBeenCalledTimes(1)
+        expect(result).not.toEqual([{ type: "text", text: "[attempt_completion] Result: Done" }])
     })
 })

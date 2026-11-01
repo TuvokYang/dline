@@ -1,5 +1,6 @@
 import type { ModelInfo } from "@shared/proto/dline/models"
 import type { ContextWindowTier, ModelCapabilities, ModelPricing } from "@shared/proto/dline/models/metadata"
+import { readBands, readCurrency, readPriceSet, withBands, withFlatPrices } from "./pricing-shape"
 
 export interface ProviderModelOverrides {
     capabilities?: ModelCapabilities
@@ -129,6 +130,45 @@ function withoutServerToolDeclaration(capabilities: ModelCapabilities): ModelCap
 }
 
 /**
+ * Apply a profile's price overrides to the registry's pricing.
+ *
+ * A price override is a rate edit, so it only replaces the rates of the mode it
+ * targets. Time-of-day schedules, subscription plans and free modes are
+ * seller-owned and are returned untouched: a profile must not turn a scheduled
+ * price into a flat one, because that would silently change when the peak rate
+ * applies.
+ *
+ * A model the registry does not price has nothing to edit, so the profile's own
+ * declaration becomes the price. Without that, a user-defined model would be
+ * billed at zero no matter what rate the profile declares.
+ *
+ * @param base Pricing declared by the registry.
+ * @param overrides Provider overrides from the active profile.
+ * @returns Pricing to bill with, or undefined when nothing is published.
+ */
+function resolvePricingOverrides(base: ModelPricing | undefined, overrides: ProviderModelOverrides): ModelPricing | undefined {
+    if (!overrides.pricing) {
+        return base
+    }
+    if (!base?.metered) {
+        return base ?? overrides.pricing
+    }
+
+    const overridePrices = readPriceSet(overrides.pricing.metered?.strategy?.flat?.prices)
+    const currency = readCurrency(overrides.pricing) ?? readCurrency(base) ?? "USD"
+    const flatOverride = withFlatPrices(base, overridePrices, currency)
+    if (flatOverride) {
+        return flatOverride
+    }
+
+    const overrideBands = readBands(overrides.pricing)
+    if (overrides.pricingTiersEnabled === true && overrideBands.length > 0) {
+        return withBands(base, overrideBands) ?? base
+    }
+    return base
+}
+
+/**
  * Build effective model metadata from registry metadata and provider overrides.
  *
  * @param modelId Selected model id, if any.
@@ -160,14 +200,7 @@ export function buildEffectiveModelInfo(
         ...(contextTier ? { contextWindow: contextTier.contextWindow } : {}),
         supportsPromptCache: mergedCapabilities?.supportsPromptCache ?? true,
     } as ModelCapabilities
-    const mergedPricing = overrides.pricing ? (mergeDefined(base.pricing, overrides.pricing) as ModelPricing) : base.pricing
-    const overrideTiers = overrides.pricing?.tiers ?? []
-    const selectedTiers = overrides.pricingTiersEnabled === true ? overrideTiers : base.pricing?.tiers
-    const pricing = mergedPricing
-        ? ({ ...mergedPricing, ...(selectedTiers !== undefined && { tiers: selectedTiers }) } as ModelPricing)
-        : selectedTiers !== undefined
-          ? ({ tiers: selectedTiers } as ModelPricing)
-          : undefined
+    const pricing = resolvePricingOverrides(base.pricing, overrides)
 
     return {
         ...base,

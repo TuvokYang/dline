@@ -2,6 +2,7 @@ import type {
     InputSemanticCatalog,
     InputSemanticComposition,
     InputSemanticDescriptor,
+    InputSemanticInputPolicy,
     InputSemanticKind,
     InputSemanticLifecycle,
     InputSemanticPayload,
@@ -10,6 +11,7 @@ import {
     InputSemanticCatalog as WireCatalog,
     InputSemanticComposition as WireComposition,
     InputSemanticDescriptor as WireDescriptor,
+    InputSemanticInputPolicy as WireInputPolicy,
     InputSemanticKind as WireKind,
     InputSemanticLifecycle as WireLifecycle,
     InputSemanticPayload as WirePayload,
@@ -33,6 +35,10 @@ const COMPOSITION_TO_WIRE: Record<InputSemanticComposition, WireComposition> = {
     exclusive: WireComposition.INPUT_SEMANTIC_COMPOSITION_EXCLUSIVE,
 }
 
+const INPUT_POLICY_TO_WIRE: Record<InputSemanticInputPolicy, WireInputPolicy> = {
+    consume_token_keep_content: WireInputPolicy.INPUT_SEMANTIC_INPUT_POLICY_CONSUME_TOKEN_KEEP_CONTENT,
+}
+
 const LIFECYCLE_TO_WIRE: Record<InputSemanticLifecycle, WireLifecycle> = {
     turn: WireLifecycle.INPUT_SEMANTIC_LIFECYCLE_TURN,
     task: WireLifecycle.INPUT_SEMANTIC_LIFECYCLE_TASK,
@@ -46,6 +52,7 @@ const WIRE_TO_KIND = invert(KIND_TO_WIRE)
 const WIRE_TO_PAYLOAD = invert(PAYLOAD_TO_WIRE)
 const WIRE_TO_COMPOSITION = invert(COMPOSITION_TO_WIRE)
 const WIRE_TO_LIFECYCLE = invert(LIFECYCLE_TO_WIRE)
+const WIRE_TO_INPUT_POLICY = invert(INPUT_POLICY_TO_WIRE)
 
 export function toProtoInputSemanticDescriptor(descriptor: InputSemanticDescriptor): WireDescriptor {
     return WireDescriptor.create({
@@ -56,6 +63,7 @@ export function toProtoInputSemanticDescriptor(descriptor: InputSemanticDescript
         payload: PAYLOAD_TO_WIRE[descriptor.payload],
         composition: COMPOSITION_TO_WIRE[descriptor.composition],
         lifecycle: LIFECYCLE_TO_WIRE[descriptor.lifecycle],
+        inputPolicy: descriptor.inputPolicy === undefined ? undefined : INPUT_POLICY_TO_WIRE[descriptor.inputPolicy],
         authorizes: descriptor.authorizes ?? "",
         dynamic: descriptor.dynamic ?? false,
     })
@@ -73,7 +81,9 @@ export function fromProtoInputSemanticDescriptor(descriptor: WireDescriptor): In
     const payload = WIRE_TO_PAYLOAD.get(descriptor.payload)
     const composition = WIRE_TO_COMPOSITION.get(descriptor.composition)
     const lifecycle = WIRE_TO_LIFECYCLE.get(descriptor.lifecycle)
-    if (!kind || !payload || !composition || !lifecycle) return undefined
+    const inputPolicy = descriptor.inputPolicy === undefined ? undefined : WIRE_TO_INPUT_POLICY.get(descriptor.inputPolicy)
+    if (!kind || !payload || !composition || !lifecycle || (descriptor.inputPolicy !== undefined && !inputPolicy))
+        return undefined
 
     return {
         id: descriptor.id,
@@ -82,6 +92,7 @@ export function fromProtoInputSemanticDescriptor(descriptor: WireDescriptor): In
         payload,
         composition,
         lifecycle,
+        ...(inputPolicy === undefined ? {} : { inputPolicy }),
         ...(descriptor.aliases.length > 0 ? { aliases: [...descriptor.aliases] } : {}),
         ...(descriptor.authorizes ? { authorizes: descriptor.authorizes } : {}),
         ...(descriptor.dynamic ? { dynamic: true } : {}),

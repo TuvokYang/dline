@@ -16,7 +16,7 @@ import { documentKeptByTurn } from "@shared/input-semantics/document-slice"
 import { presentationTextOfNode } from "@shared/input-semantics/presentation"
 import type { TaskInput } from "../shell/TaskShell"
 import type { TaskPayloadStore } from "../stores"
-import { encodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
+import { decodeTaskPayload, encodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
 import type { UserInputEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
 import {
     type AdmittedLifecycleBarrier,
@@ -50,7 +50,35 @@ export class TaskInputMaterializer {
     ) {}
 
     async materialize(envelope: Omit<UserInputEnvelope, "kind">, mode: TaskInput["mode"] = "queued"): Promise<TaskInput> {
-        return this.entry(mode, await this.materializePayload(envelope))
+        return this.entry(mode, await this.persist(envelope))
+    }
+
+    /** Review a queued submission once, including a lifecycle command that acts alone. */
+    async prepareQueuedInput(
+        envelope: Omit<UserInputEnvelope, "kind">,
+        mode: TaskInput["mode"],
+    ): Promise<
+        { readonly input: TaskInput } | { readonly performAlone: () => Promise<boolean>; readonly claimedBarrier: string }
+    > {
+        const result = await this.admission.admit(envelope)
+        if (!result.ok) throw new SemanticInputRejectedError(result.diagnostics)
+        const owned = this.ownedBarrier(result.admitted)
+        if (
+            owned &&
+            !owned.turnText.trim() &&
+            !hasResourceParts(owned.turnParts) &&
+            !envelope.images?.length &&
+            !envelope.files?.length &&
+            !envelope.context?.trim()
+        ) {
+            const command = { commandId: owned.commandId, premessage: owned.premessage }
+            return { claimedBarrier: owned.entityId, performAlone: () => this.barriers!.perform(command) }
+        }
+        const projection = this.project(result.admitted)
+        const payloadRef = await this.payloads.put(
+            encodeTaskPayload<UserInputEnvelope>({ kind: "user_input", ...envelope, ...projection }),
+        )
+        return { input: this.entry(mode, { payloadRef, userControl: result.admitted.userControl }) }
     }
 
     /**
@@ -62,21 +90,47 @@ export class TaskInputMaterializer {
      * already sent. This is the only entry that pins, so no other submission
      * can claim that standing.
      */
-    async materializeAnswer(envelope: Omit<UserInputEnvelope, "kind">, mode: TaskInput["mode"] = "queued"): Promise<TaskInput> {
-        return this.entry(mode, await this.persist(envelope, { pinnedRevision: true }))
+    async materializeAnswer(
+        envelope: Omit<UserInputEnvelope, "kind"> & { readonly admittedInputRef?: string },
+        mode: TaskInput["mode"] = "queued",
+    ): Promise<TaskInput> {
+        if (!envelope.admittedInputRef) return this.entry(mode, await this.persist(envelope, { pinnedRevision: true }))
+        const accepted = await this.readAdmittedInput(envelope.admittedInputRef)
+        const payloadRef = await this.payloads.put(
+            encodeTaskPayload<UserInputEnvelope>({
+                ...accepted,
+                context: envelope.context,
+                userControl: undefined,
+            }),
+        )
+        return this.entry(mode, { payloadRef })
     }
 
     async materializePayload(envelope: Omit<UserInputEnvelope, "kind">): Promise<string> {
+        return (await this.materializeAdmission(envelope)).payloadRef
+    }
+
+    /** Queue edits replace both the payload and its trusted control from one admission. */
+    materializeAdmission(envelope: Omit<UserInputEnvelope, "kind">): Promise<Pick<TaskInput, "payloadRef" | "userControl">> {
         return this.persist(envelope)
     }
 
-    private entry(mode: TaskInput["mode"], payloadRef: string): TaskInput {
-        return { entryId: this.identity.nextEntryId(), sequence: this.identity.nextSequence(), mode, payloadRef }
+    private entry(mode: TaskInput["mode"], admitted: Pick<TaskInput, "payloadRef" | "userControl">): TaskInput {
+        return { entryId: this.identity.nextEntryId(), sequence: this.identity.nextSequence(), mode, ...admitted }
     }
 
-    private async persist(envelope: Omit<UserInputEnvelope, "kind">, options?: TaskInputAdmissionOptions): Promise<string> {
+    private async persist(
+        envelope: Omit<UserInputEnvelope, "kind">,
+        options?: TaskInputAdmissionOptions,
+    ): Promise<Pick<TaskInput, "payloadRef" | "userControl">> {
         const admitted = await this.review(envelope, options)
-        return this.payloads.put(encodeTaskPayload<UserInputEnvelope>({ kind: "user_input", ...envelope, ...admitted }))
+        // A dialog answer already applied its control in dialog.responded. Replaying
+        // it (including synthetic timeout text) must not execute user control again.
+        const userControl = options?.pinnedRevision ? undefined : admitted.userControl
+        const payloadRef = await this.payloads.put(
+            encodeTaskPayload<UserInputEnvelope>({ kind: "user_input", ...envelope, ...admitted, userControl }),
+        )
+        return { payloadRef, ...(userControl === undefined ? {} : { userControl }) }
     }
 
     /** Refusing here keeps a rejected submission out of the journal entirely. */
@@ -87,13 +141,18 @@ export class TaskInputMaterializer {
         const result = await this.admission.admit(envelope, options)
         if (!result.ok) throw new SemanticInputRejectedError(result.diagnostics)
 
-        const owned = this.ownedBarrier(result.admitted)
-        if (!owned) return projectionOf(result.admitted)
+        return this.project(result.admitted)
+    }
+
+    private project(admitted: AdmittedTaskInput): Partial<UserInputEnvelope> {
+        const owned = this.ownedBarrier(admitted)
+        if (!owned) return projectionOf(admitted)
         // An owned barrier leaves the turn entirely - its text, its authority and
         // its tools - and travels with the input instead, so it only acts once
         // the kernel accepted the input and a round admitted it.
         return {
-            semanticInput: result.admitted.document,
+            semanticInput: admitted.document,
+            userControl: admitted.userControl,
             admittedText: owned.turnText,
             ...partsField(owned.turnParts),
             authorizedTools: owned.toolsBefore,
@@ -127,7 +186,7 @@ export class TaskInputMaterializer {
     async reviewReply(reply: Omit<UserInputEnvelope, "kind">): Promise<ReviewedReply | undefined> {
         const structured = reply.semanticInput
         const resourceDocument = structured?.nodes.some(isResourceNode) ? structured : undefined
-        if (!resourceDocument && !reply.text) return undefined
+        if (!resourceDocument && !reply.text && !reply.images?.length && !reply.files?.length) return undefined
         const result = await this.admission.admit(reply)
         if (!result.ok) {
             if (structured) throw new SemanticInputRejectedError(result.diagnostics)
@@ -135,19 +194,53 @@ export class TaskInputMaterializer {
         }
         const owned = this.ownedBarrier(result.admitted)
         if (!owned) {
+            if (result.admitted.userControl?.kind === "enter_away") {
+                const admittedInputRef = await this.payloads.put(
+                    encodeTaskPayload<UserInputEnvelope>({
+                        kind: "user_input",
+                        ...reply,
+                        ...projectionOf(result.admitted),
+                    }),
+                )
+                return {
+                    text: reply.text ?? "",
+                    document: result.admitted.document,
+                    modelText: result.admitted.admittedText,
+                    parts: result.admitted.parts,
+                    userControl: result.admitted.userControl,
+                    admittedInputRef,
+                    commit: () => {},
+                }
+            }
             if (namesActiveEntity(result.admitted.document)) {
                 return {
                     text: reply.text ?? "",
                     document: result.admitted.document,
                     parts: [],
                     carriesInput: true,
+                    userControl: result.admitted.userControl,
                     commit: () => {},
                 }
             }
-            if (!resourceDocument) return undefined
+            if (!resourceDocument)
+                return result.admitted.userControl
+                    ? {
+                          text: reply.text ?? "",
+                          document: result.admitted.document,
+                          parts: [],
+                          userControl: result.admitted.userControl,
+                          commit: () => {},
+                      }
+                    : undefined
             // Nothing was taken out, so the reply and its structure stand as sent.
             const parts = replyPartsOf(resourceDocument, result.admitted.parts)
-            return { text: reply.text ?? "", document: resourceDocument, parts, commit: () => {} }
+            return {
+                text: reply.text ?? "",
+                document: resourceDocument,
+                parts,
+                userControl: result.admitted.userControl,
+                commit: () => {},
+            }
         }
         const document = documentKeptByTurn(result.admitted.document, owned.entityId)
         // Admission named this barrier from this document, so it must be found;
@@ -158,10 +251,31 @@ export class TaskInputMaterializer {
         const barriers = this.barriers
         // Nothing left to answer with: the command is the whole message.
         const keepsNothing = !document.rawText.trim() && !hasResourceParts(parts) && !reply.images?.length && !reply.files?.length
+        const awayReply =
+            result.admitted.userControl?.kind === "enter_away"
+                ? {
+                      userControl: result.admitted.userControl,
+                      modelText: owned.turnText,
+                      parts: owned.turnParts,
+                      admittedInputRef: await this.payloads.put(
+                          encodeTaskPayload<UserInputEnvelope>({
+                              kind: "user_input",
+                              ...reply,
+                              text: document.rawText,
+                              semanticInput: document,
+                              admittedText: owned.turnText,
+                              ...partsField(owned.turnParts),
+                              authorizedTools: owned.toolsBefore,
+                              explicitInstructions: owned.instructionsBefore,
+                          }),
+                      ),
+                  }
+                : { userControl: result.admitted.userControl }
         return {
             text: document.rawText,
             document,
             parts,
+            ...awayReply,
             claimedBarrier: owned.entityId,
             commit: () => barriers?.request(command),
             ...(keepsNothing && barriers ? { performAlone: () => barriers.perform(command) } : {}),
@@ -182,7 +296,13 @@ export class TaskInputMaterializer {
      * A lifecycle command such as `/compact` has no owner on this path, so a
      * reply holding one stands as typed rather than acting half-way.
      */
-    async admitReply(reply: Omit<UserInputEnvelope, "kind">): Promise<AdmittedReply | undefined> {
+    async admitReply(
+        reply: Omit<UserInputEnvelope, "kind"> & { readonly admittedInputRef?: string },
+    ): Promise<AdmittedReply | undefined> {
+        if (reply.admittedInputRef) {
+            const accepted = await this.readAdmittedInput(reply.admittedInputRef)
+            return { payloadRef: reply.admittedInputRef, modelText: accepted.admittedText!, document: accepted.semanticInput! }
+        }
         const structured = reply.semanticInput
         if (!structured && !reply.text) return undefined
         const result = await this.admission.admit(reply, { pinnedRevision: true })
@@ -195,6 +315,15 @@ export class TaskInputMaterializer {
             encodeTaskPayload<UserInputEnvelope>({ kind: "user_input", ...reply, ...projectionOf(result.admitted) }),
         )
         return { payloadRef, modelText: result.admitted.admittedText, document: result.admitted.document }
+    }
+
+    /** Disk is the compatibility boundary; only the first admission writes these fields. */
+    private async readAdmittedInput(ref: string): Promise<UserInputEnvelope> {
+        const input = decodeTaskPayload<UserInputEnvelope>(await this.payloads.read(ref))
+        if (input.kind !== "user_input" || input.admittedText === undefined || input.semanticInput === undefined) {
+            throw new Error(`InvalidAdmittedReply:${ref}`)
+        }
+        return input
     }
 
     private ownedBarrier(admitted: AdmittedTaskInput): AdmittedLifecycleBarrier | undefined {
@@ -213,6 +342,7 @@ function projectionOf(admitted: AdmittedTaskInput): Partial<UserInputEnvelope> {
     return {
         semanticInput: admitted.document,
         admittedText: admitted.admittedText,
+        userControl: admitted.userControl,
         ...partsField(admitted.parts),
         authorizedTools: admitted.authorizedTools,
         explicitInstructions: admitted.explicitInstructions,

@@ -44,6 +44,22 @@ export const formatResponse = {
 
     toolDenied: () => generateToolResponse("toolHandlers", "toolDenied"),
 
+    awayActive: (subagentsAvailable: boolean) =>
+        [
+            generateToolResponse("toolHandlers", "awayActive"),
+            ...(subagentsAvailable ? [generateToolResponse("toolHandlers", "awaySubagents")] : []),
+        ].join("\n\n"),
+    awayExited: () => generateToolResponse("toolHandlers", "awayExited"),
+    awayFeedback: () => generateToolResponse("toolHandlers", "awayFeedback"),
+    awayAskTimeout: () => generateToolResponse("toolHandlers", "awayAskTimeout"),
+    awayCommandTimeout: () => generateToolResponse("toolHandlers", "awayCommandTimeout"),
+    interruptedCommand: () => generateToolResponse("toolHandlers", "interruptedCommand"),
+    interactionFeedbackRecorded: (switchedToAct: boolean) =>
+        [
+            ...(switchedToAct ? [generateToolResponse("toolHandlers", "planSwitchToAct")] : []),
+            generateToolResponse("toolHandlers", "interactionFeedbackRecorded"),
+        ].join("\n\n"),
+
     toolError: (error?: string) => generateToolResponse("toolHandlers", "toolError", { ERROR: error ?? "" }),
 
     clineIgnoreError: (pathStr: string) => generateToolResponse("executeCommand", "clineIgnoreError", { PATH: pathStr }),

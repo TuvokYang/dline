@@ -1,3 +1,4 @@
+import { formatResponse } from "@core/prompts/responses"
 import { findLast } from "@shared/array"
 import type { UiAsk, UiMessage } from "@shared/ExtensionMessage"
 import { Logger } from "@shared/services/Logger"
@@ -9,6 +10,9 @@ import { InteractionCancellationError } from "../interaction/InteractionCancella
 import type { CompleteInteractionRequest, InteractionOutcome, OpenInteractionRequest } from "../interaction/InteractionProtocol"
 import { getInteraction } from "../interaction/InteractionRegistry"
 import type { DialogActionRule, TaskEvent } from "../kernel"
+import { resumesAutomaticResponse } from "../kernel/away"
+import { retriesPreparedRound } from "../kernel/round-material"
+import type { DialogAutomaticResponseCommand } from "../kernel/types"
 import type { MessageStateHandler } from "../message-state"
 import type { RuntimeDiagnosticSink } from "../runtime"
 import type { TaskPayloadStore } from "../stores"
@@ -25,12 +29,15 @@ import { RetainedInputPresenter } from "./RetainedInputPresenter"
 import type { UnownedDialogContinuationPort, UnownedDialogOutcome, UnownedDialogResolution } from "./UnownedDialogContinuation"
 
 interface PendingInteraction {
+    /** Accepted retirement receipt retained only while this live receiver waits for durability. */
+    retirement?: { readonly revision: number; readonly generation: number }
     resolve(outcome: InteractionOutcome): void
     reject(error: Error): void
 }
 
 interface InteractionRequest {
     readonly turnId: string
+    readonly externalCommand?: true
     readonly interactionId: string
     readonly kind: OpenInteractionRequest["kind"]
     readonly presentation: string
@@ -282,12 +289,18 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
      * an unowned answer retires only once the continuation accepts it.
      */
     async resolve(interactionId: string, outcome: InteractionOutcome): Promise<boolean> {
+        const state = this.session?.state()
+        if (state && (resumesAutomaticResponse(state, interactionId) || retriesPreparedRound(state, interactionId)))
+            return this.retire(interactionId)
         const pending = this.pending.get(interactionId)
         if (pending) {
-            this.pending.delete(interactionId)
-            // A queued answer must remain recoverable until the tool runner has
-            // journaled its result. Terminal tool feedback retires this owner.
-            if (this.session?.state().dialog.primary?.acceptedResponse?.queuedInput) {
+            // Queued and automatic tool answers stay recoverable until the runner
+            // journals its result. Terminal tool feedback retires this owner.
+            if (
+                state?.dialog.primary?.acceptedResponse?.queuedInput ||
+                (outcome.origin === "timeout" && state?.turn.blocks.some((block) => block.blockId === interactionId))
+            ) {
+                this.pending.delete(interactionId)
                 pending.resolve(outcome)
                 return true
             }
@@ -295,7 +308,9 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
             // soon as its await resolves. Keep it parked until the old dialog is
             // durably retired, otherwise the next dialog races the still-primary one
             // and is rejected with phase_invalid.
-            await this.retire(interactionId)
+            if (!(await this.retire(interactionId, undefined, pending)) || this.pending.get(interactionId) !== pending)
+                return false
+            this.pending.delete(interactionId)
             pending.resolve(outcome)
             return true
         }
@@ -303,6 +318,60 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
         // continuation must reopen that same owner rather than recreate it after
         // dialog.resolved has removed it from the kernel.
         return this.settleUnowned(interactionId, this.dialogKind(interactionId) ?? "", outcome)
+    }
+
+    /** Deliver only the typed response already committed by the deadline transition. */
+    async deliverAutomatic(command: DialogAutomaticResponseCommand): Promise<void> {
+        const session = this.requireSession()
+        if (
+            !session.writable ||
+            this.suspendedReason ||
+            session.state().generation !== command.generation ||
+            session.state().halt.status !== "idle" ||
+            !["running", "waiting"].includes(session.state().flow.phase)
+        )
+            return
+        const interaction = [session.state().dialog.primary, ...Object.values(session.state().dialog.approvalsByBlock)].find(
+            (candidate) => candidate?.interactionId === command.interactionId,
+        )
+        if (!interaction || interaction.turnId !== command.turnId || interaction.acceptedResponse?.origin !== "timeout") return
+        if (command.deadlineKind === "external_command" && interaction.blockId) {
+            const feedbackRef = await this.payloads.put(
+                encodeTaskPayload<DialogDraftEnvelope>({
+                    kind: "dialog_draft",
+                    text: formatResponse.awayCommandTimeout(),
+                    images: [],
+                    files: [],
+                }),
+            )
+            if (!session.writable || session.state().generation !== command.generation || this.suspendedReason) return
+            const result = await session.assembly.runtime.submit({
+                type: "approval.responded",
+                generation: command.generation,
+                turnId: command.turnId,
+                blockId: interaction.blockId,
+                interactionId: interaction.interactionId,
+                approved: false,
+                origin: "timeout",
+                feedbackRef,
+            })
+            if (result.kind === "rejected") throw new Error(`Automatic rejection refused: ${result.diagnostic.code}`)
+            await result.receipt.durable
+            return
+        }
+        const delivered = await this.resolve(command.interactionId, {
+            actionId: command.deadlineKind === "external_command" ? "reject" : "reply",
+            origin: "timeout",
+            draft: {
+                text:
+                    command.deadlineKind === "external_command"
+                        ? formatResponse.awayCommandTimeout()
+                        : formatResponse.awayAskTimeout(),
+                images: [],
+                files: [],
+            },
+        })
+        if (!delivered) throw new Error("Automatic response did not reach a receiver or continuation")
     }
 
     /**
@@ -377,6 +446,7 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
             if (!current()) return
             await this.settleUnowned(interactionId, interaction.kind, {
                 actionId: response.actionId as InteractionOutcome["actionId"],
+                ...(response.roundFeedbackRef ? { roundMaterialOwned: true as const } : {}),
                 feedbackPresented: true,
                 draft: {
                     text: draft.text,
@@ -411,6 +481,7 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
         const draftRef = await this.payloads.put(
             encodeTaskPayload<DialogDraftEnvelope>({
                 kind: "dialog_draft",
+                roundMaterialOwned: true,
                 text: delivery.modelDraft.text,
                 images: [...delivery.modelDraft.images],
                 files: [...delivery.modelDraft.files],
@@ -433,6 +504,7 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
             receiverGeneration: interaction.receiverGeneration,
             actionId,
             draftRef,
+            roundFeedbackRef: draftRef,
             queueDeliveryId: delivery.deliveryId,
             queueDeliveryEntries: delivery.entries,
             queueDeliveryMode: delivery.mode,
@@ -464,6 +536,7 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
         if (!this.pending.has(interaction.interactionId) || session.state().generation !== delivery.generation) return "accepted"
         this.resolve(interaction.interactionId, {
             actionId,
+            roundMaterialOwned: true,
             feedbackPresented: true,
             draft: {
                 text: delivery.modelDraft.text,
@@ -565,7 +638,7 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
             Logger.error(
                 `Failed to resolve unowned interaction ${interactionId}: ${error instanceof Error ? error.message : error}`,
             )
-            if (currentBeforeResolve && isCurrent()) await this.reopen(interactionId, generation)
+            if (answered.origin !== "timeout" && currentBeforeResolve && isCurrent()) await this.reopen(interactionId, generation)
             return false
         }
         // Resolving the reply's resources reads files; a task that moved on
@@ -603,7 +676,7 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
             if (!retired) {
                 Logger.warn(`Continued interaction ${interactionId} could not be retired`)
             }
-        } else if (isCurrent()) {
+        } else if (answered.origin !== "timeout" && isCurrent()) {
             // The interaction is still resolving, so this is a valid state-machine
             // transition. Reopening after dialog.resolved can never work because the
             // resolved event removes the interaction entirely.
@@ -663,16 +736,26 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
     }
 
     /** Tell the kernel this receiver has consumed the response. */
-    private async retire(interactionId: string, generation = this.session?.state().generation): Promise<boolean> {
+    private async retire(
+        interactionId: string,
+        generation = this.session?.state().generation,
+        pending?: PendingInteraction,
+    ): Promise<boolean> {
         const session = this.session
-        if (!session || generation === undefined) return false
+        if (!session || !session.writable || generation === undefined) return false
         try {
+            if (pending?.retirement) {
+                if (pending.retirement.generation !== generation) return false
+                await session.assembly.runtime.waitForDurable(pending.retirement.revision)
+                return true
+            }
             const result = await session.assembly.runtime.submit({
                 type: "dialog.resolved",
                 generation,
                 interactionId,
             })
             if (result.kind === "rejected") return false
+            if (pending && result.receipt) pending.retirement = { revision: result.receipt.revision, generation }
             await result.receipt?.durable
             return true
         } catch (error) {
@@ -717,6 +800,7 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
             interactionId: request.interactionId,
             turnId: request.turnId,
             kind: request.kind,
+            ...(request.externalCommand ? { externalCommand: true as const } : {}),
             presentationRef,
             actionRules: actionRules(request.kind),
         }

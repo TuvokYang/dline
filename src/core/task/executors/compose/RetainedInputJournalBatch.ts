@@ -88,6 +88,7 @@ export class RetainedInputJournalBatch {
             readonly generation: number
             readonly turnId?: string
             readonly signal: AbortSignal
+            readonly roundMaterialOwned?: true
         },
     ): Promise<RetainedBatchReceipt> {
         assertIdentity(input)
@@ -113,6 +114,7 @@ export class RetainedInputJournalBatch {
         }
         const envelope: RetainedBatchEnvelope = {
             kind: "user_input",
+            ...(input.roundMaterialOwned ? { roundMaterialOwned: true as const } : {}),
             retainedInputBatch: identity,
             text: payloads.map((payload) => payload.text ?? "").join("\n\n"),
             admittedText: renderRetainedInputs(payloads.map(modelTextOf)),

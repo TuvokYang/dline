@@ -176,7 +176,8 @@ describe("schema 4 remote Usage pressure gate", () => {
             bodySha256: first.inflight.bodySha256,
             bucketIds: first.inflight.bucketIds,
             attempts: first.inflight.attempts,
-            createdAt: now,
+            // A 429 wait postpones `notBefore` only: the idempotency origin never moves.
+            createdAt: first.inflight.createdAt,
             notBefore: now,
         })
         drained.push(...first.inflight.bucketIds)

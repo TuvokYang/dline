@@ -3,10 +3,11 @@ import type { UiMessage } from "@shared/ExtensionMessage"
 import type { Meta, StoryObj } from "@storybook/react-vite"
 import { useEffect, useMemo, useState } from "react"
 import type { MessageHandlers } from "../../types/chatTypes"
-import { projectFoldExpansion } from "../../utils/activityFolds"
 import { isActivityFold } from "../../utils/chatRowKinds"
 import { groupChatRows } from "../../utils/messageUtils"
 import { rowIdentity } from "../../utils/rowCoordinate"
+import { designFoldRows } from "../layout/foldingTrajectoryDesign"
+import { createFoldRoundUsage } from "../layout/foldingTrajectoryUsageFixture"
 import { liveTwoTurnSteps } from "./activityFoldStoryFixtures"
 import { createMessageRenderer } from "./MessageRenderer"
 
@@ -28,8 +29,13 @@ function ConversationRows({ level, messages }: { level: AggressiveRenderingLevel
     const [expandedRows, setExpandedRows] = useState<Record<number, boolean>>({})
     const [expandedFolds, setExpandedFolds] = useState<Record<string, boolean>>({})
     const transcript = messages as UiMessage[]
-    const folded = useMemo(() => groupChatRows(transcript, undefined, { level }), [transcript, level])
-    const rows = useMemo(() => projectFoldExpansion(folded, expandedFolds), [folded, expandedFolds])
+    const roundUsage = useMemo(() => createFoldRoundUsage(transcript), [transcript])
+    // The reviewed policy, with the usage the fold headers state.
+    const rows = useMemo(
+        () => designFoldRows(transcript, groupChatRows(transcript, undefined, { level: "none" }), level, roundUsage),
+        [transcript, level, roundUsage],
+    )
+    const folded = rows
     const renderRow = createMessageRenderer(
         rows,
         transcript,

@@ -3,6 +3,7 @@
  * Extracted from api.ts wandbModels (lines 3532-3689).
  */
 import type { ModelInfo } from "@shared/api"
+import { flatPricing } from "./pricing"
 
 export const wandbModels: Record<string, ModelInfo> = {
     "deepseek-ai/DeepSeek-V3.1": {
@@ -15,10 +16,7 @@ export const wandbModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.55,
-            outputPrice: 1.65,
-        },
+        pricing: flatPricing(0.55, 1.65),
     },
     "meta-llama/Llama-4-Scout-17B-16E-Instruct": {
         id: "meta-llama/Llama-4-Scout-17B-16E-Instruct",
@@ -30,10 +28,7 @@ export const wandbModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.17,
-            outputPrice: 0.66,
-        },
+        pricing: flatPricing(0.17, 0.66),
     },
     "meta-llama/Llama-3.3-70B-Instruct": {
         id: "meta-llama/Llama-3.3-70B-Instruct",
@@ -45,10 +40,7 @@ export const wandbModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.71,
-            outputPrice: 0.71,
-        },
+        pricing: flatPricing(0.71, 0.71),
     },
     "meta-llama/Llama-3.1-70B-Instruct": {
         id: "meta-llama/Llama-3.1-70B-Instruct",
@@ -60,10 +52,7 @@ export const wandbModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.8,
-            outputPrice: 0.8,
-        },
+        pricing: flatPricing(0.8, 0.8),
     },
     "meta-llama/Llama-3.1-8B-Instruct": {
         id: "meta-llama/Llama-3.1-8B-Instruct",
@@ -75,10 +64,7 @@ export const wandbModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.22,
-            outputPrice: 0.22,
-        },
+        pricing: flatPricing(0.22, 0.22),
     },
     "microsoft/Phi-4-mini-instruct": {
         id: "microsoft/Phi-4-mini-instruct",
@@ -90,10 +76,7 @@ export const wandbModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.08,
-            outputPrice: 0.35,
-        },
+        pricing: flatPricing(0.08, 0.35),
     },
     "MiniMaxAI/MiniMax-M2.5": {
         id: "MiniMaxAI/MiniMax-M2.5",
@@ -106,10 +89,7 @@ export const wandbModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.3,
-            outputPrice: 1.2,
-        },
+        pricing: flatPricing(0.3, 1.2),
     },
     "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8": {
         id: "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8",
@@ -121,10 +101,7 @@ export const wandbModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.2,
-            outputPrice: 0.8,
-        },
+        pricing: flatPricing(0.2, 0.8),
     },
     "openai/gpt-oss-120b": {
         id: "openai/gpt-oss-120b",
@@ -136,10 +113,7 @@ export const wandbModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.15,
-            outputPrice: 0.6,
-        },
+        pricing: flatPricing(0.15, 0.6),
     },
     "openai/gpt-oss-20b": {
         id: "openai/gpt-oss-20b",
@@ -152,10 +126,7 @@ export const wandbModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.05,
-            outputPrice: 0.2,
-        },
+        pricing: flatPricing(0.05, 0.2),
     },
     "OpenPipe/Qwen3-14B-Instruct": {
         id: "OpenPipe/Qwen3-14B-Instruct",
@@ -168,10 +139,7 @@ export const wandbModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.05,
-            outputPrice: 0.22,
-        },
+        pricing: flatPricing(0.05, 0.22),
     },
     "Qwen/Qwen3-235B-A22B-Thinking-2507": {
         id: "Qwen/Qwen3-235B-A22B-Thinking-2507",
@@ -184,10 +152,7 @@ export const wandbModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.1,
-            outputPrice: 0.1,
-        },
+        pricing: flatPricing(0.1, 0.1),
     },
     "Qwen/Qwen3-235B-A22B-Instruct-2507": {
         id: "Qwen/Qwen3-235B-A22B-Instruct-2507",
@@ -199,10 +164,7 @@ export const wandbModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.1,
-            outputPrice: 0.1,
-        },
+        pricing: flatPricing(0.1, 0.1),
     },
     "Qwen/Qwen3-30B-A3B-Instruct-2507": {
         id: "Qwen/Qwen3-30B-A3B-Instruct-2507",
@@ -214,10 +176,7 @@ export const wandbModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.1,
-            outputPrice: 0.3,
-        },
+        pricing: flatPricing(0.1, 0.3),
     },
     "Qwen/Qwen3-Coder-480B-A35B-Instruct": {
         id: "Qwen/Qwen3-Coder-480B-A35B-Instruct",
@@ -230,10 +189,7 @@ export const wandbModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 1.0,
-            outputPrice: 1.5,
-        },
+        pricing: flatPricing(1.0, 1.5),
     },
     "zai-org/GLM-5-FP8": {
         id: "zai-org/GLM-5-FP8",
@@ -245,10 +201,7 @@ export const wandbModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 1.0,
-            outputPrice: 3.2,
-        },
+        pricing: flatPricing(1.0, 3.2),
     },
 }
 

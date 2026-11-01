@@ -6,6 +6,7 @@
  */
 
 import { toRequestyServiceUrl } from "@shared/clients/requesty"
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import type { ModelCapabilities, ModelPricing } from "@shared/providers/types"
 import type { ProviderModelReconciliationMode } from "../../provider-model-reconciliation"
 import { isRecord, ModelListingSource, readPerMillionPrice, readPositiveNumber, readString } from "../model-listing-source"
@@ -55,12 +56,12 @@ export class RequestyModelSource extends ModelListingSource {
     }
 
     protected override readPricing(raw: unknown): ModelPricing {
-        return {
-            inputPrice: readPerMillionPrice(raw, "input_price") ?? 0,
-            outputPrice: readPerMillionPrice(raw, "output_price") ?? 0,
-            cacheWritesPrice: readPerMillionPrice(raw, "caching_price") ?? 0,
-            cacheReadsPrice: readPerMillionPrice(raw, "cached_price") ?? 0,
-        }
+        return flatMeteredPricing(
+            readPerMillionPrice(raw, "input_price") ?? 0,
+            readPerMillionPrice(raw, "output_price") ?? 0,
+            readPerMillionPrice(raw, "caching_price") ?? 0,
+            readPerMillionPrice(raw, "cached_price") ?? 0,
+        )
     }
 }
 

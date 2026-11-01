@@ -3,6 +3,7 @@
  * Extracted from api.ts nousResearchModels (lines 5063-5084).
  */
 import type { ModelInfo } from "@shared/api"
+import { flatPricing } from "./pricing"
 
 export const nousResearchModels: Record<string, ModelInfo> = {
     "Hermes-4-405B": {
@@ -16,10 +17,7 @@ export const nousResearchModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.09,
-            outputPrice: 0.37,
-        },
+        pricing: flatPricing(0.09, 0.37),
     },
     "Hermes-4-70B": {
         id: "Hermes-4-70B",
@@ -32,10 +30,7 @@ export const nousResearchModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.05,
-            outputPrice: 0.2,
-        },
+        pricing: flatPricing(0.05, 0.2),
     },
 }
 

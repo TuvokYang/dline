@@ -1,5 +1,6 @@
 import type { ApiProviderInfo } from "@core/api"
 import type { ExplicitInstructionDeclaration } from "@core/task/explicit-instructions/types"
+import type { UserInputControl } from "@shared/away"
 import { ClineRulesToggles } from "@shared/cline-rules"
 import type { InputSemanticDescriptor } from "@shared/input-semantics/catalog"
 import type { CapabilityCommandRef } from "@shared/input-semantics/command-namespace"
@@ -44,7 +45,15 @@ type RemoteWorkflow = {
 type Workflow = FileBasedWorkflow | RemoteWorkflow
 
 /** Built-in commands Core expands itself, by the name their instructions are keyed under. */
-export type BuiltinCommandName = "newtask" | "smol" | "compact" | "newrule" | "reportbug" | "deep-planning" | "explain-changes"
+export type BuiltinCommandName =
+    | "away"
+    | "newtask"
+    | "smol"
+    | "compact"
+    | "newrule"
+    | "reportbug"
+    | "deep-planning"
+    | "explain-changes"
 
 /**
  * The built-in command each built-in descriptor identity expands to.
@@ -53,6 +62,7 @@ export type BuiltinCommandName = "newtask" | "smol" | "compact" | "newrule" | "r
  * alias such as `/smol` and the canonical `/compact` expand identically.
  */
 const BUILTIN_COMMAND_BY_DESCRIPTOR: Readonly<Record<string, BuiltinCommandName>> = {
+    "command.away": "away",
     "command.compact": "compact",
     "command.new_task": "newtask",
     "command.new_rule": "newrule",
@@ -84,6 +94,7 @@ export interface SlashCommandExpansion {
     /** Instructions that replace the command in the provider projection. */
     readonly text: string
     readonly needsClinerulesFileCheck: boolean
+    readonly userControl?: UserInputControl
     /** One-shot tool authority the command grants for its turn. */
     readonly explicitInstructions: readonly ExplicitInstructionDeclaration[]
 }
@@ -153,6 +164,7 @@ function expandBuiltinCommand(name: BuiltinCommandName, context: SlashCommandExp
     })
     const commandFocusChainSettings = promptProfile === "standard" ? context.focusChainSettings : undefined
     const replacements: Readonly<Record<BuiltinCommandName, () => string>> = {
+        away: () => "",
         newtask: newTaskToolResponse,
         smol: () => "",
         compact: () => "",
@@ -172,6 +184,7 @@ function expandBuiltinCommand(name: BuiltinCommandName, context: SlashCommandExp
     return {
         text: replacements[name](),
         needsClinerulesFileCheck: name === "newrule",
+        ...(name === "away" ? { userControl: { kind: "enter_away" as const } } : {}),
         explicitInstructions: declaration ? [declaration] : [],
     }
 }

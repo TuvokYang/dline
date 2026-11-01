@@ -3,6 +3,7 @@
  * Extracted from api.ts mistralModels (lines 3060-3223).
  */
 import type { ModelInfo } from "@shared/api"
+import { flatPricing } from "./pricing"
 
 export const mistralModels: Record<string, ModelInfo> = {
     "devstral-2512": {
@@ -14,10 +15,7 @@ export const mistralModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "labs-devstral-small-2512": {
         id: "labs-devstral-small-2512",
@@ -28,10 +26,7 @@ export const mistralModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "mistral-large-2512": {
         id: "mistral-large-2512",
@@ -42,10 +37,7 @@ export const mistralModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.5,
-            outputPrice: 1.5,
-        },
+        pricing: flatPricing(0.5, 1.5),
     },
     "ministral-14b-2512": {
         id: "ministral-14b-2512",
@@ -56,10 +48,7 @@ export const mistralModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.2,
-            outputPrice: 0.2,
-        },
+        pricing: flatPricing(0.2, 0.2),
     },
     "mistral-large-2411": {
         id: "mistral-large-2411",
@@ -70,10 +59,7 @@ export const mistralModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 2.0,
-            outputPrice: 6.0,
-        },
+        pricing: flatPricing(2.0, 6.0),
     },
     "pixtral-large-2411": {
         id: "pixtral-large-2411",
@@ -84,10 +70,7 @@ export const mistralModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 2.0,
-            outputPrice: 6.0,
-        },
+        pricing: flatPricing(2.0, 6.0),
     },
     "ministral-3b-2410": {
         id: "ministral-3b-2410",
@@ -98,10 +81,7 @@ export const mistralModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.04,
-            outputPrice: 0.04,
-        },
+        pricing: flatPricing(0.04, 0.04),
     },
     "ministral-8b-2410": {
         id: "ministral-8b-2410",
@@ -112,10 +92,7 @@ export const mistralModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.1,
-            outputPrice: 0.1,
-        },
+        pricing: flatPricing(0.1, 0.1),
     },
     "mistral-small-latest": {
         id: "mistral-small-latest",
@@ -126,10 +103,7 @@ export const mistralModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.1,
-            outputPrice: 0.3,
-        },
+        pricing: flatPricing(0.1, 0.3),
     },
     "mistral-medium-latest": {
         id: "mistral-medium-latest",
@@ -140,10 +114,7 @@ export const mistralModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.4,
-            outputPrice: 2.0,
-        },
+        pricing: flatPricing(0.4, 2.0),
     },
     "mistral-small-2501": {
         id: "mistral-small-2501",
@@ -154,10 +125,7 @@ export const mistralModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.1,
-            outputPrice: 0.3,
-        },
+        pricing: flatPricing(0.1, 0.3),
     },
     "pixtral-12b-2409": {
         id: "pixtral-12b-2409",
@@ -168,10 +136,7 @@ export const mistralModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.15,
-            outputPrice: 0.15,
-        },
+        pricing: flatPricing(0.15, 0.15),
     },
     "open-mistral-nemo-2407": {
         id: "open-mistral-nemo-2407",
@@ -182,10 +147,7 @@ export const mistralModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.15,
-            outputPrice: 0.15,
-        },
+        pricing: flatPricing(0.15, 0.15),
     },
     "open-codestral-mamba": {
         id: "open-codestral-mamba",
@@ -196,10 +158,7 @@ export const mistralModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.15,
-            outputPrice: 0.15,
-        },
+        pricing: flatPricing(0.15, 0.15),
     },
     "codestral-2501": {
         id: "codestral-2501",
@@ -210,10 +169,7 @@ export const mistralModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.3,
-            outputPrice: 0.9,
-        },
+        pricing: flatPricing(0.3, 0.9),
     },
     "devstral-small-2505": {
         id: "devstral-small-2505",
@@ -224,10 +180,7 @@ export const mistralModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.1,
-            outputPrice: 0.3,
-        },
+        pricing: flatPricing(0.1, 0.3),
     },
     "devstral-medium-latest": {
         id: "devstral-medium-latest",
@@ -238,10 +191,7 @@ export const mistralModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.4,
-            outputPrice: 2.0,
-        },
+        pricing: flatPricing(0.4, 2.0),
     },
 }
 

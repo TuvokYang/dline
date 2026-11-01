@@ -1,5 +1,6 @@
 import { Logger } from "@shared/services/Logger"
 import { planRecoveryDialog } from "../kernel/recovery"
+import type { UserControl } from "../kernel/types"
 import type { EventSubmissionResult, RuntimeFacade } from "../runtime"
 import type { TaskUiAction } from "./TaskUiAction"
 
@@ -8,6 +9,7 @@ export interface TaskInput {
     readonly payloadRef: string
     readonly mode?: "queued" | "steering"
     readonly sequence?: number
+    readonly userControl?: UserControl
 }
 
 export interface TaskHaltRearmPort {
@@ -81,6 +83,7 @@ export class TaskShell {
         private readonly halt: TaskHaltRearmPort,
         private readonly presentation?: TaskInputPresentationPort,
         private readonly retainedQueueSettlement?: TaskRetainedQueueSettlementPort,
+        private readonly awayConfiguration?: { reconcile(): Promise<void> },
     ) {}
 
     async start(input: TaskInput): Promise<EventSubmissionResult> {
@@ -106,6 +109,7 @@ export class TaskShell {
             payloadRef: input.payloadRef,
             mode: input.mode,
             sequence: input.sequence,
+            ...(input.userControl === undefined ? {} : { userControl: { kind: input.userControl.kind } }),
         })
         this.logStartPhase("runtime_submit", startedAt)
         if (submitted.kind !== "rejected" && presentation) {
@@ -121,6 +125,9 @@ export class TaskShell {
     }
 
     async respond(action: TaskUiAction): Promise<EventSubmissionResult> {
+        if (action.retryPreparedRound && !this.runtime.getState().flow.compose?.draftRef) {
+            await this.retainedQueueSettlement?.settle()
+        }
         const dialog = await this.runtime.submit({
             type: "dialog.responded",
             generation: action.generation ?? this.runtime.getState().generation,
@@ -132,6 +139,9 @@ export class TaskShell {
             actionId: action.type === "approval.respond" ? (action.approved ? "approve" : "reject") : action.actionId,
             draftRef: action.draftRef,
             selectionRef: action.selectionRef,
+            ...(action.userControl === undefined ? {} : { userControl: { kind: action.userControl.kind } }),
+            ...(action.roundFeedbackRef === undefined ? {} : { roundFeedbackRef: action.roundFeedbackRef }),
+            ...(action.retryPreparedRound ? { retryPreparedRound: true as const } : {}),
             queueDeliveryId: action.queueDeliveryId,
             queueDeliveryEntries: action.queueDeliveryEntries,
             queueDeliveryMode: action.queueDeliveryMode,
@@ -147,6 +157,13 @@ export class TaskShell {
             approved: action.approved,
             feedbackRef: action.draftRef,
         })
+    }
+
+    /** Exit the mode without answering an interaction or changing the task's execution. */
+    async stopAway(): Promise<EventSubmissionResult> {
+        const result = await this.runtime.submit({ type: "away.stopped", generation: this.runtime.getState().generation })
+        if (result.kind === "accepted") await result.receipt.durable
+        return result
     }
 
     cancel(haltId: string): Promise<EventSubmissionResult> {
@@ -169,8 +186,11 @@ export class TaskShell {
     async open(): Promise<EventSubmissionResult> {
         const startedAt = performance.now()
         this.runtime.grantWriteOwnership()
+        // Recover deferred queue evidence before configuration commits replace its snapshot.
         await this.retainedQueueSettlement?.settle()
         this.logStartPhase("retained_queue_settled", startedAt)
+        await this.awayConfiguration?.reconcile()
+        this.runtime.allowRestoredCommands?.()
         this.runtime.releaseRestoredCommands()
         const opened = await this.runtime.submit({ type: "lifecycle.open", generation: this.runtime.getState().generation })
         this.logStartPhase("lifecycle_open_submitted", startedAt)
@@ -235,15 +255,20 @@ export class TaskShell {
      */
     private async offerResume(): Promise<void> {
         const state = this.runtime.getState()
-        // Terminal tasks have nothing to resume, and an existing primary dialog is
-        // already the question the user has to answer.
-        if (state.flow.phase !== "paused" || state.dialog.primary) return
+        // A committed timeout is not answerable again. Park it under Resume so a
+        // cancellation cannot strand delivery after the dialog domain is rearmed.
+        const automatic = state.dialog.primary?.acceptedResponse?.origin === "timeout"
+        if (state.flow.phase !== "paused" || (state.dialog.primary && !automatic)) return
         const plan = planRecoveryDialog({
             taskId: state.taskId,
             revision: state.revision,
             reason: "cancelled",
             turnId: state.turn.turnId ?? `cancelled:${state.taskId}`,
         })
-        await this.runtime.submit({ type: "dialog.requested", generation: state.generation, ...plan })
+        await this.runtime.submit({
+            type: automatic ? "dialog.interrupt_requested" : "dialog.requested",
+            generation: state.generation,
+            ...plan,
+        })
     }
 }

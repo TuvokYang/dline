@@ -4,6 +4,10 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 ## [Unreleased]
 
+### Added
+- Added the OpenCode provider: one Profile covers its paid text models on a pay-as-you-go balance or a Go, Go Plus, or Go Teams subscription, and the same model is reachable through OpenAI Chat Completions, OpenAI Responses, or Anthropic Messages; the declared plan decides which catalog and which prices the Profile reads, and the gateway translates a protocol it did not natively receive
+- Added rollout-controlled Away Mode: enable it in Settings → Features → Experimental, then send `/away` with a task message to keep that task working. Automatic entry is a separate preference and starts the mode after a new question goes unanswered for ten minutes. Stop Away Mode in the footer exits only the mode, without cancelling a running command or request or reading or clearing the draft; normal content or disabling the master setting also exits, and the next normal model request receives a separate exit notice. Questions in Away receive automatic feedback, workspace-scoped commands skip approval, and commands with an external working directory still require manual approval and are refused after one unanswered minute. This is not a shell side-effect sandbox; existing permissions, disabled tools, ignore rules and hooks still apply. Both preferences default to off, and disabling the master preserves the automatic preference
+
 ### Changed
 - Aggressive rendering offers three levels: standard rows, activity between messages, and whole user turns. The second level breaks at ordinary messages, Reply, or Phase report and combines activity across model requests between those messages; the third folds across those messages within the user turn. All levels share the original grouping and message renderer, and expanding everything restores standard row order and layout without extra round headers or indentation. Bulk expand and collapse are available; live work, failures, the current approval, and checked-out checkpoints stay visible. Disabling the rollout keeps the saved choice, and legacy setting values remain readable
 

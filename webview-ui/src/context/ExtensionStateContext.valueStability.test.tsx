@@ -105,7 +105,12 @@ function modelListing() {
                             maxBudget: 0,
                         },
                     },
-                    pricing: { thinkingOutputPrice: 0 },
+                    pricing: {
+                        metered: {
+                            currency: "USD",
+                            strategy: { flat: { prices: { inputPrice: 0, outputPrice: 0, thinkingOutputPrice: 0 } } },
+                        },
+                    },
                 },
             },
             "legacy-unknown": {},
@@ -136,7 +141,9 @@ it("preserves model declarations through a Hicap refresh", async () => {
         </ExtensionStateContextProvider>,
     )
     fireEvent.click(screen.getByRole("button", { name: "Refresh Hicap" }))
-    await waitFor(() => expect(screen.getByTestId("discovered-models")).toHaveTextContent("legacy-unknown"))
+    await waitFor(() =>
+        expect(JSON.parse(screen.getByTestId("discovered-models").textContent ?? "null")).toHaveProperty("legacy-unknown"),
+    )
     const models = JSON.parse(screen.getByTestId("discovered-models").textContent ?? "null")
     expect(models.complete).toEqual({
         id: "complete",
@@ -147,7 +154,12 @@ it("preserves model declarations through a Hicap refresh", async () => {
             supportsReasoning: false,
             thinking: { supported: false, mode: "both", effortLevels: [], defaultEnabled: false, minBudget: 0, maxBudget: 0 },
         },
-        pricing: { thinkingOutputPrice: 0 },
+        pricing: {
+            metered: {
+                currency: "USD",
+                strategy: { flat: { prices: { inputPrice: 0, outputPrice: 0, thinkingOutputPrice: 0 } } },
+            },
+        },
     })
     expect(models["legacy-unknown"].capabilities).not.toHaveProperty("supportsReasoning")
     expect(models["legacy-unknown"].capabilities).not.toHaveProperty("thinking")

@@ -91,7 +91,8 @@ describe("/usage response classification", () => {
     const EXPECTED: Readonly<Record<string, DeliveryOutcome>> = {
         "accepted-ack": { kind: "acknowledged", disposition: "accepted", nextEligibleAt: 1_792_800_900_000 },
         "duplicate-ack": { kind: "acknowledged", disposition: "duplicate", nextEligibleAt: 1_792_800_900_000 },
-        "request-conflict": { kind: "discard", code: "request_id_conflict" },
+        // `error.path` is retained so the discarded window records which field the service refused.
+        "request-conflict": { kind: "discard", code: "request_id_conflict", path: "request_id" },
         "quota-limited": { kind: "wait", code: "quota_limited", retryAfterMs: 1_792_801_200_000 - NOW },
         "temporarily-unavailable": { kind: "replay" },
     }

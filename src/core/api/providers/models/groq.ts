@@ -3,6 +3,7 @@
  * Extracted from api.ts groqModels (lines 4030-4166).
  */
 import type { ModelInfo } from "@shared/api"
+import { flatPricing } from "./pricing"
 
 export const groqModels: Record<string, ModelInfo> = {
     "openai/gpt-oss-120b": {
@@ -17,10 +18,7 @@ export const groqModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.15,
-            outputPrice: 0.75,
-        },
+        pricing: flatPricing(0.15, 0.75),
     },
     "openai/gpt-oss-20b": {
         id: "openai/gpt-oss-20b",
@@ -34,10 +32,7 @@ export const groqModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.1,
-            outputPrice: 0.5,
-        },
+        pricing: flatPricing(0.1, 0.5),
     },
     "compound-beta": {
         id: "compound-beta",
@@ -51,10 +46,7 @@ export const groqModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.0,
-            outputPrice: 0.0,
-        },
+        pricing: flatPricing(0.0, 0.0),
     },
     "compound-beta-mini": {
         id: "compound-beta-mini",
@@ -67,10 +59,7 @@ export const groqModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.0,
-            outputPrice: 0.0,
-        },
+        pricing: flatPricing(0.0, 0.0),
     },
     "deepseek-r1-distill-llama-70b": {
         id: "deepseek-r1-distill-llama-70b",
@@ -84,10 +73,7 @@ export const groqModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.75,
-            outputPrice: 0.99,
-        },
+        pricing: flatPricing(0.75, 0.99),
     },
     "meta-llama/llama-4-maverick-17b-128e-instruct": {
         id: "meta-llama/llama-4-maverick-17b-128e-instruct",
@@ -100,10 +86,7 @@ export const groqModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.2,
-            outputPrice: 0.6,
-        },
+        pricing: flatPricing(0.2, 0.6),
     },
     "meta-llama/llama-4-scout-17b-16e-instruct": {
         id: "meta-llama/llama-4-scout-17b-16e-instruct",
@@ -116,10 +99,7 @@ export const groqModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.11,
-            outputPrice: 0.34,
-        },
+        pricing: flatPricing(0.11, 0.34),
     },
     "llama-3.3-70b-versatile": {
         id: "llama-3.3-70b-versatile",
@@ -132,10 +112,7 @@ export const groqModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.59,
-            outputPrice: 0.79,
-        },
+        pricing: flatPricing(0.59, 0.79),
     },
     "llama-3.1-8b-instant": {
         id: "llama-3.1-8b-instant",
@@ -148,10 +125,7 @@ export const groqModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.05,
-            outputPrice: 0.08,
-        },
+        pricing: flatPricing(0.05, 0.08),
     },
     "moonshotai/kimi-k2-instruct": {
         id: "moonshotai/kimi-k2-instruct",
@@ -165,11 +139,7 @@ export const groqModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 1.0,
-            outputPrice: 3.0,
-            cacheReadsPrice: 0.5,
-        },
+        pricing: flatPricing(1.0, 3.0, undefined, 0.5),
     },
     "moonshotai/kimi-k2-instruct-0905": {
         id: "moonshotai/kimi-k2-instruct-0905",
@@ -183,11 +153,7 @@ export const groqModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0.6,
-            outputPrice: 2.5,
-            cacheReadsPrice: 0.15,
-        },
+        pricing: flatPricing(0.6, 2.5, undefined, 0.15),
     },
 }
 

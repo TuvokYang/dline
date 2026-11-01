@@ -1,10 +1,12 @@
 import { withDiagnosticSite } from "@shared/errors/diagnostic-site"
 import { Logger } from "@shared/services/Logger"
 import { redactDiagnosticString } from "@shared/services/logging/safe-diagnostic-value"
-import type { HaltStopCommand, ParticipantId, TaskEvent } from "../kernel"
+import type { HaltStopCommand, ParticipantId, RoundMaterialPlan, TaskEvent } from "../kernel"
 import { ProfileNotValidError } from "../profile-admission"
 
-export type TaskEventSubmission = { readonly kind: "accepted"; readonly durable?: Promise<void> } | { readonly kind: "rejected" }
+export type TaskEventSubmission =
+    | { readonly kind: "accepted"; readonly durable?: Promise<void>; readonly materialPlan?: RoundMaterialPlan }
+    | { readonly kind: "rejected" }
 
 export interface TaskEventSink {
     submit(event: TaskEvent): Promise<TaskEventSubmission>

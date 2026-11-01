@@ -4,6 +4,7 @@
  */
 import { type ModelInfo } from "@shared/api"
 import { ThinkingConfig } from "@shared/proto/dline/models/metadata"
+import { band, bandedPricing, flatPricing } from "./pricing"
 
 export const geminiModels: Record<string, ModelInfo> = {
     "gemini-3.1-pro-preview": {
@@ -24,25 +25,7 @@ export const geminiModels: Record<string, ModelInfo> = {
                 canDisable: false,
             },
         },
-        pricing: {
-            inputPrice: 4.0,
-            outputPrice: 18.0,
-            cacheReadsPrice: 0.4,
-            tiers: [
-                {
-                    contextWindow: 200000,
-                    inputPrice: 2.0,
-                    outputPrice: 12.0,
-                    cacheReadsPrice: 0.2,
-                },
-                {
-                    contextWindow: Number.POSITIVE_INFINITY,
-                    inputPrice: 4.0,
-                    outputPrice: 18.0,
-                    cacheReadsPrice: 0.4,
-                },
-            ],
-        },
+        pricing: bandedPricing([band(200_000, 2.0, 12.0, undefined, 0.2), band(undefined, 4.0, 18.0, undefined, 0.4)]),
     },
     "gemini-3-pro-preview": {
         id: "gemini-3-pro-preview",
@@ -62,25 +45,7 @@ export const geminiModels: Record<string, ModelInfo> = {
                 canDisable: false,
             },
         },
-        pricing: {
-            inputPrice: 4.0,
-            outputPrice: 18.0,
-            cacheReadsPrice: 0.4,
-            tiers: [
-                {
-                    contextWindow: 200000,
-                    inputPrice: 2.0,
-                    outputPrice: 12.0,
-                    cacheReadsPrice: 0.2,
-                },
-                {
-                    contextWindow: Number.POSITIVE_INFINITY,
-                    inputPrice: 4.0,
-                    outputPrice: 18.0,
-                    cacheReadsPrice: 0.4,
-                },
-            ],
-        },
+        pricing: bandedPricing([band(200_000, 2.0, 12.0, undefined, 0.2), band(undefined, 4.0, 18.0, undefined, 0.4)]),
     },
     "gemini-3-flash-preview": {
         id: "gemini-3-flash-preview",
@@ -101,25 +66,7 @@ export const geminiModels: Record<string, ModelInfo> = {
                 canDisable: false,
             },
         },
-        pricing: {
-            inputPrice: 0.5,
-            outputPrice: 3.0,
-            cacheWritesPrice: 0.05,
-            tiers: [
-                {
-                    contextWindow: 200000,
-                    inputPrice: 0.3,
-                    outputPrice: 2.5,
-                    cacheReadsPrice: 0.03,
-                },
-                {
-                    contextWindow: Number.POSITIVE_INFINITY,
-                    inputPrice: 0.3,
-                    outputPrice: 2.5,
-                    cacheReadsPrice: 0.03,
-                },
-            ],
-        },
+        pricing: bandedPricing([band(200_000, 0.3, 2.5, undefined, 0.03), band(undefined, 0.3, 2.5, undefined, 0.03)]),
     },
     "gemini-2.5-pro": {
         id: "gemini-2.5-pro",
@@ -139,25 +86,7 @@ export const geminiModels: Record<string, ModelInfo> = {
                 canDisable: false,
             }),
         },
-        pricing: {
-            inputPrice: 2.5,
-            outputPrice: 15,
-            cacheReadsPrice: 0.625,
-            tiers: [
-                {
-                    contextWindow: 200000,
-                    inputPrice: 1.25,
-                    outputPrice: 10,
-                    cacheReadsPrice: 0.31,
-                },
-                {
-                    contextWindow: Number.POSITIVE_INFINITY,
-                    inputPrice: 2.5,
-                    outputPrice: 15,
-                    cacheReadsPrice: 0.625,
-                },
-            ],
-        },
+        pricing: bandedPricing([band(200_000, 1.25, 10, undefined, 0.31), band(undefined, 2.5, 15, undefined, 0.625)]),
     },
     "gemini-2.5-flash-lite-preview-06-17": {
         id: "gemini-2.5-flash-lite-preview-06-17",
@@ -177,11 +106,7 @@ export const geminiModels: Record<string, ModelInfo> = {
                 canDisable: true,
             }),
         },
-        pricing: {
-            inputPrice: 0.1,
-            outputPrice: 0.4,
-            cacheReadsPrice: 0.025,
-        },
+        pricing: flatPricing(0.1, 0.4, undefined, 0.025),
     },
     "gemini-2.5-flash": {
         id: "gemini-2.5-flash",
@@ -201,12 +126,7 @@ export const geminiModels: Record<string, ModelInfo> = {
                 canDisable: true,
             }),
         },
-        pricing: {
-            inputPrice: 0.3,
-            outputPrice: 2.5,
-            cacheReadsPrice: 0.075,
-            thinkingOutputPrice: 3.5,
-        },
+        pricing: flatPricing(0.3, 2.5, undefined, 0.075, "USD", 3.5),
     },
     "gemini-2.0-flash-001": {
         id: "gemini-2.0-flash-001",
@@ -217,12 +137,7 @@ export const geminiModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0.1,
-            outputPrice: 0.4,
-            cacheReadsPrice: 0.025,
-            cacheWritesPrice: 1.0,
-        },
+        pricing: flatPricing(0.1, 0.4, 1.0, 0.025),
     },
     "gemini-2.0-flash-lite-preview-02-05": {
         id: "gemini-2.0-flash-lite-preview-02-05",
@@ -233,10 +148,7 @@ export const geminiModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "gemini-2.0-pro-exp-02-05": {
         id: "gemini-2.0-pro-exp-02-05",
@@ -247,10 +159,7 @@ export const geminiModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "gemini-2.0-flash-thinking-exp-01-21": {
         id: "gemini-2.0-flash-thinking-exp-01-21",
@@ -261,10 +170,7 @@ export const geminiModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "gemini-2.0-flash-thinking-exp-1219": {
         id: "gemini-2.0-flash-thinking-exp-1219",
@@ -275,10 +181,7 @@ export const geminiModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "gemini-2.0-flash-exp": {
         id: "gemini-2.0-flash-exp",
@@ -289,10 +192,7 @@ export const geminiModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "gemini-1.5-flash-002": {
         id: "gemini-1.5-flash-002",
@@ -303,26 +203,7 @@ export const geminiModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0.15,
-            outputPrice: 0.6,
-            cacheReadsPrice: 0.0375,
-            cacheWritesPrice: 1.0,
-            tiers: [
-                {
-                    contextWindow: 128000,
-                    inputPrice: 0.075,
-                    outputPrice: 0.3,
-                    cacheReadsPrice: 0.01875,
-                },
-                {
-                    contextWindow: Number.POSITIVE_INFINITY,
-                    inputPrice: 0.15,
-                    outputPrice: 0.6,
-                    cacheReadsPrice: 0.0375,
-                },
-            ],
-        },
+        pricing: bandedPricing([band(128_000, 0.075, 0.3, 1.0, 0.01875), band(undefined, 0.15, 0.6, 1.0, 0.0375)]),
     },
     "gemini-1.5-flash-exp-0827": {
         id: "gemini-1.5-flash-exp-0827",
@@ -333,10 +214,7 @@ export const geminiModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "gemini-1.5-flash-8b-exp-0827": {
         id: "gemini-1.5-flash-8b-exp-0827",
@@ -347,10 +225,7 @@ export const geminiModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "gemini-1.5-pro-002": {
         id: "gemini-1.5-pro-002",
@@ -361,10 +236,7 @@ export const geminiModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "gemini-1.5-pro-exp-0827": {
         id: "gemini-1.5-pro-exp-0827",
@@ -375,10 +247,7 @@ export const geminiModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "gemini-exp-1206": {
         id: "gemini-exp-1206",
@@ -389,10 +258,7 @@ export const geminiModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
 }
 

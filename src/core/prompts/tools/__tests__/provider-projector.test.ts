@@ -4,6 +4,7 @@ import {
     GPT_IMAGE_2_MODEL_ID,
     GPT_IMAGE_2_SUBSCRIPTION_MODEL_ID,
 } from "../../../../shared/image-generation"
+import { ApiFormat } from "../../../../shared/proto/dline/models/metadata"
 import { DlineDefaultTool } from "../../../../shared/tools"
 import { DISABLED_WEB_SEARCH_ROUTING_PLAN, HOSTED_WEB_SEARCH_ROUTING_PLAN } from "../../__tests__/web-search-routing-fixtures"
 import { ToolPromptGenerator } from "../../generators/ToolPromptGenerator"
@@ -351,6 +352,78 @@ describe("provider tool projector", () => {
             expect(tool, providerId).not.toHaveProperty("type", "function")
             expect(tool, providerId).not.toHaveProperty("function")
         }
+    })
+
+    it("projects by the request protocol instead of the provider name", () => {
+        // One provider can be configured for three different endpoints. The wire
+        // protocol, not the vendor name, decides which wrapper the endpoint accepts.
+        const reference = {
+            openai: findTool(
+                new ToolPromptGenerator().generate(PromptProfile.Standard, {
+                    ...BASE_CONTEXT,
+                    providerInfo: { ...BASE_CONTEXT.providerInfo, providerId: "openai" },
+                }),
+                DlineDefaultTool.FILE_READ,
+            ),
+            anthropic: findTool(
+                new ToolPromptGenerator().generate(PromptProfile.Standard, {
+                    ...BASE_CONTEXT,
+                    providerInfo: { ...BASE_CONTEXT.providerInfo, providerId: "anthropic" },
+                }),
+                DlineDefaultTool.FILE_READ,
+            ),
+            google: findTool(
+                new ToolPromptGenerator().generate(PromptProfile.Standard, {
+                    ...BASE_CONTEXT,
+                    providerInfo: { ...BASE_CONTEXT.providerInfo, providerId: "gemini" },
+                }),
+                DlineDefaultTool.FILE_READ,
+            ),
+        }
+
+        for (const [apiFormat, shape] of [
+            [ApiFormat.OPENAI_CHAT, "openai"],
+            [ApiFormat.OPENAI_RESPONSES, "openai"],
+            [ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE, "openai"],
+            [ApiFormat.R1_CHAT, "openai"],
+            [ApiFormat.ANTHROPIC_CHAT, "anthropic"],
+            [ApiFormat.GEMINI_CHAT, "google"],
+        ] as const) {
+            const tool = findTool(
+                new ToolPromptGenerator().generate(PromptProfile.Standard, {
+                    ...BASE_CONTEXT,
+                    selectedApiFormat: apiFormat,
+                }),
+                DlineDefaultTool.FILE_READ,
+            )
+
+            expect(tool, `format ${apiFormat}`).toEqual(reference[shape])
+        }
+    })
+
+    it("falls back to the provider identity when the protocol is unknown to this build", () => {
+        // A newer protocol reaching this projection must not become the OpenAI
+        // wrapper, which the endpoint it belongs to would reject.
+        const unknownFormat = 9999 as ApiFormat
+
+        function projectedShape(providerId: string): "anthropic" | "google" | "openai" {
+            const tool = findTool(
+                new ToolPromptGenerator().generate(PromptProfile.Standard, {
+                    ...BASE_CONTEXT,
+                    providerInfo: { ...BASE_CONTEXT.providerInfo, providerId },
+                    selectedApiFormat: unknownFormat,
+                }),
+                DlineDefaultTool.FILE_READ,
+            )
+            if (!tool) return "openai"
+            if ("input_schema" in tool) return "anthropic"
+            if ("function" in tool) return "openai"
+            return "google"
+        }
+
+        expect(projectedShape("anthropic")).toBe("anthropic")
+        expect(projectedShape("gemini")).toBe("google")
+        expect(projectedShape("openai")).toBe("openai")
     })
 
     it("includes dependency-gated parameters only when their tool dependency is enabled", () => {

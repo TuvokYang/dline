@@ -5,6 +5,7 @@
 // sinon import removed: using vitest globals
 import { ModelRegistry } from "@core/model-registry/ModelRegistry"
 import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
+import { readCurrency } from "@shared/providers/pricing-shape"
 import { expect } from "chai"
 import { afterEach, beforeEach, describe, it, vi } from "vitest"
 import { getAvailableModels } from "../getAvailableModels"
@@ -216,7 +217,7 @@ describe("getAvailableModels handler", () => {
                             },
                             description: "A model for testing",
                             pricing: {
-                                currency: "USD",
+                                metered: { currency: "USD", strategy: { flat: { prices: { inputPrice: 0, outputPrice: 0 } } } },
                             },
                         },
                     ],
@@ -232,7 +233,7 @@ describe("getAvailableModels handler", () => {
         expect(model.capabilities?.supportsImages).to.be.true
         expect(model.capabilities?.supportsPromptCache).to.be.true
         expect(model.description).to.equal("A model for testing")
-        expect(model.pricing?.currency).to.equal("USD")
+        expect(readCurrency(model.pricing)).to.equal("USD")
     })
 
     it("preserves API formats and server-tool capabilities for the Webview catalog", async () => {

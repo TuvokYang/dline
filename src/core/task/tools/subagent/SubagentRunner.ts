@@ -39,6 +39,7 @@ import {
 } from "@shared/messages"
 import { splitResumedHostedResults } from "@shared/messages/hosted-tool-deferral"
 import type { ProviderTelemetryRole } from "@shared/provider-attempt-observer"
+import { readCurrency } from "@shared/providers/pricing-shape"
 import { resolvePromptProfile } from "@shared/resolve-prompt-profile"
 import { Logger } from "@shared/services/Logger"
 import { ClineTool, DlineDefaultTool } from "@shared/tools"
@@ -847,7 +848,7 @@ export class SubagentRunner {
                 this.baseConfig.webToolsEnabled ??
                 this.baseConfig.services.stateManager.getGlobalSettingsKey("clineWebToolsEnabled") === true
             stats.contextWindow = providerInfo.model.info.capabilities?.contextWindow || 0
-            stats.currency = providerInfo.model.info.pricing?.currency || "USD"
+            stats.currency = readCurrency(providerInfo.model.info.pricing) || "USD"
             const apiFormat = providerInfo.model.info.apiFormats?.[0]
             const nativeToolCallsRequested =
                 apiFormat === ApiFormat.OPENAI_RESPONSES ||

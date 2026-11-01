@@ -1,3 +1,4 @@
+import { formatResponse } from "@core/prompts/responses"
 import type { ToolResultAttachments } from "@integrations/misc/extract-text"
 import { REPLY_AS_TYPED, submittedInputRow } from "@shared/input-semantics/submitted-input"
 import type { ClineAskResponse } from "@shared/WebviewMessage"
@@ -18,6 +19,16 @@ export async function attachToolFeedbackFiles(files: string[] | undefined): Prom
     // Loaded on demand: the extractor pulls in the PDF and spreadsheet parsers.
     const { processFilesForToolResult } = await import("@integrations/misc/extract-text")
     return processFilesForToolResult(files)
+}
+
+/** New replies keep their body outside the paired result; legacy outcomes retain their original renderer. */
+export async function separateRoundFeedback(config: TaskConfig, outcome: InteractionOutcome) {
+    if (!outcome.roundMaterialOwned) return undefined
+    const draft = outcome.draft
+    await sayFeedbackOnce(config, "messageResponse", draft?.text, draft?.images, draft?.files, outcome)
+    const switched = config.taskState.didRespondToPlanAskBySwitchingMode === true
+    config.taskState.didRespondToPlanAskBySwitchingMode = false
+    return formatResponse.toolResult(formatResponse.interactionFeedbackRecorded(switched))
 }
 
 /**
@@ -63,9 +74,9 @@ export async function sayFeedbackOnce(
     text?: string,
     images?: string[],
     files?: string[],
-    presentation?: Pick<InteractionOutcome, "feedbackPresented" | "draft">,
+    presentation?: Pick<InteractionOutcome, "feedbackPresented" | "draft" | "origin">,
 ): Promise<void> {
-    if (presentation?.feedbackPresented) return
+    if (presentation?.feedbackPresented || presentation?.origin === "timeout") return
     if (!isAckedFeedback(config, response, text, images, files)) {
         const draft = presentation?.draft
         if (draft?.semanticInput) {

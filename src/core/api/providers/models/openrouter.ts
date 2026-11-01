@@ -5,6 +5,7 @@
  */
 
 import type { ModelInfo } from "@shared/api"
+import { flatPricing } from "./pricing"
 
 // Local suffix constant for constructing 1M variant model IDs
 const CLAUDE_SONNET_1M_SUFFIX = ":1m"
@@ -24,12 +25,7 @@ export const openRouterDefaultModelInfo: ModelInfo = {
         maxTokens: 64_000,
         contextWindow: 200_000,
     },
-    pricing: {
-        inputPrice: 3.0,
-        outputPrice: 15.0,
-        cacheWritesPrice: 3.75,
-        cacheReadsPrice: 0.3,
-    },
+    pricing: flatPricing(3.0, 15.0, 3.75, 0.3),
 }
 
 /** OpenRouter Claude Sonnet 1M variant model IDs */

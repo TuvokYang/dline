@@ -391,9 +391,34 @@ export class ControllerTaskCallbacksOwner {
         }
     }
 
-    private async missingParameter(_toolName: DlineDefaultTool, paramName: string, relPath?: string, _existingTs?: number) {
+    private async missingParameter(_toolName: DlineDefaultTool, paramName: string, relPath?: string, existingTs?: number) {
+        await this.settleRejectedCommandPreview(existingTs)
         const message = `${formatResponse.missingToolParameterError(paramName)}${relPath ? `\nPath: ${relPath}` : ""}`
         return formatResponse.toolError(message)
+    }
+
+    /**
+     * Close the command preview a rejected call already streamed.
+     *
+     * A handler publishes its command row while the call is still streaming and
+     * then rejects the call when a required parameter never arrives. That row is
+     * the user's only evidence of the attempt, so leaving it partial keeps it
+     * drawn as a command that is still working — and, now that the chat folds
+     * finished work, as the one row that never joins its block. The command never
+     * ran, so the honest terminal state is the failure the model is told about.
+     */
+    private async settleRejectedCommandPreview(ts: number | undefined): Promise<void> {
+        if (ts === undefined) return
+        const rejected = this.options.messages.clineMessages.find((candidate) => candidate.ts === ts)
+        // Only a still-streaming command row is evidence of a call that never ran.
+        // A row that already reached a terminal state keeps the state it reached.
+        if (rejected?.say !== "command" || rejected.partial !== true) return
+        const settled = await this.options.messages.finalizeClineMessage({
+            ...rejected,
+            partial: false,
+            commandStatus: "failed",
+        })
+        await this.publishRow(settled, `settled rejected command row ${ts}`)
     }
 
     private async applyLatestBrowserSettings(): Promise<BrowserSession> {

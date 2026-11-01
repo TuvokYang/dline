@@ -1,6 +1,7 @@
 import type { TaskViewAction, TaskViewState } from "@shared/ExtensionMessage"
 import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
 import { useState } from "react"
+import { InteractionDeadline } from "./InteractionDeadline"
 import { composerCarriesAction } from "./task-actions"
 import {
     type AcceptedInteractionSettlement,
@@ -63,10 +64,11 @@ export function FooterActions({
     // mid-cancellation, so the user could fire duplicate cancels against a task
     // that was already winding down. Switching task or interaction still starts
     // a fresh scope, because that is genuinely different work.
-    const dispatchScope = `${view.taskId}:${view.activeInteraction?.interactionId ?? ""}`
+    const taskScope = `${view.taskId}:${view.taskInstanceId ?? ""}`
+    const dispatchScope = `${taskScope}:${view.activeInteraction?.interactionId ?? ""}`
     const [pendingState, setPendingState] = useState<string>()
-    const pending = pendingState === dispatchScope
-    const beginPending = () => setPendingState(dispatchScope)
+    const pending = pendingState === dispatchScope || pendingState === taskScope
+    const beginPending = (scope = dispatchScope) => setPendingState(scope)
     // Clear only the scope this call owns; a late settle must not release the
     // pending state of a newer projection that has already started its own work.
     const endPending = (scope: string) => setPendingState((current) => (current === scope ? undefined : current))
@@ -77,18 +79,20 @@ export function FooterActions({
     const error = errorState?.scope === errorScope ? errorState.message : undefined
     const setError = (message?: string) => setErrorState(message ? { scope: errorScope, message } : undefined)
     const actions = view.footer.actions.filter((action) => !composerCarriesAction(view, action))
-    if (actions.length === 0) {
+    const deadline = view.activeInteraction?.status === "awaiting" ? view.activeInteraction.deadline : undefined
+    if (actions.length === 0 && !deadline) {
         return null
     }
 
     return (
         <div className="mx-3.5">
+            {deadline ? <InteractionDeadline deadline={deadline} /> : null}
             {error ? (
                 <div className="mb-1 text-xs text-(--vscode-errorForeground)" role="alert">
                     {error}
                 </div>
             ) : null}
-            <div className="flex gap-1.5">
+            <div className="flex flex-wrap gap-1.5">
                 {actions.map((action) => {
                     const targetsTask = action.dispatchTarget === "task"
                     const carriesDraft = action.payloadPolicy === "draft" || action.payloadPolicy === "draft_and_selection"
@@ -111,16 +115,17 @@ export function FooterActions({
                                     const supportedTaskAction =
                                         action.type === "cancel" ||
                                         action.type === "retry" ||
+                                        action.type === "stop_away" ||
                                         (action.type === "continue_in_background" && Boolean(action.activityId))
                                     if (!dispatchTaskAction || !supportedTaskAction) {
                                         return
                                     }
-                                    const taskScope = dispatchScope
+                                    const pendingScope = action.type === "stop_away" ? taskScope : dispatchScope
                                     setError(undefined)
-                                    beginPending()
+                                    beginPending(pendingScope)
                                     void dispatchTaskAction(action)
                                         .catch((cause: unknown) => setError(errorMessage(cause)))
-                                        .finally(() => endPending(taskScope))
+                                        .finally(() => endPending(pendingScope))
                                     return
                                 }
                                 const capturedDraft = captureInteractionDraft(draft)

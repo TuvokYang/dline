@@ -1,5 +1,6 @@
 import { ProfileCapabilityIcons } from "@components/settings/providers/ProfileCapabilityIcons"
 import type { ApiProfile } from "@shared/proto/dline/profile"
+import { readPriceSet } from "@shared/providers/pricing-shape"
 import { CheckIcon, SettingsIcon } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
@@ -107,8 +108,9 @@ const ModelSwitcher: React.FC<ModelSwitcherProps> = ({ onOpenSettings, draft, dr
     if (info) {
         if (info.capabilities?.contextWindow)
             tooltipLines.push(`Context: ${info.capabilities.contextWindow.toLocaleString()} tokens`)
-        if ((info.pricing?.inputPrice ?? 0) > 0 || (info.pricing?.outputPrice ?? 0) > 0)
-            tooltipLines.push(`In: $${info.pricing?.inputPrice ?? 0}/M | Out: $${info.pricing?.outputPrice ?? 0}/M`)
+        const rates = readPriceSet(info.pricing?.metered?.strategy?.flat?.prices)
+        if (rates.inputPrice > 0 || rates.outputPrice > 0)
+            tooltipLines.push(`In: $${rates.inputPrice}/M | Out: $${rates.outputPrice}/M`)
     }
     const tooltip = tooltipLines.join("\n")
 
@@ -323,10 +325,12 @@ const ModelSwitcher: React.FC<ModelSwitcherProps> = ({ onOpenSettings, draft, dr
                                     if (mi) {
                                         if (mi.capabilities?.contextWindow)
                                             capLines.push(`Context: ${mi.capabilities.contextWindow.toLocaleString()} tokens`)
-                                        if (mi.pricing?.inputPrice != null)
-                                            capLines.push(
-                                                `In: $${mi.pricing.inputPrice}/M | Out: $${mi.pricing.outputPrice ?? "?"}/M`,
-                                            )
+                                        {
+                                            const rates = readPriceSet(mi.pricing?.metered?.strategy?.flat?.prices)
+                                            if (mi.pricing?.metered?.strategy?.flat) {
+                                                capLines.push(`In: $${rates.inputPrice}/M | Out: $${rates.outputPrice}/M`)
+                                            }
+                                        }
                                         if (mi.capabilities?.supportsReasoning)
                                             capLines.push(
                                                 `Reasoning: ${mi.capabilities?.thinking?.effortLevels?.join(", ") || "yes"}`,

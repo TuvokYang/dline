@@ -1,3 +1,4 @@
+import type { FoldUsage } from "@shared/chat/foldUsage"
 import type { UiMessage } from "@shared/ExtensionMessage"
 
 /**
@@ -93,6 +94,9 @@ export type ActivityFoldKind = "segment" | "turn"
  * member rows exactly as standard grouping produced them, so an expanded block
  * returns those same rows to the top-level list when the block is opened.
  */
+/** The work categories whose failures a block can account for. */
+export type FoldFailureKind = "edit" | "command" | "subagent"
+
 export type ActivityFold = UiMessage[] & {
     _isActivityFold: true
     _foldKind: ActivityFoldKind
@@ -103,6 +107,21 @@ export type ActivityFold = UiMessage[] & {
     _activityFoldId: string
     _children: readonly (UiMessage | UiMessage[])[]
     _roundCount: number
+    /**
+     * The usage the folded rounds stand for, when the chat has it. Every figure
+     * comes from the request-round records the rate metrics read, so the header
+     * never states a number the reader cannot reconcile elsewhere.
+     */
+    _usage?: FoldUsage
+    /**
+     * Members that ended in failure, by work category, fixed when the block was
+     * built. Folding is what decides which failures belong to the block, so the
+     * count is recorded here instead of being re-derived by the renderer, which
+     * does not see the transcript-wide failure facts.
+     */
+    _failures?: ReadonlyMap<FoldFailureKind, number>
+    /** Timestamps of the members counted in `_failures`, so each is reported once. */
+    _failedMemberTs?: ReadonlySet<number>
 }
 
 export function isActivityFold(item: UiMessage | UiMessage[]): item is ActivityFold {

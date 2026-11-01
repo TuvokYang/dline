@@ -20,6 +20,7 @@ export function toolTerminalManifestPayload(state: TurnSlice): { readonly toolTe
                     invocationRef: block.invocationRef,
                     ...(block.approvalFeedbackRef === undefined ? {} : { approvalFeedbackRef: block.approvalFeedbackRef }),
                     ...(block.deniedByUser && block.phase === "rejected" ? { deniedByUser: true } : {}),
+                    ...(block.approvalTimedOut ? { approvalTimedOut: true as const } : {}),
                 })),
         },
     }
@@ -65,6 +66,7 @@ export function reduceTurn(state: TurnSlice, event: TaskEvent): TurnReduction {
             attempt: block.attempt,
             lanes: block.lanes,
             turnEnding: block.turnEnding,
+            ...(block.disposition ? { disposition: block.disposition } : {}),
             invocationRef: block.invocationRef,
         }))
         return {
@@ -171,7 +173,11 @@ export function reduceTurn(state: TurnSlice, event: TaskEvent): TurnReduction {
                 ? {
                       ...block,
                       ...(event.feedbackRef === undefined ? {} : { approvalFeedbackRef: event.feedbackRef }),
-                      ...(event.approved ? {} : { deniedByUser: true }),
+                      ...(event.approved
+                          ? {}
+                          : event.origin === "timeout"
+                            ? { approvalTimedOut: true as const }
+                            : { deniedByUser: true }),
                   }
                 : block,
         )

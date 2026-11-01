@@ -8,6 +8,11 @@ import {
     claudeFableExhaustedUsageFixture,
     claudeUsageFixture,
     codexUsageFixture,
+    openCodeBalanceUsageFixture,
+    openCodeGoPlusUsageFixture,
+    openCodeGoTeamsUsageFixture,
+    openCodeGoUsageFixture,
+    openCodeNoDataUsageFixture,
 } from "./usageStoryFixtures"
 
 /**
@@ -71,4 +76,48 @@ export const ClaudeFableExhausted: Story = {
     args: { title: "Claude Code" },
     decorators: withUsage(claudeFableExhaustedUsageFixture),
     play: expandCard,
+}
+
+/**
+ * OpenCode pay-as-you-go: Dline accumulates the per-response cost, and shows
+ * no remaining balance because Console publishes no balance endpoint.
+ */
+export const OpenCodeBalance: Story = {
+    args: { title: "OpenCode" },
+    decorators: withUsage(openCodeBalanceUsageFixture),
+    play: expandCard,
+}
+
+/** OpenCode Go ($10/month): three windows against the plan's per-model limit. */
+export const OpenCodeGo: Story = {
+    args: { title: "OpenCode" },
+    decorators: withUsage(openCodeGoUsageFixture),
+    play: expandCard,
+}
+
+/** OpenCode Go Plus ($40/month): the same windows against a higher limit. */
+export const OpenCodeGoPlus: Story = {
+    args: { title: "OpenCode" },
+    decorators: withUsage(openCodeGoPlusUsageFixture),
+    play: expandCard,
+}
+
+/**
+ * OpenCode Go Teams ($20/member/month). Read beside `OpenCodeGo` this is the
+ * story that makes a monthly limit derived from `billing_source` visibly
+ * wrong: the gateway reports `go` for a Teams member, but the limit differs.
+ */
+export const OpenCodeGoTeams: Story = {
+    args: { title: "OpenCode" },
+    decorators: withUsage(openCodeGoTeamsUsageFixture),
+    play: expandCard,
+}
+
+/**
+ * No cost has been reported yet. The card stays collapsed and says so instead
+ * of drawing an empty window that would read as "nothing used".
+ */
+export const OpenCodeNoData: Story = {
+    args: { title: "OpenCode" },
+    decorators: withUsage(openCodeNoDataUsageFixture),
 }

@@ -229,8 +229,11 @@ export class ApiRequestRoundLifecycle {
             return
         }
         this.pendingCompletedExecution.delete(logicalRequestId)
-        // The interrupted send is a real execution, so its fact is still reported.
-        this.publishLogicalExecution(handle)
+        // The interrupted send stays in the local execution history, but it must
+        // not become the request's logical coverage claim: the retry that produces
+        // the result owns that claim, and the coverage is first-claim-wins
+        // (usage-contract §12). Publishing this one would block the final identity.
+        Logger.debug(`[usage] superseded execution of ${handle.roundId} kept as history only`)
     }
 
     private publishLogicalExecution(handle: ApiRequestRoundHandle, toolCalls?: readonly UsageToolCall[]): void {

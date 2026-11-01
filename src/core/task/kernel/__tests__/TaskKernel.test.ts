@@ -86,6 +86,8 @@ describe("task kernel", () => {
                 mode: "queued",
                 sequence: 1,
                 state: "reserved",
+                acceptedRevision: 1,
+                userControl: undefined,
             },
         ])
         expect(result.commands).toEqual([

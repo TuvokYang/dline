@@ -3,6 +3,7 @@
  * Extracted from api.ts moonshotModels (lines 4388-4452).
  */
 import type { ModelInfo } from "@shared/api"
+import { flatPricing } from "./pricing"
 
 export const moonshotModels: Record<string, ModelInfo> = {
     "kimi-k2.5": {
@@ -15,11 +16,7 @@ export const moonshotModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0.6,
-            outputPrice: 3.0,
-            cacheReadsPrice: 0.1,
-        },
+        pricing: flatPricing(0.6, 3.0, undefined, 0.1),
     },
     "kimi-k2-0905-preview": {
         id: "kimi-k2-0905-preview",
@@ -31,10 +28,7 @@ export const moonshotModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.6,
-            outputPrice: 2.5,
-        },
+        pricing: flatPricing(0.6, 2.5),
     },
     "kimi-k2-0711-preview": {
         id: "kimi-k2-0711-preview",
@@ -46,10 +40,7 @@ export const moonshotModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.6,
-            outputPrice: 2.5,
-        },
+        pricing: flatPricing(0.6, 2.5),
     },
     "kimi-k2-turbo-preview": {
         id: "kimi-k2-turbo-preview",
@@ -61,10 +52,7 @@ export const moonshotModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 2.4,
-            outputPrice: 10,
-        },
+        pricing: flatPricing(2.4, 10),
     },
     "kimi-k2-thinking": {
         id: "kimi-k2-thinking",
@@ -76,10 +64,7 @@ export const moonshotModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.6,
-            outputPrice: 2.5,
-        },
+        pricing: flatPricing(0.6, 2.5),
     },
     "kimi-k2-thinking-turbo": {
         id: "kimi-k2-thinking-turbo",
@@ -91,10 +76,7 @@ export const moonshotModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 2.4,
-            outputPrice: 10,
-        },
+        pricing: flatPricing(2.4, 10),
     },
 }
 

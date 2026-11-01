@@ -86,4 +86,6 @@ export interface RuntimeFacade {
      * held or the runtime is still read-only, since dispatching writes the task.
      */
     releaseRestoredCommands(): void
+    /** Open only the bootstrap barrier, independently of writer ownership. */
+    allowRestoredCommands?(): void
 }

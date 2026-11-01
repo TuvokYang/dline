@@ -176,7 +176,12 @@ export class TaskHistory {
             const existingItem = rows[0]?.toHistoryItem()
             const nextItem = row.toHistoryItem()
             if (existingItem && isSameHistoryItem(existingItem, nextItem)) return existingItem
-            await transaction.replaceAll([...(await transaction.query()).filter((candidate) => candidate.id !== item.id), row])
+            // Write only this row. Rewriting the whole collection made every
+            // metadata update cost the size of the history and, worse, replaced
+            // rows that another window had committed since this transaction read
+            // them. The read above and this write stay in one transaction so the
+            // same-row and completion comparisons remain against committed state.
+            await transaction.upsert([row])
             return nextItem
         })
     }

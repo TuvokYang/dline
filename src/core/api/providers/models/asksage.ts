@@ -3,6 +3,7 @@
  * Extracted from api.ts askSageModels (lines 3224-3348).
  */
 import type { ModelInfo } from "@shared/api"
+import { flatPricing } from "./pricing"
 
 export const askSageModels: Record<string, ModelInfo> = {
     "gpt-4o": {
@@ -14,10 +15,7 @@ export const askSageModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "gpt-4o-gov": {
         id: "gpt-4o-gov",
@@ -28,10 +26,7 @@ export const askSageModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "gpt-4.1": {
         id: "gpt-4.1",
@@ -42,10 +37,7 @@ export const askSageModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "claude-35-sonnet": {
         id: "claude-35-sonnet",
@@ -56,10 +48,7 @@ export const askSageModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "aws-bedrock-claude-35-sonnet-gov": {
         id: "aws-bedrock-claude-35-sonnet-gov",
@@ -70,10 +59,7 @@ export const askSageModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "claude-37-sonnet": {
         id: "claude-37-sonnet",
@@ -84,10 +70,7 @@ export const askSageModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "claude-4.6-sonnet": {
         id: "claude-4.6-sonnet",
@@ -98,10 +81,7 @@ export const askSageModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "claude-4-sonnet": {
         id: "claude-4-sonnet",
@@ -112,10 +92,7 @@ export const askSageModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "claude-4-opus": {
         id: "claude-4-opus",
@@ -126,10 +103,7 @@ export const askSageModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "google-gemini-2.5-pro": {
         id: "google-gemini-2.5-pro",
@@ -140,10 +114,7 @@ export const askSageModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "google-claude-45-sonnet": {
         id: "google-claude-45-sonnet",
@@ -154,10 +125,7 @@ export const askSageModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "google-claude-4-opus": {
         id: "google-claude-4-opus",
@@ -168,10 +136,7 @@ export const askSageModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "gpt-5": {
         id: "gpt-5",
@@ -182,10 +147,7 @@ export const askSageModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "gpt-5-mini": {
         id: "gpt-5-mini",
@@ -196,10 +158,7 @@ export const askSageModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
     "gpt-5-nano": {
         id: "gpt-5-nano",
@@ -210,10 +169,7 @@ export const askSageModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-        },
+        pricing: flatPricing(0, 0),
     },
 }
 

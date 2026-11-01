@@ -42,7 +42,16 @@ function replaceByTaskId(history: readonly HistoryItem[], item: HistoryItem): Hi
 
 export class WorkspaceHistoryManager {
     private readonly generations = new Map<string, number>()
-    private persistenceQueue = Promise.resolve()
+    /**
+     * One write chain per task.
+     *
+     * A single workspace chain serialized every task behind every other task: a
+     * long metadata write for task A delayed task B's history, and closing A
+     * generation-checks the whole chain rather than only its own task. The stable
+     * task id is the ordering domain, so chains are keyed by it and survive a
+     * begin/close generation change instead of being reset by it.
+     */
+    private readonly persistenceQueues = new Map<string, Promise<void>>()
 
     constructor(
         readonly workspaceKey: string,
@@ -107,7 +116,10 @@ export class WorkspaceHistoryManager {
     }
 
     async flush(): Promise<void> {
-        await this.persistenceQueue
+        // Every accepted chain must drain, not only the newest one: a shutdown
+        // barrier that waited for a single task's chain would drop writes still
+        // queued for the others.
+        await Promise.all([...this.persistenceQueues.values()])
         await this.ports.writer.flush()
     }
 
@@ -122,13 +134,17 @@ export class WorkspaceHistoryManager {
     }
 
     private enqueue(session: WorkspaceHistorySession, operation: () => Promise<void>): void {
-        this.persistenceQueue = this.persistenceQueue.then(async () => {
+        const previous = this.persistenceQueues.get(session.taskId) ?? Promise.resolve()
+        const chain = previous.then(async () => {
             if (!this.isCurrent(session)) return
             await operation()
         })
-        this.persistenceQueue = this.persistenceQueue.catch((error) => {
-            this.ports.onError(error)
-        })
+        this.persistenceQueues.set(
+            session.taskId,
+            chain.catch((error) => {
+                this.ports.onError(error)
+            }),
+        )
     }
 }
 

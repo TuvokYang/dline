@@ -6,7 +6,7 @@
  */
 import { getDlineHomePath } from "@core/storage/disk"
 import { ServerTool, serverToolFromJSON } from "@shared/proto/dline/models/metadata"
-import { getProviderSeedConfig } from "@shared/providers/model-infos"
+import { getProviderCatalog, getProviderCatalogKeys, getProviderSeedConfig } from "@shared/providers/model-infos"
 import type { ImageModelInfo, ModelInfo, ProviderModelsConfig } from "@shared/providers/types"
 import { Logger } from "@shared/services/Logger"
 import chokidar, { type FSWatcher } from "chokidar"
@@ -24,6 +24,18 @@ function enrichMissingSeedMetadata(providerId: string, config: ProviderModelsCon
         return config
     }
     return reconcileProviderModels(seedConfig, config, "fill-missing")
+}
+
+/**
+ * Whether a provider id names an alternative catalog of another provider.
+ *
+ * Only the provider entry is selectable. A stored file whose id resolves to
+ * another entry's catalog is a leftover from the build that registered the
+ * catalog as a provider, and must be ignored rather than loaded.
+ */
+function isAlternativeCatalogKey(providerId: string): boolean {
+    const selection = getProviderCatalog(providerId)
+    return selection !== undefined && selection.provider.provider !== providerId
 }
 
 function withRequiredServerTool(model: ModelInfo, tool: ServerTool): ModelInfo {
@@ -149,6 +161,14 @@ export class ModelRegistry {
 
             for (const fileName of jsonFiles) {
                 const fileProviderId = getProviderIdFromConfigFile(fileName)
+                // A file left over from a build that registered an alternative
+                // catalog as its own provider must not resurrect it: the catalog
+                // now belongs to a parent entry, and loading it here would put a
+                // second selectable provider back into the registry.
+                if (isAlternativeCatalogKey(fileProviderId)) {
+                    Logger.warn(`[ModelRegistry] Ignoring ${fileName}: "${fileProviderId}" is now a catalog of another provider.`)
+                    continue
+                }
                 try {
                     const filePath = path.join(this.providersDir, fileName)
                     const raw = await fs.readFile(filePath, "utf8")
@@ -244,13 +264,46 @@ export class ModelRegistry {
     }
 
     /**
-     * Get models for a specific provider.
+     * Get the configuration of a selectable provider.
+     *
+     * A catalog key that belongs to another provider's alternative catalog is
+     * resolved to that provider, so a caller holding only a key still reaches the
+     * entry that owns base URL, billing and display identity.
      */
     getProviderModels(providerId: string): ProviderModelsConfig | undefined {
         if (providerId === "openai") {
             return this.getUnifiedOpenAiConfig()
         }
-        return this.cache.get(providerId)
+        const direct = this.cache.get(providerId)
+        if (direct) return direct
+        // An alternative catalog key resolves to its owner, but only when that
+        // owner is already loaded: answering from the seed would let a deferred
+        // catalog look available before startup finished loading it.
+        const ownerId = getProviderCatalog(providerId)?.provider.provider
+        return ownerId ? this.cache.get(ownerId) : undefined
+    }
+
+    /**
+     * Get the model catalog a catalog key selects.
+     *
+     * Unlike {@link getProviderModels} this answers with the catalog the key
+     * names, which for an alternative catalog is not the provider's primary one.
+     */
+    getProviderCatalog(catalogKey: string): ProviderModelsConfig | undefined {
+        const provider = this.getProviderModels(catalogKey)
+        if (!provider) return undefined
+        const selection = getProviderCatalog(catalogKey)
+        if (!selection) return provider
+        const catalog = selection.catalog
+        return catalog === selection.provider
+            ? provider
+            : {
+                  ...provider,
+                  models: catalog.models,
+                  defaultModelId: catalog.defaultModelId ?? provider.defaultModelId,
+                  imageModels: catalog.imageModels ?? provider.imageModels,
+                  defaultImageModelId: catalog.defaultImageModelId ?? provider.defaultImageModelId,
+              }
     }
 
     /** Resolve the canonical OpenAI provider config from memory, using the seed catalog only as a field fallback. */
@@ -299,7 +352,7 @@ export class ModelRegistry {
     }
 
     /**
-     * Get all models across all providers, grouped by provider.
+     * Get all loaded model catalogs, keyed by the primary or alternative catalog ID.
      */
     getAllModels(): Array<{
         provider: string
@@ -319,14 +372,19 @@ export class ModelRegistry {
         }> = []
 
         for (const config of this.getAllProviders()) {
-            result.push({
-                provider: config.provider,
-                providerName: config.providerName,
-                models: Object.values(config.models),
-                defaultModelId: config.defaultModelId,
-                imageModels: Object.values(config.imageModels ?? {}),
-                defaultImageModelId: config.defaultImageModelId,
-            })
+            const catalogKeys = getProviderCatalogKeys(getProviderSeedConfig(config.provider) ?? config)
+            for (const catalogKey of catalogKeys) {
+                const catalog = catalogKey === config.provider ? config : this.getProviderCatalog(catalogKey)
+                if (!catalog) continue
+                result.push({
+                    provider: catalogKey,
+                    providerName: config.providerName,
+                    models: Object.values(catalog.models),
+                    defaultModelId: catalog.defaultModelId,
+                    imageModels: Object.values(catalog.imageModels ?? {}),
+                    defaultImageModelId: catalog.defaultImageModelId,
+                })
+            }
         }
 
         return result

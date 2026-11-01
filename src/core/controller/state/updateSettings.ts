@@ -29,6 +29,7 @@ import { telemetryService } from "../../../services/telemetry"
 import { BrowserSettings as SharedBrowserSettings } from "../../../shared/BrowserSettings"
 import { Controller } from ".."
 import { accountLogoutClicked } from "../account/accountLogoutClicked"
+import { getAwaySettings } from "./awaySettings"
 
 /**
  * Safely access a field from a runtime plain object without `as unknown as Record`.
@@ -85,6 +86,15 @@ export async function updateSettings(controller: Controller, request: UpdateSett
                 throw new Error("Auto-compact reserve minimum cannot exceed maximum")
             }
         }
+
+        if ("__awayRevocations" in request) throw new Error("Away revocation metadata is not a user setting")
+        const awayPatch: { awayModeEnabled?: boolean; autoAwayModeEnabled?: boolean } = {}
+        for (const key of ["awayModeEnabled", "autoAwayModeEnabled"] as const) {
+            if (request[key] === undefined) continue
+            if (typeof request[key] !== "boolean") throw new Error(`${key} must be a boolean`)
+            awayPatch[key] = request[key]
+        }
+        if (Object.keys(awayPatch).length > 0) await getAwaySettings(controller.stateManager).mutate(awayPatch)
 
         if (request.clineEnv !== undefined) {
             ClineEnv.setEnvironment(request.clineEnv)

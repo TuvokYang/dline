@@ -39,6 +39,7 @@ export interface CanonicalDialogProjection {
     readonly failure?: { readonly stage: "prepare" | "reveal"; readonly message: string }
     /** The compaction that completed while this dialog waited for the user. */
     readonly outlivedCompactionId?: string
+    readonly deadline?: { readonly kind: "ask" | "external_command"; readonly deadlineAt: number }
 }
 
 export type CanonicalHaltProjection =
@@ -55,7 +56,7 @@ export type CanonicalHaltProjection =
       }
 
 export interface CanonicalTaskActionProjection {
-    readonly actionId: "cancel"
+    readonly actionId: "cancel" | "stop_away"
     readonly enabled: boolean
 }
 
@@ -86,6 +87,7 @@ export interface CanonicalTaskViewProjection {
     readonly flowPhase: FlowPhase
     readonly terminal: CanonicalTaskTerminal
     readonly activity: CanonicalTaskActivity
+    readonly away?: { readonly source: "command" | "ask_timeout" }
     readonly input: CanonicalTaskInputProjection
     readonly taskActions: readonly CanonicalTaskActionProjection[]
     readonly primary?: CanonicalDialogProjection

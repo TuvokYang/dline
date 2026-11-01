@@ -1,6 +1,6 @@
 import type { TaskViewAction, TaskViewState } from "@shared/ExtensionMessage"
 import { EmptyRequest } from "@shared/proto/dline/common"
-import { AskResponseRequest, MoveCommandToBackgroundRequest } from "@shared/proto/dline/task"
+import { AskResponseRequest, MoveCommandToBackgroundRequest, StopAwayModeRequest } from "@shared/proto/dline/task"
 import { TaskServiceClient } from "@/services/grpc-client"
 
 /**
@@ -10,6 +10,22 @@ import { TaskServiceClient } from "@/services/grpc-client"
  * cancel button alike, dispatches it here so they cannot drift apart.
  */
 export async function dispatchTaskAction(view: TaskViewState, action: TaskViewAction): Promise<void> {
+    if (action.type === "stop_away") {
+        const response = await TaskServiceClient.stopAwayMode(
+            StopAwayModeRequest.create({
+                taskId: view.taskId,
+                taskInstanceId: view.taskInstanceId ?? "",
+            }),
+        )
+        if (!response.accepted) {
+            throw new Error(
+                response.result === "task_read_only"
+                    ? "This task is open in another window and cannot be changed here."
+                    : "Away Mode could not be stopped for this task opening. Reopen the task and try again.",
+            )
+        }
+        return
+    }
     if (action.type === "retry") {
         await TaskServiceClient.askResponse(AskResponseRequest.create({ responseType: "retry" }))
         return
@@ -30,7 +46,11 @@ export async function dispatchTaskAction(view: TaskViewState, action: TaskViewAc
         }
         return
     }
-    await TaskServiceClient.cancelTask(EmptyRequest.create({}))
+    if (action.type === "cancel") {
+        await TaskServiceClient.cancelTask(EmptyRequest.create({}))
+        return
+    }
+    throw new Error(`Unsupported task action: ${action.type}`)
 }
 
 /** The task's cancel action, when the backend currently offers it. */

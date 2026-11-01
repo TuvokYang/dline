@@ -161,7 +161,20 @@ describe("executor loop integration", () => {
             return put(bytes)
         })
         let runtime!: TaskRuntime
-        const events = { submit: (event: Parameters<TaskRuntime["submit"]>[0]) => runtime.submit(event) }
+        const events = {
+            submit: async (event: Parameters<TaskRuntime["submit"]>[0]) => {
+                const result = await runtime.submit(event)
+                return result.kind === "accepted"
+                    ? {
+                          kind: "accepted" as const,
+                          durable: result.receipt.durable,
+                          ...(event.type === "compose.freeze_requested"
+                              ? { materialPlan: result.state.flow.compose!.materialPlan! }
+                              : {}),
+                      }
+                    : { kind: "rejected" as const }
+            },
+        }
         const adapter = new ProductionComposeAdapter({ payloads, journal, readState: () => runtime.getState() })
         const providerExecute = vi.fn(async () => undefined)
         runtime = new TaskRuntime({
@@ -203,11 +216,13 @@ describe("executor loop integration", () => {
         expect((await journal.project()).visibleMessages).toEqual([
             expect.objectContaining({ operationId: "tool.terminal_manifest:turn-1", source: "tool" }),
         ])
-        expect((await journal.read()).map((entry) => entry.operationId)).toEqual([
-            "tool.terminal_manifest:turn-1",
-            expect.stringMatching(/^intake\.retained:/),
-            expect.stringMatching(/^intake\.retained\.retract:/),
-        ])
+        // Every new material and prepared checkpoint is retracted as well as the
+        // legacy batch; none may reappear after opening this journal again.
+        const recorded = await journal.read()
+        const abandoned = recorded.filter((entry) => entry.kind === "message" && entry.source !== "tool")
+        const tombstones = recorded.filter((entry) => entry.kind === "tombstone")
+        expect(abandoned).toHaveLength(4)
+        expect(tombstones.map((entry) => entry.target)).toEqual(expect.arrayContaining(abandoned.map((entry) => entry.watermark)))
     })
 
     /** Settle the runtime until none of the watched executors is invoked again. */

@@ -1,6 +1,12 @@
+import { flatMeteredPricing, readPriceSet } from "@shared/providers/pricing-shape"
 import type { ModelInfo, ProviderModelsConfig } from "@shared/providers/types"
 import { describe, expect, it } from "vitest"
 import { reconcileProviderModels } from "../provider-model-reconciliation"
+
+/** The input rate, which is what the stored-versus-vendor cases compare. */
+function inputPriceOf(model: ModelInfo | undefined): number | undefined {
+    return readPriceSet(model?.pricing?.metered?.strategy?.flat?.prices).inputPrice
+}
 
 function config(models: Record<string, ModelInfo>): ProviderModelsConfig {
     return {
@@ -90,7 +96,7 @@ describe("reconcileProviderModels overlay-remote", () => {
                 id: "claude-fable-5-1",
                 name: "claude-fable-5-1",
                 capabilities: { maxTokens: 128_000, contextWindow: 1_000_000 },
-                pricing: { inputPrice: 10, outputPrice: 50, cacheReadsPrice: 0.25 },
+                pricing: flatMeteredPricing(10, 50, undefined, 0.25),
             },
         })
         const remote = config({
@@ -103,11 +109,7 @@ describe("reconcileProviderModels overlay-remote", () => {
 
         const merged = reconcileProviderModels(remote, stored, "overlay-remote")
 
-        expect(merged.models["claude-fable-5-1"].pricing).toEqual({
-            inputPrice: 10,
-            outputPrice: 50,
-            cacheReadsPrice: 0.25,
-        })
+        expect(merged.models["claude-fable-5-1"].pricing).toEqual(flatMeteredPricing(10, 50, undefined, 0.25))
         expect(merged.models["claude-fable-5-1"].capabilities?.supportsImages).toBe(true)
     })
 
@@ -138,7 +140,7 @@ describe("reconcileProviderModels overlay-remote", () => {
 
     it("adds vendor-only models and keeps models the vendor no longer lists", () => {
         const stored = config({
-            "retired-model": { id: "retired-model", name: "retired-model", pricing: { inputPrice: 3 } },
+            "retired-model": { id: "retired-model", name: "retired-model", pricing: flatMeteredPricing(3, 0) },
         })
         const remote = config({
             "new-model": { id: "new-model", name: "new-model" },
@@ -148,7 +150,7 @@ describe("reconcileProviderModels overlay-remote", () => {
 
         expect(Object.keys(merged.models).sort()).toEqual(["new-model", "retired-model"])
         expect(merged.models["new-model"].userDefined).toBe(false)
-        expect(merged.models["retired-model"].pricing?.inputPrice).toBe(3)
+        expect(inputPriceOf(merged.models["retired-model"])).toBe(3)
     })
 
     it("never overwrites a user-defined model", () => {
@@ -157,17 +159,17 @@ describe("reconcileProviderModels overlay-remote", () => {
                 id: "model-a",
                 name: "custom name",
                 userDefined: true,
-                pricing: { inputPrice: 1 },
+                pricing: flatMeteredPricing(1, 0),
             },
         })
         const remote = config({
-            "model-a": { id: "model-a", name: "vendor name", pricing: { inputPrice: 99 } },
+            "model-a": { id: "model-a", name: "vendor name", pricing: flatMeteredPricing(99, 0) },
         })
 
         const merged = reconcileProviderModels(remote, stored, "overlay-remote")
 
         expect(merged.models["model-a"].name).toBe("custom name")
-        expect(merged.models["model-a"].pricing?.inputPrice).toBe(1)
+        expect(inputPriceOf(merged.models["model-a"])).toBe(1)
         expect(merged.models["model-a"].userDefined).toBe(true)
     })
 })

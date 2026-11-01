@@ -3,6 +3,7 @@
 import type { GenerateContentConfig, GenerateContentResponseUsageMetadata } from "@google/genai"
 import { ApiError, FunctionCallingConfigMode, GoogleGenAI, FunctionDeclaration as GoogleTool } from "@google/genai"
 import { GeminiModelId, geminiDefaultModelId, geminiModels, ModelInfo } from "@shared/api"
+import { billableTokens, costOf, resolvePrices } from "@shared/billing"
 import { GEMINI_FLASH_MAX_OUTPUT_TOKENS, isGeminiFlashModel } from "@utils/model-utils"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { telemetryService } from "@/services/telemetry"
@@ -309,30 +310,23 @@ export class GeminiHandler extends ApiHandler {
         thoughtsTokenCount: number
         cacheReadTokens?: number
     }) {
-        if (!info.pricing?.inputPrice || !info.pricing?.outputPrice) {
+        const resolved = resolvePrices(info.pricing, { totalInputTokens: inputTokens })
+        if (resolved.kind === "not-billable") {
+            return undefined
+        }
+        // A published price of zero means "cost not reported" for this provider's
+        // UI, which is why it stays undefined instead of collapsing to 0.
+        if (!resolved.prices.inputPrice || !resolved.prices.outputPrice) {
             return undefined
         }
 
-        let inputPrice = info.pricing?.inputPrice
-        let outputPrice = info.pricing?.outputPrice
-        let cacheReadsPrice = info.pricing?.cacheReadsPrice ?? 0
-
-        if (info.pricing?.tiers) {
-            const tier = info.pricing?.tiers.find((tier) => inputTokens <= tier.contextWindow)
-            if (tier) {
-                inputPrice = tier.inputPrice ?? inputPrice
-                outputPrice = tier.outputPrice ?? outputPrice
-                cacheReadsPrice = tier.cacheReadsPrice ?? cacheReadsPrice
-            }
-        }
-
-        const uncachedInputTokens = inputTokens - (cacheReadTokens ?? 0)
-        const inputTokensCost = inputPrice * (uncachedInputTokens / 1_000_000)
-        const responseTokensCost = outputPrice * ((outputTokens + thoughtsTokenCount) / 1_000_000)
-        const cacheReadCost = (cacheReadTokens ?? 0) > 0 ? cacheReadsPrice * ((cacheReadTokens ?? 0) / 1_000_000) : 0
-        const totalCost = inputTokensCost + responseTokensCost + cacheReadCost
-
-        return totalCost
+        const tokens = billableTokens("openai", {
+            inputTokens,
+            outputTokens,
+            cacheReadTokens,
+            thinkingTokens: thoughtsTokenCount,
+        })
+        return costOf(resolved.prices, tokens)
     }
 
     getModel(): { id: GeminiModelId; info: ModelInfo } {

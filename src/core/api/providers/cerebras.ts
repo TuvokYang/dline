@@ -3,6 +3,7 @@ import { createOpenAIClient } from "@shared/net"
 import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import OpenAI from "openai"
 import { ClineStorageMessage } from "@/shared/messages/content"
+import { calculateApiCostOpenAI } from "@/utils/cost"
 import { ApiHandler, ApiHandlerContext } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { ApiStream } from "../transform/stream"
@@ -258,13 +259,7 @@ export class CerebrasHandler extends ApiHandler {
     }
 
     private calculateCost({ inputTokens, outputTokens }: { inputTokens: number; outputTokens: number }): number {
-        const model = this.getModel()
-        const inputPrice = model.info.pricing?.inputPrice || 0
-        const outputPrice = model.info.pricing?.outputPrice || 0
-
-        const inputCost = (inputPrice / 1_000_000) * inputTokens
-        const outputCost = (outputPrice / 1_000_000) * outputTokens
-
-        return inputCost + outputCost
+        // Cerebras reports cache usage inclusively, which is the OpenAI convention.
+        return calculateApiCostOpenAI(this.getModel().info, inputTokens, outputTokens)
     }
 }

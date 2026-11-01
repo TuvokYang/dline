@@ -36,6 +36,9 @@ const LOCK_ACQUIRE_ATTEMPTS = 50
 const BODY_SUFFIX = ".bin"
 const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f-]{27,55}$/i
 const BUCKET_ID_PATTERN = /^[A-Za-z0-9:_-]{1,128}$/u
+/** `Dline/<version>` as the service parses it; a value it would not accept is not a frozen identity. */
+const USER_AGENT_PATTERN = /^Dline\/[0-9A-Za-z.+-]{1,32}$/u
+const CONTRACT_PATTERN = /^[0-9]{1,3}$/u
 
 interface AttemptOutboxDocument extends SenderTurns {
     readonly state: UsageAttemptOutboxState
@@ -61,6 +64,11 @@ export interface UsageAttemptLossEvidence {
     readonly bucketIds: readonly string[]
     readonly violations: readonly string[]
     readonly recordedAt: number
+    /**
+     * Contract path the service refused, when it named one. It is a bounded body
+     * location such as `buckets[0].facts[0].token_coverage`, never payload content.
+     */
+    readonly refusedPath?: string
 }
 
 export type UsageOutboxCommit<T> = { readonly status: "committed"; readonly result: T } | { readonly status: "fenced" }
@@ -116,8 +124,28 @@ export class UsageOutboxRepository {
         await fs.mkdir(this.layout.usageDir, { recursive: true })
         return this.lock.withLock(this.layout.usageOutboxPath, async () => {
             const latest = await this.readAttemptParsed()
-            if (latest.status === "valid") return "active"
+            // A document from a newer policy epoch cannot be folded under this one:
+            // `foldUsageAttemptShards` refuses a state whose generation is ahead of the
+            // current epoch, so keeping it would fail every cycle forever without ever
+            // sending. The policy epoch can move backwards when the policy document is
+            // rebuilt (reinstall, profile repair, downgrade), so the outbox is rebuilt
+            // for the current epoch instead of pinning delivery off.
+            if (latest.status === "valid" && latest.document.state.policyGeneration <= policyGeneration) {
+                return "active"
+            }
             if (latest.status === "unsupported") return "unsupported"
+            if (latest.status === "valid") {
+                const ahead = latest.document.state.policyGeneration
+                await recordDiscard(
+                    this.layout.remoteQuarantineDir,
+                    {
+                        document: "usage-outbox",
+                        reason: "retired_document",
+                        counts: { policy_generation: ahead, current_policy_generation: policyGeneration },
+                    },
+                    this.clock(),
+                )
+            }
             if (latest.status === "malformed") {
                 if (await quarantineDocument(this.layout.usageOutboxPath, this.layout.remoteQuarantineDir, this.clock())) {
                     this.onQuarantine?.(path.basename(this.layout.usageOutboxPath))
@@ -245,8 +273,14 @@ export class UsageOutboxRepository {
         ) {
             throw new Error("Usage attempt loss violation is invalid")
         }
+        const refusedPath = evidence.refusedPath === undefined ? undefined : boundRefusedPath(evidence.refusedPath)
         const identity = new TextEncoder().encode(
-            JSON.stringify({ kind: evidence.kind, bucket_ids: evidence.bucketIds, violations: evidence.violations }),
+            JSON.stringify({
+                kind: evidence.kind,
+                bucket_ids: evidence.bucketIds,
+                violations: evidence.violations,
+                ...(refusedPath ? { refused_path: refusedPath } : {}),
+            }),
         )
         const fileName = `usage-attempt-loss-${sha256Hex(identity).slice(0, 32)}.json`
         await fs.mkdir(this.layout.remoteQuarantineDir, { recursive: true })
@@ -258,6 +292,7 @@ export class UsageOutboxRepository {
                 stage: evidence.kind,
                 bucket_ids: [...evidence.bucketIds],
                 violations: [...evidence.violations],
+                ...(refusedPath ? { refused_path: refusedPath } : {}),
                 recorded_at: evidence.recordedAt,
             },
             { fsync: true },
@@ -334,6 +369,13 @@ export class UsageOutboxRepository {
     }
 }
 
+/** A refused body path is a data location, never free text: anything else is dropped. */
+const REFUSED_PATH_PATTERN = /^[A-Za-z0-9_$.[\]]{1,200}$/u
+
+function boundRefusedPath(value: string): string | undefined {
+    return REFUSED_PATH_PATTERN.test(value) ? value : undefined
+}
+
 function holds(lease: SenderLease | undefined, grant: UsageSenderGrant): lease is SenderLease {
     return lease !== undefined && lease.ownerId === grant.ownerId && lease.generation === grant.generation
 }
@@ -388,6 +430,9 @@ function serializeAttemptDocument(document: AttemptOutboxDocument): Record<strin
                           created_at: state.inflight.createdAt,
                           attempts: state.inflight.attempts,
                           not_before: state.inflight.notBefore,
+                          // Frozen with the manifest so a replay keeps its fingerprint across a build.
+                          ...(state.inflight.userAgent ? { user_agent: state.inflight.userAgent } : {}),
+                          ...(state.inflight.contract ? { contract: state.inflight.contract } : {}),
                       },
                   }
                 : {}),
@@ -490,12 +535,18 @@ function parseAttemptInflight(value: unknown): UsageAttemptInflight | undefined 
         created_at: createdAt,
         attempts,
         not_before: notBefore,
+        user_agent: userAgent,
+        contract,
     } = value
     if (typeof requestId !== "string" || !REQUEST_ID_PATTERN.test(requestId)) return undefined
     if (typeof bodySha256 !== "string" || !/^[0-9a-f]{64}$/u.test(bodySha256)) return undefined
     if (!Array.isArray(bucketIds) || bucketIds.length === 0 || !bucketIds.every(isString)) return undefined
     if (!isCount(createdAt) || !isCount(attempts) || !isCount(notBefore)) return undefined
-    return { requestId, bodySha256, bucketIds, createdAt, attempts, notBefore }
+    // A manifest written before the identity was frozen carries neither field: it is read back
+    // without them so its version is recovered from the body instead of being refused.
+    const frozenUserAgent = typeof userAgent === "string" && USER_AGENT_PATTERN.test(userAgent) ? { userAgent } : {}
+    const frozenContract = typeof contract === "string" && CONTRACT_PATTERN.test(contract) ? { contract } : {}
+    return { requestId, bodySha256, bucketIds, createdAt, attempts, notBefore, ...frozenUserAgent, ...frozenContract }
 }
 
 function parseAttemptBucket(value: unknown): AttemptBucket | undefined {

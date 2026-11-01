@@ -4,6 +4,7 @@
  */
 import { type ModelInfo } from "@shared/api"
 import { ThinkingConfig } from "@shared/proto/dline/models/metadata"
+import { flatPricing } from "./pricing"
 
 export const huaweiCloudMaasModels: Record<string, ModelInfo> = {
     "DeepSeek-V3": {
@@ -15,12 +16,7 @@ export const huaweiCloudMaasModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.27,
-            outputPrice: 1.1,
-            cacheWritesPrice: 0,
-            cacheReadsPrice: 0,
-        },
+        pricing: flatPricing(0.27, 1.1, 0, 0),
     },
     "DeepSeek-R1": {
         id: "DeepSeek-R1",
@@ -32,13 +28,7 @@ export const huaweiCloudMaasModels: Record<string, ModelInfo> = {
             supportsPromptCache: false,
             thinking: ThinkingConfig.create({ supported: true, mode: "budget", maxBudget: 8192 }),
         },
-        pricing: {
-            inputPrice: 0.55,
-            outputPrice: 2.2,
-            cacheWritesPrice: 0,
-            cacheReadsPrice: 0,
-            thinkingOutputPrice: 2.2,
-        },
+        pricing: flatPricing(0.55, 2.2, 0, 0, "USD", 2.2),
     },
     "deepseek-r1-250528": {
         id: "deepseek-r1-250528",
@@ -50,13 +40,7 @@ export const huaweiCloudMaasModels: Record<string, ModelInfo> = {
             supportsPromptCache: false,
             thinking: ThinkingConfig.create({ supported: true, mode: "budget", maxBudget: 8192 }),
         },
-        pricing: {
-            inputPrice: 0.55,
-            outputPrice: 2.2,
-            cacheWritesPrice: 0,
-            cacheReadsPrice: 0,
-            thinkingOutputPrice: 2.2,
-        },
+        pricing: flatPricing(0.55, 2.2, 0, 0, "USD", 2.2),
     },
     "qwen3-235b-a22b": {
         id: "qwen3-235b-a22b",
@@ -68,13 +52,7 @@ export const huaweiCloudMaasModels: Record<string, ModelInfo> = {
             supportsPromptCache: false,
             thinking: ThinkingConfig.create({ supported: true, mode: "budget", maxBudget: 4096 }),
         },
-        pricing: {
-            inputPrice: 0.27,
-            outputPrice: 1.1,
-            cacheWritesPrice: 0,
-            cacheReadsPrice: 0,
-            thinkingOutputPrice: 1.1,
-        },
+        pricing: flatPricing(0.27, 1.1, 0, 0, "USD", 1.1),
     },
     "qwen3-32b": {
         id: "qwen3-32b",
@@ -86,13 +64,7 @@ export const huaweiCloudMaasModels: Record<string, ModelInfo> = {
             supportsPromptCache: false,
             thinking: ThinkingConfig.create({ supported: true, mode: "budget", maxBudget: 4096 }),
         },
-        pricing: {
-            inputPrice: 0.27,
-            outputPrice: 1.1,
-            cacheWritesPrice: 0,
-            cacheReadsPrice: 0,
-            thinkingOutputPrice: 1.1,
-        },
+        pricing: flatPricing(0.27, 1.1, 0, 0, "USD", 1.1),
     },
 }
 

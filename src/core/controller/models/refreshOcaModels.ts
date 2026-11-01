@@ -1,6 +1,7 @@
 import { StringRequest } from "@shared/proto/dline/common"
 import { OcaCompatibleModelInfo, OcaModelInfo as ProtoOcaModelInfo } from "@shared/proto/dline/models"
-import { ApiFormat } from "@shared/proto/dline/models/metadata"
+import { ApiFormat, type ModelPricing } from "@shared/proto/dline/models/metadata"
+import { readPriceSet } from "@shared/providers/pricing-shape"
 import { persistProviderCatalog } from "@/core/model-registry/provider-catalog-storage"
 import { ocaModelSource } from "@/core/model-registry/remote/vendors/oca"
 import { HostProvider } from "@/hosts/host-provider"
@@ -10,6 +11,27 @@ import { createOcaHeaders } from "@/services/auth/oca/utils/utils"
 import { ShowMessageType } from "@/shared/proto/dline/host"
 import { Logger } from "@/shared/services/Logger"
 import { Controller } from ".."
+
+/**
+ * Project published pricing onto the proto fields the OCA settings card reads.
+ *
+ * The proto message still carries per-rate scalars, so the metered price set is
+ * read once here instead of at every field.
+ */
+function readPricingFields(pricing: ModelPricing | undefined): {
+    inputPrice: number
+    outputPrice: number
+    cacheWritesPrice: number
+    cacheReadsPrice: number
+} {
+    const prices = readPriceSet(pricing?.metered?.strategy?.flat?.prices)
+    return {
+        inputPrice: prices.inputPrice,
+        outputPrice: prices.outputPrice,
+        cacheWritesPrice: prices.cacheWritePrice,
+        cacheReadsPrice: prices.cacheReadPrice,
+    }
+}
 
 /**
  * Refreshes the Oca models and returns the updated model list
@@ -62,10 +84,7 @@ export async function refreshOcaModels(controller: Controller, request: StringRe
                 contextWindow: catalogModel.capabilities?.contextWindow,
                 supportsImages: catalogModel.capabilities?.supportsImages ?? false,
                 supportsPromptCache: catalogModel.capabilities?.supportsPromptCache ?? false,
-                inputPrice: catalogModel.pricing?.inputPrice ?? 0,
-                outputPrice: catalogModel.pricing?.outputPrice ?? 0,
-                cacheWritesPrice: catalogModel.pricing?.cacheWritesPrice ?? 0,
-                cacheReadsPrice: catalogModel.pricing?.cacheReadsPrice ?? 0,
+                ...readPricingFields(catalogModel.pricing),
                 description: catalogModel.description,
                 thinkingConfig: catalogModel.capabilities?.thinking,
                 temperature: catalogModel.temperature ?? 0,

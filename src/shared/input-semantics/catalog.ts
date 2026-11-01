@@ -37,8 +37,11 @@ export type InputSemanticComposition =
 export type InputSemanticLifecycle =
     /** Applies to the turn it was submitted with. */
     | "turn"
-    /** Changes durable task state and therefore establishes a lifecycle barrier. */
+    /** Changes durable task state; the independent input policy controls barriers. */
     | "task"
+
+/** Consume a control token without taking ownership of the submission's remaining content. */
+export type InputSemanticInputPolicy = "consume_token_keep_content"
 
 export interface InputSemanticDescriptor {
     /** Stable identity. Never derived from a label or from user-facing text. */
@@ -51,6 +54,8 @@ export interface InputSemanticDescriptor {
     readonly payload: InputSemanticPayload
     readonly composition: InputSemanticComposition
     readonly lifecycle: InputSemanticLifecycle
+    /** Absent preserves the legacy task-command barrier. */
+    readonly inputPolicy?: InputSemanticInputPolicy
     /**
      * Present when the node authorizes one tool for the turn it is submitted
      * with. Admission uses this to register explicit authorization instead of
@@ -134,6 +139,15 @@ export const BUILTIN_INPUT_SEMANTICS: readonly InputSemanticDescriptor[] = [
         payload: "none",
         composition: "exclusive",
         lifecycle: "turn",
+    },
+    {
+        id: "command.away",
+        kind: "command",
+        trigger: "/away",
+        payload: "none",
+        composition: "combinable",
+        lifecycle: "task",
+        inputPolicy: "consume_token_keep_content",
     },
     {
         id: "mention.file",
@@ -353,9 +367,16 @@ export function validateComposition(
     return violations
 }
 
+/** One rule shared by the lexer, menu atoms and backend admission checks. */
+export function commandCompositionOf(descriptor: InputSemanticDescriptor | undefined): "lifecycle_barrier" | "composable" {
+    return descriptor?.lifecycle === "task" && descriptor.inputPolicy !== "consume_token_keep_content"
+        ? "lifecycle_barrier"
+        : "composable"
+}
+
 /** True when the node set establishes a task lifecycle barrier for the submission. */
 export function establishesLifecycleBarrier(catalog: InputSemanticCatalog, nodeIds: readonly string[]): boolean {
-    return nodeIds.some((nodeId) => findDescriptor(catalog, nodeId)?.lifecycle === "task")
+    return nodeIds.some((nodeId) => commandCompositionOf(findDescriptor(catalog, nodeId)) === "lifecycle_barrier")
 }
 
 /** Tools that the node set explicitly authorizes for its turn. */

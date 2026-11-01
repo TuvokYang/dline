@@ -1,6 +1,7 @@
 import { PROVIDER_API_KEY_MAP, readApiProfiles } from "@core/controller/file/getApiProfiles"
 import { type AutoApprovalSettings, DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
 import type { ApiConfiguration } from "@shared/api"
+import { type AwayPreferencePatch, isAwayPreference } from "@shared/away"
 import type { HistoryItem } from "@shared/HistoryItem"
 import {
     type GlobalState,
@@ -32,6 +33,13 @@ import { AgentConfigLoader } from "../task/tools/subagent/AgentConfigLoader"
 import { readTaskSettingsFromStorage, writeTaskSettingsToStorage } from "./disk"
 import { STATE_MANAGER_NOT_INITIALIZED } from "./error-messages"
 import { cleanupLegacyGlobalState } from "./globalstatecleanup"
+import {
+    attributeSlowestStore,
+    classifyDirtyScope,
+    type FlushStoreCosts,
+    type PersistenceStore,
+    type StoreCostSample,
+} from "./persistence-attribution"
 import { filterAllowedRemoteConfigFields } from "./remote-config/utils"
 import { cleanupRemovedSettings, findRemovedSettingsKeys } from "./removed-settings-keys"
 import {
@@ -155,6 +163,14 @@ export class StateManager {
     private pendingWorkspaceState = new Set<LocalStateKey>()
     private persistenceTimeout: NodeJS.Timeout | null = null
     private persistenceQueue: Promise<void> = Promise.resolve()
+    /**
+     * Wall-clock cost of each store written by the most recent mutation batch.
+     * The batch number lets a reader reject samples that were measured in a
+     * different batch instead of combining costs never measured together.
+     */
+    private lastBatchStoreCosts: Partial<Record<PersistenceStore, StoreCostSample>> = {}
+    /** Bumped per persistence batch so samples from different batches never mix. */
+    private persistenceBatchSequence = 0
     private shuttingDown = false
     private shutdownPromise?: Promise<void>
     private readonly PERSISTENCE_DELAY_MS = 2000
@@ -592,6 +608,7 @@ export class StateManager {
             throw new Error(STATE_MANAGER_NOT_INITIALIZED)
         }
         this.ensureMutationAllowed()
+        if (isAwayPreference(key as string)) throw new Error("Away preferences require an awaited canonical transaction")
 
         if (isSettingsKey(key as string)) {
             ;(this.settingsCache as Record<string, unknown>)[key as string] = value
@@ -618,6 +635,8 @@ export class StateManager {
         }
         this.ensureMutationAllowed()
 
+        if (Object.keys(updates).some(isAwayPreference))
+            throw new Error("Away preferences require an awaited canonical transaction")
         const updateRecord = updates as Record<string, unknown>
         const settingsRecord = this.settingsCache as Record<string, unknown>
         const globalRecord = this.globalStateCache as Record<string, unknown>
@@ -1086,6 +1105,7 @@ export class StateManager {
         if (!this.isInitialized) {
             throw new Error(STATE_MANAGER_NOT_INITIALIZED)
         }
+        if (isAwayPreference(key)) return (this.readAwaySettingsSnapshot().values[key] ?? false) as Settings[K]
         if (this.remoteConfigCache[key] !== undefined) {
             return this.remoteConfigCache[key] as Settings[K]
         }
@@ -1102,6 +1122,7 @@ export class StateManager {
         if (!this.isInitialized) {
             throw new Error(STATE_MANAGER_NOT_INITIALIZED)
         }
+        if (isAwayPreference(key)) return this.getCanonicalSettingsKey(key)
         if (this.remoteConfigCache[key] !== undefined) {
             return this.remoteConfigCache[key] as Settings[K]
         }
@@ -1126,6 +1147,39 @@ export class StateManager {
             return this.settingsCache[key]
         }
         return this.resolveSettingsFallback(key)
+    }
+
+    /** Canonical committed values only: no task, remote-config, session, or optimistic overlays. */
+    readAwaySettingsSnapshot(): SettingsSnapshot {
+        const repository = this.settingsRepository
+        if (!repository) throw new Error("Settings repository is not initialized")
+        return repository.readSnapshot()
+    }
+
+    subscribeAwaySettings(listener: (snapshot: SettingsSnapshot) => void, unavailable: () => void): () => void {
+        const repository = this.settingsRepository
+        if (!repository) throw new Error("Settings repository is not initialized")
+        const unsubscribe = repository.subscribe((commit) => listener(commit.snapshot))
+        const unsubscribeUnavailable = repository.subscribeUnavailable(unavailable)
+        return () => {
+            unsubscribe()
+            unsubscribeUnavailable()
+        }
+    }
+
+    async mutateAwayPreferences(patch: AwayPreferencePatch): Promise<SettingsSnapshot> {
+        this.ensureMutationAllowed()
+        if (Object.keys(patch).some((key) => !isAwayPreference(key))) throw new Error("Invalid Away preference key")
+        const repository = this.settingsRepository
+        if (!repository) throw new Error("Settings repository is not initialized")
+        return (await repository.mutate(patch)).snapshot
+    }
+
+    async revokeAwayMode(): Promise<SettingsSnapshot> {
+        this.ensureMutationAllowed()
+        const repository = this.settingsRepository
+        if (!repository) throw new Error("Settings repository is not initialized")
+        return (await repository.revokeAwayMode()).snapshot
     }
 
     /** Atomically mutate one global Setting against the latest cross-process committed snapshot. */
@@ -1434,7 +1488,7 @@ export class StateManager {
         }
     }
 
-    private persistPendingState(): Promise<void> {
+    private persistPendingState(flushCosts?: FlushStoreCosts): Promise<void> {
         const operation = this.persistenceQueue.then(async () => {
             if (
                 this.pendingGlobalState.size === 0 &&
@@ -1459,13 +1513,14 @@ export class StateManager {
             this.pendingWorkspaceState = new Set()
             this.pendingTaskState = new Map()
 
+            const batch = ++this.persistenceBatchSequence
             try {
                 await Promise.all([
-                    this.persistGlobalStateBatch(pendingGlobalState),
-                    this.persistSettingsBatch(pendingSettings),
-                    this.persistSecretsBatch(pendingSecrets),
-                    this.persistWorkspaceStateBatch(pendingWorkspaceState),
-                    this.persistTaskStateBatch(pendingTaskState),
+                    this.timeStoreWrite(batch, "global", this.persistGlobalStateBatch(pendingGlobalState), flushCosts),
+                    this.timeStoreWrite(batch, "settings", this.persistSettingsBatch(pendingSettings), flushCosts),
+                    this.timeStoreWrite(batch, "secrets", this.persistSecretsBatch(pendingSecrets), flushCosts),
+                    this.timeStoreWrite(batch, "workspace", this.persistWorkspaceStateBatch(pendingWorkspaceState), flushCosts),
+                    this.timeStoreWrite(batch, "task", this.persistTaskStateBatch(pendingTaskState), flushCosts),
                 ])
             } catch (error) {
                 // A partially successful batch is safe to retry because each store writes
@@ -1514,18 +1569,26 @@ export class StateManager {
         // Mutations are normally allowed while a regular flush is in progress. Keep
         // draining until the queue and all dirty collections are empty; shutdown sets
         // shuttingDown first so no new mutation can be admitted during this loop.
+        //
+        // The accumulator is local to this call rather than shared state: two
+        // controllers can flush concurrently, and a shared field would let one
+        // call's batches be attributed to the other.
+        const flushCosts: FlushStoreCosts = {}
         do {
             drainPasses++
-            await this.persistPendingState()
+            await this.persistPendingState(flushCosts)
             await this.settingsRepository?.flush()
         } while (this.hasPendingState())
-        recordPerfPhase(PerfDomain.Settings, "state_flush", performance.now() - startedAt, {
+        const durationMs = performance.now() - startedAt
+        recordPerfPhase(PerfDomain.Settings, "state_flush", durationMs, {
             passes: drainPasses,
             initialGlobal: initialPending.global,
             initialSettings: initialPending.settings,
             initialSecrets: initialPending.secrets,
             initialWorkspace: initialPending.workspace,
             initialTasks: initialPending.tasks,
+            dirtyScope: classifyDirtyScope(initialPending),
+            slowestStore: attributeSlowestStore(durationMs, flushCosts),
         })
         if (Logger.isDebugEnabled()) {
             Logger.debug(
@@ -1565,6 +1628,31 @@ export class StateManager {
             }
         }, this.PERSISTENCE_DELAY_MS)
         this.persistenceTimeout = timeout
+    }
+
+    /**
+     * Time one store write.
+     *
+     * The sample is always kept per batch so a reader can reject costs measured in
+     * different batches. When the caller is draining a flush, the cost is also
+     * added to that flush's accumulator: a flush can drain several batches, and
+     * only the sum of the batches it actually wrote can say which store made it
+     * slow.
+     */
+    private async timeStoreWrite(
+        batch: number,
+        store: PersistenceStore,
+        write: Promise<void>,
+        flushCosts?: FlushStoreCosts,
+    ): Promise<void> {
+        const startedAt = performance.now()
+        try {
+            await write
+        } finally {
+            const durationMs = performance.now() - startedAt
+            this.lastBatchStoreCosts[store] = { batch, durationMs }
+            if (flushCosts) flushCosts[store] = (flushCosts[store] ?? 0) + durationMs
+        }
     }
 
     /**
@@ -1674,6 +1762,7 @@ export class StateManager {
 
     /** Resolve a setting for one explicit task without consulting activeTaskId. */
     private getSettingWithOverrideForTask<K extends keyof Settings>(key: K, taskId?: string): Settings[K] {
+        if (isAwayPreference(key)) return this.getCanonicalSettingsKey(key)
         const remoteValue = this.remoteConfigCache[key]
         if (remoteValue !== undefined) {
             return remoteValue

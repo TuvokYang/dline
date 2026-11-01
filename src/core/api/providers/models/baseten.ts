@@ -3,6 +3,7 @@
  * Extracted from api.ts basetenModels (lines 4529-4671).
  */
 import type { ModelInfo } from "@shared/api"
+import { flatPricing } from "./pricing"
 
 export const basetenModels: Record<string, ModelInfo> = {
     "moonshotai/Kimi-K2-Thinking": {
@@ -17,12 +18,7 @@ export const basetenModels: Record<string, ModelInfo> = {
             supportsPromptCache: false,
             supportsReasoning: true,
         },
-        pricing: {
-            inputPrice: 0.6,
-            outputPrice: 2.5,
-            cacheWritesPrice: 0,
-            cacheReadsPrice: 0,
-        },
+        pricing: flatPricing(0.6, 2.5, 0, 0),
     },
     "zai-org/GLM-4.6": {
         id: "zai-org/GLM-4.6",
@@ -35,12 +31,7 @@ export const basetenModels: Record<string, ModelInfo> = {
             supportsPromptCache: false,
             supportsReasoning: true,
         },
-        pricing: {
-            inputPrice: 0.6,
-            outputPrice: 2.2,
-            cacheWritesPrice: 0,
-            cacheReadsPrice: 0,
-        },
+        pricing: flatPricing(0.6, 2.2, 0, 0),
     },
     "deepseek-ai/DeepSeek-R1": {
         id: "deepseek-ai/DeepSeek-R1",
@@ -53,12 +44,7 @@ export const basetenModels: Record<string, ModelInfo> = {
             supportsPromptCache: false,
             supportsReasoning: true,
         },
-        pricing: {
-            inputPrice: 2.55,
-            outputPrice: 5.95,
-            cacheWritesPrice: 0,
-            cacheReadsPrice: 0,
-        },
+        pricing: flatPricing(2.55, 5.95, 0, 0),
     },
     "deepseek-ai/DeepSeek-R1-0528": {
         id: "deepseek-ai/DeepSeek-R1-0528",
@@ -71,12 +57,7 @@ export const basetenModels: Record<string, ModelInfo> = {
             supportsPromptCache: false,
             supportsReasoning: true,
         },
-        pricing: {
-            inputPrice: 2.55,
-            outputPrice: 5.95,
-            cacheWritesPrice: 0,
-            cacheReadsPrice: 0,
-        },
+        pricing: flatPricing(2.55, 5.95, 0, 0),
     },
     "deepseek-ai/DeepSeek-V3-0324": {
         id: "deepseek-ai/DeepSeek-V3-0324",
@@ -89,12 +70,7 @@ export const basetenModels: Record<string, ModelInfo> = {
             supportsPromptCache: false,
             supportsReasoning: true,
         },
-        pricing: {
-            inputPrice: 0.77,
-            outputPrice: 0.77,
-            cacheWritesPrice: 0,
-            cacheReadsPrice: 0,
-        },
+        pricing: flatPricing(0.77, 0.77, 0, 0),
     },
     "deepseek-ai/DeepSeek-V3.1": {
         id: "deepseek-ai/DeepSeek-V3.1",
@@ -107,12 +83,7 @@ export const basetenModels: Record<string, ModelInfo> = {
             supportsPromptCache: false,
             supportsReasoning: true,
         },
-        pricing: {
-            inputPrice: 0.5,
-            outputPrice: 1.5,
-            cacheWritesPrice: 0,
-            cacheReadsPrice: 0,
-        },
+        pricing: flatPricing(0.5, 1.5, 0, 0),
     },
     "deepseek-ai/DeepSeek-V3.2": {
         id: "deepseek-ai/DeepSeek-V3.2",
@@ -126,12 +97,7 @@ export const basetenModels: Record<string, ModelInfo> = {
             supportsPromptCache: false,
             supportsReasoning: true,
         },
-        pricing: {
-            inputPrice: 0.3,
-            outputPrice: 0.45,
-            cacheWritesPrice: 0,
-            cacheReadsPrice: 0,
-        },
+        pricing: flatPricing(0.3, 0.45, 0, 0),
     },
     "Qwen/Qwen3-235B-A22B-Instruct-2507": {
         id: "Qwen/Qwen3-235B-A22B-Instruct-2507",
@@ -144,12 +110,7 @@ export const basetenModels: Record<string, ModelInfo> = {
             supportsPromptCache: false,
             supportsReasoning: false,
         },
-        pricing: {
-            inputPrice: 0.22,
-            outputPrice: 0.8,
-            cacheWritesPrice: 0,
-            cacheReadsPrice: 0,
-        },
+        pricing: flatPricing(0.22, 0.8, 0, 0),
     },
     "Qwen/Qwen3-Coder-480B-A35B-Instruct": {
         id: "Qwen/Qwen3-Coder-480B-A35B-Instruct",
@@ -162,12 +123,7 @@ export const basetenModels: Record<string, ModelInfo> = {
             supportsPromptCache: false,
             supportsReasoning: false,
         },
-        pricing: {
-            inputPrice: 0.38,
-            outputPrice: 1.53,
-            cacheWritesPrice: 0,
-            cacheReadsPrice: 0,
-        },
+        pricing: flatPricing(0.38, 1.53, 0, 0),
     },
     "openai/gpt-oss-120b": {
         id: "openai/gpt-oss-120b",
@@ -181,12 +137,7 @@ export const basetenModels: Record<string, ModelInfo> = {
             supportsPromptCache: false,
             supportsReasoning: true,
         },
-        pricing: {
-            inputPrice: 0.1,
-            outputPrice: 0.5,
-            cacheWritesPrice: 0,
-            cacheReadsPrice: 0,
-        },
+        pricing: flatPricing(0.1, 0.5, 0, 0),
     },
     "moonshotai/Kimi-K2-Instruct-0905": {
         id: "moonshotai/Kimi-K2-Instruct-0905",
@@ -200,12 +151,7 @@ export const basetenModels: Record<string, ModelInfo> = {
             supportsPromptCache: false,
             supportsReasoning: false,
         },
-        pricing: {
-            inputPrice: 0.6,
-            outputPrice: 2.5,
-            cacheWritesPrice: 0,
-            cacheReadsPrice: 0,
-        },
+        pricing: flatPricing(0.6, 2.5, 0, 0),
     },
 }
 

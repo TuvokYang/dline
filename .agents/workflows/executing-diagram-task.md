@@ -1,6 +1,6 @@
 ---
 name: executing-diagram-task
-description: Execute one approved Workstream task by turning its verified diagram into a node-and-edge execution ledger, implementing in graph topological order, proving every node and edge exists on both sides, and returning to the diagram when code reveals a structural fact.
+description: Execute an approved Workstream task in diagram order, verify real node and edge wiring, and report parser limits with independent manual evidence.
 ---
 
 # Executing a Diagram Task
@@ -21,7 +21,7 @@ Load this workflow from step 7 of `diagram-driven-task`, never as a substitute f
 All four must hold. If any fails, return to `diagram-driven-task` instead of implementing.
 
 1. The Workstream is explicitly opted in with exact `Architecture-Mode: diagram-driven-v1`, and the task diagram exists in `plan.md` with `%% id:`, `%% layer:`, `%% kind:` and `%% refines:`.
-2. `--scope task:<TASK-ID>` was run as a diagnostic and its exit code is recorded. Exit `0` may start implementation but is not completion evidence. Exit `1` proceeds only when every blocking or unverifiable finding is Workstream-attributed and already routed to the Workstream; exit `2` stops because the tool is unsound.
+2. `--scope task:<TASK-ID>` was run as a diagnostic and its exit code is recorded. Exit `0` is not completion evidence. Triage nonzero results using step 5 of `diagram-driven-task`: confirmed product/design contradictions stay at their owner; reproducible obvious verifier bugs may receive bounded local fixes; parser/analysis limitations require explicit records and independent manual checks. Proceed only when the applicable architecture claims are established or explicitly deferred by the approved task contract. Never treat a nonzero result as either automatic product failure or automatic permission to proceed.
 3. Any required Workstream diagram change is confirmed.
 4. `progress.md` has no unresolved `blockers`. A non-empty `waiting_for` fences only the regions it names; the ledger rows that touch those regions wait, the rest proceed.
 
@@ -161,14 +161,16 @@ Report three separate lists. Do not merge them:
 2. **implemented but deferred** — the exact edge or node, the downstream owner, and why it cannot be closed now;
 3. **not verified** — what is unproven and what would prove it.
 
-Then run `node .agents/skills/verify-architecture-diagrams/scripts/verify-diagrams.mjs --workstream .memory-bank/workstreams/<WS>` and report verdict, coverage, self-test status, warning count and exit code unchanged. Completion requires full delivery coverage. Direct imports and observable composition can be machine-proven; injected-port/event/callback/RPC semantics remain unverifiable unless a stronger project-specific proof source establishes runtime delivery.
+Apply the parser/error triage and manual-verification procedure in step 5 of `diagram-driven-task`; do not create a second policy here. Prefer existing parser facts. For unsupported source or DI/event/callback/RPC relationships, inspect the real production emit/receive/assembly and ordering and use applicable focused tests; retain exact diagnostics and separate manual evidence. Do not turn this implementation task into general parser or proof-engine development. Authorized fixes for obvious, reproduced verifier defects remain allowed, with focused regressions.
+
+After relevant changes, run `node .agents/skills/verify-architecture-diagrams/scripts/verify-diagrams.mjs --workstream .memory-bank/workstreams/<WS>` and report verdict, coverage, self-test status, warning count and exit code unchanged. Full delivery coverage means every required node/edge/behavior claim has valid machine or manual evidence under that procedure. A manually verified parser limitation need not block the product task, but is not a machine `conformant` result; an unresolved relationship or failed required behavior still blocks. In the final report explicitly distinguish product results, verifier defects repaired, remaining parser/analysis errors, manual checks and residual uncertainty. Do not claim unexecuted tests passed or conceal a nonzero machine result.
 
 ## Stop conditions
 
 - The ledger needs a node with no artifact, or two writers for one fact.
 - An edge needs a crossing the diagram does not draw.
 - A half edge cannot be closed by the end of the batch.
-- Verification exits `2`.
+- A parser/tool failure still leaves a required claim unverified after the bounded manual checks in `diagram-driven-task`.
 - The diagram must change but the change is unconfirmed.
 - Every remaining ledger row touches a region named in `waiting_for`; the task waits for the active writer's completion fact and then re-reads, as the memory collision protocol defines.
 

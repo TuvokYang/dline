@@ -509,6 +509,59 @@ describe("SystemPromptCacheService", () => {
         expect(buildCount).toBe(1)
     })
 
+    it("keys the frozen prompt on the request protocol even when Web tools are off", async () => {
+        // The routing plan echoes the request format, but it is absent once Web
+        // tools are switched off. Keying the cache on the plan alone let a task
+        // keep an Anthropic-schema prompt after switching to the OpenAI wire.
+        const webToolsOff = { ...LOCAL_WEB_SEARCH_ROUTING_PLAN, route: "disabled" as const }
+        const cached: TaskContextCache = {
+            ...emptyContext("task-1"),
+            systemPrompt: {
+                frozen: {
+                    text: "anthropic schema prompt",
+                    tools: null,
+                    capabilitiesHash: EMPTY_CAPABILITIES_HASH,
+                    createdAt: 1,
+                    refreshedAt: 1,
+                    refreshReason: "task_start",
+                    promptBuilder: {
+                        ...testPromptBuilderInfo,
+                        apiFormat: ApiFormat.ANTHROPIC_CHAT,
+                        serverTools: [],
+                        webToolsEnabled: false,
+                        webSearchRoute: "disabled",
+                    },
+                },
+            },
+        }
+        let buildCount = 0
+        const service = new SystemPromptCacheService({
+            taskId: "task-1",
+            deps: {
+                getContext: async () => cached,
+                saveContext: async () => undefined,
+                collectCapabilities: async () => EMPTY_CAPABILITIES,
+                buildSystemPrompt: async () => {
+                    buildCount += 1
+                    return { systemPrompt: "openai schema prompt" }
+                },
+            },
+        })
+
+        const result = await service.getOrCreate({
+            promptContext: {
+                ...promptContext,
+                clineWebToolsEnabled: false,
+                webSearchRoutingPlan: webToolsOff,
+                selectedApiFormat: ApiFormat.OPENAI_CHAT,
+            },
+        })
+
+        expect(buildCount).toBe(1)
+        expect(result.text).toBe("openai schema prompt")
+        expect(result.promptBuilder.apiFormat).toBe(ApiFormat.OPENAI_CHAT)
+    })
+
     it.each([
         [
             "global Web Tools setting",

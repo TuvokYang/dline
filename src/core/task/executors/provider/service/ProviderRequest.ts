@@ -12,7 +12,7 @@ import type { ProviderDraftEnvelope } from "../../../stores/payload/TaskPayloadE
 import type { HostedImageGenerationContext } from "../../../tools/HostedImageGenerationLifecycle"
 
 /** The kernel block plan fields a tool executor decides before the block is admitted. */
-export type PlannedProviderTool = Pick<ProviderTurnBlockPlan, "attempt" | "lanes" | "turnEnding" | "approval">
+export type PlannedProviderTool = Pick<ProviderTurnBlockPlan, "attempt" | "lanes" | "turnEnding" | "approval" | "disposition">
 
 /**
  * Everything a provider request carries before its conversation.
@@ -34,6 +34,8 @@ export interface ProviderRequestFrame {
     readonly tools?: Parameters<ApiHandler["createMessage"]>[2]
     readonly options?: Parameters<ApiHandler["createMessage"]>[3]
     readonly nativeTools: boolean
+    /** Whether this exact frozen prompt offers the subagent tool. */
+    readonly delegationAvailable?: boolean
     /** Frozen routes and provider identity used to admit and present hosted calls from this request. */
     readonly serverToolContext: ProviderServerToolRequestContext
     readonly mode: "serial" | "parallel"

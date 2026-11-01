@@ -49,6 +49,10 @@ const admittingPlainText: TaskInputAdmissionPort = {
     }),
 }
 
+function createAssembly(): TaskExecutorAssembly {
+    return { runtime: { beginClose: vi.fn() } } as unknown as TaskExecutorAssembly
+}
+
 function createInputs(payloads: TaskPayloadStore): TaskInputMaterializer {
     return new TaskInputMaterializer(payloads, { nextEntryId: () => "entry-1", nextSequence: () => 0 }, admittingPlainText)
 }
@@ -63,7 +67,7 @@ describe("ActiveTaskSession", () => {
             task,
             checkpointRestore: {} as never,
             readState: () => state,
-            assembly: {} as TaskExecutorAssembly,
+            assembly: createAssembly(),
             payloads,
             inputs,
             inputQueue: createInputQueue(),
@@ -88,7 +92,7 @@ describe("ActiveTaskSession", () => {
             task,
             checkpointRestore: {} as never,
             readState: () => createInitialTaskState("task-1"),
-            assembly: {} as TaskExecutorAssembly,
+            assembly: createAssembly(),
             payloads,
             inputs: createInputs(payloads),
             inputQueue: createInputQueue(),
@@ -115,7 +119,7 @@ describe("ActiveTaskSession", () => {
             task: { taskId: "task-1", terminate } as unknown as Task,
             checkpointRestore: {} as never,
             readState: () => createInitialTaskState("task-1"),
-            assembly: {} as TaskExecutorAssembly,
+            assembly: createAssembly(),
             payloads,
             inputs: createInputs(payloads),
             inputQueue: createInputQueue(),
@@ -158,7 +162,7 @@ describe("ActiveTaskSession", () => {
             task: { taskId: "task-1", terminate } as unknown as Task,
             checkpointRestore: {} as never,
             readState: () => createInitialTaskState("task-1"),
-            assembly: {} as TaskExecutorAssembly,
+            assembly: createAssembly(),
             payloads,
             inputs: createInputs(payloads),
             inputQueue: createInputQueue(),
@@ -186,7 +190,7 @@ describe("ActiveTaskSession", () => {
             checkpointRestore: {} as never,
             readState: () => createInitialTaskState("task-1"),
             isWritable: () => false,
-            assembly: {} as TaskExecutorAssembly,
+            assembly: createAssembly(),
             payloads,
             inputs: createInputs(payloads),
             inputQueue: createInputQueue(),
@@ -219,7 +223,7 @@ describe("ActiveTaskSession", () => {
             task: { taskId: "task-1", terminate } as unknown as Task,
             checkpointRestore: { stopAndFence },
             readState: () => state,
-            assembly: {} as TaskExecutorAssembly,
+            assembly: createAssembly(),
             payloads,
             inputs: createInputs(payloads),
             inputQueue: createInputQueue(),
@@ -249,7 +253,7 @@ describe("ActiveTaskSession", () => {
             task: { taskId: "task-1", terminate } as unknown as Task,
             checkpointRestore: {} as never,
             readState: () => createInitialTaskState("task-1"),
-            assembly: {} as TaskExecutorAssembly,
+            assembly: createAssembly(),
             payloads,
             inputs: createInputs(payloads),
             inputQueue: createInputQueue(),

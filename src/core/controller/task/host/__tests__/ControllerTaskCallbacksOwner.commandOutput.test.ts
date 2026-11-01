@@ -25,6 +25,7 @@ function messageStore(): { handler: MessageStateHandler; written: UiMessage[] } 
         },
         finalizeClineMessage: async (message: UiMessage) => {
             written.push(message)
+            return message
         },
     } as unknown as MessageStateHandler
     return { handler, written }
@@ -254,6 +255,48 @@ describe("ControllerTaskCallbacksOwner say", () => {
 
         expect(interactions.open).not.toHaveBeenCalled()
         expect(written).toContainEqual(expect.objectContaining({ ts: 99, type: "ask", ask: "qna_respond", partial: true }))
+    })
+
+    // A rejected call never ran, so its streamed preview must not stay partial:
+    // the chat draws a partial command as still working, and folding therefore
+    // never counts it as the failure the model was told about.
+    it("settles the streamed command preview as failed when a required parameter is missing", async () => {
+        const { handler, written } = messageStore()
+        written.push({ ts: 4242, type: "say", say: "command", text: "npm test", partial: true })
+        const delivered: Array<{ ts: number; partial: boolean; commandStatus?: string }> = []
+        const unsubscribe = registerPartialMessageCallback((message) => {
+            delivered.push({ ts: Number(message.ts), partial: message.partial, commandStatus: message.commandStatus })
+        })
+
+        try {
+            await owner(handler).callbacks.sayAndCreateMissingParamError(
+                "execute_command" as never,
+                "requires_approval",
+                undefined,
+                4242,
+            )
+        } finally {
+            unsubscribe()
+        }
+
+        expect(written).toContainEqual(
+            expect.objectContaining({ ts: 4242, say: "command", partial: false, commandStatus: "failed" }),
+        )
+        expect(delivered).toEqual([{ ts: 4242, partial: false, commandStatus: "failed" }])
+    })
+
+    it("leaves a row that already ended untouched when a required parameter is missing", async () => {
+        const { handler, written } = messageStore()
+        written.push({ ts: 4243, type: "say", say: "command", text: "npm test", partial: false, commandStatus: "completed" })
+
+        await owner(handler).callbacks.sayAndCreateMissingParamError(
+            "execute_command" as never,
+            "requires_approval",
+            undefined,
+            4243,
+        )
+
+        expect(written).toEqual([expect.objectContaining({ ts: 4243, commandStatus: "completed" })])
     })
 
     // A late row from a replaced opening must not land in the view that now shows another one.

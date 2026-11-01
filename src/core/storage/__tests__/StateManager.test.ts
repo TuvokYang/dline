@@ -432,6 +432,51 @@ describe("StateManager — Per-Task Settings Isolation", () => {
         })
     })
 
+    describe("Away canonical preferences", () => {
+        it("defaults off and ignores historical task and session overrides", async () => {
+            sm.setActiveTask("away-task")
+            getTaskStateCache(sm).set("away-task", { awayModeEnabled: true, autoAwayModeEnabled: true })
+            sm.setSessionOverride("awayModeEnabled", true)
+            expect(sm.getGlobalSettingsKey("awayModeEnabled")).toBe(false)
+            expect(sm.getCanonicalSettingsKey("awayModeEnabled")).toBe(false)
+            expect(sm.getGlobalSettingsKey("autoAwayModeEnabled")).toBe(false)
+            await sm.mutateAwayPreferences({ awayModeEnabled: true })
+            expect(sm.getGlobalSettingsKey("awayModeEnabled")).toBe(true)
+            expect(sm.getGlobalSettingsKey("autoAwayModeEnabled")).toBe(false)
+        })
+
+        it("cannot debounce away a close/open and publishes metadata-only revocation", async () => {
+            await sm.mutateAwayPreferences({ awayModeEnabled: true, autoAwayModeEnabled: true })
+            const observations: Array<{ mode: number; automatic: number }> = []
+            const unsubscribe = sm.subscribeAwaySettings(
+                (s) => observations.push(s.awayRevocations),
+                () => {},
+            )
+            await Promise.all([
+                sm.mutateAwayPreferences({ awayModeEnabled: false }),
+                sm.mutateAwayPreferences({ awayModeEnabled: true }),
+            ])
+            await sm.revokeAwayMode()
+            unsubscribe()
+            expect(observations).toEqual([
+                { mode: 1, automatic: 1 },
+                { mode: 1, automatic: 1 },
+                { mode: 2, automatic: 2 },
+            ])
+            expect(sm.getCanonicalSettingsKey("awayModeEnabled")).toBe(true)
+            await StateManager.resetForTest()
+            const reopened = await StateManager.initialize(createStorageContext({ clineDir: tempDir }))
+            expect(reopened.readAwaySettingsSnapshot().awayRevocations).toEqual({ mode: 2, automatic: 2 })
+        })
+
+        it("rejects the generic debounced setter before modifying any keys", () => {
+            expect(() => sm.setGlobalState("awayModeEnabled", true)).toThrow()
+            expect(() => sm.setGlobalStateBatch({ awayModeEnabled: true, preferredLanguage: "bad-update" })).toThrow()
+            expect(sm.getCanonicalSettingsKey("awayModeEnabled")).toBe(false)
+            expect(sm.getGlobalSettingsKey("preferredLanguage")).not.toBe("bad-update")
+        })
+    })
+
     describe("removed settings keys", () => {
         const settingsFile = () => path.join(tempDir, "data", "settings", "settings.json")
 

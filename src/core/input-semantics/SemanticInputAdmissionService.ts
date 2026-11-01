@@ -1,7 +1,9 @@
+import type { UserInputControl } from "@shared/away"
 import { type AdmittedInputPart, appendAdmittedPart, trimAdmittedParts } from "@shared/input-semantics/admitted-parts"
 import {
     authorizedTools,
     type CatalogConflict,
+    commandCompositionOf,
     commandTriggersOf,
     type InputSemanticCatalog,
     type InputSemanticDescriptor,
@@ -25,6 +27,7 @@ import { validateSemanticInputDocument } from "@shared/input-semantics/validatio
 import type { ExplicitInstructionDeclaration } from "@/core/task/explicit-instructions/types"
 
 export interface SemanticCommandExpansion {
+    readonly userControl?: UserInputControl
     /** Text that replaces the command in the provider projection. */
     readonly text: string
     /** One-shot tool authority the command grants for this turn. */
@@ -84,6 +87,7 @@ export interface AdmittedBarrier {
 }
 
 export interface AdmittedSemanticInput {
+    readonly userControl?: UserInputControl
     readonly documentId: string
     /** Ordered projection sent to the provider; node order is preserved exactly. */
     readonly text: string
@@ -190,6 +194,7 @@ export class SemanticInputAdmissionService {
                     : { barrier: { ...projection.barrier, toolsBefore: authorizedTools(catalog, composable) } }),
                 authorizedTools: authorizedTools(catalog, [...composable, ...(plan.barrier ? [plan.barrier.commandId] : [])]),
                 explicitInstructions: projection.explicitInstructions,
+                ...(projection.userControl === undefined ? {} : { userControl: projection.userControl }),
             },
         }
     }
@@ -293,6 +298,7 @@ export class SemanticInputAdmissionService {
         // Index of the barrier's own segment; every later segment follows the command.
         let barrierSegment: number | undefined
         let declarationsBefore = 0
+        let userControl: UserInputControl | undefined
 
         for (const node of document.nodes) {
             if (isSlashCommandNode(node)) {
@@ -318,6 +324,7 @@ export class SemanticInputAdmissionService {
                     barrierSegment = segments.length
                     declarationsBefore = declarations.length
                 }
+                if (expansion.userControl?.kind === "enter_away") userControl = expansion.userControl
                 segments.push(textSegment(expansion.text))
                 declarations.push(...(expansion.explicitInstructions ?? []))
                 continue
@@ -337,7 +344,7 @@ export class SemanticInputAdmissionService {
         if (unavailable.length > 0) return { ok: false, diagnostics: unavailable }
 
         const parts = partsOf(segments)
-        const projection = { text: textOf(segments), parts, explicitInstructions: declarations }
+        const projection = { text: textOf(segments), parts, explicitInstructions: declarations, userControl }
         if (!plan.barrier || barrierSegment === undefined) return { ok: true, value: projection }
         const after = segments.slice(barrierSegment + 1)
         const turn = [...segments.slice(0, barrierSegment), ...after.filter(isResourceSegment)]
@@ -360,6 +367,7 @@ export class SemanticInputAdmissionService {
 }
 
 interface Projection {
+    readonly userControl?: UserInputControl
     readonly text: string
     readonly parts: readonly AdmittedInputPart[]
     readonly explicitInstructions: readonly ExplicitInstructionDeclaration[]
@@ -462,7 +470,7 @@ function commandNodeMismatch(node: SlashCommandInputNode, descriptor: InputSeman
     if (!commandTriggersOf(descriptor).includes(node.sourceText)) {
         return `was typed as ${node.sourceText}, which is not one of its triggers`
     }
-    const expected = descriptor.lifecycle === "task" ? "lifecycle_barrier" : "composable"
+    const expected = commandCompositionOf(descriptor)
     if (node.compositionMode !== expected) return `declares ${node.compositionMode} composition, expected ${expected}`
     return undefined
 }

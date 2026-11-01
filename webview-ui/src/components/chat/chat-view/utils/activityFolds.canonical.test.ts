@@ -60,19 +60,27 @@ for (const level of ["message_segment", "user_turn"] as const) {
             })
         })
 
-        it("leaves running and failed commands outside every fold", () => {
+        it("leaves a running command outside every fold", () => {
             const messages = transcript.map((message) =>
-                message.ts === 6
-                    ? { ...message, commandStatus: "running" as const }
-                    : message.ts === 10
-                      ? { ...message, commandStatus: "failed" as const, exitCode: 1 }
-                      : message,
+                message.ts === 6 ? { ...message, commandStatus: "running" as const } : message,
             )
             const rows = groupChatRows(messages, undefined, { level })
-            expect(rows.filter((row) => !Array.isArray(row)).map((row) => row.ts)).toEqual(expect.arrayContaining([6, 10]))
+            expect(rows.filter((row) => !Array.isArray(row)).map((row) => row.ts)).toEqual(expect.arrayContaining([6]))
             const foldedTimestamps = rows.filter(isActivityFold).flatMap((fold) => fold.map((message) => message.ts))
             expect(foldedTimestamps).not.toContain(6)
-            expect(foldedTimestamps).not.toContain(10)
+        })
+
+        it("folds a failed command and reports it as a command error", () => {
+            const messages = transcript.map((message) =>
+                message.ts === 10 ? { ...message, commandStatus: "failed" as const, exitCode: 1 } : message,
+            )
+            const rows = groupChatRows(messages, undefined, { level })
+            // The failed command is finished work inside the turn, so it no longer
+            // cuts the block; the block's header states the failure instead.
+            expect(rows.filter((row) => !Array.isArray(row)).map((row) => row.ts)).not.toContain(10)
+            const block = rows.filter(isActivityFold).find((fold) => fold.some((message) => message.ts === 10))
+            if (!block) throw new Error("expected the failed command inside a block")
+            expect(block._failures?.get("command")).toBe(1)
         })
     })
 }

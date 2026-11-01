@@ -1,3 +1,4 @@
+import type { AwayRevocations } from "@shared/away"
 import type { Settings, SettingsKey } from "@shared/storage/state-keys"
 
 export const SETTINGS_REPOSITORY_SCHEMA_VERSION = 1 as const
@@ -26,6 +27,7 @@ export interface SettingsSnapshot {
     readonly revision: number
     readonly values: Readonly<Settings>
     readonly contentHash: string
+    readonly awayRevocations: AwayRevocations
 }
 
 export interface SettingsCommit {

@@ -97,6 +97,7 @@ export class VscodeWebviewProvider extends WebviewProvider implements vscode.Web
             return
         }
         controller.setAccountUsagePollingEnabled(webviewView.visible)
+        controller.setSurfaceVisible(webviewView.visible)
 
         // Register before assigning HTML because cached/HMR webviews can post
         // webviewReady and initial gRPC subscriptions during navigation.
@@ -122,6 +123,7 @@ export class VscodeWebviewProvider extends WebviewProvider implements vscode.Web
                 liveness.visibilityChanged(webviewView.visible)
                 const controller = await this.controllerReady
                 controller.setAccountUsagePollingEnabled(this.webview?.visible ?? false)
+                controller.setSurfaceVisible(this.webview?.visible ?? false)
                 if (this.webview?.visible) {
                     // View becoming visible should not steal editor focus.
                     await sendShowWebviewEvent(controller, true)
@@ -137,7 +139,10 @@ export class VscodeWebviewProvider extends WebviewProvider implements vscode.Web
         webviewView.onDidDispose(
             () => {
                 if (this.webview !== webviewView || this.viewGeneration !== generation) return
-                void this.controllerReady.then((controller) => controller.setAccountUsagePollingEnabled(false))
+                void this.controllerReady.then((controller) => {
+                    controller.setAccountUsagePollingEnabled(false)
+                    controller.setSurfaceVisible(false)
+                })
                 this.webview = undefined
                 this.disposeViewBindings()
             },

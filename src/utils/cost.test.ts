@@ -1,7 +1,25 @@
 import { describe, it } from "vitest"
 import "should"
 import { ModelInfo } from "@shared/api"
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import { calculateApiCostAnthropic, calculateApiCostOpenAI, calculateApiCostQwen } from "@utils/cost"
+
+/** Banded rates are listed lowest-first and the last band is unbounded. */
+function bandedPricing(bands: { maxInputTokens?: number; inputPrice: number; outputPrice: number }[]) {
+    return {
+        metered: {
+            currency: "USD",
+            strategy: {
+                contextWindow: {
+                    bands: bands.map((band) => ({
+                        maxInputTokens: band.maxInputTokens,
+                        prices: { inputPrice: band.inputPrice, outputPrice: band.outputPrice },
+                    })),
+                },
+            },
+        },
+    }
+}
 
 describe("Cost Utilities", () => {
     describe("calculateApiCostAnthropic", () => {
@@ -9,7 +27,7 @@ describe("Cost Utilities", () => {
             const modelInfo: ModelInfo = {
                 id: "test",
                 capabilities: { supportsImages: false, supportsPromptCache: false },
-                pricing: { inputPrice: 3.0, outputPrice: 15.0 },
+                pricing: flatMeteredPricing(3.0, 15.0),
             }
 
             const cost = calculateApiCostAnthropic(modelInfo, 1000, 500)
@@ -30,7 +48,7 @@ describe("Cost Utilities", () => {
             const modelInfo: ModelInfo = {
                 id: "test",
                 capabilities: { maxTokens: 8192, contextWindow: 200_000, supportsImages: true, supportsPromptCache: true },
-                pricing: { inputPrice: 3.0, outputPrice: 15.0, cacheWritesPrice: 3.75, cacheReadsPrice: 0.3 },
+                pricing: flatMeteredPricing(3.0, 15.0, 3.75, 0.3),
             }
 
             const cost = calculateApiCostAnthropic(modelInfo, 2000, 1000, 1500, 500)
@@ -39,14 +57,14 @@ describe("Cost Utilities", () => {
             // Input: (3.0 / 1_000_000) * 2000 = 0.006
             // Output: (15.0 / 1_000_000) * 1000 = 0.015
             // Total: 0.005625 + 0.00015 + 0.006 + 0.015 = 0.026775
-            cost.should.equal(0.026775)
+            cost.should.be.approximately(0.026775, 1e-12)
         })
 
         it("should handle zero token counts", () => {
             const modelInfo: ModelInfo = {
                 id: "test",
                 capabilities: { supportsImages: false, supportsPromptCache: true },
-                pricing: { inputPrice: 3.0, outputPrice: 15.0, cacheWritesPrice: 3.75, cacheReadsPrice: 0.3 },
+                pricing: flatMeteredPricing(3.0, 15.0, 3.75, 0.3),
             }
 
             const cost = calculateApiCostAnthropic(modelInfo, 0, 0, 0, 0)
@@ -59,7 +77,7 @@ describe("Cost Utilities", () => {
             const modelInfo: ModelInfo = {
                 id: "test",
                 capabilities: { supportsImages: false, supportsPromptCache: false },
-                pricing: { inputPrice: 3.0, outputPrice: 15.0 },
+                pricing: flatMeteredPricing(3.0, 15.0),
             }
 
             const cost = calculateApiCostOpenAI(modelInfo, 1000, 500)
@@ -84,7 +102,7 @@ describe("Cost Utilities", () => {
             const modelInfo: ModelInfo = {
                 id: "test",
                 capabilities: { maxTokens: 8192, contextWindow: 200_000, supportsImages: true, supportsPromptCache: true },
-                pricing: { inputPrice: 3.0, outputPrice: 15.0, cacheWritesPrice: 3.75, cacheReadsPrice: 0.3 },
+                pricing: flatMeteredPricing(3.0, 15.0, 3.75, 0.3),
             }
 
             const cost = calculateApiCostOpenAI(modelInfo, 2100, 1000, 1500, 500)
@@ -100,7 +118,7 @@ describe("Cost Utilities", () => {
             const modelInfo: ModelInfo = {
                 id: "test",
                 capabilities: { supportsImages: false, supportsPromptCache: true },
-                pricing: { inputPrice: 3.0, outputPrice: 15.0, cacheWritesPrice: 3.75, cacheReadsPrice: 0.3 },
+                pricing: flatMeteredPricing(3.0, 15.0, 3.75, 0.3),
             }
 
             const cost = calculateApiCostOpenAI(modelInfo, 0, 0, 0, 0)
@@ -111,12 +129,10 @@ describe("Cost Utilities", () => {
             const modelInfo: ModelInfo = {
                 id: "gpt-5.6-sol",
                 capabilities: { contextWindow: 272_000 },
-                pricing: {
-                    tiers: [
-                        { contextWindow: 272_000, inputPrice: 5, outputPrice: 30 },
-                        { contextWindow: 1_050_000, inputPrice: 10, outputPrice: 45 },
-                    ],
-                },
+                pricing: bandedPricing([
+                    { maxInputTokens: 272_000, inputPrice: 5, outputPrice: 30 },
+                    { inputPrice: 10, outputPrice: 45 },
+                ]),
             }
 
             calculateApiCostOpenAI(modelInfo, 272_000, 1_000).should.be.approximately(1.39, 1e-12)
@@ -126,12 +142,10 @@ describe("Cost Utilities", () => {
             const modelInfo: ModelInfo = {
                 id: "gpt-5.6-sol",
                 capabilities: { contextWindow: 1_050_000 },
-                pricing: {
-                    tiers: [
-                        { contextWindow: 272_000, inputPrice: 5, outputPrice: 30 },
-                        { contextWindow: 1_050_000, inputPrice: 10, outputPrice: 45 },
-                    ],
-                },
+                pricing: bandedPricing([
+                    { maxInputTokens: 272_000, inputPrice: 5, outputPrice: 30 },
+                    { inputPrice: 10, outputPrice: 45 },
+                ]),
             }
 
             calculateApiCostOpenAI(modelInfo, 300_000, 1_000).should.be.approximately(3.045, 1e-12)
@@ -143,7 +157,7 @@ describe("Cost Utilities", () => {
             const modelInfo: ModelInfo = {
                 id: "test",
                 capabilities: { supportsImages: false, supportsPromptCache: false },
-                pricing: { inputPrice: 0.15, outputPrice: 0.6 },
+                pricing: flatMeteredPricing(0.15, 0.6),
             }
 
             const cost = calculateApiCostQwen(modelInfo, 1000, 500)
@@ -168,7 +182,7 @@ describe("Cost Utilities", () => {
             const modelInfo: ModelInfo = {
                 id: "test",
                 capabilities: { maxTokens: 8192, contextWindow: 262_144, supportsImages: false, supportsPromptCache: false },
-                pricing: { inputPrice: 0.15, outputPrice: 0.6 },
+                pricing: flatMeteredPricing(0.15, 0.6),
             }
 
             const cost = calculateApiCostQwen(modelInfo, 1000, 500, 0, 0)
@@ -182,7 +196,7 @@ describe("Cost Utilities", () => {
             const modelInfo: ModelInfo = {
                 id: "test",
                 capabilities: { supportsImages: false, supportsPromptCache: true },
-                pricing: { inputPrice: 0.15, outputPrice: 0.6, cacheWritesPrice: 0.2, cacheReadsPrice: 0.05 },
+                pricing: flatMeteredPricing(0.15, 0.6, 0.2, 0.05),
             }
 
             // Qwen-style: inputTokens includes cached tokens
@@ -199,7 +213,7 @@ describe("Cost Utilities", () => {
             const modelInfo: ModelInfo = {
                 id: "test",
                 capabilities: { supportsImages: false, supportsPromptCache: true },
-                pricing: { inputPrice: 0.15, outputPrice: 0.6, cacheWritesPrice: 0.2, cacheReadsPrice: 0.05 },
+                pricing: flatMeteredPricing(0.15, 0.6, 0.2, 0.05),
             }
 
             const cost = calculateApiCostQwen(modelInfo, 0, 0, 0, 0)

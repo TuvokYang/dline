@@ -4,6 +4,7 @@
  */
 import { type ModelInfo } from "@shared/api"
 import { ThinkingConfig } from "@shared/proto/dline/models/metadata"
+import { flatPricing } from "./pricing"
 
 export const mainlandQwenModels: Record<string, ModelInfo> = {
     "qwen3-235b-a22b": {
@@ -16,13 +17,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsPromptCache: false,
             thinking: ThinkingConfig.create({ maxBudget: 38_912, supported: true, mode: "budget" }),
         },
-        pricing: {
-            inputPrice: 2,
-            outputPrice: 8,
-            cacheWritesPrice: 2,
-            cacheReadsPrice: 8,
-            thinkingOutputPrice: 20,
-        },
+        pricing: flatPricing(2, 8, 2, 8, "USD", 20),
     },
     "qwen3-32b": {
         id: "qwen3-32b",
@@ -34,13 +29,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsPromptCache: false,
             thinking: ThinkingConfig.create({ maxBudget: 38_912, supported: true, mode: "budget" }),
         },
-        pricing: {
-            inputPrice: 2,
-            outputPrice: 8,
-            cacheWritesPrice: 2,
-            cacheReadsPrice: 8,
-            thinkingOutputPrice: 20,
-        },
+        pricing: flatPricing(2, 8, 2, 8, "USD", 20),
     },
     "qwen3-30b-a3b": {
         id: "qwen3-30b-a3b",
@@ -52,13 +41,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsPromptCache: false,
             thinking: ThinkingConfig.create({ maxBudget: 38_912, supported: true, mode: "budget" }),
         },
-        pricing: {
-            inputPrice: 0.75,
-            outputPrice: 3,
-            cacheWritesPrice: 0.75,
-            cacheReadsPrice: 3,
-            thinkingOutputPrice: 7.5,
-        },
+        pricing: flatPricing(0.75, 3, 0.75, 3, "USD", 7.5),
     },
     "qwen3-14b": {
         id: "qwen3-14b",
@@ -70,13 +53,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsPromptCache: false,
             thinking: ThinkingConfig.create({ maxBudget: 38_912, supported: true, mode: "budget" }),
         },
-        pricing: {
-            inputPrice: 1,
-            outputPrice: 4,
-            cacheWritesPrice: 1,
-            cacheReadsPrice: 4,
-            thinkingOutputPrice: 10,
-        },
+        pricing: flatPricing(1, 4, 1, 4, "USD", 10),
     },
     "qwen3-8b": {
         id: "qwen3-8b",
@@ -88,13 +65,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsPromptCache: false,
             thinking: ThinkingConfig.create({ maxBudget: 38_912, supported: true, mode: "budget" }),
         },
-        pricing: {
-            inputPrice: 0.5,
-            outputPrice: 2,
-            cacheWritesPrice: 0.5,
-            cacheReadsPrice: 2,
-            thinkingOutputPrice: 5,
-        },
+        pricing: flatPricing(0.5, 2, 0.5, 2, "USD", 5),
     },
     "qwen3-4b": {
         id: "qwen3-4b",
@@ -106,13 +77,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsPromptCache: false,
             thinking: ThinkingConfig.create({ maxBudget: 38_912, supported: true, mode: "budget" }),
         },
-        pricing: {
-            inputPrice: 0.3,
-            outputPrice: 1.2,
-            cacheWritesPrice: 0.3,
-            cacheReadsPrice: 1.2,
-            thinkingOutputPrice: 3,
-        },
+        pricing: flatPricing(0.3, 1.2, 0.3, 1.2, "USD", 3),
     },
     "qwen3-1.7b": {
         id: "qwen3-1.7b",
@@ -124,13 +89,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsPromptCache: false,
             thinking: { supported: true, mode: "budget", maxBudget: 30_720 },
         },
-        pricing: {
-            inputPrice: 0.3,
-            outputPrice: 1.2,
-            cacheWritesPrice: 0.3,
-            cacheReadsPrice: 1.2,
-            thinkingOutputPrice: 3,
-        },
+        pricing: flatPricing(0.3, 1.2, 0.3, 1.2, "USD", 3),
     },
     "qwen3-0.6b": {
         id: "qwen3-0.6b",
@@ -142,13 +101,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsPromptCache: false,
             thinking: { supported: true, mode: "budget", maxBudget: 30_720 },
         },
-        pricing: {
-            inputPrice: 0.3,
-            outputPrice: 1.2,
-            cacheWritesPrice: 0.3,
-            cacheReadsPrice: 1.2,
-            thinkingOutputPrice: 3,
-        },
+        pricing: flatPricing(0.3, 1.2, 0.3, 1.2, "USD", 3),
     },
     "qwen2.5-coder-32b-instruct": {
         id: "qwen2.5-coder-32b-instruct",
@@ -159,12 +112,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.002,
-            outputPrice: 0.006,
-            cacheWritesPrice: 0.002,
-            cacheReadsPrice: 0.006,
-        },
+        pricing: flatPricing(0.002, 0.006, 0.002, 0.006),
     },
     "qwen2.5-coder-14b-instruct": {
         id: "qwen2.5-coder-14b-instruct",
@@ -175,12 +123,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.002,
-            outputPrice: 0.006,
-            cacheWritesPrice: 0.002,
-            cacheReadsPrice: 0.006,
-        },
+        pricing: flatPricing(0.002, 0.006, 0.002, 0.006),
     },
     "qwen2.5-coder-7b-instruct": {
         id: "qwen2.5-coder-7b-instruct",
@@ -191,12 +134,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.001,
-            outputPrice: 0.002,
-            cacheWritesPrice: 0.001,
-            cacheReadsPrice: 0.002,
-        },
+        pricing: flatPricing(0.001, 0.002, 0.001, 0.002),
     },
     "qwen2.5-coder-3b-instruct": {
         id: "qwen2.5-coder-3b-instruct",
@@ -207,12 +145,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.0,
-            outputPrice: 0.0,
-            cacheWritesPrice: 0.0,
-            cacheReadsPrice: 0.0,
-        },
+        pricing: flatPricing(0.0, 0.0, 0.0, 0.0),
     },
     "qwen2.5-coder-1.5b-instruct": {
         id: "qwen2.5-coder-1.5b-instruct",
@@ -223,12 +156,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.0,
-            outputPrice: 0.0,
-            cacheWritesPrice: 0.0,
-            cacheReadsPrice: 0.0,
-        },
+        pricing: flatPricing(0.0, 0.0, 0.0, 0.0),
     },
     "qwen2.5-coder-0.5b-instruct": {
         id: "qwen2.5-coder-0.5b-instruct",
@@ -239,12 +167,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.0,
-            outputPrice: 0.0,
-            cacheWritesPrice: 0.0,
-            cacheReadsPrice: 0.0,
-        },
+        pricing: flatPricing(0.0, 0.0, 0.0, 0.0),
     },
     "qwen-coder-plus-latest": {
         id: "qwen-coder-plus-latest",
@@ -255,12 +178,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 3.5,
-            outputPrice: 7,
-            cacheWritesPrice: 3.5,
-            cacheReadsPrice: 7,
-        },
+        pricing: flatPricing(3.5, 7, 3.5, 7),
     },
     "qwen-plus-latest": {
         id: "qwen-plus-latest",
@@ -271,12 +189,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.8,
-            outputPrice: 2,
-            cacheWritesPrice: 0.8,
-            cacheReadsPrice: 2,
-        },
+        pricing: flatPricing(0.8, 2, 0.8, 2),
     },
     "qwen-turbo-latest": {
         id: "qwen-turbo-latest",
@@ -287,12 +200,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.3,
-            outputPrice: 0.6,
-            cacheWritesPrice: 0.3,
-            cacheReadsPrice: 0.6,
-        },
+        pricing: flatPricing(0.3, 0.6, 0.3, 0.6),
     },
     "qwen-max-latest": {
         id: "qwen-max-latest",
@@ -303,12 +211,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 2.4,
-            outputPrice: 9.6,
-            cacheWritesPrice: 2.4,
-            cacheReadsPrice: 9.6,
-        },
+        pricing: flatPricing(2.4, 9.6, 2.4, 9.6),
     },
     "qwq-plus-latest": {
         id: "qwq-plus-latest",
@@ -319,12 +222,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.0,
-            outputPrice: 0.0,
-            cacheWritesPrice: 0.0,
-            cacheReadsPrice: 0.0,
-        },
+        pricing: flatPricing(0.0, 0.0, 0.0, 0.0),
     },
     "qwq-plus": {
         id: "qwq-plus",
@@ -335,12 +233,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.0,
-            outputPrice: 0.0,
-            cacheWritesPrice: 0.0,
-            cacheReadsPrice: 0.0,
-        },
+        pricing: flatPricing(0.0, 0.0, 0.0, 0.0),
     },
     "qwen-coder-plus": {
         id: "qwen-coder-plus",
@@ -351,12 +244,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 3.5,
-            outputPrice: 7,
-            cacheWritesPrice: 3.5,
-            cacheReadsPrice: 7,
-        },
+        pricing: flatPricing(3.5, 7, 3.5, 7),
     },
     "qwen-plus": {
         id: "qwen-plus",
@@ -367,12 +255,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.8,
-            outputPrice: 2,
-            cacheWritesPrice: 0.8,
-            cacheReadsPrice: 0.2,
-        },
+        pricing: flatPricing(0.8, 2, 0.8, 0.2),
     },
     "qwen-turbo": {
         id: "qwen-turbo",
@@ -383,12 +266,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.3,
-            outputPrice: 0.6,
-            cacheWritesPrice: 0.3,
-            cacheReadsPrice: 0.6,
-        },
+        pricing: flatPricing(0.3, 0.6, 0.3, 0.6),
     },
     "qwen-max": {
         id: "qwen-max",
@@ -399,12 +277,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 2.4,
-            outputPrice: 9.6,
-            cacheWritesPrice: 2.4,
-            cacheReadsPrice: 9.6,
-        },
+        pricing: flatPricing(2.4, 9.6, 2.4, 9.6),
     },
     "deepseek-v3": {
         id: "deepseek-v3",
@@ -415,12 +288,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0.28,
-            cacheWritesPrice: 0.14,
-            cacheReadsPrice: 0.014,
-        },
+        pricing: flatPricing(0, 0.28, 0.14, 0.014),
     },
     "deepseek-r1": {
         id: "deepseek-r1",
@@ -431,12 +299,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 2.19,
-            cacheWritesPrice: 0.55,
-            cacheReadsPrice: 0.14,
-        },
+        pricing: flatPricing(0, 2.19, 0.55, 0.14),
     },
     "qwen-vl-max": {
         id: "qwen-vl-max",
@@ -447,12 +310,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 3,
-            outputPrice: 9,
-            cacheWritesPrice: 3,
-            cacheReadsPrice: 9,
-        },
+        pricing: flatPricing(3, 9, 3, 9),
     },
     "qwen-vl-max-latest": {
         id: "qwen-vl-max-latest",
@@ -463,12 +321,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 3,
-            outputPrice: 9,
-            cacheWritesPrice: 3,
-            cacheReadsPrice: 9,
-        },
+        pricing: flatPricing(3, 9, 3, 9),
     },
     "qwen-vl-plus": {
         id: "qwen-vl-plus",
@@ -479,12 +332,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 1.5,
-            outputPrice: 4.5,
-            cacheWritesPrice: 1.5,
-            cacheReadsPrice: 4.5,
-        },
+        pricing: flatPricing(1.5, 4.5, 1.5, 4.5),
     },
     "qwen-vl-plus-latest": {
         id: "qwen-vl-plus-latest",
@@ -495,12 +343,7 @@ export const mainlandQwenModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 1.5,
-            outputPrice: 4.5,
-            cacheWritesPrice: 1.5,
-            cacheReadsPrice: 4.5,
-        },
+        pricing: flatPricing(1.5, 4.5, 1.5, 4.5),
     },
 }
 

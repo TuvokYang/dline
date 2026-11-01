@@ -11,6 +11,7 @@
 
 import type { ModelCapabilities, ModelPricing } from "@shared/proto/dline/models/metadata"
 import { ApiFormat } from "@shared/proto/dline/models/metadata"
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import type { ModelInfo } from "@shared/providers/types"
 import { CHAT_COMPLETIONS_API, MESSAGES_API, RESPONSES_API } from "@/services/auth/oca/utils/constants"
 import { createOcaHeaders } from "@/services/auth/oca/utils/utils"
@@ -66,12 +67,12 @@ export class OcaModelSource extends ModelListingSource {
     }
 
     protected override readPricing(raw: unknown): ModelPricing {
-        return {
-            inputPrice: readPerMillionPrice(raw, "model_info.input_price") ?? 0,
-            outputPrice: readPerMillionPrice(raw, "model_info.output_price") ?? 0,
-            cacheWritesPrice: readPerMillionPrice(raw, "model_info.caching_price") ?? 0,
-            cacheReadsPrice: readPerMillionPrice(raw, "model_info.cached_price") ?? 0,
-        }
+        return flatMeteredPricing(
+            readPerMillionPrice(raw, "model_info.input_price") ?? 0,
+            readPerMillionPrice(raw, "model_info.output_price") ?? 0,
+            readPerMillionPrice(raw, "model_info.caching_price") ?? 0,
+            readPerMillionPrice(raw, "model_info.cached_price") ?? 0,
+        )
     }
 
     /** The accepted API is part of the model contract, so it travels with the catalog entry. */

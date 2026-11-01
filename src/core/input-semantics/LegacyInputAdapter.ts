@@ -1,6 +1,7 @@
 import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import { lexSemanticInput, semanticCandidateSpans } from "@shared/input-semantics/lexer"
+import { normalizeCommandTokens } from "@shared/input-semantics/normalize-command-tokens"
 
 /** A submission from a client that has no semantic composer. */
 export interface LegacyInput {
@@ -46,13 +47,16 @@ export class LegacyInputAdapter {
         const catalog = await this.catalogFor(text)
         return {
             catalog,
-            document: lexSemanticInput(text, {
+            document: normalizeCommandTokens(
+                lexSemanticInput(text, {
+                    catalog,
+                    documentId: this.nextDocumentId(),
+                    // A legacy client has no way to confirm a candidate, so its text keeps
+                    // the behaviour users already rely on: a typed command activates.
+                    activation: "auto",
+                }),
                 catalog,
-                documentId: this.nextDocumentId(),
-                // A legacy client has no way to confirm a candidate, so its text keeps
-                // the behaviour users already rely on: a typed command activates.
-                activation: "auto",
-            }),
+            ),
         }
     }
 

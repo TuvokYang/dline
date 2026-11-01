@@ -3,6 +3,7 @@
  * Extracted from api.ts fireworksModels (lines 4843-4947).
  */
 import type { ModelInfo } from "@shared/api"
+import { flatPricing } from "./pricing"
 
 export const fireworksModels: Record<string, ModelInfo> = {
     "accounts/fireworks/models/kimi-k2p5": {
@@ -16,12 +17,7 @@ export const fireworksModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0.6,
-            outputPrice: 3,
-            cacheWritesPrice: 0.6,
-            cacheReadsPrice: 0.1,
-        },
+        pricing: flatPricing(0.6, 3, 0.6, 0.1),
     },
     "accounts/fireworks/models/qwen3-vl-30b-a3b-thinking": {
         id: "accounts/fireworks/models/qwen3-vl-30b-a3b-thinking",
@@ -34,12 +30,7 @@ export const fireworksModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0.15,
-            outputPrice: 0.6,
-            cacheWritesPrice: 0.15,
-            cacheReadsPrice: 0.07,
-        },
+        pricing: flatPricing(0.15, 0.6, 0.15, 0.07),
     },
     "accounts/fireworks/models/qwen3-vl-30b-a3b-instruct": {
         id: "accounts/fireworks/models/qwen3-vl-30b-a3b-instruct",
@@ -51,10 +42,7 @@ export const fireworksModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.15,
-            outputPrice: 0.6,
-        },
+        pricing: flatPricing(0.15, 0.6),
     },
     "accounts/fireworks/models/deepseek-v3p2": {
         id: "accounts/fireworks/models/deepseek-v3p2",
@@ -66,12 +54,7 @@ export const fireworksModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0.56,
-            outputPrice: 1.68,
-            cacheWritesPrice: 0.56,
-            cacheReadsPrice: 0.28,
-        },
+        pricing: flatPricing(0.56, 1.68, 0.56, 0.28),
     },
     "accounts/fireworks/models/glm-4p7": {
         id: "accounts/fireworks/models/glm-4p7",
@@ -83,12 +66,7 @@ export const fireworksModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0.6,
-            outputPrice: 2.2,
-            cacheWritesPrice: 0.6,
-            cacheReadsPrice: 0.3,
-        },
+        pricing: flatPricing(0.6, 2.2, 0.6, 0.3),
     },
     "accounts/fireworks/models/glm-5": {
         id: "accounts/fireworks/models/glm-5",
@@ -100,12 +78,7 @@ export const fireworksModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 1.0,
-            outputPrice: 3.2,
-            cacheWritesPrice: 1.0,
-            cacheReadsPrice: 0.2,
-        },
+        pricing: flatPricing(1.0, 3.2, 1.0, 0.2),
     },
     "accounts/fireworks/models/minimax-m2p5": {
         id: "accounts/fireworks/models/minimax-m2p5",
@@ -117,12 +90,7 @@ export const fireworksModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0.3,
-            outputPrice: 1.2,
-            cacheWritesPrice: 0.3,
-            cacheReadsPrice: 0.03,
-        },
+        pricing: flatPricing(0.3, 1.2, 0.3, 0.03),
     },
     "accounts/fireworks/models/minimax-m2p1": {
         id: "accounts/fireworks/models/minimax-m2p1",
@@ -135,12 +103,7 @@ export const fireworksModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0.3,
-            outputPrice: 1.2,
-            cacheWritesPrice: 0.3,
-            cacheReadsPrice: 0.03,
-        },
+        pricing: flatPricing(0.3, 1.2, 0.3, 0.03),
     },
     "accounts/fireworks/models/gpt-oss-120b": {
         id: "accounts/fireworks/models/gpt-oss-120b",
@@ -152,12 +115,7 @@ export const fireworksModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0.15,
-            outputPrice: 0.6,
-            cacheWritesPrice: 0.15,
-            cacheReadsPrice: 0.01,
-        },
+        pricing: flatPricing(0.15, 0.6, 0.15, 0.01),
     },
 }
 

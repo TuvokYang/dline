@@ -7,6 +7,7 @@ export interface OpenInteractionRequest {
     turnId: string
     interactionId: string
     kind: InteractionKind
+    externalCommand?: true
     presentation: string
     existingTs?: number
     /**
@@ -42,6 +43,10 @@ export interface MistakeLimitInteractionRequest {
 }
 
 export interface InteractionOutcome {
+    /** Distinguishes an automatic deadline outcome from user-authored input. */
+    origin?: "user" | "timeout"
+    /** The accepted body follows the paired result as ordered round material. */
+    roundMaterialOwned?: true
     actionId: InteractionResponse["actionId"]
     draft?: InteractionDraft
     selection?: InteractionSelection

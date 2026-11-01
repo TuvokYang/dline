@@ -7,6 +7,7 @@ import { PROVIDER_API_KEY_MAP, readApiProfiles, readApiProfilesFresh } from "@co
 import { resolveProfileReference } from "@core/profiles/profile-binding"
 import type { ApiConfiguration } from "@shared/api"
 import type { ApiProfile } from "@shared/proto/dline/profile"
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import type { Mode } from "@shared/storage/types"
 import type { OpenAiCodexProfileAuthStatus } from "@/integrations/openai-codex/oauth"
 import { ProfileNotValidError } from "./profile-admission"
@@ -413,7 +414,7 @@ export function createUnavailableApiHandler(message: string): ApiHandler {
                 name: "Unavailable API profile",
                 description: message,
                 capabilities: { maxTokens: 0, contextWindow: 0 },
-                pricing: { inputPrice: 0, outputPrice: 0, cacheWritesPrice: 0, cacheReadsPrice: 0, currency: "USD" },
+                pricing: flatMeteredPricing(0, 0, 0, 0),
             },
         }),
         getProviderId: () => "unavailable",

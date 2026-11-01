@@ -1,0 +1,76 @@
+---
+title: xAI
+description: Get an xAI API key and configure the Grok models in Dline.
+---
+
+import { Aside, Steps } from "@astrojs/starlight/components"
+
+xAI serves the Grok model family through its own API platform. Dline appears under **Provider** as **xAI**.
+
+**Website:** [x.ai](https://x.ai/) | **API console:** [console.x.ai](https://console.x.ai/)
+
+## Get an API key
+
+<Steps>
+
+1. Go to [console.x.ai](https://console.x.ai/) and sign up or sign in.
+
+2. Add billing details or credits to the team that will pay for requests.
+
+3. Open the API keys page and create a new key.
+
+4. Copy the key immediately and store it securely.
+
+</Steps>
+
+## Configure Dline
+
+See [Model configuration](/getting-started/authorizing-with-dline/) for the general flow.
+
+<Steps>
+
+1. Click the **Settings** button in the Dline panel title bar.
+
+2. Set **Provider** to **xAI**.
+
+3. Paste the key into the **xAI API Key** field.
+
+4. Select a model under **Model**.
+
+</Steps>
+
+Dline sends requests to `https://api.x.ai/v1`.
+
+## Models
+
+| Model | Context window | Notes |
+| --- | --- | --- |
+| `grok-4` | 262,144 | Default model. Reasons before it answers, and its reasoning is not shown. |
+| `grok-4-1-fast-reasoning` | 2,000,000 | Reasons before it answers, and its reasoning is not shown. |
+| `grok-4-1-fast-non-reasoning` | 2,000,000 | Answers directly. |
+| `grok-4-fast-reasoning` | 2,000,000 | Reasons before it answers, and its reasoning is not shown. |
+| `grok-code-fast-1` | 256,000 | Coding-oriented. |
+
+The card also lists the older Grok 3 and Grok 2 families, plus `grok-beta` and `grok-vision-beta`. Pick one of those only when a task needs a model that the newer families no longer serve.
+
+## Reasoning
+
+The xAI card has no thinking control, because the reasoning level belongs to the model ID: a `reasoning` model always reasons, and a `non-reasoning` model never does. Choose the variant you need under **Model**.
+
+<Aside>
+Dline hides reasoning content from the Grok 4 family. Those models stream a thinking trace that restates the answer rather than explaining it, so showing it would only add noise to the chat.
+</Aside>
+
+## Prompt caching
+
+Models that declare `supportsPromptCache` accept a cached prefix. Dline reports the cached share of the input separately in the usage panel, so a repeated system prompt and workspace context are billed at the cached rate instead of the full input rate.
+
+## Troubleshooting
+
+| Problem | What to do |
+| --- | --- |
+| `401` on every request | The key is not valid for `https://api.x.ai/v1`. Create a new key in the console and paste it again. |
+| `403` naming the model or the team | The team is not entitled to that model, or has no credits. Check the model list and the billing state in the console. |
+| `404` on a model | The model ID does not exist for this account. Pick another model from the list instead of typing the ID. |
+| `429` | The account hit its rate limit. Wait, or reduce how much context a task sends. |
+| Reasoning never appears in the chat | Expected for the Grok 4 family. Their reasoning is hidden on purpose; the answer is unaffected. |

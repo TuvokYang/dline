@@ -15,6 +15,7 @@ import { Logger } from "@/shared/services/Logger"
 import { getCwd, getDesktopDir } from "@/utils/path"
 import { ApiConversation } from "../storage/ApiConversation"
 import { ensureTaskDirectoryExists } from "../storage/disk"
+import { bucketMessageCount } from "../storage/persistence-attribution"
 import { UIMessage } from "../storage/UIMessage"
 import type { ConversationHistoryReader } from "./conversation/ConversationHistoryReader"
 import { readHistoryContextWindowIndicator } from "./HistoryContextWindow"
@@ -366,6 +367,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
         const span = startPerfPhase(PerfDomain.TurnPrepare, "history_update", {
             taskId: this.taskId,
             recomputed: this.historyMetricsCache?.revision !== this.messageRevision,
+            messagesBucket: bucketMessageCount(this.clineMessages.length),
         })
         try {
             return this.projectHistory()

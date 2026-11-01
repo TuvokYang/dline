@@ -1,4 +1,5 @@
-import type { ContextWindowTier, PricingTier } from "@shared/proto/dline/models/metadata"
+import { type ContextWindowBand, type ContextWindowTier, PriceSet } from "@shared/proto/dline/models/metadata"
+import { readPriceSet } from "@shared/providers/pricing-shape"
 import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
 import { type ReactNode, useId } from "react"
 import { ProfileActionRow, ProfileField, ProfileInlineGrid, ProfileSectionTitle } from "../profile-ui"
@@ -153,11 +154,17 @@ export function ContextTierEditor({ tiers, editable, onChange }: ContextTierEdit
 }
 
 interface PricingTierEditorProps {
-    tiers: PricingTier[]
+    tiers: readonly ContextWindowBand[]
     editable: boolean
     currencySymbol: string
     showCachePrices: boolean
-    onChange: (tiers: PricingTier[]) => void
+    onChange: (bands: ContextWindowBand[]) => void
+}
+
+/** Read the four published rates of one band. */
+function bandRates(band: ContextWindowBand) {
+    const prices = readPriceSet(band.prices)
+    return prices
 }
 
 /**
@@ -172,14 +179,29 @@ interface PricingTierEditorProps {
 export function PricingTierEditor({ tiers, editable, currencySymbol, showCachePrices, onChange }: PricingTierEditorProps) {
     const baseId = useId()
 
-    /** Add a default editable pricing tier. */
+    /**
+     * Add a band above the current highest one.
+     *
+     * Bands are ordered by their upper bound and the last one is unbounded, so a
+     * new band is inserted before the unbounded band and becomes the new bound.
+     */
     const addTier = () => {
-        onChange([...tiers, { contextWindow: 128_000, inputPrice: 0, outputPrice: 0, cacheWritesPrice: 0, cacheReadsPrice: 0 }])
+        onChange([...tiers, { maxInputTokens: 128_000, prices: { inputPrice: 0, outputPrice: 0 } }])
     }
 
-    /** Update one pricing tier without mutating props. */
-    const updateTier = (index: number, updates: Partial<PricingTier>) => {
-        onChange(tiers.map((tier, tierIndex) => (tierIndex === index ? { ...tier, ...updates } : tier)))
+    /** Update one band's bound or rates without mutating props. */
+    const updateTier = (index: number, updates: Partial<ContextWindowBand>) => {
+        onChange(tiers.map((band, bandIndex) => (bandIndex === index ? { ...band, ...updates } : band)))
+    }
+
+    /** Replace one band's rates, leaving its bound alone. */
+    const updateRates = (
+        index: number,
+        slot: "inputPrice" | "outputPrice" | "cacheWritePrice" | "cacheReadPrice",
+        value: number,
+    ) => {
+        const band = tiers[index]
+        updateTier(index, { prices: PriceSet.create({ ...band.prices, [slot]: value }) })
     }
 
     /** Remove one pricing tier by index. */
@@ -194,41 +216,41 @@ export function PricingTierEditor({ tiers, editable, currencySymbol, showCachePr
                 title="Pricing Tiers"
             />
             {tiers.map((tier, index) => (
-                <div className={getTierClassName(index)} key={`${tier.contextWindow}-${index}`}>
+                <div className={getTierClassName(index)} key={`band-${index}`}>
                     {editable ? (
                         <>
                             <ProfileInlineGrid>
                                 <TierField
                                     id={`${baseId}-${index}-threshold`}
                                     label="Up To Input Tokens"
-                                    onChange={(value) => updateTier(index, { contextWindow: parseTierNumber(value) })}
-                                    value={String(tier.contextWindow)}
+                                    onChange={(value) => updateTier(index, { maxInputTokens: parseTierNumber(value) })}
+                                    value={tier.maxInputTokens === undefined ? "" : String(tier.maxInputTokens)}
                                 />
                                 <TierField
                                     id={`${baseId}-${index}-input`}
                                     label={`Tier Input Price (${currencySymbol}/1M)`}
-                                    onChange={(value) => updateTier(index, { inputPrice: parseTierNumber(value) })}
-                                    value={String(tier.inputPrice ?? 0)}
+                                    onChange={(value) => updateRates(index, "inputPrice", parseTierNumber(value))}
+                                    value={String(bandRates(tier).inputPrice)}
                                 />
                                 <TierField
                                     id={`${baseId}-${index}-output`}
                                     label={`Tier Output Price (${currencySymbol}/1M)`}
-                                    onChange={(value) => updateTier(index, { outputPrice: parseTierNumber(value) })}
-                                    value={String(tier.outputPrice ?? 0)}
+                                    onChange={(value) => updateRates(index, "outputPrice", parseTierNumber(value))}
+                                    value={String(bandRates(tier).outputPrice)}
                                 />
                                 {showCachePrices ? (
                                     <>
                                         <TierField
                                             id={`${baseId}-${index}-cache-writes`}
                                             label={`Tier Cache Writes (${currencySymbol}/1M)`}
-                                            onChange={(value) => updateTier(index, { cacheWritesPrice: parseTierNumber(value) })}
-                                            value={String(tier.cacheWritesPrice ?? 0)}
+                                            onChange={(value) => updateRates(index, "cacheWritePrice", parseTierNumber(value))}
+                                            value={String(bandRates(tier).cacheWritePrice)}
                                         />
                                         <TierField
                                             id={`${baseId}-${index}-cache-reads`}
                                             label={`Tier Cache Reads (${currencySymbol}/1M)`}
-                                            onChange={(value) => updateTier(index, { cacheReadsPrice: parseTierNumber(value) })}
-                                            value={String(tier.cacheReadsPrice ?? 0)}
+                                            onChange={(value) => updateRates(index, "cacheReadPrice", parseTierNumber(value))}
+                                            value={String(bandRates(tier).cacheReadPrice)}
                                         />
                                     </>
                                 ) : null}
@@ -241,20 +263,24 @@ export function PricingTierEditor({ tiers, editable, currencySymbol, showCachePr
                         </>
                     ) : (
                         <div className="flex flex-col gap-1 text-sm">
-                            <strong>{tier.contextWindow.toLocaleString()} tokens</strong>
+                            <strong>
+                                {tier.maxInputTokens === undefined
+                                    ? "Above every declared bound"
+                                    : `Up to ${tier.maxInputTokens.toLocaleString()} tokens`}
+                            </strong>
                             <span>
                                 Input: {currencySymbol}
-                                {tier.inputPrice ?? 0}/1M
+                                {bandRates(tier).inputPrice}/1M
                             </span>
                             <span>
                                 Output: {currencySymbol}
-                                {tier.outputPrice ?? 0}/1M
+                                {bandRates(tier).outputPrice}/1M
                             </span>
                             {showCachePrices ? (
                                 <span>
                                     Cache: {currencySymbol}
-                                    {tier.cacheWritesPrice ?? 0} write / {currencySymbol}
-                                    {tier.cacheReadsPrice ?? 0} read
+                                    {bandRates(tier).cacheWritePrice} write / {currencySymbol}
+                                    {bandRates(tier).cacheReadPrice} read
                                 </span>
                             ) : null}
                         </div>

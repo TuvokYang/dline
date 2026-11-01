@@ -125,6 +125,46 @@ describe("UsageOutboxRepository", () => {
             expect(await fs.readdir(layout.usageInflightDir)).toEqual([`${OTHER_REQUEST_ID}.bin`])
         })
 
+        it("rebuilds an outbox whose policy epoch is ahead of the current one instead of failing every cycle", async () => {
+            // A rebuilt policy document can hand out a lower epoch than the one the
+            // outbox was written under. `foldUsageAttemptShards` rejects a state whose
+            // generation is ahead, so keeping that document makes every delivery cycle
+            // throw before any HTTP call and the device silently reports nothing.
+            const outbox = repository()
+            await outbox.activateAttempts(9)
+            expect((await repository().readAttempts())?.policyGeneration).toBe(9)
+
+            expect(await outbox.activateAttempts(4)).toBe("activated")
+            expect((await repository().readAttempts())?.policyGeneration).toBe(4)
+
+            const grant = await outbox.claimAttempts("window-a")
+            if (!grant) throw new Error("expected schema 4 lease")
+            const folded = await outbox.transactAttempts(grant, (state) => ({
+                state: foldUsageAttemptShards(state, [], {
+                    currentPolicyGeneration: 4,
+                    newBucketId: () => "bucket-1",
+                    sealedAt: now,
+                }),
+                result: undefined,
+            }))
+            expect(folded.status).toBe("committed")
+
+            const [evidenceName] = await fs.readdir(layout.remoteQuarantineDir)
+            expect(JSON.parse(await fs.readFile(path.join(layout.remoteQuarantineDir, evidenceName), "utf8"))).toMatchObject({
+                document: "usage-outbox",
+                reason: "retired_document",
+                counts: { policy_generation: 9, current_policy_generation: 4 },
+            })
+        })
+
+        it("keeps an outbox that already matches the current policy epoch", async () => {
+            const outbox = repository()
+            await outbox.activateAttempts(7)
+
+            expect(await outbox.activateAttempts(7)).toBe("active")
+            await expect(fs.readdir(layout.remoteQuarantineDir)).rejects.toMatchObject({ code: "ENOENT" })
+        })
+
         it("uses the existing generation fence for schema 4 transactions and resets only on a newer policy generation", async () => {
             const outbox = repository()
             await outbox.activateAttempts(7)

@@ -66,16 +66,13 @@ describe("resolveExperimentalFlag", () => {
         expect(resolveExperimentalFlag(WORKTREES, { IS_DEV: "false", [WORKTREES_VAR]: "true" })).toBe(true)
     })
 
-    it("turns on only the switches with a development default in a development build", () => {
-        expect(resolveExperimentalFlag(ExperimentalFeatureFlag.ACCOUNT, {}, true)).toBe(true)
-        expect(resolveExperimentalFlag(ExperimentalFeatureFlag.ACCOUNT, {}, false)).toBe(false)
-        // A development build offers the chat folding setting without waiting for the rollout service.
-        expect(resolveExperimentalFlag(ExperimentalFeatureFlag.AGGRESSIVE_RENDERING, {}, true)).toBe(true)
-        expect(resolveExperimentalFlag(ExperimentalFeatureFlag.AGGRESSIVE_RENDERING, {}, false)).toBe(false)
-        // Switches without one keep their static default, so development bundles
-        // and the E2E runs built from them do not change behavior.
-        expect(resolveExperimentalFlag(WORKTREES, {}, true)).toBe(false)
-        expect(resolveExperimentalFlag(ExperimentalFeatureFlag.EXTERNAL_FILE_CHECKPOINTS, {}, true)).toBe(false)
+    it.each(Object.values(ExperimentalFeatureFlag))("offers %s in both runtime and bundled development", (flag) => {
+        expect(resolveExperimentalFlag(flag, {}, true)).toBe(true)
+        expect(resolveExperimentalFlag(flag, { IS_DEV: "true" }, false)).toBe(true)
+        expect(resolveExperimentalFlag(flag, {}, false)).toBe(false)
+        const override = environmentVariableNameFor(flag)
+        expect(resolveExperimentalFlag(flag, { [override]: "false" }, true)).toBe(false)
+        expect(resolveExperimentalFlag(flag, { IS_DEV: "true", [override]: "false" }, false)).toBe(false)
     })
 
     it("lets the variable turn a development default off", () => {
@@ -89,7 +86,7 @@ describe("resolveLocalExperimentalFlag", () => {
     it("has no opinion when no local source sets the switch", () => {
         // The feature service is consulted only in this case.
         expect(resolveLocalExperimentalFlag(ExperimentalFeatureFlag.ACCOUNT, {}, false)).toBeUndefined()
-        expect(resolveLocalExperimentalFlag(WORKTREES, {}, true)).toBeUndefined()
+        expect(resolveLocalExperimentalFlag(WORKTREES, {}, false)).toBeUndefined()
     })
 
     it("reports an explicit off as an opinion", () => {
@@ -106,6 +103,7 @@ describe("resolveExperimentalFlags", () => {
             [ExperimentalFeatureFlag.ACCOUNT]: false,
             [ExperimentalFeatureFlag.EXTERNAL_FILE_CHECKPOINTS]: false,
             [ExperimentalFeatureFlag.AGGRESSIVE_RENDERING]: false,
+            "away-mode": false,
         })
     })
 
@@ -115,6 +113,7 @@ describe("resolveExperimentalFlags", () => {
             [ExperimentalFeatureFlag.ACCOUNT]: true,
             [ExperimentalFeatureFlag.EXTERNAL_FILE_CHECKPOINTS]: true,
             [ExperimentalFeatureFlag.AGGRESSIVE_RENDERING]: true,
+            "away-mode": true,
         })
     })
 })

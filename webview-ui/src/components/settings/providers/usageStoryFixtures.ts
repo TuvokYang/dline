@@ -87,3 +87,124 @@ export const claudeFableExhaustedUsageFixture: AccountUsageData = {
     ...claudeUsageFixture,
     quotas: claudeUsageFixture.quotas?.map((quota) => (quota.type === "weekly_scoped" ? { ...quota, used: 100 } : quota)),
 }
+
+/**
+ * OpenCode quota figures are US dollars scaled to micro-dollars, because
+ * `UsageQuota.used` and `limit` are `int64` and one gateway request costs cents
+ * or less. Rounding to whole cents would report every small request as zero and
+ * leave every window looking untouched.
+ */
+const OPEN_CODE_MONTHLY_LIMIT = {
+    /** Go: GLM-5.3 counts $15 of the plan's monthly limit. */
+    go: 15_000_000,
+    /** Go Plus: the same model counts $120. */
+    goPlus: 120_000_000,
+    /**
+     * Go Teams: the same model counts $20 per member. It is neither the Go nor
+     * the Go Plus figure, so a card that derived the limit from
+     * `opencode.billing_source` alone would misreport this account.
+     */
+    goTeams: 20_000_000,
+} as const
+
+/**
+ * Build the three Go windows a subscription reports.
+ *
+ * The gateway documents the split rather than the windows themselves: a 5-hour
+ * window counts 20% of the model's monthly limit, a week counts 50%, and the
+ * month counts 100%. The used amounts below keep each window at a different
+ * pressure so the three bars are distinguishable at a glance.
+ */
+function openCodeGoQuotas(monthlyLimit: number): NonNullable<AccountUsageData["quotas"]> {
+    return [
+        {
+            type: "5hour",
+            label: "5 hour",
+            shortLabel: "5h",
+            used: Math.round(monthlyLimit * 0.2 * 0.22),
+            limit: Math.round(monthlyLimit * 0.2),
+            resetAt: "2030-01-01T12:00:00.000Z",
+        },
+        {
+            type: "weekly",
+            label: "This week",
+            shortLabel: "week",
+            used: Math.round(monthlyLimit * 0.5 * 0.39),
+            limit: Math.round(monthlyLimit * 0.5),
+            resetAt: "2030-01-07T12:00:00.000Z",
+        },
+        {
+            type: "monthly",
+            label: "This month",
+            shortLabel: "month",
+            used: Math.round(monthlyLimit * 0.48),
+            limit: monthlyLimit,
+            resetAt: "2030-02-01T00:00:00.000Z",
+        },
+    ]
+}
+
+/**
+ * OpenCode pay-as-you-go: Dline accumulates the `opencode.cost` each response
+ * reports, and never shows a remaining balance because Console publishes no
+ * balance endpoint. A balance figure here would be Dline's invention.
+ */
+export const openCodeBalanceUsageFixture: AccountUsageData = {
+    profileId: "profile-story",
+    providerId: "opencode",
+    currency: "USD",
+    planType: "Pay-as-you-go",
+    isAvailable: true,
+    retrievedAt: recentlyRetrievedAt,
+    dailyInputTokens: 1_284_300,
+    dailyOutputTokens: 96_512,
+}
+
+/** OpenCode Go ($10/month): the lowest per-model monthly limit. */
+export const openCodeGoUsageFixture: AccountUsageData = {
+    profileId: "profile-story",
+    providerId: "opencode",
+    currency: "USD",
+    planType: "OpenCode Go",
+    isAvailable: true,
+    retrievedAt: recentlyRetrievedAt,
+    quotas: openCodeGoQuotas(OPEN_CODE_MONTHLY_LIMIT.go),
+}
+
+/** OpenCode Go Plus ($40/month): the same windows against a higher limit. */
+export const openCodeGoPlusUsageFixture: AccountUsageData = {
+    profileId: "profile-story",
+    providerId: "opencode",
+    currency: "USD",
+    planType: "OpenCode Go Plus",
+    isAvailable: true,
+    retrievedAt: recentlyRetrievedAt,
+    quotas: openCodeGoQuotas(OPEN_CODE_MONTHLY_LIMIT.goPlus),
+}
+
+/**
+ * OpenCode Go Teams ($20/member/month): each member carries their own limits,
+ * and those limits are a third set of figures. Rendered beside `Go` this story
+ * is what makes a limit table chosen from `billing_source` visibly wrong.
+ */
+export const openCodeGoTeamsUsageFixture: AccountUsageData = {
+    profileId: "profile-story",
+    providerId: "opencode",
+    currency: "USD",
+    planType: "OpenCode Go Teams",
+    isAvailable: true,
+    retrievedAt: recentlyRetrievedAt,
+    quotas: openCodeGoQuotas(OPEN_CODE_MONTHLY_LIMIT.goTeams),
+}
+
+/**
+ * Before the first request: no response has reported a cost, so there is
+ * nothing to accumulate yet. `isAvailable` stays false rather than claiming a
+ * zero reading, which would render as a real "0% used" window.
+ */
+export const openCodeNoDataUsageFixture: AccountUsageData = {
+    profileId: "profile-story",
+    providerId: "opencode",
+    currency: "USD",
+    isAvailable: false,
+}

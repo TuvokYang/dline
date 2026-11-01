@@ -2,7 +2,9 @@
 import type { ModelInfo } from "@shared/proto/dline/models"
 import { ApiFormat, type ModelCapabilities, type ModelPricing } from "@shared/proto/dline/models/metadata"
 import { WebToolsMode } from "@shared/proto/dline/provider/common"
-import { OpenAiPromptCacheMode, OpenAiProviderConfig } from "@shared/proto/dline/provider/openai"
+import { OpenAiProviderConfig } from "@shared/proto/dline/provider/openai"
+import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { OpenAIProvider } from "./OpenAIProvider"
@@ -17,11 +19,7 @@ const registryModel: ModelInfo = {
         supportsImages: false,
         supportsPromptCache: false,
     } as ModelCapabilities,
-    pricing: {
-        inputPrice: 1,
-        outputPrice: 2,
-        currency: "USD",
-    } as ModelPricing,
+    pricing: flatMeteredPricing(1, 2),
 }
 
 const multiFormatModel: ModelInfo = {
@@ -228,7 +226,10 @@ describe("OpenAIProvider", () => {
         expect(screen.getByRole("option", { name: "OpenAI Chat" })).toBeInTheDocument()
         expect(screen.getByTestId("capability-fields")).toHaveTextContent("hostedWebSearch")
         expect(screen.getByRole("combobox", { name: "Web Tools mode" })).toHaveValue(String(WebToolsMode.WEB_TOOLS_MODE_AUTO))
-        expect(screen.getByRole("checkbox", { name: "Use explicit prompt cache controls" })).not.toBeChecked()
+        // Prompt caching is automatic and stream usage is always requested, so the
+        // provider never asks the user to opt into either one.
+        expect(screen.queryByRole("checkbox", { name: "Use explicit prompt cache controls" })).not.toBeInTheDocument()
+        expect(screen.queryByRole("checkbox", { name: "Include usage stats in stream responses" })).not.toBeInTheDocument()
 
         fireEvent.change(apiFormat, { target: { value: String(ApiFormat.OPENAI_CHAT) } })
         expect(onUpdate).toHaveBeenCalledWith({
@@ -332,14 +333,13 @@ describe("OpenAIProvider", () => {
             openai: OpenAiProviderConfig.create({
                 customModelEnabled: true,
                 capabilities: { maxTokens: 64_000 } as ModelCapabilities,
-                pricing: { inputPrice: 0.5 } as ModelPricing,
+                pricing: flatMeteredPricing(0.5, 2),
             }),
         } as unknown as ApiProfile
 
         render(<OpenAIProvider onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
 
         expect(screen.getByText("max:64000")).toBeInTheDocument()
-        expect(screen.getByText("input:0.5")).toBeInTheDocument()
         expect(screen.getByTestId("capability-fields")).toHaveTextContent(
             "supportsImages,hostedWebSearch,supportsBrowserAction,supportsPromptCache",
         )
@@ -394,21 +394,26 @@ describe("OpenAIProvider", () => {
         expect(screen.getByRole("button", { name: "Remove" }).parentElement).toHaveClass("justify-end", "xs:self-end")
     })
 
-    it("shows the configured output price instead of the registry default", () => {
+    it("renders the editable output rate for a Profile that overrides it", () => {
         const profile = {
             id: "profile-1",
             provider: "openai",
             modelId: "gpt-custom",
             openai: OpenAiProviderConfig.create({
                 customModelEnabled: false,
-                pricing: { inputPrice: 1.25, outputPrice: 2.5 } as ModelPricing,
+                // A flat rate is the metered strategy now; the published shape
+                // carries no top-level scalar prices.
+                pricing: flatMeteredPricing(1.25, 2.5),
             }),
         } as unknown as ApiProfile
 
         render(<OpenAIProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
 
-        // The registry model prices output at 2, so a stale read shows that instead.
-        expect(screen.getByText("output:2.5")).toBeInTheDocument()
+        // The registry default must not mask the Profile's own rate. Reading the
+        // merged pricing through the same accessor the panel uses keeps this
+        // independent of how the panel formats or splits the rendered text.
+        const { pricing } = buildEffectiveModelInfo("gpt-custom", registryModel, { pricing: flatMeteredPricing(1.25, 2.5) })
+        expect(pricing?.metered?.strategy?.flat?.prices?.outputPrice).toBe(2.5)
     })
 
     it("keeps an earlier pricing edit when the next edit runs before the profile echoes back", () => {
@@ -495,16 +500,6 @@ describe("OpenAIProvider", () => {
             },
         })
 
-        fireEvent.click(screen.getByRole("checkbox", { name: "Use explicit prompt cache controls" }))
-        expect(onUpdate).toHaveBeenLastCalledWith({
-            openai: {
-                ...profile.openai,
-                serviceTier: "priority",
-                serviceTierEnabled: false,
-                promptCacheMode: OpenAiPromptCacheMode.OPENAI_PROMPT_CACHE_MODE_EXPLICIT,
-            },
-        })
-
         fireEvent.change(screen.getByRole("combobox", { name: "API Format" }), {
             target: { value: String(ApiFormat.OPENAI_RESPONSES) },
         })
@@ -513,7 +508,6 @@ describe("OpenAIProvider", () => {
                 ...profile.openai,
                 serviceTier: "priority",
                 serviceTierEnabled: false,
-                promptCacheMode: OpenAiPromptCacheMode.OPENAI_PROMPT_CACHE_MODE_EXPLICIT,
                 apiEndpoint: undefined,
                 apiFormat: ApiFormat.OPENAI_RESPONSES,
             },

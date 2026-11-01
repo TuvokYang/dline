@@ -402,6 +402,9 @@ export const ExtensionStateContextProvider: React.FC<{
         mcpResponsesCollapsed: false, // Default value (expanded), will be overwritten by extension state
         strictPlanModeEnabled: false,
         yoloModeToggled: false,
+        awayModeEnabled: false,
+        autoAwayModeEnabled: false,
+        awayModeGateEnabled: false,
         customPrompt: undefined,
         useAutoCondense: true,
         autoCondenseTriggerPercent: DEFAULT_AUTO_CONDENSE_TRIGGER_PERCENT,
@@ -1031,6 +1034,11 @@ export const ExtensionStateContextProvider: React.FC<{
                             const newState = {
                                 ...(isPatch ? prevState : {}),
                                 ...stateFields,
+                                awayModeEnabled: stateFields.awayModeEnabled ?? (isPatch ? prevState.awayModeEnabled : false),
+                                autoAwayModeEnabled:
+                                    stateFields.autoAwayModeEnabled ?? (isPatch ? prevState.autoAwayModeEnabled : false),
+                                awayModeGateEnabled:
+                                    stateFields.awayModeGateEnabled ?? (isPatch ? prevState.awayModeGateEnabled : false),
                                 accountUsage: protoToAccountUsage(response.accountUsage),
                                 autoApprovalSettings: shouldUpdateAutoApproval
                                     ? stateFields.autoApprovalSettings

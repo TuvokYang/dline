@@ -1,1 +1,2 @@
-lint-staged --no-stash --concurrent false --max-arg-length 8000
+# Leave room for the command and quoted absolute paths under Windows cmd.exe's limit.
+lint-staged --no-stash --concurrent false --max-arg-length 6000

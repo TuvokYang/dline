@@ -6,6 +6,7 @@
  * tokens, unlike the vendors that publish a per-token rate.
  */
 import type { ModelCapabilities, ModelPricing } from "@shared/proto/dline/models/metadata"
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import type { ProviderModelReconciliationMode } from "../../provider-model-reconciliation"
 import { isRecord, ModelListingSource, readPositiveNumber, readString } from "../model-listing-source"
 import type { ProviderRemoteContext } from "../model-source"
@@ -65,12 +66,12 @@ export class AiHubMixModelSource extends ModelListingSource {
 
     /** Prices are already per million tokens, so they pass through unscaled. */
     protected override readPricing(raw: unknown): ModelPricing {
-        return {
-            inputPrice: readPositiveNumber(raw, "pricing.input") ?? 0,
-            outputPrice: readPositiveNumber(raw, "pricing.output") ?? 0,
-            cacheWritesPrice: readPositiveNumber(raw, "pricing.cache_write") ?? 0,
-            cacheReadsPrice: readPositiveNumber(raw, "pricing.cache_read") ?? 0,
-        }
+        return flatMeteredPricing(
+            readPositiveNumber(raw, "pricing.input") ?? 0,
+            readPositiveNumber(raw, "pricing.output") ?? 0,
+            readPositiveNumber(raw, "pricing.cache_write") ?? 0,
+            readPositiveNumber(raw, "pricing.cache_read") ?? 0,
+        )
     }
 }
 

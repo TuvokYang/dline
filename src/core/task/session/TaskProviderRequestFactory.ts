@@ -58,7 +58,7 @@ export interface TaskProviderRequestFactoryOptions {
     readonly messages: ProviderJournalMessageMaterializer
     readonly authority: TaskTurnAuthority
     readonly tools: ProductionToolHandlerRuntime
-    readonly readAdmissionSnapshot: (block: ToolUse) => ToolAdmissionSnapshot
+    readonly readAdmissionSnapshot: (block: ToolUse) => ToolAdmissionSnapshot | Promise<ToolAdmissionSnapshot>
     /** The same predicate the prompt and tool execution use, so all three route Web tools alike. */
     readonly usesNativeToolCalls: NativeToolCallsPredicate
 }
@@ -109,7 +109,7 @@ export class TaskProviderRequestFactory implements ProviderRequestFactory, Provi
             // so handler identity is what tells whether this projection still applies.
             isCurrent: () => this.options.api.current() === frame.api,
             planTool: async (tool: ToolUse) =>
-                planProductionTool(this.options.tools.coordinator, tool, this.options.readAdmissionSnapshot(tool)),
+                planProductionTool(this.options.tools.coordinator, tool, await this.options.readAdmissionSnapshot(tool)),
         }
     }
 
@@ -278,6 +278,7 @@ export class TaskProviderRequestFactory implements ProviderRequestFactory, Provi
             requestScope.providerInfo,
             requestScope.webToolsEnabled,
             requestScope.webSearchRoutingPlan,
+            requestScope.selectedApiFormat,
         )
         const frozen = await this.options.prompt.resolvePrompt(context, preview)
         const runtime = resolveFrozenPromptRuntime(frozen, context)
@@ -297,6 +298,17 @@ export class TaskProviderRequestFactory implements ProviderRequestFactory, Provi
             tools,
             options: { serverTools, taskNamespace: this.options.taskId, retryOwner: "task" },
             nativeTools: Boolean(tools?.length),
+            delegationAvailable:
+                tools !== undefined
+                    ? tools.some(
+                          (tool) =>
+                              ("function" in tool ? tool.function?.name : "name" in tool ? tool.name : undefined) ===
+                              DlineDefaultTool.USE_SUBAGENT,
+                      )
+                    : runtime.subagentsEnabled &&
+                      context.promptProfile === "standard" &&
+                      context.isSubagentRun !== true &&
+                      !context.disableTools?.includes(DlineDefaultTool.USE_SUBAGENT),
             serverToolContext: {
                 webSearchRoutingPlan: runtime.webSearchRoutingPlan,
                 providerId: api.getProviderId?.() ?? DEFAULT_API_PROVIDER,

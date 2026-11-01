@@ -1,7 +1,7 @@
 import {
     EXPERIMENTAL_FEATURE_FLAGS,
     ExperimentalFeatureFlag,
-    ExperimentalFeatureFlagDefaultValue,
+    experimentalFeatureFlagDefault,
 } from "@/shared/services/feature-flags/feature-flags"
 import { Logger } from "@/shared/services/Logger"
 import type { FeatureFlagPayload, IFeatureFlagsProvider } from "./providers/IFeatureFlagsProvider"
@@ -129,7 +129,7 @@ export class FeatureFlagsService {
 
         const snapshot = new Map<ExperimentalFeatureFlag, FeatureFlagPayload>()
         for (const flag of EXPERIMENTAL_FEATURE_FLAGS) {
-            snapshot.set(flag, ExperimentalFeatureFlagDefaultValue[flag] ?? false)
+            snapshot.set(flag, experimentalFeatureFlagDefault(flag))
         }
 
         try {

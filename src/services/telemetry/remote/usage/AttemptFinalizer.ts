@@ -22,6 +22,10 @@ export const DEFAULT_TOKEN_FINALIZATION_DEADLINE_MS = 10_000
 export const TOKEN_FINALIZATION_RECOVERY_GRACE_MS = 60_000
 /** Persistence is coalesced: the normal path (terminal, usage, final within milliseconds) writes nothing. */
 export const FINALIZATION_PERSIST_DELAY_MS = 1_000
+/** How long a failed spool append waits before its retry; the attempt stays recoverable meanwhile. */
+export const APPEND_RETRY_DELAY_MS = 2_000
+/** Retries after the first failure; a host that cannot write at all reports the loss instead of looping. */
+const APPEND_RETRY_LIMIT = 3
 /** Finalized IDs remembered for loss evidence and late logical claims. */
 const REMEMBERED_FINALS = 4_096
 
@@ -71,6 +75,8 @@ export interface AttemptFinalizerOptions {
     readonly clock?: UsageAttemptFinalizationClock
     readonly tokenFinalizationDeadlineMs?: number
     readonly persistDelayMs?: number
+    /** Delay before a failed spool append is attempted again. */
+    readonly appendRetryDelayMs?: number
     readonly log?: AttemptFinalizerLog
 }
 
@@ -105,10 +111,26 @@ export class AttemptFinalizer {
     private readonly clock: UsageAttemptFinalizationClock
     private readonly deadlineMs: number
     private readonly persistDelayMs: number
+    private readonly appendRetryMs: number
+    private readonly appendRetries = new Set<ReturnType<typeof setTimeout>>()
+    /**
+     * Observation appends still in flight, by observation ID.
+     *
+     * A late logical claim names an attempt whose observation carries its token
+     * fact. The spool has no shared commit queue across the two append kinds, so a
+     * claim that lands first is read by a fold that cannot find its attempt
+     * checkpoint yet and is then discarded with the shard. Chaining the claim onto
+     * this promise is what makes the dependency durable in-process.
+     */
+    private readonly observationAppends = new Map<string, Promise<void>>()
+    private appending = 0
+    private flushAppended: (() => void) | undefined
     private persistTimer: ReturnType<typeof setTimeout> | undefined
     private persistedPending = false
     private persisting: Promise<void> = Promise.resolve()
     private closed = false
+    /** Purge revokes callbacks from the old consent epoch without permanently closing intake. */
+    private generation = 0
 
     constructor(private readonly options: AttemptFinalizerOptions) {
         const deadlineMs = options.tokenFinalizationDeadlineMs ?? DEFAULT_TOKEN_FINALIZATION_DEADLINE_MS
@@ -116,6 +138,7 @@ export class AttemptFinalizer {
             throw new Error("Token finalization deadline must be finite and positive")
         this.deadlineMs = deadlineMs
         this.persistDelayMs = options.persistDelayMs ?? FINALIZATION_PERSIST_DELAY_MS
+        this.appendRetryMs = options.appendRetryDelayMs ?? APPEND_RETRY_DELAY_MS
         this.now = options.now ?? Date.now
         this.clock = options.clock ?? timerFinalizationClock(this.now)
     }
@@ -163,17 +186,25 @@ export class AttemptFinalizer {
         return this.persisting
     }
 
-    /** No revision can follow in a closing host, so every open window is final now. */
+    /**
+     * No revision can follow in a closing host, so every open window is final now.
+     * Appends already in flight are awaited: a closing host must not drop the last
+     * copy of an attempt it has just finalized.
+     */
     async dispose(): Promise<void> {
         if (this.closed) return
-        for (const observationId of [...this.pending.keys()]) this.finalize(observationId)
         this.closed = true
+        for (const observationId of [...this.pending.keys()]) this.finalize(observationId)
+        await this.waitForAppends()
         await this.flush()
     }
 
     /** Drop every open window and its persisted deadline without emitting; intake may resume later. */
     async purge(): Promise<void> {
+        this.generation += 1
         for (const observationId of this.pending.keys()) this.clock.cancel(observationId)
+        for (const retry of this.appendRetries) clearTimeout(retry)
+        this.appendRetries.clear()
         this.pending.clear()
         this.finalized.clear()
         if (this.persistTimer) {
@@ -182,6 +213,8 @@ export class AttemptFinalizer {
         }
         this.persistedPending = false
         await this.persisting
+        await this.waitForAppends()
+        this.observationAppends.clear()
         await this.options.store.purge()
     }
 
@@ -242,32 +275,149 @@ export class AttemptFinalizer {
             this.log("warn", `late logical execution was rejected before storage: ${describe(error)}`)
             return
         }
-        this.track(
-            this.options.sink.appendLogicalClaim({
-                logicalRequestId: execution.handle.logicalRequestId,
-                attemptObservationId: observationId,
-                receivedAt: this.now(),
-                execution: projected,
-            }),
-        )
+        const claim: PendingUsageLogicalClaim = {
+            logicalRequestId: execution.handle.logicalRequestId,
+            attemptObservationId: observationId,
+            receivedAt: this.now(),
+            execution: projected,
+        }
+        // The finalizer remembers an attempt it already published, and that append is
+        // the only place the claim's checkpoint can come from.
+        this.track(this.appendClaimAfterObservation(observationId, claim) ?? this.options.sink.appendLogicalClaim(claim))
     }
 
+    /**
+     * Close one window and publish its observation.
+     *
+     * The recovery record is the only copy of an attempt that has not reached the
+     * spool yet, so it is released only after the append resolved. A failed append
+     * keeps the attempt pending and schedules one bounded retry; the observation ID
+     * and revision make the eventual append idempotent, so a retry after a write
+     * that did land cannot double-count.
+     */
     private finalize(observationId: string): void {
         const entry = this.pending.get(observationId)
         if (!entry) return
+        const observation: PendingUsageAttemptObservation = {
+            id: observationId,
+            revision: entry.record.revision,
+            receivedAt: this.now(),
+            localSessionId: this.options.localSessionId,
+            observation: entry.observation,
+        }
         this.pending.delete(observationId)
         this.clock.cancel(observationId)
         this.remember(observationId)
-        this.track(
-            this.options.sink.appendObservation({
-                id: observationId,
-                revision: entry.record.revision,
-                receivedAt: this.now(),
-                localSessionId: this.options.localSessionId,
-                observation: entry.observation,
-            }),
-        )
+        this.publish(observationId, observation, entry, 0)
         this.schedulePersist()
+    }
+
+    private publish(
+        observationId: string,
+        observation: PendingUsageAttemptObservation,
+        entry: PendingAttempt,
+        failures: number,
+    ): void {
+        const generation = this.generation
+        this.appendStarted()
+        const append = this.options.sink.appendObservation(observation).then(
+            () => {
+                this.appendSettled()
+                if (generation !== this.generation) return
+                this.observationAppends.delete(observationId)
+                // A retried append succeeded: the spool now holds the only required copy, so the
+                // recovery record must stop describing this attempt before its deadline recurs.
+                this.releasePending(observationId)
+            },
+            (error: unknown) => {
+                this.appendSettled()
+                if (generation !== this.generation) return
+                this.observationAppends.delete(observationId)
+                this.log("warn", `finalized usage was not stored: ${describe(error)}`)
+                if (this.closed || failures >= APPEND_RETRY_LIMIT) {
+                    // The window is over and the copy could not be written: keep the loss visible
+                    // instead of pretending the attempt was delivered.
+                    this.log("warn", "finalized usage was lost: its observation could not be stored")
+                    return
+                }
+                this.restorePending(observationId, entry)
+                // A retry that runs after a failed append must still be the copy its claim waits on.
+                this.retryAppend(observationId, observation, entry, failures + 1)
+            },
+        )
+        this.observationAppends.set(observationId, append)
+    }
+
+    /**
+     * Append a late claim only after the observation it names is durable.
+     *
+     * The claim and the observation are separate files in the spool. A fold that
+     * sees the claim without the attempt checkpoint skips it and still discards
+     * that shard, so the request would never be reported (usage-client-lifecycle
+     * §9). Awaiting the named append here removes that ordering window; a claim
+     * whose observation never became durable is not written at all.
+     */
+    private appendClaimAfterObservation(observationId: string, claim: PendingUsageLogicalClaim): Promise<void> | undefined {
+        const appended = this.observationAppends.get(observationId)
+        if (!appended) return undefined
+        const generation = this.generation
+        this.appendStarted()
+        appended.then(
+            () => this.appendSettled(),
+            () => this.appendSettled(),
+        )
+        return appended.then(() => {
+            if (generation !== this.generation) return
+            return this.options.sink.appendLogicalClaim(claim)
+        })
+    }
+
+    /** Make the attempt recoverable again while a failed append is retried. */
+    private restorePending(observationId: string, entry: PendingAttempt): void {
+        this.finalized.delete(observationId)
+        if (this.pending.has(observationId)) return
+        this.pending.set(observationId, entry)
+        this.clock.schedule(observationId, this.now() + this.deadlineMs, () => this.finalize(observationId))
+        this.schedulePersist()
+    }
+
+    /** Drop a restored window once its observation is durable; the first attempt already closed it. */
+    private releasePending(observationId: string): void {
+        if (!this.pending.delete(observationId)) return
+        this.clock.cancel(observationId)
+        this.schedulePersist()
+    }
+
+    private retryAppend(
+        observationId: string,
+        observation: PendingUsageAttemptObservation,
+        entry: PendingAttempt,
+        failures: number,
+    ): void {
+        const timer = setTimeout(() => {
+            this.appendRetries.delete(timer)
+            if (this.closed) return
+            this.publish(observationId, observation, entry, failures)
+        }, this.appendRetryMs)
+        timer.unref?.()
+        this.appendRetries.add(timer)
+    }
+
+    /** Appends still running; shutdown waits for them so a closing host does not drop a copy. */
+    private appendStarted(): void {
+        this.appending += 1
+    }
+
+    private appendSettled(): void {
+        this.appending -= 1
+        if (this.appending === 0) this.flushAppended?.()
+    }
+
+    private waitForAppends(): Promise<void> {
+        if (this.appending === 0) return Promise.resolve()
+        return new Promise<void>((resolve) => {
+            this.flushAppended = resolve
+        })
     }
 
     private project({

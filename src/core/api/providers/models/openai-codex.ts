@@ -5,6 +5,7 @@
 
 import type { ModelInfo } from "@shared/api"
 import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
+import { flatPricing } from "./pricing"
 
 /** Provider baseline used for newly listed Codex models that are not in the bundled catalog yet. */
 export const openAiCodexModelInfoSaneDefaults: Omit<ModelInfo, "id"> = {
@@ -18,7 +19,7 @@ export const openAiCodexModelInfoSaneDefaults: Omit<ModelInfo, "id"> = {
         supportsPromptCache: true,
         supportsStreaming: true,
     },
-    pricing: { inputPrice: 0, outputPrice: 0 },
+    pricing: flatPricing(0, 0),
 }
 
 /** Subscription limits and costs remain provider-owned rather than copied from API-key pricing. */

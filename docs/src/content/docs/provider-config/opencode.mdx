@@ -1,0 +1,120 @@
+---
+title: OpenCode
+description: Connect Dline to the OpenCode inference gateway on a pay-as-you-go balance or a Go subscription.
+---
+
+import { Aside, Steps } from "@astrojs/starlight/components"
+
+OpenCode runs an inference gateway that resells paid text models from several vendors. Dline talks to that gateway directly, so one Profile covers every model the gateway serves.
+
+**Website:** [opencode.ai](https://opencode.ai/) | **Model and pricing reference:** [opencode.ai/docs/zen](https://opencode.ai/docs/zen/)
+
+A Profile combines two independent choices:
+
+- **Plan** decides which subscription pays for the request and which model catalog Dline reads.
+- **API Format** decides the wire protocol used to send it.
+
+The two are independent because the gateway serves the same model through more than one protocol. Switching either one does not leave the other stale.
+
+## Get an API key
+
+<Steps>
+
+1. Sign in to the OpenCode console for the workspace that carries your balance or subscription.
+
+2. Create an API key.
+
+3. Copy the key immediately and store it securely. Dline stores it locally and only uses it to call the gateway.
+
+</Steps>
+
+## Configure Dline
+
+See [Model configuration](/getting-started/authorizing-with-dline/) for the general flow.
+
+<Steps>
+
+1. Click the **Settings** button in the Dline panel title bar.
+
+2. Set **Provider** to **OpenCode**.
+
+3. Under **Plan**, choose the subscription this Profile is billed against. The description under the picker states what the selected plan spends.
+
+4. Paste the key into the **OpenCode API Key** field.
+
+5. Select a model under **Model**.
+
+6. Under **API Format**, choose the protocol. Any of the three works for a paid text model, because the gateway translates between them.
+
+</Steps>
+
+## Models
+
+Dline reads this provider's model set from the gateway's listing endpoint, so a model the gateway starts serving appears without waiting for a new build. The listing only carries facts; the plan only decides which catalog is read, so switch **Plan** first when a model you expect is missing.
+
+Opening the **Model** list asks the gateway for its current listing, so a model released after this build still appears without waiting for an update. Context and output limits, capabilities and prices come from that listing. Plan coverage, the default model, thinking controls and gateway-hosted tools are declared by Dline, because the listing cannot express them.
+
+## Plans
+
+| Plan | What it spends |
+| --- | --- |
+| Pay-as-you-go | The credit balance on your OpenCode console workspace. |
+| OpenCode Go | Your Go subscription. Requests beyond its limit need Extra Usage turned on. |
+| OpenCode Go Plus | Your Go Plus subscription, which raises the monthly limit on every model. |
+| OpenCode Go Teams | Your workspace's Go Teams subscription. Each member carries their own limits. |
+
+The plan is a declared setting rather than a value read from a response. The gateway reports both Go Plus and Go Teams as a Go plan, so only the setting can tell them apart, and the usage surface needs that difference to show a percentage against the right limit.
+
+Only the plan decides which catalog is read. A wrong plan therefore shows the wrong models and the wrong prices rather than failing loudly, so check it when a model you expect is missing.
+
+## Protocols
+
+Dline reads the protocol a model is served on from the gateway's own listing. A model published on the OpenAI-compatible base accepts both OpenAI Chat Completions and OpenAI Responses, because both are paths under that one base; a model published on the Anthropic base accepts Anthropic Messages. The protocol this picks is the default, not a restriction: you can still choose a different one, and the gateway translates a protocol it did not natively receive.
+
+| API Format | Wire endpoint |
+| --- | --- |
+| OpenAI Chat Completions | `https://opencode.ai/inference/openai/v1` |
+| OpenAI Responses | `https://opencode.ai/inference/openai/v1` |
+| Anthropic Messages | `https://opencode.ai/inference/anthropic/v1` |
+
+A Go Profile uses `https://opencode.ai/inference/go` as the base, so the endpoints become `.../go/openai/v1` and `.../go/anthropic/v1`.
+
+When the catalog declares a model's native protocol and you pick a different one, the card says so under **API Format**: the Console translates the protocol you chose.
+
+If a Profile carries a protocol this provider cannot serve, the request fails before it is sent instead of silently falling back to another protocol. A protocol the ledger did not derive is accepted: only the three protocols above are valid, and the choice is never narrowed to the derived one.
+
+<Aside>
+Dline sends its own user agent and a per-Task session identifier, which the gateway uses for routing and prompt caching. Neither is user-configurable, and the session identifier follows one Task conversation so continuations keep the same identity.
+</Aside>
+
+## Thinking controls
+
+The card renders the reasoning control the selected model declares, not a fixed widget:
+
+- A model that declares effort levels gets **Enable Thinking** and a **Thinking Level** picker limited to its own levels.
+- A model that declares a token budget gets **Enable Thinking** and a **Thinking Budget** picker built from its declared minimum and maximum, in 1024-token steps.
+- A model that declares `canDisable: false` keeps thinking on and the checkbox cannot clear it.
+- A model that declares no reasoning renders no control at all, so the Profile cannot store a preference the gateway would ignore.
+
+## Usage and balance
+
+A Go Profile reads its usage from `GET https://opencode.ai/inference/go/v1/usage` and refreshes every 60 seconds. Usage limits are monthly dollar amounts that differ per model, and the three windows are fractions of that same limit: the 5 hour window is **20%** of it, the weekly window is **50%**, and the monthly window is **100%**.
+
+The endpoint reports how much of each window is **used**, not what remains, so the surface shows a percentage rather than a dollar balance. A percentage above 100 is a real state: once **Extra Usage** is on, Go keeps serving from your pay-as-you-go balance after the limit is reached.
+
+A pay-as-you-go Console Profile has no equivalent endpoint. Its usage area reports that the value is unavailable instead of showing a guessed zero; check the OpenCode console for the current balance.
+
+### What each request cost
+
+Every response reports what the request cost you, beside the token usage: `cost` in `usage` for OpenAI and Anthropic protocols, and on `response.completed` for Responses. Dline uses that amount as the task's cost, because it is the only figure that already accounts for peak-hour, long-context, and discount pricing.
+
+This is per-request cost, not account usage. The usage area above keeps reporting percentages and reads nothing from this field; `0` here means the request itself was free, which covers free models and Go requests inside the plan's limits.
+
+## Troubleshooting
+
+| Problem | What to do |
+| --- | --- |
+| `This model is only available inside the OpenCode client` | The gateway answered 403. That model is reserved for the vendor's own client. Choose a paid model, or use a Go plan. |
+| `The selected model is not available in this OpenCode mode` | The gateway answered 404. The model does not exist in the selected plan's catalog. Pick another model or switch **Plan**. |
+| Requests start failing right after switching **Plan** | The model list and the prices come from the catalog of the selected plan. Re-select a model from the new list. |
+| A protocol choice is rejected | The stored protocol is not one of the three this provider carries. Pick one of the protocols the message lists. |

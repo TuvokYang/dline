@@ -2,6 +2,7 @@
 import type { ModelInfo } from "@shared/proto/dline/models"
 import type { ModelCapabilities, ModelPricing } from "@shared/proto/dline/models/metadata"
 import { OpenAiProviderConfig } from "@shared/proto/dline/provider/openai"
+import { flatMeteredPricing, readPriceSet } from "@shared/providers/pricing-shape"
 import { act, render, screen } from "@testing-library/react"
 import { useState } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
@@ -13,11 +14,32 @@ import type { ApiProfile } from "./ProviderProfile"
 /** Approximates how long the extension host takes to echo a saved profile. */
 const ECHO_DELAY_MS = 500
 
+/**
+ * A flat metered price that also publishes a separate thinking-output rate.
+ *
+ * The summary reads `thinkingOutputPrice` from the same flat price slot as the
+ * plain rates, so a model that charges extra for reasoning tokens declares it
+ * there rather than in a sibling field.
+ */
+function thinkingPricing(outputPrice: number, thinkingOutputPrice: number): ModelPricing {
+    const pricing = flatMeteredPricing(0, outputPrice)
+    const flat = pricing.metered?.strategy?.flat
+    if (!flat) {
+        throw new Error("flat metered pricing expected")
+    }
+    return {
+        metered: {
+            ...pricing.metered,
+            strategy: { ...pricing.metered?.strategy, flat: { prices: { ...flat.prices, thinkingOutputPrice } } },
+        },
+    }
+}
+
 const registryModel: ModelInfo = {
     id: "gpt-custom",
     name: "Registry GPT",
     capabilities: { contextWindow: 128_000, maxTokens: 4096 } as ModelCapabilities,
-    pricing: { inputPrice: 1, outputPrice: 2, currency: "USD" } as ModelPricing,
+    pricing: flatMeteredPricing(1, 2),
 }
 
 vi.mock("./useProviderModelOptions", () => ({
@@ -54,17 +76,23 @@ function ProfileHost() {
     )
 
     return (
-        <OpenAIProvider
-            onUpdate={(updates) => {
-                // The real profile round-trips through the extension host, so the
-                // prop lags behind the edit that produced it.
-                setTimeout(() => {
-                    setProfile((current) => ({ ...current, ...updates }))
-                }, ECHO_DELAY_MS)
-            }}
-            profile={profile}
-            showModelOptions={true}
-        />
+        <>
+            <OpenAIProvider
+                onUpdate={(updates) => {
+                    // The real profile round-trips through the extension host, so the
+                    // prop lags behind the edit that produced it.
+                    setTimeout(() => {
+                        setProfile((current) => ({ ...current, ...updates }))
+                    }, ECHO_DELAY_MS)
+                }}
+                profile={profile}
+                showModelOptions={true}
+            />
+            {/* The host state the settings list would persist, readable by tests. */}
+            <div data-testid="persisted-profile" hidden>
+                {JSON.stringify(profile)}
+            </div>
+        </>
     )
 }
 
@@ -80,8 +108,9 @@ async function typePrice(label: string, value: string): Promise<void> {
         ;(field as unknown as { value: string }).value = value
         field.dispatchEvent(new Event("input", { bubbles: true }))
     })
+    // Let the host echo this edit before typing the next one, as real typing does.
     await act(async () => {
-        await vi.advanceTimersByTimeAsync(200)
+        await vi.advanceTimersByTimeAsync(ECHO_DELAY_MS + 100)
     })
 }
 
@@ -109,8 +138,15 @@ describe("OpenAIProvider pricing round trip", () => {
             await vi.advanceTimersByTimeAsync(ECHO_DELAY_MS * 4)
         })
 
-        expect(screen.getByText("$1.25/M")).toBeInTheDocument()
-        expect(screen.getByText("$2.50/M")).toBeInTheDocument()
+        // The declared contract is that every typed rate survives round-trip, so
+        // read the persisted profile rather than rendered text.
+        const persisted = JSON.parse(screen.getByTestId("persisted-profile").textContent ?? "null")
+        expect(readPriceSet(persisted.openai.pricing.metered.strategy.flat.prices)).toEqual({
+            inputPrice: 1.25,
+            outputPrice: 2.5,
+            cacheWritePrice: 0.75,
+            cacheReadPrice: 0.25,
+        })
     })
 })
 
@@ -127,7 +163,7 @@ describe("ModelInfoView thinking output pricing", () => {
         ["unbounded budget", { thinking: { supported: true, mode: "budget", minBudget: 17 } }, "$7/M"],
         ["both mode", { thinking: { supported: true, mode: "both", maxBudget: 100 } }, "$7/M"],
     ])("renders the declared output price for %s", (_label, capabilities, expected) => {
-        const modelInfo: ModelInfo = { id: "opaque-price", capabilities, pricing: { outputPrice: 2, thinkingOutputPrice: 7 } }
+        const modelInfo: ModelInfo = { id: "opaque-price", capabilities, pricing: thinkingPricing(2, 7) }
         render(<ModelInfoView modelInfo={modelInfo} selectedModelId={modelInfo.id} />)
         expect(screen.getByText(expected)).toBeInTheDocument()
         expect(screen.queryByText(expected === "$7/M" ? "$2/M" : "$7/M")).not.toBeInTheDocument()
@@ -143,13 +179,7 @@ describe("ModelInfoView thinking output pricing", () => {
                 supportsReasoning: true,
                 supportsPromptCache: true,
             },
-            pricing: {
-                inputPrice: 3,
-                outputPrice: 6,
-                cacheWritesPrice: 3,
-                cacheReadsPrice: 0.025,
-                currency: "CNY",
-            },
+            pricing: flatMeteredPricing(3, 6, 3, 0.025, "CNY"),
         }
 
         render(<ModelInfoView modelInfo={modelInfo} selectedModelId={modelInfo.id} />)
@@ -167,10 +197,11 @@ describe("ModelInfoView thinking output pricing", () => {
         const modelInfo: ModelInfo = {
             id: "opaque-free-thinking",
             capabilities: { thinking: { supported: true, mode: "budget" } },
-            pricing: { outputPrice: 2, thinkingOutputPrice: 0 },
+            pricing: thinkingPricing(2, 0),
         }
         render(<ModelInfoView modelInfo={modelInfo} selectedModelId={modelInfo.id} />)
-        expect(screen.getByText("Free")).toBeInTheDocument()
+        // Both the compact row and the thinking row read the published zero.
+        expect(screen.getAllByText("Free").length).toBeGreaterThan(0)
         expect(screen.queryByText("$2/M")).not.toBeInTheDocument()
     })
 })

@@ -4,7 +4,6 @@
  * Reads ApiProfile configurations from ~/.dline/data/settings/api_profiles.json.
  */
 
-import { allProviderModels } from "@core/api/providers/models"
 import { anthropicModels } from "@core/api/providers/models/anthropic"
 import { ModelRegistry } from "@core/model-registry/ModelRegistry"
 import { recordProfileCatalogBaseline } from "@core/profiles/profile-catalog-state"
@@ -22,7 +21,7 @@ import {
 } from "@core/storage/secrets"
 import { GPT_IMAGE_2_5_MODEL_ID, GPT_IMAGE_2_SUBSCRIPTION_MODEL_ID } from "@shared/image-generation"
 import { EmptyRequest } from "@shared/proto/dline/common"
-import type { ModelCapabilities, ServerTool } from "@shared/proto/dline/models/metadata"
+import type { ModelCapabilities } from "@shared/proto/dline/models/metadata"
 import { ApiProfile, ApiProfilesResponse, ImageGenerationSource } from "@shared/proto/dline/profile"
 import { AnthropicProviderConfig } from "@shared/proto/dline/provider/anthropic"
 import { BedrockProviderConfig } from "@shared/proto/dline/provider/bedrock"
@@ -38,7 +37,10 @@ import {
     modelInfoToStorageJson,
     pickModelInfoOverride,
 } from "@shared/providers/model-info-overrides"
-import { PROFILE_PROVIDER_KEYS } from "@shared/providers/profile-model-info"
+import { getProviderCatalog } from "@shared/providers/model-infos"
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
+import { PROFILE_PROVIDER_KEYS, resolveProfileCatalogKey } from "@shared/providers/profile-model-info"
+import { readProviderConfigField, withProviderConfigField } from "@shared/providers/provider-config"
 import { declaredServerTools } from "@shared/providers/server-tool-switches"
 import { Logger } from "@shared/services/Logger"
 import { writeFileAtomic } from "@shared/storage/atomic-file"
@@ -61,8 +63,12 @@ const API_PROFILES_FILE = "api_profiles.json"
  * 1: clear hosted-tool disables that a legacy empty `capabilities.tools` was
  *    misread into.
  * 2: migrate image source naming and the legacy subscription model alias.
+ * 3: rewrite a provider's legacy flat pricing fields into the published
+ *    `metered.strategy.flat` shape.
+ * 4: move a Profile stored against a retired catalog provider id onto the
+ *    provider that owns that catalog.
  */
-const CURRENT_PROFILE_SCHEMA_VERSION = 2
+const CURRENT_PROFILE_SCHEMA_VERSION = 4
 
 /**
  * Bring one stored profile up to the current storage revision.
@@ -80,11 +86,120 @@ function upgradeProfileSchema(profile: ApiProfile): boolean {
 
     if (revision < 1) {
         const providerKey = PROFILE_PROVIDER_KEYS[profile.provider]
-        const config = providerKey ? (profile[providerKey] as { disabledServerTools?: ServerTool[] } | undefined) : undefined
-        if (config?.disabledServerTools?.length) config.disabledServerTools = []
+        const config = providerKey ? (profile[providerKey] as object | undefined) : undefined
+        const disabled = config ? readProviderConfigField(config, "disabledServerTools") : undefined
+        if (config && Array.isArray(disabled) && disabled.length > 0) {
+            Object.assign(profile, { [String(providerKey)]: withProviderConfigField(config, "disabledServerTools", []) })
+        }
     }
     profile.schemaVersion = CURRENT_PROFILE_SCHEMA_VERSION
     return true
+}
+
+/**
+ * Legacy provider ids that used to be selectable as their own provider.
+ *
+ * Each one is now the key of an alternative catalog owned by the provider named
+ * by `provider`, reached through a Profile option instead. A Profile stored by
+ * such a build still names the retired id, so it has to be rewritten: the id no
+ * longer resolves a config branch, and leaving it would drop the user's API key
+ * and model choice on the floor.
+ */
+const LEGACY_CATALOG_PROVIDERS: Record<string, { provider: string; option?: Record<string, unknown> }> = {
+    // OPEN_CODE_MODE_GO: the Go catalog the retired provider id served.
+    "opencode-go": { provider: "opencode", option: { mode: 2 } },
+    "qwen-cn": { provider: "qwen", option: { qwenApiLine: "china" } },
+    "zai-cn": { provider: "zai", option: { zaiApiLine: "china" } },
+}
+
+/**
+ * Rewrite a Profile stored against a retired catalog provider onto its owner.
+ *
+ * The descriptor stays on the raw JSON for the same reason the pricing rewrite
+ * does: the generated message has no field for an unknown provider id, so a
+ * decoded Profile has already lost the config the migration needs to move.
+ *
+ * @param rawProfile Profile exactly as stored.
+ * @returns A profile naming the owning provider and carrying both the option
+ * that selects the same catalog and the settings previously stored under the
+ * retired key.
+ */
+function migrateLegacyCatalogProvider(rawProfile: unknown): { profile: unknown; migrated: boolean } {
+    if (!rawProfile || typeof rawProfile !== "object") return { profile: rawProfile, migrated: false }
+    const record = rawProfile as Record<string, unknown>
+    const retiredId = typeof record.provider === "string" ? record.provider : undefined
+    if (!retiredId) return { profile: rawProfile, migrated: false }
+    const legacy = LEGACY_CATALOG_PROVIDERS[retiredId]
+    if (!legacy) return { profile: rawProfile, migrated: false }
+
+    // The retired id owned the settings, so its branch is the one to move. A
+    // config already stored under the owning provider wins, because that is the
+    // newer branch a later build would have written.
+    const storedConfig = record[legacy.provider] ?? record[retiredId]
+    const ownedConfig = isPlainRecord(storedConfig) ? storedConfig : {}
+    const withOption = { ...ownedConfig, ...legacy.option }
+    const { [retiredId]: _retired, ...rest } = record
+    return {
+        profile: { ...rest, provider: legacy.provider, [legacy.provider]: withOption },
+        migrated: true,
+    }
+}
+
+/** Narrow an unknown value to a plain object record. */
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === "object" && !Array.isArray(value)
+}
+
+/**
+ * Rewrite a provider's legacy flat pricing fields into the published shape.
+ *
+ * Stores written before the published `metered.strategy.flat` pricing kept a
+ * single rate per slot directly on the override object. Those keys do not exist
+ * on the generated message, so a decode silently drops them: rewriting the
+ * decoded profile would lose the price entirely and leave the old spelling on
+ * disk. The rewrite therefore happens on the raw stored JSON, before decoding.
+ *
+ * Only an absent `pricing` is filled in. A stored price that already has the
+ * published shape is left untouched, so a second run cannot lose an edit.
+ *
+ * @param rawProfile Profile exactly as stored.
+ * @returns A profile with the migrated config, or the same value when nothing
+ * changed.
+ */
+function migrateLegacyFlatPricing(rawProfile: unknown): { profile: unknown; migrated: boolean } {
+    if (!rawProfile || typeof rawProfile !== "object") return { profile: rawProfile, migrated: false }
+    const record = rawProfile as Record<string, unknown>
+    const provider = typeof record.provider === "string" ? record.provider : undefined
+    if (!provider) return { profile: rawProfile, migrated: false }
+    const providerKey = PROFILE_PROVIDER_KEYS[provider]
+    if (!providerKey) return { profile: rawProfile, migrated: false }
+
+    const config = record[String(providerKey)]
+    if (!config || typeof config !== "object" || Array.isArray(config)) return { profile: rawProfile, migrated: false }
+    const configRecord = config as Record<string, unknown>
+    if (configRecord.pricing !== undefined && configRecord.pricing !== null) {
+        return { profile: rawProfile, migrated: false }
+    }
+
+    const numberOrUndefined = (value: unknown): number | undefined => (typeof value === "number" ? value : undefined)
+    const inputPrice = numberOrUndefined(configRecord.inputPrice)
+    const outputPrice = numberOrUndefined(configRecord.outputPrice)
+    // A config with no rate at all carries no pricing statement to preserve.
+    if (inputPrice === undefined && outputPrice === undefined) return { profile: rawProfile, migrated: false }
+
+    const migrated = flatMeteredPricing(
+        inputPrice ?? 0,
+        outputPrice ?? 0,
+        numberOrUndefined(configRecord.cacheWritesPrice),
+        numberOrUndefined(configRecord.cacheReadsPrice),
+    )
+    // The legacy scalar keys are dropped: keeping them beside the published shape
+    // would let a later reader treat one of them as authoritative again.
+    const { inputPrice: _i, outputPrice: _o, cacheWritesPrice: _cw, cacheReadsPrice: _cr, ...rest } = configRecord
+    return {
+        profile: { ...record, [String(providerKey)]: withProviderConfigField(rest, "pricing", migrated) },
+        migrated: true,
+    }
 }
 
 let apiProfilesWriteQueue: Promise<void> = Promise.resolve()
@@ -261,13 +376,19 @@ function migrateLegacyServerToolOverride(profile: ApiProfile): boolean {
     const providerKey = PROFILE_PROVIDER_KEYS[profile.provider]
     if (!providerKey) return false
 
-    const config = profile[providerKey] as { capabilities?: ModelCapabilities; disabledServerTools?: ServerTool[] } | undefined
-    const storedTools = config?.capabilities?.tools
-    if (!config?.capabilities || storedTools === undefined) return false
+    const config = profile[providerKey] as object | undefined
+    const storedCapabilities = config ? readProviderConfigField(config, "capabilities") : undefined
+    const capabilitiesRecord =
+        storedCapabilities !== null && typeof storedCapabilities === "object" && !Array.isArray(storedCapabilities)
+            ? (storedCapabilities as ModelCapabilities)
+            : undefined
+    const storedTools = capabilitiesRecord?.tools
+    if (!config || !capabilitiesRecord || storedTools === undefined) return false
 
-    const { tools: _legacyDeclaration, ...capabilities } = config.capabilities
+    const { tools: _legacyDeclaration, ...capabilities } = capabilitiesRecord
     if (storedTools.length === 0) {
-        Object.assign(config, { capabilities, disabledServerTools: [] })
+        const cleared = withProviderConfigField(config, "capabilities", capabilities)
+        Object.assign(profile, { [String(providerKey)]: withProviderConfigField(cleared, "disabledServerTools", []) })
         return true
     }
 
@@ -279,10 +400,15 @@ function migrateLegacyServerToolOverride(profile: ApiProfile): boolean {
     const enabled = new Set(storedTools)
     const disabledServerTools = declared.filter((tool) => !enabled.has(tool))
 
-    Object.assign(config, {
-        capabilities,
-        // An already-migrated profile keeps whatever the user chose more recently.
-        disabledServerTools: config.disabledServerTools?.length ? config.disabledServerTools : disabledServerTools,
+    const alreadyDisabled = readProviderConfigField(config, "disabledServerTools")
+    // An already-migrated profile keeps whatever the user chose more recently.
+    const nextDisabled = Array.isArray(alreadyDisabled) && alreadyDisabled.length > 0 ? alreadyDisabled : disabledServerTools
+    Object.assign(profile, {
+        [String(providerKey)]: withProviderConfigField(
+            withProviderConfigField(config, "capabilities", capabilities),
+            "disabledServerTools",
+            nextDisabled,
+        ),
     })
     return true
 }
@@ -298,6 +424,15 @@ function normalizeApiProfileWithMigration(profile: unknown): { profile: ApiProfi
             migrated = true
         }
     }
+    // A retired catalog provider id and the legacy pricing fields both live only
+    // on the stored JSON: the generated message has no field for either, so
+    // decoding drops them silently. Rewrite them before decoding.
+    const migratedCatalog = migrateLegacyCatalogProvider(profileInput)
+    profileInput = migratedCatalog.profile
+    if (migratedCatalog.migrated) migrated = true
+    const migratedPricing = migrateLegacyFlatPricing(profileInput)
+    profileInput = migratedPricing.profile
+    if (migratedPricing.migrated) migrated = true
     const normalized = ApiProfile.fromJSON(profileInput ?? {})
     let hasExplicitImageSource = false
     if (profileInput && typeof profileInput === "object") {
@@ -412,14 +547,16 @@ export function normalizeApiProfile(profile: unknown): ApiProfile {
 /** Read a model's built-in capability declaration without depending on registry startup. */
 function resolveSeedModelCapabilities(profile: ApiProfile): ModelCapabilities | undefined {
     if (!profile.provider || !profile.modelId) return undefined
-    return allProviderModels[profile.provider]?.models?.[profile.modelId]?.capabilities
+    // A Profile option can select an alternative catalog, so the seed lookup has
+    // to answer with the catalog the Profile reads rather than the primary one.
+    return getProviderCatalog(resolveProfileCatalogKey(profile))?.catalog.models?.[profile.modelId]?.capabilities
 }
 
 function resolveRegistryModelInfo(profile: ApiProfile) {
     if (!profile.provider || !profile.modelId) {
         return undefined
     }
-    const providerModels = ModelRegistry.getInstance().getProviderModels(profile.provider)
+    const providerModels = ModelRegistry.getInstance().getProviderCatalog(resolveProfileCatalogKey(profile))
     return providerModels?.models?.[profile.modelId]
 }
 
@@ -473,7 +610,7 @@ export function applyRegistryModelDefaults(profiles: ApiProfile[]): boolean {
     for (const profile of profiles) {
         if (clearImageBindings(profile)) changed = true
         if (!profile.provider) continue
-        const providerModels = registry.getProviderModels(profile.provider)
+        const providerModels = registry.getProviderCatalog(resolveProfileCatalogKey(profile))
 
         if (!profile.modelId && providerModels?.defaultModelId) {
             profile.modelId = providerModels.defaultModelId

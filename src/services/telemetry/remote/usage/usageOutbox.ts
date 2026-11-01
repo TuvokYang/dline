@@ -6,6 +6,7 @@ import type {
 } from "@/core/storage/telemetry-remote/UsageObservationSpool"
 import type { DeliveryOutcome } from "../contracts/classification"
 import { USAGE_GRANT_HARD_LIMITS } from "../contracts/deviceGrant"
+import { DLINE_CONTRACT } from "../contracts/otlpProduction"
 import {
     afterAcknowledged,
     afterRateLimited,
@@ -33,9 +34,57 @@ export interface UsageAttemptInflight {
     readonly requestId: string
     readonly bodySha256: string
     readonly bucketIds: readonly string[]
+    /**
+     * When this manifest was created. It is the origin of the immutable replay
+     * horizon, so a 429 wait or a credential wait never moves it.
+     */
     readonly createdAt: number
     readonly attempts: number
     readonly notBefore: number
+    /**
+     * `User-Agent` frozen with the manifest. The service fingerprints a replay on
+     * the exact agent, and `body.client.version` must match it, so a replay from a
+     * newer build may not restate it (usage-contract §14).
+     */
+    readonly userAgent?: string
+    /** `X-Dline-Contract` frozen with the manifest; absent only on a manifest persisted before the freeze. */
+    readonly contract?: string
+}
+
+/** The `User-Agent` a manifest is bound to for as long as it may be replayed. */
+export function usageUserAgent(clientVersion: string): string {
+    return `Dline/${clientVersion}`
+}
+
+/**
+ * The headers a replay must reuse exactly.
+ *
+ * A manifest persisted before these fields existed carries none, so the version
+ * is recovered from the stored canonical body: that body was accepted for the
+ * manifest's identity, and the running build is not evidence of what it says.
+ */
+export function usageReplayIdentity(
+    inflight: Pick<UsageAttemptInflight, "userAgent" | "contract">,
+    body: Uint8Array,
+): { readonly userAgent: string; readonly contract: string } | undefined {
+    const contract = inflight.contract ?? DLINE_CONTRACT
+    if (inflight.userAgent) return { userAgent: inflight.userAgent, contract }
+    const version = clientVersionOfUsageBody(body)
+    return version === undefined ? undefined : { userAgent: usageUserAgent(version), contract }
+}
+
+function clientVersionOfUsageBody(body: Uint8Array): string | undefined {
+    let parsed: unknown
+    try {
+        parsed = JSON.parse(new TextDecoder().decode(body)) as unknown
+    } catch {
+        return undefined
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined
+    const client = (parsed as Record<string, unknown>).client
+    if (typeof client !== "object" || client === null || Array.isArray(client)) return undefined
+    const version = (client as Record<string, unknown>).version
+    return typeof version === "string" && version.length > 0 ? version : undefined
 }
 
 /** Machine-wide schema 4 bucket state, changed only by the fenced repository lease holder. */
@@ -72,6 +121,10 @@ export const USAGE_SESSION_CLAIMS_MAX = 1_024
 export type UsageInflightResolution =
     | Extract<DeliveryOutcome, { kind: "acknowledged" | "replay" | "wait" | "too_large" | "discard" }>
     | { readonly kind: "body_lost" }
+    /** The manifest's immutable replay horizon has passed; it is lost before any HTTP is sent. */
+    | { readonly kind: "replay_expired" }
+    /** The frozen `User-Agent` could not be recovered, so no identity-preserving replay is possible. */
+    | { readonly kind: "replay_identity_lost" }
 
 /** A 7-day service wait plus the longest unknown-outcome replay horizon a grant may name. */
 export const USAGE_ATTEMPT_BACKLOG_MAX_AGE_MS = MAX_WAIT_MS + USAGE_GRANT_HARD_LIMITS.maxRequestReplayAgeMs
@@ -484,6 +537,9 @@ export function takeUsageAttemptBatch(state: UsageAttemptOutboxState, input: Usa
         createdAt: input.now,
         attempts: 0,
         notBefore: input.now,
+        // The body states this version, so the agent and the header are part of the same identity.
+        userAgent: usageUserAgent(input.client.version),
+        contract: DLINE_CONTRACT,
     }
     return {
         kind: "batch",
@@ -545,12 +601,9 @@ export function settleUsageAttemptInflight(
             return { ...releaseBuckets(), pacing: afterAcknowledged(state.pacing, "usage", resolution.nextEligibleAt, now) }
         case "wait": {
             const pacing = afterRateLimited(state.pacing, resolution.retryAfterMs, now, random)
-            const waited = Math.max(0, pacing.waitUntil - now)
-            return {
-                ...state,
-                inflight: { ...inflight, createdAt: inflight.createdAt + waited, notBefore: pacing.waitUntil },
-                pacing,
-            }
+            // The wait moves `notBefore` only. `createdAt` is the manifest's birth: a 429 stores
+            // nothing and cannot extend the service's idempotency window (usage-contract §14).
+            return { ...state, inflight: { ...inflight, notBefore: pacing.waitUntil }, pacing }
         }
         case "replay": {
             const attempts = inflight.attempts + 1
@@ -563,6 +616,8 @@ export function settleUsageAttemptInflight(
         case "too_large":
         case "discard":
         case "body_lost":
+        case "replay_expired":
+        case "replay_identity_lost":
             return releaseBuckets()
     }
 }

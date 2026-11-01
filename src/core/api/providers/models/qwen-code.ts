@@ -3,6 +3,7 @@
  * Extracted from api.ts qwenCodeModels (lines 4948-4979).
  */
 import type { ModelInfo } from "@shared/api"
+import { flatPricing } from "./pricing"
 
 export const qwenCodeModels: Record<string, ModelInfo> = {
     "qwen3-coder-plus": {
@@ -15,12 +16,7 @@ export const qwenCodeModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-            cacheWritesPrice: 0,
-            cacheReadsPrice: 0,
-        },
+        pricing: flatPricing(0, 0, 0, 0),
     },
     "qwen3-coder-flash": {
         id: "qwen3-coder-flash",
@@ -32,12 +28,7 @@ export const qwenCodeModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0,
-            outputPrice: 0,
-            cacheWritesPrice: 0,
-            cacheReadsPrice: 0,
-        },
+        pricing: flatPricing(0, 0, 0, 0),
     },
 }
 

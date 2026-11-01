@@ -48,6 +48,12 @@ export class TaskCommandExpander implements SemanticCommandExpanderPort {
         const target = slashCommandTargetOf(descriptor)
         if (!target) return undefined
         const expansion = await expandSlashCommand(target, this.context())
-        return expansion && { text: expansion.text, explicitInstructions: expansion.explicitInstructions }
+        return (
+            expansion && {
+                text: expansion.text,
+                explicitInstructions: expansion.explicitInstructions,
+                ...(expansion.userControl === undefined ? {} : { userControl: expansion.userControl }),
+            }
+        )
     }
 }

@@ -3,6 +3,7 @@
  */
 
 import type { ModelInfo } from "@shared/api"
+import { flatPricing } from "./pricing"
 
 /** LiteLLM-specific model info with optional temperature */
 export interface LiteLLMModelInfo extends ModelInfo {
@@ -19,12 +20,7 @@ export const liteLlmModelInfoSaneDefaults: LiteLLMModelInfo = {
         maxTokens: -1,
         contextWindow: 128_000,
     },
-    pricing: {
-        inputPrice: 0,
-        outputPrice: 0,
-        cacheWritesPrice: 0,
-        cacheReadsPrice: 0,
-    },
+    pricing: flatPricing(0, 0, 0, 0),
     temperature: 0,
 }
 

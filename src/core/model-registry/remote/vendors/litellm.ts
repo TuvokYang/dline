@@ -11,6 +11,7 @@
  */
 
 import { fetchLiteLlmModelsInfo } from "@core/api/providers/litellm"
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import type { ModelCapabilities, ModelInfo, ModelPricing } from "@shared/providers/types"
 import type { ProviderModelReconciliationMode } from "../../provider-model-reconciliation"
 import { isRecord, ModelListingSource, readPositiveNumber, readString } from "../model-listing-source"
@@ -73,12 +74,12 @@ export class LiteLlmModelSource extends ModelListingSource {
     }
 
     protected override readPricing(raw: unknown): ModelPricing {
-        return {
-            inputPrice: readPerMillionCost(raw, "input_cost_per_token") ?? 0,
-            outputPrice: readPerMillionCost(raw, "output_cost_per_token") ?? 0,
-            cacheWritesPrice: readPerMillionCost(raw, "cache_creation_input_token_cost"),
-            cacheReadsPrice: readPerMillionCost(raw, "cache_read_input_token_cost"),
-        }
+        return flatMeteredPricing(
+            readPerMillionCost(raw, "input_cost_per_token") ?? 0,
+            readPerMillionCost(raw, "output_cost_per_token") ?? 0,
+            readPerMillionCost(raw, "cache_creation_input_token_cost"),
+            readPerMillionCost(raw, "cache_read_input_token_cost"),
+        )
     }
 
     /**

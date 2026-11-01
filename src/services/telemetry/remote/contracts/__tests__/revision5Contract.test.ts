@@ -406,6 +406,12 @@ describe("report authorization", () => {
             issueState: "open",
             resolution: { state: "investigating" },
             pollAfterMs: body.poll_after_ms,
+            issueUrl: body.issue_url,
+            issueSnapshotAt: body.issue_snapshot_at,
+            serverTime: body.server_time,
+            checkedAt: body.checked_at,
+            nextQueryAt: body.next_query_at,
+            statusVersion: { grantSeq: body.status_version.grant_seq, issueSeq: body.status_version.issue_seq },
         })
     })
 

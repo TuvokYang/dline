@@ -1,8 +1,11 @@
 import { readJsonl } from "@core/storage/backend/jsonl/jsonl-utils"
 import { getTaskHeaderText } from "@core/storage/disk"
+import type { SettingsSnapshot } from "@core/storage/settings/settings-types"
+import { parseSettingsDocument } from "@core/storage/settings/settings-validation"
 import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import type { ContextWindowIndicatorSnapshot } from "@shared/context-window-indicator"
 import type { ExtensionState, UiMessage } from "@shared/ExtensionMessage"
+import { SETTINGS_DEFAULTS } from "@shared/storage/state-keys"
 import { describe, expect, it, vi } from "vitest"
 import { Controller } from "../index"
 
@@ -53,13 +56,25 @@ function buildMessages(count: number): UiMessage[] {
  * prototype for `buildState.call` to resolve it.
  */
 function controllerAccessor(
-    name: "currentOpening" | "getCurrentTaskId" | "getCurrentTaskMessages" | "getCurrentTaskMessageCount",
+    name:
+        | "currentOpening"
+        | "getCurrentTaskId"
+        | "getCurrentTaskMessages"
+        | "getCurrentTaskMessageCount"
+        | "materializeMessageWindow",
 ): unknown {
     return (Controller.prototype as unknown as Record<string, unknown>)[name]
 }
 
 /** Minimal Controller-shaped object exposing every field buildState touches. */
 function createFakeController(messages: UiMessage[]): Record<string, unknown> {
+    const snapshot: SettingsSnapshot = {
+        schemaVersion: 1,
+        revision: 0,
+        values: parseSettingsDocument(SETTINGS_DEFAULTS).values,
+        contentHash: "fixture",
+        awayRevocations: { mode: 0, automatic: 0 },
+    }
     return {
         task: createSessionFixture({
             taskId: "test-task-1",
@@ -85,6 +100,9 @@ function createFakeController(messages: UiMessage[]): Record<string, unknown> {
             getCanonicalSettingsKey: () => undefined,
             getWorkspaceStateKey: () => undefined,
             getRemoteConfigSettings: () => ({}),
+            subscribeAwaySettings: () => () => undefined,
+            readAwaySettingsSnapshot: () => snapshot,
+            revokeAwayMode: async () => snapshot,
         },
         // buildState resolves capability toggles through this private helper; the
         // header assertions below do not depend on discovery, so an empty result
@@ -109,6 +127,7 @@ function createFakeController(messages: UiMessage[]): Record<string, unknown> {
         getCurrentTaskId: controllerAccessor("getCurrentTaskId"),
         getCurrentTaskMessages: controllerAccessor("getCurrentTaskMessages"),
         getCurrentTaskMessageCount: controllerAccessor("getCurrentTaskMessageCount"),
+        materializeMessageWindow: controllerAccessor("materializeMessageWindow"),
         modeSwitchCoordinator: { getSnapshot: () => ({}) },
         getTaskLockStatus: () => undefined,
         backgroundCommandRunning: undefined,

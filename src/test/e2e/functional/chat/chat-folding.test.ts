@@ -225,6 +225,126 @@ e2e(
 )
 
 e2e(
+    "Folding - a failed command is folded into the block and counted as a command error",
+    async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }, testInfo) => {
+        e2e.setTimeout(180_000)
+        const task = "E2E_FOLDING_FAILED_COMMAND"
+        server.resetOpenAiMock()
+        // A bare `exit 1` would end the shell before it prints the completion
+        // marker Dline's foreground wrapper waits for, and a bare unknown name is
+        // not fatal either, so neither reliably produces a finished failing
+        // command. A failing child process keeps the wrapper alive to report the
+        // real exit code; this is the same fixture `task-tools.test.ts` uses.
+        const failedCommand = `node -e "console.error('E2E_FOLDING_COMMAND_FAILED'); process.exit(7)"`
+        // `requires_approval` is a required parameter: without it the handler
+        // rejects the call and the command never runs, which would test the
+        // validation error rather than a failed command.
+        server.enqueueOpenAiResponses(
+            {
+                type: "tool",
+                id: "call_folding_failed_command",
+                name: "execute_command",
+                arguments: { command: failedCommand, requires_approval: false, synchronous: true },
+            },
+            {
+                type: "tool",
+                name: "attempt_completion",
+                arguments: { result: "FOLDING_FAILED_COMMAND_DONE" },
+                expectedToolResults: [{ callId: "call_folding_failed_command", contentIncludes: "E2E_FOLDING_COMMAND_FAILED" }],
+            },
+        )
+        const app = await openVSCode(workspaceDir, { DLINE_EXPERIMENTAL_AGGRESSIVE_RENDERING: "true" })
+        try {
+            const { page, sidebar } = await openSidebar(app, helper)
+            await chooseLevel(page, sidebar, dlineDir, "user_turn")
+            await send(sidebar, task)
+            // Safe Commands are auto-approved in this environment, and auto-approval
+            // is the task's own contract, so only approve when the prompt appears.
+            const approve = sidebar.getByText("Approve", { exact: true })
+            if (await approve.isVisible().catch(() => false)) await approve.click()
+            await expect(sidebar.getByText("FOLDING_FAILED_COMMAND_DONE", { exact: false }).last()).toBeVisible({
+                timeout: 60_000,
+            })
+
+            // The failed command is finished work inside the turn, so it is not
+            // drawn on its own: it lives behind a block whose header states the
+            // count. Assert the header that owns the failed row rather than the
+            // number of blocks, because a turn may hold more than one block.
+            const header = sidebar.getByTestId("activity-fold-header").filter({ hasText: "1 command error" })
+            await expect(header).toHaveCount(1)
+            await testInfo.attach("folding-failed-command", { body: await page.screenshot(), contentType: "image/png" })
+
+            // Opening the block still shows the failed command itself.
+            await header.click()
+            await expect(sidebar.getByText("E2E_FOLDING_COMMAND_FAILED", { exact: false }).last()).toBeVisible({
+                timeout: 30_000,
+            })
+            // The error tone itself is asserted in the component test, where the
+            // rendered class is the contract; this journey stops at the behaviour:
+            // the failed command is inside the block and stated in its header.
+            await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+        } finally {
+            await app.close()
+        }
+    },
+)
+
+// The call never ran, so its streamed preview must not keep a completed card.
+// Before the fix the row stayed partial, the chat drew it as `Completed`, and the
+// folded block never counted it — the failure shown to the model was invisible.
+e2e(
+    "Folding - a rejected command call settles as a counted command error instead of a completed card",
+    async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+        e2e.setTimeout(180_000)
+        const task = "E2E_FOLDING_REJECTED_COMMAND"
+        server.resetOpenAiMock()
+        // `requires_approval` is required, so this call is rejected during
+        // validation and never reaches the terminal.
+        server.enqueueOpenAiResponses(
+            {
+                type: "tool",
+                id: "call_folding_rejected_command",
+                name: "execute_command",
+                arguments: { command: "echo FOLDING_REJECTED_COMMAND_NEVER_RUNS" },
+            },
+            {
+                type: "tool",
+                name: "attempt_completion",
+                arguments: { result: "FOLDING_REJECTED_COMMAND_DONE" },
+                expectedToolResults: [{ callId: "call_folding_rejected_command", contentIncludes: "requires_approval" }],
+            },
+        )
+        const app = await openVSCode(workspaceDir, { DLINE_EXPERIMENTAL_AGGRESSIVE_RENDERING: "true" })
+        try {
+            const { page, sidebar } = await openSidebar(app, helper)
+            await chooseLevel(page, sidebar, dlineDir, "user_turn")
+            await send(sidebar, task)
+            await expect(sidebar.getByText("FOLDING_REJECTED_COMMAND_DONE", { exact: false }).last()).toBeVisible({
+                timeout: 60_000,
+            })
+
+            // The rejected call is finished work of a countable kind, so it belongs
+            // in the block and its header states the error. Before the fix this
+            // header could not appear: the row was still partial, so folding read it
+            // as live work and left it outside every block.
+            const header = sidebar.getByTestId("activity-fold-header").filter({ hasText: "1 command error" })
+            await expect(header).toHaveCount(1)
+
+            // Opening the block shows the rejected command, and its card states the
+            // state the call actually reached rather than a completed one.
+            await header.click()
+            const rejectedCard = sidebar.getByTestId("command-card").filter({ hasText: "FOLDING_REJECTED_COMMAND_NEVER_RUNS" })
+            await expect(rejectedCard).toHaveCount(1)
+            await expect(rejectedCard.getByText("Failed", { exact: true })).toBeVisible({ timeout: 30_000 })
+            await expect(rejectedCard.getByText("Completed", { exact: true })).toHaveCount(0)
+            await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+        } finally {
+            await app.close()
+        }
+    },
+)
+
+e2e(
     "Folding - approval remains visible and a real checkpoint restore updates chat and trajectory",
     async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
         e2e.setTimeout(180_000)

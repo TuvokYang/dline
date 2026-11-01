@@ -1,0 +1,91 @@
+---
+title: Moonshot
+description: 获取 Moonshot API Key，并在 Dline 中配置 Kimi 模型。
+---
+
+import { Aside, Steps, TabItem, Tabs } from "@astrojs/starlight/components"
+
+Moonshot AI 提供 Kimi 模型系列，上下文窗口长，并为推理类工作单独提供 thinking 变体。
+
+**官网：** [platform.moonshot.ai](https://platform.moonshot.ai/)（国际）| [platform.moonshot.cn](https://platform.moonshot.cn/)（中国大陆）
+
+## 获取 API Key
+
+<Tabs>
+<TabItem label="国际">
+
+<Steps>
+
+1. 打开 [platform.moonshot.ai](https://platform.moonshot.ai/) 并注册或登录。
+
+2. 在控制台打开 API Key 管理页。
+
+3. 创建一个新的 API Key。
+
+4. 立即复制并妥善保存。
+
+</Steps>
+
+</TabItem>
+<TabItem label="中国大陆">
+
+<Steps>
+
+1. 打开 [platform.moonshot.cn](https://platform.moonshot.cn/) 并注册或登录。
+
+2. 在控制台打开 API Key 管理页。
+
+3. 创建一个新的 API Key。
+
+4. 立即复制并妥善保存。
+
+</Steps>
+
+</TabItem>
+</Tabs>
+
+## 配置 Dline
+
+通用流程见 [模型配置](/zh-cn/getting-started/authorizing-with-dline/)。
+
+<Steps>
+
+1. 点击 Dline 面板标题栏的 **Settings** 按钮。
+
+2. 把 **Provider** 设为 **Moonshot**。
+
+3. **API Version** 保持 `v1`，这是 Moonshot API 的当前版本。
+
+4. 把 Key 粘贴到 **Moonshot API Key** 字段。
+
+5. 在 **Model** 下选择模型。
+
+</Steps>
+
+## API 地址
+
+Dline 把请求发往 `https://api.moonshot.ai/v1`，即 Moonshot API 的国际站点。中国大陆平台 `platform.moonshot.cn` 是独立部署、独立发 Key，所以请使用与上述地址对应的控制台签发的 Key。
+
+## 模型
+
+| 模型 | 上下文窗口 | 说明 |
+| --- | --- | --- |
+| `kimi-k2.5` | 262,144 | 支持图片输入，并支持提示缓存。 |
+| `kimi-k2-0905-preview` | 262,144 | 默认模型。 |
+| `kimi-k2-0711-preview` | 131,072 | |
+| `kimi-k2-turbo-preview` | 262,144 | `kimi-k2-0905-preview` 的加速版。 |
+| `kimi-k2-thinking` | 262,144 | 会输出推理内容，Dline 以思考过程显示。 |
+| `kimi-k2-thinking-turbo` | 262,144 | `kimi-k2-thinking` 的加速版。 |
+
+只有 `kimi-k2.5` 支持提示缓存，所以用量面板只对这一个模型显示缓存读取与写入，其余 Kimi 模型按普通输入 Token 统计。
+
+Moonshot 卡片没有思考控件。thinking 模型总是先推理再作答，是否推理由模型本身决定。
+
+## 常见问题
+
+| 现象 | 处理方式 |
+| --- | --- |
+| 每个请求都返回 `401` | 上述 API 地址不接受这个 Key。确认 Key 在签发它的控制台里仍然有效，并且该控制台对应 `https://api.moonshot.ai/v1`。 |
+| 选择某个模型后返回 `404` | 这个 Key 无权使用该模型 ID。换一个模型，或在控制台确认账号可调用的模型。 |
+| 返回 `429` | 账号触发速率限制或余额不足。到控制台查看状态后重试。 |
+| 长提示被拒绝 | 历史超出所选模型的上下文窗口。新建任务、压缩上下文，或换上下文更大的模型。 |

@@ -4,6 +4,7 @@ import { ApiProfile, ImageGenerationSource } from "@shared/proto/dline/profile"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
 import { OpenAiPromptCacheMode, OpenAiProviderConfig } from "@shared/proto/dline/provider/openai"
 import { OpenAiCodexProviderConfig } from "@shared/proto/dline/provider/openai_codex"
+import { flatMeteredPricing, readPriceSet } from "@shared/providers/pricing-shape"
 import { expect } from "chai"
 import OpenAI from "openai"
 import should from "should"
@@ -68,10 +69,7 @@ describe("OpenAiHandler", () => {
                             supportsPromptCache: true,
                             temperature: 0.7,
                         },
-                        pricing: {
-                            inputPrice: 0.5,
-                            outputPrice: 1.5,
-                        },
+                        pricing: flatMeteredPricing(0.5, 1.5),
                     }),
                 }),
                 mode: "act",
@@ -84,7 +82,7 @@ describe("OpenAiHandler", () => {
             should(result.info.capabilities?.maxTokens).equal(12_345)
             should(result.info.capabilities?.supportsPromptCache).equal(true)
             should(result.info.capabilities?.temperature).equal(0.7)
-            should(result.info.pricing?.inputPrice).equal(0.5)
+            should(readPriceSet(result.info.pricing?.metered?.strategy?.flat?.prices).inputPrice).equal(0.5)
         })
 
         it("reports hosted web search unavailable for the Chat transport", () => {

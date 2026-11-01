@@ -39,6 +39,8 @@ export class DurableCommandOutbox {
     private readonly pending = new Map<ExecutorDomain, PendingCommand[]>()
     private readonly drains = new Map<ExecutorDomain, Promise<void>>()
     private readonly publicationsInFlight = new Map<string, PendingPublication>()
+    /** Bootstrap-held effects still belong in every durable outbox snapshot. */
+    private readonly heldRestored = new Map<string, Command>()
 
     constructor(
         private readonly router: CommandRouter,
@@ -49,6 +51,7 @@ export class DurableCommandOutbox {
     persistableAfter(commands: readonly Command[]): readonly Command[] {
         const haltRevision = commands.find((command) => command.type === "halt.stop")?.originRevision
         const retained = [
+            ...[...this.heldRestored.values()].map((command) => ({ command, fenced: false })),
             ...[...this.publicationsInFlight.values()].map((entry) => ({ command: entry.command, fenced: entry.fenced })),
             ...this.allPending(),
         ]
@@ -72,6 +75,19 @@ export class DurableCommandOutbox {
             this.queueFor(domainFor(command)).push({ command, receipt, fenced: false })
         }
         this.scheduleAll()
+    }
+
+    holdRestored(commands: readonly Command[], generation?: number): void {
+        for (const command of commands) {
+            if (generation === undefined || command.generation === generation)
+                this.heldRestored.set(commandEffectKey(command), command)
+        }
+    }
+
+    releaseRestored(): void {
+        const commands = [...this.heldRestored.values()]
+        this.heldRestored.clear()
+        this.restore(commands)
     }
 
     restore(commands: readonly Command[], generation?: number): void {
@@ -142,6 +158,9 @@ export class DurableCommandOutbox {
     }
 
     private fenceBefore(revision: number): void {
+        for (const [key, command] of this.heldRestored) {
+            if (command.originRevision < revision) this.heldRestored.delete(key)
+        }
         for (const entry of this.allPending()) {
             if (entry.command.originRevision < revision) entry.fenced = true
         }
@@ -231,9 +250,11 @@ export class DurableCommandOutbox {
     }
 
     private trackPublication(command: Command, effectKey: string, effectCompletion: Promise<void>): void {
+        let failed = false
         const completion = effectCompletion
             .then(() => this.publications.mark(command, effectKey))
             .catch((error) => {
+                failed = true
                 this.diagnostics?.record({
                     source: "outbox",
                     code: "durable_publish_failed",
@@ -243,8 +264,14 @@ export class DurableCommandOutbox {
                 })
             })
             .finally(() => {
-                if (this.publicationsInFlight.get(effectKey)?.completion === completion)
-                    this.publicationsInFlight.delete(effectKey)
+                const publication = this.publicationsInFlight.get(effectKey)
+                if (publication?.completion !== completion) return
+                this.publicationsInFlight.delete(effectKey)
+                // The accepted timeout is still the owner. Keep its exact command in later
+                // snapshots when bounded live retries fail, unless halt already fenced it.
+                if (failed && !publication.fenced && command.type === "dialog.deliver_automatic") {
+                    this.heldRestored.set(effectKey, command)
+                }
             })
         this.publicationsInFlight.set(effectKey, { command, completion, fenced: false })
     }

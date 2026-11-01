@@ -31,6 +31,7 @@ import { OcaProvider } from "./OcaProvider"
 import { OllamaProvider } from "./OllamaProvider"
 import { OpenAIProvider } from "./OpenAIProvider"
 import { OpenAiCodexProvider } from "./OpenAiCodexProvider"
+import { OpenCodeProvider } from "./OpenCodeProvider"
 import { OpenRouterProvider } from "./OpenRouterProvider"
 import type { ApiProfile } from "./ProviderProfile"
 import { QwenCodeProvider } from "./QwenCodeProvider"
@@ -226,6 +227,10 @@ const ApiProfileEditor: React.FC<ApiProfileEditorProps> = ({ profile, isPopup, o
             )
         case "wandb":
             return <WandbProvider isPopup={isPopup} onUpdate={onUpdate} profile={profile} showModelOptions={showModelOptions} />
+        case "opencode":
+            return (
+                <OpenCodeProvider isPopup={isPopup} onUpdate={onUpdate} profile={profile} showModelOptions={showModelOptions} />
+            )
         default:
             return <div className="text-xs text-description">Select a provider to configure.</div>
     }

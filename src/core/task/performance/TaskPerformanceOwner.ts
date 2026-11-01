@@ -18,6 +18,20 @@ import { TaskApiRateMetricsService } from "./task-api-rate-metrics-service"
 import { TaskRateMetricsQueryService } from "./task-rate-metrics-query-service"
 import type { TaskRateMetricsQuery, TaskRateMetricsQueryResult } from "./task-rate-metrics-types"
 
+/**
+ * A settled summary for a caller that ran its tools and found none.
+ *
+ * It is the explicit deferral release: unlike `completeProviderOnly`, it ends the
+ * request through the tools-settled terminal, which is the only path that may
+ * close a request that declared `expectTools`.
+ */
+const NO_TOOL_CALLS = {
+    toolCount: 0,
+    completedToolCount: 0,
+    failedToolCount: 0,
+    cancelledToolCount: 0,
+} as const
+
 export interface TaskPerformanceOwnerOptions {
     readonly taskId: string
     readonly readState: () => Readonly<TaskState>
@@ -217,8 +231,10 @@ export class TaskPerformanceOwner {
         if (!admission) return
         this.auxiliaryAdmissions.delete(key)
         if (toolCalls.length === 0) {
-            // The send asked for no tool, so its stream was already the whole request.
-            admission.completeProviderOnly()
+            // A settled zero-tool summary is the explicit deferral release: the caller
+            // ran its tools and found none. `completeProviderOnly` would return early
+            // on the still-declared deferral and leave the request open until close.
+            admission.completeTools(NO_TOOL_CALLS)
             return
         }
         const completed = toolCalls.filter((call) => call.outcome === "completed").length
@@ -247,7 +263,9 @@ export class TaskPerformanceOwner {
         const admission = this.auxiliaryAdmissions.get(key)
         if (!admission) return
         this.auxiliaryAdmissions.delete(key)
-        admission.completeProviderOnly()
+        // Same zero-tool settlement as above: the deferral was waiting for tools that
+        // never came, so it must be released explicitly instead of by the guard.
+        admission.completeTools(NO_TOOL_CALLS)
     }
 
     /** Complete an auxiliary logical request at the mandatory ApiHandler terminal boundary. */

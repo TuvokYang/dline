@@ -3,6 +3,8 @@ import { ApiFormat, type ModelCapabilities, type ModelPricing, type ServerTool }
 import type { ApiProfile } from "@shared/proto/dline/profile"
 import { prioritizeApiFormat, resolveApiFormat } from "./api-format"
 import { buildEffectiveModelInfo, type ProviderModelOverrides } from "./effective-model-info"
+import { type OpenCodeMode, type ProviderRegion, resolveCatalogProviderKey } from "./provider-catalog-key"
+import { readProviderConfigField } from "./provider-config"
 import type { ProviderModelsConfig } from "./types"
 
 export const PROFILE_PROVIDER_KEYS: Partial<Record<string, keyof ApiProfile>> = {
@@ -47,6 +49,62 @@ export const PROFILE_PROVIDER_KEYS: Partial<Record<string, keyof ApiProfile>> = 
     wandb: "wandb",
     xai: "xai",
     zai: "zai",
+    opencode: "opencode",
+}
+
+/**
+ * Read the catalog-selecting option stored on a Profile.
+ *
+ * The generated proto flattens the config oneof into optional siblings, so the
+ * mode is read from the OpenCode branch when that is the configured provider.
+ */
+function readOpenCodeMode(profile: ApiProfile): OpenCodeMode | undefined {
+    const config = (profile as { opencode?: { mode?: unknown } }).opencode
+    if (!config || profile.provider !== "opencode") return undefined
+    // Numeric proto values: 1 Console, 2 Go, 3 Go Plus, 4 Go Teams. Unset and
+    // unknown read as Console, the catalog every OpenCode Profile started with.
+    switch (config.mode) {
+        case 2:
+            return "go"
+        case 3:
+            return "go-plus"
+        case 4:
+            return "go-teams"
+        default:
+            return "console"
+    }
+}
+
+/**
+ * Read the endpoint region stored on a Profile.
+ *
+ * Only providers that serve separate regional catalogs declare one, and an
+ * absent or unknown value keeps the international catalog that such a Profile
+ * started with.
+ */
+function readProviderRegion(profile: ApiProfile): ProviderRegion | undefined {
+    if (profile.provider !== "qwen" && profile.provider !== "zai") return undefined
+    const config = profile[PROFILE_PROVIDER_KEYS[profile.provider] as keyof ApiProfile] as
+        | { qwenApiLine?: unknown; zaiApiLine?: unknown }
+        | undefined
+    const line = profile.provider === "qwen" ? config?.qwenApiLine : config?.zaiApiLine
+    return line === "china" ? "mainland" : undefined
+}
+
+/**
+ * Resolve the registry key whose catalog this Profile reads.
+ *
+ * A provider that selects its catalog by an option (the OpenCode billing mode,
+ * or a regional endpoint) resolves through the shared key function, so the
+ * handler, the settings UI and the usage adapter cannot disagree about which
+ * catalog a Profile names.
+ */
+export function resolveProfileCatalogKey(profile: ApiProfile): string {
+    return resolveCatalogProviderKey({
+        provider: profile.provider,
+        opencodeMode: readOpenCodeMode(profile),
+        region: readProviderRegion(profile),
+    })
 }
 
 /**
@@ -74,13 +132,16 @@ function readOverrides(value: unknown): ProviderModelOverrides {
 
     // The server-tool declaration is stripped inside buildEffectiveModelInfo, so
     // every consumer of these overrides shares one rule.
-    const capabilities = isObject(value.capabilities) ? (value.capabilities as ModelCapabilities) : undefined
+    const capabilityValue = readProviderConfigField(value, "capabilities")
+    const capabilities = isObject(capabilityValue) ? (capabilityValue as ModelCapabilities) : undefined
 
-    const pricing = isObject(value.pricing) ? (value.pricing as ModelPricing) : undefined
+    const pricingValue = readProviderConfigField(value, "pricing")
+    const pricing = isObject(pricingValue) ? (pricingValue as ModelPricing) : undefined
     // The 1M long-context option is enabled by default; only an explicit false disables it.
     // Keeps TaskHeader/runtime display consistent with the provider UI and API handlers.
-    const enableLongContext = value.enableLongContext !== false
-    const pricingTiersEnabled = typeof value.pricingTiersEnabled === "boolean" ? value.pricingTiersEnabled : undefined
+    const enableLongContext = readProviderConfigField(value, "enableLongContext") !== false
+    const pricingTierValue = readProviderConfigField(value, "pricingTiersEnabled")
+    const pricingTiersEnabled = typeof pricingTierValue === "boolean" ? pricingTierValue : undefined
 
     return { capabilities, pricing, enableLongContext, pricingTiersEnabled }
 }
@@ -106,12 +167,14 @@ function resolveProfileApiFormat(profile: ApiProfile): ApiFormat | undefined {
     const config = profile[providerKey]
     if (!isObject(config)) return undefined
 
-    const configured = typeof config.apiFormat === "number" ? (config.apiFormat as ApiFormat) : undefined
+    const configuredValue = readProviderConfigField(config, "apiFormat")
+    const configured = typeof configuredValue === "number" ? (configuredValue as ApiFormat) : undefined
+    const websocketEnabled = readProviderConfigField(config, "websocketEnabled")
     const baseFormat = configured === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE ? ApiFormat.OPENAI_RESPONSES : configured
-    if (config.websocketEnabled === true && (baseFormat === undefined || baseFormat === ApiFormat.OPENAI_RESPONSES)) {
+    if (websocketEnabled === true && (baseFormat === undefined || baseFormat === ApiFormat.OPENAI_RESPONSES)) {
         return ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE
     }
-    if (config.websocketEnabled === undefined && configured === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE) {
+    if (websocketEnabled === undefined && configured === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE) {
         return ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE
     }
     return baseFormat
@@ -130,7 +193,7 @@ export function resolveProfileDisabledServerTools(profile: ApiProfile): readonly
     const config = profile[providerKey]
     if (!isObject(config)) return undefined
 
-    const disabled = (config as { disabledServerTools?: unknown }).disabledServerTools
+    const disabled = readProviderConfigField(config, "disabledServerTools")
     return Array.isArray(disabled) ? (disabled as ServerTool[]) : undefined
 }
 

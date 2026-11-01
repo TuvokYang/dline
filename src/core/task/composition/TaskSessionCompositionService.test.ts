@@ -1,4 +1,7 @@
 import * as coreApi from "@core/api"
+import type { SettingsSnapshot } from "@core/storage/settings/settings-types"
+import { parseSettingsDocument } from "@core/storage/settings/settings-validation"
+import { SETTINGS_DEFAULTS } from "@shared/storage/state-keys"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { TaskActivityPersistence } from "../activity/TaskActivityPersistence"
 import { TaskActivityStore } from "../activity/TaskActivityStore"
@@ -23,6 +26,23 @@ function messageStores() {
     return {
         uiMessage: { close: vi.fn(async () => undefined), getAll: () => [] },
         apiConversation: { close: vi.fn(async () => undefined), getAll: () => [] },
+    }
+}
+
+function stateManagerFixture() {
+    const snapshot: SettingsSnapshot = {
+        schemaVersion: 1,
+        revision: 0,
+        values: parseSettingsDocument(SETTINGS_DEFAULTS).values,
+        contentHash: "fixture",
+        awayRevocations: { mode: 0, automatic: 0 },
+    }
+    return {
+        getTaskCacheRef: () => ({ mode: "act" }),
+        getApiConfigurationForTask: () => ({}),
+        subscribeAwaySettings: () => () => undefined,
+        readAwaySettingsSnapshot: () => snapshot,
+        revokeAwayMode: async () => snapshot,
     }
 }
 
@@ -133,10 +153,7 @@ describe("TaskSessionCompositionService", () => {
             ...openOptions(stores),
             cwd: ".",
             deferRestoredCommands: true,
-            stateManager: {
-                getTaskCacheRef: () => ({ mode: "act" }),
-                getApiConfigurationForTask: () => ({}),
-            } as never,
+            stateManager: stateManagerFixture() as never,
             prompt: { ports: { promptContext: {} } } as never,
             hostFactory: { create },
             publishState: async () => undefined,
@@ -209,10 +226,7 @@ describe("TaskSessionCompositionService orphaned activities", () => {
             ...openOptions(stores as unknown as ReturnType<typeof messageStores>),
             cwd: ".",
             deferRestoredCommands,
-            stateManager: {
-                getTaskCacheRef: () => ({ mode: "act" }),
-                getApiConfigurationForTask: () => ({}),
-            } as never,
+            stateManager: stateManagerFixture() as never,
             prompt: { ports: { promptContext: {} } } as never,
             hostFactory: {
                 create: vi.fn(async () => {
@@ -272,10 +286,7 @@ describe("TaskSessionCompositionService orphaned activities", () => {
             ...openOptions(stores as unknown as ReturnType<typeof messageStores>),
             cwd: ".",
             deferRestoredCommands: false,
-            stateManager: {
-                getTaskCacheRef: () => ({ mode: "act" }),
-                getApiConfigurationForTask: () => ({}),
-            } as never,
+            stateManager: stateManagerFixture() as never,
             prompt: { ports: { promptContext: {} } } as never,
             hostFactory: {
                 create: vi.fn(async () => {

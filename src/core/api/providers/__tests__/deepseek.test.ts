@@ -2,6 +2,7 @@ import { ModelRegistry } from "@core/model-registry/ModelRegistry"
 import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import { BaseProviderConfig, type ReasoningConfig } from "@shared/proto/dline/provider/common"
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import { expect } from "chai"
 import type OpenAI from "openai"
 import { afterEach, describe, it, vi } from "vitest"
@@ -733,6 +734,8 @@ describe("DeepSeekHandler", () => {
                     provider: "deepseek",
                     apiKey: "test-api-key",
                     modelId: "deepseek-v4-pro",
+                    // This tests token allocation, not the seed catalog's changing seller schedule.
+                    modelInfo: { id: "deepseek-v4-pro", pricing: flatMeteredPricing(3, 6, 3, 0.025) },
                     deepseek: BaseProviderConfig.create({ apiFormat: ApiFormat.OPENAI_CHAT }),
                 }),
                 mode: "act",
@@ -809,7 +812,7 @@ describe("DeepSeekHandler", () => {
 
     it("consumes a saved context override through the production runtime factory", () => {
         vi.spyOn(ModelRegistry, "getInstance").mockReturnValue({
-            getProviderModels: () => ({
+            getProviderCatalog: () => ({
                 provider: "deepseek",
                 providerName: "DeepSeek",
                 billingMode: "token",

@@ -7,6 +7,7 @@ import { getAllApiKeys, resetAllStores } from "@core/storage/secrets"
 import { EmptyRequest } from "@shared/proto/dline/common"
 import { ServerTool } from "@shared/proto/dline/models/metadata"
 import { ApiProfile, ImageGenerationSource } from "@shared/proto/dline/profile"
+import { flatMeteredPricing, readPriceSet } from "@shared/providers/pricing-shape"
 import { PROVIDER_OPTIONS } from "@shared/providers/providers"
 import { Logger } from "@shared/services/Logger"
 import { expect } from "chai"
@@ -258,7 +259,7 @@ describe("getApiProfiles", () => {
 
         expect(profile.imageSource).to.equal(ImageGenerationSource.IMAGE_GENERATION_SOURCE_GPT_SUBSCRIPTION)
         expect(profile.imageModelId).to.equal("gpt-image-2.5")
-        expect(profile.schemaVersion).to.equal(2)
+        expect(profile.schemaVersion).to.equal(4)
     })
 
     it("keeps a legacy missing image source without image bindings as None", () => {
@@ -315,7 +316,7 @@ describe("getApiProfiles", () => {
         })
 
         expect(profile.anthropic?.disabledServerTools).to.deep.equal([])
-        expect(profile.schemaVersion).to.equal(2)
+        expect(profile.schemaVersion).to.equal(4)
     })
 
     it("keeps hosted tool disables chosen after the reset", () => {
@@ -329,7 +330,96 @@ describe("getApiProfiles", () => {
         })
 
         expect(profile.anthropic?.disabledServerTools).to.deep.equal([ServerTool.WEB_SEARCH])
-        expect(profile.schemaVersion).to.equal(2)
+        expect(profile.schemaVersion).to.equal(4)
+    })
+
+    it("rewrites a legacy flat price into the published metered shape", () => {
+        // Stored before the published shape existed, so the rate sits directly on
+        // the provider config. Reading it without rewriting would leave the old
+        // spelling on disk for the next reader.
+        const profile = normalizeApiProfile({
+            id: "legacy-flat-pricing",
+            name: "Legacy Flat Pricing",
+            provider: "deepseek",
+            modelId: "deepseek-v4-pro",
+            schemaVersion: 2,
+            deepseek: { inputPrice: 0.28, outputPrice: 0.42, cacheReadsPrice: 0.028 },
+        })
+
+        const prices = profile.deepseek?.pricing?.metered?.strategy?.flat?.prices
+        expect(prices?.inputPrice).to.equal(0.28)
+        expect(prices?.outputPrice).to.equal(0.42)
+        expect(prices?.cacheReadPrice).to.equal(0.028)
+        expect(profile.schemaVersion).to.equal(4)
+    })
+
+    it("moves a Profile stored against a retired OpenCode Go provider onto OpenCode", () => {
+        // The Go catalog used to be a provider of its own. The id no longer
+        // resolves a config branch, so leaving it would drop the key and model.
+        const profile = normalizeApiProfile({
+            id: "legacy-opencode-go",
+            name: "Legacy Go",
+            provider: "opencode-go",
+            modelId: "kimi-k3",
+            schemaVersion: 3,
+            apiKey: "opencode-key",
+            "opencode-go": { model: { customModelEnabled: true }, reasoning: { enabled: true } },
+        })
+
+        expect(profile.provider).to.equal("opencode")
+        expect(profile.modelId).to.equal("kimi-k3")
+        expect(profile.apiKey).to.equal("opencode-key")
+        // OPEN_CODE_MODE_GO selects the catalog the retired id served.
+        expect(profile.opencode?.mode).to.equal(2)
+        expect(profile.opencode?.model?.customModelEnabled).to.equal(true)
+        expect(profile.schemaVersion).to.equal(4)
+    })
+
+    it("moves a Profile stored against a retired mainland catalog onto its provider", () => {
+        const profile = normalizeApiProfile({
+            id: "legacy-qwen-cn",
+            name: "Legacy Qwen CN",
+            provider: "qwen-cn",
+            modelId: "qwen-max",
+            schemaVersion: 3,
+            "qwen-cn": { qwenApiLine: "china", capabilities: { contextWindow: 131_072 } },
+        })
+
+        expect(profile.provider).to.equal("qwen")
+        expect(profile.modelId).to.equal("qwen-max")
+        // The mainland endpoint is an option on the provider, not its own id.
+        expect(profile.qwen?.qwenApiLine).to.equal("china")
+        expect(profile.qwen?.capabilities?.contextWindow).to.equal(131_072)
+    })
+
+    it("keeps a stored price in the published shape untouched", () => {
+        // A second run must not lose an edit: only an absent price is migrated.
+        const stored = flatMeteredPricing(1.5, 2.5, 0.75, 0.25)
+        const profile = normalizeApiProfile({
+            id: "already-nested-pricing",
+            name: "Already Nested Pricing",
+            provider: "deepseek",
+            modelId: "deepseek-v4-pro",
+            schemaVersion: 2,
+            deepseek: { pricing: stored },
+        })
+
+        const prices = profile.deepseek?.pricing?.metered?.strategy?.flat?.prices
+        expect(readPriceSet(prices)).to.deep.equal(readPriceSet(stored.metered?.strategy?.flat?.prices))
+        expect(profile.schemaVersion).to.equal(4)
+    })
+
+    it("carries no price when the legacy config declared no rate", () => {
+        const profile = normalizeApiProfile({
+            id: "legacy-no-pricing",
+            name: "Legacy No Pricing",
+            provider: "deepseek",
+            modelId: "deepseek-v4-pro",
+            schemaVersion: 2,
+            deepseek: { enableLongContext: true },
+        })
+
+        expect(profile.deepseek?.pricing).to.equal(undefined)
     })
 
     it("persists historical Profile names for name-only Task migration", () => {
@@ -727,11 +817,7 @@ describe("getApiProfiles", () => {
                             supportsImages: false,
                             supportsPromptCache: true,
                         },
-                        pricing: {
-                            inputPrice: 1,
-                            outputPrice: 2,
-                            currency: "USD",
-                        },
+                        pricing: flatMeteredPricing(1, 2),
                     },
                 },
             }),
@@ -753,10 +839,7 @@ describe("getApiProfiles", () => {
                             capabilities: {
                                 contextWindow: 256_000,
                             },
-                            pricing: {
-                                inputPrice: 1,
-                                outputPrice: 3,
-                            },
+                            pricing: flatMeteredPricing(1, 3),
                         },
                     },
                 ],
@@ -780,17 +863,21 @@ describe("getApiProfiles", () => {
         expect(response.profiles[0].modelInfo?.capabilities?.contextWindow).to.equal(256_000)
         expect(response.profiles[0].modelInfo?.capabilities?.maxTokens).to.equal(8_192)
         expect(response.profiles[0].modelInfo?.capabilities?.supportsPromptCache).to.equal(true)
-        expect(response.profiles[0].modelInfo?.pricing?.inputPrice).to.equal(1)
-        expect(response.profiles[0].modelInfo?.pricing?.outputPrice).to.equal(3)
+        const responsePricing = readPriceSet(response.profiles[0].modelInfo?.pricing?.metered?.strategy?.flat?.prices)
+        expect(responsePricing.inputPrice).to.equal(1)
+        expect(responsePricing.outputPrice).to.equal(3)
 
         const storedProfiles = JSON.parse(await fs.readFile(storedProfilesPath, "utf8"))
+        // Compare the persisted document, not in-memory key presence: JSON drops
+        // undefined slots, so an unpublished cache rate must read back as absent.
         expect(storedProfiles[0].modelInfo).to.deep.equal({
             id: "gpt-compatible",
-            capabilities: {
-                contextWindow: 256_000,
-            },
+            capabilities: { contextWindow: 256_000 },
             pricing: {
-                outputPrice: 3,
+                metered: {
+                    currency: "USD",
+                    strategy: { flat: { prices: { inputPrice: 1, outputPrice: 3 } } },
+                },
             },
         })
 

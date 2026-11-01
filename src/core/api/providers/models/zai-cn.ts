@@ -3,6 +3,7 @@
  * Extracted from api.ts mainlandZAiModels (lines 4737-4842).
  */
 import type { ModelInfo } from "@shared/api"
+import { band, bandedPricing, flatPricing } from "./pricing"
 
 export const mainlandZAiModels: Record<string, ModelInfo> = {
     "glm-5.1": {
@@ -14,11 +15,7 @@ export const mainlandZAiModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 1.4,
-            outputPrice: 4.4,
-            cacheReadsPrice: 0.26,
-        },
+        pricing: flatPricing(1.4, 4.4, undefined, 0.26),
     },
     "glm-5": {
         id: "glm-5",
@@ -29,11 +26,7 @@ export const mainlandZAiModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            cacheReadsPrice: 0.2,
-            inputPrice: 1.0,
-            outputPrice: 3.2,
-        },
+        pricing: flatPricing(1.0, 3.2, undefined, 0.2),
     },
     "glm-4.7": {
         id: "glm-4.7",
@@ -44,11 +37,7 @@ export const mainlandZAiModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0.6,
-            outputPrice: 2.2,
-            cacheReadsPrice: 0.11,
-        },
+        pricing: flatPricing(0.6, 2.2, undefined, 0.11),
     },
     "glm-4.6": {
         id: "glm-4.6",
@@ -59,11 +48,7 @@ export const mainlandZAiModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0.6,
-            outputPrice: 2.2,
-            cacheReadsPrice: 0.11,
-        },
+        pricing: flatPricing(0.6, 2.2, undefined, 0.11),
     },
     "glm-4.5": {
         id: "glm-4.5",
@@ -76,32 +61,11 @@ export const mainlandZAiModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0.29,
-            outputPrice: 1.14,
-            cacheWritesPrice: 0,
-            cacheReadsPrice: 0.057,
-            tiers: [
-                {
-                    contextWindow: 32_000,
-                    inputPrice: 0.21,
-                    outputPrice: 1.0,
-                    cacheReadsPrice: 0.043,
-                },
-                {
-                    contextWindow: 128_000,
-                    inputPrice: 0.29,
-                    outputPrice: 1.14,
-                    cacheReadsPrice: 0.057,
-                },
-                {
-                    contextWindow: Number.POSITIVE_INFINITY,
-                    inputPrice: 0.29,
-                    outputPrice: 1.14,
-                    cacheReadsPrice: 0.057,
-                },
-            ],
-        },
+        pricing: bandedPricing([
+            band(32_000, 0.21, 1.0, 0, 0.043),
+            band(128_000, 0.29, 1.14, 0, 0.057),
+            band(undefined, 0.29, 1.14, 0, 0.057),
+        ]),
     },
     "glm-4.5-air": {
         id: "glm-4.5-air",
@@ -114,32 +78,11 @@ export const mainlandZAiModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0.086,
-            outputPrice: 0.57,
-            cacheWritesPrice: 0,
-            cacheReadsPrice: 0.017,
-            tiers: [
-                {
-                    contextWindow: 32_000,
-                    inputPrice: 0.057,
-                    outputPrice: 0.43,
-                    cacheReadsPrice: 0.011,
-                },
-                {
-                    contextWindow: 128_000,
-                    inputPrice: 0.086,
-                    outputPrice: 0.57,
-                    cacheReadsPrice: 0.017,
-                },
-                {
-                    contextWindow: Number.POSITIVE_INFINITY,
-                    inputPrice: 0.086,
-                    outputPrice: 0.57,
-                    cacheReadsPrice: 0.017,
-                },
-            ],
-        },
+        pricing: bandedPricing([
+            band(32_000, 0.057, 0.43, 0, 0.011),
+            band(128_000, 0.086, 0.57, 0, 0.017),
+            band(undefined, 0.086, 0.57, 0, 0.017),
+        ]),
     },
 }
 

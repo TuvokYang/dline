@@ -2,6 +2,7 @@
 
 import fs from "node:fs"
 import path from "node:path"
+import { attachBindingProvenance } from "./script-bindings.mjs"
 import { canonicalSourcePath, scanTreeSitterSource } from "./tree-sitter-facts.mjs"
 import { languageForPath, supportedExtensions } from "./tree-sitter-runtime.mjs"
 
@@ -277,7 +278,13 @@ function components(nodes, edges) {
     return result.sort((left, right) => left.join("|").localeCompare(right.join("|")))
 }
 
-export async function buildDependencyClosure({ repoRoot = process.cwd(), seeds, maxFiles = 256, maxDepth = 32 } = {}) {
+export async function buildDependencyClosure({
+    repoRoot = process.cwd(),
+    seeds,
+    maxFiles = 256,
+    maxDepth = 32,
+    followImports = true,
+} = {}) {
     const absoluteRoot = path.resolve(repoRoot)
     const queue = [...new Set((seeds ?? []).map((seed) => path.resolve(absoluteRoot, seed)))]
         .sort()
@@ -287,6 +294,8 @@ export async function buildDependencyClosure({ repoRoot = process.cwd(), seeds, 
     const imports = []
     const diagnostics = []
     const aliasBases = createAliasResolver(absoluteRoot)
+    const modules = new Map()
+    const scriptModels = new Map()
     while (queue.length > 0) {
         const current = queue.shift()
         if (visited.has(current.file)) continue
@@ -315,7 +324,18 @@ export async function buildDependencyClosure({ repoRoot = process.cwd(), seeds, 
         const scan = await scanTreeSitterSource({ repoRoot: absoluteRoot, filePath: current.file, source })
         facts.push(...scan.facts)
         diagnostics.push(...scan.diagnostics)
-        for (const fact of importFacts(scan.facts)) {
+        if (scan.scriptBindings) modules.set(scan.file.path, scan.scriptBindings)
+        if (scan.scriptModel) scriptModels.set(scan.file.path, scan.scriptModel)
+        const dependencyFacts = [...importFacts(scan.facts)]
+        for (const entry of scan.scriptBindings?.exports ?? []) {
+            if (!entry.source || dependencyFacts.some((fact) => specifiers(scan.file.language, fact.text).includes(entry.source)))
+                continue
+            dependencyFacts.push({
+                text: `export ${entry.typeOnly ? "type " : ""}* from ${JSON.stringify(entry.source)}`,
+                start: { line: 1 },
+            })
+        }
+        for (const fact of dependencyFacts) {
             for (const specifier of specifiers(scan.file.language, fact.text)) {
                 const classification = classify(scan.file.language, fact.text)
                 const resolved = resolveWorkspace(absoluteRoot, current.file, scan.file.language, specifier, aliasBases)
@@ -336,7 +356,7 @@ export async function buildDependencyClosure({ repoRoot = process.cwd(), seeds, 
                           }),
                 })
                 imports.push(edge)
-                if (resolved && !visited.has(resolved)) queue.push({ file: resolved, depth: current.depth + 1 })
+                if (followImports && resolved && !visited.has(resolved)) queue.push({ file: resolved, depth: current.depth + 1 })
             }
         }
         // Breadth-first by depth, then path: an alphabetical-only order lets the dependencies of an early
@@ -361,7 +381,9 @@ export async function buildDependencyClosure({ repoRoot = process.cwd(), seeds, 
     return Object.freeze({
         files: Object.freeze(files),
         facts: Object.freeze(facts),
-        imports: Object.freeze(imports),
+        imports: Object.freeze(attachBindingProvenance(imports, modules)),
+        scriptModels,
+        scriptModules: modules,
         runtimeSccs: Object.freeze(components(new Set(files), runtimeEdges)),
         diagnostics: Object.freeze(diagnostics),
     })

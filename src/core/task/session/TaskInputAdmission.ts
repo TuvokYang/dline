@@ -1,3 +1,4 @@
+import type { UserInputControl } from "@shared/away"
 import type { AdmittedInputPart } from "@shared/input-semantics/admitted-parts"
 import type { SemanticInputDiagnostic } from "@shared/input-semantics/diagnostics"
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
@@ -29,6 +30,7 @@ export interface AdmittedLifecycleBarrier {
 /** What one submission contributes once Core has reviewed it. */
 export interface AdmittedTaskInput {
     readonly document: SemanticInputDocument
+    readonly userControl?: UserInputControl
     /** Ordered projection for the provider; the raw text stays untouched for the UI. */
     readonly admittedText: string
     /** The same projection as {@link admittedText}, with every resource kept as its own part. */
@@ -80,6 +82,12 @@ export interface LifecycleBarrierPort {
  * reply never leaves a command behind for a later round.
  */
 export interface ReviewedReply {
+    /** Trusted control accepted with dialog.responded, never inferred by a receiver. */
+    readonly userControl?: UserInputControl
+    /** First admission's immutable input; recovered delivery reads it instead of admitting again. */
+    readonly admittedInputRef?: string
+    /** Model projection when admission consumed a control token or resolved an entity. */
+    readonly modelText?: string
     /** What the reply still says to the model. */
     readonly text: string
     /**

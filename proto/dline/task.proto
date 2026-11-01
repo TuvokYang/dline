@@ -44,6 +44,8 @@ service TaskService {
   rpc dispatchInteraction(DispatchInteractionRequest) returns (DispatchInteractionResponse);
   // Requests a task-local context compaction without consuming the active interaction
   rpc compactTask(CompactTaskRequest) returns (CompactTaskResponse);
+  // Exits Away Mode on this task opening without answering an interaction or consuming a draft.
+  rpc stopAwayMode(StopAwayModeRequest) returns (StopAwayModeResponse);
   // Records task feedback (thumbs up/down)
   rpc taskFeedback(StringRequest) returns (Empty);
   // Shows task completion changes diff in a view
@@ -78,6 +80,18 @@ service TaskService {
   rpc moveCommandToBackground(MoveCommandToBackgroundRequest) returns (MoveCommandToBackgroundResponse);
   // Applies one user-driven change to the task input queue
   rpc mutateInputQueue(MutateInputQueueRequest) returns (MutateInputQueueResponse);
+}
+
+// A task control, not a dialog response. No composer content is accepted.
+message StopAwayModeRequest {
+  string task_id = 1;
+  string task_instance_id = 2;
+}
+
+// Acceptance is returned only after the mode change is durable.
+message StopAwayModeResponse {
+  bool accepted = 1;
+  string result = 2;
 }
 
 // Request message for creating a new task

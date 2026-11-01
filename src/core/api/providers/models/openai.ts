@@ -5,6 +5,7 @@
 
 import type { ModelInfo } from "@shared/api"
 import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
+import { band, bandedPricing, flatPricing } from "./pricing"
 
 type FrontierPrices = {
     inputPrice: number
@@ -25,20 +26,24 @@ type FrontierOptions = Pick<ModelInfo, "name" | "temperature" | "apiFormats"> & 
 
 /** The 272K boundary selects a usage price band, not a selectable context window. */
 function usagePricing(prices: FrontierPrices): NonNullable<ModelInfo["pricing"]> {
-    const longContext: FrontierPrices = {
-        ...prices,
+    const longContext = {
         inputPrice: prices.inputPrice * 2,
         outputPrice: prices.outputPrice * 1.5,
+        cacheWritesPrice: prices.cacheWritesPrice === undefined ? undefined : prices.cacheWritesPrice * 2,
+        cacheReadsPrice: prices.cacheReadsPrice === undefined ? undefined : prices.cacheReadsPrice * 2,
     }
-    if (prices.cacheReadsPrice !== undefined) longContext.cacheReadsPrice = prices.cacheReadsPrice * 2
-    if (prices.cacheWritesPrice !== undefined) longContext.cacheWritesPrice = prices.cacheWritesPrice * 2
-    return {
-        ...prices,
-        tiers: [
-            { contextWindow: 272_000, ...prices },
-            { contextWindow: 1_050_000, ...longContext },
-        ],
-    }
+    // The last band is unbounded so requests above the highest published
+    // threshold keep billing at that rate instead of becoming unpriced.
+    return bandedPricing([
+        band(272_000, prices.inputPrice, prices.outputPrice, prices.cacheWritesPrice, prices.cacheReadsPrice),
+        band(
+            undefined,
+            longContext.inputPrice,
+            longContext.outputPrice,
+            longContext.cacheWritesPrice,
+            longContext.cacheReadsPrice,
+        ),
+    ])
 }
 
 /** Keep model-specific protocol, reasoning and pricing differences explicit at each declaration. */
@@ -70,7 +75,9 @@ function frontierModel(id: string, prices: FrontierPrices, options: FrontierOpti
                   }
                 : {}),
         },
-        pricing: options.usagePricing ? usagePricing(prices) : { ...prices },
+        pricing: options.usagePricing
+            ? usagePricing(prices)
+            : flatPricing(prices.inputPrice, prices.outputPrice, prices.cacheWritesPrice, prices.cacheReadsPrice),
     }
 }
 

@@ -23,6 +23,7 @@ import type { ProviderRequestReportPort } from "../executors/provider/service/Pr
 import { ToolCommandExecutor, type ToolCommandExecutorOptions } from "../executors/tool/ToolCommandExecutor"
 import type { TaskEvent, TaskState } from "../kernel"
 import { type CommandExecutor, type RuntimeDiagnosticSink, type RuntimeFacade, TaskRuntime } from "../runtime"
+import type { AutomaticDialogDeliveryPort } from "../runtime/AutomaticDialogDelivery"
 import type { CommandPublicationStore, ConversationJournal, DurableTaskSnapshot, StateVault, TaskViewPort } from "../stores"
 
 /** Everything the provider domain needs: how a turn runs, how it is shown, and what it cost. */
@@ -48,6 +49,7 @@ export interface DialogPorts {
 }
 
 export interface TaskExecutionPorts {
+    readonly automaticResponses?: AutomaticDialogDeliveryPort
     readonly provider: ProviderPorts
     readonly compose: ComposePort
     readonly compaction: CompactionPort
@@ -72,6 +74,7 @@ export interface TaskExecutorAssemblyOptions {
     readonly restoredOutbox?: DurableTaskSnapshot["outbox"]
     /** Hold restored commands until the shell opens the task; see `TaskRuntime`. */
     readonly deferRestoredCommands?: boolean
+    readonly holdRestoredCommands?: boolean
     readonly halt?: HaltCommandExecutorOptions
 }
 
@@ -95,7 +98,15 @@ class BoundTaskEventSink implements TaskEventSink {
     async submit(event: TaskEvent): Promise<TaskEventSubmission> {
         if (!this.runtime) throw new Error("Task event sink is not bound")
         const result = await this.runtime.submit(event)
-        return result.kind === "accepted" ? { kind: "accepted", durable: result.receipt.durable } : { kind: "rejected" }
+        return result.kind === "accepted"
+            ? {
+                  kind: "accepted",
+                  durable: result.receipt.durable,
+                  ...(event.type === "compose.freeze_requested"
+                      ? { materialPlan: result.state.flow.compose!.materialPlan! }
+                      : {}),
+              }
+            : { kind: "rejected" }
     }
 }
 
@@ -146,6 +157,8 @@ export function createTaskExecutorAssembly(options: TaskExecutorAssemblyOptions)
         diagnostics: options.diagnostics,
         restoredOutbox: options.restoredOutbox,
         deferRestoredCommands: options.deferRestoredCommands,
+        holdRestoredCommands: options.holdRestoredCommands,
+        automaticResponses: options.execution.automaticResponses,
     })
     events.bind(runtime)
     return { runtime, halt, background, cotask, executors, participants }

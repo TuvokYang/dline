@@ -14,6 +14,7 @@ import {
     type SlashCommandInputNode,
 } from "@shared/input-semantics/document"
 import { lexSemanticInput, type SemanticActivation, type SemanticTrigger, semanticTriggerAt } from "@shared/input-semantics/lexer"
+import { normalizeCommandTokens } from "@shared/input-semantics/normalize-command-tokens"
 import { presentationTextOf, presentationTextOfNode } from "@shared/input-semantics/presentation"
 import {
     type ComposerAtom,
@@ -321,7 +322,7 @@ export function composeComposerSubmission(
         ? [{ kind: "text", text: options.literalPrefix, source: "app_action" }, ...segments]
         : [...segments]
     const projection = projectComposerDocument(prefixed, options)
-    const { document } = projection
+    const document = normalizeCommandTokens(projection.document, options.catalog)
     return projection.requiresDocument
         ? { text: document.rawText, semanticInput: document, projection }
         : { text: document.rawText, projection }

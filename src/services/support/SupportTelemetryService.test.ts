@@ -79,7 +79,7 @@ class FakeOtel {
             ticket_expires_at: NOW + 90 * 86_400_000,
             poll_after_ms: 60_000,
         })
-    status: () => Response = () =>
+    status: () => Response | Promise<Response> = () =>
         json(200, status({ state: "awaiting_issue", authorization_revision: 0, capture_expires_at: undefined }))
     exchange: (body: Record<string, unknown>) => Response = (body) =>
         json(200, {
@@ -457,16 +457,25 @@ describe("SupportTelemetryService", () => {
         )
     })
 
-    it("never projects an Issue identity even when the response carries one", async () => {
+    it("never projects raw Issue coordinates even when the response carries them", async () => {
         const support = service()
         await run(() => support.issueAuthorization())
-        otel.status = () => json(200, status({ issue: { owner: "TuvokYang", repo: "dline", number: 123 }, issue_url: "x" }))
+        otel.status = () => json(200, status({ issue: { owner: "TuvokYang", repo: "dline", number: 123 } }))
 
         const projected = await run(() => support.checkNow())
 
         expect(Object.keys(projected ?? {}).sort()).toEqual(
             ["authorizationExpiresAt", "captureExpiresAt", "issueState", "publicCode", "resolution", "state"].sort(),
         )
+    })
+
+    it("rejects a malformed supplied Issue URL instead of treating it as absent metadata", async () => {
+        const support = service()
+        await run(() => support.issueAuthorization())
+        otel.status = () => json(200, status({ issue_url: "x" }))
+
+        await expect(run(() => support.checkNow())).rejects.toThrow()
+        await expect(new IssueGrantRepository(layout(), { clock: () => NOW }).readActive(NOW, 1)).resolves.toBeNull()
     })
 
     it("deletes and revokes locally without any request leaving the machine", async () => {

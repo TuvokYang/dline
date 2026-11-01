@@ -60,6 +60,18 @@ describe("AggressiveRenderingSetting", () => {
         expect(mocks.updateSetting).toHaveBeenCalledWith("aggressiveRendering", "user_turn")
     })
 
+    // The help text is the user's only statement of what folding does. It used to
+    // promise that failures always stay visible, while the folded block now hides
+    // them behind a counted header, so the wording is part of the contract.
+    it("describes failures as counted inside the block rather than always visible", () => {
+        mocks.aggressiveRendering = { user: "user_turn", featureFlag: true }
+        const { container } = render(<AggressiveRenderingSetting />)
+        const help = container.querySelector("#aggressive-rendering + p") ?? container.querySelector("p")
+
+        expect(help?.textContent).toContain("errors it holds")
+        expect(help?.textContent).not.toContain("always stay visible")
+    })
+
     it("ignores a value that is not a known level", () => {
         mocks.aggressiveRendering = { user: "message_segment", featureFlag: true }
         const { container } = render(<AggressiveRenderingSetting />)

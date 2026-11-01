@@ -62,6 +62,12 @@ export type ReportQueryRefusalReason = (typeof REPORT_QUERY_REFUSAL_REASONS)[num
  */
 export interface ServiceError {
     readonly code?: string
+    /**
+     * `error.path` of a contract refusal: the body location the service could not
+     * accept. It is kept for local, bounded diagnostics because a 422 says nothing
+     * else about which field was wrong.
+     */
+    readonly path?: string
     /** The body's `retry_after_ms`, else `Retry-After` relative to the local clock. */
     readonly retryAfterMs?: number
     /** Server epoch milliseconds. */
@@ -76,6 +82,7 @@ export function parseServiceError(body: unknown, retryAfterHeader: string | null
     const envelope: Record<string, unknown> = isRecord(body) ? body : {}
     const error = isRecord(envelope.error) ? envelope.error : undefined
     const code = typeof error?.code === "string" && error.code.length > 0 ? error.code : undefined
+    const path = typeof error?.path === "string" && error.path.length > 0 ? error.path : undefined
     const delay = envelope.retry_after_ms
     const retryAfterMs = isSafeNonNegativeInteger(delay) ? delay : parseRetryAfterMs(retryAfterHeader, now)
     const next = envelope.next_eligible_at
@@ -83,6 +90,7 @@ export function parseServiceError(body: unknown, retryAfterHeader: string | null
     const serverTime = envelope.server_time
     return {
         ...(code ? { code } : {}),
+        ...(path ? { path } : {}),
         ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
         ...(isSafeNonNegativeInteger(next) ? { nextEligibleAt: next } : {}),
         ...(reason === undefined ? {} : { reason }),

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import type { ModelInfo } from "@shared/proto/dline/models"
 import { type ModelCapabilities, type ModelPricing, ServerTool } from "@shared/proto/dline/models/metadata"
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import { fireEvent, render, screen } from "@testing-library/react"
 import React from "react"
 import { describe, expect, it, vi } from "vitest"
@@ -58,6 +59,7 @@ vi.mock("./DebouncedTextField", () => ({
         id,
         initialValue,
         onChange,
+        placeholder,
     }: {
         ariaLabel?: string
         children?: React.ReactNode
@@ -65,6 +67,7 @@ vi.mock("./DebouncedTextField", () => ({
         id?: string
         initialValue?: string
         onChange: (value: string) => void
+        placeholder?: string
     }) => {
         const input = (
             <input
@@ -73,6 +76,7 @@ vi.mock("./DebouncedTextField", () => ({
                 defaultValue={initialValue}
                 id={id}
                 onChange={(event) => onChange(event.target.value)}
+                placeholder={placeholder}
             />
         )
         return children ? (
@@ -85,6 +89,31 @@ vi.mock("./DebouncedTextField", () => ({
         )
     },
 }))
+
+/**
+ * A metered price whose strategy is token bands.
+ *
+ * The pricing tier editor only edits the band strategy, so a fixture that used
+ * the retired flat `{ tiers }` shape would leave the editor with nothing to
+ * read and every assertion would exercise the empty path.
+ */
+function bandedPricing(bands: readonly { maxInputTokens?: number }[]): ModelPricing {
+    return {
+        metered: {
+            currency: "USD",
+            strategy: {
+                contextWindow: {
+                    // Plain band objects: the generated `ContextWindowBand` is a
+                    // type-only export here, so it has no runtime factory.
+                    bands: bands.map((band) => ({
+                        maxInputTokens: band.maxInputTokens,
+                        prices: { inputPrice: 0, outputPrice: 0 },
+                    })),
+                },
+            },
+        },
+    }
+}
 
 describe("ModelConfiguration", () => {
     it("keeps checkbox draft state while persisted props are stale", () => {
@@ -123,7 +152,7 @@ describe("ModelConfiguration", () => {
                 fields={{ capabilities: ["contextWindowTiers"], pricing: ["pricingTiers"] }}
                 onCapabilitiesUpdate={onCapabilitiesUpdate}
                 onPricingUpdate={onPricingUpdate}
-                pricing={{ tiers: [] } as unknown as ModelPricing}
+                pricing={bandedPricing([])}
                 tiersEditable={true}
             />,
         )
@@ -140,8 +169,17 @@ describe("ModelConfiguration", () => {
         })
 
         fireEvent.click(screen.getByRole("button", { name: "Add Pricing Tier" }))
+        // A new band carries only the bound and the two base rates the editor owns.
+        // Cache rates stay unpublished rather than being invented as zero.
         expect(onPricingUpdate).toHaveBeenCalledWith({
-            tiers: [{ contextWindow: 128_000, inputPrice: 0, outputPrice: 0, cacheWritesPrice: 0, cacheReadsPrice: 0 }],
+            metered: {
+                currency: "USD",
+                strategy: {
+                    contextWindow: {
+                        bands: [{ maxInputTokens: 128_000, prices: { inputPrice: 0, outputPrice: 0 } }],
+                    },
+                },
+            },
         })
     })
 
@@ -171,9 +209,7 @@ describe("ModelConfiguration", () => {
             capabilities: {
                 contextWindowTiers: [{ id: "standard", contextWindow: 272_000, label: "272K" }],
             } as ModelCapabilities,
-            pricing: {
-                tiers: [{ contextWindow: 128_000, inputPrice: 1, outputPrice: 2 }],
-            } as ModelPricing,
+            pricing: bandedPricing([{ maxInputTokens: 128_000 }]),
         }
 
         render(
@@ -197,15 +233,11 @@ describe("ModelConfiguration", () => {
     it("does not restore registry pricing tiers after an explicit empty override", () => {
         render(
             <ModelConfiguration
-                defaults={{
-                    pricing: {
-                        tiers: [{ contextWindow: 128_000, inputPrice: 1, outputPrice: 2 }],
-                    } as ModelPricing,
-                }}
+                defaults={{ pricing: bandedPricing([{ maxInputTokens: 128_000 }]) }}
                 fields={{ pricing: ["pricingTiers"] }}
                 onCapabilitiesUpdate={vi.fn()}
                 onPricingUpdate={vi.fn()}
-                pricing={{ tiers: [] } as unknown as ModelPricing}
+                pricing={bandedPricing([])}
                 pricingTiersEnabled={true}
                 tiersEditable={true}
             />,
@@ -441,25 +473,19 @@ describe("ModelConfiguration", () => {
                 fields={{ pricing: ["inputPrice"] }}
                 onCapabilitiesUpdate={vi.fn()}
                 onPricingUpdate={onPricingUpdate}
-                pricing={{ inputPrice: 1 } as ModelPricing}
+                pricing={flatMeteredPricing(1, 0)}
             />,
         )
 
         fireEvent.click(screen.getByRole("button", { name: /Model Configuration/i }))
         fireEvent.change(screen.getByLabelText(/Input Price/), { target: { value: "0.5" } })
 
-        expect(onPricingUpdate).toHaveBeenCalledWith({ inputPrice: 0.5 })
+        expect(onPricingUpdate).toHaveBeenCalledWith(flatMeteredPricing(0.5, 0))
     })
 
     it("shows registry pricing and currency until a profile override is written", () => {
         const defaults: Partial<ModelInfo> = {
-            pricing: {
-                inputPrice: 3,
-                outputPrice: 6,
-                cacheWritesPrice: 3,
-                cacheReadsPrice: 0.025,
-                currency: "CNY",
-            } as ModelPricing,
+            pricing: flatMeteredPricing(3, 6, 3, 0.025, "CNY"),
         }
 
         render(
@@ -489,7 +515,7 @@ describe("ModelConfiguration", () => {
                 }}
                 onCapabilitiesUpdate={vi.fn()}
                 onPricingUpdate={vi.fn()}
-                pricing={{ inputPrice: 1, outputPrice: 2 } as ModelPricing}
+                pricing={flatMeteredPricing(1, 2)}
             />,
         )
 
@@ -521,7 +547,7 @@ describe("ModelConfiguration", () => {
                 }}
                 onCapabilitiesUpdate={vi.fn()}
                 onPricingUpdate={vi.fn()}
-                pricing={{ cacheReadsPrice: 0.1, cacheWritesPrice: 0.2, inputPrice: 1 } as ModelPricing}
+                pricing={flatMeteredPricing(1, 0, 0.2, 0.1)}
             />,
         )
 
@@ -554,7 +580,7 @@ describe("ModelConfiguration", () => {
         expect(onCapabilitiesUpdate).not.toHaveBeenCalled()
     })
 
-    it("uses built-in defaults for context and max output", () => {
+    it("leaves an undeclared context and output limit empty", () => {
         render(
             <ModelConfiguration
                 fields={{ capabilities: ["contextWindow", "maxTokens"] }}
@@ -565,8 +591,15 @@ describe("ModelConfiguration", () => {
 
         fireEvent.click(screen.getByRole("button", { name: /Model Configuration/i }))
 
-        expect(screen.getByLabelText("Context Window Size")).toHaveValue("128000")
-        expect(screen.getByLabelText("Max Output Tokens")).toHaveValue("8192")
+        const contextWindow = screen.getByLabelText("Context Window Size")
+        const maxOutput = screen.getByLabelText("Max Output Tokens")
+
+        // A limit nobody declared must not read as a published number: an
+        // edited field would persist the guess and compaction would trust it.
+        expect(contextWindow).toHaveValue("")
+        expect(maxOutput).toHaveValue("")
+        expect(contextWindow.getAttribute("placeholder")).toContain("Unknown")
+        expect(maxOutput.getAttribute("placeholder")).toContain("Unknown")
     })
 
     it("lets provider defaults override built-in context and max output", () => {

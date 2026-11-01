@@ -1,4 +1,5 @@
 import { vertexModels } from "../core/api/providers/models/vertex"
+import { flatMeteredPricing } from "./providers/pricing-shape"
 import type { ModelInfo } from "./providers/types"
 import type { TaskServiceTierOverride } from "./task-provider-overrides"
 import type { TaskReasoningOverride } from "./task-reasoning"
@@ -45,6 +46,7 @@ export type ApiProvider =
     | "hicap"
     | "nousResearch"
     | "wandb"
+    | "opencode"
 
 export const DEFAULT_API_PROVIDER = "openrouter" as ApiProvider
 
@@ -212,7 +214,7 @@ export const hicapModelInfoSaneDefaults: HicapCompatibleModelInfo = {
         maxTokens: -1,
         contextWindow: 128_000,
     },
-    pricing: { inputPrice: 0, outputPrice: 0 },
+    pricing: flatMeteredPricing(0, 0),
     temperature: 1,
 }
 
@@ -237,6 +239,8 @@ export { nebiusModels } from "../core/api/providers/models/nebius"
 export { nousResearchModels } from "../core/api/providers/models/nousresearch"
 export { openAiModels } from "../core/api/providers/models/openai"
 export { openAiCodexModels } from "../core/api/providers/models/openai-codex"
+export { openCodeModels } from "../core/api/providers/models/opencode"
+export { openCodeGoModels } from "../core/api/providers/models/opencode-go"
 export { mainlandQwenModels } from "../core/api/providers/models/qwen-cn"
 export { qwenCodeModels } from "../core/api/providers/models/qwen-code"
 export { internationalQwenModels } from "../core/api/providers/models/qwen-intl"

@@ -941,6 +941,12 @@ export class DefaultProductionProviderService implements ProductionProviderServi
             isNativeToolCall: tool.isNativeToolCall === true,
             ...(tool.signature === undefined ? {} : { signature: tool.signature }),
             ...(recorded ? {} : { resultReplay: "text" as const }),
+            ...(planned.disposition ? { disposition: planned.disposition } : {}),
+            ...(planned.approval.kind === "manual" && planned.approval.externalCommand
+                ? { awayCommandApproval: "manual" as const }
+                : planned.approval.kind === "none" && planned.approval.awayCommand
+                  ? { awayCommandApproval: "workspace" as const }
+                  : {}),
         }
         return {
             blockId: tool.dline_tid,
@@ -948,6 +954,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
             index,
             lanes: planned.lanes,
             turnEnding: planned.turnEnding,
+            ...(planned.disposition ? { disposition: planned.disposition } : {}),
             invocation,
             approval: planned.approval,
         }

@@ -3,7 +3,10 @@ import os from "node:os"
 import path from "node:path"
 import type { HistoryItem } from "@shared/HistoryItem"
 import { afterAll, describe, expect, it } from "vitest"
-import { openTaskHistory } from "../TaskHistory"
+import type { UnifyStore, UnifyStoreTransaction } from "../backend/api/UnifyStore"
+import { SqliteUnifyStoreBackend } from "../backend/sqlite/SqliteUnifyStore"
+import { TaskHistoryRow } from "../entities/TaskHistoryRow"
+import { openTaskHistory, TaskHistory } from "../TaskHistory"
 
 /**
  * Behavior guard for republishing a history entry that did not change.
@@ -57,6 +60,57 @@ afterAll(() => {
     for (const root of roots) rmSync(root, { recursive: true, force: true })
 })
 
+/** What one `upsert` asked the store to write. */
+interface RecordedWrite {
+    upsertedIds: string[]
+    replacedAll: boolean
+}
+
+/**
+ * Wrap a real store so each transaction records the write shape it used.
+ *
+ * Every other operation forwards unchanged; only the transaction handle is
+ * instrumented, because that is where `TaskHistory` chooses between writing one
+ * row and rewriting the collection.
+ */
+function recordingStore(inner: UnifyStore<TaskHistoryRow>, writes: RecordedWrite[]): UnifyStore<TaskHistoryRow> {
+    return {
+        query: (query) => inner.query(query),
+        insert: (records) => inner.insert(records),
+        upsert: (records) => inner.upsert(records),
+        replaceAll: (records, hint) => inner.replaceAll(records, hint),
+        stats: () => inner.stats(),
+        close: () => inner.close(),
+        transaction: async <TResult>(
+            operation: (transaction: UnifyStoreTransaction<TaskHistoryRow>) => TResult | Promise<TResult>,
+        ) =>
+            inner.transaction(async (transaction) => {
+                const recorded: RecordedWrite = { upsertedIds: [], replacedAll: false }
+                writes.push(recorded)
+                return await operation({
+                    query: (query) => transaction.query(query),
+                    insert: (records) => transaction.insert(records),
+                    upsert: async (records) => {
+                        recorded.upsertedIds.push(...records.map((row) => row.id))
+                        await transaction.upsert(records)
+                    },
+                    replaceAll: async (records, hint) => {
+                        recorded.replacedAll = true
+                        await transaction.replaceAll(records, hint)
+                    },
+                })
+            }),
+    }
+}
+
+/** Open a history store that records what each write asked the store to do. */
+async function openRecordingHistory(databasePath: string): Promise<{ history: TaskHistory; writes: RecordedWrite[] }> {
+    const database = await new SqliteUnifyStoreBackend().open(databasePath)
+    const store = await database.openStore(TaskHistoryRow)
+    const writes: RecordedWrite[] = []
+    return { history: new TaskHistory(recordingStore(store, writes), database), writes }
+}
+
 describe("TaskHistory.upsert", () => {
     it("does not rewrite the table when the entry is unchanged", async () => {
         const databasePath = createDatabasePath()
@@ -94,6 +148,35 @@ describe("TaskHistory.upsert", () => {
             const stored = await history.getById("task-1")
             expect(stored?.tokensOut).toBe(999)
             expect(stored?.task).toBe("updated task")
+        } finally {
+            await history.dispose()
+        }
+    })
+
+    it("updates one entry without rewriting its neighbours", async () => {
+        const databasePath = createDatabasePath()
+        const { history, writes } = await openRecordingHistory(databasePath)
+        try {
+            const neighbours = Array.from({ length: 40 }, (_, index) =>
+                createItem({ id: `neighbour-${index}`, ulid: `ulid-n-${index}`, ts: index + 1, task: `neighbour ${index}` }),
+            )
+            for (const neighbour of neighbours) await history.upsert(neighbour)
+            await history.flush()
+            writes.length = 0
+
+            await history.upsert(createItem({ tokensOut: 777 }))
+            await history.flush()
+
+            // The contract is the write shape, not the resulting file size: a
+            // whole-collection rewrite also lands a correct table, so comparing
+            // bytes could pass while 40 untouched rows were republished.
+            expect(writes.map((write) => write.upsertedIds)).toEqual([["task-1"]])
+            expect(writes.some((write) => write.replacedAll)).toBe(false)
+
+            expect((await history.getById("task-1"))?.tokensOut).toBe(777)
+            for (const neighbour of neighbours) {
+                expect((await history.getById(neighbour.id))?.task).toBe(neighbour.task)
+            }
         } finally {
             await history.dispose()
         }

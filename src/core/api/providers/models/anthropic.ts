@@ -3,46 +3,23 @@
  * Claude 5.5 metadata verified against official Anthropic model documentation (2026-09-30 UTC).
  */
 import type { ModelInfo } from "@shared/api"
-import { ServerTool, type ThinkingConfig } from "@shared/proto/dline/models/metadata"
+import { type ContextWindowBand, ServerTool, type ThinkingConfig } from "@shared/proto/dline/models/metadata"
+import { band, flatPricing } from "./pricing"
 
 export const ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS = ["none", "low", "medium", "high", "xhigh", "max"] as const
 export const ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS_WITHOUT_XHIGH = ["none", "low", "medium", "high", "max"] as const
 export const ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS = ["low", "medium", "high", "xhigh", "max"] as const
 
-// Tiers used for building 1M variant model pricing (also used by refresh scripts)
-export const CLAUDE_SONNET_1M_TIERS = [
-    {
-        contextWindow: 200000,
-        inputPrice: 3.0,
-        outputPrice: 15,
-        cacheWritesPrice: 3.75,
-        cacheReadsPrice: 0.3,
-    },
-    {
-        contextWindow: 1_000_000,
-        inputPrice: 6,
-        outputPrice: 22.5,
-        cacheWritesPrice: 7.5,
-        cacheReadsPrice: 0.6,
-    },
+// Bands used for building 1M variant model pricing (also used by refresh scripts)
+export const CLAUDE_SONNET_1M_TIERS: readonly ContextWindowBand[] = [
+    band(200_000, 3.0, 15, 3.75, 0.3),
+    band(undefined, 6, 22.5, 7.5, 0.6),
 ]
 
 // Used by refresh scripts to build 1M variant pricing
-export const CLAUDE_OPUS_1M_TIERS = [
-    {
-        contextWindow: 200000,
-        inputPrice: 5.0,
-        outputPrice: 25,
-        cacheWritesPrice: 6.25,
-        cacheReadsPrice: 0.5,
-    },
-    {
-        contextWindow: 1_000_000,
-        inputPrice: 10,
-        outputPrice: 37.5,
-        cacheWritesPrice: 12.5,
-        cacheReadsPrice: 1.0,
-    },
+export const CLAUDE_OPUS_1M_TIERS: readonly ContextWindowBand[] = [
+    band(200_000, 5.0, 25, 6.25, 0.5),
+    band(undefined, 10, 37.5, 12.5, 1.0),
 ]
 
 /** Build a known Messages API model declaration without any model-identity inference. */
@@ -79,12 +56,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
             supportsReasoning: true,
             ...adaptiveThinkingCapabilities(ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS, true),
         },
-        pricing: {
-            inputPrice: 4.0,
-            outputPrice: 20.0,
-            cacheWritesPrice: 5.0,
-            cacheReadsPrice: 0.2,
-        },
+        pricing: flatPricing(4.0, 20.0, 5.0, 0.2),
     },
     "claude-sonnet-5-5": {
         id: "claude-sonnet-5-5",
@@ -99,12 +71,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
             supportsReasoning: true,
             ...adaptiveThinkingCapabilities(ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS, true),
         },
-        pricing: {
-            inputPrice: 2.0,
-            outputPrice: 10.0,
-            cacheWritesPrice: 2.5,
-            cacheReadsPrice: 0.2,
-        },
+        pricing: flatPricing(2.0, 10.0, 2.5, 0.2),
     },
     "claude-fable-5-5": {
         id: "claude-fable-5-5",
@@ -125,12 +92,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
             supportsReasoning: true,
             ...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS, true),
         },
-        pricing: {
-            inputPrice: 5.0,
-            outputPrice: 25.0,
-            cacheWritesPrice: 6.25,
-            cacheReadsPrice: 0.5,
-        },
+        pricing: flatPricing(5.0, 25.0, 6.25, 0.5),
     },
     "claude-fable-5-1": {
         id: "claude-fable-5-1",
@@ -147,13 +109,8 @@ export const anthropicModels: Record<string, ModelInfo> = {
             supportsReasoning: true,
             ...adaptiveThinkingCapabilities(ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS, true),
         },
-        pricing: {
-            inputPrice: 10.0,
-            outputPrice: 50.0,
-            cacheWritesPrice: 12.5,
-            // Fable 5.1 keeps Fable 5 pricing except for a cheaper cache read.
-            cacheReadsPrice: 0.25,
-        },
+        // Fable 5.1 keeps Fable 5 pricing except for a cheaper cache read.
+        pricing: flatPricing(10.0, 50.0, 12.5, 0.25),
     },
     "claude-fable-5": {
         id: "claude-fable-5",
@@ -169,12 +126,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
             supportsReasoning: true,
             ...adaptiveThinkingCapabilities(ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS, true),
         },
-        pricing: {
-            inputPrice: 10.0,
-            outputPrice: 50.0,
-            cacheWritesPrice: 12.5,
-            cacheReadsPrice: 1.0,
-        },
+        pricing: flatPricing(10.0, 50.0, 12.5, 1.0),
     },
     "claude-opus-4-8": {
         id: "claude-opus-4-8",
@@ -189,12 +141,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
             supportsReasoning: true,
             ...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
         },
-        pricing: {
-            inputPrice: 5.0,
-            outputPrice: 25.0,
-            cacheWritesPrice: 6.25,
-            cacheReadsPrice: 0.5,
-        },
+        pricing: flatPricing(5.0, 25.0, 6.25, 0.5),
     },
     "claude-sonnet-5": {
         id: "claude-sonnet-5",
@@ -209,12 +156,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
             supportsReasoning: true,
             ...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS, true),
         },
-        pricing: {
-            inputPrice: 2.0,
-            outputPrice: 10.0,
-            cacheWritesPrice: 2.5,
-            cacheReadsPrice: 0.2,
-        },
+        pricing: flatPricing(2.0, 10.0, 2.5, 0.2),
     },
     "claude-sonnet-4-6": {
         id: "claude-sonnet-4-6",
@@ -229,12 +171,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
             supportsReasoning: true,
             ...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS_WITHOUT_XHIGH),
         },
-        pricing: {
-            inputPrice: 3.0,
-            outputPrice: 15.0,
-            cacheWritesPrice: 3.75,
-            cacheReadsPrice: 0.3,
-        },
+        pricing: flatPricing(3.0, 15.0, 3.75, 0.3),
     },
     "claude-opus-4-6": {
         id: "claude-opus-4-6",
@@ -249,12 +186,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
             supportsReasoning: true,
             ...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS_WITHOUT_XHIGH),
         },
-        pricing: {
-            inputPrice: 5.0,
-            outputPrice: 25.0,
-            cacheWritesPrice: 6.25,
-            cacheReadsPrice: 0.5,
-        },
+        pricing: flatPricing(5.0, 25.0, 6.25, 0.5),
     },
     "claude-opus-5:fast": {
         id: "claude-opus-5:fast",
@@ -271,12 +203,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
             supportsReasoning: true,
             ...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS, true),
         },
-        pricing: {
-            inputPrice: 10.0,
-            outputPrice: 50.0,
-            cacheWritesPrice: 12.5,
-            cacheReadsPrice: 1.0,
-        },
+        pricing: flatPricing(10.0, 50.0, 12.5, 1.0),
     },
     "claude-opus-4-8:fast": {
         id: "claude-opus-4-8:fast",
@@ -293,12 +220,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
             supportsReasoning: true,
             ...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
         },
-        pricing: {
-            inputPrice: 10.0,
-            outputPrice: 50.0,
-            cacheWritesPrice: 12.5,
-            cacheReadsPrice: 1.0,
-        },
+        pricing: flatPricing(10.0, 50.0, 12.5, 1.0),
     },
     "claude-opus-4-7": {
         id: "claude-opus-4-7",
@@ -313,12 +235,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
             supportsReasoning: true,
             ...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
         },
-        pricing: {
-            inputPrice: 5.0,
-            outputPrice: 25.0,
-            cacheWritesPrice: 6.25,
-            cacheReadsPrice: 0.5,
-        },
+        pricing: flatPricing(5.0, 25.0, 6.25, 0.5),
     },
 }
 
@@ -339,10 +256,5 @@ export const anthropicModelInfoSaneDefaults: ModelInfo = {
         maxTokens: 384000,
         contextWindow: 1_000_000,
     },
-    pricing: {
-        inputPrice: 1,
-        outputPrice: 2,
-        cacheWritesPrice: 0.2,
-        cacheReadsPrice: 0.2,
-    },
+    pricing: flatPricing(1, 2, 0.2, 0.2),
 }

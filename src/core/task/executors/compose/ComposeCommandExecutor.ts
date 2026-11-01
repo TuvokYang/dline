@@ -5,6 +5,8 @@ import type {
     InputQueueDeliveryReservation,
     QueuedInputResponse,
     QueueJournalReceipt,
+    RoundMaterialPlan,
+    RoundMaterialReceipt,
     ToolTerminalManifest,
     TurnContinuationReason,
 } from "../../kernel"
@@ -34,6 +36,9 @@ export interface ComposeRoundInput {
      */
     readonly continuation?: TurnContinuationReason
     readonly signal: AbortSignal
+    readonly composeCommandId?: string
+    /** Returns the plan from this exact accepted Runtime transition, after durability. */
+    readonly freezeMaterial?: () => Promise<RoundMaterialPlan>
 }
 
 /**
@@ -46,7 +51,11 @@ export interface ComposeRoundInput {
  * is offered to retry, and whose domain already explained it.
  */
 export type ComposeRoundResult =
-    | { readonly draftRef: string; readonly queueJournalReceipt?: QueueJournalReceipt }
+    | {
+          readonly draftRef: string
+          readonly queueJournalReceipt?: QueueJournalReceipt
+          readonly materialReceipt?: RoundMaterialReceipt
+      }
     | { readonly withdrawn: { readonly reason: string; readonly carriedOut?: boolean } }
     | { readonly failed: { readonly reason: string; readonly presentation?: string } }
 
@@ -121,10 +130,34 @@ export class ComposeCommandExecutor implements CommandExecutor, HaltParticipant 
             ...(command.toolTerminals === undefined ? {} : { toolTerminals: command.toolTerminals }),
             ...(command.continuation === undefined ? {} : { continuation: command.continuation }),
             signal: controller.signal,
+            composeCommandId: command.commandId,
+            freezeMaterial: async () => {
+                const accepted = await this.events.submit({
+                    type: "compose.freeze_requested",
+                    generation: command.generation,
+                    commandId: command.commandId,
+                    originRevision: command.originRevision,
+                })
+                if (accepted.kind === "rejected") throw new Error("Round material freeze refused")
+                await accepted.durable
+                return accepted.materialPlan!
+            },
         }
         let result: ComposeRoundResult
         let presentation: RetainedInputPresentationCommit | undefined
         try {
+            if (command.queueDelivery) {
+                const accepted = await this.events.submit({
+                    type: "input_queue.delivery_accepted",
+                    generation: command.generation,
+                    commandId: command.commandId,
+                    originRevision: command.originRevision,
+                    deliveryId: command.queueDelivery.deliveryId,
+                })
+                if (accepted.kind === "rejected") return
+                await accepted.durable
+                if (controller.signal.aborted) return
+            }
             presentation = await this.port.preparePresentation?.(input)
             result = await this.port.compose(input)
         } catch (error) {
@@ -216,6 +249,7 @@ export class ComposeCommandExecutor implements CommandExecutor, HaltParticipant 
             originRevision: command.originRevision,
             turnId: command.turnId,
             draftRef: result.draftRef,
+            ...(result.materialReceipt === undefined ? {} : { materialReceipt: result.materialReceipt }),
             ...(result.queueJournalReceipt === undefined ? {} : { queueJournalReceipt: result.queueJournalReceipt }),
         }
     }

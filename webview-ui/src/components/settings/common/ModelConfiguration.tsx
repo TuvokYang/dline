@@ -1,5 +1,23 @@
 import type { ModelInfo } from "@shared/proto/dline/models"
-import { type ModelCapabilities, type ModelPricing, ServerTool } from "@shared/proto/dline/models/metadata"
+import {
+    type ContextWindowBand,
+    type ModelCapabilities,
+    type ModelPricing,
+    ServerTool,
+} from "@shared/proto/dline/models/metadata"
+import {
+    flatMeteredPricing,
+    type PriceSlot,
+    type PricingShapeKind,
+    readBands,
+    readCurrency,
+    readPriceSet,
+    readPricingShape,
+    withBands,
+    withPricingShape,
+    withTimeOfDayDefaultPrices,
+    withTimeWindows,
+} from "@shared/providers/pricing-shape"
 import { declaredServerTools, isServerToolEnabled, withServerToolSwitch } from "@shared/providers/server-tool-switches"
 import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import { useEffect, useId, useState } from "react"
@@ -8,6 +26,7 @@ import { getCurrencySymbol, SUPPORTED_CURRENCY_CODES } from "@/utils/currency"
 import { ProfileDisclosure, ProfileField, ProfileInlineGrid, ProfileSection, ProfileSectionTitle } from "../profile-ui"
 import { DebouncedTextField } from "./DebouncedTextField"
 import { ContextTierEditor, PricingTierEditor } from "./ModelTierEditor"
+import { TimeWindowEditor } from "./TimeWindowEditor"
 
 const BUILT_IN_CONTEXT_WINDOW = 128_000
 const BUILT_IN_MAX_TOKENS = 8_192
@@ -110,18 +129,33 @@ export const ModelConfiguration = ({
     const contextWindowId = `${fieldId}-context-window`
     const maxTokensId = `${fieldId}-max-tokens`
     const currencyId = `${fieldId}-currency`
+    const pricingShapeId = `${fieldId}-pricing-shape`
     const inputPriceId = `${fieldId}-input-price`
     const outputPriceId = `${fieldId}-output-price`
     const cacheWritesPriceId = `${fieldId}-cache-writes-price`
     const cacheReadsPriceId = `${fieldId}-cache-reads-price`
     const [draftChecks, setDraftChecks] = useState<Partial<Record<CapabilityCheckField, boolean>>>({})
-    const [pendingChecks, setPendingChecks] = useState<Partial<Record<CapabilityCheckField, boolean>>>({})
+    // Only the setter is used: the effect below reconciles against its own updater.
+    const [, setPendingChecks] = useState<Partial<Record<CapabilityCheckField, boolean>>>({})
     // Show registry defaults until the user edits them; edits persist as provider overrides.
     const [draftContextTiers, setDraftContextTiers] = useState(
         capabilityOverrides?.contextWindowTiers ?? defaults?.capabilities?.contextWindowTiers ?? [],
     )
-    const [draftPricingTiers, setDraftPricingTiers] = useState(
-        pricingTiersEnabled ? (pricingOverrides?.tiers ?? []) : (pricingOverrides?.tiers ?? defaults?.pricing?.tiers ?? []),
+    /**
+     * Rates typed before the saved profile echoes back.
+     *
+     * Each keystroke reaches the host asynchronously, so patching the stale
+     * `pricing` prop per slot dropped every rate but the last one.
+     */
+    const [draftFlatPrices, setDraftFlatPrices] = useState<
+        { inputPrice: number; outputPrice: number; cacheWritePrice?: number; cacheReadPrice?: number } | undefined
+    >(undefined)
+    const [draftPricingBands, setDraftPricingBands] = useState(() =>
+        pricingTiersEnabled
+            ? readBands(pricingOverrides)
+            : readBands(pricingOverrides).length > 0
+              ? readBands(pricingOverrides)
+              : readBands(defaults?.pricing),
     )
 
     // Extract current values from provider overrides
@@ -185,18 +219,59 @@ export const ModelConfiguration = ({
     }, [capabilityOverrides?.contextWindowTiers, defaults?.capabilities?.contextWindowTiers])
 
     useEffect(() => {
-        setDraftPricingTiers(
-            pricingTiersEnabled ? (pricingOverrides?.tiers ?? []) : (pricingOverrides?.tiers ?? defaults?.pricing?.tiers ?? []),
+        setDraftPricingBands(
+            pricingTiersEnabled
+                ? readBands(pricingOverrides)
+                : readBands(pricingOverrides).length > 0
+                  ? readBands(pricingOverrides)
+                  : readBands(defaults?.pricing),
         )
-    }, [pricingOverrides?.tiers, defaults?.pricing?.tiers, pricingTiersEnabled])
+    }, [pricingOverrides, defaults?.pricing, pricingTiersEnabled])
+
+    // The persisted pricing has arrived, so the local draft is no longer needed.
+    const persistedFlatPrices = pricing.metered?.strategy?.flat?.prices
+    useEffect(() => {
+        if (persistedFlatPrices) {
+            setDraftFlatPrices(undefined)
+        }
+    }, [persistedFlatPrices])
 
     // Registry pricing remains visible until a profile override replaces one field.
-    const currency = pricing.currency || defaults?.pricing?.currency || "USD"
+    const currency = readCurrency(pricing) ?? readCurrency(defaults?.pricing) ?? "USD"
+    // Show the shape the profile actually stores; fall back to the catalog's
+    // shape only while the profile has not overridden pricing at all.
+    const pricingShape = pricing.metered ? readPricingShape(pricing) : readPricingShape(defaults?.pricing)
+    // The default rate and the windows belong to whichever price is on screen, so
+    // a profile that has not overridden pricing yet still shows the catalog's terms.
+    const timeOfDay = pricing.metered?.strategy?.timeOfDay ?? defaults?.pricing?.metered?.strategy?.timeOfDay
+    const timeWindows = timeOfDay?.timeWindows ?? []
+    const defaultRate = readPriceSet(timeOfDay?.defaultPrices)
     const currencySymbol = getCurrencySymbol(currency)
-    const inputPriceValue = pricing.inputPrice ?? defaults?.pricing?.inputPrice
-    const outputPriceValue = pricing.outputPrice ?? defaults?.pricing?.outputPrice
-    const cacheWritesPriceValue = pricing.cacheWritesPrice ?? defaults?.pricing?.cacheWritesPrice
-    const cacheReadsPriceValue = pricing.cacheReadsPrice ?? defaults?.pricing?.cacheReadsPrice
+    const defaultPrices = readPriceSet(defaults?.pricing?.metered?.strategy?.flat?.prices)
+    /**
+     * Cache rates that a price list actually published.
+     *
+     * `readPriceSet` substitutes 0 for display, but a write must not turn
+     * "not published" into "published as 0"; only an existing rate carries over.
+     */
+    const publishedCachePrices = {
+        cacheWritePrice:
+            pricing.metered?.strategy?.flat?.prices?.cacheWritePrice ??
+            defaults?.pricing?.metered?.strategy?.flat?.prices?.cacheWritePrice,
+        cacheReadPrice:
+            pricing.metered?.strategy?.flat?.prices?.cacheReadPrice ??
+            defaults?.pricing?.metered?.strategy?.flat?.prices?.cacheReadPrice,
+    }
+    const inputPriceValue =
+        draftFlatPrices?.inputPrice ?? pricing.metered?.strategy?.flat?.prices?.inputPrice ?? defaultPrices.inputPrice
+    const outputPriceValue =
+        draftFlatPrices?.outputPrice ?? pricing.metered?.strategy?.flat?.prices?.outputPrice ?? defaultPrices.outputPrice
+    const cacheWritesPriceValue =
+        draftFlatPrices?.cacheWritePrice ??
+        pricing.metered?.strategy?.flat?.prices?.cacheWritePrice ??
+        defaultPrices.cacheWritePrice
+    const cacheReadsPriceValue =
+        draftFlatPrices?.cacheReadPrice ?? pricing.metered?.strategy?.flat?.prices?.cacheReadPrice ?? defaultPrices.cacheReadPrice
 
     // Update capability field
     const updateCapability = (field: keyof ModelCapabilities, value: ModelCapabilities[keyof ModelCapabilities]) => {
@@ -231,21 +306,76 @@ export const ModelConfiguration = ({
         updateCapability("contextWindowTiers", nextTiers)
     }
 
-    // Update pricing field
-    const updatePricing = (field: keyof ModelPricing, value: ModelPricing[keyof ModelPricing]) => {
-        onPricingUpdate({ [field]: value } as Partial<ModelPricing>)
+    /**
+     * Persist one flat rate, leaving the other slots as they are.
+     *
+     * The saved profile echoes back asynchronously, so consecutive edits must not
+     * each patch the same stale `pricing` prop: doing that dropped every rate but
+     * the last one, and a Profile that started without pricing lost the first
+     * edit entirely because there was no flat strategy to patch.
+     */
+    const updateFlatPrice = (slot: PriceSlot, value: number | undefined) => {
+        const current = draftFlatPrices ?? {
+            inputPrice: inputPriceValue,
+            outputPrice: outputPriceValue,
+            ...publishedCachePrices,
+        }
+        const next = { ...current, [slot]: value }
+        setDraftFlatPrices(next)
+        onPricingUpdate(
+            flatMeteredPricing(next.inputPrice, next.outputPrice, next.cacheWritePrice, next.cacheReadPrice, currency),
+        )
     }
 
-    /** Persist pricing tier changes while keeping the editor responsive before profile echo. */
-    const updatePricingTiers = (tiers: ModelPricing["tiers"]) => {
-        const nextTiers = tiers ?? []
-        setDraftPricingTiers(nextTiers)
-        updatePricing("tiers", nextTiers)
+    /**
+     * Switch the metered strategy the profile uses.
+     *
+     * The schema allows exactly one strategy, so the user picks the shape here
+     * and the editor below shows only that shape's fields. Rates already typed
+     * are carried across so a switch never silently resets a published price.
+     */
+    const updatePricingShape = (kind: PricingShapeKind) => {
+        // Reshape whichever price the profile is actually showing. A profile that
+        // has not overridden pricing yet displays the catalog's rates, so
+        // switching its shape must carry those, not write a new zero rate.
+        const source = pricing.metered ? pricing : (defaults?.pricing ?? pricing)
+        const next = withPricingShape(source, kind, currency)
+        if (next) {
+            onPricingUpdate(next)
+        }
     }
 
-    // Update currency (part of pricing)
+    /** Persist band changes while keeping the editor responsive before profile echo. */
+    const updatePricingBands = (bands: ContextWindowBand[]) => {
+        setDraftPricingBands(bands)
+        const next = withBands(pricing, bands) ?? withBands(defaults?.pricing, bands)
+        if (next) {
+            onPricingUpdate(next)
+        }
+    }
+
+    /**
+     * Persist the rate that covers every instant no window covers.
+     *
+     * The default is one rate set, so an edit patches exactly one slot and
+     * leaves the windows untouched.
+     */
+    const updateTimeOfDayDefault = (slot: PriceSlot, value: number) => {
+        const current = readPriceSet(timeOfDay?.defaultPrices ?? defaults?.pricing?.metered?.strategy?.timeOfDay?.defaultPrices)
+        onPricingUpdate(withTimeOfDayDefaultPrices(pricing, { ...current, [slot]: value }, currency))
+    }
+
+    /** Persist the whole window list, which is what an add, remove, or boundary edit amounts to. */
+    const updateTimeWindows = (windows: Parameters<typeof withTimeWindows>[1]) => {
+        onPricingUpdate(withTimeWindows(pricing, windows, currency))
+    }
+
+    /** Persist the currency a metered price is quoted in. */
     const updateCurrency = (currency: string) => {
-        onPricingUpdate({ currency })
+        const next = pricing.metered ? { ...pricing, metered: { ...pricing.metered, currency } } : undefined
+        if (next) {
+            onPricingUpdate(next)
+        }
     }
 
     // Update temperature
@@ -295,10 +425,19 @@ export const ModelConfiguration = ({
         supportsPromptCache && (pricingFields.includes("cacheWritesPrice") || pricingFields.includes("cacheReadsPrice"))
     const defaultContextWindow = defaults?.capabilities?.contextWindow ?? BUILT_IN_CONTEXT_WINDOW
     const defaultMaxTokens = defaults?.capabilities?.maxTokens ?? BUILT_IN_MAX_TOKENS
-    const contextWindowValue = selectedContextWindowValue ?? capabilities.contextWindow ?? defaultContextWindow
-    const maxTokensValue = capabilities.maxTokens ?? defaultMaxTokens
+    // A limit may only be shown as a value when somebody actually declared it:
+    // the profile selection, the profile override, or the registry catalog. The
+    // built-in fallback stays out of the value chain because a real model whose
+    // limit is unpublished would otherwise read 128k, look exactly like a
+    // published 128k window, and make compaction trust a number nobody stated.
+    // The built-in size is offered in the placeholder only.
+    const declaredContextWindow =
+        selectedContextWindowValue ?? capabilities.contextWindow ?? defaults?.capabilities?.contextWindow
+    const declaredMaxTokens = capabilities.maxTokens ?? defaults?.capabilities?.maxTokens
+    const contextWindowValue = declaredContextWindow === undefined ? "" : String(declaredContextWindow)
+    const maxTokensValue = declaredMaxTokens === undefined ? "" : String(declaredMaxTokens)
     const contextTiers = draftContextTiers
-    const pricingTiers = draftPricingTiers
+    const pricingBands = draftPricingBands
 
     return (
         <ProfileDisclosure title="Model Configuration">
@@ -408,13 +547,13 @@ export const ModelConfiguration = ({
                                     ariaLabel="Context Window Size"
                                     className={fieldControlClass}
                                     id={contextWindowId}
-                                    initialValue={String(contextWindowValue)}
+                                    initialValue={contextWindowValue}
                                     onChange={(value) =>
                                         onContextWindowUpdate
                                             ? onContextWindowUpdate(Number(value) || 0)
                                             : updateCapability("contextWindow", Number(value) || 0)
                                     }
-                                    placeholder={String(defaultContextWindow)}
+                                    placeholder={`Unknown (for example ${defaultContextWindow.toLocaleString()})`}
                                 />
                             </ProfileField>
                         ) : null}
@@ -424,9 +563,9 @@ export const ModelConfiguration = ({
                                     ariaLabel="Max Output Tokens"
                                     className={fieldControlClass}
                                     id={maxTokensId}
-                                    initialValue={String(maxTokensValue)}
+                                    initialValue={maxTokensValue}
                                     onChange={(value) => updateCapability("maxTokens", Number(value) || 0)}
-                                    placeholder={String(defaultMaxTokens)}
+                                    placeholder={`Unknown (for example ${defaultMaxTokens.toLocaleString()})`}
                                 />
                             </ProfileField>
                         ) : null}
@@ -442,6 +581,18 @@ export const ModelConfiguration = ({
                     <ProfileSectionTitle className="text-xs uppercase tracking-wide text-description">
                         Pricing
                     </ProfileSectionTitle>
+                    <ProfileField htmlFor={pricingShapeId} label="Pricing Mode">
+                        <Select onValueChange={(value) => updatePricingShape(value as PricingShapeKind)} value={pricingShape}>
+                            <SelectTrigger className={fieldControlClass} id={pricingShapeId}>
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="flat">Flat rate</SelectItem>
+                                <SelectItem value="contextWindow">By context size</SelectItem>
+                                <SelectItem value="timeOfDay">By time of day</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </ProfileField>
                     <ProfileField htmlFor={currencyId} label="Currency">
                         <Select onValueChange={updateCurrency} value={currency}>
                             <SelectTrigger className={fieldControlClass} id={currencyId}>
@@ -457,7 +608,67 @@ export const ModelConfiguration = ({
                         </Select>
                     </ProfileField>
 
-                    {hasBasePricingFields ? (
+                    {hasBasePricingFields && pricingShape === "timeOfDay" ? (
+                        <ProfileInlineGrid>
+                            <ProfileField htmlFor={`${inputPriceId}-default`} label={`Default Input (${currencySymbol}/1M)`}>
+                                <DebouncedTextField
+                                    ariaLabel={`Default Input (${currencySymbol}/1M)`}
+                                    className={fieldControlClass}
+                                    id={`${inputPriceId}-default`}
+                                    initialValue={String(defaultRate.inputPrice)}
+                                    onChange={(value) => updateTimeOfDayDefault("inputPrice", parsePrice(value, 0))}
+                                />
+                            </ProfileField>
+                            <ProfileField htmlFor={`${outputPriceId}-default`} label={`Default Output (${currencySymbol}/1M)`}>
+                                <DebouncedTextField
+                                    ariaLabel={`Default Output (${currencySymbol}/1M)`}
+                                    className={fieldControlClass}
+                                    id={`${outputPriceId}-default`}
+                                    initialValue={String(defaultRate.outputPrice)}
+                                    onChange={(value) => updateTimeOfDayDefault("outputPrice", parsePrice(value, 0))}
+                                />
+                            </ProfileField>
+                            {pricingFields.includes("cacheWritesPrice") ? (
+                                <ProfileField
+                                    htmlFor={`${cacheWritesPriceId}-default`}
+                                    label={`Default Cache Writes (${currencySymbol}/1M)`}>
+                                    <DebouncedTextField
+                                        ariaLabel={`Default Cache Writes (${currencySymbol}/1M)`}
+                                        className={fieldControlClass}
+                                        id={`${cacheWritesPriceId}-default`}
+                                        initialValue={String(defaultRate.cacheWritePrice)}
+                                        onChange={(value) => updateTimeOfDayDefault("cacheWritePrice", parsePrice(value, 0))}
+                                    />
+                                </ProfileField>
+                            ) : null}
+                            {pricingFields.includes("cacheReadsPrice") ? (
+                                <ProfileField
+                                    htmlFor={`${cacheReadsPriceId}-default`}
+                                    label={`Default Cache Reads (${currencySymbol}/1M)`}>
+                                    <DebouncedTextField
+                                        ariaLabel={`Default Cache Reads (${currencySymbol}/1M)`}
+                                        className={fieldControlClass}
+                                        id={`${cacheReadsPriceId}-default`}
+                                        initialValue={String(defaultRate.cacheReadPrice)}
+                                        onChange={(value) => updateTimeOfDayDefault("cacheReadPrice", parsePrice(value, 0))}
+                                    />
+                                </ProfileField>
+                            ) : null}
+                        </ProfileInlineGrid>
+                    ) : null}
+
+                    {pricingFields.includes("pricingTiers") && pricingShape === "timeOfDay" ? (
+                        <TimeWindowEditor
+                            currencySymbol={currencySymbol}
+                            editable={tiersEditable}
+                            onChange={updateTimeWindows}
+                            showCachePrices={supportsPromptCache}
+                            timezoneOffsetMinutes={timeOfDay?.schedule?.timezoneOffsetMinutes ?? 0}
+                            windows={timeWindows}
+                        />
+                    ) : null}
+
+                    {hasBasePricingFields && pricingShape !== "timeOfDay" ? (
                         <ProfileInlineGrid>
                             {pricingFields.includes("inputPrice") ? (
                                 <ProfileField htmlFor={inputPriceId} label={`Input Price (${currencySymbol}/1M tokens)`}>
@@ -466,10 +677,8 @@ export const ModelConfiguration = ({
                                         className={fieldControlClass}
                                         id={inputPriceId}
                                         initialValue={inputPriceValue != null ? String(inputPriceValue) : ""}
-                                        onChange={(value) => updatePricing("inputPrice", parsePrice(value, 0))}
-                                        placeholder={
-                                            defaults?.pricing?.inputPrice != null ? String(defaults.pricing.inputPrice) : ""
-                                        }
+                                        onChange={(value) => updateFlatPrice("inputPrice", parsePrice(value, 0))}
+                                        placeholder={defaultPrices.inputPrice ? String(defaultPrices.inputPrice) : ""}
                                     />
                                 </ProfileField>
                             ) : null}
@@ -480,10 +689,8 @@ export const ModelConfiguration = ({
                                         className={fieldControlClass}
                                         id={outputPriceId}
                                         initialValue={outputPriceValue != null ? String(outputPriceValue) : ""}
-                                        onChange={(value) => updatePricing("outputPrice", parsePrice(value, 0))}
-                                        placeholder={
-                                            defaults?.pricing?.outputPrice != null ? String(defaults.pricing.outputPrice) : ""
-                                        }
+                                        onChange={(value) => updateFlatPrice("outputPrice", parsePrice(value, 0))}
+                                        placeholder={defaultPrices.outputPrice ? String(defaultPrices.outputPrice) : ""}
                                     />
                                 </ProfileField>
                             ) : null}
@@ -499,12 +706,8 @@ export const ModelConfiguration = ({
                                         className={fieldControlClass}
                                         id={cacheWritesPriceId}
                                         initialValue={cacheWritesPriceValue != null ? String(cacheWritesPriceValue) : ""}
-                                        onChange={(value) => updatePricing("cacheWritesPrice", parsePrice(value, 0))}
-                                        placeholder={
-                                            defaults?.pricing?.cacheWritesPrice != null
-                                                ? String(defaults.pricing.cacheWritesPrice)
-                                                : ""
-                                        }
+                                        onChange={(value) => updateFlatPrice("cacheWritePrice", parsePrice(value, 0))}
+                                        placeholder={defaultPrices.cacheWritePrice ? String(defaultPrices.cacheWritePrice) : ""}
                                     />
                                 </ProfileField>
                             ) : null}
@@ -515,25 +718,21 @@ export const ModelConfiguration = ({
                                         className={fieldControlClass}
                                         id={cacheReadsPriceId}
                                         initialValue={cacheReadsPriceValue != null ? String(cacheReadsPriceValue) : ""}
-                                        onChange={(value) => updatePricing("cacheReadsPrice", parsePrice(value, 0))}
-                                        placeholder={
-                                            defaults?.pricing?.cacheReadsPrice != null
-                                                ? String(defaults.pricing.cacheReadsPrice)
-                                                : ""
-                                        }
+                                        onChange={(value) => updateFlatPrice("cacheReadPrice", parsePrice(value, 0))}
+                                        placeholder={defaultPrices.cacheReadPrice ? String(defaultPrices.cacheReadPrice) : ""}
                                     />
                                 </ProfileField>
                             ) : null}
                         </ProfileInlineGrid>
                     ) : null}
 
-                    {pricingFields.includes("pricingTiers") ? (
+                    {pricingFields.includes("pricingTiers") && pricingShape === "contextWindow" ? (
                         <PricingTierEditor
                             currencySymbol={currencySymbol}
                             editable={tiersEditable}
-                            onChange={updatePricingTiers}
+                            onChange={updatePricingBands}
                             showCachePrices={supportsPromptCache}
-                            tiers={pricingTiers}
+                            tiers={pricingBands}
                         />
                     ) : null}
                 </ProfileSection>

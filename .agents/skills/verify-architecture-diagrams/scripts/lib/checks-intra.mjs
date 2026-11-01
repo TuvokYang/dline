@@ -126,21 +126,21 @@ function words(label) {
         .filter(Boolean)
 }
 
-// A dotted label is a fact or a constraint unless nothing in it names a fact.
-// Noun uses such as "dispatch held" or "release facts" are facts, not commands,
-// so facts and constraints are classified before imperatives.
+// A noun elsewhere in an instruction cannot turn that instruction into a fact.
+// Only the declared short nominal forms disambiguate imperative-looking heads.
 export function classifyDottedLabel(label) {
     if (label === null || label === undefined) return { kind: "missing" }
     const lower = label.toLowerCase()
     const tokens = words(label)
     const fact = tokens.find((token) => FACT_NOUNS.includes(token))
     const constraint = CONSTRAINT_FORMS.some((form) => form.test(lower))
-
+    const imperative = tokens.find((token) => IMPERATIVE.includes(token))
+    const nominal =
+        tokens.length === 2 &&
+        ((tokens[0] === "dispatch" && tokens[1] === "held") || (tokens[0] === "release" && tokens[1] === "facts"))
+    if (imperative && !nominal) return imperative === tokens[0] ? { kind: "command", imperative } : { kind: "unknown" }
     if (fact) return { kind: "fact", fact }
     if (constraint) return { kind: "constraint" }
-
-    const imperative = tokens.find((token) => IMPERATIVE.includes(token))
-    if (imperative) return { kind: "command", imperative }
     return { kind: "unknown" }
 }
 
@@ -399,7 +399,11 @@ export function checkIntraLayer(diagram, labelVocabulary) {
             continue
         }
         const normalized = edge.label.replace(/\s+/g, " ")
-        if (labelVocabulary && (labelVocabulary.has(edge.label) || labelVocabulary.has(normalized))) declaredHits.push(normalized)
+        if (
+            labelVocabulary &&
+            [...labelVocabulary].some((category) => normalized === category || normalized.startsWith(`${category} `))
+        )
+            declaredHits.push(normalized)
         else descriptive.push({ edge, label: normalized })
     }
 
@@ -421,18 +425,9 @@ export function checkIntraLayer(diagram, labelVocabulary) {
         )
     }
 
-    if (labelVocabulary && !vocabularyApplies(diagram) && descriptive.length > 0) {
-        findings.push(
-            finding(
-                "not-checked",
-                "2",
-                diagram,
-                { line: descriptive[0].edge.line },
-                "vocabulary-not-applicable",
-                `${descriptive.length} solid label(s) use ${effectiveKind(diagram)}/${diagram.layer ?? "unlayered"} vocabulary; the declared categories bind only structure diagrams at L0 and L1`,
-            ),
-        )
-    } else if (labelVocabulary && declaredHits.length === 0 && descriptive.length > 0) {
+    // An explicitly typed behavioural view has no ownership-vocabulary obligation.
+    // It still owes labels, fact semantics, cycle checks and declared refinement.
+    if (labelVocabulary && vocabularyApplies(diagram) && declaredHits.length === 0 && descriptive.length > 0) {
         findings.push(
             finding(
                 "blocking",
@@ -443,7 +438,7 @@ export function checkIntraLayer(diagram, labelVocabulary) {
                 `none of this diagram's ${descriptive.length} solid labels uses a declared category (${[...labelVocabulary].join(", ")}); first label: "${descriptive[0].label}"`,
             ),
         )
-    } else if (descriptive.length > 0) {
+    } else if (vocabularyApplies(diagram) && descriptive.length > 0) {
         findings.push(
             finding(
                 "not-checked",

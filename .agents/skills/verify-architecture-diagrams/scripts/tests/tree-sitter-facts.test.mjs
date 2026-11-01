@@ -46,7 +46,7 @@ test("normalizes captures into immutable source-positioned facts", async () => {
         .filter((fact) => fact.capture.startsWith("name."))
         .map((fact) => fact.text)
         .sort()
-    assert.deepEqual(names, ["Service", "createService", "run"])
+    assert.deepEqual(names, ["Service", "Service.run", "createService", "run"])
     assert.equal(
         result.facts.every((fact) => fact.schemaVersion === TREE_SITTER_FACT_SCHEMA_VERSION),
         true,

@@ -142,6 +142,7 @@ import { getClineOnboardingModels } from "./models/getClineOnboardingModels"
 import { appendClineStealthModels } from "./models/refreshOpenRouterModels"
 import { ProfileSwitchCoordinator } from "./profile-switch/ProfileSwitchCoordinator"
 import type { ProfileSwitchOperation, ResolvedProfileTarget } from "./profile-switch/types"
+import { awaySettingsProjection } from "./state/awaySettingsProjection"
 import { planExternalStateChange } from "./state/externalStateChangePlan"
 import { projectFocusChainHistory } from "./state/focusChainHistoryProjection"
 import { cleanupStateSubscriptions, sendAccountUsageUpdate, sendStatePatch, sendStateUpdate } from "./state/subscribeToState"
@@ -175,6 +176,17 @@ import { sendPartialMessageEvent } from "./ui/subscribeToPartialMessage"
  * of the build keeps the user-visible latency ceiling unchanged.
  */
 const STATE_POST_COALESCE_MS = 50
+
+/**
+ * Minimum gap between transient Task view patches.
+ *
+ * A transient patch carries streaming text the next patch will replace, so
+ * delivering each one buys nothing the following one would not show. The gap is
+ * deliberately far below a frame's perceptible delay: interactive states never
+ * wait here, because committed state, approvals, dialogs, cancellation and
+ * terminal states call `postTaskViewPatchToWebview` directly.
+ */
+const TASK_VIEW_PATCH_THROTTLE_MS = 50
 
 /** Why a write is refused while another window owns the task this window shows. */
 const READ_ONLY_TASK_ERROR = "Task is read-only in this window."
@@ -501,6 +513,14 @@ export class Controller {
     private accountUsagePollingEnabled = true
     private disposed = false
     private uiDetached = false
+    /** Whether this controller's surface can currently be seen. Defaults to visible. */
+    private surfaceVisible = true
+    /** Set when a publication was skipped because the surface was hidden. */
+    private deferredStatePostWhileHidden = false
+    /** Trailing timer that bounds how often a transient Task view patch is sent. */
+    private taskViewPatchThrottleTimer: NodeJS.Timeout | undefined = undefined
+    /** Start of the current patch throttle window; 0 means no window is open. */
+    private taskViewPatchScheduledAt = 0
     private stateBuildsAfterDetach = 0
     private suppressedStatePostsAfterDetach = 0
     private workspaceMcpRegistration: Promise<void> = Promise.resolve()
@@ -958,9 +978,11 @@ export class Controller {
      * Make `taskId` this Controller's runtime so an activity control can act on
      * it; false when the surface changed or the task belongs to another window.
      */
-    async promoteHistoryDisplayForActivityControl(taskId: string): Promise<boolean> {
+    async promoteHistoryDisplayForActivityControl(taskId: string, expectedOpening?: TaskOpening): Promise<boolean> {
+        if (expectedOpening && this.currentOpening() !== expectedOpening) return false
         if (this.task?.taskId === taskId) return true
         return this.runTaskLifecycleOperation(async () => {
+            if (expectedOpening && this.currentOpening() !== expectedOpening) return false
             if (this.task?.taskId === taskId) return true
             const display = this.historyDisplaySession
             if (!display || !this.canPromoteHistoryDisplay(taskId)) return false
@@ -991,6 +1013,31 @@ export class Controller {
     /** Durable message count, which exceeds the loaded window for a history display. */
     getCurrentTaskMessageCount(): number {
         return this.task?.owners.messages.clineMessages.length ?? this.historyDisplaySession?.getMessageCount() ?? 0
+    }
+
+    /**
+     * Read the visible message window once and derive its index space from it.
+     *
+     * The window length and the durable message count are different quantities. A
+     * history display holds only its latest page while `getMessageCount()` reports
+     * the whole conversation, so `firstItemIndex` is the gap between them. A runtime
+     * task's window *is* the conversation, so its count is the window length and no
+     * second pass over the sequence is needed.
+     *
+     * `getCurrentTaskMessages()` merges and sorts transient entries on every access,
+     * so state projection must reach this helper exactly once per build.
+     */
+    materializeMessageWindow(): {
+        messages: UiMessage[]
+        totalCount: number
+        firstItemIndex: number
+        titleMessage: UiMessage | undefined
+    } {
+        const messages = [...this.getCurrentTaskMessages()]
+        const titleMessage =
+            this.historyDisplaySession?.getTaskTitleMessage() ?? messages.find((m) => m.say === "task") ?? messages.at(0)
+        const totalCount = this.task ? messages.length : (this.historyDisplaySession?.getMessageCount() ?? 0)
+        return { messages, totalCount, firstItemIndex: Math.max(0, totalCount - messages.length), titleMessage }
     }
 
     /**
@@ -2822,6 +2869,13 @@ export class Controller {
             this.suppressedStatePostsAfterDetach++
             return
         }
+        // A hidden surface pays for delivery and a full build it cannot show. The
+        // deferred flag survives so returning to sight publishes once, from current
+        // state, instead of replaying every skipped revision.
+        if (this.isSurfaceHidden()) {
+            this.deferredStatePostWhileHidden = true
+            return
+        }
         // Coalescing downstream of the build only saved delivery: every caller in
         // a burst still paid for a full state build whose result was then
         // discarded. Merging first makes the build itself happen once per window.
@@ -2838,23 +2892,75 @@ export class Controller {
         await this.publishState(options)
     }
 
-    /** Queue one latest-wins patch for a burst of transient Task view changes. */
+    /**
+     * Queue one latest-wins patch for a burst of transient Task view changes.
+     *
+     * Microtask merging only collapses one event loop turn; a streaming round
+     * still produced a patch per token batch. The trailing timer additionally
+     * bounds the patch rate while keeping the first patch of a burst immediate.
+     * Interactive publications never come through here, so a commit, approval,
+     * dialog, cancellation or terminal state is not delayed by this window.
+     */
     private scheduleTaskViewPatch(): void {
-        if (this.taskViewPatchScheduled) return
-        this.taskViewPatchScheduled = true
-        queueMicrotask(() => {
-            this.taskViewPatchScheduled = false
+        // An armed timer already owns the delivery of the newest projection, so a
+        // burst costs one patch per window instead of one per event loop turn.
+        if (this.taskViewPatchThrottleTimer) return
+        this.taskViewPatchScheduled = false
+        const deliver = () => {
+            this.taskViewPatchThrottleTimer = undefined
             if (!this.isUiAttached()) return
             this.postTaskViewPatchToWebview().catch((error: unknown) => {
                 Logger.error("[Controller] Transient Task view publication failed:", error)
             })
-        })
+        }
+        // The leading patch is immediate; only the trailing one waits. Zero means no
+        // patch has been delivered yet, which must not read as "inside a window".
+        const sinceLastPatch = this.taskViewPatchScheduledAt
+            ? Date.now() - this.taskViewPatchScheduledAt
+            : Number.POSITIVE_INFINITY
+        if (sinceLastPatch >= TASK_VIEW_PATCH_THROTTLE_MS) {
+            this.taskViewPatchScheduledAt = Date.now()
+            deliver()
+            return
+        }
+        this.taskViewPatchThrottleTimer = setTimeout(() => {
+            this.taskViewPatchScheduledAt = Date.now()
+            deliver()
+        }, TASK_VIEW_PATCH_THROTTLE_MS - sinceLastPatch)
+    }
+
+    /**
+     * Drop any pending transient patch so an interactive publication is not
+     * ordered behind it.
+     *
+     * The patch the timer would send carries only transient streaming text that
+     * the interactive publication re-projects in full, so cancelling it loses
+     * nothing and avoids reordering the approval or dialog behind stale text.
+     */
+    private cancelPendingTaskViewPatch(): void {
+        this.taskViewPatchScheduled = false
+        if (!this.taskViewPatchThrottleTimer) return
+        clearTimeout(this.taskViewPatchThrottleTimer)
+        this.taskViewPatchThrottleTimer = undefined
+        // The cancelled delivery still counts as the window's patch: the interactive
+        // publication showed newer state, and throttling the next transient patch
+        // keeps a streaming round from immediately re-sending what it replaced.
+        this.taskViewPatchScheduledAt = Date.now()
     }
 
     /** Publish the interaction-critical Task view without paying for a full ExtensionState build. */
     async postTaskViewPatchToWebview(): Promise<void> {
         if (this.uiDetached || this.disposed || !this.getCurrentTaskId()) {
             this.suppressedStatePostsAfterDetach++
+            return
+        }
+        // This call is the interactive path, so anything the transient timer still
+        // holds is superseded here and must not be delivered afterwards.
+        this.cancelPendingTaskViewPatch()
+        // A patch only advances a rendered row. While hidden there is no rendered
+        // row, and the recovery publication rebuilds the whole view anyway.
+        if (this.isSurfaceHidden()) {
+            this.deferredStatePostWhileHidden = true
             return
         }
         this.stateManager.setActiveTaskId(this.getCurrentTaskId())
@@ -3108,24 +3214,24 @@ export class Controller {
         // Read the message list once. The getter merges and sorts transient
         // entries on every access, so a second read costs another full pass over
         // a conversation that can hold tens of thousands of messages.
-        const rawMessages = [...this.getCurrentTaskMessages()]
-        // The title is presentation metadata, never a Task identity.
-        // A history display retains only the latest message window, so its first
-        // durable message is read separately rather than forcing a full history load.
-        const taskTitleMessage =
-            this.historyDisplaySession?.getTaskTitleMessage() ?? rawMessages.find((m) => m.say === "task") ?? rawMessages.at(0)
+        // Title, window and index space come from one read: the getter merges and
+        // sorts transient entries on every access.
+        const {
+            messages: rawMessages,
+            totalCount: totalMessageCount,
+            firstItemIndex,
+            titleMessage: taskTitleMessage,
+        } = this.materializeMessageWindow()
         // Separate task header message from body messages. Read the header from the
         // in-memory message list instead of re-reading ui_messages.jsonl on every
         // state push: getTaskHeaderText() bypasses the jsonl cache and performs a
         // full fs.readFile + per-line JSON.parse, which dominated buildState() time
         // in long conversations (900-2500ms per push in field logs).
         const _taskHeaderText = taskTitleMessage?.text ?? ""
-        // totalMessageCount now includes the task message (matching fetchMessage behavior)
-        // so the frontend can detect when scrolled to the absolute top (index 0)
-        const totalMessageCount = this.getCurrentTaskMessageCount()
-        // firstItemIndex is managed by fetchMessage; the history display already
-        // holds the latest bounded window rather than the complete file.
-        const firstItemIndex = Math.max(0, totalMessageCount - rawMessages.length)
+        // totalMessageCount includes the task message (matching fetchMessage behavior)
+        // so the frontend can detect when scrolled to the absolute top (index 0).
+        // firstItemIndex comes from the same window read: a history display holds the
+        // latest bounded page while its durable total spans the whole conversation.
         const checkpointManagerErrorMessage = this.historyDisplaySession?.historyItem.checkpointManagerErrorMessage
         // The entry cap below bounds how many tasks are sent but not how many
         // bytes: HistoryItem.task holds the verbatim task text, so a workspace
@@ -3304,6 +3410,7 @@ export class Controller {
                 featureFlagsService.getAggressiveRenderingEnabled(),
             ),
             accountEnabled: readAccountFeatureSetting(this.stateManager),
+            ...awaySettingsProjection(this.stateManager),
             hooksEnabled: getHooksEnabledSafe(this.stateManager.getGlobalSettingsKey("hooksEnabled")),
             remoteConfigSettings: this.stateManager.getRemoteConfigSettings(),
             nativeToolCallSetting: this.stateManager.getGlobalStateKey("nativeToolCallEnabled"),
@@ -3500,6 +3607,46 @@ export class Controller {
             void sendAccountUsageUpdate(this, undefined)
         }
         this.startAccountUsagePolling()
+    }
+
+    /**
+     * Record whether this controller's surface can currently be seen.
+     *
+     * A hidden panel still owns its task and keeps running it; only presentation is
+     * suspended. State is therefore not built while hidden, and the recovery
+     * publication on the way back is what guarantees the webview never keeps a stale
+     * revision. This is a separate fact from `uiDetached`: a detached ui has no
+     * surface at all, while a hidden one has a surface that is merely out of sight.
+     */
+    public setSurfaceVisible(visible: boolean): void {
+        const wasVisible = this.surfaceVisible !== false
+        if (wasVisible === visible) {
+            this.surfaceVisible = visible
+            return
+        }
+        this.surfaceVisible = visible
+        if (visible && this.deferredStatePostWhileHidden) {
+            // The hidden window absorbed every publication since the last one the
+            // webview saw, so exactly one full build restores it.
+            this.deferredStatePostWhileHidden = false
+            void this.postStateToWebview({ immediate: true })
+        }
+    }
+
+    /** Whether this controller's surface is currently visible, defaulting to true. */
+    public isSurfaceVisible(): boolean {
+        return this.surfaceVisible
+    }
+
+    /**
+     * Whether presentation must be suppressed because no surface can show it.
+     *
+     * Only an explicit `false` counts. A controller that was never told about its
+     * visibility publishes as before, so a host without a visibility signal keeps
+     * its current behaviour instead of silently going dark.
+     */
+    private isSurfaceHidden(): boolean {
+        return this.surfaceVisible === false
     }
 
     /** Pause background balance requests while this controller's webview is hidden. */
@@ -3711,6 +3858,7 @@ export class Controller {
                     Logger.warn(`[Lock] Ownership lost for task ${taskId}`)
                     // Before close is even queued: it may wait behind other lifecycle work.
                     this.trajectoryAdmission.revoke()
+                    this.task?.assembly.runtime.ownershipLost()
                     void this.clearTask({ expectedOpening: opening, closeReason: "lock_lost" }).catch((error) =>
                         Logger.error("[Lock] Failed to close lock-lost task:", error),
                     )

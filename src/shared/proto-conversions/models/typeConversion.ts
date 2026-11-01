@@ -1,6 +1,8 @@
 import { ModelInfo } from "@shared/api"
 import { OpenRouterModelInfo, ModelInfo as ProtoModelInfo } from "@shared/proto/dline/models"
 import { ThinkingConfig } from "@shared/proto/dline/models/metadata"
+import { readCurrency } from "@shared/providers/pricing-shape"
+import { pricingFromLegacyFields, projectLegacyPricing } from "./pricing-legacy"
 
 /** Preserve declarations without deriving support or mode from a budget value. */
 function convertThinkingConfig(protoConfig: ThinkingConfig | undefined): ThinkingConfig | undefined {
@@ -27,13 +29,7 @@ export function fromProtobufModelInfo(protoInfo: OpenRouterModelInfo): ModelInfo
             contextWindow: protoInfo.contextWindow ?? undefined,
             thinking: convertThinkingConfig(protoInfo.thinkingConfig),
         },
-        pricing: {
-            inputPrice: protoInfo.inputPrice,
-            outputPrice: protoInfo.outputPrice,
-            cacheWritesPrice: protoInfo.cacheWritesPrice,
-            cacheReadsPrice: protoInfo.cacheReadsPrice,
-            tiers: protoInfo.tiers.length > 0 ? protoInfo.tiers : undefined,
-        },
+        pricing: pricingFromLegacyFields(protoInfo),
         description: protoInfo.description,
         name: protoInfo.name,
         temperature: protoInfo.temperature,
@@ -50,20 +46,16 @@ export function toProtobufModelInfo(modelInfo: ModelInfo): OpenRouterModelInfo {
         name: modelInfo.name,
         temperature: modelInfo.temperature,
         apiFormat: modelInfo.apiFormats?.[0],
-        currency: modelInfo.pricing?.currency,
+        currency: readCurrency(modelInfo.pricing),
         maxTokens: modelInfo.capabilities?.maxTokens,
         contextWindow: modelInfo.capabilities?.contextWindow,
         supportsImages: modelInfo.capabilities?.supportsImages,
         supportsPromptCache: modelInfo.capabilities?.supportsPromptCache,
         supportsReasoning: modelInfo.capabilities?.supportsReasoning,
-        inputPrice: modelInfo.pricing?.inputPrice,
-        outputPrice: modelInfo.pricing?.outputPrice,
-        cacheWritesPrice: modelInfo.pricing?.cacheWritesPrice,
-        cacheReadsPrice: modelInfo.pricing?.cacheReadsPrice,
+        ...projectLegacyPricing(modelInfo.pricing),
         description: modelInfo.description,
         thinkingConfig: toProtobufThinkingConfig(modelInfo.capabilities?.thinking),
         supportsGlobalEndpoint: modelInfo.capabilities?.supportsGlobalEndpoint,
-        tiers: modelInfo.pricing?.tiers || [],
     })
 }
 

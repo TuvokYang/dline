@@ -1,6 +1,8 @@
 import type { DialogInteraction, TaskState } from "../../kernel"
+import { isAway } from "../../kernel/away"
 import type {
     CanonicalDialogProjection,
+    CanonicalTaskActionProjection,
     CanonicalTaskActivity,
     CanonicalTaskDiagnostic,
     CanonicalTaskInputProjection,
@@ -77,6 +79,9 @@ function projectDialog(
             enabled: responsive,
         })),
         failure: interaction.failure,
+        ...(responsive && interaction.deadline
+            ? { deadline: { kind: interaction.deadline.kind, deadlineAt: interaction.deadline.deadlineAt } }
+            : {}),
         ...(interaction.outlivedCompactionId ? { outlivedCompactionId: interaction.outlivedCompactionId } : {}),
     }
 }
@@ -171,6 +176,17 @@ function projectDiagnostics(
     return diagnostics
 }
 
+function projectTaskActions(state: Readonly<TaskState>, terminal: CanonicalTaskTerminal): CanonicalTaskActionProjection[] {
+    const actions: CanonicalTaskActionProjection[] =
+        state.halt.status === "stopping"
+            ? [{ actionId: "cancel", enabled: false }]
+            : terminal === "active" && hasRunningCommand(state)
+              ? [{ actionId: "cancel", enabled: true }]
+              : []
+    if (terminal === "active" && isAway(state)) actions.push({ actionId: "stop_away", enabled: true })
+    return actions
+}
+
 export function projectCanonicalTaskView(state: Readonly<TaskState>): CanonicalTaskViewProjection {
     const terminal = projectTerminal(state)
     const activity = projectActivity(state, terminal)
@@ -184,13 +200,9 @@ export function projectCanonicalTaskView(state: Readonly<TaskState>): CanonicalT
         flowPhase: state.flow.phase,
         terminal,
         activity,
+        ...(isAway(state) ? { away: { source: state.away!.mode!.source } } : {}),
         input: projectInput(state, terminal, approvals),
-        taskActions:
-            state.halt.status === "stopping"
-                ? [{ actionId: "cancel", enabled: false }]
-                : terminal === "active" && hasRunningCommand(state)
-                  ? [{ actionId: "cancel", enabled: true }]
-                  : [],
+        taskActions: projectTaskActions(state, terminal),
         primary,
         approvals,
         interrupted,

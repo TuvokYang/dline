@@ -1,4 +1,5 @@
 import { ModelInfo, openAiModelInfoSaneDefaults } from "@shared/api"
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import { SELECTOR_SEPARATOR, stringifyVsCodeLmModelSelector } from "@shared/vsCodeSelectorUtils"
 import { calculateApiCostAnthropic } from "@utils/cost"
 import * as vscode from "vscode"
@@ -551,10 +552,7 @@ export class VsCodeLmHandler extends ApiHandler implements SingleCompletionHandl
                     supportsImages: false, // VSCode Language Model API currently doesn't support image inputs
                     supportsPromptCache: true,
                 },
-                pricing: {
-                    inputPrice: 0,
-                    outputPrice: 0,
-                },
+                pricing: flatMeteredPricing(0, 0),
             }
 
             return { id: modelId, info: modelInfo }
