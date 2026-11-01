@@ -192,7 +192,10 @@ e2e(
             await sidebar.getByRole("button", { name: "Expand all activity", exact: true }).click()
             await closeTask(sidebar, dlineDocsDir, taskId)
             await reopen(sidebar, task)
-            await expect(sidebar.getByTestId("activity-fold-header")).toHaveCount(1)
+            // Reopening streams the transcript in; wait for a real row before
+            // reading the block structure, or an empty chat reads as "no blocks".
+            await expect(sidebar.locator("[data-row-ts]").first()).toBeAttached({ timeout: 30_000 })
+            await expect(sidebar.getByTestId("activity-fold-header")).toHaveCount(1, { timeout: 30_000 })
             await closeTask(sidebar, dlineDocsDir, taskId)
             const turns = Array.from({ length: 12 }, (_, index) =>
                 fixtureTurn(base + index * 100, index === 0 ? task : `E2E_FOLDING_TURN_${index}`, index === 0),
@@ -225,6 +228,8 @@ e2e(
             app = await openVSCode(workspaceDir, { DLINE_EXPERIMENTAL_AGGRESSIVE_RENDERING: "false" })
             ;({ page, sidebar } = await openSidebar(app, helper))
             await reopen(sidebar, task)
+            // An empty chat would satisfy "no blocks" for the wrong reason.
+            await expect(sidebar.locator("[data-row-ts]").first()).toBeAttached({ timeout: 30_000 })
             await expect(sidebar.locator("[data-fold-id]")).toHaveCount(0)
             expect(await storedLevel(dlineDir)).toBe("user_turn")
             await closeTask(sidebar, dlineDocsDir, taskId)
@@ -447,9 +452,11 @@ e2e(
             await expect(sidebar.getByText("FOLDING_RESTORE_DONE", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
             await send(sidebar, followup)
             await expect(sidebar.getByText("FOLDING_FOLLOWUP_DONE", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-            // Both turns are expected to have a round-start checkpoint, including the
-            // completion-only follow-up.
-            await expect(sidebar.getByTestId("activity-fold-header")).toHaveCount(2)
+            // Both turns have a round-start checkpoint, and both markers stay
+            // reachable. The follow-up's completion is still the live ask, so that
+            // turn ends without folding: its marker keeps its own row, while the
+            // first turn's marker is reachable inside its block.
+            await expect(sidebar.getByText("Checkpoint", { exact: true })).toHaveCount(1)
             const rail = trajectoryRail(sidebar)
             await expect.poll(() => rail.prompts()).toEqual([[task], [followup]])
             await sidebar.getByRole("button", { name: "Expand all activity", exact: true }).click()

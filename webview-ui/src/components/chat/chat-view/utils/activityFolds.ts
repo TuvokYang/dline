@@ -95,7 +95,7 @@ export function foldActivity(rows: ChatRow[], options: FoldOptions, context: Fol
     const classes = prepared.map((row, index) => classifyFoldRow(row, index === prepared.length - 1, options, context))
     const rounds = roundOfRows(prepared, classes, context)
     const ended = endedRows(prepared, classes, rounds)
-    const spans = foldingSpans(prepared, classes, rounds, ended, policy)
+    const spans = foldingSpans(classes, rounds, ended, policy)
     const kind = options.level === "user_turn" ? "turn" : "segment"
     const folded = applySpans(prepared, spans, (span) => buildFold(prepared.slice(span.start, span.end), kind, context))
     return options.roundUsage ? attachUsage(folded, context.rounds, options.roundUsage) : folded
@@ -249,13 +249,20 @@ function roundOfRows(rows: readonly ChatRow[], classes: readonly FoldRowClass[],
     for (let index = rows.length - 1; index >= 0; index -= 1) {
         if (!isRestorePoint(rows[index])) continue
         const next = index + 1
-        if (next === rows.length) rounds[index] += 1
-        else if (classes[next] === "turn_end") {
-            // A restore point whose round drew nothing but its own turn end still
-            // opens that round: the turn it protects must stay foldable, or its
-            // Restore control would be left with no block to live in.
-            const ending = rows[next]
-            if (!Array.isArray(ending)) rounds[index] = memberRound(ending, context)
+        if (next === rows.length) {
+            // A trailing restore point heads a round that has drawn nothing yet.
+            rounds[index] += 1
+            continue
+        }
+        // A restore point is written before the request it protects, so it heads
+        // the round of the row after it, never the round it was indexed into. The
+        // row after it may be a turn end: a completion whose request row drew
+        // nothing. That ending owns the tail of its own round, so it names the
+        // round this marker opens, and the marker must fold with it.
+        if (classes[next] === "turn_end") {
+            const following = rows[next]
+            if (!Array.isArray(following)) rounds[index] = memberRound(following, context)
+            else rounds[index] = rounds[next]
         } else if (classes[next] !== "user") rounds[index] = rounds[next]
     }
     return rounds
@@ -283,9 +290,22 @@ function endedRows(rows: readonly ChatRow[], classes: readonly FoldRowClass[], r
     const ended = new Array<boolean>(rows.length).fill(false)
     let latestRoundAhead = Number.NEGATIVE_INFINITY
     let settledTurnEndAhead = false
+    /**
+     * The round of a turn end the reader has not answered yet.
+     *
+     * Such an ask proves nothing about the work before it, so it never makes
+     * ordinary rows foldable. It does keep that round's round-start restore point
+     * foldable, because that marker is written before the request ran: the work it
+     * protects already finished, and a marker with no block would take its Restore
+     * control out of reach.
+     */
+    let pendingTurnEndRound: number | undefined
     for (let index = rows.length - 1; index >= 0; index -= 1) {
-        ended[index] = settledTurnEndAhead || latestRoundAhead > rounds[index]
         const row = rows[index]
+        const closedByPendingEnd =
+            pendingTurnEndRound !== undefined && pendingTurnEndRound === rounds[index] && isRestorePoint(row)
+        ended[index] = settledTurnEndAhead || closedByPendingEnd || latestRoundAhead > rounds[index]
+        if (!Array.isArray(row) && isTurnEndRow(row) && !isSettledTurnEnd(row)) pendingTurnEndRound = rounds[index]
         if (!Array.isArray(row) && isSettledTurnEnd(row)) settledTurnEndAhead = true
         if (classes[index] !== "user") latestRoundAhead = Math.max(latestRoundAhead, rounds[index])
     }
@@ -299,7 +319,6 @@ interface Span {
 }
 
 function foldingSpans(
-    rows: readonly ChatRow[],
     classes: readonly FoldRowClass[],
     rounds: readonly number[],
     ended: readonly boolean[],
