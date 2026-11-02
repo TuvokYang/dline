@@ -3669,12 +3669,21 @@ export class Controller {
     private startLockPoll(taskId: string) {
         this.stopLockPoll()
         const generation = this.lockPollGeneration
-        // Bound to the opening that started polling, so a close or reopen in
-        // between can never be taken over by a stale round.
-        const owner = this.currentOpening()
+        /**
+         * The opening this poll may take over.
+         *
+         * Polling starts while a read-only open is still being prepared, before
+         * the session exists, so the opening at that moment can be absent. The
+         * session it installs is the one this poll was started for; requiring
+         * the exact opening captured here therefore rejected that very session
+         * forever, and a task another window held could never become writable in
+         * this window again. Any opening of the same task that this generation
+         * installs is accepted; a close or a different task still stops it.
+         */
         this.lockPollTimer = setInterval(() => {
             void this.runTaskLifecycleOperation(async (scope) => {
-                if (generation !== this.lockPollGeneration || this.currentOpening() !== owner || this.disposed) return
+                if (generation !== this.lockPollGeneration || this.disposed) return
+                const owner = this.currentOpening()
                 if (!owner || owner.taskId !== taskId || this.taskLockAcquired) return
                 // Only a released or stale lock is worth a takeover attempt.
                 const status = await this.lockService.checkTaskLock(taskId)

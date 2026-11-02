@@ -1457,6 +1457,10 @@ export const ExtensionStateContextProvider: React.FC<{
     // Auto-refresh model lists on API key availability
     useEffect(() => {
         if (modelRefreshAttempted.current) return
+        // `openRouterModels` starts as the single built-in default, so "one entry"
+        // means "no listing has arrived yet" - not "the catalog is empty". Waiting
+        // for the backend subscription alone leaves a cached catalog unrendered
+        // when that subscription delivers nothing, so this stays as the fallback.
         const needsOpenRouter = !openRouterModels || Object.keys(openRouterModels).length <= 1
         const needsVercel = !vercelAiGatewayModels || Object.keys(vercelAiGatewayModels).length === 0
         if (!needsOpenRouter && !needsVercel) return

@@ -1,10 +1,8 @@
 import React from "react"
-import { useMount } from "react-use"
 import GitHubIcon from "@/assets/GitHubIcon"
 import WhatsNewItems from "@/components/common/WhatsNewItems"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { DLINE_REPOSITORY_URL } from "@/config/source-links"
-import { useExtensionState } from "@/context/ExtensionStateContext"
 
 interface WhatsNewModalProps {
     open: boolean
@@ -13,11 +11,9 @@ interface WhatsNewModalProps {
 }
 
 export const WhatsNewModal: React.FC<WhatsNewModalProps> = ({ open, onClose, version }) => {
-    const { refreshOpenRouterModels } = useExtensionState()
-
-    // Get latest model list in case user hits shortcut button to set model
-    useMount(refreshOpenRouterModels)
-
+    // Announcements never choose a model, so this dialog must not start a model
+    // listing request. It is mounted by the welcome surface, which the panel
+    // returns to whenever the task closes.
     const inlineCodeStyle: React.CSSProperties = {
         backgroundColor: "var(--vscode-textCodeBlock-background)",
         padding: "2px 6px",
