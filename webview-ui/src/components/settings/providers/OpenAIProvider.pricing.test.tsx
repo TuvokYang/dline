@@ -193,15 +193,42 @@ describe("ModelInfoView thinking output pricing", () => {
         expect(screen.queryByText("$3/M")).not.toBeInTheDocument()
     })
 
-    it("preserves a declared zero thinking output price", () => {
+    it("renders no price row for a model whose only thinking rate is zero", () => {
         const modelInfo: ModelInfo = {
             id: "opaque-free-thinking",
             capabilities: { thinking: { supported: true, mode: "budget" } },
             pricing: thinkingPricing(2, 0),
         }
         render(<ModelInfoView modelInfo={modelInfo} selectedModelId={modelInfo.id} />)
-        // Both the compact row and the thinking row read the published zero.
-        expect(screen.getAllByText("Free").length).toBeGreaterThan(0)
-        expect(screen.queryByText("$2/M")).not.toBeInTheDocument()
+        // A zero rate is not printed: an unlisted price reads as "no charge",
+        // while a printed "Free" made a published zero look like a claim.
+        expect(screen.queryByText("Free")).not.toBeInTheDocument()
+        expect(screen.queryByText("$0/M")).not.toBeInTheDocument()
+        expect(screen.getByText("$2/M")).toBeInTheDocument()
+    })
+
+    it("renders no stray figure when a cache-capable model publishes zero cache rates", () => {
+        // Both cache rates are published as 0, so the cache section has nothing
+        // to show while caching itself is declared. A boolean guard that leaks
+        // the value (`... && (a || b)`) yields the number 0, which React prints
+        // as a bare "0" under the capability rows.
+        const modelInfo: ModelInfo = {
+            id: "deepseek-cache-zero",
+            capabilities: {
+                contextWindow: 1_000_000,
+                maxTokens: 384_000,
+                supportsTools: true,
+                supportsReasoning: true,
+                supportsPromptCache: true,
+            },
+            pricing: flatMeteredPricing(0, 0, 0, 0),
+        }
+        const { container } = render(<ModelInfoView modelInfo={modelInfo} selectedModelId={modelInfo.id} />)
+
+        expect(screen.getByText("Prompt Caching").parentElement).toHaveTextContent("Yes")
+        // The rendered text must not contain a standalone zero anywhere.
+        expect(container.textContent).not.toMatch(/(^|\D)0(\D|$)/)
+        expect(screen.queryByText("Cache Reads")).not.toBeInTheDocument()
+        expect(screen.queryByText("Cache Writes")).not.toBeInTheDocument()
     })
 })

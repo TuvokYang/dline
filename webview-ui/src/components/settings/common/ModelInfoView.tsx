@@ -66,8 +66,16 @@ const UnsupportedIcon = styled(MinusIcon)`
 	color: var(--vscode-descriptionForeground);
 `
 
-/** One capability row: an icon carries the state, the text names it. */
-function CapabilityValue({ supported }: { supported: boolean }) {
+/**
+ * One capability row: an icon carries the state, the text names it.
+ *
+ * `undefined` is the third state: nobody declared the capability. Rendering it
+ * as "No" would turn an absent declaration into a claim the seller never made.
+ */
+function CapabilityValue({ supported }: { supported: boolean | undefined }) {
+    if (supported === undefined) {
+        return <AdvancedValue>Unknown</AdvancedValue>
+    }
     return (
         <AdvancedValue>
             {supported ? <SupportedIcon aria-hidden="true" /> : <UnsupportedIcon aria-hidden="true" />}
@@ -85,9 +93,6 @@ function CapabilityValue({ supported }: { supported: boolean }) {
 const formatCompactPrice = (price: number | undefined, currency?: string): string => {
     if (price === undefined) {
         return "N/A"
-    }
-    if (price === 0) {
-        return "Free"
     }
     const symbol = getCurrencySymbol(currency)
     if (price < 0.01) {
@@ -112,16 +117,17 @@ const formatCompactContext = (contextWindow: number | undefined): string => {
     return `${Math.round(contextWindow / 1000)}K`
 }
 
+type TierPriceType = "inputPrice" | "outputPrice" | "cacheReadPrice" | "cacheWritePrice"
+
 /**
  * Format usage-based tiered pricing: each tier's threshold is the maximum
  * input-token usage for that price band. The threshold controls pricing only,
  * not the context window.
+ *
+ * A zero rate is dropped, so the caller must not print a label for an empty
+ * result.
  */
-const formatTiers = (
-    bands: readonly ContextWindowBand[],
-    priceType: "inputPrice" | "outputPrice" | "cacheReadPrice" | "cacheWritePrice",
-    currency?: string,
-): JSX.Element[] => {
+const formatTiers = (bands: readonly ContextWindowBand[], priceType: TierPriceType, currency?: string): JSX.Element[] => {
     if (bands.length === 0) {
         return []
     }
@@ -132,7 +138,7 @@ const formatTiers = (
             const prices = readPriceSet(band.prices)
             const price = prices[priceType]
 
-            if (price === undefined) {
+            if (price === undefined || price === 0) {
                 return null
             }
 
@@ -192,13 +198,36 @@ export const ModelInfoView = ({
     // Capability checks
     const hasImages = supportsImages(modelInfo)
     const hasBrowser = supportsBrowserUse(modelInfo)
-    const hasCaching = !isGemini && supportsPromptCache(modelInfo)
+    // `undefined` when the model never declared caching; Gemini hides the row
+    // entirely because this build carries no cache path for it.
+    const hasCaching = isGemini ? false : supportsPromptCache(modelInfo)
     const hasNativeTools = modelInfo.capabilities?.supportsTools === true
     const hasReasoning =
         modelInfo.capabilities?.supportsReasoning === true || modelInfo.capabilities?.thinking?.supported === true
 
-    // Check if we have cache pricing to show in Advanced section
-    const hasCachePricing = modelInfo.capabilities?.supportsPromptCache && (flatRates.cacheWritePrice || flatRates.cacheReadPrice)
+    // Every operand here must stay boolean: `a && (b || c)` evaluates to the
+    // number `0` when all cache rates are zero, and React renders that bare `0`
+    // as text.
+    const hasCachePricing =
+        modelInfo.capabilities?.supportsPromptCache === true && Boolean(flatRates.cacheWritePrice || flatRates.cacheReadPrice)
+
+    // A tier row is worth a label only while some band still carries a price.
+    const tierLabels: ReadonlyArray<readonly [string, TierPriceType]> = modelInfo.capabilities?.supportsPromptCache
+        ? [
+              ["Input", "inputPrice"],
+              ["Output", "outputPrice"],
+              ["Cache Writes", "cacheWritePrice"],
+              ["Cache Reads", "cacheReadPrice"],
+          ]
+        : [
+              ["Input", "inputPrice"],
+              ["Output", "outputPrice"],
+          ]
+    const tierRows = hasTiers
+        ? tierLabels
+              .map(([label, priceType]) => ({ label, tiers: formatTiers(bands, priceType, currency) }))
+              .filter((row) => row.tiers.length > 0)
+        : []
 
     return (
         <div className="min-w-0">
@@ -221,22 +250,22 @@ export const ModelInfoView = ({
                         <InfoValue>{formatCompactContext(modelInfo.capabilities.maxTokens)}</InfoValue>
                     </InfoItem>
                 )}
-                {flatPrices?.inputPrice !== undefined && (
+                {flatPrices?.inputPrice ? (
                     <InfoItem>
                         <InfoLabel>Input: </InfoLabel>
                         <InfoValue>{formatCompactPrice(flatPrices.inputPrice, currency)}</InfoValue>
                     </InfoItem>
-                )}
-                {flatPrices?.outputPrice !== undefined && (
+                ) : null}
+                {flatPrices?.outputPrice ? (
                     <InfoItem>
                         <InfoLabel>Output: </InfoLabel>
                         <InfoValue>
-                            {hasThinkingConfig && thinkingOutputPrice !== undefined
+                            {hasThinkingConfig && thinkingOutputPrice
                                 ? formatCompactPrice(thinkingOutputPrice, currency)
                                 : formatCompactPrice(flatPrices.outputPrice, currency)}
                         </InfoValue>
                     </InfoItem>
-                )}
+                ) : null}
             </InfoRow>
 
             {/* Capabilities, tiers and routing stay visible; hiding them behind a
@@ -280,45 +309,31 @@ export const ModelInfoView = ({
                 {/* Cache Pricing */}
                 {hasCachePricing && (
                     <>
-                        {flatPrices?.cacheReadPrice !== undefined && (
+                        {flatPrices?.cacheReadPrice ? (
                             <AdvancedRow>
                                 <AdvancedLabel>Cache Reads</AdvancedLabel>
                                 <AdvancedValue>{formatCompactPrice(flatPrices.cacheReadPrice, currency)}</AdvancedValue>
                             </AdvancedRow>
-                        )}
-                        {flatPrices?.cacheWritePrice !== undefined && (
+                        ) : null}
+                        {flatPrices?.cacheWritePrice ? (
                             <AdvancedRow>
                                 <AdvancedLabel>Cache Writes</AdvancedLabel>
                                 <AdvancedValue>{formatCompactPrice(flatPrices.cacheWritePrice, currency)}</AdvancedValue>
                             </AdvancedRow>
-                        )}
+                        ) : null}
                     </>
                 )}
 
                 {/* Tiered Pricing */}
-                {hasTiers && (
+                {tierRows.length > 0 && (
                     <div style={{ marginTop: 8 }}>
                         <div style={{ fontWeight: 500, marginBottom: 4 }}>Tiered Pricing:</div>
-                        <AdvancedRow>
-                            <AdvancedLabel>Input</AdvancedLabel>
-                            <AdvancedValue>{formatTiers(bands, "inputPrice", currency)}</AdvancedValue>
-                        </AdvancedRow>
-                        <AdvancedRow>
-                            <AdvancedLabel>Output</AdvancedLabel>
-                            <AdvancedValue>{formatTiers(bands, "outputPrice", currency)}</AdvancedValue>
-                        </AdvancedRow>
-                        {modelInfo.capabilities?.supportsPromptCache && (
-                            <>
-                                <AdvancedRow>
-                                    <AdvancedLabel>Cache Writes</AdvancedLabel>
-                                    <AdvancedValue>{formatTiers(bands, "cacheWritePrice", currency)}</AdvancedValue>
-                                </AdvancedRow>
-                                <AdvancedRow>
-                                    <AdvancedLabel>Cache Reads</AdvancedLabel>
-                                    <AdvancedValue>{formatTiers(bands, "cacheReadPrice", currency)}</AdvancedValue>
-                                </AdvancedRow>
-                            </>
-                        )}
+                        {tierRows.map((row) => (
+                            <AdvancedRow key={row.label}>
+                                <AdvancedLabel>{row.label}</AdvancedLabel>
+                                <AdvancedValue>{row.tiers}</AdvancedValue>
+                            </AdvancedRow>
+                        ))}
                     </div>
                 )}
 
