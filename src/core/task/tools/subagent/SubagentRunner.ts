@@ -1169,20 +1169,26 @@ export class SubagentRunner {
                 try {
                     for await (const chunk of stream) {
                         switch (chunk.type) {
-                            case "usage":
+                            case "usage": {
                                 requestId = requestId ?? chunk.provider_metadata?.response_id
-                                // Providers may resend cumulative usage snapshots; only the
-                                // accumulator's delta is new and may be added to running totals.
-                                const { delta: usageDelta } = roundUsageAccumulator.apply(chunk)
+                                // Take this send's resolved total, not the sum of its deltas.
+                                // A Provider may publish an estimate and replace it with the
+                                // final total; `getUsage()` is that total and is what the
+                                // mandatory transport wrapper reports for the same send.
+                                // Accumulating deltas kept the estimate and disagreed with it.
+                                const settled = roundUsageAccumulator.apply(chunk).usage
                                 if (chunk.stopReason) roundStopReason = chunk.stopReason
-                                stats.inputTokens += usageDelta.inputTokens
-                                stats.outputTokens += usageDelta.outputTokens
-                                stats.cacheWriteTokens += usageDelta.cacheWriteTokens
-                                stats.cacheReadTokens += usageDelta.cacheReadTokens
-                                requestUsage.inputTokens += usageDelta.inputTokens
-                                requestUsage.outputTokens += usageDelta.outputTokens
-                                requestUsage.cacheWriteTokens += usageDelta.cacheWriteTokens
-                                requestUsage.cacheReadTokens += usageDelta.cacheReadTokens
+                                // The send's total replaces what this request contributed
+                                // before, so the run total moves by exactly the difference.
+                                // Adding the total itself would count it again on every chunk.
+                                stats.inputTokens += settled.inputTokens - requestUsage.inputTokens
+                                stats.outputTokens += settled.outputTokens - requestUsage.outputTokens
+                                stats.cacheWriteTokens += settled.cacheWriteTokens - requestUsage.cacheWriteTokens
+                                stats.cacheReadTokens += settled.cacheReadTokens - requestUsage.cacheReadTokens
+                                requestUsage.inputTokens = settled.inputTokens
+                                requestUsage.outputTokens = settled.outputTokens
+                                requestUsage.cacheWriteTokens = settled.cacheWriteTokens
+                                requestUsage.cacheReadTokens = settled.cacheReadTokens
                                 requestUsage.totalTokens =
                                     requestUsage.inputTokens +
                                     requestUsage.outputTokens +
@@ -1204,6 +1210,7 @@ export class SubagentRunner {
                                     }
                                 }
                                 break
+                            }
                             case "text":
                                 requestId = requestId ?? chunk.provider_metadata?.response_id
                                 assistantText += chunk.text || ""

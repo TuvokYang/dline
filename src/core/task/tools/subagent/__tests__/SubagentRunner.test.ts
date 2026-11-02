@@ -2918,6 +2918,37 @@ describe("SubagentRunner", () => {
         assert.equal(result.stats.outputTokens, 2)
     })
 
+    // BUGFIX-257 D6: the runner must not keep its own delta arithmetic. A Provider may
+    // report an estimate and then replace it with the send's final total; summing the
+    // deltas keeps the estimate while the send really consumed the replacement.
+    it("reports the send's final usage total instead of accumulating an earlier estimate", async () => {
+        const createMessage = vi.fn().mockImplementation(async function* () {
+            yield { type: "usage", usageMode: "snapshot", inputTokens: 1_100, outputTokens: 0 }
+            yield { type: "usage", usageMode: "delta", inputTokens: 0, outputTokens: 40 }
+            yield { type: "usage", usageMode: "delta", inputTokens: 0, outputTokens: 60 }
+            // The send's authoritative total: an estimate that came before the deltas is replaced.
+            yield { type: "usage", usageMode: "snapshot", inputTokens: 900, outputTokens: 100 }
+            yield {
+                type: "tool_calls",
+                function_id: "usage-final-total",
+                tool_call: { function: { name: DlineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) } },
+            }
+        })
+        stubSystemPrompt(false)
+        vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
+        vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
+        stubApiHandler(createMessage)
+        initializeHostProvider()
+
+        const result = await new SubagentRunner(createTaskConfig(false)).run("Count the final total", () => {})
+
+        assert.equal(result.status, "completed", result.error)
+        // ApiUsageAccumulator.getUsage() resolves this stream to 900/100. Accumulating the
+        // non-negative deltas instead keeps the first estimate and reports 1100/100.
+        assert.equal(result.stats.inputTokens, 900)
+        assert.equal(result.stats.outputTokens, 100)
+    })
+
     // BUGFIX-022: retry classification is a deny-list. Only account-level failures
     // that cannot recover by waiting short-circuit the backoff sequence.
     it.each([
