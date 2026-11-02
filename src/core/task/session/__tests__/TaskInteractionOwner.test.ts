@@ -374,6 +374,33 @@ describe("TaskInteractionOwner", () => {
         expect(messages.addToClineMessages).not.toHaveBeenCalled()
     })
 
+    // The preview row is drawn before the command runs, so it cannot know the
+    // directory; the approval states it as a field rather than as a text suffix.
+    it("states a command approval's directory as a field on the row it takes over", async () => {
+        const rows: UiMessage[] = [{ ts: 10, type: "say", say: "command", text: "npm test", partial: true }]
+        const messages = createMessages(rows)
+        const { owner } = createOwner({ messages, nextPresentationId: () => 50 })
+
+        await owner.anchor({
+            interactionId: "approval:tid-command",
+            kind: "tool_approval",
+            ask: "command",
+            body: "npm test",
+            row: 10,
+            workingDirectory: "/tmp/elsewhere",
+        })
+
+        expect(messages.finalizeClineMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                ts: 10,
+                text: "npm test",
+                command: "npm test",
+                commandWorkingDirectory: "/tmp/elsewhere",
+                commandAsksApproval: true,
+            }),
+        )
+    })
+
     // Every tool streams its card before approval, not only commands: a Web Fetch
     // preview left beside its approval was a second card for one call.
     it("takes over the streamed card of any tool call instead of adding a second row", async () => {

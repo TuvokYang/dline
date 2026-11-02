@@ -18,6 +18,8 @@ export interface DialogAnchorRequest {
     readonly ask?: string
     /** Row the dialog's call already drew; reused when it is still present. */
     readonly row?: number
+    /** Directory a command approval runs in; stated as a field, never as text. */
+    readonly workingDirectory?: string
 }
 
 export interface ProductionDialogAdapterOptions {
@@ -83,6 +85,7 @@ export class ProductionDialogAdapter implements DialogExecutionPort {
             body: input.presentationRef,
             ...(input.presentationAsk === undefined ? {} : { ask: input.presentationAsk }),
             ...(input.presentationRow === undefined ? {} : { row: input.presentationRow }),
+            ...(input.presentationWorkingDirectory === undefined ? {} : { workingDirectory: input.presentationWorkingDirectory }),
         })
         if (input.signal.aborted) throw input.signal.reason
         this.options.taskView.notifyTransient(this.options.taskId, {

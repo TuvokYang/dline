@@ -328,6 +328,25 @@ export interface UiMessage {
     files?: string[]
     partial?: boolean
     commandStatus?: CommandStatus
+    /**
+     * The command line a `command` row runs, kept apart from its directory and output.
+     *
+     * A row that predates this field states everything in `text`; `readCommandRow`
+     * reads either shape. Writers set it through `writeCommandRowFacts` so no
+     * writer assembles the text itself.
+     */
+    command?: string
+    /** The directory a `command` row runs in, when the row states one. */
+    commandWorkingDirectory?: string
+    /** What a `command` row printed. Empty when the command produced no output. */
+    commandOutput?: string
+    /**
+     * Whether the row asks the user to approve the command.
+     *
+     * Only a legacy row encodes this as a `REQ_APP` suffix on its command line;
+     * reading it out of a command's own text would misread `echo REQ_APP`.
+     */
+    commandAsksApproval?: boolean
     /** Whether this command currently owns the foreground turn or is detached in the background. */
     commandExecutionMode?: CommandExecutionMode
     /** Legacy persisted handoff flag; current UI uses the backend-projected footer action. */

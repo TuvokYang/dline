@@ -21,6 +21,25 @@ const baseProps = {
     onToggleCollapsed: vi.fn(),
 }
 
+describe("CommandOutputRow command status", () => {
+    it("renders an unstamped command as Pending instead of Completed", () => {
+        // A command row that never reported an outcome is not a finished command.
+        // Reading a missing status as completed claimed work that never ran.
+        render(
+            <CommandOutputRow
+                {...baseProps}
+                isCollapsed={false}
+                isCommandExecuting={false}
+                isCommandPending
+                message={{ ts: 1, type: "say", say: "command", text: "git log --oneline" }}
+            />,
+        )
+
+        expect(screen.getByText("Pending")).toBeInTheDocument()
+        expect(screen.queryByText("Completed")).toBeNull()
+    })
+})
+
 describe("CommandOutputRow handoff controls", () => {
     it("does not render a handoff action inside the command card", () => {
         const legacyHandoffProps = {

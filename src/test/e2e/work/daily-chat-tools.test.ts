@@ -2,8 +2,11 @@ import { readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { readTaskUiMessages } from "@e2e/utils/task-instance-store"
+import { workTaskIdByMarker } from "@e2e/utils/work/profiles-policies"
 import { expectWorkMessageVisible, prepareWorkSession, sendWorkMessage, setWorkAutoApproveAction } from "@e2e/utils/work/session"
 import { expect } from "@playwright/test"
+import { readCommandRow } from "@shared/commandRow"
 
 const TARGET = "openai-compatible-chat" as const
 const TASK_TEXT = "WORK_DAILY_CHAT_TOOLS_TASK"
@@ -27,7 +30,8 @@ const COMMAND = `node -e "console.log('WORK_DAILY_COMMAND_START'); console.log('
 
 e2e(
     "daily chat and tools workflow remains usable through approval, project edit, command, cancel, resume, and history",
-    async ({ helper, page, server, sidebar, userDataDir, workspaceDir }) => {
+    async ({ helper, page, server, sidebar, userDataDir, workspaceDir, testDirectories }) => {
+        const { dlineDocsDir } = testDirectories
         e2e.setTimeout(600_000)
         const replacePath = path.join(workspaceDir, REPLACE_RELATIVE_PATH)
         await writeFile(replacePath, `${REPLACE_BEFORE}\n`, "utf8")
@@ -193,6 +197,17 @@ e2e(
         const commandCard = sidebar.getByTestId("command-card").last()
         await expect(commandCard.getByRole("button", { name: COMMAND, exact: true })).toBeVisible()
         await expect(commandCard.getByTestId("command-output-summary")).toContainText("WORK_DAILY_COMMAND_END")
+        // The command line and the directory it ran in are separate facts. The
+        // card must show the directory, which it could not while the field was
+        // never written and the text carried no suffix either.
+        await expect(commandCard.getByTestId("command-workdirectory")).toBeVisible()
+        const commandTaskId = await workTaskIdByMarker(dlineDocsDir, TASK_TEXT)
+        const storedCommand = (await readTaskUiMessages(dlineDocsDir, commandTaskId)).find(
+            (message) => message.command === COMMAND,
+        )
+        expect(storedCommand, "the command row is stored as structured facts").toBeDefined()
+        expect(readCommandRow(storedCommand!).workingDirectory).toBe(workspaceDir)
+        expect(readCommandRow(storedCommand!).command).toBe(COMMAND)
         const commandResult = server
             .getMockConsumptions(TARGET)[6]
             .requestToolResults.find((result) => result.callId === "call_daily_command")

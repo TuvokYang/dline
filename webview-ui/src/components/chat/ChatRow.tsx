@@ -1,6 +1,6 @@
 import { parseMcpServerResponse } from "@shared/chat/mcpResponseRows"
-import { COMMAND_OUTPUT_STRING } from "@shared/combineCommandSequences"
 import { findApiFailurePresentedBy } from "@shared/combineErrorRetryMessages"
+import { readCommandRow } from "@shared/commandRow"
 import {
     COMPLETION_RESULT_CHANGES_FLAG,
     UiApiReqInfo,
@@ -306,18 +306,20 @@ export const ChatRowContent = memo(
 
         const isCommandMessage = type === "command"
         // Check if command has output to determine if it's actually executing
-        const _commandHasOutput = message.text?.includes(COMMAND_OUTPUT_STRING) ?? false
+        const _commandHasOutput = (readCommandRow(message).output ?? "").length > 0
         // Use commandStatus to determine state; legacy messages without commandStatus are treated as completed
         const isCommandExecuting = isCommandMessage && message.commandStatus === "running"
-        const isCommandPending = isCommandMessage && message.commandStatus === "pending"
+        // A command row without a status has not reported any outcome yet. Reading
+        // that as "completed" made an unexecuted command render as Completed,
+        // which is the one direction a status may never guess: it claims work
+        // that never ran. The writers always seed `pending` (MessageChannel and
+        // createCanonicalAskRow), so a missing status is an unsettled row.
+        const isCommandPending = isCommandMessage && (message.commandStatus === "pending" || message.commandStatus === undefined)
         const isCommandSkipped = isCommandMessage && message.commandStatus === "skipped"
         const isCommandFailed = isCommandMessage && message.commandStatus === "failed"
         const isCommandCancelled = isCommandMessage && message.commandStatus === "cancelled"
         const isCommandInterrupted = isCommandMessage && message.commandStatus === "interrupted"
-        const isCommandCompleted =
-            isCommandMessage &&
-            (message.commandStatus === "completed" || message.commandStatus === undefined) &&
-            !isCommandSkipped
+        const isCommandCompleted = isCommandMessage && message.commandStatus === "completed"
 
         // The canonical task view names the running task; the history item can be
         // absent while a task runs, which used to hide the row's Cancel.

@@ -24,6 +24,8 @@ export type ProviderTurnApproval =
           readonly presentationAsk?: string
           /** Chat row the call drew while it streamed; opaque to the kernel and carried as-is. */
           readonly presentationRow?: number
+          /** Directory a command approval runs in; opaque to the kernel, carried as-is. */
+          readonly presentationWorkingDirectory?: string
           readonly actionRules: readonly DialogActionRule[]
       }
     | {
@@ -266,6 +268,8 @@ export interface DialogInteraction {
     readonly presentationAsk?: string
     /** Chat row the dialog takes over, when its call already drew one. */
     readonly presentationRow?: number
+    /** Directory a command approval runs in; carried without inspection. */
+    readonly presentationWorkingDirectory?: string
     readonly actionRules: readonly DialogActionRule[]
     readonly journalRef?: string
     readonly journalWatermark?: JournalWatermark
@@ -830,6 +834,8 @@ interface DialogCommandInput {
     readonly presentationRef: string
     readonly presentationAsk?: string
     readonly presentationRow?: number
+    /** Directory a command approval runs in; opaque to the kernel, carried as-is. */
+    readonly presentationWorkingDirectory?: string
     readonly actionRules: readonly DialogActionRule[]
     readonly blockId?: BlockId
     readonly prepareKey: string

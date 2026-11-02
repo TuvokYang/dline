@@ -442,7 +442,11 @@ function dialogCommandInput(interaction: DialogInteraction) {
         kind: interaction.kind,
         presentationRef: interaction.presentationRef,
         ...(interaction.presentationAsk === undefined ? {} : { presentationAsk: interaction.presentationAsk }),
+
         ...(interaction.presentationRow === undefined ? {} : { presentationRow: interaction.presentationRow }),
+        ...(interaction.presentationWorkingDirectory === undefined
+            ? {}
+            : { presentationWorkingDirectory: interaction.presentationWorkingDirectory }),
         actionRules: interaction.actionRules,
         blockId: interaction.blockId,
         prepareKey: interaction.prepareKey ?? `dialog.prepare:${interaction.interactionId}`,

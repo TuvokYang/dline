@@ -2,7 +2,7 @@ import { formatResponse } from "@core/prompts/responses"
 import { findLast } from "@shared/array"
 import type { UiAsk, UiMessage } from "@shared/ExtensionMessage"
 import { Logger } from "@shared/services/Logger"
-import { createCanonicalAskRow } from "../ask-row"
+import { commandApprovalBody, createCanonicalAskRow } from "../ask-row"
 import type { RetainedInputPresentationPort } from "../executors/compose/RetainedInputPresentationPort"
 import { type DraftAttachmentPort, resolveDraftForReceiver } from "../interaction/DraftAttachments"
 import type { InteractionKind } from "../interaction/Interaction"
@@ -214,6 +214,8 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
         readonly body: string
         readonly ask?: string
         readonly row?: number
+        /** The directory a command approval runs in, stated as a field. */
+        readonly workingDirectory?: string
     }): Promise<void> {
         const currentMessages = this.messages.clineMessages
         const asks = currentMessages.filter(
@@ -243,7 +245,13 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
         const body = recoveredCompletionRow?.text ?? request.body
         // A call nothing drew yet sorts after everything already written. Wall-clock
         // time is not enough when several rows are revealed in the same millisecond.
-        const anchor = createCanonicalAskRow(ask, body, sourceRow?.ts ?? this.nextRowTs(), request.interactionId)
+        // A command approval states its directory as a field, so the row it takes
+        // over reports the directory instead of a text suffix the preview lacked.
+        const commandApproval =
+            ask === "command" && request.workingDirectory !== undefined
+                ? commandApprovalBody(body, request.workingDirectory)
+                : undefined
+        const anchor = createCanonicalAskRow(ask, body, sourceRow?.ts ?? this.nextRowTs(), request.interactionId, commandApproval)
         await this.presentAnchor(sourceRow ? { ...sourceRow, ...anchor } : anchor)
     }
 

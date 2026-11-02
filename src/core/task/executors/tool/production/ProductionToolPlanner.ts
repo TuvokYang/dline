@@ -71,6 +71,9 @@ function approval(
         presentationRef: result.presentation?.body ?? JSON.stringify(block.params),
         ...(result.presentation?.ask === undefined ? {} : { presentationAsk: result.presentation.ask }),
         ...(typeof block.ts === "number" ? { presentationRow: block.ts } : {}),
+        ...(result.presentation?.commandWorkingDirectory === undefined
+            ? {}
+            : { presentationWorkingDirectory: result.presentation.commandWorkingDirectory }),
         actionRules: approvalActionRules(result.presentation?.ask),
         ...(result.scope?.awayCommand === "external" ? { externalCommand: true as const } : {}),
     }

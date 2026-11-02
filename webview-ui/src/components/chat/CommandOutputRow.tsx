@@ -1,5 +1,5 @@
-import { COMMAND_OUTPUT_STRING, COMMAND_REQ_APP_STRING } from "@shared/combineCommandSequences"
 import { COMMAND_LOG_NOTICE_LABEL, findCommandLogNotice } from "@shared/command-log-notice"
+import { readCommandRow } from "@shared/commandRow"
 import { UiMessage } from "@shared/ExtensionMessage"
 import AnsiUp from "ansi-to-html"
 import DOMPurify from "dompurify"
@@ -279,30 +279,15 @@ export const CommandOutputRow = memo(
             />
         )
 
-        const splitMessage = (text: string) => {
-            const outputIndex = text.indexOf(COMMAND_OUTPUT_STRING)
-            if (outputIndex === -1) {
-                return { command: text, output: "" }
-            }
-            return {
-                command: text.slice(0, outputIndex).trim(),
-                output: sanitizeCommandOutput(text.slice(outputIndex + COMMAND_OUTPUT_STRING.length).trim()),
-            }
-        }
-
-        const { command: rawCommand, output } = splitMessage(message.text || "")
+        // The row's own fields are the authority; a row written before they
+        // existed states everything in its text, which the reader still splits.
+        const row = readCommandRow(message)
+        const output = sanitizeCommandOutput(row.output)
         const outputSummary = getCommandOutputSummary(output)
 
-        const requestsApproval = rawCommand.endsWith(COMMAND_REQ_APP_STRING)
-        const commandPresentation = requestsApproval ? rawCommand.slice(0, -COMMAND_REQ_APP_STRING.length) : rawCommand
-        const workingDirectoryMarker = "\n\nWorking directory: "
-        const workingDirectoryIndex = commandPresentation.lastIndexOf(workingDirectoryMarker)
-        const command =
-            workingDirectoryIndex === -1 ? commandPresentation : commandPresentation.slice(0, workingDirectoryIndex).trimEnd()
-        const workdirectory =
-            workingDirectoryIndex === -1
-                ? undefined
-                : commandPresentation.slice(workingDirectoryIndex + workingDirectoryMarker.length).trim()
+        const command = row.command
+        const workdirectory = row.workingDirectory
+        const requestsApproval = row.requestsApproval
         const showCancelButton = isActive && typeof onCancelCommand === "function"
         const ExecutionModeIcon = isBackgroundExec ? SendToBackIcon : BringToFrontIcon
         const executionModeLabel = isBackgroundExec ? "Background" : "Foreground"

@@ -1,3 +1,4 @@
+import { readCommandRow } from "@shared/commandRow"
 import type { UiMessage, UiSayTool } from "@shared/ExtensionMessage"
 import { parseImageGenerationToolText } from "@shared/image-generation"
 import { parseNewTaskAsk } from "@shared/new-task-ask"
@@ -203,11 +204,15 @@ export function ApprovalRenderer(props: PresentationProps) {
 
 /** Render command-oriented interaction content. */
 export function CommandRenderer(props: PresentationProps) {
+    // The row's fields are the authority. Copying the command must not carry the
+    // directory or an approval marker along with it, which is what reading `text`
+    // alone would do for an older row.
+    const row = readCommandRow(props.message)
     return (
         <ApprovalCard
             copyLabel="Copy command"
-            copyText={props.message.text}
-            detail={props.message.text}
+            copyText={row.command}
+            detail={row.workingDirectory ? `${row.command}\n\nIn ${row.workingDirectory}` : row.command}
             monospace
             title="Dline wants to execute this command:"
         />

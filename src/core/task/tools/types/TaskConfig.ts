@@ -189,6 +189,14 @@ export interface TaskCallbacks {
          * host that drops it leaves the output orphaned and never rendered.
          */
         commandTs?: number,
+        /**
+         * The structured facts a `command` row states, when the caller has them.
+         *
+         * A command row's directory is a field, not a suffix of its text. The
+         * caller that knows the directory passes it here; a caller that does not
+         * still gets a row whose text is the command line alone.
+         */
+        commandFacts?: { commandLine: string; workingDirectory?: string },
     ) => Promise<number | undefined>
 
     /**

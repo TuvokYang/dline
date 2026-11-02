@@ -133,6 +133,37 @@ describe("ControllerTaskCallbacksOwner say", () => {
         expect(written.at(-1)).toMatchObject({ ts: 77, say: "command", partial: false, commandStatus: "pending" })
     })
 
+    // The directory is a field, not a suffix of the command line. Losing it here
+    // is what made every new command look like it ran inside the workspace.
+    it("states a command row's directory as a field when the caller knows it", async () => {
+        const { handler, written } = messageStore()
+
+        await owner(handler).callbacks.say("command", "npm test", undefined, undefined, false, 55, undefined, {
+            commandLine: "npm test",
+            workingDirectory: "/elsewhere",
+        })
+
+        expect(written.at(-1)).toMatchObject({
+            ts: 55,
+            text: "npm test",
+            command: "npm test",
+            commandWorkingDirectory: "/elsewhere",
+            commandOutput: "",
+            commandAsksApproval: false,
+        })
+    })
+
+    // A caller that has no directory still gets a row whose text is the command
+    // line alone, so a reader never has to split it to find one.
+    it("writes a command row without a directory when the caller states none", async () => {
+        const { handler, written } = messageStore()
+
+        await owner(handler).callbacks.say("command", "npm test", undefined, undefined, false, 56)
+
+        expect(written.at(-1)).toMatchObject({ ts: 56, text: "npm test", command: "npm test" })
+        expect(written.at(-1)?.commandWorkingDirectory).toBeUndefined()
+    })
+
     it("keeps the status a command row already reached when it is finalized again", async () => {
         const { handler, written } = messageStore()
         written.push({ ts: 78, type: "say", say: "command", text: "npm test", commandStatus: "running" })

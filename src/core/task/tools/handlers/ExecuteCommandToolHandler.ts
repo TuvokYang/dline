@@ -2,7 +2,7 @@ import { resolveProvider } from "@core/api"
 import type { ToolUse } from "@core/assistant-message"
 import { getPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
-import { formatCommandApprovalBody } from "@core/task/ask-row"
+import { commandApprovalBody } from "@core/task/ask-row"
 import { showSystemNotification } from "@integrations/notifications"
 import type { CommandExecutionOutcome } from "@integrations/terminal"
 import { DEFAULT_TERMINAL_COMMAND_TIMEOUT_SECONDS, MIN_TERMINAL_COMMAND_TIMEOUT_SECONDS } from "@shared/terminal-settings"
@@ -79,14 +79,10 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
             return
         }
 
-        await uiHelpers.say(
-            "command",
-            uiHelpers.removeClosingTag(block, "command", command),
-            undefined,
-            undefined,
-            true,
-            block.ts,
-        )
+        // The directory is resolved when the command runs, so the preview row has
+        // no directory to state yet; the approval anchor and the run row add it.
+        const commandLine = uiHelpers.removeClosingTag(block, "command", command)
+        await uiHelpers.say("command", commandLine, undefined, undefined, true, block.ts, block.ts)
     }
 
     async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
@@ -229,13 +225,16 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
         const admissionOutcome = config.admissionOutcome
 
         if (!config.isSubagentExecution) {
+            const approvalBody = commandApprovalBody(actualCommand, executionDir)
             await config.callbacks.say(
                 "command",
-                formatCommandApprovalBody(actualCommand, executionDir),
+                approvalBody.commandLine,
                 undefined,
                 undefined,
                 false,
                 block.ts,
+                undefined,
+                approvalBody,
             )
         }
         const wasAutoApproved = admissionOutcome === undefined

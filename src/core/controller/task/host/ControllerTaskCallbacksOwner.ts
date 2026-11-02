@@ -18,6 +18,7 @@ import type { BegunCheckpointRow, CheckpointRowFields, HeldCheckpointRow } from 
 import type { ICheckpointManager } from "@integrations/checkpoints/types"
 import type { CommandExecutor } from "@integrations/terminal/CommandExecutor"
 import { BrowserSession } from "@services/browser/BrowserSession"
+import { writeCommandRowFacts } from "@shared/commandRow"
 import type { UiAsk, UiMessage, UiSay } from "@shared/ExtensionMessage"
 import { type SubmittedInputRow, submittedRowFields } from "@shared/input-semantics/submitted-input"
 import type { ClineContent } from "@shared/messages/content"
@@ -256,6 +257,7 @@ export class ControllerTaskCallbacksOwner {
         partial?: boolean,
         existingTs?: number,
         commandTs?: number,
+        commandFacts?: { commandLine: string; workingDirectory?: string },
     ): Promise<number> {
         // A new row takes the next id of the session's sequence. A wall-clock id
         // can equal the id another owner just gave its row in the same
@@ -264,6 +266,19 @@ export class ControllerTaskCallbacksOwner {
         // commandTs is how a command_output row finds the command it belongs to;
         // dropping it here leaves the output orphaned and never rendered.
         const message: UiMessage = { ts, type: "say", say: type, text, images, files, partial, commandTs }
+        // A command row is stored as its own facts. `text` keeps the command line
+        // so a reader that predates the fields still shows what will run.
+        if (type === "command") {
+            Object.assign(
+                message,
+                writeCommandRowFacts({
+                    command: commandFacts?.commandLine ?? text ?? "",
+                    workingDirectory: commandFacts?.workingDirectory,
+                    output: "",
+                    requestsApproval: false,
+                }),
+            )
+        }
         // The command executor moves a row from pending to running by finding it
         // pending, and the row only offers Cancel while it is pending or running.
         if (type === "command" && !partial) message.commandStatus = this.commandStatusAt(ts)

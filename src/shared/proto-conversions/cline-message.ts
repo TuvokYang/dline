@@ -342,6 +342,12 @@ export function convertClineMessageToProto(message: AppClineMessage): ProtoCline
         apiReqInfo: undefined,
         modelInfo: message.modelInfo ?? undefined,
         commandStatus: message.commandStatus ?? "",
+        // Absent means the row predates the split, which the reader recovers from
+        // `text`; an empty string would claim a command ran with no command line.
+        command: message.command,
+        commandWorkingDirectory: message.commandWorkingDirectory,
+        commandOutput: message.commandOutput,
+        commandAsksApproval: message.commandAsksApproval,
         exitCode: message.exitCode ?? 0,
         logPath: message.logPath ?? "",
         commandTs: message.commandTs ?? 0,
@@ -472,6 +478,14 @@ export function convertProtoToClineMessage(protoMessage: ProtoClineMessage): App
     }
     if (protoMessage.commandExecutionMode !== "") {
         message.commandExecutionMode = protoMessage.commandExecutionMode as AppClineMessage["commandExecutionMode"]
+    }
+    // Only a split row carries a command line; leaving the others absent is what
+    // keeps their text readable as a legacy command.
+    if (protoMessage.command !== undefined) {
+        message.command = protoMessage.command
+        message.commandOutput = protoMessage.commandOutput ?? ""
+        message.commandWorkingDirectory = protoMessage.commandWorkingDirectory
+        message.commandAsksApproval = protoMessage.commandAsksApproval ?? false
     }
     if (protoMessage.commandCanMoveToBackground) {
         message.commandCanMoveToBackground = true
