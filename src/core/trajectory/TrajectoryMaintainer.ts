@@ -79,10 +79,15 @@ export interface TrajectoryMaintainerOptions {
 }
 
 /**
- * How a catch-up ended. `ready` and `error` are durable; `not_writable` and
- * `stopped` leave the cache for another window or a later run.
+ * How a catch-up ended.
+ *
+ * `ready` and `error` are durable results the cache now holds. `not_writable`
+ * and `stopped` are ordinary ends that leave the cache for another window or a
+ * later run. `failed` is different from all of them: the fold could not finish
+ * for a reason nothing will retry on its own, so a caller that owns the
+ * maintainer has to schedule the retry instead of treating the cache as settled.
  */
-export type CatchUpOutcome = "ready" | "error" | "not_writable" | "stopped"
+export type CatchUpOutcome = "ready" | "error" | "not_writable" | "stopped" | "failed"
 
 type PassOutcome =
     | { readonly kind: "done"; readonly outcome: CatchUpOutcome }
@@ -221,11 +226,16 @@ export class TrajectoryMaintainer {
             }
             return "stopped"
         } catch (error) {
+            // A stopped maintainer and a handle the task's deletion closed are
+            // ordinary ends: nobody should retry them. Anything else is a fold
+            // that failed with the cache still empty or behind, and reporting it
+            // as `stopped` left the owner believing the cache was settled, so a
+            // quiet task kept an empty `building` cache forever.
             if (this.stopped || isClosedStorage(error)) return "stopped"
             Logger.warn(
                 `[trajectory] TrajectoryCatchUpFailed: instance=${this.options.instanceId} ${error instanceof Error ? error.message : String(error)}`,
             )
-            return "stopped"
+            return "failed"
         }
     }
 

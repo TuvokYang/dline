@@ -86,6 +86,37 @@ describe("TrajectoryMaintainerRegistry", () => {
         expect(fake.catchUp).toHaveBeenCalledTimes(2)
     })
 
+    it("retries on its own after a fold fails with nothing left to announce it", async () => {
+        // A quiet task publishes no commit and changes no access, so a failure
+        // the registry ignored would leave an empty cache for the rest of the task.
+        const fake = fakeTask()
+        fake.catchUp.mockResolvedValueOnce("failed").mockResolvedValue("ready")
+        const lease = await registry.acquire(KEY, switchableAccess(true).access, async () => fake.task)
+
+        await vi.advanceTimersByTimeAsync(0)
+        expect(fake.catchUp).toHaveBeenCalledTimes(1)
+        await vi.advanceTimersByTimeAsync(1_000)
+        expect(fake.catchUp).toHaveBeenCalledTimes(2)
+        // A success resets the wait, so the next fault is retried promptly again.
+        await vi.advanceTimersByTimeAsync(60_000)
+        expect(fake.catchUp).toHaveBeenCalledTimes(2)
+        await lease.release()
+    })
+
+    it("stops retrying once the last lease releases the maintainer", async () => {
+        const fake = fakeTask()
+        fake.catchUp.mockResolvedValue("failed")
+        const lease = await registry.acquire(KEY, switchableAccess(true).access, async () => fake.task)
+
+        await vi.advanceTimersByTimeAsync(0)
+        const attempted = fake.catchUp.mock.calls.length
+        await lease.release()
+        await vi.advanceTimersByTimeAsync(120_000)
+
+        expect(fake.catchUp.mock.calls.length).toBe(attempted)
+        expect(fake.closeMaintainer).toHaveBeenCalledTimes(1)
+    })
+
     it("catches up at least once a second under a steady stream of commits", async () => {
         const fake = fakeTask()
         await registry.acquire(KEY, switchableAccess(true).access, async () => fake.task)

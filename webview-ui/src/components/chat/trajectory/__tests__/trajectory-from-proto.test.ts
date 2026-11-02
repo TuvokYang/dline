@@ -63,12 +63,19 @@ describe("applyTrajectoryUpdate", () => {
 describe("isTrajectoryShown", () => {
     it.each([
         [TrajectoryState.TRAJECTORY_STATE_READY, true],
-        [TrajectoryState.TRAJECTORY_STATE_BUILDING, true],
         [TrajectoryState.TRAJECTORY_STATE_ERROR, false],
         [TrajectoryState.TRAJECTORY_STATE_UNAVAILABLE, false],
         [TrajectoryState.TRAJECTORY_STATE_UNSPECIFIED, false],
     ])("state %s shown: %s", (state, shown) => {
         expect(isTrajectoryShown({ state, revision: 1, turns: [] })).toBe(shown)
+    })
+
+    it("does not treat a build that has folded nothing yet as a shown trajectory", () => {
+        // An empty `building` log is the state of a cache that has not run, not
+        // of a task without turns. Showing it draws no rail and hides a source
+        // that never catches up, so only a build with turns counts.
+        expect(isTrajectoryShown({ state: TrajectoryState.TRAJECTORY_STATE_BUILDING, revision: 1, turns: [] })).toBe(false)
+        expect(isTrajectoryShown({ state: TrajectoryState.TRAJECTORY_STATE_BUILDING, revision: 1, turns: [turn(0)] })).toBe(true)
     })
 })
 

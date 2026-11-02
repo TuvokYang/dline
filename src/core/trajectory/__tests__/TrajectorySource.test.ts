@@ -153,6 +153,42 @@ describe("TrajectorySource", () => {
         expect(view.seqs()).toEqual([0, 1, 2])
     })
 
+    it("folds before the first snapshot, so the opening frame already carries the turns", async () => {
+        // A task that has never been folded has no meta and no turns. Reading
+        // first would send an empty `building` reset that claims a healthy
+        // trajectory while the rail has nothing to draw.
+        const fake = new FakeTrajectory()
+        fake.catchUp.mockImplementation(async () => {
+            fake.write([0, 1])
+            return "ready"
+        })
+        const view = receiver()
+
+        subscribe(new TrajectorySource(switchableAccess(true).access, provider(fake).maintainers), view.send)
+
+        await vi.waitFor(() => expect(view.frames).toHaveLength(1))
+        // The registry also folds on its own schedule; what matters is that a
+        // fold ran before the frame, not how many runners asked for one.
+        expect(fake.catchUp).toHaveBeenCalled()
+        expect(view.frames[0]).toMatchObject({ reset: true, state: "ready", turnCount: 2 })
+        expect(view.seqs()).toEqual([0, 1])
+    })
+
+    it("still sends the durable reset when the catch-up folded nothing", async () => {
+        const fake = new FakeTrajectory()
+        fake.write([0])
+        const before = fake.meta
+        // A fold that cannot run must not swallow the opening frame: the reader
+        // then holds no state at all and the rail would never appear.
+        fake.catchUp.mockImplementationOnce((async () => "not_writable") as never)
+        const view = receiver()
+
+        subscribe(new TrajectorySource(switchableAccess(true).access, provider(fake).maintainers), view.send)
+
+        await vi.waitFor(() => expect(view.frames).toHaveLength(1))
+        expect(view.frames[0]).toMatchObject({ reset: true, revision: before?.revision, turnCount: 1 })
+    })
+
     it("sends later writes, including a truncation, as frames based on the previous one", async () => {
         const fake = new FakeTrajectory()
         fake.write([0, 1])

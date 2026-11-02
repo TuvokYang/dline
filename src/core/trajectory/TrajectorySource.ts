@@ -240,6 +240,8 @@ class TrajectoryStreamRun implements TrajectoryStream {
         if (!this.lease) await this.hold()
         if (!this.lease || !(await this.stillWritable())) return
         if (!this.sent) {
+            await this.catchUp(this.lease)
+            if (this.closed || !(await this.stillWritable())) return
             await this.sendSnapshot(this.lease)
         }
         while (this.dirty && this.lease && (await this.stillWritable())) {
@@ -272,6 +274,28 @@ class TrajectoryStreamRun implements TrajectoryStream {
             this.dirty = true
             this.schedule()
         })
+    }
+
+    /**
+     * Fold the committed rows before a snapshot is read.
+     *
+     * Reading first reports whatever the cache held, which for a task that has
+     * never been folded is an empty `building` snapshot: the rail then draws no
+     * bars while the stream has already claimed to be healthy. Folding first
+     * keeps the first frame equal to a caught-up cache. A failed catch-up is not
+     * fatal: the snapshot still carries the durable state, and the registry's
+     * own catch-up retries after the next commit.
+     */
+    private async catchUp(lease: TrajectoryMaintainerLease): Promise<void> {
+        try {
+            await lease.maintainer.catchUp(this.access)
+        } catch (error) {
+            if (!isExpectedEnd(error)) {
+                Logger.warn(
+                    `[trajectory] TrajectoryCatchUpFailedBeforeSnapshot: ${error instanceof Error ? error.message : String(error)}`,
+                )
+            }
+        }
     }
 
     private async sendSnapshot(lease: TrajectoryMaintainerLease): Promise<void> {

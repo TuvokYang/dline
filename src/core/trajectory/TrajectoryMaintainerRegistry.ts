@@ -21,6 +21,11 @@ export interface TrajectoryMaintainerLease {
 const DEBOUNCE_TRAILING_MS = 100
 const DEBOUNCE_MAX_MS = 1_000
 
+/** First wait after a fold that failed for a reason no commit will retry. */
+const RETRY_MIN_MS = 1_000
+/** Cap of that wait, so a persistent fault stops costing a full scan every second. */
+const RETRY_MAX_MS = 30_000
+
 interface Entry {
     readonly task: Promise<MaintainedTask>
     readonly accesses: Map<symbol, TrajectoryAccess>
@@ -28,6 +33,8 @@ interface Entry {
     timer: ReturnType<typeof setTimeout> | undefined
     firstPendingAt: number | undefined
     closed: boolean
+    /** Wait before the next attempt after a fold failed with nothing left to retry it. */
+    retryDelayMs: number
 }
 
 /**
@@ -67,6 +74,7 @@ export class TrajectoryMaintainerRegistry {
                 timer: undefined,
                 firstPendingAt: undefined,
                 closed: false,
+                retryDelayMs: RETRY_MIN_MS,
             }
             entry = created
             this.entries.set(key, created)
@@ -104,12 +112,13 @@ export class TrajectoryMaintainerRegistry {
         return { writable: () => !entry.closed && [...entry.accesses.values()].some((access) => access.writable()) }
     }
 
-    private schedule(entry: Entry): void {
+    private schedule(entry: Entry, delayOverride?: number): void {
         if (entry.closed) return
         const now = Date.now()
         entry.firstPendingAt ??= now
         if (entry.timer) clearTimeout(entry.timer)
-        const delay = Math.max(0, Math.min(DEBOUNCE_TRAILING_MS, entry.firstPendingAt + DEBOUNCE_MAX_MS - now))
+        const debounced = Math.max(0, Math.min(DEBOUNCE_TRAILING_MS, entry.firstPendingAt + DEBOUNCE_MAX_MS - now))
+        const delay = delayOverride === undefined ? debounced : Math.max(debounced, delayOverride)
         entry.timer = setTimeout(() => {
             entry.timer = undefined
             entry.firstPendingAt = undefined
@@ -117,10 +126,27 @@ export class TrajectoryMaintainerRegistry {
         }, delay)
     }
 
+    /**
+     * Fold once, and keep folding after a failure that no commit will announce.
+     *
+     * A `failed` outcome means the cache is behind or empty and nothing else is
+     * going to ask again: a quiet task has no commit left to publish and no
+     * access change to observe, so waiting for one leaves the rail empty for the
+     * rest of the task. The retry is bounded and belongs to this entry, so it
+     * stops when the last lease releases the maintainer.
+     */
     private async run(entry: Entry): Promise<void> {
         if (entry.closed) return
         const { maintainer } = await entry.task
-        await maintainer.catchUp(this.writeAccess(entry))
+        const outcome = await maintainer.catchUp(this.writeAccess(entry))
+        if (entry.closed) return
+        if (outcome === "failed") {
+            const delay = entry.retryDelayMs
+            entry.retryDelayMs = Math.min(entry.retryDelayMs * 2, RETRY_MAX_MS)
+            this.schedule(entry, delay)
+            return
+        }
+        entry.retryDelayMs = RETRY_MIN_MS
     }
 
     private close(key: string, entry: Entry): Promise<void> {
