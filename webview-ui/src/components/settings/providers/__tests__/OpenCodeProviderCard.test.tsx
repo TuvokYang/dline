@@ -20,8 +20,10 @@ function StateWrapper({ children }: PropsWithChildren) {
  * These cases pin the two behaviours that a fixed widget would get wrong.
  */
 
-function renderCard(overrides: Partial<React.ComponentProps<typeof OpenCodeProviderCard>> = {}) {
-    const props: React.ComponentProps<typeof OpenCodeProviderCard> = {
+function defaultProps(
+    overrides: Partial<React.ComponentProps<typeof OpenCodeProviderCard>> = {},
+): React.ComponentProps<typeof OpenCodeProviderCard> {
+    return {
         apiFormat: ApiFormat.OPENAI_CHAT,
         apiKey: "",
         modelId: "claude-sonnet-5-5",
@@ -34,7 +36,10 @@ function renderCard(overrides: Partial<React.ComponentProps<typeof OpenCodeProvi
         onPlanChange: vi.fn(),
         ...overrides,
     }
-    return render(<OpenCodeProviderCard {...props} />, { wrapper: StateWrapper })
+}
+
+function renderCard(overrides: Partial<React.ComponentProps<typeof OpenCodeProviderCard>> = {}) {
+    return render(<OpenCodeProviderCard {...defaultProps(overrides)} />, { wrapper: StateWrapper })
 }
 
 describe("OpenCodeProviderCard", () => {
@@ -67,6 +72,33 @@ describe("OpenCodeProviderCard", () => {
         fireEvent.focus(screen.getByLabelText("Model"))
 
         expect(onRefreshModels).toHaveBeenCalledTimes(1)
+    })
+
+    it("follows a new declaration when the catalog replaces the seed on the same card", () => {
+        const seed: ModelCapabilities = {
+            supportsReasoning: true,
+            thinking: { supported: true, mode: "effort", effortLevels: ["low", "high"], defaultEnabled: true },
+        }
+        // The listing the gateway publishes states the same levels but never
+        // activates thinking by default.
+        const listed: ModelCapabilities = {
+            supportsReasoning: true,
+            thinking: { supported: true, mode: "effort", effortLevels: ["low", "high"] },
+        }
+        const props = {
+            capabilities: seed,
+            enableThinking: true,
+            modelId: "deepseek-v4.1-flash",
+        }
+        const { rerender } = render(<OpenCodeProviderCard {...defaultProps(props)} />, { wrapper: StateWrapper })
+        const checkbox = () => screen.getByLabelText("Enable Thinking") as HTMLElement & { checked?: boolean }
+        expect(checkbox().checked).toBe(true)
+
+        // Opening the model list persists the listing and republishes the catalog,
+        // so this card re-renders with the gateway's declaration. The switch is
+        // driven by that declaration and must stop claiming the seed's default.
+        rerender(<OpenCodeProviderCard {...defaultProps({ ...props, capabilities: listed, enableThinking: false })} />)
+        expect(checkbox().checked).toBe(false)
     })
 
     it("shows the stored budget as selected and falls back to a declared value when it is not offered", () => {

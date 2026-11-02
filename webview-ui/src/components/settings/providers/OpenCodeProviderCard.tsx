@@ -1,6 +1,6 @@
 import { ApiFormat, type ModelCapabilities } from "@shared/proto/dline/models/metadata"
 import { VSCodeCheckbox, VSCodeDropdown, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
-import { useId, useState } from "react"
+import { useEffect, useId, useState } from "react"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { DropdownContainer } from "../common/ModelSelector"
 import { ProfileField } from "../profile-ui"
@@ -56,8 +56,8 @@ export const OPEN_CODE_PLAN_OPTIONS: readonly OpenCodePlanOption[] = [
  * is a separate implementation rather than a value of this picker.
  */
 export const OPEN_CODE_API_FORMATS: readonly ApiFormat[] = [
-    ApiFormat.OPENAI_CHAT,
     ApiFormat.OPENAI_RESPONSES,
+    ApiFormat.OPENAI_CHAT,
     ApiFormat.ANTHROPIC_CHAT,
 ]
 
@@ -74,7 +74,9 @@ export function resolveOpenCodeApiFormat(stored: unknown, derived: readonly ApiF
     if (selected !== undefined && OPEN_CODE_API_FORMATS.includes(selected)) {
         return selected
     }
-    return derived?.[0] ?? OPEN_CODE_API_FORMATS[0]
+    // Responses is the gateway's native OpenAI protocol, so a Profile with no
+    // stored choice starts there instead of on Chat Completions.
+    return derived?.[0] ?? ApiFormat.OPENAI_RESPONSES
 }
 
 const OPEN_CODE_API_FORMAT_LABELS: Readonly<Record<number, string>> = {
@@ -151,6 +153,14 @@ export function OpenCodeProviderCard({
     const formatId = useId()
     const budgetId = useId()
     const [thinkingChecked, setThinkingChecked] = useState(enableThinking)
+    // The declaration a model carries can change while this card stays mounted:
+    // opening the model list persists the vendor listing, and its published
+    // capabilities replace the seed the card first rendered. The checkbox is
+    // driven by that declaration, so it has to follow the prop instead of
+    // freezing the value it saw at mount.
+    useEffect(() => {
+        setThinkingChecked(enableThinking)
+    }, [enableThinking])
     const selectedPlan = OPEN_CODE_PLAN_OPTIONS.find((option) => option.value === plan) ?? OPEN_CODE_PLAN_OPTIONS[0]
     const selectedFormat = formatForSelection(apiFormat)
     const thinking = resolveThinking(capabilities)
@@ -212,7 +222,9 @@ export function OpenCodeProviderCard({
                 }
                 htmlFor={formatId}
                 label="API Format">
-                <DropdownContainer className="dropdown-container min-w-0">
+                {/* One step below the Model list so an open picker above it is
+                    not painted over by this control. */}
+                <DropdownContainer className="dropdown-container min-w-0" zIndex={999}>
                     <VSCodeDropdown
                         aria-label="API Format"
                         className="min-h-7 w-full"

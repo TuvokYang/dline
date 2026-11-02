@@ -175,6 +175,29 @@ describe("reconcileProviderModels overlay-remote", () => {
 })
 
 describe("reconcileProviderModels refresh-built-ins", () => {
+    it("keeps a listing-derived catalog intact when the seed declares no model of its own", () => {
+        // OpenCode ships no model declaration: discovery writes every entry.
+        // Refreshing from that empty seed must not treat the whole catalog as
+        // retired built-ins, or each startup would wipe the vendor's limits,
+        // capabilities and prices.
+        const stored = config({
+            "kimi-k3": {
+                id: "kimi-k3",
+                name: "Kimi K3",
+                userDefined: false,
+                capabilities: { contextWindow: 1_048_576, maxTokens: 131_072, supportsPromptCache: true },
+            },
+        })
+        const emptySeed = config({})
+
+        const merged = reconcileProviderModels(emptySeed, stored, "refresh-built-ins")
+
+        expect(Object.keys(merged.models)).toEqual(["kimi-k3"])
+        expect(merged.models["kimi-k3"].capabilities?.contextWindow).toBe(1_048_576)
+        expect(merged.models["kimi-k3"].capabilities?.maxTokens).toBe(131_072)
+        expect(merged.models["kimi-k3"].capabilities?.supportsPromptCache).toBe(true)
+    })
+
     it("removes retired built-ins while preserving explicit and legacy user models", () => {
         const stored = config({
             "retired-built-in": { id: "retired-built-in", name: "Retired", userDefined: false },

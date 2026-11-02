@@ -28,7 +28,6 @@ import { openAiDefaultModelId, openAiModels } from "./openai"
 import { openAiCodexModels } from "./openai-codex"
 import { openAIDefaultImageModelId, openAIImageModels } from "./openai-image"
 import { openCodeModels } from "./opencode"
-import { openCodeGoModels } from "./opencode-go"
 import { mainlandQwenModels } from "./qwen-cn"
 import { qwenCodeModels } from "./qwen-code"
 import { internationalQwenModels } from "./qwen-intl"
@@ -46,8 +45,9 @@ const emptyModels: Record<string, any> = {}
 const firstKey = <T extends Record<string, unknown>>(obj: T): string => Object.keys(obj)[0] || ""
 
 export const allProviderModels: Record<string, ProviderModelsConfig> = {
-    // One selectable provider. The Go plan serves a different model set, so it
-    // is a second catalog of this provider reached through the Profile's mode.
+    // One selectable provider. The Go plan is a second catalog of this
+    // provider reached through the Profile's mode; its models come from the same
+    // gateway listing, so the catalog declares no model of its own.
     opencode: {
         provider: "opencode",
         providerName: "OpenCode",
@@ -55,11 +55,9 @@ export const allProviderModels: Record<string, ProviderModelsConfig> = {
         billingUrl: "https://opencode.ai/console",
         billingMode: "console",
         models: openCodeModels,
-        defaultModelId: "claude-sonnet-5-5",
         catalogs: {
             "opencode-go": {
-                models: openCodeGoModels,
-                defaultModelId: "kimi-k3",
+                models: {},
             },
         },
     },

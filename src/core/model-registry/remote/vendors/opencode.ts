@@ -14,20 +14,20 @@
  * the base URL therefore yields the real choice, while mapping the protocol name
  * alone would under-report the protocols an OpenAI-family model accepts.
  *
- * Two facts the listing cannot state stay with the provider definitions: which
- * models a subscription plan covers, and which model is the default. Both live
- * in `openCodeCatalogDeclaration()`.
+ * No model fact is declared locally. Every field a Profile acts on — limits,
+ * cache flag, reasoning levels, input modalities, protocols and prices — is read
+ * from the listing below; a hand-written description of a model would be a claim
+ * the gateway never made.
  *
- * The Console and Go plans share this one listing: a Go catalog is the same
- * models filtered by plan coverage, not a second fetch.
+ * The Console and Go plans share this one listing: both catalogs are populated
+ * from the same response.
  */
 
-import { ApiFormat } from "@shared/proto/dline/models/metadata"
-import { flatMeteredPricing } from "@shared/providers/pricing-shape"
+import { ApiFormat, type ContextWindowBand, type ThinkingConfig } from "@shared/proto/dline/models/metadata"
+import { flatMeteredPricing, withBands } from "@shared/providers/pricing-shape"
 import type { ModelCapabilities, ModelInfo } from "@shared/providers/types"
-import { openCodeCatalogDeclaration } from "@/core/api/providers/models/opencode"
 import type { ProviderModelReconciliationMode } from "../../provider-model-reconciliation"
-import { isRecord, ModelListingSource, readPositiveNumber, readString } from "../model-listing-source"
+import { isRecord, ModelListingSource, readNonNegativeNumber, readPositiveNumber, readString } from "../model-listing-source"
 import type { ProviderRemoteContext } from "../model-source"
 
 /** Listing root, and the root every family base URL hangs off. */
@@ -44,18 +44,111 @@ export const OPENCODE_BASE_URL = "https://opencode.ai/inference"
  * at.
  *
  * `openai/v1` is one OpenAI-compatible base: Chat Completions and Responses are
- * two paths under it, so a model listed with either name accepts both. Gemini is
- * absent because this build carries no tool-schema path for it; such a model is
- * skipped instead of being offered with a protocol that cannot carry tools.
+ * two paths under it, so a model listed with either name accepts both. Responses
+ * is listed first because it is the protocol this gateway publishes as each
+ * model's native entry, and the default resolver takes the first supported
+ * format when a Profile has no stored choice. Gemini is absent because this
+ * build carries no tool-schema path for it; such a model is skipped instead of
+ * being offered with a protocol that cannot carry tools.
  */
 const FAMILY_FORMATS: Readonly<Record<string, readonly ApiFormat[]>> = {
-    "openai/v1": [ApiFormat.OPENAI_CHAT, ApiFormat.OPENAI_RESPONSES],
+    "openai/v1": [ApiFormat.OPENAI_RESPONSES, ApiFormat.OPENAI_CHAT],
     "anthropic/v1": [ApiFormat.ANTHROPIC_CHAT],
 }
 
-/** Read a published per-million-token price. */
+/**
+ * Read a published per-million-token price.
+ *
+ * A zero is a published rate, not a missing one: free models state `price: 0`
+ * and a paid model may state a zero cache rate. Reading only positive values
+ * would leave every free entry without a price set, which the usage surface
+ * cannot tell apart from "the seller publishes no terms".
+ */
 function readMillionPrice(source: unknown, ...paths: string[]): number | undefined {
-    return readPositiveNumber(source, ...paths)
+    return readNonNegativeNumber(source, ...paths)
+}
+
+/**
+ * The token-tiered rates the listing publishes, or `undefined` when it bills flat.
+ *
+ * An override states "this rate applies once the request passes N input tokens".
+ * The catalog expresses the same thing as bands, where a band's `maxInputTokens`
+ * is the largest request it covers, so an override at `gt: N` ends the band that
+ * holds everything up to `N` and the base rate covers that first band.
+ *
+ * Only the outer edges become bands: the listing publishes at most one override
+ * per model today, and a band chain built from arbitrary distances would invent
+ * prices for the gaps.
+ */
+function readPricingBands(source: unknown, inputPrice: number, outputPrice: number): ContextWindowBand[] | undefined {
+    const inputOverride = firstOverride(source, "cost.text.input.overrides")
+    const outputOverride = firstOverride(source, "cost.text.output.overrides")
+    // Every model in the listing that tiers prices uses the same threshold on both
+    // sides, so one band edge describes the entry. A future entry that tiers only
+    // one side still lands here, with the other side keeping its base rate.
+    const threshold = inputOverride?.threshold ?? outputOverride?.threshold
+    if (threshold === undefined) {
+        return undefined
+    }
+    const cacheRead = readNonNegativeNumber(source, "cost.text.input.cache.read")
+    const cacheWrite = readNonNegativeNumber(source, "cost.text.input.cache.write")
+    return [
+        {
+            maxInputTokens: threshold,
+            prices: { inputPrice, outputPrice, cacheReadPrice: cacheRead, cacheWritePrice: cacheWrite },
+        },
+        {
+            maxInputTokens: Number.MAX_SAFE_INTEGER,
+            prices: {
+                inputPrice: inputOverride?.price ?? inputPrice,
+                outputPrice: outputOverride?.price ?? outputPrice,
+                cacheReadPrice: inputOverride?.cacheRead ?? cacheRead,
+                cacheWritePrice: inputOverride?.cacheWrite ?? cacheWrite,
+            },
+        },
+    ]
+}
+
+/**
+ * The first published override at a context threshold, or `undefined` when the
+ * listing does not tier this side.
+ */
+function firstOverride(
+    source: unknown,
+    path: string,
+): { threshold: number; price?: number; cacheRead?: number; cacheWrite?: number } | undefined {
+    const entries = readArrayAt(source, path)
+    if (!entries) {
+        return undefined
+    }
+    for (const entry of entries) {
+        if (!isRecord(entry)) {
+            continue
+        }
+        const threshold = readNonNegativeNumber(entry, "when.context.gt")
+        if (threshold === undefined || threshold <= 0) {
+            continue
+        }
+        return {
+            threshold,
+            price: readNonNegativeNumber(entry, "price"),
+            cacheRead: readNonNegativeNumber(entry, "cache.read"),
+            cacheWrite: readNonNegativeNumber(entry, "cache.write"),
+        }
+    }
+    return undefined
+}
+
+/** Read a nested array by dotted path, or `undefined` when any step is missing. */
+function readArrayAt(source: unknown, path: string): unknown[] | undefined {
+    let current: unknown = source
+    for (const key of path.split(".")) {
+        if (!isRecord(current)) {
+            return undefined
+        }
+        current = current[key]
+    }
+    return Array.isArray(current) ? current : undefined
 }
 
 /** True when the listing marks a capability as supported. */
@@ -68,17 +161,60 @@ function capabilitySupported(source: unknown, key: string): boolean | undefined 
 }
 
 /**
- * True when the listing accepts image input for this model.
+ * The input MIME types the listing declares for this model.
  *
- * The listing names concrete MIME types (`image/png`), not a bare `image`, so a
- * prefix check is what recognizes every image format instead of none of them.
+ * The listing names concrete types (`image/png`, `application/pdf`,
+ * `audio/mpeg`), not bare families, so the list is copied as published and
+ * normalized later by the shared media resolver. `text` is not a media type
+ * Dline negotiates, so it is dropped instead of offered as an attachment type.
  */
-function supportsImageInput(source: unknown): boolean {
+function readInputMediaTypes(source: unknown): string[] {
     if (!isRecord(source) || !isRecord(source.modalities)) {
-        return false
+        return []
     }
     const input = source.modalities.input
-    return Array.isArray(input) && input.some((value) => typeof value === "string" && value.startsWith("image/"))
+    if (!Array.isArray(input)) {
+        return []
+    }
+    return input.filter((value): value is string => typeof value === "string" && value.includes("/"))
+}
+
+/**
+ * The thinking declaration the listing publishes, or `undefined` when it states
+ * none.
+ *
+ * Only facts the listing actually states are copied. `defaultEffort`,
+ * `defaultEnabled` and `canDisable` are separate declarations in
+ * `models/metadata.proto`, so a `supported` flag or a `toggle` flag is not
+ * evidence for any of them: a model that accepts `effort` without publishing a
+ * default must fall back to the provider default, and a model whose `effort`
+ * list has no `none` entry is not thereby forced to keep thinking on.
+ */
+function readThinking(source: unknown): ThinkingConfig | undefined {
+    if (!isRecord(source) || !isRecord(source.capabilities)) {
+        return undefined
+    }
+    const reasoning = source.capabilities.reasoning
+    if (!isRecord(reasoning)) {
+        return undefined
+    }
+    const effortLevels = Array.isArray(reasoning.effort)
+        ? reasoning.effort.filter((value): value is string => typeof value === "string" && value.length > 0)
+        : []
+    if (effortLevels.length > 0) {
+        return { supported: true, mode: "effort", effortLevels }
+    }
+    if (isRecord(reasoning.budget)) {
+        const minBudget = readPositiveNumber(reasoning, "budget.min")
+        const maxBudget = readPositiveNumber(reasoning, "budget.max")
+        return {
+            supported: true,
+            mode: "budget",
+            ...(minBudget === undefined ? {} : { minBudget }),
+            ...(maxBudget === undefined ? {} : { maxBudget }),
+        }
+    }
+    return reasoning.supported === true ? { supported: true } : undefined
 }
 
 /**
@@ -100,7 +236,14 @@ function readFamilyPath(raw: unknown): string | undefined {
             continue
         }
         // Keep the family path relative to the gateway root.
-        return baseUrl.startsWith(`${OPENCODE_BASE_URL}/`) ? baseUrl.slice(OPENCODE_BASE_URL.length + 1) : undefined
+        if (!baseUrl.startsWith(`${OPENCODE_BASE_URL}/`)) {
+            return undefined
+        }
+        // The Go endpoint publishes the same families under a `/go` segment
+        // (`.../inference/go/openai/v1`). The protocol a model speaks is decided
+        // by the family, not by which plan endpoint serves it, so the segment is
+        // dropped before the family lookup.
+        return baseUrl.slice(OPENCODE_BASE_URL.length + 1).replace(/^go\//, "")
     }
     return undefined
 }
@@ -116,8 +259,20 @@ export class OpenCodeModelSource extends ModelListingSource {
     readonly providerName = "OpenCode"
     /** The listing answers without a key, so discovery works before a Profile is saved. */
     override readonly requiresApiKey = false
-    /** The catalog is fully derived from the listing, so entries that disappear should too. */
-    override readonly reconciliation: ProviderModelReconciliationMode = "replace"
+    /**
+     * The catalog is merged, not replaced.
+     *
+     * Every fact the gateway publishes is authoritative for this model, but the
+     * catalog also carries what a Profile declared about a model — a manual
+     * entry, a price a person corrected — and a listing that goes silent about a
+     * field must not erase it. Merging keeps both: fields the vendor states win,
+     * fields it omits keep their stored value.
+     *
+     * There is deliberately no removal branch, so a model the listing stops
+     * returning stays available rather than disappearing on a listing outage.
+     * Retiring a model needs an explicit decision, not an inference from absence.
+     */
+    override readonly reconciliation: ProviderModelReconciliationMode = "overlay-remote"
     protected override readonly defaultBaseUrl = OPENCODE_BASE_URL
 
     /**
@@ -149,9 +304,17 @@ export class OpenCodeModelSource extends ModelListingSource {
         return readString(raw, "description")
     }
 
-    /** The listing publishes the context and output limits under `limit`. */
+    /**
+     * The listing publishes the input and output limits under `limit`.
+     *
+     * `limit.input` is the ceiling on what one request may send, which is exactly
+     * what `contextWindow` means here; `limit.context` is the total the model can
+     * hold and is larger when an answer is reserved inside it (`gpt-6-astra`
+     * publishes 922k input inside a 1.05M context). Reading `context` alone would
+     * let compaction fill a window the request cannot actually carry.
+     */
     protected override readContextWindow(raw: unknown): number | undefined {
-        return readPositiveNumber(raw, "limit.context")
+        return readPositiveNumber(raw, "limit.input", "limit.context")
     }
 
     protected override readMaxTokens(raw: unknown): number | undefined {
@@ -166,9 +329,9 @@ export class OpenCodeModelSource extends ModelListingSource {
      * the default — come from the declaration.
      */
     protected override toModelInfo(raw: unknown, modelId: string): ModelInfo {
-        const declaration = openCodeCatalogDeclaration(modelId)
         const pricing = this.readPricing(raw)
         const apiFormats = readApiFormats(raw)
+        const remoteThinking = readThinking(raw)
         return {
             id: modelId,
             name: this.readModelName(raw, modelId),
@@ -176,8 +339,11 @@ export class OpenCodeModelSource extends ModelListingSource {
             ...(apiFormats ? { apiFormats: [...apiFormats] } : {}),
             capabilities: {
                 ...this.readCapabilities(raw),
-                ...(declaration?.tools ? { tools: [...declaration.tools] } : {}),
-                ...(declaration?.thinking ? { thinking: declaration.thinking } : {}),
+                // The thinking control is exactly what the listing states. A field
+                // the listing omits stays absent so the Profile falls back to the
+                // provider default, instead of locking a switch or naming an effort
+                // level the gateway never published.
+                ...(remoteThinking ? { thinking: remoteThinking } : {}),
             },
             ...(pricing ? { pricing } : {}),
         }
@@ -186,25 +352,22 @@ export class OpenCodeModelSource extends ModelListingSource {
     protected override readCapabilities(raw: unknown): ModelCapabilities {
         const base = super.readCapabilities(raw)
         const capabilities = isRecord(raw) ? raw.capabilities : undefined
+        const inputMediaTypes = readInputMediaTypes(raw)
         return {
             ...base,
-            supportsImages: supportsImageInput(raw),
+            supportsImages: inputMediaTypes.some((mediaType) => mediaType.startsWith("image/")),
+            // The listing publishes the exact MIME types the model reads, so a
+            // model that takes PDF but no image is described as such instead of
+            // being flattened into the image-only legacy flag.
+            ...(inputMediaTypes.length > 0 ? { inputMediaTypes } : {}),
             supportsTools: capabilitySupported(capabilities, "tools") ?? base.supportsTools,
             supportsReasoning: capabilitySupported(capabilities, "reasoning") ?? base.supportsReasoning,
-            supportsPromptCache: this.supportsCachePricing(raw),
+            // Caching is a property of this gateway, not of an individual entry.
+            // The listing either names a mode (`explicit`/`implicit`) or omits the
+            // block entirely, and both cases mean the model caches, so the flag is
+            // constant rather than derived from the presence of the block.
+            supportsPromptCache: true,
         }
-    }
-
-    /**
-     * Whether the listing says this model caches.
-     *
-     * The listing states caching explicitly under `capabilities.cache`, as an
-     * `explicit` or `implicit` mode, and free models publish a public price of
-     * zero. A price therefore cannot stand in for the flag.
-     */
-    private supportsCachePricing(raw: unknown): boolean {
-        const cache = isRecord(raw) && isRecord(raw.capabilities) ? raw.capabilities.cache : undefined
-        return isRecord(cache)
     }
 
     /** The listing quotes input, output and cache rates per token. */
@@ -214,12 +377,17 @@ export class OpenCodeModelSource extends ModelListingSource {
         if (inputPrice === undefined && outputPrice === undefined) {
             return undefined
         }
-        return flatMeteredPricing(
+        const flat = flatMeteredPricing(
             inputPrice ?? 0,
             outputPrice ?? 0,
             readMillionPrice(raw, "cost.text.input.cache.write"),
             readMillionPrice(raw, "cost.text.input.cache.read"),
         )
+        // 14 models bill more once the request passes a context threshold. Reading
+        // only the headline rate would understate them by up to five times, so the
+        // published overrides become bands and the first tier keeps the base price.
+        const bands = readPricingBands(raw, inputPrice ?? 0, outputPrice ?? 0)
+        return bands ? (withBands(flat, bands) ?? flat) : flat
     }
 }
 

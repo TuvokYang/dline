@@ -51,7 +51,11 @@ export async function discoverProviderModels(
             const models = await source.fetchModels({ ...resolved, signal: options?.signal })
             if (options?.persist === true && Object.keys(models).length > 0) {
                 await persistProviderCatalog({
-                    providerId: source.providerId,
+                    // The catalog key the caller asked for, not the source's own
+                    // provider id: a Go Profile reads `opencode-go`, and writing
+                    // that result under `opencode` would leave the Go catalog on
+                    // its local declarations.
+                    providerId,
                     providerName: source.providerName,
                     baseUrl: resolved.baseUrl,
                     billingMode: source.billingMode,

@@ -510,7 +510,12 @@ describe("OpenCodeHandler", () => {
                     provider: "opencode",
                     apiKey: "test-key",
                     modelId: "gpt-6-sol",
-                    opencode: OpenCodeProviderConfig.create({ mode: OpenCodeMode.OPEN_CODE_MODE_GO }),
+                    opencode: OpenCodeProviderConfig.create({
+                        mode: OpenCodeMode.OPEN_CODE_MODE_GO,
+                        // This case pins the Go endpoint, not the protocol default, so
+                        // the protocol is stated explicitly.
+                        model: BaseProviderConfig.create({ apiFormat: ApiFormat.OPENAI_CHAT }),
+                    }),
                 }),
                 mode: "act",
             })

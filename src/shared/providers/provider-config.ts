@@ -36,6 +36,10 @@ export type ProviderConfigField =
 /**
  * Read one shared configuration field from a provider config value.
  *
+ * The flat address is the one every provider writes. `model` is the nested
+ * carrier an older OpenCode Profile used; it is read only as a fallback so
+ * those Profiles keep their settings until the next save flattens them.
+ *
  * @param config Provider config lifted from a Profile, or any unknown value.
  * @param field Shared field to read.
  * @returns The stored value, or `undefined` when this config does not carry it.
@@ -49,25 +53,24 @@ export function readProviderConfigField(config: unknown, field: ProviderConfigFi
 }
 
 /**
- * Store one shared configuration field while preserving the config's shape.
+ * Store one shared configuration field at its flat address.
  *
  * The result is a new object: Profile updates are compared and persisted as whole
  * replacements, so mutating the value handed in would hide the change from the
  * diff that decides whether a write is needed.
  *
+ * The field always lands at the top level, which is the one address every
+ * provider shares. A config that still carries the deprecated nested `model`
+ * carrier keeps an untouched copy of the field there for the rest of this edit,
+ * which is why reads prefer the flat value unconditionally.
+ *
  * @param config Provider config to update.
  * @param field Shared field to store.
  * @param value New value for the field.
- * @returns A copy carrying the new value in the shape that already owns it.
+ * @returns A copy carrying the new value at the flat address.
  */
 export function withProviderConfigField<T extends object>(config: T, field: ProviderConfigField, value: unknown): T {
-    const flat = config as Record<string, unknown>
-    const nested = asRecord(flat.model)
-    // Generated configs declare an optional model slot even before it is populated.
-    if (flat[field] !== undefined || !Object.hasOwn(flat, "model")) {
-        return { ...config, [field]: value }
-    }
-    return { ...config, model: { ...nested, [field]: value } }
+    return { ...config, [field]: value }
 }
 
 /** Narrow an unknown value to a plain object record. */

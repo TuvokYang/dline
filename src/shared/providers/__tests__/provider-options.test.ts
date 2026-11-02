@@ -33,8 +33,10 @@ describe("provider selector options", () => {
         for (const owner of owners) {
             expect(PROVIDER_OPTIONS.some((option) => (option.value as string) === owner.provider)).toBe(true)
             for (const [catalogKey, catalog] of Object.entries(owner.catalogs ?? {})) {
+                // Never selectable on its own, whatever it holds. A catalog whose
+                // models come from a gateway listing starts empty by design.
                 expect(PROVIDER_OPTIONS.some((option) => (option.value as string) === catalogKey)).toBe(false)
-                expect(Object.keys(catalog.models).length).toBeGreaterThan(0)
+                expect(catalog.models).toBeDefined()
             }
         }
     })

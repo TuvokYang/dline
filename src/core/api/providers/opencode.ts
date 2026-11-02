@@ -88,8 +88,16 @@ const OPENCODE_USAGE_WINDOWS: readonly {
     { key: "monthly", type: "monthly", label: "Monthly", shortLabel: "month", windowSeconds: 2_592_000 },
 ]
 
-/** Protocols this handler can carry. Gemini is deliberately absent: no tool-schema path exists yet. */
-const SUPPORTED_FORMATS: readonly ApiFormat[] = [ApiFormat.OPENAI_CHAT, ApiFormat.OPENAI_RESPONSES, ApiFormat.ANTHROPIC_CHAT]
+/**
+ * Protocols this handler can carry. Gemini is deliberately absent: no tool-schema
+ * path exists yet.
+ *
+ * Responses leads because it is the gateway's native OpenAI protocol. This is the
+ * default for a model that declares nothing, and the settings page resolves an
+ * unset Profile the same way, so the picker cannot show one protocol while the
+ * request uses another.
+ */
+const SUPPORTED_FORMATS: readonly ApiFormat[] = [ApiFormat.OPENAI_RESPONSES, ApiFormat.OPENAI_CHAT, ApiFormat.ANTHROPIC_CHAT]
 
 /**
  * Stable identity this client declares upstream.
@@ -244,7 +252,7 @@ export class OpenCodeHandler extends ApiHandler {
             }
             return requested
         }
-        return this.declaredFormats().find((format) => SUPPORTED_FORMATS.includes(format)) ?? ApiFormat.OPENAI_CHAT
+        return this.declaredFormats().find((format) => SUPPORTED_FORMATS.includes(format)) ?? SUPPORTED_FORMATS[0]
     }
 
     override getSelectedApiFormat(): ApiFormat {

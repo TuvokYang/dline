@@ -195,6 +195,10 @@ export function buildEffectiveModelInfo(
         overrides.preferContextWindowTier === true || explicitContextWindow === undefined
             ? selectContextTier(mergedCapabilities, overrides.enableLongContext)
             : undefined
+    // This is the single place the product default lives. Every listing source
+    // reports only what the vendor declared, so a silence reaching here means the
+    // provider said nothing about caching; the catalog treats that as enabled
+    // rather than as a denial, and no source has to invent the value.
     const capabilities = {
         ...mergedCapabilities,
         ...(contextTier ? { contextWindow: contextTier.contextWindow } : {}),

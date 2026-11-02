@@ -146,6 +146,25 @@ export function reconcileProviderModels(
 
     const models: Record<string, ModelInfo> = {}
 
+    // A seed that declares no model owns no built-in entry to refresh. Providers
+    // whose catalog is fully derived from a vendor listing (OpenCode) declare
+    // nothing locally, so every stored entry was written by discovery. Treating
+    // those as retired built-ins would delete them on each startup, and
+    // overwriting a listed entry with a seed that states nothing would drop the
+    // limits and capabilities the vendor published.
+    if (Object.keys(seed.models).length === 0) {
+        for (const [modelId, storedModel] of Object.entries(stored.models)) {
+            models[modelId] = storedModel
+        }
+        return {
+            ...seed,
+            ...stored,
+            models,
+            imageModels: reconcileImageModels(seed, stored, mode),
+            defaultImageModelId: stored.defaultImageModelId ?? seed.defaultImageModelId,
+        }
+    }
+
     for (const [modelId, seedModel] of Object.entries(seed.models)) {
         const storedModel = stored.models[modelId]
         if (storedModel?.userDefined === true) {

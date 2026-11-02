@@ -35,8 +35,9 @@ describe("resolveCatalogProviderKey", () => {
 
         expect(registry[consoleKey]?.provider).toBe(OPENCODE_CONSOLE_CATALOG)
         const goCatalog = registry[OPENCODE_CONSOLE_CATALOG]?.catalogs?.[goKey]
+        // The catalog is declared here, but it holds no model of its own: the
+        // gateway listing fills it at run time.
         expect(goCatalog, "the Go catalog must be declared by the OpenCode provider").toBeDefined()
-        expect(Object.keys(goCatalog?.models ?? {}).length).toBeGreaterThan(0)
         // A second selectable provider would expose the same models under its own
         // base URL, which is exactly what declaring the catalog avoids.
         expect(registry[goKey]).toBeUndefined()

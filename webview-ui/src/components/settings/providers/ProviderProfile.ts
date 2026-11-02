@@ -4,7 +4,7 @@ export type { ApiProfile } from "@shared/proto/dline/profile"
 
 import { type ApiProfile, ImageGenerationSource } from "@shared/proto/dline/profile"
 import { WebToolsMode } from "@shared/proto/dline/provider/common"
-import { OpenCodeMode } from "@shared/proto/dline/provider/opencode"
+import { OpenCodeMode, OpenCodeProviderConfig } from "@shared/proto/dline/provider/opencode"
 
 /**
  * Generate default profile name from provider and modelId.
@@ -98,10 +98,7 @@ export function createEmptyApiProfile(): ApiProfile {
 export function defaultProviderConfig(provider: string): Partial<ApiProfile> | undefined {
     if (provider === "opencode") {
         return {
-            opencode: {
-                mode: OpenCodeMode.OPEN_CODE_MODE_CONSOLE,
-                model: undefined,
-            },
+            opencode: OpenCodeProviderConfig.create({ mode: OpenCodeMode.OPEN_CODE_MODE_CONSOLE }),
         }
     }
     return undefined

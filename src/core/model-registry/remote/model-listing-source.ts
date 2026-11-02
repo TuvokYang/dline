@@ -39,6 +39,31 @@ export function readPositiveNumber(source: unknown, ...paths: string[]): number 
     return undefined
 }
 
+/**
+ * Read a dotted path and return it only when it is a usable non-negative number.
+ *
+ * A published zero is a value, not an absence: free models state `price: 0`, and
+ * a paid model may state a zero cache rate. Whether to read the value that way
+ * belongs to the caller, which is why this sits beside `readPositiveNumber`
+ * instead of replacing it — a zero context window carries no meaning.
+ */
+export function readNonNegativeNumber(source: unknown, ...paths: string[]): number | undefined {
+    for (const path of paths) {
+        let current: unknown = source
+        for (const segment of path.split(".")) {
+            if (!isRecord(current)) {
+                current = undefined
+                break
+            }
+            current = current[segment]
+        }
+        if (typeof current === "number" && Number.isFinite(current) && current >= 0) {
+            return current
+        }
+    }
+    return undefined
+}
+
 export function readString(source: unknown, ...paths: string[]): string | undefined {
     for (const path of paths) {
         let current: unknown = source
