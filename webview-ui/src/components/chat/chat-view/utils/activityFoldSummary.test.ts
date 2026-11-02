@@ -8,10 +8,11 @@ import {
     finishedRequest,
     finishedTurnTranscript,
     restorePoint,
+    subagentBatch,
     userTask,
     workingRespond,
 } from "../components/messages/activityFoldStoryFixtures"
-import { describeActivityFold, describeToolCalls, summarizeActivityFold } from "./activityFoldSummary"
+import { describeActivityFold, describeFoldDetail, describeToolCalls, summarizeActivityFold } from "./activityFoldSummary"
 import { type ActivityFold, isActivityFold } from "./chatRowKinds"
 import { groupChatRows } from "./messageUtils"
 
@@ -33,15 +34,110 @@ const preEditCheckpoint = (ts: number, toolTs: number): UiMessage => ({
     checkpointSource: { kind: "pre_edit", toolTs, toolName: "replace_in_file", dlineTid: `tool-${toolTs}` },
 })
 
+const writeTool = (ts: number, tool: string): UiMessage => ({
+    ts,
+    type: "say",
+    say: "tool",
+    text: JSON.stringify({ tool, path: "src/a.ts" }),
+})
+
 describe("summarizeActivityFold", () => {
     it("counts a whole turn including prose, using actual requests rather than nested wrappers", () => {
         const summary = summaryOf(finishedTurnTranscript)
-        expect(summary).toMatchObject({ rounds: 4, commands: 1, fileEdits: 0, thoughts: 2, checkpoints: 4, assistantMessages: 1 })
-        expect(Array.from(summary.toolCalls)).toEqual([
+        expect(summary).toMatchObject({ rounds: 4, thoughts: 2, checkpoints: 4, assistantMessages: 1 })
+        expect(summary.work.get("read")).toBe(4)
+        expect(summary.work.get("command")).toBe(1)
+        expect(Array.from(summary.tools)).toEqual([
             ["readFile", 3],
             ["searchFiles", 1],
         ])
         expect(describeToolCalls(summary)).toBe("readFile ×3, searchFiles ×1")
+    })
+
+    /**
+     * The header states a verb for every write, so a reader can see a rename or a
+     * delete instead of an anonymous count. A write that fell into a generic
+     * bucket would make destructive work look like a lookup.
+     */
+    it("states every write tool as a write rather than an unnamed call", () => {
+        const summary = summaryOf([
+            userTask(1, "Tidy the module"),
+            restorePoint(10, "files-1"),
+            finishedRequest(11),
+            writeTool(12, "editedExistingFile"),
+            writeTool(13, "newFileCreated"),
+            writeTool(14, "fileDeleted"),
+            writeTool(15, "renameSymbol"),
+            writeTool(16, "replaceText"),
+            finishedRequest(17),
+            completion(18, "Done."),
+        ])
+
+        expect(summary.work.get("write")).toBe(5)
+        expect(summary.work.get("other")).toBeUndefined()
+        expect(describeActivityFold(summary)).toBe("1 round · 5 writes · 1 checkpoint")
+    })
+
+    /**
+     * A subagent batch is its own kind of work. Counting it as tool calls is the
+     * defect this test exists for: delegation would disappear into the tools the
+     * agents happened to run.
+     */
+    it("states a subagent batch as subagents and never as tool calls", () => {
+        const summary = summaryOf([
+            userTask(1, "Review the parser"),
+            restorePoint(10, "files-1"),
+            finishedRequest(11),
+            subagentBatch(12, "completed"),
+            finishedRequest(13),
+            completion(14, "Reviewed."),
+        ])
+
+        expect(summary.work.get("subagent")).toBe(1)
+        expect(summary.work.get("read")).toBeUndefined()
+        expect(summary.work.get("other")).toBeUndefined()
+        expect(describeActivityFold(summary)).toBe("1 round · 1 subagent · 1 checkpoint")
+        expect(describeFoldDetail(summary)).toContain("Subagents:")
+    })
+
+    it("names the agents a batch ran so the header can say what delegated", () => {
+        const batch: UiMessage = {
+            ts: 12,
+            type: "say",
+            say: "subagent",
+            text: JSON.stringify({
+                status: "completed",
+                total: 2,
+                completed: 2,
+                successes: 2,
+                failures: 0,
+                toolCalls: 9,
+                inputTokens: 0,
+                outputTokens: 0,
+                contextWindow: 0,
+                maxContextTokens: 0,
+                maxContextUsagePercentage: 0,
+                items: [
+                    { index: 0, prompt: "a", status: "completed", subagentName: "reviewer" },
+                    { index: 1, prompt: "b", status: "completed", subagentName: "explorer" },
+                ],
+            }),
+        }
+        const summary = summaryOf([
+            userTask(1, "Review the parser"),
+            restorePoint(10, "files-1"),
+            finishedRequest(11),
+            batch,
+            finishedRequest(13),
+            completion(14, "Reviewed."),
+        ])
+
+        expect(summary.work.get("subagent")).toBe(2)
+        expect(Array.from(summary.subagents)).toEqual([
+            ["reviewer", 1],
+            ["explorer", 1],
+        ])
+        expect(describeFoldDetail(summary)).toContain("reviewer ×1")
     })
 
     it("counts edits and the working_respond update inside the turn block", () => {
@@ -56,9 +152,10 @@ describe("summarizeActivityFold", () => {
             completion(16, "Done."),
         ])
 
-        expect(summary.toolCalls.size).toBe(0)
-        expect(summary).toMatchObject({ rounds: 1, commands: 0, fileEdits: 2, checkpoints: 1, assistantMessages: 1 })
-        expect(describeActivityFold(summary)).toBe("1 round · 2 file edits · 1 checkpoint · 1 message")
+        expect(summary.tools.size).toBe(2)
+        expect(summary).toMatchObject({ rounds: 1, checkpoints: 1, assistantMessages: 1 })
+        expect(summary.work.get("write")).toBe(2)
+        expect(describeActivityFold(summary)).toBe("1 round · 2 writes · 1 checkpoint · 1 message")
     })
 
     it("counts a restore point attached to an edit once", () => {
@@ -103,11 +200,13 @@ describe("summarizeActivityFold", () => {
             completion(19, "Found it."),
         ])
 
-        expect(Array.from(summary.toolCalls)).toEqual([
+        expect(Array.from(summary.tools)).toEqual([
             ["docs:search", 2],
             ["docs:resource", 1],
         ])
-        expect(describeActivityFold(summary)).toBe("1 round · 3 tool calls · 1 checkpoint")
+        expect(summary.work.get("external")).toBe(3)
+        expect(summary.external.get("mcp")).toBe(3)
+        expect(describeActivityFold(summary)).toBe("1 round · 3 externals · 1 checkpoint")
     })
 
     it("counts a browser launch and each action as steps, not their results", () => {
@@ -131,12 +230,13 @@ describe("summarizeActivityFold", () => {
             completion(19, "The page works."),
         ])
 
-        expect(Array.from(summary.toolCalls)).toEqual([
+        expect(Array.from(summary.tools)).toEqual([
             ["browser:launch", 1],
             ["browser:click", 1],
             ["browser:close", 1],
         ])
-        expect(describeActivityFold(summary)).toBe("1 round · 3 tool calls · 1 checkpoint")
+        expect(summary.external.get("browser")).toBe(3)
+        expect(describeActivityFold(summary)).toBe("1 round · 3 externals · 1 checkpoint")
     })
 
     it("counts distinct requests in message segments too", () => {
@@ -147,9 +247,10 @@ describe("summarizeActivityFold", () => {
     it("names a fold with nothing countable as finished steps", () => {
         expect(
             describeActivityFold({
-                toolCalls: new Map(),
-                commands: 0,
-                fileEdits: 0,
+                work: new Map(),
+                external: new Map(),
+                tools: new Map(),
+                subagents: new Map(),
                 checkpoints: 0,
                 thoughts: 0,
                 assistantMessages: 0,

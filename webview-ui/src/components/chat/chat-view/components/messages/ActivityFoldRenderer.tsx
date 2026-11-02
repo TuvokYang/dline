@@ -2,7 +2,7 @@ import { describeFoldUsage } from "@shared/chat/foldUsage"
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import type React from "react"
 import { useMemo } from "react"
-import { describeActivityFoldParts, describeToolCalls, summarizeActivityFold } from "../../utils/activityFoldSummary"
+import { describeActivityFoldParts, describeFoldDetail, summarizeActivityFold } from "../../utils/activityFoldSummary"
 import type { ActivityFold } from "../../utils/chatRowKinds"
 import { rowIdentity } from "../../utils/rowCoordinate"
 import { RowContent, type RowRenderContext } from "./RowContent"
@@ -28,6 +28,7 @@ export const ActivityFoldRenderer: React.FC<ActivityFoldRendererProps> = ({ fold
         [fold, context.checkpointAttachments],
     )
     const parts = useMemo(() => describeActivityFoldParts(summary), [summary])
+    const detail = useMemo(() => describeFoldDetail(summary), [summary])
     const usage = useMemo(() => (fold._usage ? describeFoldUsage(fold._usage) : ""), [fold._usage])
     const foldId = fold._activityFoldId
 
@@ -39,7 +40,7 @@ export const ActivityFoldRenderer: React.FC<ActivityFoldRendererProps> = ({ fold
                     className="flex w-full items-start gap-1.5 rounded-xs border-0 bg-transparent p-0 text-left text-xs text-description hover:text-foreground cursor-pointer"
                     data-testid="activity-fold-header"
                     onClick={() => onToggleFold(foldId)}
-                    title={describeToolCalls(summary) || undefined}
+                    title={detail}
                     type="button">
                     {expanded ? (
                         <ChevronDownIcon className="mt-0.5 size-3 shrink-0" />
@@ -62,8 +63,13 @@ export const ActivityFoldRenderer: React.FC<ActivityFoldRendererProps> = ({ fold
                                 </span>
                             ))}
                         </span>
+                        {/* The cost capsule is one unbroken unit: it states what the block
+                            spent, and a header too narrow for it wraps the capsule to its own
+                            line instead of truncating the figures. */}
                         {usage !== "" && (
-                            <span className="shrink-0 whitespace-nowrap tabular-nums" data-testid="activity-fold-usage">
+                            <span
+                                className="shrink-0 whitespace-nowrap rounded-xs bg-toolbar-hover/40 px-1.5 py-0.5 text-[11px] leading-none tabular-nums text-description"
+                                data-testid="activity-fold-usage">
                                 {usage}
                             </span>
                         )}

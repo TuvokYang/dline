@@ -53,7 +53,7 @@ describe("a failed work item stays inside its block", () => {
         const block = folds(transcript)[0]
         const summary = summarizeActivityFold(block, new Map())
         expect(summary.failures.get("command")).toBe(1)
-        expect(summary.commands).toBe(1)
+        expect(summary.work.get("command")).toBe(1)
         expect(describeActivityFold(summary)).toContain("1 command error")
     })
 
@@ -68,7 +68,8 @@ describe("a failed work item stays inside its block", () => {
         const block = folds(transcript)[0]
         const summary = summarizeActivityFold(block, new Map())
         expect(summary.failures.get("edit")).toBe(1)
-        expect(summary.fileEdits).toBe(0)
+        // A failed edit is one error, not also a completed write.
+        expect(summary.work.get("write")).toBeUndefined()
         expect(describeActivityFold(summary)).toContain("1 edit error")
     })
 
@@ -152,7 +153,7 @@ describe("the block keeps a failure it cannot account for out of it", () => {
         // The renderer paints `isFailure` parts in the error tone, so this is what
         // makes an error count read as an error rather than as another tally.
         expect(parts.filter((part) => part.isFailure).map((part) => part.text)).toEqual(["1 command error"])
-        expect(parts.filter((part) => !part.isFailure).map((part) => part.text)).toContain("1 file edit")
+        expect(parts.filter((part) => !part.isFailure).map((part) => part.text)).toContain("1 write")
     })
 
     it("does not count a settled edit as an error", () => {
@@ -170,7 +171,7 @@ describe("the block keeps a failure it cannot account for out of it", () => {
 
         const summary = summarizeActivityFold(folds(transcript)[0], new Map())
         expect(summary.failures.size).toBe(0)
-        expect(summary.fileEdits).toBe(1)
+        expect(summary.work.get("write")).toBe(1)
         expect(describeActivityFold(summary)).not.toContain("error")
     })
 })

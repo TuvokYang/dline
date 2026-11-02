@@ -158,7 +158,7 @@ describe("a folded block states what it cost", () => {
         // fact in the same colour as a successful command count.
         const errorCount = screen.getByText("1 command error")
         expect(errorCount.className).toContain("text-error")
-        const commandCount = screen.getByText("1 command")
+        const commandCount = screen.getByText("1 cmd")
         expect(commandCount.className).not.toContain("text-error")
     })
 

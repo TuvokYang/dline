@@ -132,15 +132,25 @@ function attachUsage(
     })
 }
 
-/** Map a transcript round index onto its usage record, in provider-send order. */
+/**
+ * Map a transcript round index onto its usage record.
+ *
+ * The round query returns the newest rounds still retained, so a long Task has
+ * fewer records than provider sends. Binding from the end is what keeps a record
+ * on the send it measured: the last record measured the last send. Binding from
+ * the start would slide every earlier figure onto the wrong round and state a
+ * cost the block never incurred.
+ */
 function indexUsageByRound(
     roundUsage: readonly FoldRoundUsage[],
     rounds: ReadonlyMap<number, number>,
 ): ReadonlyMap<number, FoldRoundUsage> {
     const providerRounds = [...new Set(rounds.values())].filter((round) => round > 0).sort((left, right) => left - right)
     const byRound = new Map<number, FoldRoundUsage>()
-    providerRounds.forEach((round, position) => {
-        const usage = roundUsage[position]
+    const tail = providerRounds.slice(-roundUsage.length)
+    const offset = roundUsage.length - tail.length
+    tail.forEach((round, index) => {
+        const usage = roundUsage[index + offset]
         if (usage) byRound.set(round, usage)
     })
     return byRound

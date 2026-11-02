@@ -520,11 +520,14 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         return focusChainSettings.enabled && !lastProgressMessageText
     }, [focusChainSettings.enabled, lastProgressMessageText])
 
+    // The fold header states a block's Provider cost, so the chat hands the fold
+    // step the opening whose round records own those figures.
     const groupedMessages = useGroupedChatRows(
         modifiedMessages,
         visibleMessages,
         aggressiveRendering,
         taskViewState?.activeInteraction?.askMessageTs,
+        taskViewState,
     )
 
     // Use scroll behavior hook
