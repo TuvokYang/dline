@@ -4,10 +4,16 @@ import { useEffect, useRef, useState } from "react"
 import { TaskServiceClient } from "@/services/grpc-client"
 import { projectRoundUsage } from "../utils/roundUsageProjection"
 
+/**
+ * The round page size, mirroring the backend's recent-round cap.
+ *
+ * The backend clamps to its own limit, so asking for more only spends a larger
+ * request; asking for less silently drops rounds a block could have stated.
+ * Keep the two in step when either changes.
+ */
+const MAX_ROUNDS = 60
 /** One day of Provider rounds; a longer task keeps its newest rounds only. */
 const ROUND_WINDOW_MS = 24 * 60 * 60 * 1_000
-/** Matches the backend's recent-round page so the window and the page agree. */
-const MAX_ROUNDS = 60
 
 interface FoldRoundUsageState {
     readonly requestKey: string
@@ -34,7 +40,10 @@ export function useFoldRoundUsage(taskId: string | undefined, taskInstanceId: st
         const isCurrent = () => active && latestRequestKey.current === requestKey
         if (!taskId || !taskInstanceId) return noRounds(active)
 
-        const endMs = Date.now() + ROUND_WINDOW_MS
+        // A real past window ending now, not a window starting in the future: the
+        // round resolution ignores it today, but a range that begins after every
+        // recorded send would silently select nothing the day it stops ignoring it.
+        const endMs = Date.now()
         void TaskServiceClient.getTaskRateMetrics(
             GetTaskRateMetricsRequest.create({
                 taskId,

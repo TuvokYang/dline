@@ -13,6 +13,9 @@ export function projectRoundUsage(points: readonly TaskRateMetricPoint[]): FoldR
     return points.flatMap((point) => {
         // A minute/hour/day bucket is an aggregate, not one provider send.
         if (point.roundId === undefined || point.roundId === "") return []
+        // A round that reported no usage at all states nothing rather than a zero.
+        // Keeping it would only add an empty entry the header cannot print.
+        if (!hasAnyFigure(point)) return []
         const usage: FoldRoundUsage = {
             roundId: point.roundId,
             ...(positive(point.providerDurationMs) ? { providerDurationMs: point.providerDurationMs } : {}),
@@ -43,6 +46,16 @@ export function indexRoundNumbers(roundNumbers: readonly number[], recordCount: 
     const offset = recordCount - tail.length
     tail.forEach((round, index) => byRound.set(round, index + offset))
     return byRound
+}
+
+/** Whether the round states at least one figure the header can print. */
+function hasAnyFigure(point: TaskRateMetricPoint): boolean {
+    return (
+        positive(point.providerDurationMs) ||
+        defined(point.inputTokens) ||
+        defined(point.outputTokens) ||
+        defined(point.totalCost)
+    )
 }
 
 function toUsageQuality(quality: TaskRateUsageQuality): FoldUsageQuality {

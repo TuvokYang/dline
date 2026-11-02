@@ -26,6 +26,18 @@ function summaryOf(messages: UiMessage[]) {
     return summarizeActivityFold(turnFold(messages), indexPreEditCheckpointAttachments(messages))
 }
 
+function summaryOfRoots(messages: UiMessage[], workspaceRoots: readonly string[]) {
+    return summarizeActivityFold(turnFold(messages), indexPreEditCheckpointAttachments(messages), { workspaceRoots })
+}
+
+/** A command row states the directory it runs in after the command line. */
+const commandAsk = (ts: number, commandLine: string, workingDirectory: string): UiMessage => ({
+    ts,
+    type: "say",
+    say: "command",
+    text: `${commandLine}\n\nWorking directory: ${workingDirectory}`,
+})
+
 const preEditCheckpoint = (ts: number, toolTs: number): UiMessage => ({
     ts,
     type: "say",
@@ -204,9 +216,95 @@ describe("summarizeActivityFold", () => {
             ["docs:search", 2],
             ["docs:resource", 1],
         ])
-        expect(summary.work.get("external")).toBe(3)
-        expect(summary.external.get("mcp")).toBe(3)
-        expect(describeActivityFold(summary)).toBe("1 round · 3 externals · 1 checkpoint")
+        // An MCP call looks something up on a server, so it reads outside the
+        // workspace; the header keeps it inside the read tally.
+        expect(Array.from(summary.work)).toEqual([["read", 3]])
+        expect(summary.external.get("read")).toBe(3)
+        expect(describeActivityFold(summary)).toBe("1 round · 3 reads (3 external) · 1 checkpoint")
+    })
+
+    it("states the external share inside the verb it qualified", () => {
+        const summary = summaryOf([
+            userTask(1, "Read locally and elsewhere"),
+            restorePoint(10, "files-1"),
+            finishedRequest(11),
+            writeTool(12, "readFile"),
+            finishedRequest(13),
+            writeTool(14, "findReferences"),
+            finishedRequest(15),
+            writeTool(16, "webFetch"),
+            finishedRequest(17),
+            writeTool(18, "codeExecution"),
+            finishedRequest(19),
+            completion(20, "Read them."),
+        ])
+
+        // Four reads, three of which left the workspace; code execution runs a
+        // command outside the workspace rather than reading one.
+        expect(summary.work.get("read")).toBe(3)
+        expect(summary.work.get("command")).toBe(1)
+        expect(summary.external.get("read")).toBe(2)
+        expect(summary.external.get("command")).toBe(1)
+        expect(describeActivityFold(summary)).toBe("4 rounds · 3 reads (2 external) · 1 cmd (1 external) · 1 checkpoint")
+    })
+
+    it("counts a command that ran outside every workspace root as external", () => {
+        const summary = summaryOfRoots(
+            [
+                userTask(1, "Run it elsewhere"),
+                restorePoint(10, "files-1"),
+                finishedRequest(11),
+                commandAsk(12, "npm install", "E:\\workspace\\vscode\\dline"),
+                finishedRequest(13),
+                commandAsk(14, "npm test", "E:\\workspace\\other"),
+                finishedRequest(15),
+                completion(16, "Ran them."),
+            ],
+            ["E:\\workspace\\vscode\\dline"],
+        )
+
+        // Two commands ran, and only the second left the workspace.
+        expect(summary.work.get("command")).toBe(2)
+        expect(summary.external.get("command")).toBe(1)
+        expect(describeActivityFold(summary)).toBe("2 rounds · 2 cmds (1 external) · 1 checkpoint")
+    })
+
+    it("counts a command as internal when its directory is a subdirectory of a root", () => {
+        const summary = summaryOfRoots(
+            [
+                userTask(1, "Run it here"),
+                restorePoint(10, "files-1"),
+                finishedRequest(11),
+                commandAsk(12, "npm test", "e:\\workspace\\vscode\\dline\\src"),
+                finishedRequest(13),
+                completion(14, "Ran it."),
+            ],
+            ["E:\\workspace\\vscode\\dline"],
+        )
+
+        // Separator, trailing-slash and case differences do not make a nested
+        // directory external.
+        expect(summary.external.get("command")).toBeUndefined()
+        expect(describeActivityFold(summary)).toBe("1 round · 1 cmd · 1 checkpoint")
+    })
+
+    it("never reports a command without a recorded directory as external", () => {
+        const summary = summaryOfRoots(
+            [
+                userTask(1, "Run it"),
+                restorePoint(10, "files-1"),
+                finishedRequest(11),
+                { ts: 12, type: "say", say: "command", text: "npm test" },
+                finishedRequest(13),
+                completion(14, "Ran it."),
+            ],
+            ["E:\\workspace\\vscode\\dline"],
+        )
+
+        // An older row states no directory, so the block cannot claim it left the
+        // workspace even though the command may have.
+        expect(summary.work.get("command")).toBe(1)
+        expect(summary.external.get("command")).toBeUndefined()
     })
 
     it("counts a browser launch and each action as steps, not their results", () => {
@@ -235,8 +333,8 @@ describe("summarizeActivityFold", () => {
             ["browser:click", 1],
             ["browser:close", 1],
         ])
-        expect(summary.external.get("browser")).toBe(3)
-        expect(describeActivityFold(summary)).toBe("1 round · 3 externals · 1 checkpoint")
+        expect(summary.external.get("read")).toBe(3)
+        expect(describeActivityFold(summary)).toBe("1 round · 3 reads (3 external) · 1 checkpoint")
     })
 
     it("counts distinct requests in message segments too", () => {

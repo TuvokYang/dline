@@ -1,3 +1,4 @@
+import { readCommandRow } from "@shared/commandRow"
 import type { UiAskUseMcpServer, UiMessage, UiSayBrowserAction, UiSaySubagentStatus } from "@shared/ExtensionMessage"
 import type { ActivityFold, FoldFailureKind } from "./chatRowKinds"
 
@@ -6,10 +7,11 @@ import type { ActivityFold, FoldFailureKind } from "./chatRowKinds"
  *
  * A single "tool calls" total hides the only distinction that matters in a
  * transcript: whether the model looked at something, changed something, ran
- * something, delegated to an agent, or reached outside the workspace. Each kind
- * is counted on its own so a header can never report a subagent as a tool call.
+ * something, or delegated to an agent. Each kind is counted on its own so a
+ * header can never report a subagent as a tool call. Reaching outside the
+ * workspace is not a kind of its own: it qualifies a read, a write or a command.
  */
-export type FoldWorkKind = "read" | "write" | "command" | "subagent" | "external" | "other"
+export type FoldWorkKind = "read" | "write" | "command" | "subagent" | "other"
 
 /**
  * Facts a fold header states about its members.
@@ -23,11 +25,13 @@ export interface ActivityFoldSummary {
     /** Work by kind. */
     readonly work: ReadonlyMap<FoldWorkKind, number>
     /**
-     * Providers reached outside the workspace, by destination: `web`, `mcp` or
-     * `browser`. Already counted in `work.external`, and stated apart so a reader
-     * can tell a search from a browser step.
+     * How much of each kind reached outside the workspace, by kind.
+     *
+     * External reach is a property of a read, a write or a command, never a peer
+     * category: "12 read (3 external)" says the reads went outside, while a
+     * separate `external` tally would make a reader add it to the total.
      */
-    readonly external: ReadonlyMap<string, number>
+    readonly external: ReadonlyMap<FoldWorkKind, number>
     /** Which built-in tool each read, write and other count came from, for the tooltip. */
     readonly tools: ReadonlyMap<string, number>
     /**
@@ -68,6 +72,10 @@ const WRITE_TOOLS = new Set(["editedExistingFile", "newFileCreated", "fileDelete
 
 /** Provider-hosted work that reaches outside the workspace. */
 const EXTERNAL_TOOLS = new Set(["webFetch", "webSearch", "codeExecution"])
+/** Reads that leave the workspace: a definition or reference lookup in another tree. */
+const EXTERNAL_READ_TOOLS = new Set(["findReferences"])
+/** External work whose verb is running something rather than looking at it. */
+const EXTERNAL_COMMAND_TOOLS = new Set(["codeExecution"])
 
 /** Tools that render as an assistant update rather than as work. */
 const ASSISTANT_TOOLS = new Set(["actModeRespond", "statusUpdate"])
@@ -83,12 +91,18 @@ const OTHER_TOOLS = new Set([
     "genericTool",
 ])
 
+export interface FoldSummaryContext {
+    /** Directories a command may run in and still be inside the workspace. */
+    readonly workspaceRoots?: readonly string[]
+}
+
 export function summarizeActivityFold(
     fold: ActivityFold,
     checkpointAttachments: ReadonlyMap<number, readonly UiMessage[]>,
+    context: FoldSummaryContext = {},
 ): ActivityFoldSummary {
     const work = new Map<FoldWorkKind, number>()
-    const external = new Map<string, number>()
+    const external = new Map<FoldWorkKind, number>()
     const tools = new Map<string, number>()
     const subagents = new Map<string, number>()
     const failures = fold._failures ?? new Map<FoldFailureKind, number>()
@@ -104,8 +118,12 @@ export function summarizeActivityFold(
         if (fold._failedMemberTs?.has(member.ts)) continue
         if (member.say === "checkpoint_created") checkpoints += 1
         else if (member.say === "reasoning") thoughts += 1
-        else if (member.say === "command" || member.ask === "command") count(work, "command")
-        else if (member.say === "text") assistantMessages += 1
+        else if (member.say === "command" || member.ask === "command") {
+            count(work, "command")
+            // A command that runs outside every workspace root reached outside the
+            // workspace; the row states its directory, so this is a fact, not a guess.
+            if (runsOutsideWorkspace(member, context.workspaceRoots)) count(external, "command")
+        } else if (member.say === "text") assistantMessages += 1
         else if (member.say === "subagent" || member.say === "use_subagents") {
             countSubagents(member, work, subagents)
         } else if (member.say === "tool" || member.ask === "tool") {
@@ -118,21 +136,31 @@ export function summarizeActivityFold(
                 continue
             }
             count(tools, name)
-            if (READ_TOOLS.has(name)) count(work, "read")
-            else if (WRITE_TOOLS.has(name)) count(work, "write")
-            else if (EXTERNAL_TOOLS.has(name)) countExternal(work, external, "web")
-            else count(work, "other")
+            if (READ_TOOLS.has(name)) {
+                count(work, "read")
+                if (EXTERNAL_READ_TOOLS.has(name)) count(external, "read")
+            } else if (WRITE_TOOLS.has(name)) count(work, "write")
+            else if (EXTERNAL_TOOLS.has(name)) {
+                // Reaching outside the workspace qualifies the nearest verb: a
+                // fetch reads elsewhere, code execution runs elsewhere.
+                count(work, EXTERNAL_COMMAND_TOOLS.has(name) ? "command" : "read")
+                count(external, EXTERNAL_COMMAND_TOOLS.has(name) ? "command" : "read")
+            } else count(work, "other")
         } else {
             const mcp = mcpCallName(member)
             if (mcp) {
+                // An MCP call reaches a server, so it is a read that left the
+                // workspace rather than a category of its own.
                 count(tools, mcp)
-                countExternal(work, external, "mcp")
+                count(work, "read")
+                count(external, "read")
                 continue
             }
             const browser = browserStepName(member)
             if (browser) {
                 count(tools, browser)
-                countExternal(work, external, "browser")
+                count(work, "read")
+                count(external, "read")
             }
         }
     }
@@ -163,9 +191,30 @@ function count<T>(counter: Map<T, number>, key: T, by = 1): void {
     counter.set(key, (counter.get(key) ?? 0) + by)
 }
 
-function countExternal(work: Map<FoldWorkKind, number>, external: Map<string, number>, destination: string): void {
-    count(work, "external")
-    count(external, destination)
+/**
+ * Whether a command row states a directory outside every workspace root.
+ *
+ * The row appends its working directory after the command line, so the block can
+ * tell a command that reached outside the workspace from one that stayed in it.
+ * A row without the marker is a command from before the directory was recorded,
+ * and an unknown directory is never reported as external: a reader must not see
+ * a figure the row does not support.
+ */
+function runsOutsideWorkspace(message: UiMessage, roots: readonly string[] | undefined): boolean {
+    const workingDirectory = readCommandRow(message).workingDirectory
+    if (workingDirectory === undefined || !roots || roots.length === 0) return false
+    const from = normalizeDirectory(workingDirectory)
+    return !roots.some((root) => isSameOrInside(from, normalizeDirectory(root)))
+}
+
+/** Windows accepts either separator, and a trailing one does not change the directory. */
+function normalizeDirectory(directory: string): string {
+    return directory.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()
+}
+
+/** Windows paths compare case-insensitively; a sibling with a shared prefix is not inside. */
+function isSameOrInside(directory: string, root: string): boolean {
+    return directory === root || directory.startsWith(`${root}/`)
 }
 
 /** The request row is the call; its response row is not counted again. */
@@ -187,7 +236,7 @@ function browserStepName(message: UiMessage): string | undefined {
 
 /**
  * One-line header text, such as
- * `2 rounds · 8 read · 2 write · 4 cmd · 1 subagent · 2 external`.
+ * `2 rounds · 8 read (3 external) · 2 write · 4 cmd · 1 subagent`.
  */
 export function describeActivityFold(summary: ActivityFoldSummary): string {
     return describeActivityFoldParts(summary)
@@ -207,7 +256,6 @@ const WORK_LABELS: ReadonlyArray<readonly [FoldWorkKind, string]> = [
     ["write", "write"],
     ["command", "cmd"],
     ["subagent", "subagent"],
-    ["external", "external"],
     ["other", "other"],
 ]
 
@@ -218,16 +266,22 @@ const WORK_LABELS: ReadonlyArray<readonly [FoldWorkKind, string]> = [
  * which parts are failure counts without re-parsing the sentence.
  */
 export function describeActivityFoldParts(summary: ActivityFoldSummary): ActivityFoldPart[] {
-    const counted = [
+    // A fact states a count and a noun; work facts also name their kind so their
+    // external share can qualify them.
+    const facts: Array<readonly [number, string, FoldWorkKind?]> = [
         [summary.rounds ?? 0, "round"],
-        ...WORK_LABELS.map(([kind, label]) => [summary.work.get(kind) ?? 0, label] as const),
+        ...WORK_LABELS.map(([kind, label]) => [summary.work.get(kind) ?? 0, label, kind] as const),
         [summary.thoughts, "thought"],
         [summary.checkpoints, "checkpoint"],
         [summary.assistantMessages, "message"],
-    ] as const
-    const parts: ActivityFoldPart[] = counted.flatMap(([counted, noun]) => {
-        const text = countOf(counted, noun)
-        return text === undefined ? [] : [{ text, isFailure: false }]
+    ]
+    const parts: ActivityFoldPart[] = facts.flatMap(([total, noun, kind]) => {
+        const text = countOf(total, noun)
+        if (text === undefined) return []
+        // Reaching outside the workspace qualifies the verb rather than adding a
+        // tally a reader would sum: "12 reads (3 external)".
+        const outside = kind === undefined ? undefined : outsideCount(summary.external.get(kind) ?? 0)
+        return [{ text: outside === undefined ? text : `${text} (${outside})`, isFailure: false }]
     })
     for (const [kind, label] of FAILURE_LABELS) {
         const text = countOf(summary.failures?.get(kind) ?? 0, label)
@@ -259,13 +313,18 @@ export function describeFoldDetail(summary: ActivityFoldSummary): string | undef
     const agents = Array.from(summary.subagents, ([name, count]) => `${name} ×${count}`).join(", ")
     if (agents) lines.push(`Subagents: ${agents}`)
     const outside = Array.from(summary.external, ([kind, count]) => `${kind} ×${count}`).join(", ")
-    if (outside) lines.push(`External: ${outside}`)
+    if (outside) lines.push(`External by verb: ${outside}`)
     return lines.length > 0 ? lines.join("\n") : undefined
 }
 
 function countOf(count: number, noun: string): string | undefined {
     if (count === 0) return undefined
     return `${count} ${noun}${count === 1 ? "" : "s"}`
+}
+
+/** `external` is uncountable, so its parenthetical never takes a plural. */
+function outsideCount(count: number): string | undefined {
+    return count === 0 ? undefined : `${count} external`
 }
 
 function numberOr(value: unknown, fallback: number): number {

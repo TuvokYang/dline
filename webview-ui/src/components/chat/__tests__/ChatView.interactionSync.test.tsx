@@ -91,6 +91,9 @@ vi.mock("@/services/grpc-client", () => ({
     TaskServiceClient: {
         askResponse: mocks.askResponse,
         compactTask: mocks.compactTask,
+        // The fold header asks for round figures when it renders; this harness
+        // draws chat rows, so it needs the call to resolve to no figures.
+        getTaskRateMetrics: vi.fn(async () => ({ points: [] })),
         dispatchInteraction: mocks.dispatchInteraction,
         mutateInputQueue: mocks.mutateInputQueue,
     },

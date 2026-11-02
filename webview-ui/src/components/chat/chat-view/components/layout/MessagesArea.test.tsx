@@ -1096,8 +1096,10 @@ describe("MessagesArea with real folding", () => {
         expect(document.querySelector('[data-message-ts="100"]')).toBeNull()
     })
 
-    it("offers bulk expand and collapse outside the list without changing Standard row order", () => {
+    it("toggles every fold from one floating control without changing row order", () => {
         renderChat(twoTurnTranscript)
+        // One control, two actions: the label states what the click will do, so
+        // the collapse action is reachable only after the fold state flips.
         fireEvent.click(screen.getByRole("button", { name: "Expand all activity" }))
         // Every block stays, with its header, and draws its members beneath it.
         expect(document.querySelectorAll("[data-fold-id]")).toHaveLength(2)
@@ -1105,6 +1107,18 @@ describe("MessagesArea with real folding", () => {
         fireEvent.click(screen.getByRole("button", { name: "Collapse all activity" }))
         expect(document.querySelectorAll("[data-fold-id]")).toHaveLength(2)
         expect(drawn()).toEqual([1, 35, 40, 45])
+    })
+
+    it("keeps the fold control in the floating column so the pinned message cannot cover it", () => {
+        renderChat(twoTurnTranscript)
+        const controls = screen.getByTestId("folding-controls")
+        // The sticky user message owns the top edge at z-10. A toolbar placed
+        // there is hidden the moment a message is pinned, which is the reported
+        // bug; the control must live in the bottom-right column instead.
+        expect(controls.className).toContain("absolute")
+        expect(controls.className).toContain("right-4")
+        expect(controls.className).not.toContain("top-0")
+        expect(controls.className).toContain("z-20")
     })
 
     function showTrajectory() {

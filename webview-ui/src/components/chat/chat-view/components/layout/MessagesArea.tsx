@@ -45,6 +45,16 @@ const LOAD_COUNT = DEFAULT_MESSAGE_WINDOW_LIMITS.loadCount
 const ROW_LOAD_THRESHOLD = 8
 const USER_SCROLL_INTENT_TTL_MS = 750
 
+/**
+ * The one surface every floating control in the message column is drawn on.
+ *
+ * The fold control and the scroll control sit in the same column, so they must
+ * share a background, a border treatment and a size; declaring it once keeps a
+ * later edit from re-splitting them.
+ */
+const FLOATING_CONTROL =
+    "w-10 h-10 rounded-full bg-background/65 backdrop-blur-sm shadow-md border-0 text-foreground flex items-center justify-center cursor-pointer"
+
 /** Sentinel value to prevent Virtuoso zero-sized-element warnings when data is empty */
 // @ts-expect-error — Virtuoso sentinel; only ts/type needed, full UiMessage shape not required
 const EMPTY_PLACEHOLDER_MSG: UiMessage = { ts: -1, type: "__empty_placeholder__" } as UiMessage
@@ -1110,33 +1120,12 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
         scheduleDeferredWindowGrowth,
     ])
 
+    // The bulk fold control only exists while there is something to fold or unfold.
+    const foldControlVisible = foldingEnabled && (closedFolds.length > 0 || hasOpenFolds)
+    const allFoldsOpen = closedFolds.length === 0
+
     return (
-        <div className="overflow-hidden flex flex-col h-full relative">
-            {foldingEnabled && (closedFolds.length > 0 || hasOpenFolds) && (
-                <div
-                    className="flex shrink-0 justify-end gap-3 px-4 py-1 text-xs text-description"
-                    data-testid="folding-controls">
-                    <button
-                        className="border-0 bg-transparent p-0 cursor-pointer disabled:opacity-40"
-                        disabled={closedFolds.length === 0}
-                        onClick={() =>
-                            scrollBehavior.replaceFoldExpansion({
-                                ...chatState.expandedFolds,
-                                ...Object.fromEntries(closedFolds.map((fold) => [fold._activityFoldId, true])),
-                            })
-                        }
-                        type="button">
-                        Expand all activity
-                    </button>
-                    <button
-                        className="border-0 bg-transparent p-0 cursor-pointer disabled:opacity-40"
-                        disabled={!hasOpenFolds}
-                        onClick={() => scrollBehavior.replaceFoldExpansion({})}
-                        type="button">
-                        Collapse all activity
-                    </button>
-                </div>
-            )}
+        <div className="group/messages overflow-hidden flex flex-col h-full relative">
             <div
                 className={cn(
                     "pointer-events-none absolute top-0 left-0 right-0 z-10 pl-[15px] pr-[14px] bg-background",
@@ -1221,6 +1210,47 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                     taskInstanceId={taskViewState?.taskInstanceId}
                 />
 
+                {/* Bulk fold control. It lives in the floating column because the
+                    sticky user message owns the top edge with z-10; an in-flow
+                    toolbar there was covered the moment a message was pinned.
+                    Visibility follows the pointer and scrolling only: hovering
+                    anywhere over the conversation reveals it, and focus-visible
+                    keeps it reachable from the keyboard. */}
+                {foldControlVisible && (
+                    <div
+                        className={cn(
+                            "absolute z-20 transition-opacity duration-300 ease-out",
+                            "bottom-[calc(1rem+2.5rem+0.5rem)] right-4",
+                            "opacity-0 pointer-events-none",
+                            "group-hover/messages:opacity-100 group-hover/messages:pointer-events-auto",
+                            floatingBtnVisible && "opacity-100 pointer-events-auto",
+                            "has-[:focus-visible]:opacity-100 has-[:focus-visible]:pointer-events-auto",
+                        )}
+                        data-testid="folding-controls">
+                        <button
+                            aria-label={allFoldsOpen ? "Collapse all activity" : "Expand all activity"}
+                            className={cn(
+                                FLOATING_CONTROL,
+                                "hover:bg-background/90 hover:shadow-xl hover:scale-105",
+                                "active:scale-95 transition-all duration-200",
+                            )}
+                            onClick={() =>
+                                scrollBehavior.replaceFoldExpansion(
+                                    allFoldsOpen
+                                        ? {}
+                                        : Object.fromEntries(closedFolds.map((fold) => [fold._activityFoldId, true])),
+                                )
+                            }
+                            title={allFoldsOpen ? "Collapse all activity" : "Expand all activity"}
+                            type="button">
+                            <span
+                                className={cn("codicon text-base", allFoldsOpen ? "codicon-list-flat" : "codicon-list-tree")}
+                                style={allFoldsOpen ? { transform: "scaleX(0.86)" } : undefined}
+                            />
+                        </button>
+                    </div>
+                )}
+
                 {/* Floating scroll direction button — dims after 5s idle, stays armed */}
                 {showScrollToBottom && (
                     <div
@@ -1239,8 +1269,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                         <button
                             aria-label={floatingBtnDir === "bottom" ? "Scroll to bottom" : "Scroll to top"}
                             className={cn(
-                                "w-10 h-10 rounded-full bg-background/65 backdrop-blur-sm shadow-md",
-                                "flex items-center justify-center cursor-pointer border-0",
+                                FLOATING_CONTROL,
                                 "hover:bg-background/90 hover:shadow-xl hover:scale-105",
                                 "active:scale-95 transition-all duration-200",
                             )}

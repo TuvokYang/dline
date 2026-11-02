@@ -2,6 +2,7 @@ import { describeFoldUsage } from "@shared/chat/foldUsage"
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import type React from "react"
 import { useMemo } from "react"
+import { useExtensionState } from "@/context/ExtensionStateContext"
 import { describeActivityFoldParts, describeFoldDetail, summarizeActivityFold } from "../../utils/activityFoldSummary"
 import type { ActivityFold } from "../../utils/chatRowKinds"
 import { rowIdentity } from "../../utils/rowCoordinate"
@@ -23,9 +24,13 @@ interface ActivityFoldRendererProps extends RowRenderContext {
  * they read the work underneath.
  */
 export const ActivityFoldRenderer: React.FC<ActivityFoldRendererProps> = ({ fold, expanded, onToggleFold, ...context }) => {
+    const { workspaceRoots } = useExtensionState()
+    // The roots are read here rather than threaded through every row: only the
+    // fold header classifies a command by the directory it ran in.
+    const roots = useMemo(() => (workspaceRoots ?? []).map((root) => root.path).filter((path) => path !== ""), [workspaceRoots])
     const summary = useMemo(
-        () => summarizeActivityFold(fold, context.checkpointAttachments),
-        [fold, context.checkpointAttachments],
+        () => summarizeActivityFold(fold, context.checkpointAttachments, { workspaceRoots: roots }),
+        [fold, context.checkpointAttachments, roots],
     )
     const parts = useMemo(() => describeActivityFoldParts(summary), [summary])
     const detail = useMemo(() => describeFoldDetail(summary), [summary])
