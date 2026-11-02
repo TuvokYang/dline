@@ -7,6 +7,7 @@ import { UsageOutboxRepository } from "@/core/storage/telemetry-remote/UsageOutb
 import { USAGE_GRANT_HARD_LIMITS, type UsageGrantContract } from "../contracts/deviceGrant"
 import { usageReplayBudget } from "../contracts/pacing"
 import type { UsageBodyGrant } from "../contracts/usageBody"
+import { sealOpenAttemptBucket } from "../usage/attemptBucket"
 import {
     attemptBacklogStorageBytes,
     boundUsageAttemptBacklog,
@@ -221,19 +222,31 @@ describe("schema 4 remote Usage pressure gate", () => {
     })
 })
 
+/**
+ * The backlog an offline machine accumulates: one bucket per delivery interval.
+ *
+ * Buckets close on fact count, and facts are identities, so several attempts of the
+ * same identity in one interval still share one fact. A sender that cannot reach the
+ * service therefore leaves exactly one bucket per interval behind, which is what this
+ * reproduces by folding and sealing one interval at a time.
+ */
 function foldConcurrentAttempts(count: number, sealedAt: number): UsageAttemptOutboxState {
-    const observations = Array.from({ length: count }, (_, index) => pendingAttempt(index))
-    const shards = Array.from({ length: 4 }, (_, shardIndex) => ({
-        name: `host-${shardIndex}.${sealedAt}.attempts.sealed.jsonl`,
-        observations: observations.filter((_, index) => index % 4 === shardIndex),
-        claims: [],
-    }))
+    let state = emptyUsageAttemptOutbox(POLICY_GENERATION)
     let nextBucket = 0
-    return foldUsageAttemptShards(emptyUsageAttemptOutbox(POLICY_GENERATION), shards, {
-        currentPolicyGeneration: POLICY_GENERATION,
-        newBucketId: () => `bucket-${++nextBucket}`,
-        sealedAt,
-    })
+    for (let index = 0; index < count; index++) {
+        const shard = {
+            name: `host-${index % 4}.${sealedAt}.attempts.sealed.jsonl`,
+            observations: [pendingAttempt(index)],
+            claims: [],
+        }
+        state = foldUsageAttemptShards(state, [shard], {
+            currentPolicyGeneration: POLICY_GENERATION,
+            newBucketId: () => `bucket-${++nextBucket}`,
+            sealedAt,
+        })
+        state = { ...state, buckets: sealOpenAttemptBucket(state.buckets, sealedAt) }
+    }
+    return state
 }
 
 function pendingAttempt(index: number) {

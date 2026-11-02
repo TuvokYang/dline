@@ -1,6 +1,7 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import { writeFileAtomic, writeJsonAtomic } from "@shared/storage/atomic-file"
+import { isDlineUserAgent } from "@/services/EnvUtils"
 import { type ChannelPacing } from "@/services/telemetry/remote/contracts/pacing"
 import { type AttemptBucket, validateAttemptBucket } from "@/services/telemetry/remote/usage/attemptBucket"
 import {
@@ -36,8 +37,6 @@ const LOCK_ACQUIRE_ATTEMPTS = 50
 const BODY_SUFFIX = ".bin"
 const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f-]{27,55}$/i
 const BUCKET_ID_PATTERN = /^[A-Za-z0-9:_-]{1,128}$/u
-/** `Dline/<version>` as the service parses it; a value it would not accept is not a frozen identity. */
-const USER_AGENT_PATTERN = /^Dline\/[0-9A-Za-z.+-]{1,32}$/u
 const CONTRACT_PATTERN = /^[0-9]{1,3}$/u
 
 interface AttemptOutboxDocument extends SenderTurns {
@@ -346,8 +345,16 @@ export class UsageOutboxRepository {
             const changed = await change(previous, this.clock())
             if (changed.document) {
                 const next = serializeAttemptDocument(changed.document)
-                const unchanged = JSON.stringify(serializeAttemptDocument(previous)) === JSON.stringify(next)
-                if (!unchanged) await writeJsonAtomic(this.layout.usageOutboxPath, next, { fsync: true })
+                // Format the document once. Comparing through a second full
+                // serialization of the previous state doubled the synchronous CPU
+                // this holds the outbox lock for, on a document that reaches
+                // megabytes; comparing the already-formatted next against a fresh
+                // serialization of the previous is the same check at half the cost.
+                const nextJson = JSON.stringify(next)
+                const unchanged = JSON.stringify(serializeAttemptDocument(previous)) === nextJson
+                // writeJsonAtomic serializes its value again, so hand it the
+                // already-formatted JSON string.
+                if (!unchanged) await writeFileAtomic(this.layout.usageOutboxPath, nextJson, { fsync: true })
             }
             return changed.result
         })
@@ -544,7 +551,9 @@ function parseAttemptInflight(value: unknown): UsageAttemptInflight | undefined 
     if (!isCount(createdAt) || !isCount(attempts) || !isCount(notBefore)) return undefined
     // A manifest written before the identity was frozen carries neither field: it is read back
     // without them so its version is recovered from the body instead of being refused.
-    const frozenUserAgent = typeof userAgent === "string" && USER_AGENT_PATTERN.test(userAgent) ? { userAgent } : {}
+    // The reader accepts exactly what the writer produces: one predicate, so a manifest
+    // cannot be frozen in a form its own replay refuses.
+    const frozenUserAgent = typeof userAgent === "string" && isDlineUserAgent(userAgent) ? { userAgent } : {}
     const frozenContract = typeof contract === "string" && CONTRACT_PATTERN.test(contract) ? { contract } : {}
     return { requestId, bodySha256, bucketIds, createdAt, attempts, notBefore, ...frozenUserAgent, ...frozenContract }
 }

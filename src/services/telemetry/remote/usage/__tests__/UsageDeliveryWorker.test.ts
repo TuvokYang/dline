@@ -110,6 +110,23 @@ describe("UsageDeliveryWorker", () => {
         })
     }
 
+    /**
+     * Advance past the shard settle delay, fold the settled shard, then advance to the
+     * end of that bucket's own event window.
+     *
+     * Sealing is a fact-count decision now, so a bucket no longer closes because its
+     * attempts stayed open for 60 s. Only the maintenance pass at the window boundary
+     * closes a low-frequency bucket, and that boundary is unknown until the shard has
+     * been folded once. The extra cycle is exactly what a real sender does between two
+     * periodic runs, so the assertions below still describe production timing.
+     */
+    async function settleAndSeal(sender: UsageDeliveryWorker): Promise<void> {
+        now = now + SEALED_SHARD_SETTLE_MS
+        await sender.runCycle(7)
+        const open = (await new UsageOutboxRepository(layout, { clock: () => now }).readAttempts())?.buckets.open
+        if (open) now = Math.max(now, open.windowEndedAt)
+    }
+
     async function observeAttempt(
         id: string,
         admittedAt: number,
@@ -171,7 +188,7 @@ describe("UsageDeliveryWorker", () => {
         expect(await outbox.readAttempts()).toBeDefined()
         expect(transport.deliveries).toEqual([])
 
-        now = start + MINUTE + SETTLE
+        await settleAndSeal(sender)
         expect(await sender.runCycle(7)).toMatchObject({ kind: "delivered", disposition: "accepted" })
         expect(transport.deliveries).toHaveLength(1)
         expect(transport.sentAttempt(0).schema_version).toBe(5)
@@ -184,7 +201,7 @@ describe("UsageDeliveryWorker", () => {
         await observeAttempt("attempt-compaction", start + 2_000, 31_000, "compaction")
 
         expect(await sender.runCycle(7)).toEqual({ kind: "idle" })
-        now = start + MINUTE + SETTLE
+        await settleAndSeal(sender)
         expect(await sender.runCycle(7)).toMatchObject({ kind: "delivered", disposition: "accepted" })
 
         expect(transport.deliveries).toHaveLength(1)
@@ -212,7 +229,7 @@ describe("UsageDeliveryWorker", () => {
         expect(await outbox.readAttempts()).toBeDefined()
 
         activeValidation = undefined
-        now += SEALED_SHARD_SETTLE_MS
+        await settleAndSeal(sender)
         expect(await sender.runCycle(7)).toEqual({ kind: "idle" })
         expect(transport.deliveries).toEqual([])
         expect((await outbox.readAttempts())?.buckets.sealed).toHaveLength(1)
@@ -232,7 +249,7 @@ describe("UsageDeliveryWorker", () => {
         await observeAttempt("attempt-a", start + 1_000, 60_000)
 
         expect(await sender.runCycle(7)).toEqual({ kind: "idle" })
-        now += SEALED_SHARD_SETTLE_MS
+        await settleAndSeal(sender)
         expect(await sender.runCycle(7)).toEqual({ kind: "rejected", violations: ["payload_too_large:body_size"] })
 
         const names = (await fs.readdir(layout.remoteQuarantineDir)).filter((name) => name.startsWith("usage-attempt-loss-"))
@@ -259,7 +276,7 @@ describe("UsageDeliveryWorker", () => {
         await observeAttempt("attempt-a", start + 1_000, 60_000)
 
         expect(await sender.runCycle(7)).toEqual({ kind: "idle" })
-        now += SEALED_SHARD_SETTLE_MS
+        await settleAndSeal(sender)
         expect(await sender.runCycle(7)).toMatchObject({ kind: "discarded", code: "invalid_usage_body" })
 
         const names = (await fs.readdir(layout.remoteQuarantineDir)).filter((name) => name.startsWith("usage-attempt-loss-"))
@@ -283,7 +300,9 @@ describe("UsageDeliveryWorker", () => {
         await observeAttempt("attempt-b", start + 2_000, 18_500)
 
         expect(await sender.runCycle(7)).toEqual({ kind: "idle" })
-        now += SEALED_SHARD_SETTLE_MS
+        await settleAndSeal(sender)
+        expect(await sender.runCycle(7)).toEqual({ kind: "idle" })
+        now = start + 700_000
         expect(await sender.runCycle(7)).toEqual({ kind: "idle" })
 
         const state = await outbox.readAttempts()
@@ -319,18 +338,20 @@ describe("UsageDeliveryWorker", () => {
 
     it("persists a schema 4 429 wait across restart and replays the exact request before later work", async () => {
         const transport = new FakeTransport()
-        const nextEligibleAt = start + SEALED_SHARD_SETTLE_MS + 120_000
+        const sender = worker("window-a", new FakeTokens(), transport, ATTEMPT_VALIDATION)
+        await observeAttempt("attempt-paused", start + 1_000, 60_000)
+
+        expect(await sender.runCycle(7)).toEqual({ kind: "idle" })
+        await settleAndSeal(sender)
+        // The gate has to sit ahead of the clock the batch is created at, so it is
+        // derived from the settled bucket rather than from the fixture's start time.
+        const nextEligibleAt = now + 120_000
         transport.replies.push({
             status: 429,
             json: { ok: false, error: { code: "quota_limited" }, next_eligible_at: nextEligibleAt },
             // The body names the gate; the header disagrees and must lose.
             retryAfter: "5",
         })
-        const sender = worker("window-a", new FakeTokens(), transport, ATTEMPT_VALIDATION)
-        await observeAttempt("attempt-paused", start + 1_000, 60_000)
-
-        expect(await sender.runCycle(7)).toEqual({ kind: "idle" })
-        now += SEALED_SHARD_SETTLE_MS
         const paused = await sender.runCycle(7)
         const waitUntil = (await new UsageOutboxRepository(layout).readAttempts())?.pacing.waitUntil ?? 0
         expect(waitUntil).toBe(nextEligibleAt)
@@ -355,7 +376,7 @@ describe("UsageDeliveryWorker", () => {
         await observeAttempt("attempt-takeover", start + 1_000, 60_000)
 
         expect(await first.runCycle(7)).toEqual({ kind: "idle" })
-        now += SEALED_SHARD_SETTLE_MS
+        await settleAndSeal(first)
         expect(await first.runCycle(7)).toMatchObject({ kind: "retrying" })
         expect(await second.runCycle(7)).toEqual({ kind: "standby" })
         now += USAGE_SENDER_LEASE_MS
@@ -377,7 +398,7 @@ describe("UsageDeliveryWorker", () => {
         await observeAttempt("attempt-ignored", start + 1_000, 60_000)
 
         expect(await sender.runCycle(7)).toEqual({ kind: "idle" })
-        now += SEALED_SHARD_SETTLE_MS
+        await settleAndSeal(sender)
         expect(await sender.runCycle(7)).toMatchObject({ kind: "retrying" })
         now = (await outbox.readAttempts())?.inflight?.notBefore ?? now
         expect(await sender.runCycle(7)).toMatchObject({ kind: "delivered", disposition: "ignored_version" })
@@ -399,7 +420,7 @@ describe("UsageDeliveryWorker", () => {
         await observeAttempt("attempt-conflict", start + 1_000, 60_000)
 
         expect(await sender.runCycle(7)).toEqual({ kind: "idle" })
-        now += SEALED_SHARD_SETTLE_MS
+        await settleAndSeal(sender)
         expect(await sender.runCycle(7)).toMatchObject({ kind: "discarded", code: "request_id_conflict" })
         now += 10 * MINUTE
         expect(await sender.runCycle(7)).toEqual({ kind: "idle" })
@@ -415,7 +436,7 @@ describe("UsageDeliveryWorker", () => {
         await observeAttempt("attempt-y", start + 2_000, 31_000, "compaction")
 
         expect(await sender.runCycle(7)).toEqual({ kind: "idle" })
-        now += SEALED_SHARD_SETTLE_MS
+        await settleAndSeal(sender)
         expect(await sender.runCycle(7)).toMatchObject({ kind: "delivered" })
 
         const sent = transport.deliveries[0].body
@@ -436,7 +457,7 @@ describe("UsageDeliveryWorker", () => {
         await observeAttempt("attempt-b", start + 2_000, 18_500)
 
         await sender.runCycle(7)
-        now += SEALED_SHARD_SETTLE_MS
+        await settleAndSeal(sender)
         const result = await sender.runCycle(7)
 
         expect(result).toMatchObject({ kind: "delivered", disposition: "accepted" })

@@ -2,6 +2,7 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { sealOpenAttemptBucket } from "@/services/telemetry/remote/usage/attemptBucket"
 import { foldUsageAttemptShards } from "@/services/telemetry/remote/usage/usageOutbox"
 import { type OtelStorageLayout, resolveOtelStorageLayout } from "../OtelStorageLayout"
 import { USAGE_SENDER_LEASE_MS, UsageOutboxRepository } from "../UsageOutboxRepository"
@@ -79,12 +80,17 @@ describe("UsageOutboxRepository", () => {
                 },
             ]
             let nextBucket = 0
-            const fold = (state: Parameters<typeof foldUsageAttemptShards>[0]) =>
-                foldUsageAttemptShards(state, shards, {
+            // Buckets close on fact count, so this shard's two attempts stay open after a
+            // fold. Sealing them is the maintenance boundary this test asserts on, not a
+            // consequence of the durations it chose.
+            const fold = (state: Parameters<typeof foldUsageAttemptShards>[0]) => {
+                const folded = foldUsageAttemptShards(state, shards, {
                     currentPolicyGeneration: 7,
                     newBucketId: () => `bucket-${++nextBucket}`,
                     sealedAt: now + 100_000,
                 })
+                return { ...folded, buckets: sealOpenAttemptBucket(folded.buckets, now + 100_000) }
+            }
 
             expect(await outbox.transactAttempts(grant, (state) => ({ state: fold(state), result: undefined }))).toEqual({
                 status: "committed",

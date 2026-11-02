@@ -115,20 +115,28 @@ describe("schema 4 attempt bucket reducer", () => {
         expect(state.open?.facts.map((fact) => fact.identity.modelId)).toEqual(["catalog:other"])
     })
 
-    it("seals after full-duration overshoot without clipping the attempt", () => {
+    it("keeps accumulating past the duration threshold and seals only on the fact limit", () => {
         let nextBucket = 0
         const options = { newBucketId: () => `bucket-${++nextBucket}`, sealedAt: () => 99_000 }
         let state = emptyAttemptBucketState()
         state = appendAttemptToBuckets(state, attempt({ attemptObservationId: "a", durationMs: 58_400 }), options)
         state = appendAttemptToBuckets(state, attempt({ attemptObservationId: "b", durationMs: 18_500 }), options)
 
-        expect(state.sealed).toHaveLength(1)
-        expect(state.sealed[0].durationMs).toBe(76_900)
-        expect(state.sealed[0].facts[0].duration.sum).toBe(76_900)
-        expect(state.open).toBeUndefined()
+        // 76_900 ms is past the grant's 60 000 ms threshold, but one slow request must
+        // not end the bucket: it still has room for 30 more facts.
+        expect(state.sealed).toHaveLength(0)
+        expect(state.open?.durationMs).toBe(76_900)
+        expect(state.open?.facts[0].duration.sum).toBe(76_900)
 
-        state = appendAttemptToBuckets(state, attempt({ attemptObservationId: "c", durationMs: 500 }), options)
-        expect(state.open?.durationMs).toBe(500)
+        // Same identity keeps folding into the one fact, so the bucket stays open no
+        // matter how much wall-clock time it has accumulated.
+        for (let index = 0; index < 10; index += 1) {
+            state = appendAttemptToBuckets(state, attempt({ attemptObservationId: `more-${index}`, durationMs: 60_000 }), options)
+        }
+        expect(state.sealed).toHaveLength(0)
+        expect(state.open?.facts).toHaveLength(1)
+        expect(state.open?.facts[0].requests.completed).toBe(12)
+        expect(state.open?.durationMs).toBe(76_900 + 600_000)
     })
 
     it("seals a low-frequency bucket at its bounded open-age boundary without waiting for another attempt", () => {

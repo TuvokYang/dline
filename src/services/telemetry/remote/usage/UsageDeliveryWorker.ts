@@ -152,6 +152,7 @@ export class UsageDeliveryWorker {
                 newBucketId: randomUUID,
                 sealedAt: committedAt,
                 eventWindowMs: attemptGrant?.contract.eventWindowMs,
+                ...(attemptGrant ? { durationBucketThresholdMs: attemptGrant.contract.durationBucketThresholdMs } : {}),
                 ...(attemptGrant ? { fits: usageBucketFitsGrant(attemptGrant, this.options.client) } : {}),
                 onRejected: (rejection) => rejected.push(rejection),
             })

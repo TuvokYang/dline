@@ -1,4 +1,5 @@
 import { fetch } from "@shared/net"
+import { dlineUserAgent } from "@/services/EnvUtils"
 import type { WireResponse } from "../contracts/classification"
 import type {
     ExchangeOperationRequest,
@@ -138,7 +139,7 @@ export class DlineOtelHttpClient
     constructor(options: DlineOtelHttpClientOptions) {
         this.endpoint = parseEndpoint(options.endpoint ?? DLINE_OTEL_ENDPOINT)
         this.timeoutMs = options.timeoutMs ?? DLINE_OTEL_REQUEST_TIMEOUT_MS
-        this.userAgent = `Dline/${options.clientVersion}`
+        this.userAgent = dlineUserAgent(options.clientVersion)
     }
 
     /** The service origin every request goes to; safe to log, it never carries a path or credentials. */

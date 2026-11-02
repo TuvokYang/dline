@@ -78,7 +78,7 @@ function foldAttempts(
     firstBucket = 0,
 ) {
     let nextBucket = firstBucket
-    return foldUsageAttemptShards(
+    const folded = foldUsageAttemptShards(
         state,
         shards.map((shard) => ({ claims: [], ...shard })),
         {
@@ -88,6 +88,19 @@ function foldAttempts(
             onRejected,
         },
     )
+    return folded
+}
+
+/**
+ * Fold, then close the open bucket as `takeUsageAttemptBatch` requires.
+ *
+ * Sealing is a fact-count decision now, so an attempt no longer closes its bucket by
+ * staying open for 60 s. These cases are about batching and bounding rather than
+ * about the seal rule, so they close the bucket explicitly at the fold's own seal time.
+ */
+function foldSealed(state: UsageAttemptOutboxState, shards: readonly TestShard[], firstBucket = 0): UsageAttemptOutboxState {
+    const folded = foldAttempts(state, shards, undefined, firstBucket)
+    return { ...folded, buckets: sealOpenAttemptBucket(folded.buckets, T0 + 100_000) }
 }
 
 describe("foldUsageAttemptShards", () => {
@@ -100,16 +113,17 @@ describe("foldUsageAttemptShards", () => {
         const folded = foldAttempts(emptyUsageAttemptOutbox(7), shards)
         const replayed = foldAttempts(folded, shards)
 
-        expect(folded.buckets.open).toBeUndefined()
-        expect(folded.buckets.sealed).toHaveLength(1)
-        expect(folded.buckets.sealed[0]).toMatchObject({
+        // 70 000 ms of wall-clock time no longer closes a bucket on its own, so the two
+        // attempts share the open bucket; the fold still orders and checkpoints them.
+        expect(folded.buckets.open?.bucketId).toBe("bucket-1")
+        expect(folded.buckets.sealed).toHaveLength(0)
+        expect(folded.buckets.open).toMatchObject({
             bucketId: "bucket-1",
             firstAttemptAt: T0 + 10_000,
             lastAttemptAt: T0 + 20_000,
             durationMs: 70_000,
-            sealedAt: T0 + 100_000,
         })
-        expect(folded.buckets.sealed[0].facts[0].requests.completed).toBe(2)
+        expect(folded.buckets.open?.facts[0].requests.completed).toBe(2)
         expect(folded.observationRevisions).toEqual({
             a: { revision: 1, bucketId: "bucket-1" },
             b: { revision: 1, bucketId: "bucket-1" },
@@ -242,8 +256,21 @@ describe("takeUsageAttemptBatch", () => {
     }
 
     it("takes only the first eight complete buckets and persists the grant interval plus jitter", () => {
-        const observations = Array.from({ length: 9 }, (_, index) => attemptObservation(`attempt-${index}`, T0 + index, 60_000))
-        const state = foldAttempts(emptyUsageAttemptOutbox(7), [{ name: "nine.attempts.sealed.jsonl", observations }])
+        // Nine distinct identities in one bucket would be one bucket, so each attempt is
+        // folded and sealed on its own to produce the nine buckets this case is about.
+        let state = emptyUsageAttemptOutbox(7)
+        for (let index = 0; index < 9; index += 1) {
+            state = foldSealed(
+                state,
+                [
+                    {
+                        name: `bucket-${index}.attempts.sealed.jsonl`,
+                        observations: [attemptObservation(`attempt-${index}`, T0 + index, 60_000, 1, `catalog:model-${index}`)],
+                    },
+                ],
+                index,
+            )
+        }
 
         const decision = takeAttempts(state, validation(), REQUEST_A, () => 1)
         if (decision.kind !== "batch") throw new Error(`expected batch, got ${decision.kind}`)
@@ -264,7 +291,7 @@ describe("takeUsageAttemptBatch", () => {
                 `catalog:model-${index}`,
             ),
         )
-        const state = foldAttempts(emptyUsageAttemptOutbox(7), [{ name: "facts.attempts.sealed.jsonl", observations }])
+        const state = foldSealed(emptyUsageAttemptOutbox(7), [{ name: "facts.attempts.sealed.jsonl", observations }])
 
         const decision = takeAttempts(state)
         if (decision.kind !== "batch") throw new Error(`expected batch, got ${decision.kind}`)
@@ -275,7 +302,7 @@ describe("takeUsageAttemptBatch", () => {
     })
 
     it("uses canonical UTF-8 bytes and the shared write-row formula to stop before an illegal second bucket", () => {
-        const state = foldAttempts(emptyUsageAttemptOutbox(7), [
+        const state = foldSealed(emptyUsageAttemptOutbox(7), [
             {
                 name: "bounds.attempts.sealed.jsonl",
                 observations: [attemptObservation("a", T0, 60_000), attemptObservation("b", T0 + 1, 60_000)],
@@ -311,7 +338,7 @@ describe("takeUsageAttemptBatch", () => {
             },
             taskAttempts: { count: 1, sum: 2, min: 2, max: 2 },
         }
-        const state = foldAttempts(emptyUsageAttemptOutbox(7), [
+        const state = foldSealed(emptyUsageAttemptOutbox(7), [
             {
                 name: "logical.attempts.sealed.jsonl",
                 observations: [attemptObservation("final", T0, 60_000, 1, "catalog:claude-opus-4-1", logicalExecution)],
@@ -357,16 +384,16 @@ describe("takeUsageAttemptBatch", () => {
     })
 
     it("bounds the retained FIFO prefix by bucket count and checkpoint bytes with explicit loss", () => {
-        const state = foldAttempts(emptyUsageAttemptOutbox(7), [
-            {
-                name: "backlog.attempts.sealed.jsonl",
-                observations: [
-                    attemptObservation("a", T0, 60_000),
-                    attemptObservation("b", T0 + 1, 60_000),
-                    attemptObservation("c", T0 + 2, 60_000),
-                ],
-            },
-        ])
+        // Three buckets, one attempt each: sealing is explicit now, so each attempt is
+        // folded and closed before the next one opens its own bucket.
+        let state = emptyUsageAttemptOutbox(7)
+        for (const [index, id] of ["a", "b", "c"].entries()) {
+            state = foldSealed(
+                state,
+                [{ name: `${id}.attempts.sealed.jsonl`, observations: [attemptObservation(id, T0 + index, 60_000)] }],
+                index,
+            )
+        }
         const oneBucketState = {
             ...state,
             buckets: { sealed: state.buckets.sealed.slice(0, 1) },
@@ -394,8 +421,53 @@ describe("takeUsageAttemptBatch", () => {
         expect(byBytes.losses).toEqual([{ bucketIds: ["bucket-2", "bucket-3"], violations: ["backlog_capacity"] }])
     })
 
+    /**
+     * The regression this guards: the bound used to reserialize the whole
+     * retained prefix once per candidate bucket, inside the outbox lock. With a
+     * few thousand pending buckets that is gigabytes of formatting per cycle and
+     * every other window missed its five-second acquire budget. Encoding work
+     * must grow with the number of buckets, not with its square.
+     */
+    it("measures each bucket once when bounding a large backlog", () => {
+        // One bucket per attempt: the bound cost is a function of how many buckets are
+        // retained, so the case needs many buckets rather than many facts in one bucket.
+        let state = emptyUsageAttemptOutbox(7)
+        for (let index = 0; index < 60; index += 1) {
+            state = foldSealed(
+                state,
+                [
+                    {
+                        name: `bulk-${index}.attempts.sealed.jsonl`,
+                        observations: [attemptObservation(`bulk-${index}`, T0 + index, 60_000, 1, `catalog:bulk-${index}`)],
+                    },
+                ],
+                index,
+            )
+        }
+        expect(state.buckets.sealed.length).toBeGreaterThan(1)
+
+        const original = JSON.stringify
+        let encodings = 0
+        // biome-ignore lint/suspicious/noExplicitAny: the spy has to sit under the module's own call
+        ;(JSON as any).stringify = (...args: Parameters<typeof original>) => {
+            encodings++
+            return original(...args)
+        }
+        try {
+            boundUsageAttemptBacklog(state, T0 + 100_000, { maxAgeMs: 1_000_000 })
+        } finally {
+            JSON.stringify = original
+        }
+
+        // Quadratic bounding encoded every bucket once per candidate, so the count
+        // tracked the bucket count squared. A linear pass stays close to the
+        // bucket count plus the handful of fixed documents around it.
+        const buckets = state.buckets.sealed.length
+        expect(encodings).toBeLessThan(buckets * 2)
+    })
+
     it("expires an immutable inflight as one unit and releases its checkpoints with age loss evidence", () => {
-        const state = foldAttempts(emptyUsageAttemptOutbox(7), [
+        const state = foldSealed(emptyUsageAttemptOutbox(7), [
             { name: "aged.attempts.sealed.jsonl", observations: [attemptObservation("a", T0, 60_000)] },
         ])
         const decision = takeAttempts(state)
@@ -414,7 +486,7 @@ describe("takeUsageAttemptBatch", () => {
     })
 
     it("keeps one immutable inflight across wait and replay, then releases buckets only on acknowledgement", () => {
-        const state = foldAttempts(emptyUsageAttemptOutbox(7), [
+        const state = foldSealed(emptyUsageAttemptOutbox(7), [
             { name: "replay.attempts.sealed.jsonl", observations: [attemptObservation("a", T0, 60_000)] },
         ])
         const decision = takeAttempts(state)
@@ -452,7 +524,7 @@ describe("takeUsageAttemptBatch", () => {
 
     it("replays an unknown outcome past a day and past twelve attempts until the grant's replay age ends", () => {
         const DAY_MS = 24 * 60 * 60_000
-        const state = foldAttempts(emptyUsageAttemptOutbox(7), [
+        const state = foldSealed(emptyUsageAttemptOutbox(7), [
             { name: "horizon.attempts.sealed.jsonl", observations: [attemptObservation("a", T0, 60_000)] },
         ])
         const decision = takeAttempts(state)

@@ -4,6 +4,7 @@ import type {
     PendingUsageLogicalClaim,
     SettledUsageAttemptShard,
 } from "@/core/storage/telemetry-remote/UsageObservationSpool"
+import { dlineUserAgent } from "@/services/EnvUtils"
 import type { DeliveryOutcome } from "../contracts/classification"
 import { USAGE_GRANT_HARD_LIMITS } from "../contracts/deviceGrant"
 import { DLINE_CONTRACT } from "../contracts/otlpProduction"
@@ -53,7 +54,7 @@ export interface UsageAttemptInflight {
 
 /** The `User-Agent` a manifest is bound to for as long as it may be replayed. */
 export function usageUserAgent(clientVersion: string): string {
-    return `Dline/${clientVersion}`
+    return dlineUserAgent(clientVersion)
 }
 
 /**
@@ -130,8 +131,19 @@ export type UsageInflightResolution =
 export const USAGE_ATTEMPT_BACKLOG_MAX_AGE_MS = MAX_WAIT_MS + USAGE_GRANT_HARD_LIMITS.maxRequestReplayAgeMs
 /** A bounded FIFO prefix large enough for 512 maximum-size requests. */
 export const USAGE_ATTEMPT_BACKLOG_MAX_BUCKETS = 4_096
-/** Durable bucket plus checkpoint budget; exact request bodies remain separately capped at 64 KiB. */
-export const USAGE_ATTEMPT_BACKLOG_MAX_BYTES = 64 * 1024 * 1024
+/**
+ * Durable bucket plus checkpoint budget; exact request bodies remain separately
+ * capped at 64 KiB.
+ *
+ * The backlog is rewritten in place under the outbox lock on every mutation, so
+ * this budget is also a bound on how long one window holds that lock. At the
+ * previous 64 MB one cycle read, parsed, compared and fsynced a document of that
+ * size several times, and other windows missed their five-second acquire budget
+ * while it did. 8 MB holds roughly 1,800 average buckets, which is far more than
+ * a day of production, and keeps one lock hold in the low hundreds of
+ * milliseconds.
+ */
+export const USAGE_ATTEMPT_BACKLOG_MAX_BYTES = 8 * 1024 * 1024
 
 export function emptyUsageAttemptOutbox(
     policyGeneration: number,
@@ -164,6 +176,13 @@ export interface UsageAttemptFoldOptions {
     readonly eventWindowMs?: number
     /** Capacity of one request under the current grant; see {@link usageBucketFitsGrant}. */
     readonly fits?: (sealed: AttemptBucket) => boolean
+    /**
+     * The grant's `durationBucketThresholdMs`: how much accumulated attempt time one
+     * bucket may hold. The service echoes this constant today, so leaving it unset
+     * keeps the compiled default; reading it from the grant means a service that
+     * changes the value does not need a client release to follow it.
+     */
+    readonly durationBucketThresholdMs?: number
     readonly onRejected?: (rejection: UsageAttemptObservationRejection) => void
 }
 
@@ -242,6 +261,9 @@ export function foldUsageAttemptShards(
                 newBucketId: options.newBucketId,
                 sealedAt: () => options.sealedAt,
                 eventWindowMs: options.eventWindowMs,
+                ...(options.durationBucketThresholdMs === undefined
+                    ? {}
+                    : { durationThresholdMs: options.durationBucketThresholdMs }),
                 fits: options.fits,
                 startsSession,
                 logicalClaimed,
@@ -366,31 +388,50 @@ export function boundUsageAttemptBacklog(
     }
     if (ageExpired.size > 0) bounded = releaseAttemptBuckets(bounded, ageExpired)
 
-    if (attemptBacklogStorageBytes(bounded) > maxBytes || retainedAttemptBucketCount(bounded) > maxBuckets) {
+    // One measurement feeds both this gate and the FIFO walk below. Formatting the
+    // document three times per cycle is the same waste as the per-candidate pass,
+    // just a smaller constant factor.
+    let measured = measureAttemptBacklog(bounded)
+    if (measuredTotalBytes(measured) > maxBytes || retainedAttemptBucketCount(bounded) > maxBuckets) {
         bounded = { ...bounded, buckets: sealOpenAttemptBucket(bounded.buckets, now) }
+        measured = measureAttemptBacklog(bounded)
     }
+    const bytesByBucket = measured.bytesByBucket
 
     const protectedIds = new Set(bounded.inflight?.bucketIds ?? [])
+    // Measure every bucket once. Reserializing the whole retained prefix per
+    // candidate bucket is quadratic in the backlog size and runs while the
+    // outbox lock is held, so a few thousand pending buckets made one cycle
+    // serialize gigabytes and left every other window waiting past its acquire
+    // budget. Bucket cost is independent of which siblings are retained, so a
+    // running total is exactly the same number.
+    const bytesOf = (bucket: AttemptBucket): number => bytesByBucket.get(bucket.bucketId) ?? 0
     const kept: AttemptBucket[] = []
     const capacityDropped: string[] = []
+    let keptBytes = measured.fixedBytes
     let capacityReached = false
     for (const bucket of bounded.buckets.sealed) {
         if (protectedIds.has(bucket.bucketId)) {
             kept.push(bucket)
+            keptBytes += bytesOf(bucket)
             continue
         }
         if (capacityReached) {
             capacityDropped.push(bucket.bucketId)
             continue
         }
-        const candidate = pruneAttemptCheckpoints({ ...bounded, buckets: { sealed: [...kept, bucket] } })
-        if (retainedAttemptBucketCount(candidate) > maxBuckets || attemptBacklogStorageBytes(candidate) > maxBytes) {
+        if (kept.length + 1 > maxBuckets || keptBytes + bytesOf(bucket) > maxBytes) {
             capacityReached = true
             capacityDropped.push(bucket.bucketId)
         } else {
             kept.push(bucket)
+            keptBytes += bytesOf(bucket)
         }
     }
+    // What survives is exactly the walked prefix, so its cost is already known.
+    // Re-measuring here would format the document once more for a number the loop
+    // just accumulated.
+    const retainedBytes = keptBytes
     if (capacityDropped.length > 0) {
         bounded = releaseAttemptBuckets({ ...bounded, buckets: { sealed: kept } }, new Set(capacityDropped))
     } else if (bounded.buckets.open === undefined) {
@@ -400,11 +441,34 @@ export function boundUsageAttemptBacklog(
     const losses: UsageAttemptBacklogLoss[] = []
     if (ageExpired.size > 0) losses.push({ bucketIds: [...ageExpired], violations: ["backlog_age"] })
     if (capacityDropped.length > 0) losses.push({ bucketIds: capacityDropped, violations: ["backlog_capacity"] })
-    return { state: bounded, losses, retainedBytes: attemptBacklogStorageBytes(bounded) }
+    return { state: bounded, losses, retainedBytes }
 }
 
 /** Conservative encoded storage bound for retained buckets and their live dedupe checkpoints. */
 export function attemptBacklogStorageBytes(state: UsageAttemptOutboxState): number {
+    return measuredTotalBytes(measureAttemptBacklog(state))
+}
+
+function measuredTotalBytes(measured: {
+    readonly fixedBytes: number
+    readonly bytesByBucket: ReadonlyMap<string, number>
+}): number {
+    let bytes = measured.fixedBytes
+    for (const cost of measured.bytesByBucket.values()) bytes += cost
+    return bytes
+}
+
+/**
+ * The same bound, split into its fixed part and one cost per retained bucket.
+ *
+ * A bucket's encoded cost depends only on its own checkpoints and claims, so the
+ * FIFO bound accumulates it instead of reserializing the whole prefix once per
+ * candidate. The two forms are the same number by construction.
+ */
+function measureAttemptBacklog(state: UsageAttemptOutboxState): {
+    readonly fixedBytes: number
+    readonly bytesByBucket: ReadonlyMap<string, number>
+} {
     const checkpointsByBucket = new Map<string, Record<string, UsageAttemptObservationCheckpoint>>()
     for (const [attemptId, checkpoint] of Object.entries(state.observationRevisions)) {
         const entries = checkpointsByBucket.get(checkpoint.bucketId) ?? {}
@@ -425,16 +489,18 @@ export function attemptBacklogStorageBytes(state: UsageAttemptOutboxState): numb
         sessionClaims: state.sessionClaims,
         inflight: state.inflight,
     }
-    let bytes = encodedBytes(fixed)
+    const bytesByBucket = new Map<string, number>()
     for (const bucket of buckets) {
-        bytes +=
+        bytesByBucket.set(
+            bucket.bucketId,
             encodedBytes({
                 bucket,
                 checkpoints: checkpointsByBucket.get(bucket.bucketId) ?? {},
                 logicalClaims: claimsByBucket.get(bucket.bucketId) ?? {},
-            }) + 2
+            }) + 2,
+        )
     }
-    return bytes
+    return { fixedBytes: encodedBytes(fixed), bytesByBucket }
 }
 
 function retainedAttemptBucketCount(state: UsageAttemptOutboxState): number {
