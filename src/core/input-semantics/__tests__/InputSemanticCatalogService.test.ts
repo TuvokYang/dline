@@ -53,6 +53,37 @@ describe("InputSemanticCatalogService trigger uniqueness", () => {
     })
 })
 
+describe("InputSemanticCatalogService gated built-in commands", () => {
+    const catalogWith = async (awayMode: boolean) => {
+        const service = new InputSemanticCatalogService(port(empty).port, { awayMode })
+        return service.refresh()
+    }
+
+    it("withdraws the away descriptor while the preference cannot enter the mode", async () => {
+        const withdrawn = await catalogWith(false)
+        expect(withdrawn.descriptors.map((descriptor) => descriptor.id)).not.toContain("command.away")
+        expect(withdrawn.descriptors.map((descriptor) => descriptor.trigger)).not.toContain("/away")
+    })
+
+    it("offers the away descriptor once the capability is enabled", async () => {
+        const offered = await catalogWith(true)
+        expect(offered.descriptors).toContainEqual(
+            expect.objectContaining({ id: "command.away", trigger: "/away", inputPolicy: "consume_token_keep_content" }),
+        )
+    })
+
+    it("advances the revision in both directions and settles once the answer is unchanged", async () => {
+        const service = new InputSemanticCatalogService(port(empty).port, { awayMode: true })
+        const enabled = await service.refresh()
+        const disabled = await service.setCommandAvailability({ awayMode: false })
+        expect(disabled.revision).toBeGreaterThan(enabled.revision)
+        expect(disabled.descriptors.map((descriptor) => descriptor.id)).not.toContain("command.away")
+
+        const repeated = await service.setCommandAvailability({ awayMode: false })
+        expect(repeated).toBe(disabled)
+    })
+})
+
 describe("InputSemanticCatalogService", () => {
     it("exposes the built-ins at revision 0 before discovery has run", () => {
         const service = new InputSemanticCatalogService(port(empty).port)

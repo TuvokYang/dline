@@ -29,6 +29,7 @@ import { telemetryService } from "../../../services/telemetry"
 import { BrowserSettings as SharedBrowserSettings } from "../../../shared/BrowserSettings"
 import { Controller } from ".."
 import { accountLogoutClicked } from "../account/accountLogoutClicked"
+import { publishInputSemanticCatalog } from "../slash/subscribeToInputSemanticCatalog"
 import { getAwaySettings } from "./awaySettings"
 
 /**
@@ -94,7 +95,20 @@ export async function updateSettings(controller: Controller, request: UpdateSett
             if (typeof request[key] !== "boolean") throw new Error(`${key} must be a boolean`)
             awayPatch[key] = request[key]
         }
-        if (Object.keys(awayPatch).length > 0) await getAwaySettings(controller.stateManager).mutate(awayPatch)
+        if (Object.keys(awayPatch).length > 0) {
+            await getAwaySettings(controller.stateManager).mutate(awayPatch)
+            // The catalog decides whether `/away` exists, so the composer must learn
+            // the new answer now. The preference is already committed at this point,
+            // and a failed capability refresh is recoverable on the next request, so
+            // it must not turn a successful settings write into an error.
+            try {
+                await publishInputSemanticCatalog(controller)
+            } catch (error) {
+                Logger.warn(
+                    `[AwaySettings] Failed to publish the command catalog after an Away change: ${error instanceof Error ? error.message : String(error)}`,
+                )
+            }
+        }
 
         if (request.clineEnv !== undefined) {
             ClineEnv.setEnvironment(request.clineEnv)
