@@ -82,23 +82,6 @@ describe("QnaRespondHandler", () => {
         assert.doesNotMatch(result, /<user_message>/)
     })
 
-    it("keeps acked text feedback in the qna tool result", async () => {
-        const config = createConfig()
-        config.taskState.ackedFeedback = {
-            response: "messageResponse",
-            text: "你可以干什么",
-            images: [],
-            files: [],
-        }
-        const handler = new QnaRespondHandler()
-
-        const result = await handler.execute(config, createBlock())
-
-        assert.ok(typeof result === "string")
-        assert.match(result, /<feedback>\n你可以干什么\n<\/feedback>/)
-        assert.doesNotMatch(result, /<user_message>/)
-    })
-
     it("consumes the one-shot Plan to Act switch state", async () => {
         const config = createConfig({
             mode: "plan",

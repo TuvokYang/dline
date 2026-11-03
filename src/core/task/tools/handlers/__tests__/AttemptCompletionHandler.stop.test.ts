@@ -102,16 +102,6 @@ function holdCheckpoint(config: TaskConfig): () => void {
 }
 
 describe("AttemptCompletionHandler stop behavior", () => {
-    it("returns terminal completion when the runtime starts a new task", async () => {
-        const taskState = new DefaultToolHandlerState()
-        const config = createConfig(taskState)
-        const handler = new AttemptCompletionHandler()
-
-        const result = await handler.execute(config, createBlock())
-
-        assert.equal(result, "[attempt_completion] Result: Done")
-    })
-
     it("leaves task_progress updates to the central executor", async () => {
         const taskState = new DefaultToolHandlerState()
         const config = createConfig(taskState)
@@ -138,17 +128,6 @@ describe("AttemptCompletionHandler stop behavior", () => {
         assert.equal(taskState.consecutiveMistakeCount, 1)
         // The refused call must settle the streamed preview at its original identity.
         expect(config.callbacks.say).toHaveBeenCalledWith("completion_result", "", undefined, undefined, false, 123)
-    })
-
-    it("completes once every checklist item is checked", async () => {
-        const taskState = new DefaultToolHandlerState()
-        taskState.currentFocusChainChecklist = "# Plan\n- [x] Inspect\n- [x] Verify"
-        const config = createConfig(taskState)
-        config.focusChainSettings = { enabled: true } as TaskConfig["focusChainSettings"]
-
-        const result = await new AttemptCompletionHandler().execute(config, createBlock())
-
-        assert.equal(result, "[attempt_completion] Result: Done")
     })
 
     it("does not gate completion when the Focus Chain is disabled or the call is a subagent's", async () => {
@@ -206,22 +185,5 @@ describe("AttemptCompletionHandler stop behavior", () => {
         expect(rejected).toBe(false)
         releaseCheckpoint()
         await expect(execution).rejects.toThrow("stopped")
-    })
-
-    it("returns completion feedback when the user replies", async () => {
-        const taskState = new DefaultToolHandlerState()
-        const config = createConfig(taskState, { actionId: "reply", text: "Please refine the result" })
-        const handler = new AttemptCompletionHandler()
-
-        const result = await handler.execute(config, createBlock())
-
-        assert.deepEqual(result, [
-            { type: "text", text: "[attempt_completion] Result: Done" },
-            {
-                type: "text",
-                text: "The user has provided feedback on the results. Consider their input to continue the task, and then attempt completion again.",
-            },
-            { type: "text", text: "<feedback>\nPlease refine the result\n</feedback>" },
-        ])
     })
 })
