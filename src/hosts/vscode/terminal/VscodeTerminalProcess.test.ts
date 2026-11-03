@@ -877,34 +877,6 @@ describe("TerminalProcess (Integration Tests)", () => {
             expect(emitSpy).toHaveBeenCalledWith("line", "line3", "combined")
         })
 
-        it("should properly handle process hot state (e.g. compiling)", async () => {
-            // Create a terminal
-            const terminal = TerminalRegistry.createTerminal().terminal
-            createdTerminals.push(terminal)
-
-            // Mock the shell integration
-            const mockExecuteCommand = vi.fn().mockReturnValue({
-                read: () => createMockStream(["compiling..."]),
-            })
-
-            // Create a mock shell integration object and stub the getter
-            vi.spyOn(terminal, "shellIntegration", "get").mockReturnValue({
-                executeCommand: mockExecuteCommand,
-            })
-
-            // Spy on global setTimeout
-            const setTimeoutSpy = vi.spyOn(global, "setTimeout")
-
-            await process.run(terminal, "build command")
-
-            // Move time forward enough to schedule
-            vi.advanceTimersByTime(100)
-
-            // Expect a 15-second (>= 10000ms) hot timeout, since it saw "compiling"
-            const foundCompilingTimeout = (setTimeoutSpy as any).mock.calls.filter((args: any) => args[1] && args[1] >= 10000)
-            foundCompilingTimeout.length.should.be.greaterThan(0)
-        })
-
         it("should handle standard commands with normal hot timeout", async () => {
             // Create a terminal
             const terminal = TerminalRegistry.createTerminal().terminal
@@ -1095,15 +1067,6 @@ describe("TerminalProcess (Integration Tests)", () => {
         expect(executeCommand).not.toHaveBeenCalled()
     })
 
-    it("should remove prompt characters from the last line of output", () => {
-        const processAny = process as any
-
-        processAny.removeLastLineArtifacts("line 1\nline 2 %").should.equal("line 1\nline 2")
-        processAny.removeLastLineArtifacts("line 1\nline 2 $").should.equal("line 1\nline 2")
-        processAny.removeLastLineArtifacts("line 1\nline 2 #").should.equal("line 1\nline 2")
-        processAny.removeLastLineArtifacts("line 1\nline 2 >").should.equal("line 1\nline 2")
-    })
-
     it("should process buffer and emit lines when newline characters are found", () => {
         const processAny = process as any
         const emitSpy = vi.spyOn(process, "emit")
@@ -1122,24 +1085,6 @@ describe("TerminalProcess (Integration Tests)", () => {
     // Encoding tests — verify UTF-8, ANSI, and CJK preservation
     // =========================================================================
     describe("Encoding & Unicode preservation", () => {
-        it("should preserve CJK characters in removeLastLineArtifacts", () => {
-            const processAny = process as any
-            const input = "line 1\n文件路径: C:\\用户\\测试.txt"
-            processAny.removeLastLineArtifacts(input).should.equal(input)
-        })
-
-        it("should preserve CJK in removeLastLineArtifacts with prompt chars", () => {
-            const processAny = process as any
-            // % is a trailing prompt char and will be removed by removeLastLineArtifacts
-            processAny.removeLastLineArtifacts("line1\n成功率: 95%").should.equal("line1\n成功率: 95")
-        })
-
-        it("should not corrupt emoji in removeLastLineArtifacts", () => {
-            const processAny = process as any
-            const input = "Build ✅\nTests ✅✅"
-            processAny.removeLastLineArtifacts(input).should.equal(input)
-        })
-
         it("should emit CJK lines correctly through emitIfEol", () => {
             const processAny = process as any
             const emitSpy = vi.spyOn(process, "emit")

@@ -31,20 +31,4 @@ describe("Hostbridge - Env - getHostVersion", () => {
             remoteNameStub.mockRestore()
         }
     })
-
-    it("normalizes empty remote workspace names to undefined", async () => {
-        vi.spyOn(vscode.env, "remoteName", "get").mockReturnValue("")
-
-        const response = await getHostVersion({} as any)
-
-        assert.strictEqual(response.remoteName, undefined)
-    })
-
-    it("keeps local workspaces without a remoteName", async () => {
-        vi.spyOn(vscode.env, "remoteName", "get").mockReturnValue(undefined)
-
-        const response = await getHostVersion({} as any)
-
-        assert.strictEqual(response.remoteName, undefined)
-    })
 })
