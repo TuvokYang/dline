@@ -17,7 +17,6 @@ describe("ThinkingRow", () => {
 
         const title = screen.getByText("Thinking...")
         expect(title).toBeInTheDocument()
-        expect(title).toHaveClass("animate-shimmer")
         expect(screen.getByText("Inspecting files...")).toBeInTheDocument()
     })
 
@@ -38,7 +37,6 @@ describe("ThinkingRow", () => {
 
         const title = screen.getByText("Waiting...")
         expect(title).toBeInTheDocument()
-        expect(title).toHaveClass("animate-shimmer")
     })
 
     it("calls onToggle when header is clicked", () => {

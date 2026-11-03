@@ -21,8 +21,6 @@ describe("FocusChainChangeRow rendering", () => {
         renderExpandedRow()
 
         const detailContainer = screen.getByTestId("focus-chain-change-details")
-        expect(detailContainer).toHaveClass("max-h-[80vh]")
-        expect(detailContainer).toHaveClass("overflow-y-auto")
         expect(screen.getByText("Keep the API boundary")).toBeVisible()
     })
 

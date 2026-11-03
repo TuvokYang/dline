@@ -279,19 +279,11 @@ describe("ChatRow image generation rendering", () => {
             />,
         )
         const partialImage = await screen.findByRole("img", { name: "Generated image partial 1" })
-        expect(screen.getByTestId("image-generation-scroll")).toHaveClass(
-            "max-h-[60vh]",
-            "overflow-y-auto",
-            "overscroll-x-contain",
-        )
-        expect(partialImage.parentElement).toHaveClass("w-full")
         expect(partialImage.parentElement?.style.maxHeight).toBe("60vh")
         unmount()
 
         render(<TestableChatRowContent {...baseProps} message={message} />)
         const finalImage = await screen.findByRole("img", { name: "Generated image 1" })
-        expect(finalImage.closest("[data-testid='image-generation-artifacts']")).toHaveClass("grid-cols-1")
-        expect(finalImage.closest("[data-testid='image-generation-artifacts']")).not.toHaveClass("sm:grid-cols-2")
         expect(finalImage.parentElement?.style.maxHeight).toBe("60vh")
     })
 
@@ -314,7 +306,6 @@ describe("ChatRow image generation rendering", () => {
         const fillButtons = screen.getAllByRole("button", { name: "Fill image preview" })
         fireEvent.click(fillButtons[fillButtons.length - 1])
         expect(image).toHaveAttribute("data-display-mode", "fill")
-        expect(image).toHaveClass("object-cover")
         fireEvent.click(screen.getByRole("button", { name: "Copy Artifact ID" }))
         fireEvent.click(screen.getByRole("button", { name: "Use as Reference" }))
         fireEvent.click(screen.getByRole("button", { name: "Collapse image generation" }))

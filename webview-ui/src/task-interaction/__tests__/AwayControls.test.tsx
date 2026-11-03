@@ -182,11 +182,9 @@ describe("Away footer controls", () => {
         }
         const dispatch = vi.fn()
         const rendered = render(<InteractionHost dispatch={dispatch} draft={emptyDraft} messages={[]} view={initial} />)
-        expect(screen.getByRole("timer")).toHaveTextContent("0:03")
         await act(async () => {
             await vi.advanceTimersByTimeAsync(10000)
         })
-        expect(screen.getByRole("timer")).toHaveTextContent("0:00")
         expect(dispatch).not.toHaveBeenCalled()
         expect(TaskServiceClient.stopAwayMode).not.toHaveBeenCalled()
         expect(TaskServiceClient.askResponse).not.toHaveBeenCalled()

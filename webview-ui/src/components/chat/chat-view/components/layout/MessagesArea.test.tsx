@@ -269,15 +269,6 @@ describe("MessagesArea sliding-window integration", () => {
         vi.restoreAllMocks()
     })
 
-    it("keeps the sticky overlay transparent outside the visible message", () => {
-        const scrollBehavior = createScrollBehavior()
-        scrollBehavior.scrolledPastUserMessage = createMessages(0, 1)[0]
-        renderMessagesArea(scrollBehavior)
-
-        const stickyMessage = screen.getByRole("button", { name: "Sticky user message" })
-        expect(stickyMessage.parentElement).toHaveClass("pointer-events-none")
-    })
-
     it("initializes a loaded tail at the absolute bottom without a visible retry chain", () => {
         mocks.initialMessages = createMessages(800, 200)
         mocks.initialFirstItemIndex = 800

@@ -561,7 +561,8 @@ describe("ToolAdmissionRegistry", () => {
         expect(result.outcome).toBe("admitted")
         if (result.outcome !== "admitted") throw new Error("expected admission")
         expect(result.decision).toMatchObject({ kind: "manual", scope: "command_all" })
-        expect(result.presentation?.body).toContain(`Working directory: ${path.resolve(inputSnapshot.cwd, "commands")}`)
+        expect(result.presentation?.body).toBe("echo ok")
+        expect(result.presentation?.commandWorkingDirectory).toBe(path.resolve(inputSnapshot.cwd, "commands"))
     })
 
     it("combines the MCP category toggle with the per-tool gate in the single resolver", () => {

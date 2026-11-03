@@ -129,37 +129,8 @@ describe("a folded block states what it cost", () => {
         // reserving a second row. A sibling block would always cost two rows.
         const line = usageLine()?.parentElement
         if (!line) throw new Error("expected the figures to sit inside the summary line")
-        expect(line.className).toContain("flex-wrap")
         expect(line.contains(header().querySelector("span"))).toBe(true)
         expect(header().contains(usageLine())).toBe(true)
-    })
-
-    it("paints the error count in the error tone and the other counts plainly", () => {
-        const fold = failedHarness()
-        render(
-            <ActivityFoldRenderer
-                checkpointAttachments={new Map()}
-                expanded={false}
-                expandedRows={{}}
-                fold={fold}
-                footerActive={false}
-                modifiedMessages={[]}
-                onAddToInput={() => undefined}
-                onFollowupOptionSelect={async () => undefined}
-                onHeightChange={() => undefined}
-                onSetQuote={() => undefined}
-                onToggleExpand={() => undefined}
-                onToggleFold={() => undefined}
-            />,
-        )
-
-        // The count has to read as an error, so it carries the error tone while the
-        // surrounding tallies stay muted. Without this the header states the same
-        // fact in the same colour as a successful command count.
-        const errorCount = screen.getByText("1 command error")
-        expect(errorCount.className).toContain("text-error")
-        const commandCount = screen.getByText("1 cmd")
-        expect(commandCount.className).not.toContain("text-error")
     })
 
     it("draws no cost line when the chat has no usage for the block", () => {

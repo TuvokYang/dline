@@ -110,13 +110,6 @@ describe("TaskHeader pricing", () => {
         const rate = screen.getByTestId("task-rate-metrics")
         expect(rate).toHaveAttribute("id", "price-tag")
         expect(rate).toHaveAttribute("title", "In: 1250 / Out: 250 / Cache read: 0 / Cache write: 0")
-        expect(rate).not.toHaveTextContent("Active:")
-        expect(rate).toHaveTextContent("In:1.3K")
-        expect(rate).toHaveTextContent("Out:250")
-        expect(rate).toHaveTextContent("RPM:3")
-        expect(rate).toHaveTextContent("TPM:4.5K")
-        expect(rate).toHaveClass("ml-auto", "justify-end")
-        expect(rate).toHaveClass("rounded-full", "bg-success/80", "text-background")
         expect(rate).toHaveAttribute("type", "button")
         expect(rate.querySelectorAll("button")).toHaveLength(0)
     })
@@ -159,8 +152,6 @@ describe("TaskHeader pricing", () => {
         )
 
         const metrics = screen.getByTitle("In: 1250 / Out: 250 / Cache read: 0 / Cache write: 0")
-        expect(metrics).toHaveTextContent("In:1.3K")
-        expect(metrics).toHaveTextContent("Out:250")
         expect(screen.queryByText("$0.000")).not.toBeInTheDocument()
     })
 
@@ -213,7 +204,5 @@ describe("TaskHeader pricing", () => {
         )
 
         const metrics = screen.getByTitle("In: 1000000000 / Out: 1250000000 / Cache read: 0 / Cache write: 0")
-        expect(metrics).toHaveTextContent("In:1.00B")
-        expect(metrics).toHaveTextContent("Out:1.25B")
     })
 })

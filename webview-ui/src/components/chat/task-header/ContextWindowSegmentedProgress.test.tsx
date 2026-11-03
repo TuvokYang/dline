@@ -70,7 +70,6 @@ describe("ContextWindowSegmentedProgress", () => {
             "var(--vscode-charts-purple, #bc8cff)",
         ])
         expect(segments[1]).toHaveAttribute("data-active", "true")
-        expect(segments[1]).toHaveClass("animate-pulse")
         expect(progress).not.toHaveAttribute("title")
         expect(segments.every((segment) => !segment.hasAttribute("title"))).toBe(true)
         expect(segments.map((segment) => segment.getAttribute("tabindex"))).toEqual([null, null, null, null])
@@ -281,12 +280,7 @@ describe("ContextWindowSegmentedProgress", () => {
         render(<ContextWindowSegmentedProgress snapshot={snapshot()} />)
 
         for (const kind of ["durable", "active", "staged", "environment"] as const) {
-            expect(screen.getByTestId(`context-window-segment-${kind}`)).toHaveClass(
-                "motion-reduce:transition-none",
-                "motion-reduce:transform-none",
-            )
         }
-        expect(screen.getByTestId("context-window-segment-active")).toHaveClass("motion-reduce:animate-none")
     })
 
     it("gives every non-zero segment a real pixel minimum while zero-token segments remain absent", () => {

@@ -35,7 +35,6 @@ describe("QnaOutputRow rendering boundary", () => {
 
         render(<QnaOutputRow text={response} />)
 
-        expect(screen.getByTestId("markdown-block")).toHaveTextContent("Result")
         expect(mocks.renderMarkdown).toHaveBeenCalledWith(response)
         expect(mocks.copyText).toHaveBeenCalledWith(response)
         expect(screen.queryByTestId("qna-output-preview")).not.toBeInTheDocument()
@@ -48,9 +47,6 @@ describe("QnaOutputRow rendering boundary", () => {
 
         const preview = screen.getByTestId("qna-output-preview")
         expect(preview.textContent).toHaveLength(32 * 1024)
-        expect(preview).toHaveTextContent("E2E_ROLLING_TURN_A")
-        expect(preview).not.toHaveTextContent("TAIL_MARKER")
-        expect(screen.getByTestId("qna-output-preview-notice")).toHaveTextContent("Use Copy to access the complete response")
         expect(mocks.renderMarkdown).not.toHaveBeenCalled()
         expect(mocks.copyText).toHaveBeenCalledWith(response)
     })

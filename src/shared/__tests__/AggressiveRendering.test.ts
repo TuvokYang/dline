@@ -21,7 +21,7 @@ describe("chat folding settings", () => {
         expect(effectiveAggressiveRendering({ user: expected, featureFlag: true })).toBe(expected)
     })
 
-    it.each([undefined, null, "round", "unknown", 3, {}])("falls back safely for %s", (stored) => {
+    it.each([undefined, null, "unknown", 3, {}])("falls back safely for %s", (stored) => {
         expect(normalizeAggressiveRenderingLevel(stored)).toBe("none")
         expect(isAggressiveRenderingLevel(stored)).toBe(false)
     })

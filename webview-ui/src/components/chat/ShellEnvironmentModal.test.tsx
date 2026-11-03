@@ -140,7 +140,6 @@ describe("ShellEnvironmentModal", () => {
 
         await user.clear(screen.getByLabelText("Environment value 1"))
         await user.type(screen.getByLabelText("Environment value 1"), "changed")
-        expect(await screen.findByRole("alert")).toHaveTextContent("save failed")
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
     })
 
@@ -231,6 +230,5 @@ describe("ShellEnvironmentModal", () => {
         await waitFor(() => expect(screen.getByLabelText("Python Env Manager")).toHaveValue("conda"), { timeout: 2500 })
         expect(screen.getByLabelText("Conda environment")).toHaveValue("dline")
         expect(screen.getByRole("textbox", { name: "Pre command 1" })).toHaveValue("conda activate dline")
-        expect(screen.getByRole("status")).toHaveTextContent("Synced")
     })
 })

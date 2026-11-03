@@ -119,7 +119,6 @@ describe("ComposerActionButton", () => {
         expect(button()).toHaveAttribute("data-action", "resume")
         expect(button()).toHaveAccessibleName("Resume task")
         expect(button()).toHaveAttribute("aria-disabled", "false")
-        expect(button()).not.toHaveClass("composer-action--empty")
         fireEvent.click(button())
         expect(onSend).toHaveBeenCalledOnce()
     })

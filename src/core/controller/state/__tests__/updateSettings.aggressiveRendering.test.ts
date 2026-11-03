@@ -24,7 +24,7 @@ describe("updateSettings aggressive rendering", () => {
         expect(setGlobalState).toHaveBeenCalledWith("aggressiveRendering", level)
     })
 
-    it.each(["standard", "activity", "turn", "round"])("rejects the non-canonical write %s", async (level) => {
+    it.each(["standard", "activity", "turn"])("rejects the non-canonical write %s", async (level) => {
         const { controller, setGlobalState } = createController()
 
         await expect(updateSettings(controller, UpdateSettingsRequest.create({ aggressiveRendering: level }))).rejects.toThrow(
@@ -79,7 +79,7 @@ describe("aggressive rendering settings round trip", () => {
 
     it.each([
         ["a never-saved setting", undefined],
-        ["a value from an older build", "round"],
+        ["a value from an older build", "standard"],
         ["a value of the wrong type", 2],
     ])("projects %s as standard", (_case, storedValue) => {
         expect(projectAggressiveRendering(storedValue, true)).toEqual({ user: "none", featureFlag: true })

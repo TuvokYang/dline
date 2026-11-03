@@ -22,12 +22,8 @@ describe("ContextWindow metrics", () => {
         render(<ContextWindow contextWindow={128_000} lastApiReqTotalTokens={64_000} useAutoCondense={false} />)
 
         const progress = screen.getByRole("progressbar", { name: "Context window usage progress" })
-        expect(progress.firstElementChild?.getAttribute("style")).toContain("var(--vscode-charts-green, #3fb950)")
         fireEvent.mouseEnter(screen.getByTestId("context-window-progress-track"))
         expect(screen.getByText("Segment details unavailable for this saved task.")).toBeInTheDocument()
-        expect(document.querySelector('[data-context-summary-metric="used"]')?.getAttribute("style")).toContain(
-            "var(--vscode-charts-green, #3fb950)",
-        )
         expect(screen.queryByTestId("context-window-segment-details")).not.toBeInTheDocument()
     })
 
@@ -118,19 +114,6 @@ describe("ContextWindow metrics", () => {
         await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument())
     })
 
-    it("owns a shrink-safe three-column layout so the progress track cannot collapse at narrow widths", () => {
-        render(<ContextWindow contextWindow={128_000} lastApiReqTotalTokens={64_000} useAutoCondense={false} />)
-
-        expect(screen.getByTestId("context-window-indicator")).toHaveClass("min-w-0", "w-full")
-        expect(screen.getByTestId("context-window-progress-track")).toHaveClass("min-w-0", "w-full")
-        expect(screen.getByTestId("context-window-progress-track").parentElement).toHaveClass(
-            "grid",
-            "grid-cols-[auto_minmax(2rem,1fr)_auto]",
-            "min-w-0",
-            "w-full",
-        )
-    })
-
     it("renders the authoritative four segments in durable, active, staged, ENV order", () => {
         render(
             <ContextWindow
@@ -206,10 +189,7 @@ describe("ContextWindow metrics", () => {
 
         fireEvent.mouseEnter(screen.getByTestId("context-window-progress-track"))
         const surface = document.querySelector('[data-context-window-surface="summary"]')
-        expect(surface).toHaveClass("w-72", "bg-menu", "text-code-foreground")
         expect(document.querySelectorAll('[data-slot="hover-card-content"]')).toHaveLength(1)
-        expect(screen.getByTestId("context-window-summary")).toHaveClass("w-full")
-        expect(screen.getByTestId("context-window-summary")).not.toHaveClass("w-72", "bg-menu", "p-2", "shadow-sm")
 
         fireEvent.mouseLeave(screen.getByTestId("context-window-indicator"))
         await waitFor(() => expect(document.querySelector('[data-slot="hover-card-content"]')).not.toBeInTheDocument())

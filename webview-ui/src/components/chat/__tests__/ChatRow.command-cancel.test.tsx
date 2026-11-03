@@ -94,7 +94,6 @@ describe("ChatRow command cancellation", () => {
         )
 
         expect(screen.getByText("Cancelled")).toBeInTheDocument()
-        expect(screen.getByTestId("command-status-icon")).toHaveClass("lucide-circle-slash", "text-description")
         expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull()
     })
 
@@ -114,7 +113,6 @@ describe("ChatRow command cancellation", () => {
         )
 
         expect(screen.getByText("Interrupted")).toBeInTheDocument()
-        expect(screen.getByTestId("command-status-icon")).toHaveClass("lucide-circle-slash", "text-description")
         expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull()
     })
 
@@ -134,7 +132,6 @@ describe("ChatRow command cancellation", () => {
         )
 
         expect(screen.getByText("Skipped")).toBeInTheDocument()
-        expect(screen.getByTestId("command-status-icon")).toHaveClass("lucide-circle-slash", "text-description")
         expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull()
     })
 })

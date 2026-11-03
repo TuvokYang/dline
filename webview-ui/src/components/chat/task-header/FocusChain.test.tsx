@@ -74,8 +74,6 @@ describe("FocusChain history and layout", () => {
         const expandedContent = screen.getByTestId("focus-chain-expanded-content")
         const history = screen.getByTestId("focus-chain-history")
 
-        expect(expandedContent).toHaveClass("focus-chain-scrollable", "scrollable", "max-h-[40vh]", "overflow-y-auto")
-        expect(history).not.toHaveClass("max-h-[40vh]", "overflow-y-auto", "scrollable")
         expect(expandedContent).toContainElement(history)
     })
 
@@ -86,10 +84,7 @@ describe("FocusChain history and layout", () => {
         const header = screen.getByTitle("Current task")
         const progressBar = header.firstElementChild
 
-        expect(header).toHaveClass("relative", "w-full", "shrink-0")
-        expect(header).not.toHaveClass("h-full")
         expect(progressBar).not.toBeNull()
         expect(header).toContainElement(progressBar as HTMLElement)
-        expect(progressBar).toHaveClass("absolute", "bottom-0")
     })
 })

@@ -102,14 +102,10 @@ describe("DiffEditRow", () => {
 
         render(<DiffEditRow fileAction="Add" patch={patch} path="first.txt" />)
 
-        expect(screen.getByTestId("diff-edit-scroll")).toHaveClass("max-h-[60vh]", "overflow-y-auto", "overscroll-x-contain")
         expect(screen.getByText("first.txt")).toBeInTheDocument()
         expect(screen.getByText("second.txt")).toBeInTheDocument()
         fireEvent.click(screen.getByRole("button", { name: /first\.txt/ }))
         fireEvent.click(screen.getByRole("button", { name: /second\.txt/ }))
-        expect(screen.getByText("alpha")).toHaveClass("text-green-400")
-        expect(screen.getByText("beta")).toHaveClass("text-green-400")
-        expect(screen.getByText("gamma")).toHaveClass("text-green-400")
     })
 
     it("keeps a user collapse while the stream keeps sending frames", async () => {

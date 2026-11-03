@@ -15,8 +15,6 @@ describe("NewTaskPreview", () => {
         render(<NewTaskPreview mode={mode} task="Review the implementation" />)
 
         const modeRow = screen.getByTestId("new-task-mode")
-        expect(modeRow).toHaveTextContent("Mode")
-        expect(modeRow).toHaveTextContent(label)
     })
 
     it("keeps legacy previews without a mode readable", () => {

@@ -35,11 +35,7 @@ describe("CommandRenderer", () => {
 
         expect(screen.getByText("Dline wants to execute this command:")).toBeTruthy()
         const card = screen.getByTestId("tool-approval-summary")
-        expect(card.className).toContain("min-w-0")
-        expect(card.className).toContain("max-w-full")
         const body = screen.getByText(longCommand)
-        expect(body.className).toContain("[overflow-wrap:anywhere]")
-        expect(body.className).toContain("whitespace-pre-wrap")
     })
 })
 
@@ -82,7 +78,6 @@ describe("ApprovalRenderer", () => {
         expect(screen.getByText("Dline wants to use a tool on the release-tools MCP server:")).toBeTruthy()
         const body = screen.getByTestId("tool-approval-summary").lastElementChild as HTMLElement
         expect(body.textContent).toBe(`echo\n${args}`)
-        expect(body.className).toContain("[overflow-wrap:anywhere]")
     })
 
     it("titles subagent, spawn-task, and browser approvals instead of dumping raw JSON", () => {

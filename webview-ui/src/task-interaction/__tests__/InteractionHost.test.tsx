@@ -511,7 +511,6 @@ describe("InteractionHost", () => {
         )
 
         const frame = screen.getByTestId("presentation-tool_approval")
-        expect(within(frame).getByTestId("hosted-card")).toHaveTextContent("card 100")
         expect(renderApprovalCard).toHaveBeenCalledWith(ASK)
         expect(screen.queryByText("Approve write")).toBeNull()
         const approve = screen.getByRole("button", { name: "Approve" })

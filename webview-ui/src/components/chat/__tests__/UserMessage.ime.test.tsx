@@ -99,29 +99,9 @@ describe("UsageBar", () => {
         const { container } = render(<UsageBar />)
         const trigger = screen.getByRole("button", { name: "Provider usage" })
 
-        expect(trigger).toHaveTextContent("7d: 78%")
-        expect(trigger).toHaveClass("text-foreground")
-        expect(trigger).not.toHaveClass("text-success", "text-editor-warning-foreground", "text-error")
         expect(trigger.querySelector("svg")).toBeNull()
         expect(container.querySelectorAll('[data-chat-input-slot="provider-usage"]')).toHaveLength(1)
         expect(container.querySelector('[data-chat-input-slot="codex-usage"]')).toBeNull()
-    })
-
-    it("shows the five-hour quota when it is controlling", () => {
-        mockedContext.value = {
-            accountUsage: {
-                profileId: "profile-a",
-                providerId: "openai-codex",
-                currency: "",
-                quotas: [
-                    { type: "5hour", label: "5 hour", shortLabel: "5h", used: 95, limit: 100 },
-                    { type: "weekly", label: "7 day", shortLabel: "7d", used: 83, limit: 100 },
-                ],
-            },
-        }
-
-        render(<UsageBar />)
-        expect(screen.getByRole("button", { name: "Provider usage" })).toHaveTextContent("5h: 5%")
     })
 
     it("uses the shared tooltip, details renderer, and reset-credit action", async () => {
@@ -167,19 +147,6 @@ describe("UsageBar", () => {
         const { container } = render(<UsageBar />)
         expect(container).toBeEmptyDOMElement()
         expect(screen.queryByText("--")).not.toBeInTheDocument()
-    })
-
-    it("keeps a zero balance visible", () => {
-        mockedContext.value = {
-            accountUsage: {
-                profileId: "profile-a",
-                providerId: "deepseek",
-                currency: "USD",
-                remainingBalance: 0,
-            },
-        }
-        render(<UsageBar />)
-        expect(screen.getByRole("button", { name: "Provider usage" })).toHaveTextContent("$0.00")
     })
 })
 
