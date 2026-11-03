@@ -57,7 +57,7 @@ After creation:
 - The full TODO list is shown in `environment_details`.
 
 ### itemMismatchRejected
-TODO list update rejected — NEXT TOOL CALLS BLOCKED. The submitted completed items do not match the stored TODO list.
+TODO list update rejected. The submitted completed items do not match the stored TODO list; the committed checklist is unchanged.
 
 Unmatched items:
 - Fake item A
@@ -72,8 +72,8 @@ Complete items in strict order FIRST. If the plan needs to change, use change_to
 ### planModeReminder
 # TODO LIST (RECOMMENDED IN PLAN MODE)
 
-When presenting a finalized plan through `make_plan`, include a TODO list with a `# Title`, optional `## Section` headings, and at least one non-empty item.
-After the list is active, changing its structure requires `change_todo_list` and user approval.
+When presenting a finalized plan through `make_plan`, create a TODO list with a `# Title` and at least one non-empty unchecked item only if no list exists or the old list is fully complete. Otherwise send only a legal incremental update, or omit task_progress if nothing changed.
+Changing an unfinished list's structure still requires `change_todo_list` and user approval.
 
 
 Use `task_progress` only when completion state or the current work changes:

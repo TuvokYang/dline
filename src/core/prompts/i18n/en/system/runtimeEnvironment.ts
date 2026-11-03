@@ -9,9 +9,9 @@ const prompts: Record<string, string> = {
 - You can use the browser_action tool to interact with websites (including html files and locally running development servers) through a Puppeteer-controlled browser when you feel it is necessary in accomplishing the user's task. This tool is particularly useful for web development tasks as it allows you to launch a browser, navigate to pages, interact with elements through clicks and keyboard input, and capture the results through screenshots and console logs. This tool may be useful at key stages of web development tasks-such as after implementing new features, making substantial changes, when troubleshooting issues, or to verify the result of your work. You can analyze the provided screenshots to ensure correct rendering or identify errors, and review console logs for runtime issues.
 - For example, if asked to add a component to a react website, you might create the necessary files, use execute_command to run the site locally, then use browser_action to launch the browser, navigate to the local server, and verify the component renders & functions correctly before closing the browser.`,
     webToolsCapabilities:
-        "\n- Use web_fetch to retrieve and analyze content from a known URL when external source material is needed.",
+        "\n- Use web_fetch to retrieve readable content from a known URL when external source material is needed.",
     localWebSearchCapabilities:
-        "\n- When the task requires current information (for example current documentation, best practices, or news), use web_search. This request routes that tool through Dline's local executor.",
+        "\n- When the task requires current information (for example current documentation, best practices, or news), use web_search.",
     serverWebSearchCapabilities:
         "\n- Use web search when the user requests external search or verification, when the task cannot be completed reliably without external retrieval, or when known solutions to a similar problem would inform a decision that local evidence cannot settle. Do not search merely because information may be current or recent.",
     connectedMcpServers: "Connected MCP servers: @NAMES@",

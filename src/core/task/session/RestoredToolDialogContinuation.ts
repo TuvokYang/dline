@@ -10,6 +10,7 @@ import {
 import { Logger } from "@shared/services/Logger"
 import { DlineDefaultTool } from "@shared/tools"
 import { serializeDurableToolResult, toolResultReplayOf } from "../DurableToolResult"
+import { FocusChainPrompts } from "../focus-chain/prompts"
 import { interactionKindForToolName, projectInteractionContinuation } from "../interaction/InteractionContinuation"
 import type { InteractionOutcome } from "../interaction/InteractionProtocol"
 import type { KernelBlock, TaskState } from "../kernel"
@@ -248,10 +249,24 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
                       actionId: resolution.outcome.actionId,
                   })
         const documentPayloadRefs = await putAttachedDocuments(this.ports.payloads, result.documents)
+        // Keep the live call's ignored-parameter diagnostic in the restored answer,
+        // but never execute its progress update or show a duplicate warning row.
+        const toolResult =
+            kind === "completion" && Object.hasOwn(invocation.input, "task_progress")
+                ? {
+                      ...result.toolResult,
+                      content: [
+                          ...(typeof result.toolResult.content === "string"
+                              ? [{ type: "text" as const, text: result.toolResult.content }]
+                              : result.toolResult.content),
+                          { type: "text" as const, text: FocusChainPrompts.ignoredCompletionProgress },
+                      ],
+                  }
+                : result.toolResult
         const envelope: ToolResultEnvelope = {
             kind: "tool_result",
             blockId: invocation.dlineTid,
-            content: serializeDurableToolResult(result.toolResult, toolResultReplayOf(invocation)),
+            content: serializeDurableToolResult(toolResult, toolResultReplayOf(invocation)),
             ...(documentPayloadRefs ? { documentPayloadRefs } : {}),
             // The result carries the reply's text; the ref only keeps the authority its admission granted.
             ...(reply ? { feedbackInputRefs: [reply.payloadRef] } : {}),

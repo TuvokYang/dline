@@ -10,6 +10,8 @@ export interface OpenInteractionRequest {
     externalCommand?: true
     presentation: string
     existingTs?: number
+    /** Runtime-only hook after durable final presentation, before admitting feedback. Never replayed on restore. */
+    afterPresented?: () => Promise<void>
     /**
      * `interrupt` takes the slot over from a dialog already waiting for the
      * user, which comes back unchanged once this one is answered. Without it a
@@ -24,6 +26,7 @@ export interface CompleteInteractionRequest {
     completionId: string
     presentation: string
     existingTs?: number
+    afterPresented?: () => Promise<void>
 }
 
 export interface RetryInteractionRequest {

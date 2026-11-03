@@ -85,6 +85,7 @@ export interface TaskEnvironmentProjectionOptions {
 
 export interface EnvironmentDetailsOptions {
     readonly preview?: boolean
+    readonly requestId?: string
     readonly api?: ApiHandler
     readonly mode?: Mode
 }
@@ -128,7 +129,8 @@ export class TaskEnvironmentProjection {
         const host = await this.options.host.getHostVersion()
         const effectiveApi = buildOptions.api ?? this.options.runtime.getApi()
         const effectiveMode = buildOptions.mode ?? this.options.runtime.getMode()
-        if (buildOptions.preview !== true) this.options.conversation.focusChain?.beginRequest()
+        await this.options.conversation.focusChain?.ready?.()
+        if (buildOptions.preview !== true) this.options.conversation.focusChain?.beginRequest(buildOptions.requestId)
         const platform = host.platform || "Unknown"
         let details = `# Dline Version\n${host.clineVersion || "unknown"}`
         details += this.formatWorkspaceRootsSection()

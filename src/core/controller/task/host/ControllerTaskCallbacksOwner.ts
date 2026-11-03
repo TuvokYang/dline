@@ -119,15 +119,22 @@ export class ControllerTaskCallbacksOwner {
             taskState: options.toolState,
             getMode: () => options.controller.task?.owners.settings.mode ?? "plan",
             stateManager: options.stateManager,
-            postStateToWebview: () => options.controller.postStateToWebview(),
+            postStateToWebview: () => options.controller.postStateToWebview({ immediate: true }),
             say: (...args) => this.say(...args),
             focusChainSettings: options.stateManager.getGlobalSettingsKey("focusChainSettings"),
+            requestsSinceProgress: () => {
+                const rows = options.messages.clineMessages
+                let lastProgress = rows.length - 1
+                while (lastProgress >= 0 && rows[lastProgress].say !== "task_progress") lastProgress--
+                return rows.slice(lastProgress + 1).filter((row) => row.say === "api_req_started").length
+            },
             // The checklist is the only place item-level TODO work is visible, so
             // usage observes it here rather than re-parsing tool arguments.
             ...(options.observeChecklist === undefined ? {} : { observeChecklist: options.observeChecklist }),
         })
         this.focusChainInstructions = {
-            beginRequest: () => this.focusChain.beginRequest(),
+            ready: () => this.focusChain.ready(),
+            beginRequest: (requestId) => this.focusChain.beginRequest(requestId),
             project: (projectionOptions) => this.focusChain.projectInstructions(projectionOptions),
         }
         this.callbacks = {
@@ -145,9 +152,9 @@ export class ControllerTaskCallbacksOwner {
             doesLatestTaskCompletionHaveNewChanges: (completionMessageTs) =>
                 this.checkpointManager?.doesLatestTaskCompletionHaveNewChanges(completionMessageTs) ?? Promise.resolve(false),
             updateFCListFromToolResponse: async (progress) => {
-                await this.focusChain.updateFCListFromToolResponse(progress)
-                // The tab title carries checklist progress, as on dev.
-                void options.controller.syncPanelTitle()
+                const result = await this.focusChain.updateFCListFromToolResponse(progress)
+                if (result.kind === "applied") void options.controller.syncPanelTitle()
+                return result
             },
             ...(options.observeChecklist === undefined ? {} : { observeChecklist: options.observeChecklist }),
             postStateToWebview: () => options.controller.postStateToWebview(),

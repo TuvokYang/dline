@@ -8,14 +8,12 @@ export interface UrlContentFetcherPort {
 
 export interface LocalWebFetchRequest {
     readonly url: string
-    readonly prompt: string
     readonly signal?: AbortSignal
     readonly timeoutMs?: number
 }
 
 export interface LocalWebFetchResponse {
     readonly url: string
-    readonly prompt: string
     readonly content: string
     readonly source: {
         readonly id: "browser"
@@ -100,7 +98,6 @@ export class BrowserWebFetchProvider implements LocalWebFetchProvider {
                     const content = await fetcher.urlToMarkdown(request.url, cancellation.signal)
                     return {
                         url: request.url,
-                        prompt: request.prompt,
                         content,
                         source: {
                             id: "browser",

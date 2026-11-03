@@ -6,6 +6,7 @@ import type { IgnoreController } from "@core/ignore/IgnoreController"
 import type { ImageGenerationService } from "@core/image-generation/ImageGenerationService"
 import type { CommandPermissionController } from "@core/permissions"
 import type { ExplicitInstructionAuthorization, ExplicitInstructionConsumePort } from "@core/task/explicit-instructions/types"
+import type { FocusChainUpdateResult } from "@core/task/focus-chain/update-result"
 import type { ChecklistChange } from "@core/task/telemetry/ChecklistDiff"
 import type { TaskFileTracker } from "@integrations/checkpoints/TaskFileTracker"
 import type { DiffViewProvider } from "@integrations/editor/DiffViewProvider"
@@ -59,6 +60,8 @@ export interface SayPresentationRequest {
 
 /** Interaction and presentation boundary exposed to handlers. */
 export interface TaskInteractionPorts {
+    /** Final presentation without a manual wait, used by automatic interaction policy. */
+    present?(request: OpenInteractionRequest): Promise<void>
     open(request: OpenInteractionRequest): Promise<InteractionOutcome>
     complete(request: CompleteInteractionRequest): Promise<InteractionOutcome>
     /**
@@ -117,6 +120,9 @@ export interface TaskConfig {
 
     // Typed interaction boundary
     interactions: TaskInteractionPorts
+    /** Commit only progress in canonical block order; ordinary calls must not wait on unready predecessors. */
+    commitToolProgress?: (commit: () => Promise<void>, waitForPredecessors: boolean) => Promise<void>
+    settlePrecedingProgress?: () => Promise<void>
     /** Manual approval outcome delivered once to this handler invocation. */
     admissionOutcome?: ToolAdmissionOutcome
 
@@ -262,7 +268,7 @@ export interface TaskCallbacks {
      * execution: a task instantiated to generate a title, review a change, or
      * decide an approval presents none, and must not have to supply a stub.
      */
-    updateFCListFromToolResponse?: (taskProgress: string | undefined) => Promise<void>
+    updateFCListFromToolResponse?: (taskProgress: string | undefined) => Promise<FocusChainUpdateResult>
 
     /**
      * Report what changed in the checklist a call carried.

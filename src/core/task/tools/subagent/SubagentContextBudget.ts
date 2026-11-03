@@ -74,22 +74,7 @@ export function buildContextBudgetSection(budget: ContextBudgetLease | undefined
 }
 
 export function renderContextBudgetSection(facts: SubagentContextBudgetFacts): string {
-    const lines = [
-        renderPrompt("subagent", "contextBudgetFinalResult", {
-            FINAL_RESULT_TOKENS: facts.finalResultTokens.toLocaleString(),
-        }),
-    ]
-    if (facts.mainTaskRound) {
-        lines.push(
-            renderPrompt("subagent", "contextBudgetMainTaskShare", {
-                ROUND_BUDGET_TOKENS: facts.mainTaskRound.budgetTokens.toLocaleString(),
-                ROUND_USED_TOKENS: facts.mainTaskRound.usedTokens.toLocaleString(),
-                WORKING_CONSUMERS: String(facts.mainTaskRound.workingConsumers),
-            }),
-        )
-    }
-    if (facts.delivery === "held_until_compaction") {
-        lines.push(renderPrompt("subagent", "contextBudgetHeldWhole"))
-    }
-    return lines.join("\n")
+    return renderPrompt("subagent", "contextBudgetFinalResult", {
+        FINAL_RESULT_TOKENS: facts.finalResultTokens.toLocaleString(),
+    })
 }

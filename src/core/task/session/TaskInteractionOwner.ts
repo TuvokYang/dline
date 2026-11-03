@@ -44,6 +44,7 @@ interface InteractionRequest {
     readonly existingTs?: number
     readonly completionId?: string
     readonly placement?: OpenInteractionRequest["placement"]
+    readonly afterPresented?: () => Promise<void>
 }
 
 function actionRules(kind: OpenInteractionRequest["kind"]): readonly DialogActionRule[] {
@@ -106,6 +107,24 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
     private nextRowTs(): number {
         const sequence = this.session?.owners?.nextPresentationId
         return sequence ? sequence() : Math.max(Date.now(), (this.messages.clineMessages.at(-1)?.ts ?? 0) + 1)
+    }
+
+    /** Publish a complete anchor without installing a manual receiver. */
+    async present(request: OpenInteractionRequest): Promise<void> {
+        if (this.suspendedReason) throw new InteractionCancellationError(this.suspendedReason)
+        const session = this.requireSession()
+        const generation = session.state().generation
+        const anchor = createCanonicalAskRow(
+            getInteraction(request.kind).taskAsk,
+            request.presentation,
+            request.existingTs ?? this.nextRowTs(),
+            request.interactionId,
+        )
+        await this.presentAnchor(anchor, { keepRecordedFields: request.kind === "completion" })
+        if (this.suspendedReason || session.state().generation !== generation) {
+            throw new InteractionCancellationError(this.suspendedReason ?? "Interaction generation retired")
+        }
+        await request.afterPresented?.()
     }
 
     open(request: OpenInteractionRequest): Promise<InteractionOutcome> {
@@ -750,7 +769,7 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
         pending?: PendingInteraction,
     ): Promise<boolean> {
         const session = this.session
-        if (!session || !session.writable || generation === undefined) return false
+        if (!session?.writable || generation === undefined) return false
         try {
             if (pending?.retirement) {
                 if (pending.retirement.generation !== generation) return false
@@ -790,13 +809,9 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
                 completionId: request.completionId,
             }),
         )
-        const definition = getInteraction(request.kind)
-        // A completion's checkpoint and change verdict settle beside its dialog and
-        // may land on the row first, so taking that row over keeps what they recorded.
-        // Every other dialog replaces its streamed row outright, as its renderer expects.
-        const anchor = createCanonicalAskRow(definition.taskAsk, request.presentation, anchorTs, request.interactionId)
-        if (request.kind === "completion") await this.presentAnchor(anchor, { keepRecordedFields: true })
-        else await this.presentAnchor(anchor)
+        // The complete anchor and its call-local effects settle before queued or
+        // immediate feedback is admitted. Restored dialogs never replay this hook.
+        await this.present({ ...request, existingTs: anchorTs })
         const session = this.requireSession()
         const state = session.state()
         // An interrupt only differs from a request when a dialog holds the slot;

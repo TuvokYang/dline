@@ -25,7 +25,6 @@ import type { ToolRunCommand } from "../ToolExecutionDomain"
 import { usesAwayFeedback } from "./AwayToolPolicy"
 import type { ProductionToolHandlerRuntime } from "./ProductionToolHandlerRuntime"
 import { planProductionTool } from "./ProductionToolPlanner"
-import { resolveToolInteractionPolicy } from "./ToolInteractionPolicy"
 
 export interface ProductionToolConfigFactoryInput {
     readonly command: ToolRunCommand
@@ -386,10 +385,7 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
             }
             config = createLocalWebSearchFallbackConfig(config, message)
         }
-        const policyResult = await resolveToolInteractionPolicy(config, block)
-        const result = normalizeToolExecutionResult(
-            policyResult === undefined ? await this.options.runtime.execute(config, block) : policyResult,
-        )
+        const result = normalizeToolExecutionResult(await this.options.runtime.execute(config, block))
         const response = await this.deferWithoutRoom(
             config,
             input.invocation,

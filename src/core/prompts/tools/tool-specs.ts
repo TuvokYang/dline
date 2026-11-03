@@ -279,11 +279,7 @@ export const STANDARD_TOOL_SPECS: readonly Omit<ProfileToolSpec, "profile">[] = 
     spec(
         DlineDefaultTool.WEB_FETCH,
         getPrompt("webFetch", "standardDescription"),
-        [
-            param("url", true, getPrompt("webFetch", "urlInstruction")),
-            param("prompt", true, getPrompt("webFetch", "standardPromptInstruction")),
-            taskProgress,
-        ],
+        [param("url", true, getPrompt("webFetch", "urlInstruction")), taskProgress],
         hasLocalWebFetch,
     ),
     spec(

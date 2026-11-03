@@ -115,8 +115,7 @@ describe("renderContextBudgetSection", () => {
         }
     })
 
-    it("renders one more line for the share and one for held delivery", () => {
-        const lineCount = (text: string) => text.split("\n").length
+    it("projects only the effective allowance, independent of internal allocation and delivery", () => {
         const inline = renderContextBudgetSection({ finalResultTokens: 8_000, delivery: "inline" })
         const shared = renderContextBudgetSection({
             finalResultTokens: 8_000,
@@ -125,8 +124,8 @@ describe("renderContextBudgetSection", () => {
         })
         const held = renderContextBudgetSection({ finalResultTokens: 8_000, delivery: "held_until_compaction" })
 
-        expect(lineCount(shared)).toBe(lineCount(inline) + 1)
-        expect(lineCount(held)).toBe(lineCount(inline) + 1)
-        expect(held).not.toBe(shared)
+        expect(shared).toBe(inline)
+        expect(held).toBe(inline)
+        expect(renderContextBudgetSection({ finalResultTokens: 2_000, delivery: "inline" })).not.toBe(inline)
     })
 })

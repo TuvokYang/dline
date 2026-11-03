@@ -44,7 +44,7 @@ import { WebFetchToolHandler } from "./handlers/WebFetchToolHandler"
 import { WebSearchToolHandler } from "./handlers/WebSearchToolHandler"
 import { WorkingRespondHandler } from "./handlers/WorkingRespondHandler"
 import { WriteToFileToolHandler } from "./handlers/WriteToFileToolHandler"
-import { applyToolCallSideEffects, resolveToolCallSideEffects } from "./ToolCallSideEffects"
+import { ToolCallProgress } from "./ToolCallSideEffects"
 import type { ToolDenial, ToolHandlerResult } from "./ToolExecutionResult"
 import { ToolValidator } from "./ToolValidator"
 import type { TaskConfig } from "./types/TaskConfig"
@@ -384,7 +384,11 @@ export class ToolExecutorCoordinator {
     /**
      * Execute a tool through its registered handler
      */
-    async execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
+    async execute(
+        config: TaskConfig,
+        block: ToolUse,
+        policy?: (config: TaskConfig, block: ToolUse) => Promise<ToolHandlerResult | undefined>,
+    ): Promise<ToolHandlerResult> {
         const handler = this.getHandler(block.name)
         if (!handler) {
             const refusal = findHandlerlessExplicitRefusal(block.name, config.explicitInstructions)
@@ -414,15 +418,19 @@ export class ToolExecutorCoordinator {
         // Effects that ride on a call without belonging to any tool. The surface
         // decides which of them it has, so a task with no checklist and no
         // workspace history runs the same tools without supplying either.
-        const effects = resolveToolCallSideEffects(config)
+        const progress = new ToolCallProgress(authorized.config, block, handler.name)
+        const scopedConfig = config.interactions
+            ? { ...authorized.config, interactions: progress.interactions(config.interactions) }
+            : authorized.config
         let result: ToolHandlerResult
         try {
-            result = await handler.execute(authorized.config, block)
+            await scopedConfig.settlePrecedingProgress?.()
+            const automatic = await policy?.(scopedConfig, block)
+            result = automatic === undefined ? await handler.execute(scopedConfig, block) : automatic
         } finally {
             settleMutation?.()
         }
-        await applyToolCallSideEffects(effects, block)
-        return result
+        return progress.finish(result)
     }
 
     /**

@@ -1,5 +1,5 @@
+import * as path from "node:path"
 import { FocusChainSettings } from "@shared/FocusChainSettings"
-import { isCompletedFocusChainItem } from "@shared/focus-chain-utils"
 import * as chokidar from "chokidar"
 import * as fs from "fs/promises"
 import { telemetryService } from "@/services/telemetry"
@@ -11,27 +11,22 @@ import { ensureTaskDirectoryExists } from "../../storage/disk"
 import { StateManager } from "../../storage/StateManager"
 import { type ChecklistChange, type ChecklistReport, diffChecklist, parseChecklist } from "../telemetry/ChecklistDiff"
 import type { ToolConversationState } from "../tools/state/ToolHandlerState"
+import { type ChecklistUpdateDecision, evaluateChecklistUpdate } from "./ChecklistUpdate"
 import {
     appendToFocusChainHistory,
     createFocusChainMarkdownContent,
     ensureFocusChainFile,
-    extractExampleItems,
-    extractFocusChainItemsFromText,
     extractFocusChainListFromText,
     getFocusChainFilePath,
     getFocusChainHistoryFilePath,
     getUncheckedFocusChainItemAtIndex,
-    hasChecklistTitle,
-    hasNewChecklistHeader,
-    hasUncheckedFocusChainItem,
     hasValidTodoItem,
     isAllItemsCompleted,
     isEquivalentFocusChainList,
-    mergeCompletedItems,
-    mergeInProgressItem,
 } from "./file-utils"
 import { selectFocusChainInstructionPolicy } from "./instruction-policy"
 import { FocusChainPrompts } from "./prompts"
+import type { FocusChainUpdateResult } from "./update-result"
 import { parseFocusChainListCounts } from "./utils"
 
 export interface FocusChainProjectionOptions {
@@ -41,7 +36,8 @@ export interface FocusChainProjectionOptions {
 }
 
 export interface FocusChainInstructionPort {
-    beginRequest(): void
+    ready?(): Promise<void>
+    beginRequest(requestId?: string): void
     project(options?: FocusChainProjectionOptions): string
 }
 
@@ -70,6 +66,8 @@ export interface FocusChainDependencies {
     postStateToWebview: () => Promise<void>
     say: (type: UiSay, text?: string, images?: string[], files?: string[], partial?: boolean) => Promise<number | undefined>
     focusChainSettings: FocusChainSettings
+    /** Count real request rows after the last committed progress row when reopening. */
+    requestsSinceProgress?: () => number
     /**
      * Receive item-level checklist changes for usage.
      *
@@ -100,6 +98,11 @@ export class FocusChainManager {
     private focusChainSettings: FocusChainSettings
     private fileUpdateDebounceTimer?: NodeJS.Timeout
     private disposed = false
+    private loading?: Promise<void>
+    private mutationTail: Promise<void> = Promise.resolve()
+    private completedRequests: number | undefined
+    private lastRequestId: string | undefined
+    private readonly requestsSinceProgress?: () => number
 
     constructor(dependencies: FocusChainDependencies) {
         this.taskId = dependencies.taskId
@@ -110,6 +113,7 @@ export class FocusChainManager {
         this.say = dependencies.say
         this.focusChainSettings = dependencies.focusChainSettings
         this.observeUsageChecklist = dependencies.observeChecklist
+        this.requestsSinceProgress = dependencies.requestsSinceProgress
     }
 
     /**
@@ -121,7 +125,7 @@ export class FocusChainManager {
     public async setupFocusChainFileWatcher() {
         if (this.disposed || this.focusChainFileWatcher) return
         try {
-            const taskDir = await ensureTaskDirectoryExists(this.taskId)
+            const taskDir = path.resolve(await ensureTaskDirectoryExists(this.taskId))
             const focusChainFilePath = getFocusChainFilePath(taskDir, this.taskId)
 
             // Ensure focus chain file exists (create empty file for new tasks)
@@ -130,29 +134,21 @@ export class FocusChainManager {
             if (this.disposed) return
             await ensureFocusChainFile(this.taskId, "")
 
-            // Load existing checklist from disk into taskState
-            // This is critical for task resumption: without this, taskState.currentFocusChainChecklist
-            // remains null even if the file exists, causing "no task plan exists" errors
-            const existingChecklist = await this.readFocusChainFromDisk()
-            if (this.disposed) return
-            // A reopened task also shows the checklists that earlier plans replaced.
-            const existingHistory = await this.readFocusChainHistory()
-            if (this.disposed) return
-            if (existingHistory) this.taskState.focusChainHistory = existingHistory
-            if (existingChecklist) {
-                this.taskState.currentFocusChainChecklist = existingChecklist
-                this.taskState.currentInProgressItemIndex =
-                    getUncheckedFocusChainItemAtIndex(existingChecklist, this.taskState.currentInProgressItemIndex) !== null
-                        ? this.taskState.currentInProgressItemIndex
-                        : null
-            }
-            if (existingChecklist || existingHistory) await this.postStateToWebview()
+            // Keep observing the file even when the first read fails, so an
+            // external repair can recover without reopening the task again.
+            await this.ready()
 
             if (this.disposed) return
-            // Initialize chokidar watcher
-            this.focusChainFileWatcher = chokidar.watch(focusChainFilePath, {
+            // Watch the parent so replacing or repairing the target does not retire
+            // its watch. Filter discovery to this checklist, never the other task files.
+            this.focusChainFileWatcher = chokidar.watch(taskDir, {
                 persistent: true,
                 ignoreInitial: true,
+                depth: 0,
+                ignored: (watchedPath) => {
+                    const resolved = path.resolve(watchedPath)
+                    return resolved !== taskDir && resolved !== focusChainFilePath
+                },
                 awaitWriteFinish: {
                     stabilityThreshold: 300,
                     pollInterval: 100,
@@ -168,9 +164,7 @@ export class FocusChainManager {
                     await this.updateFCListFromMarkdownFileAndNotifyUI()
                 })
                 .on("unlink", async () => {
-                    this.taskState.currentFocusChainChecklist = null
-                    this.taskState.currentInProgressItemIndex = null
-                    await this.postStateToWebview()
+                    await this.updateFCListFromMarkdownFileAndNotifyUI()
                 })
                 .on("error", (error) => {
                     Logger.error(`[Task ${this.taskId}] Failed to watch focus chain file:`, error)
@@ -193,35 +187,25 @@ export class FocusChainManager {
             clearTimeout(this.fileUpdateDebounceTimer)
         }
 
-        // Debounce file watcher to prevent false positives
-        this.fileUpdateDebounceTimer = setTimeout(async () => {
-            try {
-                const markdownTodoList = await this.readFocusChainFromDisk()
-                if (markdownTodoList) {
-                    const previousList = this.taskState.currentFocusChainChecklist
-
-                    // The runtime's own writes echo through this watcher, and the file keeps only the
-                    // persisted form. Compare that form so formatting never counts as a user edit.
-                    if (previousList === null || !isEquivalentFocusChainList(previousList, markdownTodoList)) {
-                        this.taskState.currentFocusChainChecklist = markdownTodoList
-                        this.taskState.currentInProgressItemIndex =
-                            getUncheckedFocusChainItemAtIndex(markdownTodoList, this.taskState.currentInProgressItemIndex) !==
-                            null
-                                ? this.taskState.currentInProgressItemIndex
-                                : null
-                        this.taskState.todoListWasUpdatedByUser = true
-
-                        await this.postStateToWebview()
-                        telemetryService.captureFocusChainListWritten(this.taskId)
-                    } else {
-                        Logger.log(
-                            `[Task ${this.taskId}] Focus Chain List: File watcher triggered but content unchanged, skipping update`,
-                        )
-                    }
-                }
-            } catch (error) {
-                Logger.error(`[Task ${this.taskId}] Error updating focuss chain list from markdown file:`, error)
-            }
+        // Read inside the same queue as model commits, so an own-write echo cannot
+        // race its memory publication or be mistaken for an external edit.
+        this.fileUpdateDebounceTimer = setTimeout(() => {
+            void this.enqueueMutation(async () => {
+                if (this.disposed) return
+                const checklist = await this.readFocusChainFromDisk()
+                const previous = this.taskState.currentFocusChainChecklist
+                if (previous === checklist || (previous && checklist && isEquivalentFocusChainList(previous, checklist))) return
+                this.taskState.currentFocusChainChecklist = checklist
+                this.taskState.currentInProgressItemIndex =
+                    checklist && getUncheckedFocusChainItemAtIndex(checklist, this.taskState.currentInProgressItemIndex) !== null
+                        ? this.taskState.currentInProgressItemIndex
+                        : null
+                if (!checklist || !isAllItemsCompleted(checklist)) this.completedRequests = undefined
+                else if (!previous || !isAllItemsCompleted(previous)) this.completedRequests = 0
+                this.taskState.todoListWasUpdatedByUser = true
+                await this.postStateToWebview()
+                telemetryService.captureFocusChainListWritten(this.taskId)
+            }).catch((error: unknown) => Logger.error(`[Task ${this.taskId}] Failed to load external checklist edit:`, error))
         }, 300)
     }
 
@@ -253,7 +237,7 @@ export class FocusChainManager {
                 return `\n
 				${listCurrentProgress}\n
 				${noteChecklistInEnv}\n
-				${FocusChainPrompts.completed(totalItems)}\n
+				<focus_chain_reminder kind="completed">${FocusChainPrompts.completed(totalItems)}</focus_chain_reminder>\n
 				`
             }
 
@@ -309,10 +293,13 @@ export class FocusChainManager {
     }
 
     /** Count one real provider request; previews never call this boundary. */
-    public beginRequest(): void {
+    public beginRequest(requestId?: string): void {
         if (this.currentSettings().enabled !== true) return
+        if (requestId !== undefined && requestId === this.lastRequestId) return
+        this.lastRequestId = requestId
         this.taskState.apiRequestCount += 1
         this.taskState.apiRequestsSinceLastTodoUpdate += 1
+        if (this.completedRequests !== undefined) this.completedRequests += 1
     }
 
     /** Project reminder text only when the configured cadence or another trigger requires it. */
@@ -325,7 +312,7 @@ export class FocusChainManager {
      * Returns the raw focus chain list string if found, or null if the file doesn't exist or contains no valid todos.
      * @requires this.taskId and this.context to locate the task directory
      * @returns Promise<string | null> - focus chain list content as string, or null if file missing/invalid
-     * @throws Returns null on file read errors (file not found, permission issues)
+     * @throws Non-ENOENT read errors: an unreadable checklist must never be treated as an empty plan.
      */
     public async readFocusChainFromDisk(): Promise<string | null> {
         try {
@@ -334,16 +321,10 @@ export class FocusChainManager {
             const markdownContent = await fs.readFile(todoFilePath, "utf8")
             const todoList = extractFocusChainListFromText(markdownContent)
 
-            if (todoList) {
-                const _todoLines = extractFocusChainItemsFromText(markdownContent)
-                return todoList
-            }
-
-            return null
+            return todoList || null
         } catch (error) {
-            // File doesn't exist or can't be read, return null
-            Logger.log(`[Task ${this.taskId}] focus chain list: Could not load from markdown file: ${error}`)
-            return null
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") return null
+            throw error
         }
     }
 
@@ -358,9 +339,9 @@ export class FocusChainManager {
             const historyPath = getFocusChainHistoryFilePath(taskDir, this.taskId)
             const content = await fs.readFile(historyPath, "utf8")
             return content || null
-        } catch {
-            // File doesn't exist yet, return null
-            return null
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") return null
+            throw error
         }
     }
 
@@ -390,227 +371,141 @@ export class FocusChainManager {
      * Also manages the apiRequestsSinceLastTodoUpdate counter and includes comprehensive error handling.
      * @param taskProgress - Optional focus chain list string from AI model's task_progress parameter
      * @requires this.taskState, this.say method, and telemetryService to be available
-     * @returns Promise<void> - Updates taskState.currentFocusChainChecklist and sends UI messages
+     * @returns Whether progress was applied, unchanged, ignored, rejected, or failed to persist.
      */
-    public async updateFCListFromToolResponse(taskProgress: string | undefined) {
+    public async updateFCListFromToolResponse(taskProgress: string | undefined): Promise<FocusChainUpdateResult> {
+        if (!taskProgress?.trim() || !hasValidTodoItem(taskProgress)) return { kind: "ignored" }
         try {
-            if (!taskProgress?.trim()) {
-                return
-            }
-
-            const newContent = taskProgress.trim()
-            if (!hasValidTodoItem(newContent)) {
-                return
-            }
-
-            this.taskState.apiRequestsSinceLastTodoUpdate = 0
-            let previousList = this.taskState.currentFocusChainChecklist
-            if (!previousList) {
-                const persistedList = await this.readFocusChainFromDisk()
-                if (persistedList) {
-                    this.taskState.currentFocusChainChecklist = persistedList
-                    previousList = persistedList
-                }
-            }
-            const hasChecklistHeader = hasNewChecklistHeader(newContent)
-            const isNewChecklist = hasChecklistTitle(newContent)
-
-            if (hasChecklistHeader && !isNewChecklist) {
-                this.taskState.consecutiveMistakeCount++
-                this.taskState.focusChainRejectionMessage = FocusChainPrompts.titleRequired
-                await this.say("error", "Focus Chain: A new checklist requires a # Title. Update rejected.")
-                this.checkConsecutiveErrors()
-                return
-            }
-
-            if (isNewChecklist && !hasUncheckedFocusChainItem(newContent)) {
-                this.taskState.consecutiveMistakeCount++
-                this.taskState.focusChainRejectionMessage = FocusChainPrompts.uncheckedItemRequired
-                await this.say("error", "Focus Chain: A new checklist requires at least one unchecked item. Update rejected.")
-                this.checkConsecutiveErrors()
-                return
-            }
-
-            if (isNewChecklist) {
-                if (previousList && !isAllItemsCompleted(previousList)) {
-                    this.taskState.consecutiveMistakeCount++
-                    Logger.warn(`[Task ${this.taskId}] focus chain: New checklist rejected — old checklist not fully completed.`)
-                    this.taskState.focusChainRejectionMessage = FocusChainPrompts.tamperingRejected
-                    await this.say(
-                        "error",
-                        "Focus Chain: AI attempted to replace the plan before all items were completed. Update rejected.",
-                    )
-                    this.checkConsecutiveErrors()
-                    return
-                }
-
-                if (previousList && isAllItemsCompleted(previousList)) {
-                    try {
-                        const taskDir = await ensureTaskDirectoryExists(this.taskId)
-                        await appendToFocusChainHistory(taskDir, this.taskId, previousList)
-                        this.taskState.focusChainHistory = await this.readFocusChainHistory()
-                    } catch (error) {
-                        Logger.error(`[Task ${this.taskId}] focus chain: Failed to archive:`, error)
-                    }
-                }
-
-                this.taskState.currentFocusChainChecklist = newContent
-                this.taskState.currentInProgressItemIndex = null
-                this.taskState.hasWarnedSkipOrder = false
-                this.trackTelemetry(newContent)
-                await this.persistAndNotify(newContent)
-                return
-            }
-
-            if (!previousList) {
-                this.taskState.consecutiveMistakeCount++
-                Logger.warn(`[Task ${this.taskId}] focus chain: Completed items reported but no checklist exists.`)
-                this.taskState.focusChainRejectionMessage = FocusChainPrompts.recommended
-                await this.say("error", "Focus Chain: AI attempted to report progress but no task plan exists. Update rejected.")
-                this.checkConsecutiveErrors()
-                return
-            }
-
-            // Check if all items are already completed — reject, show guidance only in AI prompt
-            if (isAllItemsCompleted(previousList)) {
-                this.taskState.consecutiveMistakeCount++
-                Logger.warn(`[Task ${this.taskId}] focus chain: Items reported but checklist already 100% complete.`)
-                this.taskState.focusChainRejectionMessage = FocusChainPrompts.allCompletedAlready
-                this.checkConsecutiveErrors()
-                return
-            }
-
-            const hasCompletedItems = newContent.includes("- [x]")
-            const hasInProgressItems = newContent.includes("- [ ]")
-
-            // Handle in-progress-only reports (no completed items)
-            if (!hasCompletedItems && hasInProgressItems) {
-                const { updatedText, matchedItem: _matchedItem, matchedItemIndex } = mergeInProgressItem(previousList, newContent)
-
-                if (!updatedText) {
-                    // - [ ] text mismatch — warn but don't block tools
-                    const examples = extractExampleItems(previousList, 3)
-                    const exampleStr = examples.join("\n")
-                    const msg = FocusChainPrompts.inProgressMismatchRejected(exampleStr)
-                    this.taskState.consecutiveMistakeCount++
-                    Logger.warn(`[Task ${this.taskId}] focus chain: In-progress item mismatch.`)
-                    this.taskState.focusChainRejectionMessage = msg
-                    await this.say("error", `Focus Chain: In-progress item doesn't match the plan. Use exact item text.`)
-                    this.checkConsecutiveErrors()
-                    return
-                }
-
-                this.taskState.currentFocusChainChecklist = updatedText
-                this.taskState.currentInProgressItemIndex = matchedItemIndex
-                this.trackTelemetry(updatedText)
-                await this.persistAndNotify(updatedText)
-                return
-            }
-
-            const mergeResult = mergeCompletedItems(previousList, newContent)
-            let mergedText = mergeResult.mergedText
-            let nextCurrentInProgressItemIndex =
-                getUncheckedFocusChainItemAtIndex(mergedText, this.taskState.currentInProgressItemIndex) !== null
-                    ? this.taskState.currentInProgressItemIndex
-                    : null
-            const unmatchedItems = mergeResult.unmatchedItems
-
-            if (unmatchedItems.length > 0) {
-                this.taskState.consecutiveMistakeCount++
-                // BLOCK next tool calls for - [x] mismatch (fabricated progress)
-                this.taskState.blockNextToolCalls = true
-                const unmatchedStr = unmatchedItems.map((i) => `- ${i}`).join("\n")
-                const examples = extractExampleItems(previousList, 3)
-                const exampleStr = examples.join("\n")
-                const msg = FocusChainPrompts.itemMismatchRejected(unmatchedStr, exampleStr)
-                Logger.warn(
-                    `[Task ${this.taskId}] focus chain: Item mismatch — ${unmatchedItems.length} items not found in checklist. Blocking next tools.`,
-                )
-                this.taskState.focusChainRejectionMessage = msg
-                await this.say(
-                    "error",
-                    `Focus Chain: AI reported fabricated progress. Next tool calls BLOCKED. Unmatched: ${unmatchedStr}`,
-                )
-                this.checkConsecutiveErrors()
-                return
-            }
-
-            // Process in-progress item when submitted alongside completed items
-            if (hasCompletedItems && hasInProgressItems) {
-                const progressResult = mergeInProgressItem(mergedText, newContent)
-                if (progressResult.updatedText) {
-                    mergedText = progressResult.updatedText
-                    nextCurrentInProgressItemIndex = progressResult.matchedItemIndex
-                }
-                // If in-progress item didn't match, silently ignore
-            }
-
-            // Compute which items are newly completed in this report (vs. already [x] in previousList)
-            // This prevents historical skip-order artifacts from blocking legitimate backfill updates.
-            const normalizeItemText = (item: string): string => {
-                return item.replace(/^-\s*\[[ xX]\]\s*/, "").trim()
-            }
-            const oldCompletedSet = new Set(
-                extractFocusChainItemsFromText(previousList)
-                    .filter((item) => isCompletedFocusChainItem(item))
-                    .map(normalizeItemText),
-            )
-            const mergedCompletedSet = new Set(
-                extractFocusChainItemsFromText(mergedText)
-                    .filter((item) => isCompletedFocusChainItem(item))
-                    .map(normalizeItemText),
-            )
-            // Items that are [x] in merged but were NOT [x] in previous = newly completed
-            const newlyCompletedSet = new Set([...mergedCompletedSet].filter((item) => !oldCompletedSet.has(item)))
-
-            let seenUnchecked = false
-            let skipDetected = false
-            const mergedItems = extractFocusChainItemsFromText(mergedText)
-            for (const item of mergedItems) {
-                const completed = isCompletedFocusChainItem(item)
-                const isNewlyCompleted = completed && newlyCompletedSet.has(normalizeItemText(item))
-                if (isNewlyCompleted) {
-                    if (seenUnchecked) {
-                        skipDetected = true
-                        break
-                    }
-                } else if (!completed) {
-                    seenUnchecked = true
-                }
-                // Pre-existing [x] items (already completed before this report) do NOT
-                // participate in skip detection — only newly-completed items can "skip".
-            }
-
-            if (skipDetected) {
-                if (this.taskState.hasWarnedSkipOrder) {
-                    this.taskState.consecutiveMistakeCount++
-                    const examples = extractExampleItems(previousList, 3)
-                    const exampleStr = examples.join("\n")
-                    const msg = FocusChainPrompts.skipOrderRejected(exampleStr)
-                    Logger.warn(`[Task ${this.taskId}] focus chain: Second skip-order violation — rejecting.`)
-                    this.taskState.focusChainRejectionMessage = msg
-                    await this.say(
-                        "error",
-                        "Focus Chain: AI skipped items again (second violation). Update rejected. Complete earlier items first.",
-                    )
-                    this.checkConsecutiveErrors()
-                    return
-                }
-                this.taskState.hasWarnedSkipOrder = true
-                Logger.warn(`[Task ${this.taskId}] focus chain: First skip-order violation — accepted with warning.`)
-                this.taskState.focusChainRejectionMessage = FocusChainPrompts.skipOrderWarning
-                await this.say(
-                    "error",
-                    "Focus Chain Warning: AI skipped unchecked items (first offense). Accepted this time, next skip will be rejected.",
-                )
-            }
-
-            this.taskState.currentFocusChainChecklist = mergedText
-            this.taskState.currentInProgressItemIndex = nextCurrentInProgressItemIndex
-            this.trackTelemetry(mergedText)
-            await this.persistAndNotify(mergedText)
+            await this.ensureLoaded()
         } catch (error) {
-            Logger.error(`[Task ${this.taskId}] focus chain: Error in updateFCListFromToolResponse:`, error)
+            Logger.error(`[Task ${this.taskId}] Checklist loading failed; update refused:`, error)
+            await this.say("error", FocusChainPrompts.loadingFailed)
+            return { kind: "failed", message: FocusChainPrompts.loadingFailed }
+        }
+        return this.enqueueMutation(async () => {
+            if (this.disposed) return { kind: "ignored" }
+            const decision = evaluateChecklistUpdate(
+                {
+                    checklist: this.taskState.currentFocusChainChecklist,
+                    currentItem: this.taskState.currentInProgressItemIndex,
+                    warnedSkip: this.taskState.hasWarnedSkipOrder,
+                },
+                taskProgress.trim(),
+            )
+            if (decision.kind === "rejected") {
+                this.taskState.consecutiveMistakeCount++
+                this.taskState.focusChainRejectionMessage = decision.message
+                if (decision.blockTools) this.taskState.blockNextToolCalls = true
+                await this.say("error", decision.diagnostic ?? decision.message)
+                await this.checkConsecutiveErrors()
+                return { kind: "rejected", message: decision.message }
+            }
+            return this.commitChecklist(decision)
+        })
+    }
+
+    /** A broken optional checklist must not prevent the task from asking for recovery guidance. */
+    public async ready(): Promise<void> {
+        try {
+            await this.ensureLoaded()
+        } catch (error) {
+            Logger.warn(`[Task ${this.taskId}] Checklist unavailable during environment projection:`, error)
+            this.taskState.focusChainRejectionMessage = FocusChainPrompts.loadingFailed
+        }
+    }
+
+    /** One initial read is shared by startup, environment construction, and the first report. */
+    public ensureLoaded(): Promise<void> {
+        this.loading ??= (async () => {
+            const [checklist, history] = await Promise.all([this.readFocusChainFromDisk(), this.readFocusChainHistory()])
+            if (this.disposed) return
+            if (!this.taskState.currentFocusChainChecklist && checklist) {
+                this.taskState.currentFocusChainChecklist = checklist
+                this.taskState.currentInProgressItemIndex =
+                    getUncheckedFocusChainItemAtIndex(checklist, this.taskState.currentInProgressItemIndex) !== null
+                        ? this.taskState.currentInProgressItemIndex
+                        : null
+            }
+            const loaded = this.taskState.currentFocusChainChecklist
+            if (loaded && isAllItemsCompleted(loaded)) this.completedRequests = this.requestsSinceProgress?.() ?? 0
+            if (loaded) this.lastObservedChecklist = parseChecklist(loaded)
+            if (!this.taskState.focusChainHistory && history) this.taskState.focusChainHistory = history
+            if (checklist || history) await this.publishState()
+        })().catch((error: unknown) => {
+            this.loading = undefined
+            throw error
+        })
+        return this.loading
+    }
+
+    private enqueueMutation<T>(run: () => Promise<T>): Promise<T> {
+        const result = this.mutationTail.then(run)
+        this.mutationTail = result.then(
+            () => undefined,
+            () => undefined,
+        )
+        return result
+    }
+
+    /** Publish only what was accepted and written; a failed file write leaves canonical state untouched. */
+    private async commitChecklist(
+        decision: Extract<ChecklistUpdateDecision, { kind: "accepted" }>,
+    ): Promise<FocusChainUpdateResult> {
+        const previous = this.taskState.currentFocusChainChecklist
+        const changed = previous !== decision.checklist || this.taskState.currentInProgressItemIndex !== decision.currentItem
+        if (!changed) return { kind: "unchanged" }
+        try {
+            await this.writeFocusChainToDisk(decision.checklist)
+        } catch (error) {
+            Logger.error(`[Task ${this.taskId}] Failed to commit checklist:`, error)
+            const message = FocusChainPrompts.persistenceFailed
+            await this.say("error", message)
+            return { kind: "failed", message }
+        }
+        if (decision.archive) {
+            try {
+                const taskDir = await ensureTaskDirectoryExists(this.taskId)
+                await appendToFocusChainHistory(taskDir, this.taskId, decision.archive)
+                this.taskState.focusChainHistory = await this.readFocusChainHistory()
+            } catch (error) {
+                Logger.error(`[Task ${this.taskId}] Failed to archive checklist:`, error)
+                await this.say("error", FocusChainPrompts.archiveFailed)
+            }
+        }
+        this.taskState.currentFocusChainChecklist = decision.checklist
+        this.taskState.currentInProgressItemIndex = decision.currentItem
+        if (!isAllItemsCompleted(decision.checklist)) this.completedRequests = undefined
+        else if (!previous || !isAllItemsCompleted(previous)) this.completedRequests = 0
+        this.taskState.apiRequestsSinceLastTodoUpdate = 0
+        this.taskState.todoListWasUpdatedByUser = false
+        this.taskState.consecutiveMistakeCount = 0
+        this.taskState.blockNextToolCalls = false
+        this.taskState.focusChainRejectionMessage = decision.warnSkip ? FocusChainPrompts.skipOrderWarning : null
+        this.taskState.hasWarnedSkipOrder = decision.archive
+            ? false
+            : this.taskState.hasWarnedSkipOrder || decision.warnSkip === true
+        try {
+            this.trackTelemetry(decision.checklist)
+        } catch (error) {
+            Logger.warn(`[Task ${this.taskId}] Checklist telemetry failed:`, error)
+        }
+        // Persistence already succeeded. A presentation failure must not claim that
+        // the old checklist is still canonical or undo an unrelated successful tool.
+        try {
+            await this.say("task_progress", decision.checklist)
+        } catch (error) {
+            Logger.warn(`[Task ${this.taskId}] Failed to publish checklist row:`, error)
+        }
+        await this.publishState()
+        if (decision.warnSkip) await this.say("error", FocusChainPrompts.skipOrderWarning)
+        return { kind: "applied" }
+    }
+
+    private async publishState(): Promise<void> {
+        try {
+            await this.postStateToWebview()
+        } catch (error) {
+            Logger.warn(`[Task ${this.taskId}] Failed to publish checklist state:`, error)
         }
     }
 
@@ -668,22 +563,6 @@ export class FocusChainManager {
     }
 
     /**
-     * Persist checklist to disk and notify the UI.
-     */
-    private async persistAndNotify(checklist: string) {
-        try {
-            await this.writeFocusChainToDisk(checklist)
-            this.taskState.todoListWasUpdatedByUser = false
-            this.taskState.consecutiveMistakeCount = 0
-            this.taskState.blockNextToolCalls = false
-            await this.say("task_progress", checklist)
-        } catch (error) {
-            Logger.error(`[Task ${this.taskId}] focus chain: Failed to write to disk:`, error)
-            await this.say("task_progress", checklist)
-        }
-    }
-
-    /**
      * Evaluates multiple conditions to determine if focus chain list instructions should be included in the AI prompt.
      * Returns true when in plan mode, after mode switches, when user edits exist, or at reminder intervals.
      * @requires this.mode, this.taskState, and this.focusChainSettings to be initialized
@@ -697,7 +576,12 @@ export class FocusChainManager {
         // Include when user had edited the list manually
         const userUpdatedList = this.taskState.todoListWasUpdatedByUser
         // Include when reaching the reminder interval, configured by settings
-        const reachedReminderInterval = this.taskState.apiRequestsSinceLastTodoUpdate >= Math.max(1, settings.remindClineInterval)
+        const interval = Math.max(1, settings.remindClineInterval)
+        const completedRound = this.completedRequests
+        const reachedReminderInterval =
+            completedRound === undefined
+                ? this.taskState.apiRequestsSinceLastTodoUpdate >= interval
+                : completedRound === 1 || completedRound === 2 || (completedRound > 2 && (completedRound - 2) % interval === 0)
         // Include on first API request if list does not exist
         const isFirstApiRequest = this.taskState.apiRequestCount === 1 && !this.taskState.currentFocusChainChecklist
 
@@ -758,42 +642,26 @@ export class FocusChainManager {
     }
 
     /**
-     * Performs cleanup operations when the focus chain manager is no longer needed.
-     * Cancels active file watchers and clears any pending debounce timers to prevent memory leaks.
-     * @requires No parameters needed
-     * @returns void - Cleans up timers and watchers, no return value
-     */
-    /**
      * Force-replace the current focus chain with a new plan.
      * Archives the old plan to history and writes the new plan to disk.
      * Used by FocusChainHandler for user-approved plan overrides.
      */
     public async forceReplaceFocusChain(newPlan: string): Promise<void> {
         const normalizedPlan = newPlan.trim()
-        if (!hasValidTodoItem(normalizedPlan)) {
-            return
-        }
-
-        const oldPlan = this.taskState.currentFocusChainChecklist
-        if (oldPlan) {
-            try {
-                const taskDir = await ensureTaskDirectoryExists(this.taskId)
-                await appendToFocusChainHistory(taskDir, this.taskId, oldPlan)
-                this.taskState.focusChainHistory = await this.readFocusChainHistory()
-            } catch (error) {
-                Logger.error(`[Task ${this.taskId}] focus chain: Failed to archive old plan:`, error)
-            }
-        }
-        this.taskState.currentFocusChainChecklist = normalizedPlan
-        this.taskState.currentInProgressItemIndex = null
-        this.taskState.hasWarnedSkipOrder = false
-        this.taskState.focusChainRejectionMessage = null
-        try {
-            await this.writeFocusChainToDisk(normalizedPlan)
-            await this.say("task_progress", normalizedPlan)
-        } catch (error) {
-            Logger.error(`[Task ${this.taskId}] focus chain: Failed to write new plan:`, error)
-        }
+        if (!hasValidTodoItem(normalizedPlan)) return
+        await this.ensureLoaded()
+        await this.enqueueMutation(async () => {
+            if (this.disposed) return
+            const oldPlan = this.taskState.currentFocusChainChecklist
+            const result = await this.commitChecklist({
+                kind: "accepted",
+                checklist: normalizedPlan,
+                currentItem: null,
+                ...(oldPlan ? { archive: oldPlan } : {}),
+            })
+            if (result.kind === "failed") throw new Error(result.message)
+            this.taskState.hasWarnedSkipOrder = false
+        })
     }
 
     public dispose() {

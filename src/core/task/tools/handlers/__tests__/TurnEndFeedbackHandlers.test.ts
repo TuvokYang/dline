@@ -51,7 +51,7 @@ function createConfig(text: string): TaskConfig {
             signal: null,
         })),
         doesLatestTaskCompletionHaveNewChanges: vi.fn(async () => false),
-        updateFCListFromToolResponse: vi.fn(async () => {}),
+        updateFCListFromToolResponse: vi.fn(async () => ({ kind: "ignored" as const })),
         postStateToWebview: vi.fn(async () => {}),
         reinitExistingTaskFromId: vi.fn(async () => {}),
         cancelTask: vi.fn(async () => {}),

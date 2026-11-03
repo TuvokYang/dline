@@ -23,6 +23,7 @@ import type { ToolApprovalFeedbackLedger } from "../executors/tool/ToolApprovalF
 import type { ToolBlockStatePort } from "../executors/tool/ToolBlockStatePort"
 import { TurnToolScheduler } from "../executors/tool/TurnToolScheduler"
 import type { ExplicitInstructionConsumePort } from "../explicit-instructions/types"
+import { ToolProgressOrder } from "../focus-chain/ToolProgressOrder"
 import type { TaskState } from "../kernel"
 import type { MessageStateHandler } from "../message-state"
 import { createRequestApiScope, type NativeToolCallsPredicate } from "../RequestApiScope"
@@ -90,8 +91,10 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
      * next task.
      */
     readonly turnScheduler: TurnToolScheduler
+    readonly progress: ToolProgressOrder
 
     constructor(private readonly options: TaskToolExecutionOwnerOptions) {
+        this.progress = new ToolProgressOrder(options.readState)
         this.turnScheduler = new TurnToolScheduler({
             readConfiguredLimit: () => this.options.stateManager.getGlobalSettingsKey("maxParallelToolCalls"),
         })
@@ -175,6 +178,17 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
     ): TaskConfig {
         const api = this.options.api.current()
         const mode = this.options.settings.mode
+        const turnId = input.command?.turnId
+        const blockId = input.invocation?.dlineTid
+        const progress =
+            turnId && blockId
+                ? {
+                      commitToolProgress: this.progress.bind(turnId, blockId),
+                      ...(this.options.readState().turn.blocks.find((block) => block.blockId === blockId)?.turnEnding
+                          ? { settlePrecedingProgress: () => this.progress.settleBefore(turnId, blockId) }
+                          : {}),
+                  }
+                : {}
         const requestScope = createRequestApiScope(
             api,
             mode,
@@ -218,6 +232,7 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
                 ? { admissionOutcome: this.options.approvalFeedback.takeOutcome(input.invocation.dlineTid) }
                 : {}),
             callbacks: this.options.callbacks,
+            ...progress,
             coordinator: input.coordinator,
             identityFactory: this.identities,
             activityStore: this.options.activities,

@@ -123,6 +123,8 @@ Responses API support is driven by API format and provider capabilities. Do not 
 
 ## Prompt and tool changes
 
+Follow `prompt-engineering` for model-visible contracts, implementation-detail boundaries, effective parameters, and behavioral verification.
+
 The only stable prompt profiles are Standard and Lite. Tool descriptors have one canonical source in `src/core/prompts/tools/tool-specs.ts`, with ordered inclusion in `tool-ids.ts`. Native and XML definitions are projected from that source.
 
 Do not create `system-prompt/tools/<tool>.ts` model-family variants or edit generated provider schemas independently.

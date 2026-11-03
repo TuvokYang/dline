@@ -211,7 +211,7 @@
     "type": "function",
     "function": {
       "name": "make_plan",
-      "description": "[TURN-END] Present a COMPLETE implementation or design plan covering ALL user requirements. Available in both ACT and PLAN modes. In ACT MODE, use this tool only when the user explicitly requests a plan. In PLAN MODE, use it after thorough exploration and analysis when ready to present the plan. Your response MUST include the full plan with detailed analysis, architecture decisions covering every step needed to fulfill ALL requirements. Do not simplify or omit parts of the plan - the user needs to see the entire plan to review it. Do not call repeatedly - use qna_respond for questions and discussion.\nHowever, if while writing your response you realize you need more exploration before providing a complete plan, set the optional needs_more_exploration parameter.",
+      "description": "[TURN-END] Present a COMPLETE implementation or design plan covering ALL user requirements. Available in both ACT and PLAN modes. In ACT MODE, use this tool only when the user explicitly requests a plan. In PLAN MODE, use it after thorough exploration and analysis when ready to present the plan. Include the full plan, detailed analysis, architecture decisions, and every implementation step for review. Do not call repeatedly; use qna_respond for questions and discussion. If more exploration is needed, set needs_more_exploration.",
       "strict": false,
       "parameters": {
         "type": "object",

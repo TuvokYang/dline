@@ -1,4 +1,4 @@
-import { access, chmod, cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises"
+import { access, chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import type { MockApiConsumption, MockApiTarget } from "@e2e/fixtures/server"
 import { getE2EMockProviderBaseUrl } from "@e2e/fixtures/server/api"
@@ -11,12 +11,10 @@ import {
     rewriteTaskUiMessages,
     waitForTaskRelease,
 } from "@e2e/utils/task-instance-store"
+import { prepareWebFetchBrowser, webFetchE2e } from "@e2e/utils/web-fetch-browser-fixture"
 import { expect, type Frame, type Locator, type Page } from "@playwright/test"
-import { type BrowserSettings, DEFAULT_BROWSER_SETTINGS } from "@shared/BrowserSettings"
 import { ServerTool } from "@shared/proto/dline/models/metadata"
 import type { ElectronApplication } from "playwright"
-// @ts-expect-error puppeteer-chromium-resolver does not publish TypeScript declarations.
-import PCR from "puppeteer-chromium-resolver"
 import { InstanceDatabase, InstanceLayout, openInstanceStorage } from "@/core/storage/instance"
 import { openTaskJournalStores } from "@/core/task/stores"
 import { FileTaskStateVault } from "@/core/task/stores/FileTaskStateVault"
@@ -107,57 +105,6 @@ async function attachHostedWebResumeEvidence(
         await writeFile(evidencePath, evidence.content, "utf8")
         await testInfo.attach(evidence.fileName, { path: evidencePath, contentType: evidence.contentType })
     }
-}
-
-/** Budget for downloading the Chromium build once per worker; it is spent outside every test's own timeout. */
-const WEB_FETCH_CHROMIUM_SEED_TIMEOUT_MS = 600_000
-
-async function downloadChromiumSeed(seedDir: string): Promise<string> {
-    const download = async (): Promise<void> => {
-        await mkdir(seedDir, { recursive: true })
-        const stats = await PCR({ downloadPath: seedDir })
-        await access(stats.executablePath)
-    }
-    try {
-        await download()
-    } catch {
-        await rm(seedDir, { recursive: true, force: true })
-        await download()
-    }
-    return seedDir
-}
-
-/**
- * Local Web Fetch launches a real Chromium build that is downloaded from the network. The download runs as a worker
- * fixture with its own budget, so a slow mirror cannot consume the timeout of whichever Web Fetch test runs first.
- */
-const webFetchE2e = e2e.extend<Record<never, never>, { webFetchChromiumSeed: string }>({
-    webFetchChromiumSeed: [
-        async ({}, use, workerInfo) => {
-            const seedDir = path.join(E2ETestHelper.PUPPETEER_CACHE_DIR, `worker-${workerInfo.workerIndex}`)
-            await use(await downloadChromiumSeed(seedDir))
-        },
-        { scope: "worker", timeout: WEB_FETCH_CHROMIUM_SEED_TIMEOUT_MS },
-    ],
-})
-
-async function prepareWebFetchBrowser(dlineDir: string, dlineHomeDir: string, seedDir: string): Promise<void> {
-    const testPuppeteerDir = path.join(dlineHomeDir, "puppeteer")
-    await rm(testPuppeteerDir, { recursive: true, force: true })
-    await cp(seedDir, testPuppeteerDir, { recursive: true })
-
-    const settings = JSON.parse(await readFile(settingsPath(dlineDir), "utf8")) as Record<string, unknown>
-    const browserSettings = (settings.browserSettings ?? {}) as Partial<BrowserSettings>
-    settings.browserSettings = {
-        ...DEFAULT_BROWSER_SETTINGS,
-        ...browserSettings,
-        viewport: {
-            ...DEFAULT_BROWSER_SETTINGS.viewport,
-            ...browserSettings.viewport,
-        },
-        customArgs: "--no-sandbox",
-    } satisfies BrowserSettings
-    await writeFile(settingsPath(dlineDir), `${JSON.stringify(settings, null, 2)}\n`, "utf8")
 }
 
 async function prepareRuntimeProfile(
@@ -1533,11 +1480,10 @@ webFetchE2e(
         })
         await prepareWebFetchBrowser(dlineDir, dlineHomeDir, webFetchChromiumSeed)
         const url = `${server.baseUrl}/mock/web-fetch/page`
-        const prompt = "Return the local Web Fetch page content within the product budget"
         const completion = "E2E_RESPONSES_MANUAL_WEB_FETCH_TERMINAL"
         server.enqueueResponses(
             "openai-compatible-responses",
-            { type: "tool", id: "call_responses_manual_web_fetch", name: "web_fetch", arguments: { url, prompt } },
+            { type: "tool", id: "call_responses_manual_web_fetch", name: "web_fetch", arguments: { url } },
             {
                 type: "tool",
                 id: "call_responses_manual_web_fetch_done",
@@ -1619,11 +1565,18 @@ for (const testCase of webFetchCases) {
             })
             await prepareWebFetchBrowser(dlineDir, dlineHomeDir, webFetchChromiumSeed)
             const url = `${server.baseUrl}/mock/web-fetch/page`
-            const prompt = "Extract the local Web Fetch marker"
             const completion = `E2E_${testCase.target.toUpperCase().replaceAll("-", "_")}_WEB_FETCH_OK`
             server.enqueueResponses(
                 testCase.target,
-                { type: "tool", id: `call_${testCase.target}_web_fetch`, name: "web_fetch", arguments: { url, prompt } },
+                {
+                    type: "tool",
+                    id: `call_${testCase.target}_web_fetch`,
+                    name: "web_fetch",
+                    arguments: {
+                        url,
+                        ...(testCase.target === "openai-compatible-chat" ? { prompt: "Legacy unused analysis input" } : {}),
+                    },
+                },
                 {
                     type: "tool",
                     id: `call_${testCase.target}_web_fetch_done`,
@@ -1632,7 +1585,7 @@ for (const testCase of webFetchCases) {
                     expectedToolResults: [
                         {
                             callId: `call_${testCase.target}_web_fetch`,
-                            contentIncludes: ["Dline local Web Fetch", prompt],
+                            contentIncludes: ["Dline local Web Fetch", url],
                         },
                     ],
                     expectedRequestExcludes: ["REMOVE_NAVIGATION", "REMOVE_SCRIPT"],
@@ -1661,9 +1614,6 @@ for (const testCase of webFetchCases) {
                 }
                 const fetchCard = opened.sidebar.getByTestId("web-fetch-card").filter({ hasText: url })
                 await expect(fetchCard).toHaveCount(1)
-                await expect(fetchCard.getByText("Browser Web Fetch (Dline)", { exact: true })).toBeVisible({
-                    timeout: 180_000,
-                })
                 const fetchToggle = fetchCard.getByTestId("web-fetch-details-toggle")
                 await expect(fetchToggle).toHaveAttribute("aria-expanded", "false")
                 await expect(fetchCard.getByTestId("web-fetch-results")).toHaveCount(0)
@@ -1713,7 +1663,6 @@ webFetchE2e(
         await prepareWebFetchBrowser(dlineDir, dlineHomeDir, webFetchChromiumSeed)
         const warmUrl = `${server.baseUrl}/mock/web-fetch/page`
         const delayedUrl = `${server.baseUrl}/mock/web-fetch/page?delayMs=30000`
-        const delayedPrompt = "Remain in flight until checkpoint restore cancels this request"
         const resumeDraft = "E2E_WEB_FETCH_RESTORE_FIRST_RESUME_DRAFT"
         const completion = "E2E_WEB_FETCH_RESTORE_FIRST_RESUME_OK"
         server.enqueueResponses(
@@ -1737,7 +1686,7 @@ webFetchE2e(
                 type: "tool",
                 id: "call_web_fetch_restore_warm",
                 name: "web_fetch",
-                arguments: { url: warmUrl, prompt: "Warm the isolated Web Fetch browser" },
+                arguments: { url: warmUrl },
             },
             {
                 type: "tool",
@@ -1750,7 +1699,7 @@ webFetchE2e(
                 type: "tool",
                 id: "call_web_fetch_restore_in_flight",
                 name: "web_fetch",
-                arguments: { url: delayedUrl, prompt: delayedPrompt },
+                arguments: { url: delayedUrl },
             },
             {
                 type: "tool",
@@ -1800,12 +1749,10 @@ webFetchE2e(
             const approveButton = opened.sidebar.getByRole("contentinfo").getByText("Approve", { exact: true })
             await expect(approveButton).toBeVisible({ timeout: 60_000 })
             await approveButton.click()
-            // One call is one card: its streamed preview, its approval and the running fetch
-            // share the row, and the running fetch writes its prompt onto it.
+            // One call keeps the same card through preview, approval, and running fetch.
             const runningCard = opened.sidebar.getByTestId("web-fetch-card").filter({ hasText: delayedUrl })
             await expect(runningCard).toHaveCount(1, { timeout: 30_000 })
             await expect(runningCard).toBeVisible()
-            await expect(runningCard).toContainText(delayedPrompt, { timeout: 30_000 })
             await expect.poll(() => server.getWebFetchPageRequests().length, { timeout: 30_000 }).toBe(2)
 
             // Every request adds its own restore point, so the newest one is the round that
@@ -1872,13 +1819,12 @@ e2e(
         const errorMessage = "E2E Web Fetch blocked by PreToolUse hook"
         await configureCancelingPreToolUseHook(dlineDir, workspaceDir, errorMessage)
         const url = `${server.baseUrl}/mock/web-fetch/page`
-        const prompt = "This fetch must be blocked before provider execution"
         const taskText = "Run the Web Fetch that the workspace policy will block."
         server.enqueueResponses("openai-compatible-responses", {
             type: "tool",
             id: "call_hook_cancelled_web_fetch",
             name: "web_fetch",
-            arguments: { url, prompt },
+            arguments: { url },
         })
 
         let app: ElectronApplication | undefined
@@ -1931,12 +1877,11 @@ webFetchE2e(
         })
         await prepareWebFetchBrowser(dlineDir, dlineHomeDir, webFetchChromiumSeed)
         const url = "http://127.0.0.1:1/e2e-web-fetch-failure"
-        const prompt = "Extract content from the intentionally unreachable page"
         const taskText = "Attempt the unreachable local Web Fetch, report its error, then finish."
         const completion = "E2E_LOCAL_WEB_FETCH_FAILURE_REPLAYED"
         server.enqueueResponses(
             "openai-compatible-chat",
-            { type: "tool", id: "call_failed_web_fetch", name: "web_fetch", arguments: { url, prompt } },
+            { type: "tool", id: "call_failed_web_fetch", name: "web_fetch", arguments: { url } },
             {
                 type: "tool",
                 id: "call_failed_web_fetch_done",

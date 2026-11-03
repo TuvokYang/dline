@@ -665,6 +665,7 @@ export class TaskSessionCompositionService {
                   subagents: toolExecution,
                   readState,
                   focusChain: tool.focusChain,
+                  beforeRequest: () => toolExecution.progress.flush(),
               })
             : undefined
         const providerRequests = new TaskProviderRequestFactory({
@@ -828,6 +829,8 @@ export class TaskSessionCompositionService {
                     // Applied first and synchronously, so the view it informs never
                     // delays the figure and a failing view cannot skip it.
                     contextUsage.committed(state)
+                    // Opening may commit before the session is returned. Later notifications use its latest state.
+                    toolExecution.progress.synchronize(session?.state() ?? state)
                     compaction.committed(state)
                     collaboration?.committed(state)
                     // The verdict reaches History before the view reads it back.
@@ -1014,7 +1017,10 @@ export class TaskSessionCompositionService {
                     },
                 },
                 toolOperationCancellation: {
-                    cancel: (reason) => toolState.cancelOperations(reason),
+                    cancel: (reason) => {
+                        toolExecution.progress.cancel()
+                        toolState.cancelOperations(reason)
+                    },
                     reset: () => toolState.resetOperationCancellation(),
                 },
                 toolSurface: tool.surface,

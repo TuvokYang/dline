@@ -188,7 +188,7 @@
     "type": "function",
     "function": {
       "name": "attempt_completion",
-      "description": "[TURN-END] Use this tool when the user's entire current task is complete and the relevant verification is consistent. A completed TODO list shows that the tracked phase is done; it does not by itself establish that the full user objective is complete.\n\nBefore calling, compare the result with the latest user instruction, approved scope, expected deliverables, success criteria, verification evidence, known blockers, and work discovered during execution. Do not use this tool for a progress update, intermediate milestone, completed phase checklist, context-window pressure, automatic compaction, partial result, plan, report, question, or ordinary conversation. If work still remains to satisfy the user's request, continue the task instead.",
+      "description": "[TURN-END] Use this tool when the user's entire current task is complete and the relevant verification is consistent. A completed TODO list shows that the tracked phase is done; it does not by itself establish that the full user objective is complete.\n\nBefore calling, compare the result with the latest user instruction, approved scope, expected deliverables, success criteria, verification evidence, known blockers, and work discovered during execution. Do not use this tool for a progress update, intermediate milestone, completed phase checklist, context-window pressure, automatic compaction, partial result, plan, report, question, or ordinary conversation. If work still remains to satisfy the user's request, continue the task instead.\n\nComplete any existing TODO list before calling; do not pass task_progress.",
       "strict": false,
       "parameters": {
         "type": "object",
@@ -209,7 +209,7 @@
     "type": "function",
     "function": {
       "name": "make_plan",
-      "description": "[TURN-END] Present a COMPLETE implementation or design plan covering ALL user requirements. Available in both ACT and PLAN modes. In ACT MODE, use this tool only when the user explicitly requests a plan. In PLAN MODE, use it after thorough exploration and analysis when ready to present the plan. Your response MUST include the full plan with detailed analysis, architecture decisions, and a complete task_progress checklist organized with a required # Title and optional ## Section headings covering every step needed to fulfill ALL requirements. Do not simplify or omit parts of the plan - the user needs to see the entire plan to review it. Do not call repeatedly - use qna_respond for questions and discussion.\nHowever, if while writing your response you realize you need more exploration before providing a complete plan, set the optional needs_more_exploration parameter.",
+      "description": "[TURN-END] Present a COMPLETE implementation or design plan covering ALL user requirements. Available in both ACT and PLAN modes. In ACT MODE, use this tool only when the user explicitly requests a plan. In PLAN MODE, use it after thorough exploration and analysis when ready to present the plan. Include the full plan, detailed analysis, architecture decisions, and every implementation step for review. Do not call repeatedly; use qna_respond for questions and discussion. If more exploration is needed, set needs_more_exploration.\n\nFollow the TODO update rules when providing task_progress.",
       "strict": false,
       "parameters": {
         "type": "object",
@@ -384,7 +384,7 @@
     "type": "function",
     "function": {
       "name": "web_fetch",
-      "description": "Fetches and analyzes content from a specified URL. IMPORTANT: If an MCP-provided web fetch tool is available, prefer using that tool instead of this one, as it may have fewer restrictions.",
+      "description": "Retrieves readable webpage content from a specified URL.",
       "strict": false,
       "parameters": {
         "type": "object",
@@ -393,18 +393,13 @@
             "type": "string",
             "description": "The URL to fetch content from"
           },
-          "prompt": {
-            "type": "string",
-            "description": "Prompt for analyzing the webpage content"
-          },
           "task_progress": {
             "type": "string",
             "description": "Omit task_progress when no TODO item is being created or updated. When provided, include at least one non-empty checklist item. During an existing checklist, send exact newly completed items and at most one exact current item; the current item may be sent by itself. Do not repeat the full checklist or change its structure. Use a full checklist only for initial creation or after all current items are complete and a new phase begins."
           }
         },
         "required": [
-          "url",
-          "prompt"
+          "url"
         ],
         "additionalProperties": false
       }
@@ -414,7 +409,7 @@
     "type": "function",
     "function": {
       "name": "web_search",
-      "description": "Performs a web search and returns relevant results with titles and URLs. IMPORTANT: If an MCP-provided web search tool is available, prefer using that tool instead of this one, as it may have fewer restrictions.",
+      "description": "Searches the web and returns result titles, URLs, and available excerpts.",
       "strict": false,
       "parameters": {
         "type": "object",
