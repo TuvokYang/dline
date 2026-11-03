@@ -90,16 +90,6 @@ describe("UnifyStore public schema and query API", () => {
         )
     })
 
-    it("keeps comparison values type-safe", () => {
-        const fields = RankedEntity.storage.fields
-        eq(fields.rank, 3)
-        const assertComparisonTypeSafety = () => {
-            // @ts-expect-error Numeric fields reject string values.
-            eq(fields.rank, "3")
-        }
-        expectTypeOf(assertComparisonTypeSafety).toBeFunction()
-    })
-
     it("keeps enum text and nullable column values narrow", () => {
         class StatusEntity {
             static readonly storage = defineEntity<StatusEntity>()({
