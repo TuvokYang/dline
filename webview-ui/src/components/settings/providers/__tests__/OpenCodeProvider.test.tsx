@@ -142,7 +142,7 @@ describe("OpenCodeProvider", () => {
         props.onCapabilitiesUpdate({ contextWindow: 0 })
 
         const updated = onUpdate.mock.calls.at(-1)?.[0] as {
-            opencode?: { model?: { capabilities?: Record<string, unknown> } }
+            opencode?: { capabilities?: Record<string, unknown> }
         }
         const capabilities = updated.opencode?.capabilities
         expect(capabilities).not.toHaveProperty("contextWindow")

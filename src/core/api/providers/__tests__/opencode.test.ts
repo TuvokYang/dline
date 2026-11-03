@@ -58,7 +58,6 @@ function createHandler(options: {
     pricing?: ModelInfo["pricing"]
     reasoning?: { enableThinking?: boolean; effort?: string; thinkingBudget?: number }
 }) {
-    const declared = options.apiFormat !== undefined || options.capabilities !== undefined || options.pricing !== undefined
     return new OpenCodeHandler({
         profile: ApiProfile.create({
             provider: "opencode",
@@ -66,14 +65,10 @@ function createHandler(options: {
             modelId: options.modelId ?? "gpt-6-sol",
             opencode: OpenCodeProviderConfig.create({
                 mode: options.mode ?? OpenCodeMode.OPEN_CODE_MODE_CONSOLE,
-                model: declared
-                    ? BaseProviderConfig.create({
-                          apiFormat: options.apiFormat,
-                          capabilities: options.capabilities,
-                          pricing: options.pricing,
-                          reasoning: options.reasoning,
-                      })
-                    : undefined,
+                apiFormat: options.apiFormat,
+                capabilities: options.capabilities,
+                pricing: options.pricing,
+                reasoning: options.reasoning,
             }),
         }),
         mode: "act",
@@ -438,6 +433,7 @@ describe("OpenCodeHandler", () => {
     it.each([
         [ApiFormat.OPENAI_CHAT, { reasoning_effort: "high" }],
         [ApiFormat.OPENAI_RESPONSES, { reasoning: { effort: "high", summary: "auto" } }],
+        [ApiFormat.ANTHROPIC_CHAT, { thinking: { type: "adaptive" }, output_config: { effort: "high" } }],
     ] as const)("encodes saved reasoning controls for protocol %s", async (apiFormat, expected) => {
         const handler = createHandler({
             apiFormat,
@@ -448,12 +444,20 @@ describe("OpenCodeHandler", () => {
             reasoning: { enableThinking: true, effort: "high" },
         })
         const { chatCreate, responsesCreate } = mockOpenAIClient(handler)
-        const create = apiFormat === ApiFormat.OPENAI_CHAT ? chatCreate : responsesCreate
+        const messagesCreate = mockAnthropicClient(handler)
+        const create =
+            apiFormat === ApiFormat.ANTHROPIC_CHAT
+                ? messagesCreate
+                : apiFormat === ApiFormat.OPENAI_CHAT
+                  ? chatCreate
+                  : responsesCreate
         create.mockResolvedValue(streamOf([]))
 
         await collect(handler.createMessage("system", userTurn))
 
         expect(create.mock.calls[0][0]).toMatchObject(expected)
+        // An omitted timeout inherits the SDK's bounded default, not an explicit undefined.
+        expect(create.mock.calls[0][1]).not.toHaveProperty("timeout")
     })
 
     it.each([
@@ -559,7 +563,8 @@ describe("OpenCodeHandler", () => {
                 baseUrl: string
                 defaultHeaders: Record<string, string>
             }
-            expect(options.baseUrl).to.equal("https://opencode.ai/inference/go/anthropic/v1")
+            // The SDK appends /v1/messages to this base; the E2E asserts the final wire path.
+            expect(options.baseUrl).to.equal("https://opencode.ai/inference/go/anthropic")
             // A continuation must keep the same conversation identity as the first request.
             expect(options.defaultHeaders["x-opencode-session"]).to.equal("task-abc")
         })

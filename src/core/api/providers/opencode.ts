@@ -19,7 +19,9 @@ import type { ModelInfo } from "@shared/api"
 import { prioritizeApiFormat } from "@shared/providers/api-format"
 import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
 import { getProviderCatalog } from "@shared/providers/model-infos"
-import { resolveProfileCatalogKey, resolveProfileModelId } from "@shared/providers/profile-model-info"
+import { resolveProfileCatalogKey, resolveProfileModelId, resolveProfileOverrides } from "@shared/providers/profile-model-info"
+import { readProviderConfigField } from "@shared/providers/provider-config"
+import { resolveProfileReasoningConfig } from "@shared/task-reasoning"
 import { calculateApiCostOpenAI } from "@utils/cost"
 import type OpenAI from "openai"
 import type { ChatCompletionFunctionTool } from "openai/resources/chat/completions"
@@ -212,10 +214,7 @@ export class OpenCodeHandler extends ApiHandler {
         const registry = this.catalog[id]
         const selected = this.profile.modelInfo?.id === id ? this.profile.modelInfo : undefined
         const base = selected ?? registry ?? { id }
-        const info = buildEffectiveModelInfo(id || base.id, base, {
-            capabilities: this.config?.model?.capabilities,
-            pricing: this.config?.model?.pricing,
-        })
+        const info = buildEffectiveModelInfo(id || base.id, base, resolveProfileOverrides(this.profile))
         const format = this.selectedFormat
         return { id: info.id, info: prioritizeApiFormat(info, format) }
     }
@@ -245,7 +244,7 @@ export class OpenCodeHandler extends ApiHandler {
      * rejected, because no fallback could answer in the shape the user chose.
      */
     private get selectedFormat(): ApiFormat {
-        const requested = this.config?.model?.apiFormat
+        const requested = readProviderConfigField(this.config, "apiFormat") as ApiFormat | undefined
         if (requested !== undefined) {
             if (!SUPPORTED_FORMATS.includes(requested)) {
                 throw new Error(`OpenCode cannot carry the selected protocol. Choose one of: ${SUPPORTED_FORMATS.join(", ")}.`)
@@ -300,7 +299,8 @@ export class OpenCodeHandler extends ApiHandler {
             if (!this.apiKey) throw new Error("OpenCode API key is required")
             this.anthropicClient = createAnthropicClient(
                 { kind: "api_key", apiKey: this.apiKey },
-                { baseUrl: `${this.baseUrl.replace(/\/$/, "")}/anthropic/v1`, defaultHeaders: this.headers() },
+                // The Anthropic SDK appends /v1/messages itself.
+                { baseUrl: `${this.baseUrl.replace(/\/$/, "")}/anthropic`, defaultHeaders: this.headers() },
             )
         }
         return this.anthropicClient
@@ -368,14 +368,17 @@ export class OpenCodeHandler extends ApiHandler {
                 model: model.id,
                 messages: [{ role: "system", content: systemPrompt }, ...convertToOpenAiMessages(messages)],
                 ...(maxTokens ? { max_tokens: maxTokens } : {}),
-                ...encodeOpenAIChatReasoning(model.info.capabilities, this.config?.model?.reasoning),
+                ...encodeOpenAIChatReasoning(
+                    model.info.capabilities,
+                    resolveProfileReasoningConfig(this.profile, model.info.capabilities),
+                ),
                 stream: true,
                 stream_options: { include_usage: true },
                 // A conversation without local tools must omit the field entirely:
                 // spreading the helper's `undefined` would send `tools: null`.
                 ...(toolParams.tools ? toolParams : {}),
             } as OpenAI.Chat.ChatCompletionCreateParamsStreaming,
-            { signal, timeout: this.ctx.requestTimeoutMs },
+            { signal, ...(this.ctx.requestTimeoutMs !== undefined ? { timeout: this.ctx.requestTimeoutMs } : {}) },
         )
 
         for await (const chunk of stream) {
@@ -441,7 +444,10 @@ export class OpenCodeHandler extends ApiHandler {
             options?.generation?.purpose === "compaction"
                 ? options.generation.maxOutputTokens
                 : model.info.capabilities?.maxTokens
-        const reasoning = encodeOpenAIResponsesReasoning(model.info.capabilities, this.config?.model?.reasoning)
+        const reasoning = encodeOpenAIResponsesReasoning(
+            model.info.capabilities,
+            resolveProfileReasoningConfig(this.profile, model.info.capabilities),
+        )
         // Responses spells a function tool out flat while Chat nests it under
         // `function`. Both are projections of the same canonical tool, so a
         // non-function tool is dropped here rather than sent in a shape this
@@ -474,7 +480,7 @@ export class OpenCodeHandler extends ApiHandler {
                 store: false,
                 ...(responseTools.length ? { tools: responseTools } : {}),
             },
-            { signal, timeout: this.ctx.requestTimeoutMs },
+            { signal, ...(this.ctx.requestTimeoutMs !== undefined ? { timeout: this.ctx.requestTimeoutMs } : {}) },
         )
 
         // The shared handler owns usage accounting and tool-call assembly. Parsing
@@ -501,7 +507,10 @@ export class OpenCodeHandler extends ApiHandler {
     ): ApiStream {
         const client = this.ensureAnthropicClient()
         const model = this.getModel()
-        const transport = new ApiKeyAnthropicTransport(client, false, { signal, timeout: this.ctx.requestTimeoutMs })
+        const transport = new ApiKeyAnthropicTransport(client, false, {
+            signal,
+            ...(this.ctx.requestTimeoutMs !== undefined ? { timeout: this.ctx.requestTimeoutMs } : {}),
+        })
 
         const anthropicMessages = prepareAnthropicMessages(messages, model.info, options)
         const requestBody = buildAnthropicMessagesRequest({
@@ -510,7 +519,10 @@ export class OpenCodeHandler extends ApiHandler {
             systemPrompt,
             systemPrefix: [],
             messages: anthropicMessages,
-            reasoning: resolveAnthropicReasoning(model.info.capabilities, this.config?.model?.reasoning),
+            reasoning: resolveAnthropicReasoning(
+                model.info.capabilities,
+                resolveProfileReasoningConfig(this.profile, model.info.capabilities),
+            ),
             tools,
             options,
             forcedToolChoice: anthropicPromptCacheOn(model.info) ? "model_declared" : "never",

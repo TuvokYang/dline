@@ -1,6 +1,7 @@
 import type { ModelCapabilities, ThinkingConfig } from "@shared/proto/dline/models/metadata"
 import type { ApiProfile } from "@shared/proto/dline/profile"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
+import { resolveOpenCodeReasoningConfig } from "@shared/providers/opencode-reasoning"
 import { PROFILE_PROVIDER_KEYS } from "@shared/providers/profile-model-info"
 import { readProviderConfigField, withProviderConfigField } from "@shared/providers/provider-config"
 import { resolveThinkingBudgetBounds } from "@shared/providers/thinking-budget"
@@ -81,11 +82,15 @@ function readReasoningConfig(config: unknown): ReasoningConfig | undefined {
 }
 
 /** Read the Profile-owned reasoning configuration for display and inheritance. */
-export function resolveProfileReasoningConfig(profile: ApiProfile | undefined): ReasoningConfig | undefined {
+export function resolveProfileReasoningConfig(
+    profile: ApiProfile | undefined,
+    capabilities: ModelCapabilities | undefined = profile?.modelInfo?.capabilities,
+): ReasoningConfig | undefined {
     if (!profile) return undefined
     const providerKey = PROFILE_PROVIDER_KEYS[profile.provider]
     if (!providerKey) return undefined
     const reasoning = readReasoningConfig(profile[providerKey])
+    if (profile.provider === "opencode") return resolveOpenCodeReasoningConfig(capabilities, reasoning)
     return reasoning ? { ...reasoning } : undefined
 }
 

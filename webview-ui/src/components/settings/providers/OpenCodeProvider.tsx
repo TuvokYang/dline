@@ -1,11 +1,12 @@
 import type { ModelInfo } from "@shared/proto/dline/models"
 import { type ModelCapabilities } from "@shared/proto/dline/models/metadata"
+import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
 import { OpenCodeMode, OpenCodeProviderConfig } from "@shared/proto/dline/provider/opencode"
 import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
+import { resolveOpenCodeReasoningConfig } from "@shared/providers/opencode-reasoning"
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import { OPENCODE_CONSOLE_CATALOG, OPENCODE_GO_CATALOG } from "@shared/providers/provider-catalog-key"
 import { readProviderConfigField, withProviderConfigField } from "@shared/providers/provider-config"
-import { resolveTaskThinkingConfig } from "@shared/task-reasoning"
 import { useMemo } from "react"
 import { ModelConfiguration } from "../common/ModelConfiguration"
 import { ModelInfoView } from "../common/ModelInfoView"
@@ -77,7 +78,7 @@ export const OpenCodeProvider = ({ showModelOptions, isPopup, profile, onUpdate 
         onUpdate({ opencode: next })
     }
 
-    /** Store a shared base field inside whichever shape this config already uses. */
+    /** Store shared fields at their canonical flat address; legacy fields are read-only. */
     const writeBaseField = (field: "apiFormat" | "reasoning" | "capabilities", value: unknown) => {
         writeConfig(withProviderConfigField(latest(), field, value) as OpenCodeProviderConfig)
     }
@@ -162,19 +163,8 @@ export const OpenCodeProvider = ({ showModelOptions, isPopup, profile, onUpdate 
     const declaredFormats = modelInfo.apiFormats ?? []
     const storedFormat = readProviderConfigField(config, "apiFormat")
     const apiFormat = resolveOpenCodeApiFormat(storedFormat, declaredFormats)
-    const thinking = resolveTaskThinkingConfig(modelInfo.capabilities)
-    const reasoning = readProviderConfigField(config, "reasoning") as
-        | { enableThinking?: boolean; effort?: string; thinkingBudget?: number }
-        | undefined
-    // Thinking starts on for a model that declares it, and its level starts one
-    // step below the highest the model offers. OpenCode resells models whose
-    // reasoning is the point of paying for them, so leaving both fields empty
-    // sent no thinking and quietly underused the selected model. The highest
-    // level stays reserved for a deliberate choice, and a stored preference
-    // always wins over both defaults.
-    const defaultEffort = defaultThinkingEffort(thinking?.effortLevels)
-    const enableThinking = reasoning?.enableThinking ?? thinking !== undefined
-    const effort = reasoning?.effort ?? defaultEffort
+    const storedReasoning = readProviderConfigField(config, "reasoning") as ReasoningConfig | undefined
+    const reasoning = resolveOpenCodeReasoningConfig(modelInfo.capabilities, storedReasoning)
 
     const changePlan = (next: OpenCodePlan) => {
         const nextConfig: OpenCodeProviderConfig = { ...latest(), mode: PLAN_MODES[next] }
@@ -195,8 +185,8 @@ export const OpenCodeProvider = ({ showModelOptions, isPopup, profile, onUpdate 
                 apiFormat={apiFormat}
                 apiKey={profile.apiKey}
                 capabilities={modelInfo.capabilities}
-                effort={effort}
-                enableThinking={enableThinking}
+                effort={reasoning?.effort}
+                enableThinking={reasoning?.enableThinking}
                 modelId={modelId}
                 models={Object.keys(modelOptions)}
                 // `declaredFormats` leads with the default this build prefers, not
@@ -257,18 +247,4 @@ function handlePricingUpdate() {}
 /** Whether a stored value is a plain object, so an override can be handed to the model builder. */
 function isObject(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === "object" && !Array.isArray(value)
-}
-
-/**
- * The level a model starts on: one step below its highest, or the highest when
- * it publishes a single level.
- *
- * Levels are ordered from least to most effort as the listing publishes them, so
- * the second-to-last entry is the strongest level that is not the ceiling. A
- * model with one level has no step below it, and a model with no levels uses the
- * provider default instead of a level it never declared.
- */
-function defaultThinkingEffort(effortLevels: readonly string[] | undefined): string | undefined {
-    if (!effortLevels || effortLevels.length === 0) return undefined
-    return effortLevels[Math.max(0, effortLevels.length - 2)]
 }

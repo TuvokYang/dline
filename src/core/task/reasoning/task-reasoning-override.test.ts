@@ -117,9 +117,10 @@ describe("Task reasoning override domain", () => {
         const runtimeProfile = applyTaskReasoningOverride(profile, { kind: "budget", budgetTokens: 2048 })
         const restored = ApiProfile.decode(ApiProfile.encode(ApiProfile.create(runtimeProfile)).finish())
 
-        expect(restored.opencode?.model?.reasoning).toMatchObject({ enableThinking: true, thinkingBudget: 2048 })
+        expect(restored.opencode?.reasoning).toMatchObject({ enableThinking: true, thinkingBudget: 2048 })
         expect(restored.opencode?.mode).toBe(OpenCodeMode.OPEN_CODE_MODE_GO)
-        expect(profile.opencode?.model).toBeUndefined()
+        expect(restored.opencode?.model).toBeUndefined()
+        expect(profile.opencode?.reasoning).toBeUndefined()
     })
 
     it("applies effort without mutating the Catalog Profile or retaining a budget", () => {

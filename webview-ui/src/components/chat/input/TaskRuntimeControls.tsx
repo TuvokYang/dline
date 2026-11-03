@@ -4,7 +4,7 @@ import { updateTaskSettings } from "@components/settings/utils/settingsHandlers"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@components/ui/select"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@components/ui/tooltip"
 import { useExtensionState } from "@context/ExtensionStateContext"
-import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
+import { resolveProfileCatalogKey, resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import { resolveThinkingBudgetBounds } from "@shared/providers/thinking-budget"
 import type { OpenAiServiceTier } from "@shared/storage/types"
 import { profileServiceTierEnabled, resolveProfileServiceTier } from "@shared/task-provider-overrides"
@@ -27,11 +27,13 @@ export function TaskRuntimeControls() {
             (profileName ? profiles.find((candidate) => candidate.name === profileName) : undefined),
         [profileId, profileName, profiles],
     )
-    const { models: providerModels, defaultModelId: providerDefaultModelId } = useProviderModels(profile?.provider ?? "")
+    const { models: providerModels, defaultModelId: providerDefaultModelId } = useProviderModels(
+        profile ? resolveProfileCatalogKey(profile) : "",
+    )
     const effectiveModelInfo = profile
         ? resolveProfileModelInfo(profile, { models: providerModels, defaultModelId: providerDefaultModelId })
         : undefined
-    const profileReasoning = resolveProfileReasoningConfig(profile)
+    const profileReasoning = resolveProfileReasoningConfig(profile, effectiveModelInfo?.capabilities)
     const thinking = resolveTaskThinkingConfig(effectiveModelInfo?.capabilities)
     const effortLevels = (thinking?.effortLevels ?? []).filter((effort) => thinking?.canDisable !== false || effort !== "none")
     const budgetBounds = thinking ? resolveThinkingBudgetBounds(thinking) : undefined
