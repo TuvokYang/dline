@@ -411,11 +411,23 @@ describe("CheckpointTracker with tracked files in an unborn user repository", ()
         }
     })
 
-    it("creates a restore point for a tracked file and Restore Files recovers its content", async () => {
+    it("creates and restores a checkpoint without changing the unborn user repository or its staged index", async () => {
         const sandbox = await createUnbornSandbox()
         try {
+            await simpleGit(sandbox.workspacePath).add("write_test.txt")
+            const userGitDir = path.join(sandbox.workspacePath, ".git")
+            const readUserGitState = async () => ({
+                head: await fs.readFile(path.join(userGitDir, "HEAD")),
+                index: await fs.readFile(path.join(userGitDir, "index")),
+                branches: await fs.readdir(path.join(userGitDir, "refs", "heads")),
+                objects: (await fs.readdir(path.join(userGitDir, "objects"), { recursive: true })).sort(),
+            })
+            const originalGitState = await readUserGitState()
+            expect(originalGitState.branches).toEqual([])
+
             const tracker = await CheckpointTracker.create("task-unborn-tracked", true, sandbox.workspacePath)
             if (!tracker) throw new Error("checkpoint_tracker_missing")
+            expect(await readUserGitState()).toEqual(originalGitState)
             const taskFiles = new TaskFileTracker("task-unborn-tracked")
             taskFiles.trackModification(sandbox.trackedFile)
             tracker.setTaskFileTracker(taskFiles)
@@ -423,12 +435,16 @@ describe("CheckpointTracker with tracked files in an unborn user repository", ()
             await fs.writeFile(sandbox.trackedFile, "checkpoint content")
             const checkpointHash = await tracker.commit()
             expectCheckpointHash(checkpointHash)
+            expect(await readUserGitState()).toEqual(originalGitState)
 
+            const shadowGitPath = await getShadowGitPath(hashWorkingDir(sandbox.workspacePath))
+            const shadowGit = simpleGit(path.dirname(shadowGitPath))
+            expect(await shadowGit.show([`${checkpointHash}:write_test.txt`])).toBe("checkpoint content")
             await fs.writeFile(sandbox.trackedFile, "after checkpoint")
             await tracker.restoreFiles(checkpointHash, [sandbox.trackedFile])
 
             expect(await fs.readFile(sandbox.trackedFile, "utf8")).toBe("checkpoint content")
-            expect((await simpleGit(sandbox.workspacePath).branchLocal()).current).toBe("")
+            expect(await readUserGitState()).toEqual(originalGitState)
         } finally {
             await disposeSandbox(sandbox)
         }
