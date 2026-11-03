@@ -5,6 +5,7 @@ import { Logger } from "@/shared/services/Logger"
 import { OutputLimitExceededError } from "../stream/OutputLimitExceededError"
 import { createResponsesWebSearchReplay } from "../transform/openai-response-format"
 import { createResponsesRegistry, createResponsesToolChunk } from "../transform/responses-identity-registry"
+import { ResponsesSummaryText } from "../transform/responses-summary-text"
 import { normalizeResponsesStopReason } from "../transform/stop-reason"
 import type { ApiRawStreamServerToolChunk, ApiServerToolPhase } from "../transform/stream"
 
@@ -146,7 +147,7 @@ export async function* handleResponsesApiStreamResponse(
         outputTokens: number,
         cacheWriteTokens: number,
         cacheReadTokens: number,
-    ) => Promise<number>,
+    ) => Promise<number | undefined>,
     /**
      * Read the amount the gateway itself charged from the raw usage event.
      *
@@ -157,6 +158,7 @@ export async function* handleResponsesApiStreamResponse(
     readReportedCost?: (usage: unknown) => number | undefined,
 ) {
     const identityRegistry = createResponsesRegistry("responses-api-support")
+    const summaryText = new ResponsesSummaryText()
     const streamedArgumentItems = new Set<string>()
     const emittedArgumentSnapshots = new Set<string>()
     const completedArgumentItems = new Set<string>()
@@ -249,14 +251,14 @@ export async function* handleResponsesApiStreamResponse(
                 yield {
                     type: "reasoning",
                     provider_metadata: { response_id: chunk.item_id },
-                    reasoning: part.text,
+                    reasoning: summaryText.append(part.text, chunk.item_id, chunk.summary_index),
                 } as const
             }
             if (chunk.type === "response.reasoning_summary_text.delta") {
                 yield {
                     type: "reasoning",
                     provider_metadata: { response_id: chunk.item_id },
-                    reasoning: chunk.delta,
+                    reasoning: summaryText.append(chunk.delta, chunk.item_id, chunk.summary_index),
                 } as const
             }
             if (chunk.type === "response.reasoning_summary_part.done") {
