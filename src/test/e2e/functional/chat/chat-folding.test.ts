@@ -2,7 +2,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
-import { rewriteTaskUiMessages, waitForTaskRelease } from "@e2e/utils/task-instance-store"
+import { readTaskUiMessages, rewriteTaskUiMessages, waitForTaskRelease } from "@e2e/utils/task-instance-store"
 import { trajectoryRail } from "@e2e/utils/trajectory-rail"
 import { expect, type Frame, type Page } from "@playwright/test"
 import type { UiMessage } from "@shared/ExtensionMessage"
@@ -423,10 +423,11 @@ e2e(
 
 e2e(
     "Folding - approval remains visible and a real checkpoint restore updates chat and trajectory",
-    async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+    async ({ dlineDir, dlineDocsDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
         e2e.setTimeout(180_000)
         const task = "E2E_FOLDING_RESTORE"
         const followup = "E2E_FOLDING_FOLLOWUP"
+        const before = await taskIds(dlineDocsDir)
         await writeFile(path.join(workspaceDir, "folding-restore.txt"), "before folding\n", "utf8")
         server.resetOpenAiMock()
         server.enqueueOpenAiResponses(
@@ -452,15 +453,22 @@ e2e(
             await expect(sidebar.getByText("FOLDING_RESTORE_DONE", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
             await send(sidebar, followup)
             await expect(sidebar.getByText("FOLDING_FOLLOWUP_DONE", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-            // Both turns have a round-start checkpoint, and both markers stay
-            // reachable. The follow-up's completion is still the live ask, so that
-            // turn ends without folding: its marker keeps its own row, while the
-            // first turn's marker is reachable inside its block.
-            await expect(sidebar.getByText("Checkpoint", { exact: true })).toHaveCount(1)
+            const taskId = await E2ETestHelper.waitForValue(
+                async () => (await taskIds(dlineDocsDir)).find((id) => !before.includes(id)),
+                30_000,
+            )
+            const target = (await readTaskUiMessages(dlineDocsDir, taskId)).find(
+                (message) => message.say === "checkpoint_created" && message.checkpointSource?.kind === "round_start",
+            )
+            if (!target) throw new Error("Expected the task's persisted round-start checkpoint")
             const rail = trajectoryRail(sidebar)
             await expect.poll(() => rail.prompts()).toEqual([[task], [followup]])
+            // A checkpoint-only finished turn folds too. Locate the actual marker,
+            // not a count of standalone labels that depends on its presentation.
+            await sidebar.getByTestId("activity-fold-header").first().hover()
             await sidebar.getByRole("button", { name: "Expand all activity", exact: true }).click()
-            const checkpoint = sidebar.getByText("Checkpoint", { exact: true }).first().locator("..").locator("..")
+            const checkpoint = sidebar.locator(`[data-message-ts="${target.ts}"]`)
+            await expect(checkpoint).toBeVisible()
             await checkpoint.hover()
             await checkpoint.getByRole("button", { name: "Restore", exact: true }).click()
             await sidebar.getByRole("button", { name: "Restore Files & Task", exact: true }).click()

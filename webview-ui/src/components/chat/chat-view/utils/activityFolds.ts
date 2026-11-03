@@ -9,7 +9,9 @@ import {
     isBrowserSession,
     isExplorationRun,
 } from "./chatRowKinds"
+import { groupExplorationRounds } from "./explorationRuns"
 import { type FoldContext, failedWorkKind, failedWorkUnits, isFoldableWorkEnd, rowState } from "./foldContext"
+import type { FoldUsageByRequest } from "./foldUsageBinding"
 import { isSettledTurnEnd, isTurnEndRow } from "./turnEndRows"
 
 type ChatRow = UiMessage | UiMessage[]
@@ -18,13 +20,9 @@ export interface FoldOptions {
     readonly level: AggressiveRenderingLevel
     /** The ask the footer is answering right now; it stays visible whatever its row says. */
     readonly activeAskTs?: number
-    /**
-     * The usage record of each provider round, in request-round order.
-     *
-     * The chat has no such records projected to it yet, so it omits this and the
-     * header states no figures. Stories and tests pass fixture records to exercise
-     * the same code path a projected transcript will use.
-     */
+    /** Live figures bound to actual send timestamps at query time. */
+    readonly usageByRequest?: FoldUsageByRequest
+    /** Ordered fixture adapter for callers without an RPC/send snapshot. */
     readonly roundUsage?: readonly FoldRoundUsage[]
 }
 
@@ -91,14 +89,17 @@ const ASSISTANT_TOOLS = new Set<string>(["actModeRespond", "statusUpdate"] satis
 export function foldActivity(rows: ChatRow[], options: FoldOptions, context: FoldContext): ChatRow[] {
     if (options.level === "none") return rows
     const policy = FOLD_POLICIES[options.level]
-    const prepared = policy.splitsCrossRoundRuns ? splitCrossRoundRuns(rows) : rows
+    const prepared = policy.splitsCrossRoundRuns ? splitCrossRoundRuns(rows) : splitMixedExplorationRuns(rows, options, context)
     const classes = prepared.map((row, index) => classifyFoldRow(row, index === prepared.length - 1, options, context))
     const rounds = roundOfRows(prepared, classes, context)
     const ended = endedRows(prepared, classes, rounds)
     const spans = foldingSpans(classes, rounds, ended, policy)
     const kind = options.level === "user_turn" ? "turn" : "segment"
     const folded = applySpans(prepared, spans, (span) => buildFold(prepared.slice(span.start, span.end), kind, context))
-    return options.roundUsage ? attachUsage(folded, context.rounds, options.roundUsage) : folded
+    const byRound = options.usageByRequest
+        ? boundUsageByRound(options.usageByRequest, context.rounds)
+        : indexUsageByRound(options.roundUsage ?? [], context.rounds)
+    return attachUsage(folded, context.rounds, byRound)
 }
 
 /**
@@ -111,47 +112,51 @@ export function foldActivity(rows: ChatRow[], options: FoldOptions, context: Fol
 function attachUsage(
     rows: readonly ChatRow[],
     rounds: ReadonlyMap<number, number>,
-    roundUsage: readonly FoldRoundUsage[],
+    byRound: ReadonlyMap<number, readonly FoldRoundUsage[]>,
 ): ChatRow[] {
-    if (roundUsage.length === 0) return [...rows]
-    const byRound = indexUsageByRound(roundUsage, rounds)
+    if (byRound.size === 0) return [...rows]
     return rows.map((row) => {
         if (!isActivityFold(row)) return row
-        const covered = new Set<FoldRoundUsage>()
+        const covered = new Map<string, FoldRoundUsage>()
         for (const member of row) {
             // A round-start restore point belongs to the round it opens, so it
             // must not pull in the previous round's figures.
             if (member.say === "checkpoint_created") continue
             const round = rounds.get(member.ts)
             const usage = round === undefined ? undefined : byRound.get(round)
-            if (usage) covered.add(usage)
+            for (const record of usage ?? []) covered.set(record.roundId, record)
         }
-        const usage = summarizeRoundsUsage([...covered])
+        const usage = summarizeRoundsUsage([...covered.values()])
         if (usage) row._usage = usage
         return row
     })
 }
 
-/**
- * Map a transcript round index onto its usage record.
- *
- * The round query returns the newest rounds still retained, so a long Task has
- * fewer records than provider sends. Binding from the end is what keeps a record
- * on the send it measured: the last record measured the last send. Binding from
- * the start would slide every earlier figure onto the wrong round and state a
- * cost the block never incurred.
- */
+/** Translate fixed send identities to this transcript's grouping buckets. */
+function boundUsageByRound(
+    usageByRequest: FoldUsageByRequest,
+    rounds: ReadonlyMap<number, number>,
+): ReadonlyMap<number, readonly FoldRoundUsage[]> {
+    const byRound = new Map<number, readonly FoldRoundUsage[]>()
+    for (const [ts, usage] of usageByRequest) {
+        const round = rounds.get(ts)
+        if (round !== undefined) byRound.set(round, usage)
+    }
+    return byRound
+}
+
+/** Ordered fixture records use the same aggregation, without live-query binding. */
 function indexUsageByRound(
     roundUsage: readonly FoldRoundUsage[],
     rounds: ReadonlyMap<number, number>,
-): ReadonlyMap<number, FoldRoundUsage> {
+): ReadonlyMap<number, readonly FoldRoundUsage[]> {
     const providerRounds = [...new Set(rounds.values())].filter((round) => round > 0).sort((left, right) => left - right)
-    const byRound = new Map<number, FoldRoundUsage>()
+    const byRound = new Map<number, readonly FoldRoundUsage[]>()
     const tail = providerRounds.slice(-roundUsage.length)
     const offset = roundUsage.length - tail.length
     tail.forEach((round, index) => {
         const usage = roundUsage[index + offset]
-        if (usage) byRound.set(round, usage)
+        if (usage) byRound.set(round, [usage])
     })
     return byRound
 }
@@ -172,6 +177,36 @@ function splitCrossRoundRuns(rows: readonly ChatRow[]): ChatRow[] {
             return roundRows
         })
         return perRound.some((roundRows) => roundRows.length === 0) ? [row] : perRound.flat()
+    })
+}
+
+/** Keep finished read-only prefixes independent of their unfinished suffix. */
+function splitMixedExplorationRuns(rows: ChatRow[], options: FoldOptions, context: FoldContext): ChatRow[] {
+    if (!rows.some(isExplorationRun)) return rows
+    const units = splitCrossRoundRuns(rows)
+    const classes = units.map((row, index) => classifyFoldRow(row, index === units.length - 1, options, context))
+    const ended = endedRows(units, classes, roundOfRows(units, classes, context))
+    const finished = new Set<number>()
+    units.forEach((row, index) => {
+        if (classes[index] !== "activity" || !ended[index]) return
+        for (const member of Array.isArray(row) ? row : [row]) finished.add(member.ts)
+    })
+    return rows.flatMap((row) => {
+        if (!isExplorationRun(row)) return [row]
+        const complete = row._rounds.map((round) =>
+            [...(round.checkpoint ? [round.checkpoint] : []), ...round.entries]
+                .flatMap((entry) => (Array.isArray(entry) ? entry : [entry]))
+                .every((member) => finished.has(member.ts)),
+        )
+        if (complete.every((value) => value === complete[0])) return [row]
+        const result: ChatRow[] = []
+        let start = 0
+        for (let end = 1; end <= row._rounds.length; end += 1) {
+            if (end < row._rounds.length && complete[end] === complete[start]) continue
+            result.push(...groupExplorationRounds(row._rounds.slice(start, end)))
+            start = end
+        }
+        return result
     })
 }
 

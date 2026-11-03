@@ -1100,6 +1100,27 @@ describe("MessagesArea with real folding", () => {
         expect(drawn()).toEqual([1, 35, 40, 45])
     })
 
+    it("opens all remaining folds without closing an already open fold", () => {
+        renderChat(twoTurnTranscript)
+        openFold("turn:10")
+        expect(header("turn:10")).toHaveAttribute("aria-expanded", "true")
+        fireEvent.click(screen.getByRole("button", { name: "Expand all activity" }))
+        expect(header("turn:10")).toHaveAttribute("aria-expanded", "true")
+        expect(header("turn:41")).toHaveAttribute("aria-expanded", "true")
+        fireEvent.click(screen.getByRole("button", { name: "Collapse all activity" }))
+        expect(header("turn:10")).toHaveAttribute("aria-expanded", "false")
+        expect(header("turn:41")).toHaveAttribute("aria-expanded", "false")
+        expect(drawn()).toEqual([1, 35, 40, 45])
+    })
+
+    it("does not expose a bulk action for stale expanded IDs absent from the current rows", () => {
+        renderChat(twoTurnTranscript)
+        openFold("turn:10")
+        deliver([twoTurnTranscript[0]])
+        expect(document.querySelectorAll("[data-fold-id]")).toHaveLength(0)
+        expect(screen.queryByTestId("folding-controls")).toBeNull()
+    })
+
     function showTrajectory() {
         act(() => {
             for (const stream of mocks.trajectoryStreams) {

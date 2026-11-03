@@ -1,80 +1,109 @@
-import { type FoldRoundUsage } from "@shared/chat/foldUsage"
-import { GetTaskRateMetricsRequest, TaskRateMetricsResolution as ProtoResolution } from "@shared/proto/dline/task"
+import type { UiMessage } from "@shared/ExtensionMessage"
+import {
+    GetTaskRateMetricsRequest,
+    TaskRateMetricsResolution as ProtoResolution,
+    TaskRateUsageQuality,
+} from "@shared/proto/dline/task"
 import { useEffect, useRef, useState } from "react"
 import { TaskServiceClient } from "@/services/grpc-client"
-import { projectRoundUsage } from "../utils/roundUsageProjection"
+import {
+    bindFoldUsage,
+    captureFoldUsageRequests,
+    EMPTY_FOLD_USAGE,
+    type FoldUsageBinding,
+    type FoldUsageByRequest,
+    type FoldUsageRequest,
+} from "../utils/foldUsageBinding"
 
-/**
- * The round page size, mirroring the backend's recent-round cap.
- *
- * The backend clamps to its own limit, so asking for more only spends a larger
- * request; asking for less silently drops rounds a block could have stated.
- * Keep the two in step when either changes.
- */
+/** Match the backend's recent-round cap without requesting full history. */
 const MAX_ROUNDS = 60
-/** One day of Provider rounds; a longer task keeps its newest rounds only. */
 const ROUND_WINDOW_MS = 24 * 60 * 60 * 1_000
+/** Readiness and late usage get a finite recovery window, never continuous polling. */
+const RETRY_DELAYS_MS = [250, 1_000, 3_000] as const
 
 interface FoldRoundUsageState {
-    readonly requestKey: string
-    readonly rounds: readonly FoldRoundUsage[]
+    readonly openingKey: string
+    readonly binding: FoldUsageBinding
 }
 
-/**
- * The figures a folded block states, read from the Task's Provider rounds.
- *
- * The chat asks for rounds rather than a time bucket: a block's header costs the
- * rounds it holds, so a minute bucket would attribute one send's duration to a
- * block that never made it. Nothing is returned until the Task reports a
- * canonical opening, because the RPC refuses a request that does not belong to
- * the opening it answers.
- */
-export function useFoldRoundUsage(taskId: string | undefined, taskInstanceId: string | undefined): readonly FoldRoundUsage[] {
-    const requestKey = JSON.stringify([taskId, taskInstanceId])
-    const latestRequestKey = useRef(requestKey)
-    latestRequestKey.current = requestKey
-    const [state, setState] = useState<FoldRoundUsageState>({ requestKey, rounds: [] })
+/** Read Provider figures on send completion/usage revision, scoped to one opening. */
+export function useFoldRoundUsage(
+    taskId: string | undefined,
+    taskInstanceId: string | undefined,
+    messages: readonly UiMessage[],
+    enabled: boolean,
+): FoldUsageByRequest {
+    const openingKey = JSON.stringify([taskId, taskInstanceId])
+    const snapshotKey = JSON.stringify(captureFoldUsageRequests(messages))
+    const queryKey = JSON.stringify([openingKey, snapshotKey, enabled])
+    const latestQueryKey = useRef(queryKey)
+    latestQueryKey.current = queryKey
+    const [state, setState] = useState<FoldRoundUsageState>({ openingKey, binding: EMPTY_FOLD_USAGE })
+    const retained = useRef(state)
 
     useEffect(() => {
         let active = true
-        const isCurrent = () => active && latestRequestKey.current === requestKey
-        if (!taskId || !taskInstanceId) return noRounds(active)
-
-        // A real past window ending now, not a window starting in the future: the
-        // round resolution ignores it today, but a range that begins after every
-        // recorded send would silently select nothing the day it stops ignoring it.
-        const endMs = Date.now()
-        void TaskServiceClient.getTaskRateMetrics(
-            GetTaskRateMetricsRequest.create({
-                taskId,
-                taskInstanceId,
-                resolution: ProtoResolution.TASK_RATE_METRICS_RESOLUTION_ROUND,
-                startMs: endMs - ROUND_WINDOW_MS,
-                endMs,
-                maxPoints: MAX_ROUNDS,
-            }),
-        )
-            .then((data) => {
+        let timer: ReturnType<typeof setTimeout> | undefined
+        let warned = false
+        const isCurrent = () => active && latestQueryKey.current === queryKey
+        if (!taskId || !taskInstanceId || !enabled) return
+        const requests = JSON.parse(snapshotKey) as FoldUsageRequest[]
+        const expected = Math.min(MAX_ROUNDS, requests.filter((request) => request.finished).length)
+        const warn = (reason: string) => {
+            if (warned) return
+            warned = true
+            // Never log RPC errors: they can carry request or account payloads.
+            console.warn(`[fold-usage] ${reason}`)
+        }
+        const retry = (attempt: number) => {
+            const delay = RETRY_DELAYS_MS[attempt]
+            if (delay !== undefined && isCurrent()) timer = setTimeout(() => void query(attempt + 1), delay)
+        }
+        const query = async (attempt: number): Promise<void> => {
+            const endMs = Date.now()
+            try {
+                const data = await TaskServiceClient.getTaskRateMetrics(
+                    GetTaskRateMetricsRequest.create({
+                        taskId,
+                        taskInstanceId,
+                        resolution: ProtoResolution.TASK_RATE_METRICS_RESOLUTION_ROUND,
+                        startMs: endMs - ROUND_WINDOW_MS,
+                        endMs,
+                        maxPoints: MAX_ROUNDS,
+                    }),
+                )
                 if (!isCurrent()) return
-                // Another opening's rounds must never be attributed to this transcript.
-                if (data.taskId !== taskId || data.taskInstanceId !== taskInstanceId) return
-                setState({ requestKey, rounds: projectRoundUsage(data.points) })
-            })
-            .catch(() => {
-                // A block without figures states none; a missing header figure is
-                // not a reason to disturb the transcript.
-                if (isCurrent()) setState({ requestKey, rounds: [] })
-            })
+                if (data.taskId !== taskId || data.taskInstanceId !== taskInstanceId) {
+                    warn("Ignored a response for another Task opening.")
+                    retry(attempt)
+                    return
+                }
+                if (data.degraded || data.truncated)
+                    warn("Round coverage is degraded or truncated; unavailable figures remain absent.")
+                const previous = retained.current.openingKey === openingKey ? retained.current.binding : EMPTY_FOLD_USAGE
+                const binding = bindFoldUsage(requests, data.points, previous, data.degraded)
+                retained.current = { openingKey, binding }
+                setState(retained.current)
+                const provisional = data.points.some(
+                    (point) =>
+                        point.provisional ||
+                        (point.usageQuality !== TaskRateUsageQuality.TASK_RATE_USAGE_QUALITY_EXACT &&
+                            point.usageQuality !== TaskRateUsageQuality.TASK_RATE_USAGE_QUALITY_LEGACY),
+                )
+                if (binding.byRequest.size < expected || provisional || data.degraded) retry(attempt)
+            } catch {
+                if (!isCurrent()) return
+                warn("Round query unavailable; retaining the last bound figures during bounded recovery.")
+                retry(attempt)
+            }
+        }
+        void query(0)
         return () => {
             active = false
+            if (timer !== undefined) clearTimeout(timer)
         }
-    }, [requestKey, taskId, taskInstanceId])
+    }, [queryKey, openingKey, snapshotKey, taskId, taskInstanceId, enabled])
 
-    // A new opening must not state the previous Task's figures even for one frame.
-    return state.requestKey === requestKey ? state.rounds : []
-}
-
-/** Nothing to clean up: the request was never issued. */
-function noRounds(_active: boolean): () => void {
-    return () => undefined
+    // Same-opening updates retain already bound values; a new opening never does.
+    return enabled && state.openingKey === openingKey ? state.binding.byRequest : EMPTY_FOLD_USAGE.byRequest
 }

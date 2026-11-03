@@ -94,7 +94,7 @@ function foldUnits(units: readonly RoundUnit[]): ChatRow[] {
             reference ??= candidate.checkpoint
             if (candidate.hasTools) end = cursor
         }
-        result.push(...buildRun(units.slice(start, end + 1)))
+        result.push(...groupExplorationRounds(units.slice(start, end + 1)))
         index = end + 1
     }
     return result
@@ -112,19 +112,16 @@ function canJoin(unit: RoundUnit, reference: UiMessage | undefined): boolean {
     return !reference || restoresSameFiles(reference, checkpoint)
 }
 
-function buildRun(units: readonly RoundUnit[]): ChatRow[] {
-    const rows = rowsOf(units)
+/** Rebuild a contiguous part of a run without changing its member rows or identity. */
+export function groupExplorationRounds(rounds: readonly ExplorationRound[]): ChatRow[] {
+    const rows = rounds.flatMap((round) => [...(round.checkpoint ? [round.checkpoint] : []), ...round.entries])
     if (rows.length < MIN_FOLDED_ROWS) return rows
 
     const members = rows.flatMap((row) => (Array.isArray(row) ? row : [row]))
-    const rounds: ExplorationRound[] = units.map((unit) => ({
-        ...(unit.checkpoint ? { checkpoint: unit.checkpoint } : {}),
-        entries: unit.entries,
-    }))
     const run = members as ExplorationRun
     run._isExplorationRun = true
     run._explorationRunId = `explore:${members[0].ts}`
-    run._rounds = rounds
+    run._rounds = [...rounds]
     return [run]
 }
 

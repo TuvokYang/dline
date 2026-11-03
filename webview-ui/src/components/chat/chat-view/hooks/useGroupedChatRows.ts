@@ -30,10 +30,7 @@ export function useGroupedChatRows(
     taskOpening?: { readonly taskId?: string; readonly taskInstanceId?: string },
 ): (UiMessage | UiMessage[])[] {
     const level = effectiveAggressiveRendering(aggressiveRendering)
-    const roundUsage = useFoldRoundUsage(taskOpening?.taskId, taskOpening?.taskInstanceId)
-    const options = useMemo<FoldOptions>(
-        () => ({ level, activeAskTs, ...(roundUsage.length > 0 ? { roundUsage } : {}) }),
-        [level, activeAskTs, roundUsage],
-    )
+    const usageByRequest = useFoldRoundUsage(taskOpening?.taskId, taskOpening?.taskInstanceId, modifiedMessages, level !== "none")
+    const options = useMemo<FoldOptions>(() => ({ level, activeAskTs, usageByRequest }), [level, activeAskTs, usageByRequest])
     return useMemo(() => groupChatRows(modifiedMessages, visibleMessages, options), [modifiedMessages, visibleMessages, options])
 }

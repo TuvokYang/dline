@@ -137,7 +137,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
         () => folds.filter((fold) => chatState.expandedFolds[fold._activityFoldId] !== true),
         [folds, chatState.expandedFolds],
     )
-    const hasOpenFolds = Object.values(chatState.expandedFolds).some(Boolean)
+    const hasOpenFolds = folds.some((fold) => chatState.expandedFolds[fold._activityFoldId] === true)
     const taskKey = getTaskViewKey(taskViewState)
     const taskKeyRef = useRef(taskKey)
     taskKeyRef.current = taskKey
@@ -1238,7 +1238,10 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                                 scrollBehavior.replaceFoldExpansion(
                                     allFoldsOpen
                                         ? {}
-                                        : Object.fromEntries(closedFolds.map((fold) => [fold._activityFoldId, true])),
+                                        : {
+                                              ...chatState.expandedFolds,
+                                              ...Object.fromEntries(closedFolds.map((fold) => [fold._activityFoldId, true])),
+                                          },
                                 )
                             }
                             title={allFoldsOpen ? "Collapse all activity" : "Expand all activity"}
