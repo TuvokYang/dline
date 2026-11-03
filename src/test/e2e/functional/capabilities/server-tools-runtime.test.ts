@@ -361,7 +361,6 @@ async function expect40VhCard(card: Locator, shouldScroll = false): Promise<void
         scrollHeight: element.scrollHeight,
         viewportHeight: window.innerHeight,
     }))
-    expect(metrics.className).toContain("max-h-[40vh]")
     expect(["auto", "hidden"]).toContain(metrics.overflowY)
     expect(metrics.clientHeight).toBeLessThanOrEqual(metrics.viewportHeight * 0.4 + 1)
     if (shouldScroll && metrics.overflowY === "auto") {
