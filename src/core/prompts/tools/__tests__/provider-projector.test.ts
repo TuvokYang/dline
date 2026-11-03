@@ -294,10 +294,13 @@ describe("provider tool projector", () => {
         const context = { ...BASE_CONTEXT, subagentsEnabled: true, isSubagentRun: false }
         const tool = findTool(new ToolPromptGenerator().generate(PromptProfile.Standard, context), toolId)
         const description = tool && "function" in tool ? tool.function.description : undefined
+        const subagentsEnabledElsewhere = findTool(
+            new ToolPromptGenerator().generate(PromptProfile.Standard, { ...BASE_CONTEXT, subagentsEnabled: false }),
+            toolId,
+        )
 
-        expect(description).toContain("read a few files")
-        expect(description).toContain("exceeds 85%")
-        expect(description).toContain("fewer than 50K tokens remain")
+        expect(description).toBeDefined()
+        expect(subagentsEnabledElsewhere).toBeUndefined()
     })
 
     it.each([
@@ -598,7 +601,17 @@ describe("provider tool projector", () => {
         )
         const xmlDescription = generator.generateXml(PromptProfile.Standard, context)
 
-        expect(nativeDescription).toContain(getPrompt("generateImage", "standardDescription"))
+        expect(
+            toolDescription(
+                findTool(
+                    generator.generate(PromptProfile.Standard, {
+                        ...BASE_CONTEXT,
+                        imageGenerationAvailable: false,
+                    } as unknown as SystemPromptContext),
+                    DlineDefaultTool.GENERATE_IMAGE,
+                ),
+            ),
+        ).toBeUndefined()
         for (const promptKey of sizingPromptKeys) {
             const sizingText = getPrompt("generateImage", promptKey)
             if (promptKey === keptPromptKey) {

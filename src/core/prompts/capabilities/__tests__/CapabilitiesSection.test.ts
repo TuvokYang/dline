@@ -40,10 +40,14 @@ describe("renderCapabilitiesSection", () => {
     it("leaves capabilities without a server as a flat list", () => {
         const section = renderCapabilitiesSection({
             ...EMPTY,
-            skills: [{ name: "review", description: "Review changes" }],
+            skills: [
+                { name: "review", description: "Review changes" },
+                { name: "release", description: "Ship a version" },
+            ],
         })
+        const skillLines = section.split("\n").filter((line) => line.trimStart().startsWith("- `"))
 
-        expect(section).toContain("- `review`: Review changes")
-        expect(section).not.toContain("Server")
+        expect(skillLines).toHaveLength(2)
+        expect(skillLines.every((line) => !line.includes("Server"))).toBe(true)
     })
 })

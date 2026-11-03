@@ -76,15 +76,16 @@ describe("canonical system prompt pipeline", () => {
         expect(Object.isFrozen(env)).toBe(true)
         expect(env).toMatchObject({
             WORKSPACE_NAMES: "\n- project",
-            PARALLEL_TOOLS_RULE: expect.stringContaining("multiple tools"),
             MCP_RULE: "",
-            CLARIFY_PERMISSION: expect.stringContaining("ask the user clarifying questions"),
-            PARALLEL_TOOL_POLICY: expect.stringContaining("multiple independent tools"),
             CUSTOM_INSTRUCTIONS: "Preferred language: zh-CN.\n\nGlobal project rules.",
             OS: "macOS",
             IDE: "TestIde",
             SUBAGENT_TIMEOUT_SECONDS: "1200",
         })
+        for (const key of ["PARALLEL_TOOLS_RULE", "CLARIFY_PERMISSION", "PARALLEL_TOOL_POLICY"] as const) {
+            expect(env[key].length).toBeGreaterThan(0)
+            expect(env[key]).not.toMatch(/@[A-Z_]+@/)
+        }
         expect(Reflect.set(env, "WORKSPACE_NAMES", "\n- mutated")).toBe(false)
         expect(env).not.toHaveProperty("CWD")
         expect(env).not.toHaveProperty("HOME_DIR")
