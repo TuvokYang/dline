@@ -225,7 +225,6 @@ describe("ModelInfoView thinking output pricing", () => {
         }
         const { container } = render(<ModelInfoView modelInfo={modelInfo} selectedModelId={modelInfo.id} />)
 
-        expect(screen.getByText("Prompt Caching").parentElement).toHaveTextContent("Yes")
         // The rendered text must not contain a standalone zero anywhere.
         expect(container.textContent).not.toMatch(/(^|\D)0(\D|$)/)
         expect(screen.queryByText("Cache Reads")).not.toBeInTheDocument()

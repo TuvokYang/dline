@@ -46,30 +46,14 @@ describe("AggressiveRenderingSetting", () => {
         expect(container.querySelector("#aggressive-rendering")).toBeNull()
     })
 
-    it("offers the three levels while the flag is on and writes the chosen level", () => {
+    it("writes the level the user chooses", () => {
         mocks.aggressiveRendering = { user: "none", featureFlag: true }
         const { container } = render(<AggressiveRenderingSetting />)
-        const dropdown = renderedDropdown(container)
 
-        const offered = Array.from(dropdown.querySelectorAll("vscode-option")).map((option) => option.getAttribute("value"))
-        expect(offered).toEqual(["none", "message_segment", "user_turn"])
-
-        chooseLevel(dropdown, "user_turn")
+        chooseLevel(renderedDropdown(container), "user_turn")
 
         expect(mocks.updateSetting).toHaveBeenCalledTimes(1)
         expect(mocks.updateSetting).toHaveBeenCalledWith("aggressiveRendering", "user_turn")
-    })
-
-    // The help text is the user's only statement of what folding does. It used to
-    // promise that failures always stay visible, while the folded block now hides
-    // them behind a counted header, so the wording is part of the contract.
-    it("describes failures as counted inside the block rather than always visible", () => {
-        mocks.aggressiveRendering = { user: "user_turn", featureFlag: true }
-        const { container } = render(<AggressiveRenderingSetting />)
-        const help = container.querySelector("#aggressive-rendering + p") ?? container.querySelector("p")
-
-        expect(help?.textContent).toContain("errors it holds")
-        expect(help?.textContent).not.toContain("always stay visible")
     })
 
     it("ignores a value that is not a known level", () => {

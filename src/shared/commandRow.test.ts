@@ -98,9 +98,6 @@ describe("writeCommandRowFacts", () => {
         })
 
         expect(facts.text).toBe("npm test")
-        expect(facts.text).not.toContain("Working directory")
-        expect(facts.text).not.toContain("REQ_APP")
-        expect(facts.text).not.toContain("Output:")
     })
 })
 

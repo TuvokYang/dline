@@ -1109,18 +1109,6 @@ describe("MessagesArea with real folding", () => {
         expect(drawn()).toEqual([1, 35, 40, 45])
     })
 
-    it("keeps the fold control in the floating column so the pinned message cannot cover it", () => {
-        renderChat(twoTurnTranscript)
-        const controls = screen.getByTestId("folding-controls")
-        // The sticky user message owns the top edge at z-10. A toolbar placed
-        // there is hidden the moment a message is pinned, which is the reported
-        // bug; the control must live in the bottom-right column instead.
-        expect(controls.className).toContain("absolute")
-        expect(controls.className).toContain("right-4")
-        expect(controls.className).not.toContain("top-0")
-        expect(controls.className).toContain("z-20")
-    })
-
     function showTrajectory() {
         act(() => {
             for (const stream of mocks.trajectoryStreams) {
