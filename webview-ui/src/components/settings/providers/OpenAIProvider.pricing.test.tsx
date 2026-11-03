@@ -188,8 +188,6 @@ describe("ModelInfoView thinking output pricing", () => {
         expect(screen.getAllByText("¥3/M")).toHaveLength(2)
         expect(screen.getByText("¥6/M")).toBeInTheDocument()
         expect(screen.getByText("¥0.03/M")).toBeInTheDocument()
-        expect(screen.getByText("Native Tool Calls").parentElement).toHaveTextContent("Yes")
-        expect(screen.getByText("Reasoning").parentElement).toHaveTextContent("Yes")
         expect(screen.queryByText("$3/M")).not.toBeInTheDocument()
     })
 

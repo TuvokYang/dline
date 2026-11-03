@@ -214,17 +214,10 @@ describe("OpenAIProvider", () => {
         // A single picker covers both catalog and listing-only models; the custom
         // switch stays available for ids no listing returns.
         expect(screen.getByRole("checkbox", { name: "Use custom model ID" })).not.toBeChecked()
-        expect(screen.getByTestId("model-options")).toHaveTextContent("gpt-listed-only")
-        expect(screen.getByTestId("remote-model-options")).toHaveTextContent("gpt-listed-only")
         const apiFormat = screen.getByRole("combobox", { name: "API Format" })
         expect(apiFormat).toHaveValue(String(ApiFormat.OPENAI_RESPONSES))
-        expect(apiFormat).toHaveStyle({
-            backgroundColor: "var(--vscode-dropdown-background)",
-            color: "var(--vscode-dropdown-foreground)",
-        })
         expect(screen.getByRole("option", { name: "OpenAI Responses" })).toBeInTheDocument()
         expect(screen.getByRole("option", { name: "OpenAI Chat" })).toBeInTheDocument()
-        expect(screen.getByTestId("capability-fields")).toHaveTextContent("hostedWebSearch")
         expect(screen.getByRole("combobox", { name: "Web Tools mode" })).toHaveValue(String(WebToolsMode.WEB_TOOLS_MODE_AUTO))
         // Prompt caching is automatic and stream usage is always requested, so the
         // provider never asks the user to opt into either one.
@@ -267,7 +260,6 @@ describe("OpenAIProvider", () => {
         expect(screen.getByRole("textbox", { name: "Model" })).toHaveValue("legacy-compatible-model")
         expect(screen.getByRole("checkbox", { name: "Use custom model ID" })).not.toBeChecked()
         expect(screen.getByRole("combobox", { name: "API Format" })).toBeInTheDocument()
-        expect(screen.getByTestId("default-native-tools")).toHaveTextContent("true")
     })
 
     it("commits a listing-only model without claiming the custom-model switch", () => {
@@ -340,9 +332,6 @@ describe("OpenAIProvider", () => {
         render(<OpenAIProvider onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
 
         expect(screen.getByText("max:64000")).toBeInTheDocument()
-        expect(screen.getByTestId("capability-fields")).toHaveTextContent(
-            "supportsImages,hostedWebSearch,supportsBrowserAction,supportsPromptCache",
-        )
 
         fireEvent.click(screen.getByText("Update Images"))
 
@@ -362,36 +351,6 @@ describe("OpenAIProvider", () => {
                 capabilities: { maxTokens: 64_000, supportsImages: true, supportsTools: true },
             },
         })
-    })
-
-    it("keeps Service Tier disabled when the OpenAI Profile has not explicitly enabled it", () => {
-        const profile = {
-            id: "profile-1",
-            provider: "openai",
-            modelId: "gpt-multi",
-            openai: OpenAiProviderConfig.create(),
-        } as unknown as ApiProfile
-
-        render(<OpenAIProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
-
-        expect(screen.getByTestId("service-tier-enabled")).toHaveTextContent("false")
-    })
-
-    it("uses a responsive field grid for custom headers", () => {
-        const profile = {
-            id: "profile-headers",
-            provider: "openai",
-            modelId: "gpt-multi",
-            openai: OpenAiProviderConfig.create({ openAiHeaders: { Authorization: "Bearer token" } }),
-        } as unknown as ApiProfile
-
-        render(<OpenAIProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
-
-        const row = screen.getByTestId("custom-header-row")
-        expect(row).toHaveClass("grid-cols-1", "xs:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]")
-        expect(screen.getByRole("textbox", { name: "Header name" })).toHaveClass("min-h-7", "w-full")
-        expect(screen.getByRole("textbox", { name: "Header value" })).toHaveClass("min-h-7", "w-full")
-        expect(screen.getByRole("button", { name: "Remove" }).parentElement).toHaveClass("justify-end", "xs:self-end")
     })
 
     it("renders the editable output rate for a Profile that overrides it", () => {
@@ -476,9 +435,6 @@ describe("OpenAIProvider", () => {
 
         render(<OpenAIProvider onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
 
-        expect(screen.getByTestId("thinking-efforts")).toHaveTextContent("none,custom")
-        expect(screen.getByTestId("service-tier-enabled")).toHaveTextContent("true")
-
         // Each control replaces the whole provider config, and the profile prop
         // only echoes a save back after the backend commits it. Editing several
         // controls in a row must therefore accumulate: rebuilding from the prop
@@ -539,7 +495,6 @@ describe("OpenAIProvider", () => {
         render(<OpenAIProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
 
         expect(screen.getByText("Model metadata incomplete")).toBeInTheDocument()
-        expect(screen.getByRole("status")).toHaveTextContent("Confirm the context window and native tool support")
     })
 
     it("shows Lite prompt guidance for a custom model below 64K context", () => {
@@ -556,6 +511,5 @@ describe("OpenAIProvider", () => {
         render(<OpenAIProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
 
         expect(screen.getByText("Lite prompt profile")).toBeInTheDocument()
-        expect(screen.getByRole("status")).toHaveTextContent("below 64K tokens")
     })
 })

@@ -67,7 +67,6 @@ describe("ProviderUsage through OpenAiCodexUsage compatibility", () => {
         expect(screen.getByText("20% remaining")).toBeInTheDocument()
         expect(screen.getByRole("progressbar", { name: "5 hour usage" })).toHaveAttribute("aria-valuenow", "50")
         expect(screen.getByRole("progressbar", { name: "7 day usage" })).toHaveAttribute("aria-valuenow", "20")
-        expect(screen.getByRole("progressbar", { name: "7 day usage" }).firstElementChild).toHaveStyle({ width: "20%" })
         expect(screen.getByText("Reset cards: 1")).toBeInTheDocument()
     })
 

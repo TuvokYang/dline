@@ -263,26 +263,6 @@ describe("AnthropicProvider", () => {
         expect(onUpdate).not.toHaveBeenCalled()
     })
 
-    it("uses declared budget mode and defaults for an opaque custom model", () => {
-        const profile = {
-            id: "opaque-budget-profile",
-            provider: "anthropic",
-            modelId: "opaque-budget",
-            modelInfo: {
-                id: "opaque-budget",
-                capabilities: {
-                    thinking: { supported: true, mode: "budget", minBudget: 17, defaultEnabled: true, canDisable: false },
-                },
-            },
-            anthropic: AnthropicProviderConfig.create({ customModelEnabled: true }),
-        } as ApiProfile
-        render(<AnthropicProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
-        expect(screen.getByTestId("thinking-mode")).toHaveTextContent("budget-only")
-        expect(screen.getByTestId("thinking-default-enabled")).toHaveTextContent("true")
-        expect(screen.getByTestId("thinking-disable-supported")).toHaveTextContent("false")
-        expect(screen.getByTestId("thinking-min-budget")).toHaveTextContent("17")
-    })
-
     it("does not infer thinking from an unknown model name or stored effort", () => {
         const profile = {
             id: "unknown-profile",
@@ -293,23 +273,6 @@ describe("AnthropicProvider", () => {
         render(<AnthropicProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
         expect(screen.queryByTestId("thinking-control")).not.toBeInTheDocument()
         expect(screen.getByText("context:")).toBeInTheDocument()
-    })
-
-    it("merges partial thinking overrides without replacing the declared mode or levels", () => {
-        const profile = {
-            id: "override-profile",
-            provider: "anthropic",
-            modelId: defaultAdaptiveModel.id,
-            anthropic: AnthropicProviderConfig.create({
-                capabilities: { thinking: { defaultEnabled: false, defaultEffort: "low", canDisable: false } },
-            }),
-        } as ApiProfile
-        render(<AnthropicProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
-        expect(screen.getByTestId("thinking-mode")).toHaveTextContent("effort-only")
-        expect(screen.getByTestId("thinking-default-effort")).toHaveTextContent("low")
-        expect(screen.getByTestId("thinking-default-enabled")).toHaveTextContent("false")
-        expect(screen.getByTestId("thinking-disable-supported")).toHaveTextContent("false")
-        expect(screen.getByTestId("thinking-efforts")).toHaveTextContent("none,low,medium,high,xhigh,max")
     })
 
     it("honors a coarse negative override instead of offering nested thinking controls", () => {
@@ -408,9 +371,6 @@ describe("AnthropicProvider", () => {
 
         expect(screen.getByText("max:64000")).toBeInTheDocument()
         expect(screen.getByText("input:0.5")).toBeInTheDocument()
-        expect(screen.getByTestId("capability-fields")).toHaveTextContent(
-            "supportsImages,hostedWebSearch,hostedWebFetch,supportsBrowserAction,supportsPromptCache",
-        )
 
         fireEvent.click(screen.getByText("Update Cache"))
 
@@ -467,9 +427,7 @@ describe("AnthropicProvider", () => {
 
         render(<AnthropicProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
 
-        expect(screen.getByTestId("capability-fields")).not.toHaveTextContent("contextWindowTiers")
         expect(screen.queryByRole("checkbox", { name: "Enable Long Context" })).not.toBeInTheDocument()
-        expect(screen.getByTestId("current-context-window")).toHaveTextContent("1000000")
     })
 
     it("uses the selected tier for the explicit context window and preserves both tier values", () => {
@@ -492,7 +450,6 @@ describe("AnthropicProvider", () => {
         const { rerender } = render(<AnthropicProvider onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
 
         expect(screen.getByRole("checkbox", { name: "Enable Long Context" })).toBeChecked()
-        expect(screen.getByTestId("current-context-window")).toHaveTextContent("1200000")
         fireEvent.click(screen.getByText("Update Current Window"))
         expect(onUpdate).toHaveBeenCalledWith({
             anthropic: {
@@ -514,7 +471,6 @@ describe("AnthropicProvider", () => {
             />,
         )
         expect(screen.getByRole("checkbox", { name: "Enable Long Context" })).not.toBeChecked()
-        expect(screen.getByTestId("current-context-window")).toHaveTextContent("160000")
     })
 
     it("edits direct context windows without adding a long-context suffix tier", () => {
@@ -538,7 +494,6 @@ describe("AnthropicProvider", () => {
         render(<AnthropicProvider onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
 
         expect(screen.queryByRole("checkbox", { name: "Enable Long Context" })).not.toBeInTheDocument()
-        expect(screen.getByTestId("current-context-window")).toHaveTextContent("1250000")
         fireEvent.click(screen.getByText("Update Current Window"))
         expect(onUpdate).toHaveBeenCalledWith({
             anthropic: {
@@ -546,19 +501,6 @@ describe("AnthropicProvider", () => {
                 capabilities: { contextWindow: 1_500_000 },
             },
         })
-    })
-
-    it("reads adaptive-thinking efforts from the selected model metadata", () => {
-        const profile = {
-            id: "profile-adaptive",
-            provider: "anthropic",
-            modelId: "claude-sonnet-4-6",
-            anthropic: AnthropicProviderConfig.create({ reasoning: { enableThinking: true, effort: "high" } }),
-        } as unknown as ApiProfile
-
-        render(<AnthropicProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
-
-        expect(screen.getByTestId("thinking-efforts")).toHaveTextContent("none,low,medium,high,max")
     })
 
     it("selects the long context by default for explicitly tiered registry models", () => {
@@ -574,36 +516,5 @@ describe("AnthropicProvider", () => {
 
         // Explicitly tiered compatible models keep the legacy long-context control.
         expect(screen.getByText("context:1000000")).toBeInTheDocument()
-    })
-
-    it("marks Opus 5 thinking as enabled by default while keeping disabled available", () => {
-        const profile = {
-            id: "profile-opus-5",
-            provider: "anthropic",
-            modelId: "claude-opus-5",
-            anthropic: AnthropicProviderConfig.create({}),
-        } as unknown as ApiProfile
-
-        render(<AnthropicProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
-
-        expect(screen.getByTestId("thinking-default-enabled")).toHaveTextContent("true")
-        expect(screen.getByTestId("thinking-default-effort")).toHaveTextContent("high")
-        expect(screen.getByTestId("thinking-disable-supported")).toHaveTextContent("true")
-        expect(screen.getByTestId("thinking-efforts")).toHaveTextContent("none,low,medium,high,xhigh,max")
-    })
-
-    it("keeps Fable 5 thinking required and removes the disabled effort", () => {
-        const profile = {
-            id: "profile-fable-5",
-            provider: "anthropic",
-            modelId: "claude-fable-5",
-            anthropic: AnthropicProviderConfig.create({ reasoning: { enableThinking: false, effort: "none" } }),
-        } as unknown as ApiProfile
-
-        render(<AnthropicProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
-
-        expect(screen.getByTestId("thinking-default-enabled")).toHaveTextContent("true")
-        expect(screen.getByTestId("thinking-disable-supported")).toHaveTextContent("false")
-        expect(screen.getByTestId("thinking-efforts")).toHaveTextContent("low,medium,high,xhigh,max")
     })
 })

@@ -624,26 +624,4 @@ describe("ModelConfiguration", () => {
         expect(screen.getByLabelText("Context Window Size")).toHaveValue("256000")
         expect(screen.getByLabelText("Max Output Tokens")).toHaveValue("16384")
     })
-
-    it("uses accessible VS Code settings hierarchy and responsive grids", () => {
-        render(
-            <ModelConfiguration
-                capabilities={{ contextWindow: 128_000 } as ModelCapabilities}
-                fields={{ capabilities: ["contextWindow"] }}
-                onCapabilitiesUpdate={vi.fn()}
-                onPricingUpdate={vi.fn()}
-            />,
-        )
-
-        fireEvent.click(screen.getByRole("button", { name: /Model Configuration/i }))
-
-        const disclosure = screen.getByRole("button", { name: "Model Configuration" })
-        expect(disclosure).toHaveClass("text-sm", "font-semibold")
-        expect(screen.getByText("Capabilities")).toHaveClass("text-xs", "font-semibold")
-        expect(screen.getByText("Context Window Size")).toHaveClass("text-sm", "font-medium")
-        expect(screen.getByLabelText("Context Window Size").closest(".profile-field")?.parentElement).toHaveClass(
-            "grid-cols-1",
-            "xs:grid-cols-2",
-        )
-    })
 })

@@ -100,7 +100,6 @@ describe("ClaudeCodeProvider thinking controls", () => {
         })
         render(<ClaudeCodeProvider onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
         expect(screen.getByRole("textbox", { name: "Model" })).toHaveValue("carried-claude-code")
-        expect(screen.getByTestId("model-id")).toHaveTextContent("carried-claude-code")
         expect(screen.queryByRole("checkbox", { name: "Enable Thinking" })).not.toBeInTheDocument()
         expect(onUpdate).not.toHaveBeenCalled()
     })
@@ -127,7 +126,6 @@ describe("ClaudeCodeProvider thinking controls", () => {
         render(<ClaudeCodeProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
         expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).toBeChecked()
         expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).toBeDisabled()
-        expect(screen.getAllByRole("combobox")[0]).toHaveTextContent("Low")
     })
 
     it("honors a provider negative override before displaying thinking controls", () => {

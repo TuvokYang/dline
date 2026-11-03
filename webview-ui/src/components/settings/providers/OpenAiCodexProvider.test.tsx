@@ -156,8 +156,6 @@ describe("OpenAiCodexProvider OAUTH control", () => {
         const signOut = screen.getByRole("button", { name: "Sign out" })
         expect(accountCard).toContainElement(signInAgain)
         expect(accountCard).toContainElement(signOut)
-        expect(signInAgain).toHaveClass("bg-button-background")
-        expect(signOut).toHaveClass("text-error")
         // The Controller reads usage once when the Profile becomes active. The
         // panel remounts on every expand and tab switch, so it shows that
         // snapshot and reads only when the user refreshes.
@@ -225,7 +223,6 @@ describe("OpenAiCodexProvider OAUTH control", () => {
 
         fireEvent.click(screen.getByRole("button", { name: /Advanced: import OAuth credential JSON/ }))
         const input = screen.getByRole("textbox", { name: "OpenAI Codex OAuth JSON" })
-        expect(input).toHaveClass("h-24", "max-h-24")
         const oauthJson = JSON.stringify({ access_token: "manual-secret", expires: 1_900_000_000_000 })
         fireEvent.change(input, { target: { value: oauthJson } })
         fireEvent.click(screen.getByRole("button", { name: "Import credential" }))

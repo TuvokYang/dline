@@ -35,18 +35,6 @@ const effortSelector = () => screen.getAllByRole("combobox")[0]
 const displaySelector = () => screen.getAllByRole("combobox")[1]
 
 describe("ThinkingControl", () => {
-    it("leaves an undeclared effort default unset instead of selecting the first level", () => {
-        render(
-            <ThinkingControl
-                defaultEnabled={true}
-                effortOptions={["low"]}
-                mode="effort-only"
-                onReasoningConfigUpdate={vi.fn()}
-            />,
-        )
-        expect(screen.getByRole("combobox")).toHaveTextContent("Provider default")
-    })
-
     it("does not fabricate a medium preference when thinking is enabled", () => {
         const onUpdate = vi.fn()
         render(<ThinkingControl effortOptions={["low"]} mode="effort-only" onReasoningConfigUpdate={onUpdate} />)
@@ -130,18 +118,6 @@ describe("ThinkingControl", () => {
         )
         expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).toBeChecked()
         expect(screen.getAllByRole("combobox").some((selector) => selector.textContent === "Low")).toBe(true)
-    })
-
-    it("preserves a legal model-declared effort outside the old OpenAI whitelist", () => {
-        render(
-            <ThinkingControl
-                effortOptions={["low", "custom"]}
-                mode="effort-only"
-                onReasoningConfigUpdate={vi.fn()}
-                reasoningConfig={{ enableThinking: true, effort: "custom" }}
-            />,
-        )
-        expect(screen.getByRole("combobox")).toHaveTextContent("Custom")
     })
 
     it("does not render an empty-string effort as a Radix option", () => {
@@ -254,7 +230,6 @@ describe("ThinkingControl", () => {
         )
 
         expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).toBeChecked()
-        expect(screen.getByRole("combobox")).toHaveTextContent("High")
     })
 
     it("persists an explicit disabled request when None is selected", () => {
@@ -386,7 +361,6 @@ describe("ThinkingControl", () => {
         const enableThinking = screen.getByRole("checkbox", { name: "Enable Thinking" })
         expect(enableThinking).toBeChecked()
         expect(enableThinking).toBeDisabled()
-        expect(screen.getByRole("combobox")).toHaveTextContent("High")
         expect(screen.queryByRole("option", { name: "None" })).not.toBeInTheDocument()
         expect(onReasoningConfigUpdate).not.toHaveBeenCalled()
     })

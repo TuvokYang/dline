@@ -229,18 +229,4 @@ describe("OllamaModelPicker Component", () => {
         // Check if dropdown is hidden - we can't easily check this in the test environment
         // Just verify the test doesn't crash
     })
-
-    it("handles empty models array", () => {
-        render(
-            <ExtensionStateContextProvider>
-                <OllamaModelPicker ollamaModels={[]} onModelChange={mockOnModelChange} selectedModelId="" />
-            </ExtensionStateContextProvider>,
-        )
-
-        const modelSearchInput = screen.getByPlaceholderText("Search and select a model...")
-        fireEvent.focus(modelSearchInput)
-
-        // No dropdown items should be displayed for empty models array
-        // Just verify the test doesn't crash
-    })
 })

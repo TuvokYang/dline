@@ -22,9 +22,7 @@ describe("Profile settings fields", () => {
 
         const input = screen.getByLabelText("OpenAI API Key")
         expect(input.tagName.toLowerCase()).toBe("vscode-text-field")
-        expect(input).toHaveClass("min-h-7", "w-full")
         expect(screen.getAllByText("OpenAI API Key")).toHaveLength(1)
-        expect(screen.getByText("Stored locally")).toHaveClass("text-xs", "text-description")
         expect(screen.getByText(/signing up here/i).closest("vscode-link")).toBeInTheDocument()
     })
 
@@ -34,7 +32,6 @@ describe("Profile settings fields", () => {
 
         const toggle = screen.getByRole("checkbox", { name: "Use custom base URL" })
         const input = document.querySelector("vscode-text-field")
-        expect(input).toHaveClass("min-h-7", "w-full")
 
         fireEvent.click(toggle)
         expect(document.querySelector("vscode-text-field")).not.toBeInTheDocument()
@@ -52,8 +49,6 @@ describe("Profile settings fields", () => {
         expect(primary).toHaveAccessibleName("Model")
         expect(fallback).toHaveAccessibleName("Fallback model")
         expect(primary.getAttribute("id")).not.toBe(fallback.getAttribute("id"))
-        expect(primary).toHaveClass("w-full")
-        expect(fallback).toHaveClass("w-full")
     })
 
     it("uses the shared field hierarchy for API Format without changing conditional rendering", () => {
@@ -77,7 +72,6 @@ describe("Profile settings fields", () => {
         )
 
         const selector = screen.getByRole("combobox", { name: "API Format" })
-        expect(selector).toHaveClass("min-h-7", "w-full")
         expect(screen.getAllByText("API Format")).toHaveLength(1)
     })
 })

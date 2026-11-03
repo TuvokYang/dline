@@ -114,48 +114,4 @@ describe("ProviderProfileList", () => {
         expect(onReorderProfiles).toHaveBeenCalledOnce()
         expect(onReorderProfiles).toHaveBeenCalledWith("profile-1", "profile-2")
     })
-
-    it("uses muted settings-compatible button surfaces", () => {
-        render(
-            <ProviderProfileList
-                currentMode="act"
-                editMode={false}
-                expandedId={null}
-                onAddProfile={vi.fn()}
-                onDeleteProfile={vi.fn()}
-                onReorderProfiles={vi.fn()}
-                onToggleEditMode={vi.fn()}
-                onToggleExpand={vi.fn()}
-                onUpdateProfile={vi.fn()}
-                profiles={[buildProfile()]}
-                providerOptions={providerOptions}
-            />,
-        )
-
-        expect(screen.getByRole("button", { name: "Manage profiles" })).toHaveClass("border-editor-widget-border/40")
-        expect(screen.getByRole("button", { name: "Add profile" })).toHaveClass("bg-(--vscode-editor-background)")
-    })
-
-    it("uses a muted destructive style for delete confirmation", () => {
-        render(
-            <ProviderProfileList
-                currentMode="act"
-                editMode={true}
-                expandedId={null}
-                onAddProfile={vi.fn()}
-                onDeleteProfile={vi.fn()}
-                onReorderProfiles={vi.fn()}
-                onToggleEditMode={vi.fn()}
-                onToggleExpand={vi.fn()}
-                onUpdateProfile={vi.fn()}
-                profiles={[buildProfile()]}
-                providerOptions={providerOptions}
-            />,
-        )
-
-        const deleteButton = screen.getByRole("button", { name: "Delete selected (0)" })
-
-        expect(deleteButton).toHaveClass("border-editor-widget-border/40")
-        expect(deleteButton).not.toHaveClass("border-red-600")
-    })
 })

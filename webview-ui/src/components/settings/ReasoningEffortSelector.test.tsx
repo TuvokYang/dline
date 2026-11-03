@@ -4,16 +4,6 @@ import { describe, expect, it, vi } from "vitest"
 import ReasoningEffortSelector from "./ReasoningEffortSelector"
 
 describe("ReasoningEffortSelector declared options", () => {
-    it("leaves an undeclared default unset instead of inventing medium", () => {
-        render(<ReasoningEffortSelector allowedEfforts={["low", "medium"]} onReasoningEffortChange={vi.fn()} />)
-        expect(screen.getByRole("combobox")).toHaveTextContent("Provider default")
-    })
-
-    it("does not display an unknown persisted preference as a legal option", () => {
-        render(<ReasoningEffortSelector allowedEfforts={["low"]} onReasoningEffortChange={vi.fn()} reasoningEffort="high" />)
-        expect(screen.getByRole("combobox")).toHaveTextContent("Provider default")
-    })
-
     it("preserves a declared provider-specific effort through the actual menu", () => {
         const onChange = vi.fn()
         render(

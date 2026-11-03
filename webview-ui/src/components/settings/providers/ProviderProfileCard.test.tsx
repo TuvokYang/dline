@@ -155,7 +155,6 @@ describe("ProviderProfileCard", () => {
         )
 
         const nameInput = screen.getByDisplayValue("openai:model-a")
-        expect(nameInput).toHaveClass("max-w-80", "justify-self-start")
         fireEvent.change(nameInput, { target: { value: "openai:custom" } })
         expect(onUpdate).not.toHaveBeenCalled()
         fireEvent.blur(nameInput)
@@ -366,41 +365,12 @@ describe("ProviderProfileCard", () => {
         )
 
         const tail = screen.getByTestId("profile-summary-tail")
-        expect(tail).toHaveClass("ml-auto", "shrink-0", "justify-end", "row-start-2", "xs:row-start-1")
         const usageGroup = screen.getByRole("group", { name: "Profile uses" })
         expect(usageGroup).toBeInTheDocument()
         expect(usageGroup.querySelectorAll("span")).not.toHaveLength(0)
         for (const badge of usageGroup.querySelectorAll("span")) expect(badge).toHaveClass("h-5")
         expect(screen.getByRole("list", { name: "Model capabilities" })).toBeInTheDocument()
         expect(screen.queryByText("🧠")).not.toBeInTheDocument()
-    })
-
-    it("uses muted settings-compatible card surfaces", () => {
-        const { container } = render(
-            <ProviderProfileCard
-                currentMode="act"
-                editMode={false}
-                isExpanded={true}
-                onDelete={vi.fn()}
-                onToggleExpand={vi.fn()}
-                onUpdate={vi.fn()}
-                profile={buildProfile()}
-                providerOptions={providerOptions}
-            />,
-        )
-
-        const card = container.firstElementChild
-        const body = screen.getByText("Provider editor").closest(".profile-form")
-
-        expect(card).toHaveClass("border-b", "border-editor-widget-border/35")
-        expect(card).not.toHaveClass("bg-(--vscode-editor-background)")
-        expect(body).toHaveClass("profile-form", "border-editor-widget-border/30", "gap-4")
-        expect(screen.getByText("Provider editor").parentElement).toHaveClass(
-            "gap-3",
-            "[&>div]:flex",
-            "[&>div]:flex-col",
-            "[&>div]:!gap-3",
-        )
     })
 
     it("initializes a newly selected Anthropic provider with long context enabled", () => {

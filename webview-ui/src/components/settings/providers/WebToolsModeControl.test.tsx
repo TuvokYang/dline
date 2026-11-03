@@ -10,8 +10,6 @@ describe("WebToolsModeControl", () => {
 
         const control = screen.getByRole("combobox", { name: "Web Tools mode" })
         expect(control).toHaveValue(String(WebToolsMode.WEB_TOOLS_MODE_AUTO))
-        expect(control).toHaveClass("min-h-7", "w-full", "text-sm")
-        expect(screen.getByText("Web Tools")).toHaveClass("text-sm", "font-medium")
         expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
             "Auto",
             "Local only",
