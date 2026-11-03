@@ -83,8 +83,9 @@ describe("canonical system prompt pipeline", () => {
             SUBAGENT_TIMEOUT_SECONDS: "1200",
         })
         for (const key of ["PARALLEL_TOOLS_RULE", "CLARIFY_PERMISSION", "PARALLEL_TOOL_POLICY"] as const) {
-            expect(env[key].length).toBeGreaterThan(0)
-            expect(env[key]).not.toMatch(/@[A-Z_]+@/)
+            const value = String(env[key])
+            expect(value.trim().length).toBeGreaterThan(0)
+            expect(value).not.toMatch(/@[A-Z_]+@/)
         }
         expect(Reflect.set(env, "WORKSPACE_NAMES", "\n- mutated")).toBe(false)
         expect(env).not.toHaveProperty("CWD")

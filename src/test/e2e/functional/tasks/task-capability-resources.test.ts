@@ -300,7 +300,7 @@ e2e(
         await expectComposerText(input, "Verify task-local capability resources.")
         await expectComposerPlaceholder(input, "Type your task here...")
         await expect(sendButton).toHaveCount(1)
-        await expect(sendButton).not.toHaveClass(/disabled/)
+        await expect(sendButton).toBeEnabled()
         await sendButton.click()
         await expectComposerText(input, "", { timeout: 5_000, message: `Webview errors: ${webviewErrors.join("\n")}` })
         await expect(sidebar.getByText("E2E_CAPABILITY_TASK_READY", { exact: false }).last()).toBeVisible({ timeout: 60_000 })

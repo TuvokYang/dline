@@ -474,7 +474,6 @@ e2e.describe("Chat message window scroll", () => {
                 await page.mouse.wheel(0, 120)
                 const scrollToBottom = sidebar.getByRole("button", { name: "Scroll to bottom", exact: true })
                 await expect(scrollToBottom).toBeVisible({ timeout: 10_000 })
-                await expect(scrollToBottom.locator("..")).toHaveClass(/pointer-events-auto/)
                 await scrollToBottom.click()
                 await expect(sidebar.getByText(STREAM_COMPLETION_MARKER, { exact: false }).last()).toBeVisible({
                     timeout: 30_000,

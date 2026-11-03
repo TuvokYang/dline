@@ -92,7 +92,7 @@ e2e(
         const thinkingRow = sidebar.getByText("Thinking", { exact: true })
         await expect(thinkingRow).toBeVisible({ timeout: 60_000 })
         // It must animate, which is the whole point of showing a contentless row.
-        await expect(thinkingRow).toHaveClass(/animate-shimmer/)
+        await expect.poll(() => thinkingRow.evaluate((element) => getComputedStyle(element).animationName)).not.toBe("none")
 
         // The opaque payload must never reach the DOM.
         await expect(sidebar.locator("body")).not.toContainText(ENCRYPTED_PAYLOAD_PREFIX)
