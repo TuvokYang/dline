@@ -140,6 +140,7 @@ export const sidebar = [
                 translations: { "zh-CN": "运行时架构" },
                 items: [
                     "developer-guide/architecture",
+                    "developer-guide/pricing",
                     "developer-guide/task-tool-execution-domain",
                     "developer-guide/prompt-architecture",
                     "developer-guide/storage",

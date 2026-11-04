@@ -95,6 +95,10 @@ Native tools and XML tools are two projections of the same canonical descriptors
 - `src/core/model-registry/ModelRegistry.ts` is the runtime model catalog.
 - The API format `ApiFormat` is defined in `proto/dline/models/metadata.proto`. Provider metadata and API format decide native tool, hosted tool, image, reasoning, and transport capabilities.
 
+## Billing and pricing
+
+`ApiHandler.calculateUsageCost` in `src/core/api/ApiHandler.ts` contains the complete one-send token-cost calculation; `src/core/api/billing/` owns its validation, strategy selection and calendar helpers. Pricing is one `ModelInfo.pricing` declaration with `currency` and `strategy`. A Profile replaces the complete declaration or inherits it when absent; legacy envelopes are upgraded only on read. Provider settings render or edit it through the same `PricingEditor` using `readOnly`. Billing does not own usage collection, request lifecycle, settlement or metrics storage. See [Billing and Model Pricing](/developer-guide/pricing/) for strategies, persistence and integration boundaries.
+
 ## Networking
 
 Extension-side code must reach the network through `src/shared/net.ts`, not global `fetch` or a default Axios instance:

@@ -95,6 +95,10 @@ VS Code API 调用应当留在宿主和集成边界内。
 - `src/core/model-registry/ModelRegistry.ts` 是运行时模型目录。
 - API 格式 `ApiFormat` 定义在 `proto/dline/models/metadata.proto`。服务商元数据和 API 格式决定原生工具、托管工具、图片、推理和传输能力。
 
+## Billing 与价格
+
+`src/core/api/ApiHandler.ts` 的 `ApiHandler.calculateUsageCost` 承载完整的一次发送 token 金额计算；`src/core/api/billing/` 负责其校验、策略选择与日历辅助。价格只有一份 `ModelInfo.pricing`，由 `currency` 和 `strategy` 组成。Profile 完整替换声明，缺失时继承；旧 envelope 只在读取时升级。Provider 设置通过同一个 `PricingEditor` 的 `readOnly` 开关展示或编辑。Billing 不负责用量采集、请求生命周期、结算或 Metrics 存储。策略、持久化和接线边界见[Billing 与模型价格](/zh-cn/developer-guide/pricing/)。
+
 ## 网络
 
 扩展侧代码必须通过 `src/shared/net.ts` 访问网络，不要使用全局 `fetch` 或默认的 Axios 实例：

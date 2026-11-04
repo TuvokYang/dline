@@ -1,0 +1,103 @@
+---
+title: Billing and Model Pricing
+description: The pure billing boundary, effective ModelInfo pricing, Profile overrides, and the shared read-only/editable Provider pricing component.
+---
+
+Use this page when changing token-cost calculation or Provider pricing configuration. Billing is a stateless calculation, not a request lifecycle, usage collector, ledger, or metrics service.
+
+## Ownership and data flow
+
+| Boundary | Owner | Responsibility |
+|---|---|---|
+| Configuration contract | `proto/dline/models/metadata.proto` | `ModelPricing`, unit-price sets, context bands, time windows and schedule |
+| Effective model information | `src/shared/providers/profile-model-info.ts`, `effective-model-info.ts` | Combine catalog information with the current Profile's complete pricing override |
+| Amount calculation | `src/core/api/ApiHandler.ts` | `ApiHandler.calculateUsageCost` contains the complete one-send calculation and returns amount/currency |
+| Domain validation and selection | `src/core/api/billing/` | Validate declarations and tokens; select context bands and seller-time rates |
+| Profile persistence | `src/core/controller/file/updateApiProfiles.ts` | Validate changed explicit pricing before the existing catalog repository mutation |
+| Settings presentation | `webview-ui/src/components/settings/common/PricingEditor.tsx` | Edit or render the same declaration with `readOnly={true}` |
+
+The model catalog supplies the base declaration. An absent provider-owned `pricing` inherits it; an explicit override replaces the complete `ModelPricing`, including `currency` and `strategy`. Reset removes the override. Do not merge oneof siblings or write a Profile edit back into the global model catalog. `pricingTiersEnabled` is a legacy editing flag, not a switch that changes the effective price declaration.
+
+The deprecated `metered`/`subscription`/`free` envelopes and old RPC price fields retain their wire numbers. Read boundaries upgrade old data once; current fields take precedence and writers emit only `currency`/`strategy`. Subscription or free account identity does not disable calculation. A published zero is an explicit numeric rate, not a missing declaration.
+
+`PriceSet.input_price` and `output_price` retain field numbers 1 and 2 with explicit presence. JSON and binary decoding preserve an absent rate instead of manufacturing zero; valid billing still requires both base rates. Editor drafts and structural edits leave unpublished slots blank. Old payloads that already omitted a zero field cannot reveal its original presence, so readers do not guess it back.
+
+The existing Profile/model-information path carries pricing. There is no separate price store, price-query RPC, preview DTO, or token-amount trial API. Shared helpers perform structural composition only; they do not choose rates, interpret holidays, or calculate money.
+
+## One round, one calculation
+
+Call `ApiHandler.calculateUsageCost` with one send's standard tokens, effective pricing and API sending time. The billing module exports validation and input/result types, not another calculator:
+
+```ts
+import { ApiHandler } from "@core/api/ApiHandler"
+import type { ModelPricing } from "@shared/proto/dline/models/metadata"
+
+const pricing: ModelPricing = {
+    currency: "USD",
+    strategy: { flat: { prices: { inputPrice: 2, outputPrice: 8 } } },
+}
+const result = ApiHandler.calculateUsageCost(
+    pricing,
+    { inputTokens: 125_000, outputTokens: 10_000 },
+    Date.parse("2026-11-03T01:30:00Z"),
+)
+// { kind: "calculated", amount: 0.33, currency: "USD" }
+```
+
+Input, cache-write and cache-read token counts are mutually exclusive. Context-band selection uses their sum. `outputTokens` already includes `thoughtsTokenCount`; thoughts are a subset, not extra output. If a thinking-output price is declared, it prices that subset; otherwise the ordinary output price applies. Prices are per one million tokens.
+
+Billing has no clock, request identity, storage, retry, accumulation or usage normalization. A time-of-day strategy requires a valid explicit sending instant. Flat/context pricing does not require time to select a rate; legacy adapters may pass an unavailable time only for those strategies.
+
+| Result | Meaning |
+|---|---|
+| `calculated` | This calculation's `amount` and `currency`, including a legitimate zero amount |
+| `unavailable` | No pricing declaration; do not invent a zero amount |
+| `invalid` | Field-level issues; never substitute a successful zero amount |
+
+Absent optional cache prices stay absent in configuration and presentation. Calculation retains the legacy rule that an absent cache price contributes zero; it does not publish a zero rate. Negative, unsafe or non-finite token counts, thoughts exceeding total output, and amount overflow are invalid.
+
+## Strategies and boundaries
+
+- **Flat:** one complete price set; no invented segment.
+- **Context window:** strictly ascending inclusive input bounds and exactly one unbounded final band, whose `maxInputTokens` is omitted. Select one whole-round price set, not progressive pricing or the model's context capacity. Do not encode infinity as zero or `Number.MAX_SAFE_INTEGER`.
+- **Time of day:** a fixed seller UTC offset, applicable-day rule, default rate and non-overlapping windows. Windows use minutes in `[startMinute, endMinute)`, with `0 ≤ start < end ≤ 1440`. Adjacency and gaps are valid; split a cross-midnight window into two windows. Defaults cover gaps and non-applicable days.
+- **Time × context:** the default or any window can contain bands instead of a single price set. Select the time rate first, then its input band. Display and preserve every band.
+
+`ModelPricing.strategy` has one active branch: `flat`, `contextWindow` or `timeOfDay`. Each time rate has prices or bands, not both. Input/output unit prices must be finite and non-negative; cache and thinking-output prices are optional. Currency is a three-letter uppercase code. Domain validation checks the whole declaration, not only the currently selected branch. The Proto time-window type is `PricingTimeWindow`.
+
+The local public-holiday calendar currently covers China in 2025 and 2026. Sources and dates live in `src/core/api/billing/calendars.ts`. An uncovered date that needs a holiday decision returns an issue instead of guessing. DeepSeek's peak and default prices are independently declared in `src/core/api/providers/models/deepseek.ts`; no multiplier derives one from the other.
+
+## Provider rendering and editing
+
+`ModelConfiguration` uses the editable `PricingEditor`. `ModelInfoView` and Storybook use that same component with `readOnly={true}`. `PriceSetFields`, `PricingTierEditor` and `TimeWindowEditor` share the structure; read-only mode removes input and mutation controls rather than introducing another view.
+
+| Entry | Editing contract |
+|---|---|
+| DeepSeek | Fixed time-of-day strategy; explicit default/window rates are editable. Published window geometry is fixed. The real settings footer renders the same effective pricing and proportional configuration bar. A legacy flat override is preserved until an explicit Reset, not converted with a guessed discount. |
+| OpenAI / Anthropic | The custom-base-URL **switch** enables pricing modes and structure editing, even before a URL is entered. It is independent of custom model ID. Flat pricing exposes Add Pricing Tier; it becomes a valid banded declaration. |
+| Other `ModelInfoView` consumers | Read-only pricing summary; this component does not grant those Providers a new editing surface. |
+
+Turning custom URL off retains the existing URL-clearing behavior but does not delete pricing. The enabled-but-empty switch is editor-local and is not a new persistent setting. Profile/model keys isolate local pricing drafts.
+
+The horizontal time bar is configuration geometry: a window's width is its minute duration out of 1440, with the default behind gaps. Labels state seller time, applicable days and configured holiday conditions. It is **not** today's resolved calendar, current rate, next boundary or countdown. The frontend does not implement those billing decisions.
+
+## Saving and failure paths
+
+Edits publish complete pricing declarations. Latest-draft references keep adjacent debounced fields from replacing each other; stale echoes cannot roll the draft back. Flush pending inputs before structural changes and Reset so a late field cannot modify a different row or recreate a removed override. Flush failure retains the structure and reports an alert.
+
+The existing Profile save path validates new or changed explicit pricing before mutation. Reset/absence is allowed. An unchanged malformed legacy declaration does not block an unrelated rename; editing that declaration requires a valid replacement. No new migration or persistence authority is introduced. See [Storage Ownership](/developer-guide/storage/) for repository consistency.
+
+Provider adapters call the base method where their existing standard response usage is available. Messages responses combine their input and final output before calculation; a `pause_turn` continuation uses its own send time and response usage. Internal retries and transport fallbacks also pass the time of the actual send, not the outer `createMessage` entry time. This does not change token collection or snapshot/delta semantics.
+
+A valid Provider-reported amount, including zero, takes precedence over local calculation. Carry its supplied or protocol-defined currency with it; do not label an unknown currency using Profile defaults. Existing consumers receive resolved money and currency without selecting prices or recalculating accumulated tokens. Amounts retain the existing accumulation rules and currency follows the latest amount; no exchange or multi-currency settlement layer is introduced.
+
+## Verification entry points
+
+From the repository root, the focused calculation/configuration suites are:
+
+```sh
+npm run test:run -- src/core/api/billing/__tests__ src/shared/providers/__tests__/model-info-overrides.test.ts src/shared/providers/__tests__/effective-model-info.test.ts src/core/controller/file/__tests__/profile-pricing.integration.test.ts
+npm run test:run -- webview-ui/src/components/settings/common/PricingEditor.test.tsx webview-ui/src/components/settings/common/ModelConfiguration.test.tsx webview-ui/src/components/settings/providers/ProviderPricing.integration.test.tsx webview-ui/src/components/settings/providers/OpenAIProvider.pricing.test.tsx
+```
+
+They cover independent amount oracles, boundaries, sending-time selection, complete override/Reset and disk reopen, optional-price presence, nested bands, custom-URL gating, delayed input flush, and real Provider composition. Storybook demonstrates the same presentation but is not evidence of Profile persistence or Provider runtime wiring. See [Testing](/developer-guide/testing/) for broader verification.
