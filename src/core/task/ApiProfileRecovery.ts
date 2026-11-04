@@ -78,7 +78,7 @@ const PROVIDERS_WITH_NON_FLAT_CREDENTIALS = new Set(["bedrock", "cline", "oca", 
 function requiresFlatApiKey(profile: ApiProfile): boolean {
     if (PROVIDERS_WITH_NON_FLAT_CREDENTIALS.has(profile.provider)) return false
     if (profile.provider === "openai" && profile.openai?.azureIdentity) {
-        const baseUrl = profile.baseUrl?.toLowerCase() ?? ""
+        const _baseUrl = profile.baseUrl?.toLowerCase() ?? ""
         return false
     }
     if (profile.provider === "ollama" || profile.provider === "lmstudio") return false
@@ -245,7 +245,6 @@ export async function validateApiProfileCredentials(
                         "reauthentication_required",
                         `Profile not valid: "${profile.name}" must sign in to OpenAI Codex again.`,
                     )
-                case "missing":
                 default:
                     return invalidProfile(
                         profile,
@@ -309,7 +308,7 @@ export async function validateResolvedTaskApiProfile(resolution: ApiProfileRecov
 function invalidResult(
     configuration: ApiConfiguration,
     requestedProfile: string | undefined,
-    requestedProfileId: string | undefined,
+    _requestedProfileId: string | undefined,
     validity: ApiProfileValidity,
 ): ApiProfileRecoveryResult {
     return {

@@ -200,7 +200,7 @@ export function projectCanonicalTaskView(state: Readonly<TaskState>): CanonicalT
         flowPhase: state.flow.phase,
         terminal,
         activity,
-        ...(isAway(state) ? { away: { source: state.away!.mode!.source } } : {}),
+        ...(isAway(state) ? { away: { source: state.away.mode.source } } : {}),
         input: projectInput(state, terminal, approvals),
         taskActions: projectTaskActions(state, terminal),
         primary,

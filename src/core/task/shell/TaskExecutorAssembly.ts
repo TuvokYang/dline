@@ -102,9 +102,7 @@ class BoundTaskEventSink implements TaskEventSink {
             ? {
                   kind: "accepted",
                   durable: result.receipt.durable,
-                  ...(event.type === "compose.freeze_requested"
-                      ? { materialPlan: result.state.flow.compose!.materialPlan! }
-                      : {}),
+                  ...(event.type === "compose.freeze_requested" ? { materialPlan: result.state.flow.compose?.materialPlan } : {}),
               }
             : { kind: "rejected" }
     }

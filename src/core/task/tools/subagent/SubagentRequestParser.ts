@@ -124,7 +124,7 @@ function parseOptions(params: Record<string, unknown>): SubagentToolOptions {
  * @param tag Section tag name.
  * @returns Trimmed section body.
  */
-function extractSection(prompt: string, tag: "task" | "context"): string {
+function _extractSection(prompt: string, tag: "task" | "context"): string {
     const pattern = new RegExp(`<${tag}>\\s*([\\s\\S]*?)\\s*</${tag}>`, "i")
     const match = prompt.match(pattern)
     const value = match?.[1]?.trim()

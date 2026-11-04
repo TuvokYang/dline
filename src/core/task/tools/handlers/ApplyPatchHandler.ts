@@ -448,10 +448,6 @@ export class ApplyPatchHandler implements IFullyManagedTool {
         return files
     }
 
-    private extractAllFiles(text: string): string[] {
-        return this.extractFilesForOperations(text, [PATCH_MARKERS.ADD, PATCH_MARKERS.UPDATE, PATCH_MARKERS.DELETE])
-    }
-
     private async loadFiles(config: TaskConfig, filePaths: string[]): Promise<Record<string, string>> {
         const files: Record<string, string> = {}
 

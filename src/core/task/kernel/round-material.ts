@@ -31,7 +31,7 @@ export function freezeRoundMaterial(state: TaskState): RoundMaterialPlan {
         frozenRevision: state.revision,
         notices: [...(state.roundMaterial?.notices ?? [])],
         inputs: inputs.sort((left, right) => left.revision - right.revision),
-        ...(isAway(state) ? { activeAway: state.away!.mode } : {}),
+        ...(isAway(state) ? { activeAway: state.away?.mode } : {}),
     }
 }
 

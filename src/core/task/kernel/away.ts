@@ -1,4 +1,14 @@
-import type { AwayConfigurationFact, DialogInteraction, RoundNotice, TaskEvent, TaskState, UserControl } from "./types"
+import type {
+    AwayConfigurationFact,
+    AwayMode,
+    AwaySlice,
+    DialogInteraction,
+    InteractionDeadline,
+    RoundNotice,
+    TaskEvent,
+    TaskState,
+    UserControl,
+} from "./types"
 
 export const ASK_AWAY_TIMEOUT_MS = 10 * 60 * 1000
 export const EXTERNAL_COMMAND_TIMEOUT_MS = 60 * 1000
@@ -9,7 +19,7 @@ export const DISABLED_AWAY_CONFIGURATION: AwayConfigurationFact = {
     automaticRevocation: 0,
 }
 
-export function isAway(state: TaskState): boolean {
+export function isAway(state: TaskState): state is TaskState & { readonly away: AwaySlice & { readonly mode: AwayMode } } {
     const away = state.away
     return (
         away?.mode !== undefined && away.configuration.enabled && away.mode.modeRevocation === away.configuration.modeRevocation
@@ -106,6 +116,7 @@ export function validDeadline(interaction: DialogInteraction, configuration: Awa
 
 /** A configuration update invalidates old qualifications; enabling never arms an existing ask. */
 export function reduceAway(state: TaskState, event: TaskEvent): TaskState {
+    const now = event.now
     if (event.type === "away.configured") {
         const previous = state.away?.configuration ?? DISABLED_AWAY_CONFIGURATION
         const configuration = {
@@ -150,7 +161,8 @@ export function reduceAway(state: TaskState, event: TaskEvent): TaskState {
             event.queueDeliveryEntries.map((entry) => entry.entryId),
         )
     if (event.type === "user.submit" || event.type === "dialog.responded") return applyControl(state, event.userControl)
-    if (event.type === "provider.turn_ready" && isAway(state) && Number.isFinite(event.now)) {
+    if (event.type === "provider.turn_ready" && isAway(state) && typeof now === "number" && Number.isFinite(now)) {
+        const configuration = state.away.configuration
         const external = new Set(
             event.turnPlan.blocks
                 .filter((block) => block.approval.kind === "manual" && block.approval.externalCommand)
@@ -168,9 +180,9 @@ export function reduceAway(state: TaskState, event: TaskEvent): TaskState {
                                   ...interaction,
                                   deadline: {
                                       kind: "external_command" as const,
-                                      deadlineAt: event.now! + EXTERNAL_COMMAND_TIMEOUT_MS,
-                                      modeRevocation: state.away!.configuration.modeRevocation,
-                                      automaticRevocation: state.away!.configuration.automaticRevocation,
+                                      deadlineAt: now + EXTERNAL_COMMAND_TIMEOUT_MS,
+                                      modeRevocation: configuration.modeRevocation,
+                                      automaticRevocation: configuration.automaticRevocation,
                                   },
                               }
                             : interaction,
@@ -182,19 +194,24 @@ export function reduceAway(state: TaskState, event: TaskEvent): TaskState {
     if (
         (event.type === "dialog.requested" || event.type === "dialog.interrupt_requested") &&
         event.externalCommand &&
-        isAway(state)
+        isAway(state) &&
+        typeof now === "number" &&
+        Number.isFinite(now)
     ) {
+        const configuration = state.away.configuration
+        const interaction = state.dialog.primary
+        if (!interaction || interaction.interactionId !== event.interactionId) return state
         return {
             ...state,
             dialog: {
                 ...state.dialog,
                 primary: {
-                    ...state.dialog.primary!,
+                    ...interaction,
                     deadline: {
                         kind: "external_command",
-                        deadlineAt: event.now! + EXTERNAL_COMMAND_TIMEOUT_MS,
-                        modeRevocation: state.away!.configuration.modeRevocation,
-                        automaticRevocation: state.away!.configuration.automaticRevocation,
+                        deadlineAt: now + EXTERNAL_COMMAND_TIMEOUT_MS,
+                        modeRevocation: configuration.modeRevocation,
+                        automaticRevocation: configuration.automaticRevocation,
                     },
                 },
             },
@@ -202,7 +219,7 @@ export function reduceAway(state: TaskState, event: TaskEvent): TaskState {
     }
     if ((event.type === "dialog.requested" || event.type === "dialog.interrupt_requested") && event.kind === "followup") {
         const configuration = state.away?.configuration
-        if (!configuration?.enabled || !configuration.automatic || !Number.isFinite(event.now)) return state
+        if (!configuration?.enabled || !configuration.automatic || typeof now !== "number" || !Number.isFinite(now)) return state
         const interaction = state.dialog.primary
         if (!interaction || interaction.interactionId !== event.interactionId) return state
         return {
@@ -213,7 +230,7 @@ export function reduceAway(state: TaskState, event: TaskEvent): TaskState {
                     ...interaction,
                     deadline: {
                         kind: "ask",
-                        deadlineAt: event.now! + ASK_AWAY_TIMEOUT_MS,
+                        deadlineAt: now + ASK_AWAY_TIMEOUT_MS,
                         modeRevocation: configuration.modeRevocation,
                         automaticRevocation: configuration.automaticRevocation,
                     },
@@ -224,21 +241,31 @@ export function reduceAway(state: TaskState, event: TaskEvent): TaskState {
     return state
 }
 
+export type TimedDialogInteraction = DialogInteraction & {
+    readonly deadline: InteractionDeadline
+    readonly receiverGeneration: number
+}
+
+/** Retain the deadline and receiver qualification across scheduler and kernel calls. */
+export function hasInteractionDeadline(interaction: DialogInteraction | undefined): interaction is TimedDialogInteraction {
+    return interaction?.deadline !== undefined && interaction.receiverGeneration !== undefined
+}
+
 export function dueAwayInteraction(
     state: TaskState,
     event: Extract<TaskEvent, { type: "away.deadline_due" }>,
-): DialogInteraction | undefined {
+): TimedDialogInteraction | undefined {
     if (state.halt.status !== "idle" || !["running", "waiting"].includes(state.flow.phase)) return undefined
     const interaction = [state.dialog.primary, ...Object.values(state.dialog.approvalsByBlock)].find(
         (candidate) => candidate?.interactionId === event.interactionId,
     )
     if (
-        !interaction ||
+        !hasInteractionDeadline(interaction) ||
         interaction.status !== "awaiting" ||
         interaction.acceptedResponse ||
         interaction.turnId !== event.turnId ||
         interaction.receiverGeneration !== event.receiverGeneration ||
-        interaction.deadline?.deadlineAt !== event.deadlineAt ||
+        interaction.deadline.deadlineAt !== event.deadlineAt ||
         !Number.isFinite(event.now) ||
         event.now < event.deadlineAt ||
         !validDeadline(interaction, state.away?.configuration ?? DISABLED_AWAY_CONFIGURATION)
@@ -249,8 +276,8 @@ export function dueAwayInteraction(
 }
 
 /** Commit the typed result before the live receiver or restored continuation is woken. */
-export function acceptAwayDeadline(state: TaskState, interaction: DialogInteraction): TaskState {
-    const deadlineKind = interaction.deadline!.kind
+export function acceptAwayDeadline(state: TaskState, interaction: TimedDialogInteraction): TaskState {
+    const deadlineKind = interaction.deadline.kind
     const accepted: DialogInteraction = {
         ...interaction,
         status: "resolving",
@@ -260,7 +287,7 @@ export function acceptAwayDeadline(state: TaskState, interaction: DialogInteract
             deadlineKind,
             actionId: deadlineKind === "ask" ? "reply" : "reject",
             stateRevision: state.revision - 1,
-            receiverGeneration: interaction.receiverGeneration!,
+            receiverGeneration: interaction.receiverGeneration,
         },
     }
     const next: TaskState = {

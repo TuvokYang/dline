@@ -63,8 +63,10 @@ export class TaskInputMaterializer {
         const result = await this.admission.admit(envelope)
         if (!result.ok) throw new SemanticInputRejectedError(result.diagnostics)
         const owned = this.ownedBarrier(result.admitted)
+        const barriers = this.barriers
         if (
             owned &&
+            barriers &&
             !owned.turnText.trim() &&
             !hasResourceParts(owned.turnParts) &&
             !envelope.images?.length &&
@@ -72,7 +74,7 @@ export class TaskInputMaterializer {
             !envelope.context?.trim()
         ) {
             const command = { commandId: owned.commandId, premessage: owned.premessage }
-            return { claimedBarrier: owned.entityId, performAlone: () => this.barriers!.perform(command) }
+            return { claimedBarrier: owned.entityId, performAlone: () => barriers.perform(command) }
         }
         const projection = this.project(result.admitted)
         const payloadRef = await this.payloads.put(

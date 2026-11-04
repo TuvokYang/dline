@@ -197,10 +197,12 @@ e2e(
         const commandCard = sidebar.getByTestId("command-card").last()
         await expect(commandCard.getByRole("button", { name: COMMAND, exact: true })).toBeVisible()
         await expect(commandCard.getByTestId("command-output-summary")).toContainText("WORK_DAILY_COMMAND_END")
-        // The command line and the directory it ran in are separate facts. The
-        // card must show the directory, which it could not while the field was
-        // never written and the text carried no suffix either.
-        await expect(commandCard.getByTestId("command-workdirectory")).toBeVisible()
+        // Completed cards fold into a summary; open the card to read its metadata.
+        // Keep the directory separate from the executable command and verify its stored value below.
+        await commandCard.getByRole("button", { name: COMMAND, exact: true }).click()
+        const workdirectory = commandCard.getByTestId("command-workdirectory")
+        await expect(workdirectory).toBeVisible()
+        await expect(workdirectory).toHaveText(workspaceDir)
         const commandTaskId = await workTaskIdByMarker(dlineDocsDir, TASK_TEXT)
         const storedCommand = (await readTaskUiMessages(dlineDocsDir, commandTaskId)).find(
             (message) => message.command === COMMAND,

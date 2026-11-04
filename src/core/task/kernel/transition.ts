@@ -655,14 +655,16 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
         return [{ ...commandBase(next, 0), type: "provider.start", draftRef: compose.draftRef!, turnId: compose.turnId }]
     }
     if (event.type === "dialog.resolved" && resumesAutomaticResponse(previous, event.interactionId)) {
-        const interaction = next.dialog.primary!
+        const interaction = next.dialog.primary
+        const deadlineKind = interaction?.acceptedResponse?.deadlineKind
+        if (!interaction || deadlineKind === undefined) return []
         return [
             {
                 ...commandBase(next, 0),
                 type: "dialog.deliver_automatic",
                 interactionId: interaction.interactionId,
                 turnId: interaction.turnId,
-                deadlineKind: interaction.acceptedResponse!.deadlineKind!,
+                deadlineKind,
             },
         ]
     }
@@ -992,7 +994,7 @@ export function transition(state: TaskState, event: TaskEvent): TransitionResult
                     type: "dialog.deliver_automatic",
                     interactionId: interaction.interactionId,
                     turnId: interaction.turnId,
-                    deadlineKind: interaction.deadline!.kind,
+                    deadlineKind: interaction.deadline.kind,
                 },
             ],
         }

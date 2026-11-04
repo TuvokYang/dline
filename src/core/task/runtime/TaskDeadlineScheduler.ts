@@ -1,4 +1,5 @@
-import { type DialogInteraction, dueAwayInteraction, type TaskEvent, type TaskState } from "../kernel"
+import type { TaskEvent, TaskState } from "../kernel"
+import { dueAwayInteraction, hasInteractionDeadline, type TimedDialogInteraction } from "../kernel/away"
 
 export interface TaskDeadlineClock {
     now(): number
@@ -32,9 +33,9 @@ export class TaskDeadlineScheduler {
         const state = this.readState()
         if (state.halt.status !== "idle" || !["running", "waiting"].includes(state.flow.phase)) return
         const candidates = [state.dialog.primary, ...Object.values(state.dialog.approvalsByBlock)]
-            .filter((interaction): interaction is DialogInteraction => interaction?.deadline !== undefined)
-            .filter((interaction) => dueAwayInteraction(state, this.event(state, interaction, interaction.deadline!.deadlineAt)))
-            .sort((a, b) => a.deadline!.deadlineAt - b.deadline!.deadlineAt)
+            .filter(hasInteractionDeadline)
+            .filter((interaction) => dueAwayInteraction(state, this.event(state, interaction, interaction.deadline.deadlineAt)))
+            .sort((a, b) => a.deadline.deadlineAt - b.deadline.deadlineAt)
         const first = candidates[0]
         if (!first) return
         this.timer = this.clock.schedule(
@@ -43,7 +44,7 @@ export class TaskDeadlineScheduler {
                 if (this.closed || !this.permitted()) return
                 this.pending = this.deliver(first).catch(this.reportError)
             },
-            Math.max(0, first.deadline!.deadlineAt - this.clock.now()),
+            Math.max(0, first.deadline.deadlineAt - this.clock.now()),
         )
     }
 
@@ -56,7 +57,7 @@ export class TaskDeadlineScheduler {
         await this.pending
     }
 
-    private async deliver(interaction: DialogInteraction): Promise<void> {
+    private async deliver(interaction: TimedDialogInteraction): Promise<void> {
         const state = this.readState()
         await this.submit(this.event(state, interaction, this.clock.now()))
         this.refresh()
@@ -64,7 +65,7 @@ export class TaskDeadlineScheduler {
 
     private event(
         state: TaskState,
-        interaction: DialogInteraction,
+        interaction: TimedDialogInteraction,
         now: number,
     ): Extract<TaskEvent, { type: "away.deadline_due" }> {
         return {
@@ -72,8 +73,8 @@ export class TaskDeadlineScheduler {
             generation: state.generation,
             interactionId: interaction.interactionId,
             turnId: interaction.turnId,
-            receiverGeneration: interaction.receiverGeneration ?? -1,
-            deadlineAt: interaction.deadline!.deadlineAt,
+            receiverGeneration: interaction.receiverGeneration,
+            deadlineAt: interaction.deadline.deadlineAt,
             now,
         }
     }

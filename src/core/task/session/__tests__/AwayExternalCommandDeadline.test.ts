@@ -122,7 +122,7 @@ describe("Away planned external command deadline", () => {
             },
         }
         const adapter = new ProductionComposeAdapter({ payloads, journal, readState: () => runtime.getState() })
-        const executed = vi.fn(async () => {})
+        const executed = vi.fn(async () => undefined)
         const sent: ProviderDraftEnvelope[] = []
         runtime = new TaskRuntime({
             initialState: {

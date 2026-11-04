@@ -324,7 +324,7 @@ export class ToolBoundaryReviewError extends Error {
  * they will touch, so they never contribute canonical write-path lanes and
  * fall back to the conservative fan-out lane instead.
  */
-const DYNAMIC_WRITE_FANOUT_TOOLS = new Set<DlineDefaultTool>([DlineDefaultTool.REPLACE_TEXT, DlineDefaultTool.RENAME])
+const _DYNAMIC_WRITE_FANOUT_TOOLS = new Set<DlineDefaultTool>([DlineDefaultTool.REPLACE_TEXT, DlineDefaultTool.RENAME])
 
 async function confirmScopeContext(
     block: ToolUse,

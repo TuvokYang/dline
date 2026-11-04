@@ -66,7 +66,7 @@ describe("tool domain resource release", () => {
         const domain = new ToolExecutionDomain({
             runner: createToolDomainRunner({
                 resources,
-                execute: () => new Promise<void>((resolve) => (finish = resolve)),
+                execute: () => new Promise<undefined>((resolve) => (finish = () => resolve(undefined))),
             }),
             sink: { emit: () => undefined },
             surface: createDeniedSurface("detached_domain"),

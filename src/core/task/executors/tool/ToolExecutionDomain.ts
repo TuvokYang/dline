@@ -52,7 +52,7 @@ export interface ToolDomainEventSink {
 
 /** The side-effecting work the domain owns; injected so the domain stays testable. */
 export interface ToolDomainRunner {
-    runBlock(command: ToolRunCommand): Promise<ToolDomainRunResult | void>
+    runBlock(command: ToolRunCommand): Promise<ToolDomainRunResult | undefined>
     /** Request cancellation before the domain waits for in-flight work to settle. */
     requestStop?(order: HaltOrder): Promise<void>
     /** Release remaining owned resources exactly once after the drain. */

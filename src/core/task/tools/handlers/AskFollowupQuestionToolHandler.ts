@@ -55,7 +55,7 @@ export class AskFollowupQuestionToolHandler implements IToolHandler, IPartialBlo
             options: parsePartialArrayString(optionsRaw || "[]"),
         } satisfies UiAskQuestion
 
-        const options = parsePartialArrayString(optionsRaw || "[]")
+        const _options = parsePartialArrayString(optionsRaw || "[]")
 
         const outcome = await config.interactions.open({
             turnId: interactionTurnId(block),

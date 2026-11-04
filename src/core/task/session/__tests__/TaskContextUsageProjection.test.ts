@@ -354,11 +354,10 @@ describe("TaskContextUsageProjection", () => {
         expect(harness.target.contextWindowIndicator).toMatchObject({ contextWindow: WINDOW, mode: "plan" })
     })
 
-    it("keeps the conversation it showed while a hidden Pass is sent, without adding the staged tail", async () => {
+    it("keeps the reported conversation occupancy while a hidden Pass is sent", async () => {
         const harness = createProjection()
         await request(harness, "turn-1", 441_433)
         harness.projection.committed({ ...running(), flow: { phase: "waiting" } })
-        harness.projection.staged({ pendingContextTokens: 30_000 })
         harness.projection.committed({
             ...running(),
             flow: {
@@ -417,7 +416,6 @@ describe("TaskContextUsageProjection", () => {
         await request(harness, "turn-1", 17_392)
         // The run continues after this report, so the figure is still receiving.
         await request(harness, "turn-2", 930_100)
-        harness.projection.staged({ pendingContextTokens: 66_000 })
         const compaction = (attempt: string) =>
             ({
                 ...running(),
@@ -479,10 +477,9 @@ describe("TaskContextUsageProjection", () => {
         expect(total(harness)).toBe(155_000)
     })
 
-    it("drops a staged tail once an ordinary request carries it", async () => {
+    it("keeps the latest ordinary request occupancy when compaction is scheduled", async () => {
         const harness = createProjection()
         await request(harness, "turn-1", 500_000)
-        harness.projection.staged({ pendingContextTokens: 40_000 })
         await request(harness, "turn-2", 540_000)
 
         harness.projection.committed({

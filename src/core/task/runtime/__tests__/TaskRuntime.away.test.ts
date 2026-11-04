@@ -12,7 +12,7 @@ function step(state: TaskState, event: EventInput) {
     if (result.kind === "rejected") throw new Error(result.diagnostic.message)
     return result
 }
-function awaiting(automatic = true): TaskState {
+function awaiting(automatic = true, timing: { readonly now?: number } = { now: 1000 }): TaskState {
     let state: TaskState = { ...createInitialTaskState("deadline"), flow: { phase: "running" } }
     state = step(state, { type: "away.configured", configuration: { ...configuration, automatic } }).state
     const requested = step(state, {
@@ -20,7 +20,7 @@ function awaiting(automatic = true): TaskState {
         interactionId: "question",
         turnId: "turn",
         kind: "followup",
-        now: 1000,
+        now: timing.now,
         presentationRef: "question-body",
         actionRules: [{ actionId: "reply", payloadPolicy: "draft" }],
     })
@@ -218,6 +218,44 @@ describe("Runtime-owned Away deadlines", () => {
         }
         await vi.advanceTimersByTimeAsync(600000)
         expect(attempts).toBe(failure === "persistent" ? 3 : 1)
+    })
+
+    it.each([
+        undefined,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        Number.NEGATIVE_INFINITY,
+    ])("does not arm an ask without a finite event clock (%s)", async (now) => {
+        vi.useFakeTimers()
+        vi.setSystemTime(1000)
+        const state = awaiting(true, { now })
+        expect(state.dialog.primary?.deadline).toBeUndefined()
+        const r = runtime(state)
+        runtimes.push(r.instance)
+        r.instance.allowRestoredCommands()
+        expect(vi.getTimerCount()).toBe(0)
+        await vi.advanceTimersByTimeAsync(700000)
+        expect(r.deliveries).toEqual([])
+        expect(r.instance.getState()).toBe(state)
+    })
+
+    it.each(["deadline", "receiverGeneration"] as const)("does not schedule an interaction missing %s", async (missing) => {
+        vi.useFakeTimers()
+        vi.setSystemTime(1000)
+        const original = awaiting()
+        const primary = original.dialog.primary
+        if (!primary) throw new Error("Missing prepared question")
+        const state: TaskState = {
+            ...original,
+            dialog: { ...original.dialog, primary: { ...primary, [missing]: undefined } },
+        }
+        const r = runtime(state)
+        runtimes.push(r.instance)
+        r.instance.allowRestoredCommands()
+        expect(vi.getTimerCount()).toBe(0)
+        await vi.advanceTimersByTimeAsync(700000)
+        expect(r.deliveries).toEqual([])
+        expect(r.instance.getState()).toBe(state)
     })
 
     it("lets only one of a human response and the due event settle the question", () => {
