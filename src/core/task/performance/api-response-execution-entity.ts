@@ -171,7 +171,8 @@ export function assertApiResponseExecutionRecord(record: ApiResponseExecutionRec
     if (record.terminalKind === "provider_only" && record.toolCount !== 0) {
         throw new Error("Provider-only API response execution cannot contain tools")
     }
-    if (record.terminalKind !== "provider_only" && record.toolCount === 0) {
+    // Releasing a deferred request can settle zero tools; a turn-ending interaction still owns a tool.
+    if (record.terminalKind === "turn_end_awaiting_user" && record.toolCount === 0) {
         throw new Error("Tool API response execution must contain at least one tool")
     }
 }
