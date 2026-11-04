@@ -411,7 +411,7 @@ function statsFromActivity(config: TaskConfig, activityId: string): SubagentRunS
         cacheWriteTokens: metrics?.cacheWriteTokens ?? 0,
         cacheReadTokens: metrics?.cacheReadTokens ?? 0,
         totalCost: metrics?.totalCost ?? 0,
-        currency: metrics?.currency ?? "USD",
+        currency: metrics?.currency ?? "",
         contextTokens,
         contextWindow,
         contextUsagePercentage: contextWindow > 0 ? (contextTokens / contextWindow) * 100 : 0,
@@ -830,6 +830,7 @@ async function emitUsage(config: TaskConfig, entries: SubagentStatusItem[]): Pro
         cacheWrites: entries.reduce((acc, entry) => acc + (entry.cacheWriteTokens ?? 0), 0),
         cacheReads: entries.reduce((acc, entry) => acc + (entry.cacheReadTokens ?? 0), 0),
         cost: entries.reduce((acc, entry) => acc + entry.totalCost, 0),
+        currency: entries.at(-1)?.currency || undefined,
     }
     await config.callbacks.say("subagent_usage", JSON.stringify(payload))
 }

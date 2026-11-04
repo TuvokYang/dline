@@ -210,7 +210,10 @@ export const DeepSeekProvider = ({ showModelOptions, isPopup, profile, onUpdate 
                             capabilities: ["contextWindow", "maxTokens"],
                             pricing: ["inputPrice", "outputPrice", "cacheWritesPrice", "cacheReadsPrice"],
                         }}
+                        fixedPricingShape="timeOfDay"
+                        key={`${profile.id}:${modelId}`}
                         onCapabilitiesUpdate={handleCapabilitiesUpdate}
+                        onPricingReset={() => updateProfile({ deepseek: { ...configToUpdate(), pricing: undefined } })}
                         onPricingUpdate={handlePricingUpdate}
                         pricing={pc.pricing}
                     />

@@ -3085,6 +3085,7 @@ describe("SubagentRunner", () => {
         const started = deferred<void>()
         const released = deferred<void>()
         const createMessage = vi.fn().mockImplementation(async function* () {
+            yield { type: "usage", inputTokens: 10, outputTokens: 2, totalCost: 0.25, currency: "CNY" }
             started.resolve()
             await released.promise
             yield* []
@@ -3101,7 +3102,10 @@ describe("SubagentRunner", () => {
         try {
             config.taskState.cancelOperations("parent_cancelled")
             expect(abort).toHaveBeenCalled()
-            expect((await run).status).toBe("cancelled")
+            const result = await run
+            expect(result.status).toBe("cancelled")
+            expect(result.stats.totalCost).toBe(0.25)
+            expect(result.stats.currency).toBe("CNY")
         } finally {
             released.resolve()
             await runner.abort()
@@ -3363,6 +3367,7 @@ describe("SubagentRunner", () => {
 
     it("keeps propagating a stream failure when no hosted call was involved", async () => {
         const createMessage = vi.fn().mockImplementation(async function* () {
+            yield { type: "usage", inputTokens: 10, outputTokens: 2, totalCost: 0.25, currency: "CNY" }
             yield { type: "text", text: "partial" }
             throw new Error("plain stream failure")
         })
@@ -3382,6 +3387,8 @@ describe("SubagentRunner", () => {
 
         assert.equal(result.status, "failed")
         assert.match(result.error || "", /plain stream failure/i)
+        assert.equal(result.stats.totalCost, 0.25)
+        assert.equal(result.stats.currency, "CNY")
     })
 
     it("fails context window errors", async () => {

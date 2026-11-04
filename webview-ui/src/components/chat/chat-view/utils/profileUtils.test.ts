@@ -33,12 +33,12 @@ describe("resolveActiveProfile", () => {
 })
 
 describe("resolveTaskCurrency", () => {
-    it("uses the active profile currency before API metrics are available", () => {
-        expect(resolveTaskCurrency(undefined, "CNY")).to.equal("CNY")
-        expect(resolveTaskCurrency("", "CNY")).to.equal("CNY")
+    it("keeps unknown amount currency unknown", () => {
+        expect(resolveTaskCurrency(undefined)).to.equal(undefined)
+        expect(resolveTaskCurrency("")).to.equal(undefined)
     })
 
     it("prefers the currency reported by API metrics", () => {
-        expect(resolveTaskCurrency("USD", "CNY")).to.equal("USD")
+        expect(resolveTaskCurrency(" cny ")).to.equal("CNY")
     })
 })

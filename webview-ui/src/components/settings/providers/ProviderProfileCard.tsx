@@ -3,7 +3,6 @@ import { ApiFormat, type ThinkingConfig } from "@shared/proto/dline/models/metad
 import { type ImageGenerationProfile, ImageGenerationSource } from "@shared/proto/dline/profile"
 import { AnthropicProviderConfig } from "@shared/proto/dline/provider/anthropic"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
-import { readCurrency, readPriceSet } from "@shared/providers/pricing-shape"
 import { PROFILE_PROVIDER_KEYS, resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import { clampThinkingBudget, resolveThinkingBudgetBounds } from "@shared/providers/thinking-budget"
 import type { Mode } from "@shared/storage/types"
@@ -144,10 +143,12 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
         if (mi.capabilities?.contextWindow)
             tooltipLines.push(`Context: ${mi.capabilities?.contextWindow.toLocaleString()} tokens`)
         if (mi.capabilities?.maxTokens) tooltipLines.push(`Max output: ${mi.capabilities.maxTokens.toLocaleString()} tokens`)
-        if (mi.pricing?.metered?.strategy?.flat) {
-            const rates = readPriceSet(mi.pricing.metered.strategy.flat.prices)
-            const currencySymbol = getCurrencySymbol(readCurrency(mi.pricing) ?? "USD")
-            tooltipLines.push(`In: ${currencySymbol}${rates.inputPrice}/M | Out: ${currencySymbol}${rates.outputPrice}/M`)
+        if (mi.pricing?.strategy?.flat) {
+            const prices = mi.pricing.strategy.flat.prices
+            const symbol = mi.pricing.currency?.trim() ? getCurrencySymbol(mi.pricing.currency) : ""
+            const input = prices?.inputPrice === undefined ? "—" : `${symbol}${prices.inputPrice}`
+            const output = prices?.outputPrice === undefined ? "—" : `${symbol}${prices.outputPrice}`
+            tooltipLines.push(`In: ${input}/M | Out: ${output}/M`)
         }
         if (mi.capabilities?.supportsReasoning)
             tooltipLines.push(`Reasoning: ${mi.capabilities?.thinking?.effortLevels?.join(", ") || "supported"}`)

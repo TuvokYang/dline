@@ -86,12 +86,12 @@ export class OpenRouterModelSource extends ModelListingSource {
     }
 
     protected override readPricing(raw: unknown): ModelPricing | undefined {
-        return flatMeteredPricing(
-            readPerMillionPrice(raw, "pricing.prompt") ?? 0,
-            readPerMillionPrice(raw, "pricing.completion") ?? 0,
-            readPerMillionPrice(raw, "pricing.input_cache_write"),
-            readPerMillionPrice(raw, "pricing.input_cache_read"),
-        )
+        const input = readPerMillionPrice(raw, "pricing.prompt")
+        const output = readPerMillionPrice(raw, "pricing.completion")
+        const cacheWrite = readPerMillionPrice(raw, "pricing.input_cache_write")
+        const cacheRead = readPerMillionPrice(raw, "pricing.input_cache_read")
+        if ([input, output, cacheWrite, cacheRead].every((rate) => rate === undefined)) return undefined
+        return flatMeteredPricing(input, output, cacheWrite, cacheRead)
     }
 
     protected override readModelId(raw: unknown): string | undefined {

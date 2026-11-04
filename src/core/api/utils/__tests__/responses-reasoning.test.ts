@@ -32,7 +32,7 @@ async function reasoning(events: readonly ResponseEvent[]): Promise<ApiStreamThi
         yield* events
     }
     const chunks: ApiStreamThinkingChunk[] = []
-    for await (const chunk of handleResponsesApiStreamResponse(stream(), { id: "test-model" }, async () => 0)) {
+    for await (const chunk of handleResponsesApiStreamResponse(stream(), { id: "test-model" }, 0)) {
         if (chunk.type === "reasoning") chunks.push(chunk)
     }
     return chunks

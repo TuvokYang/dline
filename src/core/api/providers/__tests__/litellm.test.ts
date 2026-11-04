@@ -263,6 +263,7 @@ describe("LiteLlmHandler", () => {
                     provider: "litellm",
                     modelInfo: {
                         id,
+                        pricing: { currency: "CNY", strategy: { flat: { prices: { inputPrice: 10_000, outputPrice: 20_000 } } } },
                         capabilities: {
                             thinking: anthropicRoute
                                 ? { supported: true, mode: "budget", minBudget: 17, maxBudget: 101 }
@@ -297,7 +298,15 @@ describe("LiteLlmHandler", () => {
             expect(body.drop_params).to.equal(true)
             expect(chunks).to.deep.equal([
                 { type: "text", text: "test response" },
-                { type: "usage", inputTokens: 70, outputTokens: 50, cacheWriteTokens: 20, cacheReadTokens: 10, totalCost: 1.9 },
+                {
+                    type: "usage",
+                    inputTokens: 70,
+                    outputTokens: 50,
+                    cacheWriteTokens: 20,
+                    cacheReadTokens: 10,
+                    totalCost: 1.7,
+                    currency: "CNY",
+                },
             ])
         })
 

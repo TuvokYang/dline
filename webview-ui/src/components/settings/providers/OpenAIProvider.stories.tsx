@@ -1,4 +1,4 @@
-import { ApiFormat, type ModelPricing } from "@shared/proto/dline/models/metadata"
+import { ApiFormat, type ModelPricing, PricingDayRule } from "@shared/proto/dline/models/metadata"
 import { OpenAiProviderConfig } from "@shared/proto/dline/provider/openai"
 import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import type { Meta, StoryObj } from "@storybook/react-vite"
@@ -19,15 +19,17 @@ import type { ApiProfile } from "./ProviderProfile"
 /** A flagship OpenAI-compatible catalog price, per 1M tokens in USD. */
 const CATALOG_PRICING: ModelPricing = flatMeteredPricing(2.5, 10, 3.75, 1.25, "USD")
 
-function profileWith(pricing?: ModelPricing): ApiProfile {
+function profileWith(pricing?: ModelPricing, apiFormat = ApiFormat.OPENAI_CHAT): ApiProfile {
     return {
         id: "profile-openai-story",
         name: "OpenAI",
         provider: "openai",
         apiKey: "sk-storybook0000000000000000",
         modelId: "gpt-storybook",
+        baseUrl: "https://proxy.invalid/v1",
         openai: OpenAiProviderConfig.create({
             pricing,
+            apiFormat,
             capabilities: { contextWindow: 400_000, maxTokens: 128_000, supportsPromptCache: true },
             streamIncludeUsage: true,
         }),
@@ -41,8 +43,8 @@ function profileWith(pricing?: ModelPricing): ApiProfile {
  * into the profile is what makes the selector's result visible: the same round
  * trip the host performs, minus persistence.
  */
-function CardFixture({ initialPricing }: { readonly initialPricing?: ModelPricing }) {
-    const [profile, setProfile] = useState<ApiProfile>(() => profileWith(initialPricing))
+function CardFixture({ initialPricing, apiFormat }: { readonly initialPricing?: ModelPricing; readonly apiFormat?: ApiFormat }) {
+    const [profile, setProfile] = useState<ApiProfile>(() => profileWith(initialPricing, apiFormat))
     const onUpdate = useCallback((updates: Partial<ApiProfile>) => {
         setProfile((current) => ({
             ...current,
@@ -91,8 +93,8 @@ export const Flat: Story = {
 /**
  * Choosing `By context size` must persist a `contextWindow` strategy and swap
  * the rate fields for the tier editor. `OpenAIProvider` also flips
- * `pricingTiersEnabled` when bands appear, which is what makes an explicit
- * empty band list round-trip.
+ * the legacy editing flag when bands appear. The declaration always keeps a
+ * complete rate with an unbounded final band.
  */
 export const ContextWindow: Story = {
     args: { initialPricing: CATALOG_PRICING },
@@ -100,7 +102,9 @@ export const ContextWindow: Story = {
         await openModelConfiguration(context)
         const canvas = within(context.canvasElement)
         await userEvent.click(canvas.getByLabelText("Pricing Mode"))
-        await userEvent.click(await canvas.findByRole("option", { name: "By context size" }))
+        await userEvent.click(
+            await within(context.canvasElement.ownerDocument.body).findByRole("option", { name: "By context size" }),
+        )
 
         await expect(canvas.getByLabelText("Pricing Mode")).toHaveTextContent("By context size")
         await expect(canvas.queryByLabelText("Input Price ($/1M tokens)")).toBeNull()
@@ -118,11 +122,13 @@ export const TimeOfDay: Story = {
         await openModelConfiguration(context)
         const canvas = within(context.canvasElement)
         await userEvent.click(canvas.getByLabelText("Pricing Mode"))
-        await userEvent.click(await canvas.findByRole("option", { name: "By time of day" }))
+        await userEvent.click(
+            await within(context.canvasElement.ownerDocument.body).findByRole("option", { name: "By time of day" }),
+        )
 
         await expect(canvas.getByLabelText("Pricing Mode")).toHaveTextContent("By time of day")
-        await expect(canvas.getByLabelText("Default Input ($/1M)")).toHaveValue("2.5")
-        await expect(canvas.getByLabelText("Default Output ($/1M)")).toHaveValue("10")
+        await expect(canvas.getByLabelText("Default Input Price ($/1M tokens)")).toHaveValue("2.5")
+        await expect(canvas.getByLabelText("Default Output Price ($/1M tokens)")).toHaveValue("10")
         await expect(canvas.getByText("Time Windows")).toBeVisible()
         await expect(canvas.queryByText("Pricing Tiers")).toBeNull()
     },
@@ -137,7 +143,9 @@ export const EmptyProfileSwitch: Story = {
         await openModelConfiguration(context)
         const canvas = within(context.canvasElement)
         await userEvent.click(canvas.getByLabelText("Pricing Mode"))
-        await userEvent.click(await canvas.findByRole("option", { name: "By context size" }))
+        await userEvent.click(
+            await within(context.canvasElement.ownerDocument.body).findByRole("option", { name: "By context size" }),
+        )
         await expect(canvas.getByLabelText("Pricing Mode")).toHaveTextContent("By context size")
     },
 }
@@ -145,20 +153,19 @@ export const EmptyProfileSwitch: Story = {
 /** The Responses protocol renders the same pricing controls as Chat. */
 export const ResponsesProtocol: Story = {
     args: {
+        apiFormat: ApiFormat.OPENAI_RESPONSES,
         initialPricing: {
-            metered: {
-                currency: "USD",
-                strategy: {
-                    timeOfDay: {
-                        schedule: {
-                            timezoneOffsetMinutes: 0,
-                            dayRule: 0,
-                            defaultOnPublicHolidays: false,
-                            holidayCalendar: "",
-                        },
-                        defaultPrices: { inputPrice: 2, outputPrice: 8 },
-                        timeWindows: [{ startMinute: 0, endMinute: 360, prices: { inputPrice: 4, outputPrice: 16 } }],
+            currency: "USD",
+            strategy: {
+                timeOfDay: {
+                    schedule: {
+                        timezoneOffsetMinutes: 0,
+                        dayRule: PricingDayRule.PRICING_DAY_RULE_ALL_DAYS,
+                        defaultOnPublicHolidays: false,
+                        holidayCalendar: "",
                     },
+                    defaultPrices: { inputPrice: 2, outputPrice: 8 },
+                    timeWindows: [{ startMinute: 0, endMinute: 360, prices: { inputPrice: 4, outputPrice: 16 } }],
                 },
             },
         },
@@ -167,18 +174,17 @@ export const ResponsesProtocol: Story = {
         await openModelConfiguration(context)
         const canvas = within(context.canvasElement)
         await expect(canvas.getByLabelText("Pricing Mode")).toHaveTextContent("By time of day")
-        await expect(canvas.getByLabelText("Off-peak Output ($/1M)")).toHaveValue("8")
+        await expect(canvas.getByLabelText("Default Output Price ($/1M tokens)")).toHaveValue("8")
         // The protocol picker is independent of pricing.
         await expect(canvas.getByLabelText("API Format")).toBeVisible()
     },
 }
 
-/** Guard: the story asserts the wire format enum is what the card offers. */
+/** Verify the selected wire format rather than comparing a constant to itself. */
 export const DefaultProtocolIsChat: Story = {
     args: { initialPricing: CATALOG_PRICING },
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement)
-        await expect(ApiFormat.OPENAI_CHAT).toBe(ApiFormat.OPENAI_CHAT)
-        await expect(canvas.getByText("OpenAI")).toBeVisible()
+        await expect(canvas.getByRole("combobox", { name: "API Format" })).toHaveValue(String(ApiFormat.OPENAI_CHAT))
     },
 }

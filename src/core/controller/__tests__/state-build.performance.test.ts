@@ -214,4 +214,20 @@ describe("buildState usage totals", () => {
 
         expect(state.apiMetrics).toMatchObject({ totalCost: 0.5, currency: "USD", requestsPerMinute: 6 })
     })
+
+    it("does not label an unlabelled amount with the rate snapshot currency", async () => {
+        const fakeController = createFakeController(buildMessages(3))
+        const owners = (fakeController.task as { owners: Record<string, unknown> }).owners
+        owners.messages = {
+            ...(owners.messages as Record<string, unknown>),
+            readStateMetrics: () => ({ totalTokensIn: 100, totalTokensOut: 20, totalCost: 0 }),
+        }
+        owners.apiRateSnapshot = () => ({ currency: "USD", requestsPerMinute: 6 })
+
+        const state = await buildState.call(fakeController, 1)
+
+        expect(state.apiMetrics?.totalCost).toBe(0)
+        expect(state.apiMetrics?.currency).toBeUndefined()
+        expect(state.apiMetrics?.requestsPerMinute).toBe(6)
+    })
 })

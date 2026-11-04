@@ -406,7 +406,7 @@ describe("OpenAiCodexHandler hosted Web Search", () => {
                 },
             },
         ]
-        const chunks = await collect((handler as any).handleResponseEvents(eventStream(events), handler.getModel()))
+        const chunks = await collect((handler as any).handleResponseEvents(eventStream(events), handler.getModel(), 0))
 
         expect(chunks.filter((chunk: any) => chunk.type === "server_tool")).to.deep.include.members([
             {
@@ -547,7 +547,7 @@ describe("OpenAiCodexHandler hosted Web Search", () => {
             },
         ]
 
-        const chunks = (await collect((handler as any).handleResponseEvents(eventStream(events), handler.getModel()))) as any[]
+        const chunks = (await collect((handler as any).handleResponseEvents(eventStream(events), handler.getModel(), 0))) as any[]
 
         expect(chunks.filter((chunk) => chunk.type === "text").map((chunk) => chunk.text)).to.deep.equal(["hello"])
         expect(
@@ -575,7 +575,6 @@ describe("OpenAiCodexHandler hosted Web Search", () => {
             cacheWriteTokens: 0,
             cacheReadTokens: 80,
             thoughtsTokenCount: 5,
-            totalCost: 0,
             provider_metadata: { response_id: "resp_1" },
         })
     })
@@ -694,6 +693,7 @@ describe("OpenAiCodexHandler hosted Web Search", () => {
                     },
                 ]),
                 handler.getModel(),
+                0,
             ),
         )
 
@@ -951,6 +951,7 @@ describe("OpenAiCodexHandler hosted Web Search", () => {
                 { accessToken: "access-token", expires: 1_900_000_000_000 },
                 {},
                 new AbortController().signal,
+                handler.getModel(),
             ),
         )
 
@@ -985,6 +986,7 @@ describe("OpenAiCodexHandler hosted Web Search", () => {
                 { accessToken: "access-token", expires: 1_900_000_000_000 },
                 {},
                 controller.signal,
+                handler.getModel(),
             ),
         ).then(
             () => undefined,

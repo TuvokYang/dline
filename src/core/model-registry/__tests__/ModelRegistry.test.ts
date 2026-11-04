@@ -1066,7 +1066,7 @@ describe("ModelRegistry", () => {
             expect(go).to.deep.equal({ supported: true })
         })
 
-        it("does not bill a listing-only Go model at the listing's metered rate", async () => {
+        it("preserves declared pricing independently of a subscription catalog", async () => {
             await fsPromises.writeFile(
                 path.join(tempDir, "opencode.json"),
                 JSON.stringify({
@@ -1094,11 +1094,12 @@ describe("ModelRegistry", () => {
             )
             await registry.initialize()
 
-            // The plan owns billing, so a model it covers must not report the
-            // balance rate the listing quotes. Its capabilities still survive.
+            // Account identity does not erase a model's published price declaration.
             const model = registry.getProviderCatalog("opencode-go")?.models["released-after-build"]
             expect(model?.capabilities?.contextWindow).to.equal(200_000)
-            expect(model?.pricing?.metered?.strategy?.flat).to.equal(undefined)
+            expect(model?.pricing?.strategy?.flat?.prices?.inputPrice).to.equal(3)
+            expect(model?.pricing?.strategy?.flat?.prices?.outputPrice).to.equal(15)
+            expect(model?.pricing?.metered).to.equal(undefined)
         })
 
         it("leaves a user-defined model with exactly what the user declared", async () => {
@@ -1153,12 +1154,10 @@ describe("ModelRegistry", () => {
             )
             await registry.initialize()
 
-            // Only a subscription plan owns its billing. A pay-as-you-go catalog is
-            // billed by the listing's per-token rates, so stripping them would make
-            // a newly released model free in the usage view.
+            // Read migration preserves the published rates without retaining the old envelope.
             const model = registry.getProviderCatalog("qwen-cn")?.models["qwen-listing-only"]
             expect(model?.capabilities?.contextWindow).to.equal(262_144)
-            expect(model?.pricing?.metered?.strategy?.flat?.prices?.inputPrice).to.equal(0.4)
+            expect(model?.pricing?.strategy?.flat?.prices?.inputPrice).to.equal(0.4)
         })
 
         it("does not put a seed model back into a catalog the listing replaced", async () => {

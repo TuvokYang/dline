@@ -98,6 +98,7 @@ export class MistralHandler extends ApiHandler {
         // A model that rejects a forced choice fails the whole request rather than
         // degrading to an automatic one.
         const forcedToolUseOn = model.info.capabilities?.supportsForcedToolUse !== false
+        const sentAtMs = Date.now()
         const stream = await client.chat
             .stream({
                 model: model.id,
@@ -149,10 +150,15 @@ export class MistralHandler extends ApiHandler {
             }
 
             if (chunk.data.usage) {
-                yield {
-                    type: "usage",
+                const tokens = {
                     inputTokens: chunk.data.usage.promptTokens || 0,
                     outputTokens: chunk.data.usage.completionTokens || 0,
+                }
+                const cost = ApiHandler.calculateUsageCost(model.info.pricing, tokens, sentAtMs)
+                yield {
+                    type: "usage",
+                    ...tokens,
+                    ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                 }
             }
         }

@@ -9,7 +9,6 @@ import type { ModelInfo } from "@shared/proto/dline/models"
 import { AskResponseRequest, CompactTaskRequest } from "@shared/proto/dline/task"
 import { toProtoSemanticInputDocument } from "@shared/proto-conversions/input-semantics/document"
 import { resolveInputMediaTypes } from "@shared/providers/input-media"
-import { readCurrency } from "@shared/providers/pricing-shape"
 import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useApiProfiles } from "@/components/settings/providers/useApiProfiles"
@@ -420,9 +419,9 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
     const displayedApiMetrics = useMemo(
         () => ({
             ...(apiMetrics ?? { totalTokensIn: 0, totalTokensOut: 0, totalCost: 0 }),
-            currency: resolveTaskCurrency(apiMetrics?.currency, readCurrency(selectedModelInfo.pricing)),
+            currency: resolveTaskCurrency(apiMetrics?.currency),
         }),
-        [apiMetrics, selectedModelInfo.pricing],
+        [apiMetrics],
     )
 
     // The model's declared input media decide whether the file dialog offers images.

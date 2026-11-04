@@ -375,7 +375,8 @@ export class DefaultProductionProviderService implements ProductionProviderServi
                         }
                         switch (chunk.type) {
                             case "usage":
-                                yield { kind: "usage", usage: usage.next(chunk) }
+                                const increment = usage.next(chunk)
+                                yield { kind: "usage", usage: increment, ...(usage.currency ? { currency: usage.currency } : {}) }
                                 break
                             case "text": {
                                 text += chunk.text

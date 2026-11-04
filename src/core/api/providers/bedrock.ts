@@ -12,7 +12,6 @@ import {
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers"
 import { type BedrockModelId, bedrockDefaultModelId, bedrockModels, CLAUDE_SONNET_1M_SUFFIX, type ModelInfo } from "@shared/api"
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
-import { calculateApiCostOpenAI, calculateApiCostQwen } from "@utils/cost"
 import { ExtensionRegistryInfo } from "@/registry"
 import type { ClineStorageMessage } from "@/shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
@@ -180,14 +179,8 @@ export class AwsBedrockHandler extends ApiHandler {
             return
         }
 
-        if (baseModelId.includes("openai")) {
-            yield* this.createOpenAIMessage(systemPrompt, messages, modelId, model, tools)
-            return
-        }
-
-        // Check if this is a Qwen model
-        if (baseModelId.includes("qwen")) {
-            yield* this.createQwenMessage(systemPrompt, messages, modelId, model, tools)
+        if (baseModelId.includes("openai") || baseModelId.includes("qwen")) {
+            yield* this.createNonStreamingConverseMessage(systemPrompt, messages, modelId, model, tools)
             return
         }
 
@@ -417,9 +410,13 @@ export class AwsBedrockHandler extends ApiHandler {
 
         // Execute the streaming request
         const identity = bedrockAttemptIdentity(command)
+        let sentAtMs = Number.NaN
         const { stream } = await ApiHandler.observeProviderStreamResponse(
             identity,
-            () => client.send(command),
+            () => {
+                sentAtMs = Date.now()
+                return client.send(command)
+            },
             (response) => (response.body ? this.failOnBedrockProtocolErrors(response.body) : undefined),
         )
 
@@ -434,12 +431,10 @@ export class AwsBedrockHandler extends ApiHandler {
                         // Report usage on first chunk
                         if (isFirstChunk) {
                             isFirstChunk = false
-                            const totalCost = calculateApiCostOpenAI(model.info, inputTokenEstimate, 0, 0, 0)
                             yield {
                                 type: "usage",
                                 inputTokens: inputTokenEstimate,
                                 outputTokens: 0,
-                                totalCost: totalCost,
                             }
                         }
 
@@ -458,13 +453,11 @@ export class AwsBedrockHandler extends ApiHandler {
                                 }
 
                                 if (accumulatedTokens >= TOKEN_REPORT_THRESHOLD) {
-                                    const totalCost = calculateApiCostOpenAI(model.info, 0, accumulatedTokens, 0, 0)
                                     yield {
                                         type: "usage",
                                         usageMode: "delta",
                                         inputTokens: 0,
                                         outputTokens: accumulatedTokens,
-                                        totalCost: totalCost,
                                     }
                                     accumulatedTokens = 0
                                 }
@@ -482,13 +475,11 @@ export class AwsBedrockHandler extends ApiHandler {
                             }
                             // Report aggregated token usage only when threshold is reached
                             if (accumulatedTokens >= TOKEN_REPORT_THRESHOLD) {
-                                const totalCost = calculateApiCostOpenAI(model.info, 0, accumulatedTokens, 0, 0)
                                 yield {
                                     type: "usage",
                                     usageMode: "delta",
                                     inputTokens: 0,
                                     outputTokens: accumulatedTokens,
-                                    totalCost: totalCost,
                                 }
                                 accumulatedTokens = 0
                             }
@@ -506,23 +497,27 @@ export class AwsBedrockHandler extends ApiHandler {
 
             // Report any remaining accumulated tokens at the end of the stream
             if (accumulatedTokens > 0) {
-                const totalCost = calculateApiCostOpenAI(model.info, 0, accumulatedTokens, 0, 0)
                 yield {
                     type: "usage",
                     usageMode: "delta",
                     inputTokens: 0,
                     outputTokens: accumulatedTokens,
-                    totalCost: totalCost,
                 }
             }
 
-            // Add final total cost calculation that includes both input and output tokens
-            const finalTotalCost = calculateApiCostOpenAI(model.info, inputTokenEstimate, outputTokens, 0, 0)
+            const cost = ApiHandler.calculateUsageCost(
+                model.info.pricing,
+                {
+                    inputTokens: inputTokenEstimate,
+                    outputTokens,
+                },
+                sentAtMs,
+            )
             yield {
                 type: "usage",
                 inputTokens: inputTokenEstimate,
                 outputTokens: outputTokens,
-                totalCost: finalTotalCost,
+                ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
             }
         }
     }
@@ -623,9 +618,13 @@ export class AwsBedrockHandler extends ApiHandler {
     private async *executeConverseStream(command: ConverseStreamCommand, modelInfo: ModelInfo): ApiStream {
         const client = await this.getBedrockClient()
         const identity = bedrockAttemptIdentity(command)
+        let sentAtMs = Number.NaN
         const { stream } = await ApiHandler.observeProviderStreamResponse(
             identity,
-            () => client.send(command),
+            () => {
+                sentAtMs = Date.now()
+                return client.send(command)
+            },
             (response) => (response.stream ? this.failOnBedrockProtocolErrors(response.stream) : undefined),
         )
 
@@ -662,6 +661,16 @@ export class AwsBedrockHandler extends ApiHandler {
                     const outputTokens = chunk.metadata.usage.outputTokens || 0
                     const cacheReadInputTokens = chunk.metadata.usage.cacheReadInputTokens || 0
                     const cacheWriteInputTokens = chunk.metadata.usage.cacheWriteInputTokens || 0
+                    const cost = ApiHandler.calculateUsageCost(
+                        modelInfo.pricing,
+                        {
+                            inputTokens,
+                            outputTokens,
+                            cacheReadTokens: cacheReadInputTokens,
+                            cacheWriteTokens: cacheWriteInputTokens,
+                        },
+                        sentAtMs,
+                    )
 
                     yield {
                         type: "usage",
@@ -669,13 +678,7 @@ export class AwsBedrockHandler extends ApiHandler {
                         outputTokens,
                         cacheReadTokens: cacheReadInputTokens,
                         cacheWriteTokens: cacheWriteInputTokens,
-                        totalCost: calculateApiCostOpenAI(
-                            modelInfo,
-                            inputTokens,
-                            outputTokens,
-                            cacheWriteInputTokens,
-                            cacheReadInputTokens,
-                        ),
+                        ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                     }
                 }
 
@@ -1147,10 +1150,9 @@ export class AwsBedrockHandler extends ApiHandler {
     }
 
     /**
-     * Creates a message using OpenAI models through AWS Bedrock
-     * Uses non-streaming Converse API and simulates streaming for models that don't support it
+     * Run one non-streaming Converse response and project its content as chunks.
      */
-    private async *createOpenAIMessage(
+    private async *createNonStreamingConverseMessage(
         systemPrompt: string,
         messages: ClineStorageMessage[],
         modelId: string,
@@ -1186,7 +1188,11 @@ export class AwsBedrockHandler extends ApiHandler {
 
             // Execute the non-streaming request
             const identity = bedrockAttemptIdentity(command)
-            const response = await ApiHandler.observeProviderCall(identity, () => client.send(command))
+            let sentAtMs = Number.NaN
+            const response = await ApiHandler.observeProviderCall(identity, () => {
+                sentAtMs = Date.now()
+                return client.send(command)
+            })
 
             // Extract the complete response text and reasoning content
             let fullText = ""
@@ -1216,12 +1222,19 @@ export class AwsBedrockHandler extends ApiHandler {
                 outputTokens = actualOutputTokens
 
                 // Report actual usage after processing content
-                const actualCost = calculateApiCostOpenAI(model.info, actualInputTokens, actualOutputTokens, 0, 0)
+                const cost = ApiHandler.calculateUsageCost(
+                    model.info.pricing,
+                    {
+                        inputTokens: actualInputTokens,
+                        outputTokens: actualOutputTokens,
+                    },
+                    sentAtMs,
+                )
                 yield {
                     type: "usage",
                     inputTokens: actualInputTokens,
                     outputTokens: actualOutputTokens,
-                    totalCost: actualCost,
+                    ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                 }
             } else {
                 // Estimate output tokens if not provided (includes both regular text and reasoning)
@@ -1257,158 +1270,26 @@ export class AwsBedrockHandler extends ApiHandler {
 
             // Report final usage if we didn't have actual usage data earlier
             if (!response.usage) {
-                const finalCost = calculateApiCostOpenAI(model.info, inputTokenEstimate, outputTokens, 0, 0)
+                const cost = ApiHandler.calculateUsageCost(
+                    model.info.pricing,
+                    {
+                        inputTokens: inputTokenEstimate,
+                        outputTokens,
+                    },
+                    sentAtMs,
+                )
                 yield {
                     type: "usage",
                     inputTokens: inputTokenEstimate,
                     outputTokens: outputTokens,
-                    totalCost: finalCost,
+                    ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                 }
             }
         } catch (error) {
-            Logger.error("Error with OpenAI model via Converse API:", error)
+            Logger.error("Error with non-streaming Converse model:", error)
 
             // Try to extract more detailed error information
-            let errorMessage = "Failed to process OpenAI model request"
-            if (error instanceof Error) {
-                errorMessage = error.message
-                // Check for specific AWS SDK errors
-                if ("name" in error) {
-                    errorMessage = `${error.name}: ${error.message}`
-                }
-            }
-
-            yield {
-                type: "text",
-                text: `[ERROR] ${errorMessage}`,
-            }
-        }
-    }
-
-    /**
-     * Creates a message using Qwen models through AWS Bedrock
-     * Uses non-streaming Converse API and simulates streaming for models that don't support it
-     */
-    private async *createQwenMessage(
-        systemPrompt: string,
-        messages: ClineStorageMessage[],
-        modelId: string,
-        model: { id: string; info: ModelInfo },
-        tools?: ClineTool[],
-    ): ApiStream {
-        // Get Bedrock client with proper credentials
-        const client = await this.getBedrockClient()
-
-        // Format messages for Converse API
-        const formattedMessages = this.formatMessagesForConverseAPI(messages)
-
-        // Prepare system message
-        const systemMessages = systemPrompt ? [{ text: systemPrompt }] : undefined
-
-        // Prepare the non-streaming Converse command
-        const toolConfig = this.mapClineToolsToBedrockToolConfig(tools)
-        const command = new ConverseCommand({
-            modelId: modelId,
-            messages: formattedMessages,
-            system: systemMessages,
-            inferenceConfig: {
-                maxTokens: model.info.capabilities?.maxTokens || 8192,
-                temperature: 0,
-            },
-            ...(toolConfig ? { toolConfig } : {}),
-        })
-
-        try {
-            // Track token usage
-            const inputTokenEstimate = this.estimateInputTokens(systemPrompt, messages)
-            let outputTokens = 0
-
-            // Execute the non-streaming request
-            const identity = bedrockAttemptIdentity(command)
-            const response = await ApiHandler.observeProviderCall(identity, () => client.send(command))
-
-            // Extract the complete response text and reasoning content
-            let fullText = ""
-            let reasoningText = ""
-
-            if (response.output?.message?.content) {
-                for (const contentBlock of response.output.message.content) {
-                    // Check for reasoning content first
-                    if ("reasoningContent" in contentBlock && contentBlock.reasoningContent) {
-                        // Handle nested reasoning structure
-                        const reasoning = contentBlock.reasoningContent
-                        if ("reasoningText" in reasoning && reasoning.reasoningText && "text" in reasoning.reasoningText) {
-                            reasoningText += reasoning.reasoningText.text
-                        }
-                    }
-                    // Handle regular text content
-                    else if ("text" in contentBlock && contentBlock.text) {
-                        fullText += contentBlock.text
-                    }
-                }
-            }
-
-            // If we have actual usage data from the response, use it
-            if (response.usage) {
-                const actualInputTokens = response.usage.inputTokens || inputTokenEstimate
-                const actualOutputTokens = response.usage.outputTokens || this.estimateTokenCount(fullText + reasoningText)
-                outputTokens = actualOutputTokens
-
-                // Report actual usage after processing content
-                const actualCost = calculateApiCostQwen(model.info, actualInputTokens, actualOutputTokens, 0, 0)
-                yield {
-                    type: "usage",
-                    inputTokens: actualInputTokens,
-                    outputTokens: actualOutputTokens,
-                    totalCost: actualCost,
-                }
-            } else {
-                // Estimate output tokens if not provided (includes both regular text and reasoning)
-                outputTokens = this.estimateTokenCount(fullText + reasoningText)
-            }
-
-            // Yield reasoning content first if present
-            if (reasoningText) {
-                const reasoningChunkSize = 1000 // Characters per chunk
-                for (let i = 0; i < reasoningText.length; i += reasoningChunkSize) {
-                    const chunk = reasoningText.slice(i, Math.min(i + reasoningChunkSize, reasoningText.length))
-
-                    yield {
-                        type: "reasoning",
-                        reasoning: chunk,
-                    }
-                }
-            }
-
-            // Simulate streaming by chunking the response text
-            if (fullText) {
-                const chunkSize = 1000 // Characters per chunk
-
-                for (let i = 0; i < fullText.length; i += chunkSize) {
-                    const chunk = fullText.slice(i, Math.min(i + chunkSize, fullText.length))
-
-                    yield {
-                        type: "text",
-                        text: chunk,
-                    }
-                }
-            }
-
-            // Report final usage if we didn't have actual usage data earlier
-            if (!response.usage) {
-                const finalCost = calculateApiCostQwen(model.info, inputTokenEstimate, outputTokens, 0, 0)
-                yield {
-                    type: "usage",
-                    inputTokens: inputTokenEstimate,
-                    outputTokens: outputTokens,
-                    totalCost: finalCost,
-                }
-            }
-        } catch (error) {
-            Logger.error("Error with Qwen model via Converse API:", error)
-
-            // Try to extract more detailed error information
-            let errorMessage = "Failed to process Qwen model request"
+            let errorMessage = "Failed to process non-streaming Converse request"
             if (error instanceof Error) {
                 errorMessage = error.message
                 // Check for specific AWS SDK errors

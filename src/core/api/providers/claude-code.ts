@@ -154,15 +154,12 @@ export class ClaudeCodeHandler extends ApiHandler {
             forcedToolChoice: "model_declared",
         })
 
-        for await (const chunk of streamAnthropicMessagesEndpoint({
+        yield* streamAnthropicMessagesEndpoint({
             messages: requestBody.messages,
+            pricing: model.info.pricing,
             openStream: (continuationMessages) =>
                 transport.open({ ...requestBody, messages: continuationMessages }, identity.headers),
-        })) {
-            // A subscription is billed by plan, not per request, so reporting a
-            // token-derived cost here would invent a charge the user never incurs.
-            yield chunk.type === "usage" ? { ...chunk, totalCost: 0 } : chunk
-        }
+        })
     }
 
     /**

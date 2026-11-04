@@ -1,4 +1,5 @@
 import type { ModelPricing } from "@shared/proto/dline/models/metadata"
+import { ApiProfile as ProtoApiProfile } from "@shared/proto/dline/profile"
 import { AnthropicProviderConfig } from "@shared/proto/dline/provider/anthropic"
 import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import type { Meta, StoryObj } from "@storybook/react-vite"
@@ -21,17 +22,22 @@ import type { ApiProfile } from "./ProviderProfile"
 const CATALOG_PRICING: ModelPricing = flatMeteredPricing(3, 15, 3.75, 0.3, "USD")
 
 function profileWith(pricing?: ModelPricing): ApiProfile {
-    return {
+    return ProtoApiProfile.create({
         id: "profile-anthropic-story",
         name: "Anthropic",
         provider: "anthropic",
         apiKey: "sk-ant-storybook00000000000000",
         modelId: "claude-storybook",
+        baseUrl: "https://proxy.invalid/v1",
+        modelInfo: {
+            id: "claude-storybook",
+            capabilities: { contextWindowTiers: [{ id: "standard", contextWindow: 200_000, label: "200K", apiModelSuffix: "" }] },
+        },
         anthropic: AnthropicProviderConfig.create({
             pricing,
             capabilities: { contextWindow: 200_000, maxTokens: 64_000, supportsPromptCache: true },
         }),
-    } as ApiProfile
+    })
 }
 
 /** The card backed by real state, so a selector change is visible immediately. */
@@ -89,7 +95,9 @@ export const ContextWindow: Story = {
         await openModelConfiguration(context)
         const canvas = within(context.canvasElement)
         await userEvent.click(canvas.getByLabelText("Pricing Mode"))
-        await userEvent.click(await canvas.findByRole("option", { name: "By context size" }))
+        await userEvent.click(
+            await within(context.canvasElement.ownerDocument.body).findByRole("option", { name: "By context size" }),
+        )
 
         await expect(canvas.getByLabelText("Pricing Mode")).toHaveTextContent("By context size")
         await expect(canvas.getByText("Pricing Tiers")).toBeVisible()
@@ -107,11 +115,13 @@ export const TimeOfDay: Story = {
         await openModelConfiguration(context)
         const canvas = within(context.canvasElement)
         await userEvent.click(canvas.getByLabelText("Pricing Mode"))
-        await userEvent.click(await canvas.findByRole("option", { name: "By time of day" }))
+        await userEvent.click(
+            await within(context.canvasElement.ownerDocument.body).findByRole("option", { name: "By time of day" }),
+        )
 
         await expect(canvas.getByLabelText("Pricing Mode")).toHaveTextContent("By time of day")
-        await expect(canvas.getByLabelText("Default Input ($/1M)")).toHaveValue("3")
-        await expect(canvas.getByLabelText("Default Output ($/1M)")).toHaveValue("15")
+        await expect(canvas.getByLabelText("Default Input Price ($/1M tokens)")).toHaveValue("3")
+        await expect(canvas.getByLabelText("Default Output Price ($/1M tokens)")).toHaveValue("15")
         await expect(canvas.getByText("Time Windows")).toBeVisible()
     },
 }
@@ -126,13 +136,14 @@ export const ShapeDoesNotTouchContextTiers: Story = {
     play: async (context) => {
         await openModelConfiguration(context)
         const canvas = within(context.canvasElement)
-        await expect(canvas.getByText("Context Tiers")).toBeVisible()
-
+        const contextSize = canvas.getByLabelText("Context Tier Window")
+        await expect(contextSize).toHaveValue("200000")
         await userEvent.click(canvas.getByLabelText("Pricing Mode"))
-        await userEvent.click(await canvas.findByRole("option", { name: "By time of day" }))
-
-        await expect(canvas.getByText("Context Tiers")).toBeVisible()
-        await expect(canvas.getByText("Pricing Tiers")).toBeNull()
+        await userEvent.click(
+            await within(context.canvasElement.ownerDocument.body).findByRole("option", { name: "By time of day" }),
+        )
+        await expect(contextSize).toHaveValue("200000")
+        await expect(canvas.queryByText("Pricing Tiers")).toBeNull()
     },
 }
 

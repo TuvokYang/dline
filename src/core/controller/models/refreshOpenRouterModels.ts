@@ -151,7 +151,7 @@ async function fetchAndCacheModels(controller: Controller): Promise<Record<strin
                         // prompt-cache flag follows from whether a cache read price came back.
                         // OpenRouter charges no cache write pricing for OpenAI models.
                         if (modelId.startsWith("openai/") || modelId.startsWith("google/")) {
-                            if (readPriceSet(modelInfo.pricing?.metered?.strategy?.flat?.prices).cacheReadPrice > 0) {
+                            if (readPriceSet(modelInfo.pricing?.strategy?.flat?.prices).cacheReadPrice > 0) {
                                 modelInfo.capabilities!.supportsPromptCache = true
                             }
                         }

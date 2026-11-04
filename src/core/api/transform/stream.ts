@@ -41,7 +41,9 @@ export interface ApiStreamUsageChunk {
      * reasoning fold it into `outputTokens` at their boundary.
      */
     thoughtsTokenCount?: number
-    totalCost?: number // openrouter
+    totalCost?: number
+    /** Currency of totalCost from the same source. Absence is unknown, never inferred from the Profile. */
+    currency?: string
     serverToolUsage?: {
         webSearchRequests?: number
         webFetchRequests?: number

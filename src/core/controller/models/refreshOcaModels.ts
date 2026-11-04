@@ -24,7 +24,7 @@ function readPricingFields(pricing: ModelPricing | undefined): {
     cacheWritesPrice: number
     cacheReadsPrice: number
 } {
-    const prices = readPriceSet(pricing?.metered?.strategy?.flat?.prices)
+    const prices = readPriceSet(pricing?.strategy?.flat?.prices)
     return {
         inputPrice: prices.inputPrice,
         outputPrice: prices.outputPrice,

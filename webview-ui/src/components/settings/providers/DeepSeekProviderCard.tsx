@@ -1,12 +1,11 @@
-import { ApiFormat } from "@shared/proto/dline/models/metadata"
+import { ApiFormat, type ModelPricing } from "@shared/proto/dline/models/metadata"
 import { VSCodeCheckbox, VSCodeDropdown, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
 import { useId, useState } from "react"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { DropdownContainer } from "../common/ModelSelector"
+import { PricingEditor } from "../common/PricingEditor"
 import { ProfileField } from "../profile-ui"
 import ReasoningEffortSelector from "../ReasoningEffortSelector"
-import { DeepSeekOffPeakPricing, type DeepSeekPricedModel } from "./DeepSeekOffPeakPricing"
-import type { DeepSeekRateRule } from "./deepseekPricingSchedule"
 import { ProviderUsage } from "./ProviderUsage"
 
 /**
@@ -43,29 +42,14 @@ export interface DeepSeekProviderCardProps {
     readonly apiFormat: ApiFormat | undefined
     readonly apiKey: string
     readonly modelId: string
-    /**
-     * Peak prices for the selected model, or `undefined` when the catalog
-     * publishes no terms for it.
-     *
-     * A Profile bills against one model, so this is one entry rather than the
-     * whole catalog: a list here would turn the summary into a rate sheet the
-     * user has to search for the row that applies to them.
-     */
-    readonly pricedModel: DeepSeekPricedModel | undefined
+    /** Effective model metadata, using the same declaration as the real Provider. */
+    readonly pricing: ModelPricing | undefined
     readonly profileId: string
     readonly models: readonly string[]
-    /** Instant the pricing card renders its current rate for. Injected so stories are stable. */
-    readonly now: Date
-    /**
-     * Which published time-of-day rule applies. The direct API excludes Chinese
-     * public holidays from peak billing; the OpenCode gateway does not.
-     */
-    readonly rateRule?: DeepSeekRateRule
     /** Whether thinking is enabled for this Profile. Defaults to on. */
     readonly enableThinking?: boolean
     /** Selected thinking level. Defaults to the standard level, `high`. */
     readonly effort?: DeepSeekEffort
-    readonly isHoliday?: (chinaStandardDay: string) => boolean
     readonly onApiFormatChange: (apiFormat: ApiFormat) => void
     readonly onApiKeyChange: (apiKey: string) => void
     readonly onEffortChange: (effort: DeepSeekEffort) => void
@@ -84,14 +68,11 @@ export function DeepSeekProviderCard({
     apiFormat,
     apiKey,
     modelId,
-    pricedModel,
+    pricing,
     profileId,
     models,
-    now,
-    rateRule = "deepseek-direct",
     enableThinking = true,
     effort = DEEP_SEEK_DEFAULT_EFFORT,
-    isHoliday,
     onApiFormatChange,
     onApiKeyChange,
     onEffortChange,
@@ -182,9 +163,7 @@ export function DeepSeekProviderCard({
 
             <ProviderUsage enabled pollIntervalMs={null} profileId={profileId} />
 
-            {pricedModel !== undefined && (
-                <DeepSeekOffPeakPricing isHoliday={isHoliday} model={pricedModel} now={now} rule={rateRule} />
-            )}
+            <PricingEditor pricing={pricing} readOnly={true} showCachePrices />
         </div>
     )
 }

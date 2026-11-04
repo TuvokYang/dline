@@ -627,14 +627,14 @@ describe("ProviderCommandExecutor request reporting", () => {
             {
                 start: () =>
                     chunks([
-                        { kind: "usage", usage: { inputTokens: 10, cacheReadTokens: 4, totalCost: 0.5 } },
+                        { kind: "usage", usage: { inputTokens: 10, cacheReadTokens: 4, totalCost: 0.5 }, currency: "USD" },
                         {
                             kind: "final",
                             turnId: "turn-request",
                             payloadRef: "payload:final",
                             turnPlan: { mode: "serial", blocks: [] },
                         },
-                        { kind: "usage", usage: { outputTokens: 7, totalCost: 0.9 } },
+                        { kind: "usage", usage: { outputTokens: 7, totalCost: 0.9 }, currency: "CNY" },
                     ]),
             },
             new InMemoryConversationJournal(),
@@ -652,6 +652,7 @@ describe("ProviderCommandExecutor request reporting", () => {
         expect(report.settle).toHaveBeenCalledWith({
             usage: { inputTokens: 10, cacheReadTokens: 4, totalCost: 0.9, outputTokens: 7 },
             contextUsage: { inputTokens: 10, cacheReadTokens: 4, totalCost: 0.9, outputTokens: 7 },
+            currency: "CNY",
             outcome: "completed",
         })
     })
@@ -667,10 +668,11 @@ describe("ProviderCommandExecutor request reporting", () => {
                         {
                             kind: "usage",
                             usage: { inputTokens: 4, cacheReadTokens: 367_654, cacheWriteTokens: 4_480, totalCost: 0.2 },
+                            currency: "USD",
                         },
                         { kind: "usage", usage: { outputTokens: 8 } },
                         { kind: "retry", notice: { attempt: 1, maxAttempts: 5, delayMs: 0, errorMessage: "{}" } },
-                        { kind: "usage", usage: { inputTokens: 4, cacheReadTokens: 372_134, totalCost: 0.3 } },
+                        { kind: "usage", usage: { inputTokens: 4, cacheReadTokens: 372_134, totalCost: 0.3 }, currency: "CNY" },
                         {
                             kind: "final",
                             turnId: "turn-request",
@@ -700,6 +702,7 @@ describe("ProviderCommandExecutor request reporting", () => {
             },
             // Only the attempt that produced the turn describes what the next request carries.
             contextUsage: { inputTokens: 4, cacheReadTokens: 372_134, totalCost: 0.3, outputTokens: 274 },
+            currency: "CNY",
             outcome: "completed",
         })
     })

@@ -58,6 +58,7 @@ export class NousResearchHandler extends ApiHandler {
             ...convertToOpenAiMessages(messages),
         ]
 
+        const sentAtMs = Date.now()
         const stream = await client.chat.completions.create({
             model: model.id,
             messages: openAiMessages,
@@ -83,10 +84,19 @@ export class NousResearchHandler extends ApiHandler {
             }
 
             if (chunk.usage) {
+                const cost = ApiHandler.calculateUsageCost(
+                    model.info.pricing,
+                    {
+                        inputTokens: chunk.usage.prompt_tokens || 0,
+                        outputTokens: chunk.usage.completion_tokens || 0,
+                    },
+                    sentAtMs,
+                )
                 yield {
                     type: "usage",
                     inputTokens: chunk.usage.prompt_tokens || 0,
                     outputTokens: chunk.usage.completion_tokens || 0,
+                    ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                 }
             }
         }

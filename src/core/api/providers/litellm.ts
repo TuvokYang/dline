@@ -162,60 +162,6 @@ export class LiteLlmHandler extends ApiHandler {
         return data
     }
 
-    private async getModelCostInfo(publicModelName: string): Promise<{
-        inputCostPerToken: number
-        outputCostPerToken: number
-        cacheCreationCostPerToken?: number
-        cacheReadCostPerToken?: number
-    }> {
-        try {
-            const matchingModel = await this.fetchLiteLlmModelInfo(publicModelName)
-
-            if (matchingModel) {
-                return {
-                    inputCostPerToken: matchingModel.model_info.input_cost_per_token || 0,
-                    outputCostPerToken: matchingModel.model_info.output_cost_per_token || 0,
-                    cacheCreationCostPerToken: matchingModel.model_info.cache_creation_input_token_cost,
-                    cacheReadCostPerToken: matchingModel.model_info.cache_read_input_token_cost,
-                }
-            }
-        } catch (error) {
-            Logger.warn("Error getting LiteLLM model cost info:", error)
-        }
-
-        // Fallback to zero costs if we can't get the information
-        return {
-            inputCostPerToken: 0,
-            outputCostPerToken: 0,
-        }
-    }
-
-    async calculateCost(
-        prompt_tokens: number,
-        completion_tokens: number,
-        cache_creation_tokens?: number,
-        cache_read_tokens?: number,
-    ): Promise<number | undefined> {
-        const publicModelId = this.modelId || liteLlmDefaultModelId
-
-        try {
-            const costInfo = await this.getModelCostInfo(publicModelId)
-
-            // Calculate costs for different token types
-            const inputCost = Math.max(0, prompt_tokens - (cache_read_tokens || 0)) * costInfo.inputCostPerToken
-            const outputCost = completion_tokens * costInfo.outputCostPerToken
-            const cacheCreationCost = (cache_creation_tokens || 0) * (costInfo.cacheCreationCostPerToken || 0)
-            const cacheReadCost = (cache_read_tokens || 0) * (costInfo.cacheReadCostPerToken || 0)
-
-            const totalCost = inputCost + outputCost + cacheCreationCost + cacheReadCost
-
-            return totalCost
-        } catch (error) {
-            Logger.error("Error calculating spend:", error)
-            return undefined
-        }
-    }
-
     @withRetry()
     async *createMessage(systemPrompt: string, messages: ClineStorageMessage[]): ApiStream {
         const client = this.ensureClient()
@@ -306,6 +252,7 @@ export class LiteLlmHandler extends ApiHandler {
             },
         )
 
+        const sentAtMs = Date.now()
         const stream = await client.chat.completions.create({
             model: this.modelId || liteLlmDefaultModelId,
             messages: [systemMessage, ...enhancedMessages],
@@ -364,14 +311,14 @@ export class LiteLlmHandler extends ApiHandler {
                     cacheReadTokens,
                 })
 
-                // Calculate cost using the actual token usage including cache tokens
-                const totalCost =
-                    (await this.calculateCost(
-                        usage.prompt_tokens || 0,
-                        usage.completion_tokens || 0,
-                        cacheWriteTokens > 0 ? cacheWriteTokens : undefined,
-                        cacheReadTokens > 0 ? cacheReadTokens : undefined,
-                    )) || 0
+                const cost = ApiHandler.calculateUsageCost(
+                    model.info.pricing,
+                    {
+                        ...normalizedInput,
+                        outputTokens: usage.completion_tokens || 0,
+                    },
+                    sentAtMs,
+                )
 
                 yield {
                     type: "usage",
@@ -379,7 +326,7 @@ export class LiteLlmHandler extends ApiHandler {
                     outputTokens: usage.completion_tokens || 0,
                     cacheWriteTokens: normalizedInput.cacheWriteTokens > 0 ? normalizedInput.cacheWriteTokens : undefined,
                     cacheReadTokens: normalizedInput.cacheReadTokens > 0 ? normalizedInput.cacheReadTokens : undefined,
-                    totalCost,
+                    ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                 }
             }
         }

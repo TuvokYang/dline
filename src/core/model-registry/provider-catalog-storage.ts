@@ -1,9 +1,11 @@
 import { getProviderCatalog, getProviderSeedConfig } from "@shared/providers/model-infos"
+import { migrateModelPricing, modelPricingForWrite } from "@shared/providers/pricing-shape"
 import type { ModelInfo, ProviderModelsConfig } from "@shared/providers/types"
 import { Logger } from "@shared/services/Logger"
 import fs from "fs/promises"
 import * as path from "path"
 import { ModelRegistry } from "./ModelRegistry"
+import { mapCatalogPricing } from "./model-pricing-migration"
 import { getProviderConfigFileName } from "./provider-config-file"
 import { type ProviderModelReconciliationMode, reconcileProviderModels } from "./provider-model-reconciliation"
 
@@ -24,7 +26,7 @@ export interface PersistProviderCatalogOptions {
 
 /** Serialize provider catalogs with stable, human-editable formatting. */
 export function serializeProviderCatalog(config: ProviderModelsConfig): string {
-    return `${JSON.stringify(config, null, "\t")}\n`
+    return `${JSON.stringify(mapCatalogPricing(config, modelPricingForWrite), null, "\t")}\n`
 }
 
 /**
@@ -142,7 +144,7 @@ async function readStoredOwner(filePath: string, ownerId: string): Promise<Provi
     try {
         const parsed = JSON.parse(raw) as ProviderModelsConfig
         if (!parsed || typeof parsed !== "object" || !parsed.models) return undefined
-        return { ...parsed, provider: parsed.provider || ownerId }
+        return mapCatalogPricing({ ...parsed, provider: parsed.provider || ownerId }, migrateModelPricing)
     } catch (error) {
         Logger.warn(`[ModelRegistry] Ignoring unparsable provider catalog ${path.basename(filePath)}:`, error)
         return undefined

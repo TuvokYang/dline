@@ -92,6 +92,26 @@ function requestInfo(row: UiMessage): UiApiReqInfo {
 }
 
 describe("TaskProviderRequestReporter", () => {
+    it("persists the amount's source currency rather than inferring the Profile currency", async () => {
+        const harness = createReporter()
+        await (await harness.reporter.begin({ turnId: "currency" })).settle({
+            usage: { inputTokens: 10, outputTokens: 1, totalCost: 0.25, costUsageReported: 1 },
+            currency: "CNY",
+            outcome: "completed",
+        })
+        expect(requestInfo(harness.rows[0])).toMatchObject({ cost: 0.25, currency: "CNY" })
+    })
+
+    it("does not attach a guessed currency to an amount with an unknown source currency", async () => {
+        const harness = createReporter()
+        await (await harness.reporter.begin({ turnId: "unknown-currency" })).settle({
+            usage: { inputTokens: 10, outputTokens: 1, totalCost: 0, costUsageReported: 1 },
+            outcome: "completed",
+        })
+        expect(requestInfo(harness.rows[0]).cost).toBe(0)
+        expect(requestInfo(harness.rows[0]).currency).toBeUndefined()
+    })
+
     it("opens a request row before the stream and settles it with the reported usage", async () => {
         const harness = createReporter()
 

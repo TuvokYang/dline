@@ -242,6 +242,7 @@ export class TaskProviderRequestReporter implements ProviderRequestReport.Provid
             contextInputTokens:
                 contextUsageTokens.inputTokens + contextUsageTokens.cacheWriteTokens + contextUsageTokens.cacheReadTokens,
             totalCost: tokens.totalCost,
+            currency: settlement.currency,
             api,
             cancelReason: cancelReasonFor(settlement.outcome),
         })

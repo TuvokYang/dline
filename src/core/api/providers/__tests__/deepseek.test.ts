@@ -763,16 +763,28 @@ describe("DeepSeekHandler", () => {
 
             const chunks = await collectChunks(handler)
 
-            expect(chunks).to.deep.equal([
-                {
-                    type: "usage",
-                    inputTokens: 50,
-                    outputTokens: 25,
-                    cacheWriteTokens: 50,
-                    cacheReadTokens: 900,
-                    totalCost: 0.00047250000000000005,
-                },
-            ])
+            expect(chunks).to.have.length(1)
+            const chunk = chunks[0]
+            if (
+                typeof chunk !== "object" ||
+                chunk === null ||
+                !("type" in chunk) ||
+                chunk.type !== "usage" ||
+                !("totalCost" in chunk) ||
+                !("currency" in chunk)
+            ) {
+                throw new Error("Expected the terminal usage chunk with a calculated cost")
+            }
+            const { totalCost, currency, ...counts } = chunk
+            expect(counts).to.deep.equal({
+                type: "usage",
+                inputTokens: 50,
+                outputTokens: 25,
+                cacheWriteTokens: 50,
+                cacheReadTokens: 900,
+            })
+            expect(totalCost).to.be.closeTo(0.0004725, 1e-12)
+            expect(currency).to.equal("USD")
         })
 
         it("passes an AbortSignal to the SDK and aborts an in-flight request", async () => {

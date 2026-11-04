@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { ModelInfo } from "@shared/proto/dline/models"
-import { ApiFormat } from "@shared/proto/dline/models/metadata"
+import { ApiFormat, PricingDayRule } from "@shared/proto/dline/models/metadata"
 import { ApiProfile as ProtoApiProfile } from "@shared/proto/dline/profile"
 import { BaseProviderConfig } from "@shared/proto/dline/provider/common"
 import { flatMeteredPricing } from "@shared/providers/pricing-shape"
@@ -28,7 +28,21 @@ const models = {
                 effortLevels: ["low", "high", "max"],
             },
         },
-        pricing: flatMeteredPricing(3, 6, 3, 0.025, "CNY"),
+        pricing: {
+            currency: "CNY",
+            strategy: {
+                timeOfDay: {
+                    schedule: {
+                        timezoneOffsetMinutes: 480,
+                        dayRule: PricingDayRule.PRICING_DAY_RULE_ALL_DAYS,
+                        defaultOnPublicHolidays: false,
+                        holidayCalendar: "",
+                    },
+                    defaultPrices: { inputPrice: 3, outputPrice: 6, cacheWritePrice: 3, cacheReadPrice: 0.025 },
+                    timeWindows: [],
+                },
+            },
+        },
     } as ModelInfo,
     "deepseek-flash": {
         id: "deepseek-flash",
@@ -77,6 +91,11 @@ vi.mock("../common/ModelAutocomplete", () => ({
     ),
 }))
 vi.mock("@vscode/webview-ui-toolkit/react", () => ({
+    VSCodeButton: ({ children, onClick, disabled }: React.ComponentProps<"button">) => (
+        <button disabled={disabled} onClick={onClick} type="button">
+            {children}
+        </button>
+    ),
     VSCodeTextField: ({ children: _children, ...props }: React.InputHTMLAttributes<HTMLInputElement>) => <input {...props} />,
     VSCodeCheckbox: ({
         checked,
@@ -218,10 +237,10 @@ describe("DeepSeekProvider", () => {
 
         expect(screen.getByRole("textbox", { name: "Context Window Size" })).toHaveValue("1000000")
         expect(screen.getByRole("textbox", { name: "Max Output Tokens" })).toHaveValue("384000")
-        expect(screen.getByRole("textbox", { name: "Input Price (¥/1M tokens)" })).toHaveValue("3")
-        expect(screen.getByRole("textbox", { name: "Output Price (¥/1M tokens)" })).toHaveValue("6")
-        expect(screen.getByRole("textbox", { name: "Cache Writes (¥/M)" })).toHaveValue("3")
-        expect(screen.getByRole("textbox", { name: "Cache Reads (¥/M)" })).toHaveValue("0.025")
+        expect(screen.getByRole("textbox", { name: "Default Input Price (¥/1M tokens)" })).toHaveValue("3")
+        expect(screen.getByRole("textbox", { name: "Default Output Price (¥/1M tokens)" })).toHaveValue("6")
+        expect(screen.getByRole("textbox", { name: "Default Cache Writes (¥/1M tokens)" })).toHaveValue("3")
+        expect(screen.getByRole("textbox", { name: "Default Cache Reads (¥/1M tokens)" })).toHaveValue("0.025")
     })
 
     it("persists a context override without losing a preceding API format edit or existing provider settings", async () => {

@@ -3,8 +3,8 @@
  * Extracted from api.ts deepSeekModels (lines 2213-2238).
  */
 import type { ModelInfo } from "@shared/api"
-import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
-import { priceSet, timeOfDayPricing } from "./pricing"
+import { ApiFormat, type PriceSet, PricingDayRule, ServerTool } from "@shared/proto/dline/models/metadata"
+import { timeOfDayPricing } from "./pricing"
 
 export const DEEPSEEK_REASONING_EFFORT_OPTIONS = ["low", "high", "max"] as const
 
@@ -25,14 +25,13 @@ const DEEPSEEK_PEAK_WINDOWS = [
 /**
  * Peak/off-peak schedule for the direct DeepSeek endpoint.
  *
- * Off-peak is exactly half the peak rate, and the seller charges off-peak for
- * whole public holidays, so the schedule names the CN calendar instead of the
- * catalog restating the dates.
+ * The seller charges the default rate on weekends and whole public holidays.
+ * The schedule names the CN calendar instead of duplicating its dates here.
  */
 function deepSeekSchedule() {
     return {
         timezoneOffsetMinutes: 8 * 60,
-        dayRule: 1,
+        dayRule: PricingDayRule.PRICING_DAY_RULE_WEEKDAYS,
         defaultOnPublicHolidays: true,
         holidayCalendar: "CN",
     } as const
@@ -46,11 +45,10 @@ function deepSeekSchedule() {
  * multiplier: the catalog is the price authority, and a derived value cannot
  * express a seller that discounts by anything other than half.
  */
-function deepSeekPricing(inputPrice: number, outputPrice: number, cacheWritePrice: number, cacheReadPrice: number) {
-    const peak = priceSet(inputPrice, outputPrice, cacheWritePrice, cacheReadPrice)
+function deepSeekPricing(peak: PriceSet, offPeak: PriceSet) {
     return timeOfDayPricing({
         schedule: deepSeekSchedule(),
-        defaultPrices: priceSet(inputPrice / 2, outputPrice / 2, cacheWritePrice / 2, cacheReadPrice / 2),
+        defaultPrices: offPeak,
         timeWindows: DEEPSEEK_PEAK_WINDOWS.map((window) => ({ ...window, prices: peak })),
         currency: "CNY",
     })
@@ -97,7 +95,12 @@ export const deepSeekModels: Record<string, ModelInfo> = {
             tools: [ServerTool.WEB_SEARCH],
         },
         apiFormats: [ApiFormat.OPENAI_CHAT, ApiFormat.OPENAI_RESPONSES, ApiFormat.ANTHROPIC_CHAT],
-        pricing: deepSeekPricing(3, 6, 3, 0.025),
+        // Published CNY / 1M tokens, verified 2026-11-03. Cache-write has no
+        // separate published rate and remains absent rather than fabricated.
+        pricing: deepSeekPricing(
+            { inputPrice: 9, outputPrice: 27, cacheReadPrice: 0.3 },
+            { inputPrice: 4.5, outputPrice: 13.5, cacheReadPrice: 0.15 },
+        ),
     },
     "deepseek-flash": {
         id: "deepseek-flash",
@@ -114,7 +117,10 @@ export const deepSeekModels: Record<string, ModelInfo> = {
             // would route Auto to a hosted search that never runs and hide the local one.
         },
         apiFormats: [ApiFormat.OPENAI_CHAT, ApiFormat.OPENAI_RESPONSES, ApiFormat.ANTHROPIC_CHAT],
-        pricing: deepSeekPricing(1, 2, 1, 0.02),
+        pricing: deepSeekPricing(
+            { inputPrice: 2, outputPrice: 8, cacheReadPrice: 0.04 },
+            { inputPrice: 1, outputPrice: 4, cacheReadPrice: 0.02 },
+        ),
     },
 }
 

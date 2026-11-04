@@ -146,10 +146,11 @@ describe("SapAiCoreHandler", () => {
                 streamCompletionGPT(
                     source: AsyncIterable<Buffer>,
                     model: ReturnType<SapAiCoreHandler["getModel"]>,
+                    sentAtMs: number,
                 ): AsyncIterable<unknown>
             }
 
-            for await (const chunk of privateHandler.streamCompletionGPT(stream, handler.getModel())) chunks.push(chunk)
+            for await (const chunk of privateHandler.streamCompletionGPT(stream, handler.getModel(), 0)) chunks.push(chunk)
 
             tailConsumed.should.equal(true)
             chunks.should.deepEqual([{ type: "usage", inputTokens: 0, outputTokens: 0 }])

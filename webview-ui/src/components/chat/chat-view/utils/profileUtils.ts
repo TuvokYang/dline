@@ -22,13 +22,7 @@ export function resolveActiveProfile(
     return namedProfile ?? profiles.find((profile) => profile.enabled && profile.usedFor?.includes(mode)) ?? profiles[0]
 }
 
-/**
- * Resolve the billing currency of the current task.
- *
- * Both inputs originate from `ModelInfo.pricing.currency`: API metrics record the
- * model that produced the cost, and the active profile's model covers a task
- * that has not reported metrics yet.
- */
-export function resolveTaskCurrency(apiCurrency: string | undefined, profileCurrency: string | undefined): string {
-    return normalizeCurrencyCode(apiCurrency?.trim() || profileCurrency)
+/** Preserve the currency reported with task amounts; the active Profile is not its source. */
+export function resolveTaskCurrency(apiCurrency: string | undefined): string | undefined {
+    return apiCurrency?.trim() ? normalizeCurrencyCode(apiCurrency) : undefined
 }

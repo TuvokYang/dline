@@ -1,6 +1,5 @@
 import type { ModelInfo } from "@shared/proto/dline/models"
 import type { ContextWindowTier, ModelCapabilities, ModelPricing } from "@shared/proto/dline/models/metadata"
-import { readBands, readCurrency, readPriceSet, withBands, withFlatPrices } from "./pricing-shape"
 
 export interface ProviderModelOverrides {
     capabilities?: ModelCapabilities
@@ -44,14 +43,14 @@ export function mergeCapabilities(base: ModelCapabilities | undefined, updates: 
 }
 
 /**
- * Merge provider pricing overrides without preserving undefined fields.
+ * Replace a complete pricing declaration without merging mode oneofs.
  *
  * @param base Existing provider pricing overrides.
  * @param updates Partial pricing updates.
  * @returns Merged pricing overrides.
  */
-export function mergePricing(base: ModelPricing | undefined, updates: Partial<ModelPricing>): ModelPricing {
-    return mergeDefined(base, updates) as ModelPricing
+export function mergePricing(_base: ModelPricing | undefined, updates: Partial<ModelPricing>): ModelPricing {
+    return { ...updates } as ModelPricing
 }
 
 /**
@@ -130,42 +129,12 @@ function withoutServerToolDeclaration(capabilities: ModelCapabilities): ModelCap
 }
 
 /**
- * Apply a profile's price overrides to the registry's pricing.
- *
- * A price override is a rate edit, so it only replaces the rates of the mode it
- * targets. Time-of-day schedules, subscription plans and free modes are
- * seller-owned and are returned untouched: a profile must not turn a scheduled
- * price into a flat one, because that would silently change when the peak rate
- * applies.
- *
- * A model the registry does not price has nothing to edit, so the profile's own
- * declaration becomes the price. Without that, a user-defined model would be
- * billed at zero no matter what rate the profile declares.
- *
- * @param base Pricing declared by the registry.
- * @param overrides Provider overrides from the active profile.
- * @returns Pricing to bill with, or undefined when nothing is published.
+ * Select a complete model-owned pricing declaration. An absent override inherits
+ * the catalog; an explicit declaration replaces it without interpreting rates.
+ * Only an absent declaration inherits, regardless of the catalog pricing mode.
  */
 function resolvePricingOverrides(base: ModelPricing | undefined, overrides: ProviderModelOverrides): ModelPricing | undefined {
-    if (!overrides.pricing) {
-        return base
-    }
-    if (!base?.metered) {
-        return base ?? overrides.pricing
-    }
-
-    const overridePrices = readPriceSet(overrides.pricing.metered?.strategy?.flat?.prices)
-    const currency = readCurrency(overrides.pricing) ?? readCurrency(base) ?? "USD"
-    const flatOverride = withFlatPrices(base, overridePrices, currency)
-    if (flatOverride) {
-        return flatOverride
-    }
-
-    const overrideBands = readBands(overrides.pricing)
-    if (overrides.pricingTiersEnabled === true && overrideBands.length > 0) {
-        return withBands(base, overrideBands) ?? base
-    }
-    return base
+    return overrides.pricing ?? base
 }
 
 /**

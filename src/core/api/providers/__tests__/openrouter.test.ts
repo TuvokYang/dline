@@ -203,6 +203,7 @@ describe("OpenRouterHandler", () => {
                                 usage: {
                                     prompt_tokens: 13,
                                     completion_tokens: 5,
+                                    cost: 0,
                                 },
                             },
                         ]),
@@ -229,6 +230,7 @@ describe("OpenRouterHandler", () => {
                 inputTokens: 13,
                 outputTokens: 5,
                 totalCost: 0,
+                currency: "USD",
             },
         ])
     })
@@ -248,6 +250,7 @@ describe("OpenRouterHandler", () => {
                                 usage: {
                                     prompt_tokens: 1000,
                                     completion_tokens: 200,
+                                    cost: 0,
                                     prompt_tokens_details: {
                                         cached_tokens: 500,
                                         cache_write_tokens: 300,
@@ -278,6 +281,7 @@ describe("OpenRouterHandler", () => {
                 inputTokens: 200,
                 outputTokens: 200,
                 totalCost: 0,
+                currency: "USD",
             },
         ])
     })

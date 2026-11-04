@@ -22,7 +22,6 @@ import { getProviderCatalog } from "@shared/providers/model-infos"
 import { resolveProfileCatalogKey, resolveProfileModelId, resolveProfileOverrides } from "@shared/providers/profile-model-info"
 import { readProviderConfigField } from "@shared/providers/provider-config"
 import { resolveProfileReasoningConfig } from "@shared/task-reasoning"
-import { calculateApiCostOpenAI } from "@utils/cost"
 import type OpenAI from "openai"
 import type { ChatCompletionFunctionTool } from "openai/resources/chat/completions"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
@@ -363,6 +362,7 @@ export class OpenCodeHandler extends ApiHandler {
                 ? options.generation.maxOutputTokens
                 : model.info.capabilities?.maxTokens
 
+        const sentAtMs = Date.now()
         const stream = await client.chat.completions.create(
             {
                 model: model.id,
@@ -403,28 +403,29 @@ export class OpenCodeHandler extends ApiHandler {
                 // not is the price table consulted, because a local estimate cannot
                 // see peak-hour, long-context, or discount pricing.
                 const reportedCost = readOpenCodeCost(chunk.usage)
-                // `prompt_tokens` already includes the cached share, so a local
-                // estimate must read the raw total while the stream reports the
-                // uncached remainder.
-                const totalCost =
-                    reportedCost ??
-                    (await calculateApiCostOpenAI(
-                        model.info,
-                        chunk.usage.prompt_tokens || 0,
-                        chunk.usage.completion_tokens || 0,
-                        usage.cacheWriteTokens,
-                        usage.cacheReadTokens,
-                    ))
                 const thoughtsTokenCount = chatReasoningTokens(chunk.usage)
+                const cost =
+                    reportedCost === undefined
+                        ? ApiHandler.calculateUsageCost(
+                              model.info.pricing,
+                              {
+                                  ...usage,
+                                  outputTokens: chunk.usage.completion_tokens || 0,
+                                  thoughtsTokenCount,
+                              },
+                              sentAtMs,
+                          )
+                        : undefined
                 yield {
                     type: "usage",
                     ...usage,
                     outputTokens: chunk.usage.completion_tokens || 0,
                     ...(thoughtsTokenCount === undefined ? {} : { thoughtsTokenCount }),
-                    // `totalCost` is the single accounting field every consumer
-                    // reads, so the gateway's own charge travels there rather than
-                    // in a side channel no surface knows about.
-                    totalCost,
+                    ...(reportedCost !== undefined
+                        ? { totalCost: reportedCost }
+                        : cost?.kind === "calculated"
+                          ? { totalCost: cost.amount, currency: cost.currency }
+                          : {}),
                 }
             }
         }
@@ -469,6 +470,7 @@ export class OpenCodeHandler extends ApiHandler {
             ]
         })
 
+        const sentAtMs = Date.now()
         const stream = await client.responses.create(
             {
                 model: model.id,
@@ -486,15 +488,10 @@ export class OpenCodeHandler extends ApiHandler {
         // The shared handler owns usage accounting and tool-call assembly. Parsing
         // the events here would drop `response.completed.usage`, which is the only
         // place this protocol reports token counts.
-        yield* handleResponsesApiStreamResponse(
-            stream,
-            model.info,
-            async (info, inputTokens, outputTokens, cacheWrite, cacheRead) =>
-                calculateApiCostOpenAI(info, inputTokens, outputTokens, cacheWrite, cacheRead),
-            // Responses reports the charge on `response.completed`, in the same
-            // usage object the shared handler reads the token counts from.
-            (usage) => readOpenCodeCost(usage),
-        )
+        yield* handleResponsesApiStreamResponse(stream, model.info, sentAtMs, (usage) => {
+            const totalCost = readOpenCodeCost(usage)
+            return totalCost === undefined ? undefined : { totalCost }
+        })
     }
 
     /** Anthropic Messages, using the native input-schema tool shape without a second conversion. */
@@ -531,6 +528,11 @@ export class OpenCodeHandler extends ApiHandler {
         const protocolHeaders = this.headers()
         yield* streamAnthropicMessagesEndpoint({
             messages: requestBody.messages,
+            pricing: model.info.pricing,
+            readReportedCost: (usage) => {
+                const totalCost = readOpenCodeCost(usage)
+                return totalCost === undefined ? undefined : { totalCost }
+            },
             // Every continuation belongs to the same Task conversation, so it must
             // carry the same session identity as the first request.
             openStream: (continuationMessages) =>

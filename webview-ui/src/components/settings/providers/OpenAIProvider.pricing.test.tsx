@@ -23,16 +23,11 @@ const ECHO_DELAY_MS = 500
  */
 function thinkingPricing(outputPrice: number, thinkingOutputPrice: number): ModelPricing {
     const pricing = flatMeteredPricing(0, outputPrice)
-    const flat = pricing.metered?.strategy?.flat
+    const flat = pricing.strategy?.flat
     if (!flat) {
-        throw new Error("flat metered pricing expected")
+        throw new Error("Flat pricing expected")
     }
-    return {
-        metered: {
-            ...pricing.metered,
-            strategy: { ...pricing.metered?.strategy, flat: { prices: { ...flat.prices, thinkingOutputPrice } } },
-        },
-    }
+    return { currency: pricing.currency, strategy: { flat: { prices: { ...flat.prices, thinkingOutputPrice } } } }
 }
 
 const registryModel: ModelInfo = {
@@ -71,6 +66,7 @@ function ProfileHost() {
                 id: "profile-1",
                 provider: "openai",
                 modelId: "gpt-custom",
+                baseUrl: "https://proxy.invalid/v1",
                 openai: OpenAiProviderConfig.create({ customModelEnabled: false }),
             }) as unknown as ApiProfile,
     )
@@ -130,8 +126,8 @@ describe("OpenAIProvider pricing round trip", () => {
 
         await typePrice("Input Price ($/1M tokens)", "1.25")
         await typePrice("Output Price ($/1M tokens)", "2.5")
-        await typePrice("Cache Writes ($/M)", "0.75")
-        await typePrice("Cache Reads ($/M)", "0.25")
+        await typePrice("Cache Writes ($/1M tokens)", "0.75")
+        await typePrice("Cache Reads ($/1M tokens)", "0.25")
 
         // Let every pending echo arrive before reading the summary.
         await act(async () => {
@@ -141,7 +137,7 @@ describe("OpenAIProvider pricing round trip", () => {
         // The declared contract is that every typed rate survives round-trip, so
         // read the persisted profile rather than rendered text.
         const persisted = JSON.parse(screen.getByTestId("persisted-profile").textContent ?? "null")
-        expect(readPriceSet(persisted.openai.pricing.metered.strategy.flat.prices)).toEqual({
+        expect(readPriceSet(persisted.openai.pricing.strategy.flat.prices)).toEqual({
             inputPrice: 1.25,
             outputPrice: 2.5,
             cacheWritePrice: 0.75,
@@ -150,82 +146,47 @@ describe("OpenAIProvider pricing round trip", () => {
     })
 })
 
-describe("ModelInfoView thinking output pricing", () => {
-    it.each<[string, ModelCapabilities, string]>([
-        ["maximum without mode", { thinking: { supported: true, maxBudget: 100 } }, "$2/M"],
-        ["coarse veto", { supportsReasoning: false, thinking: { supported: true, mode: "budget", maxBudget: 100 } }, "$2/M"],
-        ["nested veto", { thinking: { supported: false, mode: "budget", maxBudget: 100 } }, "$2/M"],
-        ["missing support", { supportsReasoning: true, thinking: { mode: "budget", maxBudget: 100 } }, "$2/M"],
-        ["effort mode", { thinking: { supported: true, mode: "effort", maxBudget: 100 } }, "$2/M"],
-        ["inverted bounds", { thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 8 } }, "$2/M"],
-        ["fractional maximum", { thinking: { supported: true, mode: "budget", maxBudget: 10.5 } }, "$2/M"],
-        ["zero maximum", { thinking: { supported: true, mode: "budget", maxBudget: 0 } }, "$2/M"],
-        ["unbounded budget", { thinking: { supported: true, mode: "budget", minBudget: 17 } }, "$7/M"],
-        ["both mode", { thinking: { supported: true, mode: "both", maxBudget: 100 } }, "$7/M"],
-    ])("renders the declared output price for %s", (_label, capabilities, expected) => {
-        const modelInfo: ModelInfo = { id: "opaque-price", capabilities, pricing: thinkingPricing(2, 7) }
-        render(<ModelInfoView modelInfo={modelInfo} selectedModelId={modelInfo.id} />)
-        expect(screen.getByText(expected)).toBeInTheDocument()
-        expect(screen.queryByText(expected === "$7/M" ? "$2/M" : "$7/M")).not.toBeInTheDocument()
-    })
+describe("ModelInfoView complete pricing declaration", () => {
+    const displayedRates = (container: HTMLElement) =>
+        Object.fromEntries(
+            Array.from(container.querySelectorAll<HTMLElement>("[data-price-slot]")).map((cell) => [
+                cell.dataset.priceSlot,
+                Number.parseFloat(cell.textContent!.replace(/[^0-9.-]/g, "")),
+            ]),
+        )
 
-    it("uses the model billing currency and displays output limits and declared capabilities", () => {
+    it.each([false, true])("keeps standard output and thinking rates distinct with reasoning support %s", (supported) => {
         const modelInfo: ModelInfo = {
-            id: "deepseek-cny-display",
-            capabilities: {
-                contextWindow: 1_000_000,
-                maxTokens: 384_000,
-                supportsTools: true,
-                supportsReasoning: true,
-                supportsPromptCache: true,
-            },
-            pricing: flatMeteredPricing(3, 6, 3, 0.025, "CNY"),
-        }
-
-        render(<ModelInfoView modelInfo={modelInfo} selectedModelId={modelInfo.id} />)
-
-        expect(screen.getByText("384K")).toBeInTheDocument()
-        expect(screen.getAllByText("¥3/M")).toHaveLength(2)
-        expect(screen.getByText("¥6/M")).toBeInTheDocument()
-        expect(screen.getByText("¥0.03/M")).toBeInTheDocument()
-        expect(screen.queryByText("$3/M")).not.toBeInTheDocument()
-    })
-
-    it("renders no price row for a model whose only thinking rate is zero", () => {
-        const modelInfo: ModelInfo = {
-            id: "opaque-free-thinking",
-            capabilities: { thinking: { supported: true, mode: "budget" } },
-            pricing: thinkingPricing(2, 0),
-        }
-        render(<ModelInfoView modelInfo={modelInfo} selectedModelId={modelInfo.id} />)
-        // A zero rate is not printed: an unlisted price reads as "no charge",
-        // while a printed "Free" made a published zero look like a claim.
-        expect(screen.queryByText("Free")).not.toBeInTheDocument()
-        expect(screen.queryByText("$0/M")).not.toBeInTheDocument()
-        expect(screen.getByText("$2/M")).toBeInTheDocument()
-    })
-
-    it("renders no stray figure when a cache-capable model publishes zero cache rates", () => {
-        // Both cache rates are published as 0, so the cache section has nothing
-        // to show while caching itself is declared. A boolean guard that leaks
-        // the value (`... && (a || b)`) yields the number 0, which React prints
-        // as a bare "0" under the capability rows.
-        const modelInfo: ModelInfo = {
-            id: "deepseek-cache-zero",
-            capabilities: {
-                contextWindow: 1_000_000,
-                maxTokens: 384_000,
-                supportsTools: true,
-                supportsReasoning: true,
-                supportsPromptCache: true,
-            },
-            pricing: flatMeteredPricing(0, 0, 0, 0),
+            id: "opaque-price",
+            capabilities: { supportsReasoning: supported },
+            pricing: thinkingPricing(2, 7),
         }
         const { container } = render(<ModelInfoView modelInfo={modelInfo} selectedModelId={modelInfo.id} />)
+        expect(displayedRates(container)).toEqual({ inputPrice: 0, outputPrice: 2, thinkingOutputPrice: 7 })
+        expect(screen.queryAllByRole("textbox")).toHaveLength(0)
+    })
 
-        // The rendered text must not contain a standalone zero anywhere.
-        expect(container.textContent).not.toMatch(/(^|\D)0(\D|$)/)
-        expect(screen.queryByText("Cache Reads")).not.toBeInTheDocument()
-        expect(screen.queryByText("Cache Writes")).not.toBeInTheDocument()
+    it("preserves published currency precision and optional prices", () => {
+        const modelInfo: ModelInfo = { id: "cny-display", pricing: flatMeteredPricing(3, 6, 3, 0.025, "CNY") }
+        const { container } = render(<ModelInfoView modelInfo={modelInfo} selectedModelId={modelInfo.id} />)
+        expect(displayedRates(container)).toEqual({ inputPrice: 3, outputPrice: 6, cacheWritePrice: 3, cacheReadPrice: 0.025 })
+        for (const cell of container.querySelectorAll("[data-price-slot]")) expect(cell.textContent?.charAt(0)).toBe("¥")
+    })
+
+    it("does not suppress published zero prices or substitute unpublished cache prices", () => {
+        const zero = thinkingPricing(2, 0)
+        const { container } = render(
+            <ModelInfoView
+                modelInfo={{ id: "zero", pricing: zero, capabilities: { supportsPromptCache: true } }}
+                selectedModelId="zero"
+            />,
+        )
+        expect(displayedRates(container)).toEqual({
+            inputPrice: 0,
+            outputPrice: 2,
+            thinkingOutputPrice: 0,
+            cacheWritePrice: Number.NaN,
+            cacheReadPrice: Number.NaN,
+        })
     })
 })

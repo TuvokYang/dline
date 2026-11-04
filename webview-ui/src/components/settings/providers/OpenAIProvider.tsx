@@ -7,7 +7,7 @@ import { DEFAULT_OPENAI_RESPONSES_STREAM_IDLE_TIMEOUT_SECONDS } from "@shared/pr
 import { hasBands } from "@shared/providers/pricing-shape"
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import { VSCodeButton, VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
-import { useCallback, useId, useMemo } from "react"
+import { useCallback, useId, useMemo, useState } from "react"
 import { ApiFormatSelector } from "../common/ApiFormatSelector"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { BaseUrlField } from "../common/BaseUrlField"
@@ -66,6 +66,8 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
     const fieldId = useId()
     const streamIdleTimeoutId = `${fieldId}-stream-idle-timeout`
     const customModelFieldId = `${fieldId}-custom-model-id`
+    const [customUrlToggle, setCustomUrlToggle] = useState<{ profileId: string; enabled: boolean }>()
+    const customUrlEnabled = customUrlToggle?.profileId === profile.id ? customUrlToggle.enabled : !!profile.baseUrl
     const {
         models,
         defaultModelId,
@@ -204,9 +206,11 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
     return (
         <div className="flex min-w-0 flex-col gap-3">
             <BaseUrlField
+                enabled={customUrlEnabled}
                 initialValue={profile.baseUrl}
                 label="Use custom base URL"
                 onChange={(value) => onUpdate({ baseUrl: value || undefined })}
+                onEnabledChange={(enabled) => setCustomUrlToggle({ profileId: profile.id, enabled })}
                 placeholder="Enter base URL..."
             />
 
@@ -303,10 +307,16 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
                                 "supportsTools",
                                 "temperature",
                             ],
-                            pricing: ["inputPrice", "outputPrice", "cacheWritesPrice", "cacheReadsPrice", "pricingTiers"],
+                            pricing: customUrlEnabled
+                                ? ["inputPrice", "outputPrice", "cacheWritesPrice", "cacheReadsPrice", "pricingTiers"]
+                                : [],
                         }}
+                        key={`${profile.id}:${modelId}`}
                         onCapabilitiesUpdate={handleCapabilitiesUpdate}
                         onDisabledServerToolsUpdate={handleDisabledServerToolsUpdate}
+                        onPricingReset={() =>
+                            onUpdate({ openai: { ...configToUpdate(), pricing: undefined, pricingTiersEnabled: undefined } })
+                        }
                         onPricingUpdate={handlePricingUpdate}
                         pricing={pc.pricing}
                         pricingTiersEnabled={pc.pricingTiersEnabled === true}

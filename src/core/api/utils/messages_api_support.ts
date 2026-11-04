@@ -8,10 +8,13 @@ import type {
 import { Tool as AnthropicTool, type ToolUnion as AnthropicToolUnion } from "@anthropic-ai/sdk/resources/messages/messages"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
 import type { ClineAssistantHostedToolBlock } from "@/shared/messages/content"
-import { ServerTool } from "@/shared/proto/dline/models/metadata"
+import { type ModelPricing, ServerTool } from "@/shared/proto/dline/models/metadata"
+import { ApiHandler } from "../ApiHandler"
+import { validateTokens } from "../billing/validation"
 import { OutputLimitExceededError } from "../stream/OutputLimitExceededError"
 import { normalizeAnthropicStopReason } from "../transform/stop-reason"
-import type { ApiRawStreamServerToolChunk, ApiStream } from "../transform/stream"
+import type { ApiRawStreamServerToolChunk, ApiStream, ApiStreamUsageChunk } from "../transform/stream"
+import { ApiUsageAccumulator } from "../transform/usage-accumulator"
 
 export type AnthropicMessagesStreamEvent = Anthropic.RawMessageStreamEvent | BetaRawMessageStreamEvent
 
@@ -282,43 +285,104 @@ export function declaredAnthropicHostedToolNames(serverTools?: readonly ServerTo
     return new Set(declarations.flatMap((tool) => ("name" in tool && typeof tool.name === "string" ? [tool.name] : [])))
 }
 
+export interface AnthropicMessagesUsageOptions {
+    pricing?: ModelPricing
+    sentAtMs?: number
+    readReportedCost?: (usage: unknown) => Pick<ApiStreamUsageChunk, "totalCost" | "currency"> | undefined
+}
+
 export async function* handleAnthropicMessagesApiStreamResponse(
     stream: AsyncIterable<AnthropicMessagesStreamEvent>,
     state?: AnthropicMessagesStreamState,
+    usageOptions: AnthropicMessagesUsageOptions = {},
 ): ApiStream {
     const lastStartedToolCall = { id: "", name: "", arguments: "" }
     const activeServerToolCall = { id: "", name: "", arguments: "", input: undefined as unknown }
     const startedServerToolCallIds = state?.startedServerToolCallIds ?? new Set<string>()
     const serverToolUseBlocks = state?.serverToolUseBlocks ?? new Map<string, Record<string, unknown>>()
     const resumedServerToolCallIds = state?.resumedServerToolCallIds
+    const usageAccumulator = new ApiUsageAccumulator()
+    let thoughtsTokenCount = 0
+    let hasInputUsage = false
+    let validUsage = true
+    let reportedCost: Pick<ApiStreamUsageChunk, "totalCost" | "currency"> | undefined
+
+    const usageChunk = (
+        chunk: ApiStreamUsageChunk,
+        rawUsage: unknown,
+        terminal: boolean,
+        initial = false,
+    ): ApiStreamUsageChunk => {
+        const raw = rawUsage as AnthropicOutputTokenDetails & {
+            input_tokens?: number
+            output_tokens?: number
+            cache_creation_input_tokens?: number
+            cache_read_input_tokens?: number
+        }
+        hasInputUsage ||= initial
+        validUsage &&=
+            validateTokens({
+                inputTokens: initial ? (raw.input_tokens ?? Number.NaN) : 0,
+                outputTokens: raw.output_tokens ?? Number.NaN,
+                cacheWriteTokens: initial ? (raw.cache_creation_input_tokens ?? undefined) : undefined,
+                cacheReadTokens: initial ? (raw.cache_read_input_tokens ?? undefined) : undefined,
+                thoughtsTokenCount: raw.output_tokens_details?.thinking_tokens,
+            }).length === 0
+        const { usage } = usageAccumulator.apply(chunk)
+        if (typeof chunk.thoughtsTokenCount === "number" && Number.isFinite(chunk.thoughtsTokenCount)) {
+            thoughtsTokenCount = Math.max(thoughtsTokenCount, chunk.thoughtsTokenCount)
+        }
+        reportedCost = usageOptions.readReportedCost?.(rawUsage) ?? reportedCost
+        if (!terminal) return chunk
+        if (reportedCost?.totalCost !== undefined) return { ...chunk, ...reportedCost }
+        if (!hasInputUsage || !validUsage) return chunk
+        const cost = ApiHandler.calculateUsageCost(
+            usageOptions.pricing,
+            {
+                ...usage,
+                thoughtsTokenCount,
+            },
+            usageOptions.sentAtMs ?? Number.NaN,
+        )
+        return cost.kind === "calculated" ? { ...chunk, totalCost: cost.amount, currency: cost.currency } : chunk
+    }
 
     for await (const chunk of stream) {
         switch (chunk?.type) {
             case "message_start": {
                 const usage = chunk.message.usage
                 const serverToolUsage = getServerToolUsage(usage)
-                yield {
-                    type: "usage",
-                    inputTokens: usage.input_tokens || 0,
-                    outputTokens: usage.output_tokens || 0,
-                    cacheWriteTokens: usage.cache_creation_input_tokens || undefined,
-                    cacheReadTokens: usage.cache_read_input_tokens || undefined,
-                    ...getThinkingTokens(usage),
-                    ...(serverToolUsage === undefined ? {} : { serverToolUsage }),
-                }
+                yield usageChunk(
+                    {
+                        type: "usage",
+                        inputTokens: usage.input_tokens || 0,
+                        outputTokens: usage.output_tokens || 0,
+                        cacheWriteTokens: usage.cache_creation_input_tokens || undefined,
+                        cacheReadTokens: usage.cache_read_input_tokens || undefined,
+                        ...getThinkingTokens(usage),
+                        ...(serverToolUsage === undefined ? {} : { serverToolUsage }),
+                    },
+                    usage,
+                    false,
+                    true,
+                )
                 break
             }
             case "message_delta": {
                 const serverToolUsage = getServerToolUsage(chunk.usage)
                 const stopReason = normalizeAnthropicStopReason(chunk.delta?.stop_reason)
-                yield {
-                    type: "usage",
-                    inputTokens: 0,
-                    outputTokens: chunk.usage.output_tokens || 0,
-                    ...getThinkingTokens(chunk.usage),
-                    ...(serverToolUsage === undefined ? {} : { serverToolUsage }),
-                    ...(stopReason ? { stopReason } : {}),
-                }
+                yield usageChunk(
+                    {
+                        type: "usage",
+                        inputTokens: 0,
+                        outputTokens: chunk.usage.output_tokens || 0,
+                        ...getThinkingTokens(chunk.usage),
+                        ...(serverToolUsage === undefined ? {} : { serverToolUsage }),
+                        ...(stopReason ? { stopReason } : {}),
+                    },
+                    chunk.usage,
+                    stopReason !== undefined,
+                )
                 if (chunk.delta?.stop_reason === "max_tokens") {
                     throw new OutputLimitExceededError("anthropic_messages", "max_tokens")
                 }

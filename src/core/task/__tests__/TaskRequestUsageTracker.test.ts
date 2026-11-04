@@ -60,4 +60,28 @@ describe("TaskRequestUsageTracker", () => {
             cacheUsageReported: false,
         })
     })
+
+    it("adds money deltas and lets a snapshot replace them while carrying currency", () => {
+        const tracker = new TaskRequestUsageTracker()
+        tracker.apply({ type: "usage", usageMode: "delta", inputTokens: 100, outputTokens: 1, totalCost: 1, currency: "CNY" })
+        tracker.apply({ type: "usage", usageMode: "delta", inputTokens: 50, outputTokens: 1, totalCost: 2, currency: "CNY" })
+        expect(tracker.getSnapshot()).toMatchObject({ inputTokens: 150, outputTokens: 2, totalCost: 3, currency: "CNY" })
+        tracker.apply({ type: "usage", inputTokens: 150, outputTokens: 2, totalCost: 4, currency: "CNY" })
+        expect(tracker.getSnapshot()).toMatchObject({ inputTokens: 150, outputTokens: 2, totalCost: 4, currency: "CNY" })
+    })
+
+    it("does not inherit currency for a replacement unlabelled amount", () => {
+        const tracker = new TaskRequestUsageTracker()
+        tracker.apply({ type: "usage", inputTokens: 100, outputTokens: 1, totalCost: 1, currency: "CNY" })
+        tracker.apply({ type: "usage", inputTokens: 100, outputTokens: 2, totalCost: 2 })
+        expect(tracker.getSnapshot().totalCost).toBe(2)
+        expect(tracker.getSnapshot()).not.toHaveProperty("currency")
+    })
+
+    it("does not clamp invalid negative money to a reported zero", () => {
+        const tracker = new TaskRequestUsageTracker()
+        tracker.apply({ type: "usage", inputTokens: 100, outputTokens: 1, totalCost: -1, currency: "USD" })
+        expect(tracker.getSnapshot()).not.toHaveProperty("totalCost")
+        expect(tracker.getSnapshot()).not.toHaveProperty("currency")
+    })
 })

@@ -68,6 +68,7 @@ export class SambanovaHandler extends ApiHandler {
         }
 
         const toolCallProcessor = new ToolCallProcessor()
+        const sentAtMs = Date.now()
         const stream = await client.chat.completions.create({
             model: this.getModel().id,
             messages: openAiMessages,
@@ -91,10 +92,19 @@ export class SambanovaHandler extends ApiHandler {
             }
 
             if (chunk.usage) {
+                const cost = ApiHandler.calculateUsageCost(
+                    model.info.pricing,
+                    {
+                        inputTokens: chunk.usage.prompt_tokens || 0,
+                        outputTokens: chunk.usage.completion_tokens || 0,
+                    },
+                    sentAtMs,
+                )
                 yield {
                     type: "usage",
                     inputTokens: chunk.usage.prompt_tokens || 0,
                     outputTokens: chunk.usage.completion_tokens || 0,
+                    ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                 }
             }
         }

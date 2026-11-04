@@ -1,14 +1,12 @@
 import { geminiModels, ModelInfo } from "@shared/api"
-import type { ContextWindowBand } from "@shared/proto/dline/models/metadata"
-import { readBands, readCurrency, readPriceSet } from "@shared/providers/pricing-shape"
 import { VSCodeDropdown, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
 import { CheckIcon, MinusIcon } from "lucide-react"
 import { useId } from "react"
 import styled from "styled-components"
-import { formatCurrencyAmount, getCurrencySymbol } from "@/utils/currency"
 import { ModelDescriptionMarkdown } from "../ModelDescriptionMarkdown"
 import { ProfileField } from "../profile-ui"
-import { hasThinkingBudget, supportsBrowserUse, supportsImages, supportsPromptCache } from "../utils/pricingUtils"
+import { supportsBrowserUse, supportsImages, supportsPromptCache } from "../utils/pricingUtils"
+import { PricingEditor } from "./PricingEditor"
 
 // ========== Styled Components ==========
 
@@ -86,27 +84,7 @@ function CapabilityValue({ supported }: { supported: boolean | undefined }) {
 
 // ========== Helper Functions ==========
 
-/**
- * Format price for compact display (e.g., "$5/M" for $5 per million tokens)
- * Price is already in per-million format from OpenRouter
- */
-const formatCompactPrice = (price: number | undefined, currency?: string): string => {
-    if (price === undefined) {
-        return "N/A"
-    }
-    const symbol = getCurrencySymbol(currency)
-    if (price < 0.01) {
-        return `${symbol}${price.toFixed(4)}/M`
-    }
-    if (price < 1) {
-        return `${symbol}${price.toFixed(2)}/M`
-    }
-    return `${symbol}${price % 1 === 0 ? price : price.toFixed(2)}/M`
-}
-
-/**
- * Format context window for compact display (e.g., "200K")
- */
+/** Format a declared context capacity, independently from pricing usage bands. */
 const formatCompactContext = (contextWindow: number | undefined): string => {
     if (!contextWindow) {
         return "N/A"
@@ -115,51 +93,6 @@ const formatCompactContext = (contextWindow: number | undefined): string => {
         return `${(contextWindow / 1_000_000).toFixed(contextWindow % 1_000_000 === 0 ? 0 : 1)}M`
     }
     return `${Math.round(contextWindow / 1000)}K`
-}
-
-type TierPriceType = "inputPrice" | "outputPrice" | "cacheReadPrice" | "cacheWritePrice"
-
-/**
- * Format usage-based tiered pricing: each tier's threshold is the maximum
- * input-token usage for that price band. The threshold controls pricing only,
- * not the context window.
- *
- * A zero rate is dropped, so the caller must not print a label for an empty
- * result.
- */
-const formatTiers = (bands: readonly ContextWindowBand[], priceType: TierPriceType, currency?: string): JSX.Element[] => {
-    if (bands.length === 0) {
-        return []
-    }
-
-    return bands
-        .map((band, index) => {
-            const prevLimit = index > 0 ? bands[index - 1].maxInputTokens : 0
-            const prices = readPriceSet(band.prices)
-            const price = prices[priceType]
-
-            if (price === undefined || price === 0) {
-                return null
-            }
-
-            return (
-                <span key={`band-${index}`} style={{ paddingLeft: "15px" }}>
-                    {formatCurrencyAmount(price, currency)}/million tokens (
-                    {band.maxInputTokens === undefined ? (
-                        <span>
-                            {">"} {(prevLimit ?? 0).toLocaleString()} input tokens
-                        </span>
-                    ) : (
-                        <span>
-                            {"<="} {band.maxInputTokens.toLocaleString()} input tokens
-                        </span>
-                    )}
-                    {")"}
-                    {index < bands.length - 1 && <br />}
-                </span>
-            )
-        })
-        .filter((element): element is JSX.Element => element !== null)
 }
 
 // ========== Props ==========
@@ -186,14 +119,7 @@ export const ModelInfoView = ({
 }: ModelInfoViewProps) => {
     const providerRoutingId = useId()
     const isGemini = Object.keys(geminiModels).includes(selectedModelId)
-    const hasThinkingConfig = hasThinkingBudget(modelInfo)
-    const bands = readBands(modelInfo.pricing)
-    const hasTiers = bands.length > 0
     const contextTiers = modelInfo.capabilities?.contextWindowTiers ?? []
-    const currency = readCurrency(modelInfo.pricing)
-    const flatPrices = modelInfo.pricing?.metered?.strategy?.flat?.prices
-    const flatRates = readPriceSet(flatPrices)
-    const thinkingOutputPrice = flatPrices?.thinkingOutputPrice
 
     // Capability checks
     const hasImages = supportsImages(modelInfo)
@@ -204,30 +130,6 @@ export const ModelInfoView = ({
     const hasNativeTools = modelInfo.capabilities?.supportsTools === true
     const hasReasoning =
         modelInfo.capabilities?.supportsReasoning === true || modelInfo.capabilities?.thinking?.supported === true
-
-    // Every operand here must stay boolean: `a && (b || c)` evaluates to the
-    // number `0` when all cache rates are zero, and React renders that bare `0`
-    // as text.
-    const hasCachePricing =
-        modelInfo.capabilities?.supportsPromptCache === true && Boolean(flatRates.cacheWritePrice || flatRates.cacheReadPrice)
-
-    // A tier row is worth a label only while some band still carries a price.
-    const tierLabels: ReadonlyArray<readonly [string, TierPriceType]> = modelInfo.capabilities?.supportsPromptCache
-        ? [
-              ["Input", "inputPrice"],
-              ["Output", "outputPrice"],
-              ["Cache Writes", "cacheWritePrice"],
-              ["Cache Reads", "cacheReadPrice"],
-          ]
-        : [
-              ["Input", "inputPrice"],
-              ["Output", "outputPrice"],
-          ]
-    const tierRows = hasTiers
-        ? tierLabels
-              .map(([label, priceType]) => ({ label, tiers: formatTiers(bands, priceType, currency) }))
-              .filter((row) => row.tiers.length > 0)
-        : []
 
     return (
         <div className="min-w-0">
@@ -250,22 +152,6 @@ export const ModelInfoView = ({
                         <InfoValue>{formatCompactContext(modelInfo.capabilities.maxTokens)}</InfoValue>
                     </InfoItem>
                 )}
-                {flatPrices?.inputPrice ? (
-                    <InfoItem>
-                        <InfoLabel>Input: </InfoLabel>
-                        <InfoValue>{formatCompactPrice(flatPrices.inputPrice, currency)}</InfoValue>
-                    </InfoItem>
-                ) : null}
-                {flatPrices?.outputPrice ? (
-                    <InfoItem>
-                        <InfoLabel>Output: </InfoLabel>
-                        <InfoValue>
-                            {hasThinkingConfig && thinkingOutputPrice
-                                ? formatCompactPrice(thinkingOutputPrice, currency)
-                                : formatCompactPrice(flatPrices.outputPrice, currency)}
-                        </InfoValue>
-                    </InfoItem>
-                ) : null}
             </InfoRow>
 
             {/* Capabilities, tiers and routing stay visible; hiding them behind a
@@ -306,37 +192,6 @@ export const ModelInfoView = ({
                     </div>
                 )}
 
-                {/* Cache Pricing */}
-                {hasCachePricing && (
-                    <>
-                        {flatPrices?.cacheReadPrice ? (
-                            <AdvancedRow>
-                                <AdvancedLabel>Cache Reads</AdvancedLabel>
-                                <AdvancedValue>{formatCompactPrice(flatPrices.cacheReadPrice, currency)}</AdvancedValue>
-                            </AdvancedRow>
-                        ) : null}
-                        {flatPrices?.cacheWritePrice ? (
-                            <AdvancedRow>
-                                <AdvancedLabel>Cache Writes</AdvancedLabel>
-                                <AdvancedValue>{formatCompactPrice(flatPrices.cacheWritePrice, currency)}</AdvancedValue>
-                            </AdvancedRow>
-                        ) : null}
-                    </>
-                )}
-
-                {/* Tiered Pricing */}
-                {tierRows.length > 0 && (
-                    <div style={{ marginTop: 8 }}>
-                        <div style={{ fontWeight: 500, marginBottom: 4 }}>Tiered Pricing:</div>
-                        {tierRows.map((row) => (
-                            <AdvancedRow key={row.label}>
-                                <AdvancedLabel>{row.label}</AdvancedLabel>
-                                <AdvancedValue>{row.tiers}</AdvancedValue>
-                            </AdvancedRow>
-                        ))}
-                    </div>
-                )}
-
                 {/* Provider Routing */}
                 {showProviderRouting && onProviderSortingChange ? (
                     <ProfileField
@@ -366,6 +221,11 @@ export const ModelInfoView = ({
                     </ProfileField>
                 ) : null}
             </AdvancedSection>
+            <PricingEditor
+                pricing={modelInfo.pricing}
+                readOnly={true}
+                showCachePrices={modelInfo.capabilities?.supportsPromptCache === true}
+            />
         </div>
     )
 }

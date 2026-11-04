@@ -14,7 +14,7 @@ import { fetchLiteLlmModelsInfo } from "@core/api/providers/litellm"
 import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import type { ModelCapabilities, ModelInfo, ModelPricing } from "@shared/providers/types"
 import type { ProviderModelReconciliationMode } from "../../provider-model-reconciliation"
-import { isRecord, ModelListingSource, readPositiveNumber, readString } from "../model-listing-source"
+import { isRecord, ModelListingSource, readNonNegativeNumber, readPositiveNumber, readString } from "../model-listing-source"
 import type { ProviderRemoteContext } from "../model-source"
 
 /** Fallbacks preserved from the previous handler for deployments that omit sizes. */
@@ -27,7 +27,7 @@ function readFlag(raw: unknown, field: string): boolean {
 
 /** LiteLLM reports costs per token as plain numbers. */
 function readPerMillionCost(raw: unknown, field: string): number | undefined {
-    const perToken = readPositiveNumber(raw, `model_info.${field}`)
+    const perToken = readNonNegativeNumber(raw, `model_info.${field}`)
     return perToken === undefined ? undefined : perToken * 1_000_000
 }
 
@@ -73,13 +73,13 @@ export class LiteLlmModelSource extends ModelListingSource {
         }
     }
 
-    protected override readPricing(raw: unknown): ModelPricing {
-        return flatMeteredPricing(
-            readPerMillionCost(raw, "input_cost_per_token") ?? 0,
-            readPerMillionCost(raw, "output_cost_per_token") ?? 0,
-            readPerMillionCost(raw, "cache_creation_input_token_cost"),
-            readPerMillionCost(raw, "cache_read_input_token_cost"),
-        )
+    protected override readPricing(raw: unknown): ModelPricing | undefined {
+        const input = readPerMillionCost(raw, "input_cost_per_token")
+        const output = readPerMillionCost(raw, "output_cost_per_token")
+        const cacheWrite = readPerMillionCost(raw, "cache_creation_input_token_cost")
+        const cacheRead = readPerMillionCost(raw, "cache_read_input_token_cost")
+        if ([input, output, cacheWrite, cacheRead].every((rate) => rate === undefined)) return undefined
+        return flatMeteredPricing(input, output, cacheWrite, cacheRead)
     }
 
     /**

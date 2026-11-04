@@ -68,6 +68,7 @@ export class MoonshotHandler extends ApiHandler {
             ...convertToOpenAiMessages(messages),
         ]
 
+        const sentAtMs = Date.now()
         const stream = await client.chat.completions.create({
             model: model.id,
             messages: openAiMessages,
@@ -106,10 +107,12 @@ export class MoonshotHandler extends ApiHandler {
                     totalInputTokens: usage.prompt_tokens,
                     cacheReadTokens: usage.cached_tokens,
                 })
+                const tokens = { ...inputUsage, outputTokens: usage.completion_tokens || 0 }
+                const cost = ApiHandler.calculateUsageCost(model.info.pricing, tokens, sentAtMs)
                 yield {
                     type: "usage",
-                    ...inputUsage,
-                    outputTokens: usage.completion_tokens || 0,
+                    ...tokens,
+                    ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                 }
             }
         }

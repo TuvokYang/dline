@@ -8,15 +8,13 @@ import { buildEffectiveModelInfo } from "../effective-model-info"
 /** Banded rates are listed lowest-first and the last band is unbounded. */
 function bandedPricing(bands: { maxInputTokens?: number; inputPrice: number; outputPrice: number }[]) {
     return {
-        metered: {
-            currency: "USD",
-            strategy: {
-                contextWindow: {
-                    bands: bands.map((band) => ({
-                        maxInputTokens: band.maxInputTokens,
-                        prices: { inputPrice: band.inputPrice, outputPrice: band.outputPrice },
-                    })),
-                },
+        currency: "USD",
+        strategy: {
+            contextWindow: {
+                bands: bands.map((band) => ({
+                    maxInputTokens: band.maxInputTokens,
+                    prices: { inputPrice: band.inputPrice, outputPrice: band.outputPrice },
+                })),
             },
         },
     }
@@ -73,9 +71,9 @@ describe("buildEffectiveModelInfo", () => {
         should(result.capabilities?.maxTokens).equal(64_000)
         should(result.capabilities?.supportsImages).equal(true)
         should(result.capabilities?.temperature).equal(0.7)
-        should(readPriceSet(result.pricing?.metered?.strategy?.flat?.prices).inputPrice).equal(0.5)
-        should(readPriceSet(result.pricing?.metered?.strategy?.flat?.prices).outputPrice).equal(2)
-        should(readPriceSet(result.pricing?.metered?.strategy?.flat?.prices).cacheReadPrice).equal(0.05)
+        should(readPriceSet(result.pricing?.strategy?.flat?.prices).inputPrice).equal(0.5)
+        should(readPriceSet(result.pricing?.strategy?.flat?.prices).outputPrice).equal(2)
+        should(readPriceSet(result.pricing?.strategy?.flat?.prices).cacheReadPrice).equal(0.05)
         should(readCurrency(result.pricing)).equal("USD")
     })
 
@@ -154,7 +152,7 @@ describe("buildEffectiveModelInfo", () => {
         should(readPriceSet(readBands(result.pricing)[1].prices).outputPrice).equal(10)
     })
 
-    it("should keep the registry band shape when band editing is disabled", () => {
+    it("should apply a complete pricing override independently of the historical editing flag", () => {
         const registryModel: ModelInfo = {
             id: "tiered-pricing-model",
             pricing: bandedPricing([{ inputPrice: 1, outputPrice: 2 }]),
@@ -166,21 +164,25 @@ describe("buildEffectiveModelInfo", () => {
         })
 
         should(readBands(result.pricing).length).equal(1)
-        should(readPriceSet(readBands(result.pricing)[0].prices).inputPrice).equal(1)
+        should(readPriceSet(readBands(result.pricing)[0].prices).inputPrice).equal(7)
     })
 
-    it("should not turn a subscription plan into a per-token rate", () => {
+    it("should replace a zero price with an explicit complete Profile declaration", () => {
         const registryModel: ModelInfo = {
             id: "plan-model",
-            pricing: { subscription: {} },
+            pricing: flatMeteredPricing(0, 0),
         }
 
         const result = buildEffectiveModelInfo("plan-model", registryModel, {
             pricing: flatMeteredPricing(1, 2),
         })
 
-        should(result.pricing?.subscription).be.ok()
-        should(result.pricing?.metered).be.undefined()
+        should(readPriceSet(result.pricing?.strategy?.flat?.prices)).deepEqual({
+            inputPrice: 1,
+            outputPrice: 2,
+            cacheWritePrice: 0,
+            cacheReadPrice: 0,
+        })
     })
 
     it("should compose model info from provider overrides when model id is empty", () => {
@@ -197,8 +199,8 @@ describe("buildEffectiveModelInfo", () => {
         should(result.capabilities?.contextWindow).equal(32_000)
         should(result.capabilities?.supportsPromptCache).equal(true)
         should(result.capabilities?.temperature).equal(0.2)
-        should(readPriceSet(result.pricing?.metered?.strategy?.flat?.prices).inputPrice).equal(0.1)
-        should(readPriceSet(result.pricing?.metered?.strategy?.flat?.prices).outputPrice).equal(0.2)
+        should(readPriceSet(result.pricing?.strategy?.flat?.prices).inputPrice).equal(0.1)
+        should(readPriceSet(result.pricing?.strategy?.flat?.prices).outputPrice).equal(0.2)
     })
 
     it("should use the explicit model id when registry metadata is missing", () => {

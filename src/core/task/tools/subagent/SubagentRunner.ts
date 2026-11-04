@@ -39,7 +39,6 @@ import {
 } from "@shared/messages"
 import { splitResumedHostedResults } from "@shared/messages/hosted-tool-deferral"
 import type { ProviderTelemetryRole } from "@shared/provider-attempt-observer"
-import { readCurrency } from "@shared/providers/pricing-shape"
 import { resolvePromptProfile } from "@shared/resolve-prompt-profile"
 import { Logger } from "@shared/services/Logger"
 import { ClineTool, DlineDefaultTool } from "@shared/tools"
@@ -57,7 +56,6 @@ import {
 import { HostRegistryInfo } from "@/registry"
 import { boundToolText, MAX_TOOL_RESULT_TEXT_BYTES } from "@/shared/content-limits"
 import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
-import { calculateApiCostAnthropic } from "@/utils/cost"
 import { isNativeToolCallingConfig, isNextGenModelFamily } from "@/utils/model-utils"
 import type { UsageToolCall } from "../../telemetry/UsageToolCalls"
 import { canonicalizeAttemptCompletionParams } from "../attempt-completion-params"
@@ -240,6 +238,7 @@ interface SubagentRequestUsageState {
     cacheReadTokens: number
     totalTokens: number
     totalCost?: number
+    currency?: string
 }
 
 interface SubagentUsageState {
@@ -848,7 +847,6 @@ export class SubagentRunner {
                 this.baseConfig.webToolsEnabled ??
                 this.baseConfig.services.stateManager.getGlobalSettingsKey("clineWebToolsEnabled") === true
             stats.contextWindow = providerInfo.model.info.capabilities?.contextWindow || 0
-            stats.currency = readCurrency(providerInfo.model.info.pricing) || "USD"
             const apiFormat = providerInfo.model.info.apiFormats?.[0]
             const nativeToolCallsRequested =
                 apiFormat === ApiFormat.OPENAI_RESPONSES ||
@@ -1036,21 +1034,11 @@ export class SubagentRunner {
                 // hosted-tool failure. Skipping it would drop this request's cost and
                 // leave the next turn's compaction check reading a stale token sample.
                 const settleRequestUsage = (): void => {
-                    const calculatedRequestCost =
-                        requestUsage.totalCost ??
-                        calculateApiCostAnthropic(
-                            providerInfo.model.info,
-                            requestUsage.inputTokens,
-                            requestUsage.outputTokens,
-                            requestUsage.cacheWriteTokens,
-                            requestUsage.cacheReadTokens,
-                        )
                     requestUsage.totalTokens =
                         requestUsage.inputTokens +
                         requestUsage.outputTokens +
                         requestUsage.cacheWriteTokens +
                         requestUsage.cacheReadTokens
-                    stats.totalCost += calculatedRequestCost || 0
                     usageState.lastRequest = { ...requestUsage }
                 }
                 let recoveredFromHostedServerToolFailure = false
@@ -1194,7 +1182,14 @@ export class SubagentRunner {
                                     requestUsage.outputTokens +
                                     requestUsage.cacheWriteTokens +
                                     requestUsage.cacheReadTokens
-                                requestUsage.totalCost = chunk.totalCost ?? requestUsage.totalCost
+                                if (chunk.totalCost !== undefined) {
+                                    const previousCost = requestUsage.totalCost ?? 0
+                                    requestUsage.totalCost =
+                                        chunk.usageMode === "delta" ? previousCost + chunk.totalCost : chunk.totalCost
+                                    requestUsage.currency = chunk.currency
+                                    stats.totalCost += requestUsage.totalCost - previousCost
+                                    stats.currency = chunk.currency ?? ""
+                                }
                                 stats.contextTokens = requestUsage.totalTokens
                                 stats.contextUsagePercentage =
                                     stats.contextWindow > 0 ? (stats.contextTokens / stats.contextWindow) * 100 : 0

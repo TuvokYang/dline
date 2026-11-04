@@ -80,7 +80,11 @@ function readMillionPrice(source: unknown, ...paths: string[]): number | undefin
  * per model today, and a band chain built from arbitrary distances would invent
  * prices for the gaps.
  */
-function readPricingBands(source: unknown, inputPrice: number, outputPrice: number): ContextWindowBand[] | undefined {
+function readPricingBands(
+    source: unknown,
+    inputPrice: number | undefined,
+    outputPrice: number | undefined,
+): ContextWindowBand[] | undefined {
     const inputOverride = firstOverride(source, "cost.text.input.overrides")
     const outputOverride = firstOverride(source, "cost.text.output.overrides")
     // Every model in the listing that tiers prices uses the same threshold on both
@@ -98,7 +102,6 @@ function readPricingBands(source: unknown, inputPrice: number, outputPrice: numb
             prices: { inputPrice, outputPrice, cacheReadPrice: cacheRead, cacheWritePrice: cacheWrite },
         },
         {
-            maxInputTokens: Number.MAX_SAFE_INTEGER,
             prices: {
                 inputPrice: inputOverride?.price ?? inputPrice,
                 outputPrice: outputOverride?.price ?? outputPrice,
@@ -378,15 +381,15 @@ export class OpenCodeModelSource extends ModelListingSource {
             return undefined
         }
         const flat = flatMeteredPricing(
-            inputPrice ?? 0,
-            outputPrice ?? 0,
+            inputPrice,
+            outputPrice,
             readMillionPrice(raw, "cost.text.input.cache.write"),
             readMillionPrice(raw, "cost.text.input.cache.read"),
         )
         // 14 models bill more once the request passes a context threshold. Reading
         // only the headline rate would understate them by up to five times, so the
         // published overrides become bands and the first tier keeps the base price.
-        const bands = readPricingBands(raw, inputPrice ?? 0, outputPrice ?? 0)
+        const bands = readPricingBands(raw, inputPrice, outputPrice)
         return bands ? (withBands(flat, bands) ?? flat) : flat
     }
 }

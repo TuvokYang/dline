@@ -11,7 +11,7 @@ import {
 import { hasBands } from "@shared/providers/pricing-shape"
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
-import { useId } from "react"
+import { useCallback, useId, useMemo, useState } from "react"
 import styled from "styled-components"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { ApiKeyField } from "../common/ApiKeyField"
@@ -25,6 +25,7 @@ import { ProfileField } from "../profile-ui"
 import ThinkingControl from "../ThinkingControl"
 import { ANTHROPIC_THINKING_DISPLAY_DESCRIPTION, ANTHROPIC_THINKING_DISPLAY_SELECTOR_OPTIONS } from "./anthropicThinkingDisplay"
 import { ClaudeCodeIdentitySection } from "./shared/ClaudeCodeIdentitySection"
+import { usePendingProviderConfig } from "./usePendingProviderConfig"
 import { useProviderModelOptions } from "./useProviderModelOptions"
 
 const StyledCheckbox = styled(VSCodeCheckbox)`
@@ -45,8 +46,10 @@ interface AnthropicProviderProps {
  * The Anthropic provider configuration component.
  * All data sourced from ApiProfile.anthropic (the proto oneof field) â€? * typed as AnthropicProviderConfig | undefined, no unsafe casts.
  */
-export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate }: AnthropicProviderProps) => {
+export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate: onUpdateProfile }: AnthropicProviderProps) => {
     const customModelFieldId = useId()
+    const [customUrlToggle, setCustomUrlToggle] = useState<{ profileId: string; enabled: boolean }>()
+    const customUrlEnabled = customUrlToggle?.profileId === profile.id ? customUrlToggle.enabled : !!profile.baseUrl
     const { remoteConfigSettings } = useExtensionState()
     const rc: Partial<Record<string, string | number | boolean>> =
         (remoteConfigSettings as Record<string, string | number | boolean>) ?? {}
@@ -65,7 +68,15 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
         selectedModelId: resolveProfileModelId(profile),
     })
 
-    const pc = profile.anthropic ?? AnthropicProviderConfig.create()
+    const propConfig = useMemo(() => profile.anthropic ?? AnthropicProviderConfig.create(), [profile.anthropic])
+    const { config: pc, latest: configToUpdate, publish } = usePendingProviderConfig(profile.id, propConfig)
+    const onUpdate = useCallback(
+        (updates: Partial<ApiProfile>) => {
+            if (updates.anthropic) publish(updates.anthropic)
+            onUpdateProfile(updates)
+        },
+        [onUpdateProfile, publish],
+    )
     const modelId = resolveProfileModelId(profile, { defaultModelId: anthropicDefaultModelId })
     // The user owns this switch. Deriving it from catalog membership would flip
     // it on for any id that only the provider's listing returned, and the
@@ -104,15 +115,15 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
      * The id is kept so toggling back and forth does not discard the selection.
      */
     const handleToggleCustomModel = (enabled: boolean) => {
-        onUpdate({ anthropic: { ...pc, customModelEnabled: enabled } })
+        onUpdate({ anthropic: { ...configToUpdate(), customModelEnabled: enabled } })
     }
 
     // Update provider capabilities without writing profile.modelInfo.
     const handleCapabilitiesUpdate = (updates: Partial<ModelCapabilities>) => {
         onUpdate({
             anthropic: {
-                ...pc,
-                capabilities: mergeCapabilities(pc.capabilities, updates),
+                ...configToUpdate(),
+                capabilities: mergeCapabilities(configToUpdate().capabilities, updates),
             },
         })
     }
@@ -121,10 +132,10 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
     const handleContextWindowUpdate = (contextWindow: number) => {
         onUpdate({
             anthropic: {
-                ...pc,
+                ...configToUpdate(),
                 capabilities: updateSelectedContextWindow(
                     registryModel.capabilities,
-                    pc.capabilities,
+                    configToUpdate().capabilities,
                     enableLongContext,
                     contextWindow,
                     contextWindowTiersEnabled,
@@ -136,8 +147,8 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
     const handlePricingUpdate = (updates: Partial<ModelPricing>) => {
         onUpdate({
             anthropic: {
-                ...pc,
-                pricing: mergePricing(pc.pricing, updates),
+                ...configToUpdate(),
+                pricing: mergePricing(configToUpdate().pricing, updates),
                 ...(hasBands(updates) ? { pricingTiersEnabled: true } : {}),
             },
         })
@@ -146,7 +157,7 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
     // Record the hosted tools this profile turns off. The model's own declaration
     // stays in the registry so the switch can never erase a real capability.
     const handleDisabledServerToolsUpdate = (disabledServerTools: ServerTool[]) => {
-        onUpdate({ anthropic: { ...pc, disabledServerTools } })
+        onUpdate({ anthropic: { ...configToUpdate(), disabledServerTools } })
     }
 
     return (
@@ -161,9 +172,11 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
             <RemotelyConfiguredInputWrapper hidden={rc.anthropicBaseUrl === undefined}>
                 <BaseUrlField
                     disabled={!!rc.anthropicBaseUrl}
+                    enabled={customUrlEnabled}
                     initialValue={profile.baseUrl || ""}
                     label="Use custom base URL"
                     onChange={(value) => onUpdate({ baseUrl: value || undefined })}
+                    onEnabledChange={(enabled) => setCustomUrlToggle({ profileId: profile.id, enabled })}
                     placeholder="Default: https://api.anthropic.com"
                     showLockIcon={!!rc.anthropicBaseUrl}
                 />
@@ -207,7 +220,7 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
                             onChange={(event: Event | React.FormEvent<HTMLElement>) =>
                                 onUpdate({
                                     anthropic: {
-                                        ...pc,
+                                        ...configToUpdate(),
                                         enableLongContext: (event.target as HTMLInputElement | null)?.checked === true,
                                     },
                                 })
@@ -235,7 +248,7 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
                             minBudget={thinking?.minBudget}
                             mode={isAdaptiveThinkingModel ? "effort-only" : "budget-only"}
                             onReasoningConfigUpdate={(reasoning) => {
-                                onUpdate({ anthropic: { ...pc, reasoning } })
+                                onUpdate({ anthropic: { ...configToUpdate(), reasoning } })
                             }}
                             reasoningConfig={pc.reasoning}
                             showModeSelector={false}
@@ -259,11 +272,17 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
                                 "supportsPromptCache",
                                 "supportsTools",
                             ],
-                            pricing: ["inputPrice", "outputPrice", "cacheWritesPrice", "cacheReadsPrice", "pricingTiers"],
+                            pricing: customUrlEnabled
+                                ? ["inputPrice", "outputPrice", "cacheWritesPrice", "cacheReadsPrice", "pricingTiers"]
+                                : [],
                         }}
+                        key={`${profile.id}:${modelId}`}
                         onCapabilitiesUpdate={handleCapabilitiesUpdate}
                         onContextWindowUpdate={handleContextWindowUpdate}
                         onDisabledServerToolsUpdate={handleDisabledServerToolsUpdate}
+                        onPricingReset={() =>
+                            onUpdate({ anthropic: { ...configToUpdate(), pricing: undefined, pricingTiersEnabled: undefined } })
+                        }
                         onPricingUpdate={handlePricingUpdate}
                         pricing={pc.pricing}
                         pricingTiersEnabled={pc.pricingTiersEnabled === true}
@@ -273,7 +292,7 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
 
                     <ClaudeCodeIdentitySection
                         config={pc.claudeCodeIdentity}
-                        onChange={(claudeCodeIdentity) => onUpdate({ anthropic: { ...pc, claudeCodeIdentity } })}
+                        onChange={(claudeCodeIdentity) => onUpdate({ anthropic: { ...configToUpdate(), claudeCodeIdentity } })}
                     />
 
                     <ModelInfoView isPopup={isPopup} modelInfo={modelInfo} selectedModelId={modelId} />

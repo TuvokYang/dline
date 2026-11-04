@@ -13,21 +13,6 @@ export function isListingDerivedModel(model: { userDefined?: boolean } | undefin
 }
 
 /**
- * Catalogs that are not billed by the prices the listing declares.
- *
- * `opencode-go` is a subscription plan whose models are published by the shared
- * OpenCode listing. That listing attaches the per-token prices the same model
- * costs on a pay-as-you-go gateway, which the plan never charges, so a model the
- * plan surfaces without a seed entry must not inherit them. Pay-as-you-go
- * catalogues (`opencode`, `qwen-cn`, `zai-cn`) keep the declared prices.
- */
-const PLAN_BILLED_CATALOG_IDS: ReadonlySet<string> = new Set(["opencode-go"])
-
-export function isListingOwnedPlanCatalog(catalogKey: string): boolean {
-    return PLAN_BILLED_CATALOG_IDS.has(catalogKey)
-}
-
-/**
  * Providers whose catalog is loaded after the blocking startup pass. The set is
  * derived from the seed data so that marking a catalog `deferred` in one place
  * is enough.

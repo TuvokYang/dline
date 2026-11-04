@@ -25,7 +25,7 @@ export class BasetenModelSource extends ModelListingSource {
         if (inputPrice === undefined && outputPrice === undefined) {
             return undefined
         }
-        return flatMeteredPricing(inputPrice ?? 0, outputPrice ?? 0)
+        return flatMeteredPricing(inputPrice, outputPrice)
     }
 }
 

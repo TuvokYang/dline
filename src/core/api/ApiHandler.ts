@@ -1,6 +1,6 @@
 import type { ModelInfo } from "@shared/api"
 import type { AccountUsageData, AccountUsageQuotaData } from "@shared/ExtensionMessage"
-import type { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
+import type { ApiFormat, ModelPricing, ServerTool } from "@shared/proto/dline/models/metadata"
 import type { ApiProfile, ImageGenerationSource } from "@shared/proto/dline/profile"
 import type { WebToolsMode } from "@shared/proto/dline/provider/common"
 import type { Mode } from "@shared/storage/types"
@@ -21,7 +21,12 @@ import {
     withProviderAttemptIdentity,
 } from "@/shared/provider-attempt-observer"
 import type { ClineTool } from "@/shared/tools"
+import { selectPrices } from "./billing/selection"
+import type { BillingResult, BillingTokens } from "./billing/types"
+import { validateInstant, validateModelPricing, validateTokens } from "./billing/validation"
 import type { ApiStream, ApiStreamUsageChunk } from "./transform/stream"
+
+const TOKENS_PER_PRICE_UNIT = 1_000_000
 
 export type {
     ProviderAttemptAdapterIdentity,
@@ -116,6 +121,46 @@ export interface SingleCompletionHandler {
  * Provider adapters extend this class and implement only Provider-specific behavior.
  */
 export abstract class ApiHandler {
+    /**
+     * Calculate one send/response from supplied standard tokens and send time.
+     * No clock, usage collection, account mode, accumulation or persistence is owned here.
+     * Missing pricing is not zero; a declared zero rate is a calculated amount.
+     */
+    static calculateUsageCost(pricing: ModelPricing | undefined, tokens: BillingTokens, sentAtMs: number): BillingResult {
+        const pricingIssues = validateModelPricing(pricing)
+        if (pricingIssues.length) return { kind: "invalid", issues: pricingIssues }
+        if (!pricing) return { kind: "unavailable" }
+
+        const issues = [...validateTokens(tokens), ...(pricing.strategy?.timeOfDay ? validateInstant(sentAtMs) : [])]
+        if (issues.length) return { kind: "invalid", issues }
+        const cacheWrite = tokens.cacheWriteTokens ?? 0
+        const cacheRead = tokens.cacheReadTokens ?? 0
+        const thoughts = tokens.thoughtsTokenCount ?? 0
+        const selected = selectPrices(pricing, tokens.inputTokens + cacheWrite + cacheRead, sentAtMs)
+        if (selected.kind === "invalid") return selected
+        const prices = selected.prices
+        const amount =
+            (tokens.inputTokens * prices.inputPrice! +
+                (tokens.outputTokens - thoughts) * prices.outputPrice! +
+                thoughts * (prices.thinkingOutputPrice ?? prices.outputPrice!) +
+                cacheWrite * (prices.cacheWritePrice ?? 0) +
+                cacheRead * (prices.cacheReadPrice ?? 0)) /
+            TOKENS_PER_PRICE_UNIT
+        if (!Number.isFinite(amount)) {
+            return {
+                kind: "invalid",
+                issues: [
+                    {
+                        path: "tokens",
+                        code: "amount-overflow",
+                        message: "The supplied token counts and rates exceed the supported amount range.",
+                    },
+                ],
+            }
+        }
+        return { kind: "calculated", amount, currency: pricing.currency! }
+    }
+
     /** Identify the effective Provider/model/thinking tuple from the final encoded request. */
     static identifyProviderAttempt(provider: string, encodedRequest: unknown): ProviderAttemptIdentity | undefined {
         return providerAttemptIdentityFromEncodedRequest(provider, encodedRequest)

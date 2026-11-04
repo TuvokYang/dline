@@ -1,9 +1,10 @@
-import { type ContextWindowBand, type ContextWindowTier, PriceSet } from "@shared/proto/dline/models/metadata"
-import { readPriceSet } from "@shared/providers/pricing-shape"
+import type { ContextWindowBand, ContextWindowTier } from "@shared/proto/dline/models/metadata"
 import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
-import { type ReactNode, useId } from "react"
+import { type ReactNode, useEffect, useId, useRef, useState } from "react"
 import { ProfileActionRow, ProfileField, ProfileInlineGrid, ProfileSectionTitle } from "../profile-ui"
+import { flushPendingDebouncedInputs } from "../utils/useDebouncedInput"
 import { DebouncedTextField } from "./DebouncedTextField"
+import { PriceSetFields } from "./PriceSetFields"
 
 const fieldControlClass = "min-h-7 w-full"
 
@@ -156,137 +157,136 @@ export function ContextTierEditor({ tiers, editable, onChange }: ContextTierEdit
 interface PricingTierEditorProps {
     tiers: readonly ContextWindowBand[]
     editable: boolean
+    ratesEditable?: boolean
     currencySymbol: string
     showCachePrices: boolean
-    onChange: (bands: ContextWindowBand[]) => void
+    onChange?: (bands: ContextWindowBand[]) => void
 }
 
-/** Read the four published rates of one band. */
-function bandRates(band: ContextWindowBand) {
-    const prices = readPriceSet(band.prices)
-    return prices
+/** Insert before the sole unbounded tail, retaining its declared prices. */
+export function appendPricingTier(tiers: readonly ContextWindowBand[]): ContextWindowBand[] {
+    const tail = tiers.at(-1)
+    if (!tail) return [{ prices: {} }]
+    if (tail.maxInputTokens !== undefined) return [...tiers, { prices: { ...tail.prices! } }]
+    const bound = (tiers.at(-2)?.maxInputTokens ?? 0) + 128_000
+    if (!Number.isSafeInteger(bound)) return [...tiers]
+    return [...tiers.slice(0, -1), { maxInputTokens: bound, prices: { ...tail.prices! } }, tail]
 }
 
-/**
- * Render usage-based tiered pricing in read-only or editable mode.
- *
- * Each tier's threshold is the maximum input-token usage for that price band;
- * it controls pricing, not the context window.
- *
- * @param props Pricing values, editability, currency, and update callback.
- * @returns Pricing tier editor section.
- */
-export function PricingTierEditor({ tiers, editable, currencySymbol, showCachePrices, onChange }: PricingTierEditorProps) {
+/** Edit price bands independently from model context-capacity tiers. */
+export function PricingTierEditor({
+    tiers,
+    editable,
+    ratesEditable = editable,
+    currencySymbol,
+    showCachePrices,
+    onChange,
+}: PricingTierEditorProps) {
     const baseId = useId()
-
-    /**
-     * Add a band above the current highest one.
-     *
-     * Bands are ordered by their upper bound and the last one is unbounded, so a
-     * new band is inserted before the unbounded band and becomes the new bound.
-     */
-    const addTier = () => {
-        onChange([...tiers, { maxInputTokens: 128_000, prices: { inputPrice: 0, outputPrice: 0 } }])
+    const latest = useRef(tiers)
+    const [invalidBound, setInvalidBound] = useState<number>()
+    const [flushFailed, setFlushFailed] = useState(false)
+    const afterInputFlush = (change: () => void) => {
+        void flushPendingDebouncedInputs()
+            .then(() => {
+                setFlushFailed(false)
+                change()
+            })
+            .catch(() => setFlushFailed(true))
     }
-
-    /** Update one band's bound or rates without mutating props. */
+    useEffect(() => {
+        latest.current = tiers
+    }, [tiers])
+    const publish = (next: ContextWindowBand[]) => {
+        latest.current = next
+        onChange?.(next)
+    }
     const updateTier = (index: number, updates: Partial<ContextWindowBand>) => {
-        onChange(tiers.map((band, bandIndex) => (bandIndex === index ? { ...band, ...updates } : band)))
+        publish(latest.current.map((band, at) => (at === index ? { ...band, ...updates } : band)))
     }
-
-    /** Replace one band's rates, leaving its bound alone. */
-    const updateRates = (
-        index: number,
-        slot: "inputPrice" | "outputPrice" | "cacheWritePrice" | "cacheReadPrice",
-        value: number,
-    ) => {
-        const band = tiers[index]
-        updateTier(index, { prices: PriceSet.create({ ...band.prices, [slot]: value }) })
-    }
-
-    /** Remove one pricing tier by index. */
-    const removeTier = (index: number) => {
-        onChange(tiers.filter((_, tierIndex) => tierIndex !== index))
-    }
-
+    const removeTier = (index: number) =>
+        afterInputFlush(() => {
+            if (latest.current.length <= 1) return
+            const next = latest.current.filter((_, at) => at !== index)
+            publish(next.map((band, at) => (at === next.length - 1 ? { ...band, maxInputTokens: undefined } : band)))
+        })
     return (
         <div className="flex min-w-0 flex-col gap-2">
             <TierHeader
-                action={editable ? <VSCodeButton onClick={addTier}>Add Pricing Tier</VSCodeButton> : undefined}
+                action={
+                    editable ? (
+                        <VSCodeButton onClick={() => afterInputFlush(() => publish(appendPricingTier(latest.current)))}>
+                            Add Pricing Tier
+                        </VSCodeButton>
+                    ) : undefined
+                }
                 title="Pricing Tiers"
             />
-            {tiers.map((tier, index) => (
-                <div className={getTierClassName(index)} key={`band-${index}`}>
-                    {editable ? (
-                        <>
-                            <ProfileInlineGrid>
-                                <TierField
-                                    id={`${baseId}-${index}-threshold`}
-                                    label="Up To Input Tokens"
-                                    onChange={(value) => updateTier(index, { maxInputTokens: parseTierNumber(value) })}
-                                    value={tier.maxInputTokens === undefined ? "" : String(tier.maxInputTokens)}
-                                />
-                                <TierField
-                                    id={`${baseId}-${index}-input`}
-                                    label={`Tier Input Price (${currencySymbol}/1M)`}
-                                    onChange={(value) => updateRates(index, "inputPrice", parseTierNumber(value))}
-                                    value={String(bandRates(tier).inputPrice)}
-                                />
-                                <TierField
-                                    id={`${baseId}-${index}-output`}
-                                    label={`Tier Output Price (${currencySymbol}/1M)`}
-                                    onChange={(value) => updateRates(index, "outputPrice", parseTierNumber(value))}
-                                    value={String(bandRates(tier).outputPrice)}
-                                />
-                                {showCachePrices ? (
-                                    <>
-                                        <TierField
-                                            id={`${baseId}-${index}-cache-writes`}
-                                            label={`Tier Cache Writes (${currencySymbol}/1M)`}
-                                            onChange={(value) => updateRates(index, "cacheWritePrice", parseTierNumber(value))}
-                                            value={String(bandRates(tier).cacheWritePrice)}
-                                        />
-                                        <TierField
-                                            id={`${baseId}-${index}-cache-reads`}
-                                            label={`Tier Cache Reads (${currencySymbol}/1M)`}
-                                            onChange={(value) => updateRates(index, "cacheReadPrice", parseTierNumber(value))}
-                                            value={String(bandRates(tier).cacheReadPrice)}
-                                        />
-                                    </>
-                                ) : null}
-                            </ProfileInlineGrid>
-                            <ProfileActionRow>
-                                <VSCodeButton appearance="secondary" onClick={() => removeTier(index)}>
-                                    Remove Pricing Tier
-                                </VSCodeButton>
-                            </ProfileActionRow>
-                        </>
-                    ) : (
-                        <div className="flex flex-col gap-1 text-sm">
-                            <strong>
-                                {tier.maxInputTokens === undefined
-                                    ? "Above every declared bound"
-                                    : `Up to ${tier.maxInputTokens.toLocaleString()} tokens`}
-                            </strong>
-                            <span>
-                                Input: {currencySymbol}
-                                {bandRates(tier).inputPrice}/1M
-                            </span>
-                            <span>
-                                Output: {currencySymbol}
-                                {bandRates(tier).outputPrice}/1M
-                            </span>
-                            {showCachePrices ? (
-                                <span>
-                                    Cache: {currencySymbol}
-                                    {bandRates(tier).cacheWritePrice} write / {currencySymbol}
-                                    {bandRates(tier).cacheReadPrice} read
-                                </span>
-                            ) : null}
-                        </div>
-                    )}
-                </div>
-            ))}
+            {flushFailed && (
+                <span className="text-xs text-error" role="alert">
+                    Pending inputs could not be saved. Retry before changing tiers.
+                </span>
+            )}
+            {tiers.map((tier, index) => {
+                const lower = index === 0 ? 0 : tiers[index - 1].maxInputTokens
+                const range =
+                    tier.maxInputTokens === undefined
+                        ? index === 0
+                            ? "All input sizes (unbounded)"
+                            : `Above ${lower?.toLocaleString()} input tokens`
+                        : `${lower?.toLocaleString()} ${index === 0 ? "≤" : "<"} input tokens ≤ ${tier.maxInputTokens.toLocaleString()}`
+                return (
+                    <div className={getTierClassName(index)} key={`band-${index}`}>
+                        <strong className="text-xs">{range}</strong>
+                        {editable ? (
+                            <>
+                                {index < tiers.length - 1 ? (
+                                    <TierField
+                                        id={`${baseId}-${index}-threshold`}
+                                        label="Up To Input Tokens"
+                                        onChange={(text) => {
+                                            const value = Number(text)
+                                            const lower = latest.current[index - 1]?.maxInputTokens ?? 0
+                                            const upper = latest.current[index + 1]?.maxInputTokens ?? Number.POSITIVE_INFINITY
+                                            const valid =
+                                                Boolean(text.trim()) &&
+                                                Number.isSafeInteger(value) &&
+                                                value > lower &&
+                                                value < upper
+                                            setInvalidBound(valid ? undefined : index)
+                                            if (valid) updateTier(index, { maxInputTokens: value })
+                                        }}
+                                        value={tier.maxInputTokens === undefined ? "" : String(tier.maxInputTokens)}
+                                    />
+                                ) : (
+                                    <span className="text-xs text-description">No upper limit</span>
+                                )}
+                                {invalidBound === index && (
+                                    <span className="text-xs text-error" role="alert">
+                                        Enter a positive integer between the adjacent tier limits.
+                                    </span>
+                                )}
+                                <ProfileActionRow>
+                                    <VSCodeButton
+                                        appearance="secondary"
+                                        disabled={tiers.length <= 1}
+                                        onClick={() => removeTier(index)}>
+                                        Remove Pricing Tier
+                                    </VSCodeButton>
+                                </ProfileActionRow>
+                            </>
+                        ) : null}
+                        <PriceSetFields
+                            currencySymbol={currencySymbol}
+                            onChange={(prices) => updateTier(index, { prices })}
+                            prefix={`Tier ${index + 1}`}
+                            prices={tier.prices}
+                            readOnly={!ratesEditable}
+                            showCachePrices={showCachePrices}
+                        />
+                    </div>
+                )
+            })}
         </div>
     )
 }

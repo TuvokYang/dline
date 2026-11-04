@@ -1,6 +1,5 @@
 import type { ModelPricing } from "@shared/api"
 import { UiMessage } from "@shared/ExtensionMessage"
-import { readPriceSet } from "@shared/providers/pricing-shape"
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import React, { useCallback, useLayoutEffect, useState } from "react"
 import Thumbnails from "@/components/common/Thumbnails"
@@ -20,7 +19,6 @@ import { PromptCacheHealthBanner } from "./PromptCacheHealthBanner"
 import { TaskRateMetrics } from "./rate-metrics/TaskRateMetrics"
 import SpawnedTasksBar from "./SpawnedTasksBar"
 import { TaskLockBanner } from "./TaskLockBanner"
-import { hasNonZeroModelPricing } from "./util"
 
 const IS_DEV = process.env.IS_DEV === '"true"'
 interface TaskHeaderProps {
@@ -127,7 +125,7 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 
     const totalInputTokens = tokensIn + (cacheWrites ?? 0) + (cacheReads ?? 0)
     const currentContextTokens = lastApiReqTotalTokens ?? totalInputTokens
-    const isCostAvailable = totalCost != null && hasNonZeroModelPricing(pricing)
+    const isCostAvailable = totalCost != null
     const hasMetrics = isCostAvailable || totalInputTokens > 0 || tokensOut > 0 || cacheHitRate !== undefined
     const hasRateMetrics = (requestsPerMinute ?? 0) > 0 || (tokensPerMinute ?? 0) > 0
     const hasUnifiedMetrics = hasMetrics || hasRateMetrics
@@ -186,13 +184,9 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
                                 <CopyTaskButton className={BUTTON_CLASS} taskText={task.text} />
                                 <RefreshPromptButton
                                     className={BUTTON_CLASS}
-                                    currency={currency}
+                                    currency={pricing?.currency}
                                     estimatedInputTokens={currentContextTokens}
-                                    inputPrice={
-                                        pricing?.metered?.strategy?.flat
-                                            ? readPriceSet(pricing.metered.strategy.flat.prices).inputPrice
-                                            : undefined
-                                    }
+                                    inputPrice={pricing?.strategy?.flat?.prices?.inputPrice}
                                     promptFreshness={promptFreshness}
                                     taskId={taskId}
                                 />

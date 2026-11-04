@@ -1,6 +1,7 @@
+import type { ModelInfo } from "@shared/proto/dline/models"
 import { ServerTool } from "@shared/proto/dline/models/metadata"
 import { expect } from "chai"
-import { describe, it, vi } from "vitest"
+import { describe, it } from "vitest"
 import { OutputLimitExceededError } from "../../stream/OutputLimitExceededError"
 import { handleResponsesApiStreamResponse } from "../responses_api_support"
 
@@ -13,13 +14,13 @@ const createAsyncIterable = (events: any[]) =>
         },
     }) as any
 
-async function collectChunks(events: any[], calculateCost = vi.fn(async () => 0)) {
+async function collectChunks(
+    events: any[],
+    modelInfo: ModelInfo = { id: "test-model" },
+    readReportedCost?: Parameters<typeof handleResponsesApiStreamResponse>[3],
+) {
     const chunks: any[] = []
-    for await (const chunk of handleResponsesApiStreamResponse(
-        createAsyncIterable(events),
-        { id: "test-model" },
-        calculateCost,
-    )) {
+    for await (const chunk of handleResponsesApiStreamResponse(createAsyncIterable(events), modelInfo, 0, readReportedCost)) {
         chunks.push(chunk)
     }
     return chunks
@@ -177,7 +178,23 @@ describe("responses_api_support hosted tools", () => {
     })
 
     it("classifies official Responses cache write tokens separately from uncached input", async () => {
-        const calculateCost = vi.fn(async () => 0)
+        const modelInfo: ModelInfo = {
+            id: "priced-model",
+            pricing: {
+                currency: "USD",
+                strategy: {
+                    flat: {
+                        prices: {
+                            inputPrice: 2,
+                            outputPrice: 4,
+                            cacheWritePrice: 1,
+                            cacheReadPrice: 0.5,
+                            thinkingOutputPrice: 10,
+                        },
+                    },
+                },
+            },
+        }
         const chunks = await collectChunks(
             [
                 {
@@ -194,7 +211,7 @@ describe("responses_api_support hosted tools", () => {
                     },
                 },
             ],
-            calculateCost,
+            modelInfo,
         )
 
         expect(chunks).to.deep.equal([
@@ -205,12 +222,11 @@ describe("responses_api_support hosted tools", () => {
                 cacheWriteTokens: 300,
                 cacheReadTokens: 500,
                 thoughtsTokenCount: 10,
-                totalCost: 0,
+                totalCost: 0.00111,
+                currency: "USD",
                 provider_metadata: { response_id: "resp_cache_usage" },
             },
         ])
-        // `output_tokens` already includes `reasoning_tokens`, so cost is never charged for them twice.
-        expect(calculateCost.mock.calls).to.deep.equal([[{ id: "test-model" }, 1_000, 25, 300, 500]])
     })
 
     it("falls back to cache_miss_tokens for compatible Responses providers", async () => {
@@ -318,7 +334,7 @@ describe("responses_api_support hosted tools", () => {
                 },
             ])
             stream._request_id = "req_failed_1"
-            for await (const _ of handleResponsesApiStreamResponse(stream, { id: "test-model" }, async () => 0)) {
+            for await (const _ of handleResponsesApiStreamResponse(stream, { id: "test-model" }, 0)) {
                 // The failed event must throw before yielding a successful terminal value.
             }
         } catch (error) {

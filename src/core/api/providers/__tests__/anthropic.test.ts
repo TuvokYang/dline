@@ -1,7 +1,7 @@
 import { anthropicModels } from "@shared/api"
 import { ApiFormat, ServerTool, type ThinkingConfig } from "@shared/proto/dline/models/metadata"
 import { ApiProfile } from "@shared/proto/dline/profile"
-import { flatMeteredPricing, readPriceSet } from "@shared/providers/pricing-shape"
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import { expect } from "chai"
 import should from "should"
 import { afterEach, describe, it, vi } from "vitest"
@@ -235,7 +235,7 @@ describe("AnthropicHandler", () => {
             should(result.info.capabilities?.contextWindow).equal(1_000_000)
             should(result.info.capabilities?.maxTokens).equal(12_345)
             should(result.info.capabilities?.supportsPromptCache).equal(false)
-            should(readPriceSet(result.info.pricing?.metered?.strategy?.flat?.prices).inputPrice).equal(0.5)
+            should(result.info.pricing?.strategy?.flat?.prices?.inputPrice).equal(0.5)
         })
 
         it("should preserve a custom model id when profile modelInfo is missing", () => {

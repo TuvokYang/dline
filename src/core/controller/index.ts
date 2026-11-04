@@ -3287,11 +3287,10 @@ export class Controller {
         const apiMetrics = {
             ...usageTotals,
             ...rateSnapshot,
-            // The rows price every request, including the ones a provider did not
-            // price, and add subagent usage; the provider-round store only holds
-            // reported cost. Cost therefore stays with the rows, as in task history.
+            // Amount and currency share the row aggregate's source; a rate
+            // snapshot must not label an amount whose unit was not reported.
             totalCost: usageTotals.totalCost,
-            currency: usageTotals.currency ?? rateSnapshot.currency,
+            currency: usageTotals.currency,
         }
         const contextWindowIndicator = shownContextWindowIndicator(this.task, this.historyDisplaySession)
         const lastApiReqTotalTokens = contextWindowIndicator

@@ -1,7 +1,6 @@
 import { groqDefaultModelId, groqModels, ModelInfo } from "@shared/api"
 import { providerFetch } from "@shared/net"
 import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
-import { calculateApiCostOpenAI } from "@utils/cost"
 import OpenAI from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
@@ -122,6 +121,7 @@ export class GroqHandler extends ApiHandler {
                     apiKey: this.apiKey,
                     defaultHeaders: buildExternalBasicHeaders(),
                     fetch: providerFetch,
+                    maxRetries: 0,
                 })
             } catch (error) {
                 throw new Error(`Error creating Groq client: ${error.message}`)
@@ -130,7 +130,7 @@ export class GroqHandler extends ApiHandler {
         return this.client
     }
 
-    private async *yieldUsage(info: ModelInfo, usage: GroqUsage | undefined): ApiStream {
+    private async *yieldUsage(info: ModelInfo, usage: GroqUsage | undefined, sentAtMs: number): ApiStream {
         const totalInputTokens = usage?.prompt_tokens || 0
         const outputTokens = usage?.completion_tokens || 0
         const inputUsage = splitInclusiveInputUsage({
@@ -138,20 +138,13 @@ export class GroqHandler extends ApiHandler {
             cacheReadTokens: usage?.prompt_tokens_details?.cached_tokens,
         })
 
-        // Calculate cost with the Provider total; canonical usage remains non-overlapping.
-        const totalCost = calculateApiCostOpenAI(
-            info,
-            totalInputTokens,
-            outputTokens,
-            inputUsage.cacheWriteTokens,
-            inputUsage.cacheReadTokens,
-        )
+        const cost = ApiHandler.calculateUsageCost(info.pricing, { ...inputUsage, outputTokens }, sentAtMs)
 
         yield {
             type: "usage",
             ...inputUsage,
             outputTokens,
-            totalCost,
+            ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
         }
     }
 
@@ -244,6 +237,7 @@ export class GroqHandler extends ApiHandler {
         }
 
         const toolCallProcessor = new ToolCallProcessor()
+        const sentAtMs = Date.now()
         const stream = await client.chat.completions.create(requestParams)
 
         for await (const chunk of stream) {
@@ -273,7 +267,7 @@ export class GroqHandler extends ApiHandler {
 
             // Handle usage information
             if (chunk.usage) {
-                yield* this.yieldUsage(model.info, chunk.usage)
+                yield* this.yieldUsage(model.info, chunk.usage, sentAtMs)
             }
         }
     }

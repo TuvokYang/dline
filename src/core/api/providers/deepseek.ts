@@ -1,7 +1,6 @@
 import { Anthropic } from "@anthropic-ai/sdk"
 import { deepSeekDefaultModelId, deepSeekModels, ModelInfo } from "@shared/api"
 import { providerFetch } from "@shared/net"
-import { calculateApiCostOpenAI } from "@utils/cost"
 import OpenAI from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
@@ -111,7 +110,11 @@ export class DeepSeekHandler extends ApiHandler {
         return resolveDeepSeekReasoning(model.info.capabilities, this.config?.reasoning)
     }
 
-    private async *yieldUsage(info: ModelInfo, usage: OpenAI.Completions.CompletionUsage | undefined): ApiStream {
+    private async *yieldUsage(
+        info: ModelInfo,
+        usage: OpenAI.Completions.CompletionUsage | undefined,
+        sentAtMs: number,
+    ): ApiStream {
         // Deepseek reports total input AND cache reads/writes,
         // see context caching: https://api-docs.deepseek.com/guides/kv_cache)
         // where the input tokens is the sum of the cache hits/misses, just like OpenAI.
@@ -132,8 +135,18 @@ export class DeepSeekHandler extends ApiHandler {
         const cacheReadTokens = deepUsage?.prompt_cache_hit_tokens || 0
         const cacheWriteTokens = deepUsage?.prompt_cache_miss_tokens || 0
         const inputTokens = Math.max(0, rawInputTokens - cacheReadTokens - cacheWriteTokens)
-        const totalCost = calculateApiCostOpenAI(info, rawInputTokens, outputTokens, cacheWriteTokens, cacheReadTokens)
         const thoughtsTokenCount = chatReasoningTokens(deepUsage)
+        const cost = ApiHandler.calculateUsageCost(
+            info.pricing,
+            {
+                inputTokens,
+                outputTokens,
+                cacheWriteTokens,
+                cacheReadTokens,
+                thoughtsTokenCount,
+            },
+            sentAtMs,
+        )
         yield {
             type: "usage",
             inputTokens: inputTokens,
@@ -141,7 +154,7 @@ export class DeepSeekHandler extends ApiHandler {
             cacheWriteTokens: cacheWriteTokens,
             cacheReadTokens: cacheReadTokens,
             ...(thoughtsTokenCount === undefined ? {} : { thoughtsTokenCount }),
-            totalCost: totalCost,
+            ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
         }
     }
 
@@ -197,6 +210,7 @@ export class DeepSeekHandler extends ApiHandler {
         const openAiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = thinking.enabled
             ? convertDeepSeekMessages(messages, systemPrompt)
             : [{ role: "system", content: systemPrompt }, ...convertDeepseekToOpenAiMessages(messages)]
+        const sentAtMs = Date.now()
         const stream = await client.chat.completions.create(
             {
                 model: model.id,
@@ -245,7 +259,7 @@ export class DeepSeekHandler extends ApiHandler {
             }
 
             if (chunk.usage) {
-                yield* this.yieldUsage(model.info, chunk.usage)
+                yield* this.yieldUsage(model.info, chunk.usage, sentAtMs)
             }
 
             const outputLimitError = getOpenAIChatOutputLimitError(chunk.choices?.[0]?.finish_reason)
@@ -289,13 +303,9 @@ export class DeepSeekHandler extends ApiHandler {
             ...(thinking.enabled ? { reasoning: { effort: thinking.effort, summary: "auto" } } : {}),
             ...(typeof maxOutputTokens === "number" && maxOutputTokens > 0 ? { max_output_tokens: maxOutputTokens } : {}),
         }
+        const sentAtMs = Date.now()
         const stream = await client.responses.create(params, { signal })
-        yield* handleResponsesApiStreamResponse(
-            stream,
-            model.info,
-            async (info, inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens) =>
-                calculateApiCostOpenAI(info, inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens),
-        )
+        yield* handleResponsesApiStreamResponse(stream, model.info, sentAtMs)
     }
 
     private async *createAnthropicMessage(
@@ -333,8 +343,9 @@ export class DeepSeekHandler extends ApiHandler {
                   }
                 : { temperature: 0 }),
         }
+        const sentAtMs = Date.now()
         const stream = await client.messages.create(request as Anthropic.MessageCreateParamsStreaming, { signal })
-        yield* handleAnthropicMessagesApiStreamResponse(stream)
+        yield* handleAnthropicMessagesApiStreamResponse(stream, undefined, { pricing: model.info.pricing, sentAtMs })
     }
 
     private getBaseModel(): { id: string; info: ModelInfo } {

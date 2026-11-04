@@ -1,12 +1,11 @@
 import { ModelInfo } from "@shared/api"
-import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { fetch, providerFetch } from "@/shared/net"
 import { Logger } from "@/shared/services/Logger"
 
 import { ApiHandler, ApiHandlerContext } from "../ApiHandler"
-import { ApiStream } from "../transform/stream"
+import { ApiStream, type ApiStreamUsageChunk } from "../transform/stream"
 
 // Dify API Response Types
 export interface DifyFileResponse {
@@ -253,19 +252,8 @@ export class DifyHandler extends ApiHandler {
                                     }
                                     hasYieldedContent = true
                                 }
-                                // Yield usage data if available
-                                if (parsed.usage) {
-                                    const inputTokens = parsed.usage.prompt_tokens ?? 0
-                                    const outputTokens =
-                                        parsed.usage.completion_tokens ??
-                                        Math.max(0, (parsed.usage.total_tokens ?? inputTokens) - inputTokens)
-                                    yield {
-                                        type: "usage",
-                                        inputTokens,
-                                        outputTokens,
-                                        totalCost: parsed.usage.total_price || 0,
-                                    }
-                                }
+                                const usage = this.readMessageUsage(parsed)
+                                if (usage) yield usage
                                 messageEnded = true
                             } else if (parsed.event === "error") {
                                 Logger.error("[DIFY DEBUG] Error event:", parsed)
@@ -337,6 +325,8 @@ export class DifyHandler extends ApiHandler {
                                     }
                                     hasYieldedContent = true
                                 }
+                                const usage = this.readMessageUsage(parsed)
+                                if (usage) yield usage
                                 messageEnded = true
                             } else if (parsed.event === "error") {
                                 Logger.error("[DIFY DEBUG] Direct JSON Error event:", parsed)
@@ -423,6 +413,38 @@ export class DifyHandler extends ApiHandler {
         return userQuery
     }
 
+    private readMessageUsage(event: unknown): ApiStreamUsageChunk | undefined {
+        if (!event || typeof event !== "object") return undefined
+        const response = event as { metadata?: { usage?: unknown }; usage?: unknown }
+        // Prefer the official envelope as a whole; never borrow money or currency from the legacy branch.
+        const value = response.metadata?.usage ?? response.usage
+        if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
+        const usage = value as {
+            prompt_tokens?: number
+            completion_tokens?: number
+            total_tokens?: number
+            total_price?: unknown
+            currency?: unknown
+        }
+        const inputTokens = usage.prompt_tokens ?? 0
+        const outputTokens = usage.completion_tokens ?? Math.max(0, (usage.total_tokens ?? inputTokens) - inputTokens)
+        const rawAmount = usage.total_price
+        const numeric =
+            typeof rawAmount === "number"
+                ? rawAmount
+                : typeof rawAmount === "string" && /^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(rawAmount.trim())
+                  ? Number(rawAmount)
+                  : undefined
+        const amount = numeric !== undefined && Number.isFinite(numeric) && numeric >= 0 ? numeric : undefined
+        const currency = typeof usage.currency === "string" && usage.currency.trim() ? usage.currency.trim() : undefined
+        return {
+            type: "usage",
+            inputTokens,
+            outputTokens,
+            ...(amount === undefined ? {} : { totalCost: amount, ...(currency ? { currency } : {}) }),
+        }
+    }
+
     getModel(): { id: string; info: ModelInfo } {
         return {
             id: "dify-workflow",
@@ -435,7 +457,6 @@ export class DifyHandler extends ApiHandler {
                     supportsImages: true,
                     supportsPromptCache: false,
                 },
-                pricing: flatMeteredPricing(0, 0),
             },
         }
     }

@@ -3,7 +3,6 @@ import type { ModelInfo } from "@shared/proto/dline/models"
 import { ApiFormat, type ModelCapabilities, type ModelPricing } from "@shared/proto/dline/models/metadata"
 import { WebToolsMode } from "@shared/proto/dline/provider/common"
 import { OpenAiProviderConfig } from "@shared/proto/dline/provider/openai"
-import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
 import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
@@ -78,12 +77,6 @@ vi.mock("../common/ModelConfiguration", () => ({
             <button onClick={() => onCapabilitiesUpdate({ supportsImages: true })} type="button">
                 Update Images
             </button>
-            <button onClick={() => onPricingUpdate({ inputPrice: 1.25 })} type="button">
-                Set Input Price
-            </button>
-            <button onClick={() => onPricingUpdate({ outputPrice: 2.5 })} type="button">
-                Set Output Price
-            </button>
             {fields.capabilities?.includes("supportsTools") && (
                 <button onClick={() => onCapabilitiesUpdate({ supportsTools: true })} type="button">
                     Enable Native Tools
@@ -98,8 +91,8 @@ vi.mock("../common/ModelInfoView", () => ({
         <div>
             <span>context:{modelInfo.capabilities?.contextWindow}</span>
             <span>max:{modelInfo.capabilities?.maxTokens}</span>
-            <span>input:{modelInfo.pricing?.inputPrice}</span>
-            <span>output:{modelInfo.pricing?.outputPrice}</span>
+            <span>input:{modelInfo.pricing?.strategy?.flat?.prices?.inputPrice}</span>
+            <span>output:{modelInfo.pricing?.strategy?.flat?.prices?.outputPrice}</span>
         </div>
     ),
 }))
@@ -353,50 +346,21 @@ describe("OpenAIProvider", () => {
         })
     })
 
-    it("renders the editable output rate for a Profile that overrides it", () => {
+    it("passes the Profile output rate to the model display instead of the registry rate", () => {
         const profile = {
             id: "profile-1",
             provider: "openai",
             modelId: "gpt-custom",
             openai: OpenAiProviderConfig.create({
                 customModelEnabled: false,
-                // A flat rate is the metered strategy now; the published shape
-                // carries no top-level scalar prices.
                 pricing: flatMeteredPricing(1.25, 2.5),
             }),
         } as unknown as ApiProfile
 
         render(<OpenAIProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
 
-        // The registry default must not mask the Profile's own rate. Reading the
-        // merged pricing through the same accessor the panel uses keeps this
-        // independent of how the panel formats or splits the rendered text.
-        const { pricing } = buildEffectiveModelInfo("gpt-custom", registryModel, { pricing: flatMeteredPricing(1.25, 2.5) })
-        expect(pricing?.metered?.strategy?.flat?.prices?.outputPrice).toBe(2.5)
-    })
-
-    it("keeps an earlier pricing edit when the next edit runs before the profile echoes back", () => {
-        const onUpdate = vi.fn()
-        const profile = {
-            id: "profile-1",
-            provider: "openai",
-            modelId: "gpt-custom",
-            openai: OpenAiProviderConfig.create({ customModelEnabled: true }),
-        } as unknown as ApiProfile
-
-        render(<OpenAIProvider onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
-
-        // Each debounced price field commits on its own timer, so a second field can
-        // save before the parent re-renders with the first field's value. Both edits
-        // must survive that window.
-        fireEvent.click(screen.getByRole("button", { name: "Set Input Price" }))
-        fireEvent.click(screen.getByRole("button", { name: "Set Output Price" }))
-
-        expect(onUpdate).toHaveBeenLastCalledWith({
-            openai: expect.objectContaining({
-                pricing: expect.objectContaining({ inputPrice: 1.25, outputPrice: 2.5 }),
-            }),
-        })
+        expect(screen.getByText("input:1.25")).toBeInTheDocument()
+        expect(screen.getByText("output:2.5")).toBeInTheDocument()
     })
 
     it("shows the default Responses stream idle timeout and persists a positive number of seconds", () => {

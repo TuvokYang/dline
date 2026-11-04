@@ -55,6 +55,7 @@ export class WandbHandler extends ApiHandler {
         const client = this.ensureClient()
         const model = this.getModel()
 
+        const sentAtMs = Date.now()
         const stream = await client.chat.completions.create({
             model: model.id,
             messages: [{ role: "system", content: systemPrompt }, ...convertToOpenAiMessages(messages)],
@@ -91,10 +92,19 @@ export class WandbHandler extends ApiHandler {
                 // at the same rate as regular input tokens). We report inputTokens as the full
                 // prompt_tokens value and do not subtract cached tokens until W&B supports
                 // cache-aware pricing. This may change in a future update.
+                const cost = ApiHandler.calculateUsageCost(
+                    model.info.pricing,
+                    {
+                        inputTokens: chunk.usage.prompt_tokens || 0,
+                        outputTokens: chunk.usage.completion_tokens || 0,
+                    },
+                    sentAtMs,
+                )
                 yield {
                     type: "usage",
                     inputTokens: chunk.usage.prompt_tokens || 0,
                     outputTokens: chunk.usage.completion_tokens || 0,
+                    ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                 }
             }
         }

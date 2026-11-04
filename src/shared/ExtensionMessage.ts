@@ -1045,6 +1045,7 @@ export interface UiSubagentUsageInfo {
     cacheWrites: number
     cacheReads: number
     cost: number
+    currency?: string
 }
 
 export type UiApiReqCancelReason = "streaming_failed" | "user_cancelled" | "retries_exhausted"

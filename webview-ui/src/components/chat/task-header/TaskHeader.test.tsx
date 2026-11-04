@@ -2,7 +2,7 @@ import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import { fireEvent, render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import TaskHeader from "./TaskHeader"
-import { formatTokenMetric, hasNonZeroModelPricing } from "./util"
+import { formatTokenMetric } from "./util"
 
 const mocks = vi.hoisted(() => ({
     setExpandTaskHeader: vi.fn(),
@@ -138,9 +138,10 @@ describe("TaskHeader pricing", () => {
         expect(mocks.setExpandTaskHeader).not.toHaveBeenCalled()
     })
 
-    it("hides a zero-priced model cost while retaining token metrics", () => {
+    it("shows a reported zero amount independently of zero model prices while retaining token metrics", () => {
         render(
             <TaskHeader
+                currency="CNY"
                 doesModelSupportPromptCache={false}
                 onClose={vi.fn()}
                 pricing={flatMeteredPricing(0, 0, 0, 0)}
@@ -151,16 +152,15 @@ describe("TaskHeader pricing", () => {
             />,
         )
 
-        const metrics = screen.getByTitle("In: 1250 / Out: 250 / Cache read: 0 / Cache write: 0")
-        expect(screen.queryByText("$0.000")).not.toBeInTheDocument()
+        expect(screen.getByTitle("In: 1250 / Out: 250 / Cache read: 0 / Cache write: 0")).toBeInTheDocument()
+        expect(screen.getByText("¥0.000")).toBeInTheDocument()
     })
 
-    it("keeps the cost visible when the model has non-zero pricing", () => {
+    it("shows an unlabelled reported amount without current model pricing", () => {
         render(
             <TaskHeader
                 doesModelSupportPromptCache={false}
                 onClose={vi.fn()}
-                pricing={flatMeteredPricing(0, 1)}
                 task={task}
                 tokensIn={0}
                 tokensOut={0}
@@ -168,23 +168,7 @@ describe("TaskHeader pricing", () => {
             />,
         )
 
-        expect(screen.getByText("$0.000")).toBeInTheDocument()
-    })
-
-    it("recognizes non-zero cache, context-band, and scheduled rates in the current pricing schema", () => {
-        expect(hasNonZeroModelPricing(flatMeteredPricing(0, 0, 0, 0.1))).toBe(true)
-        expect(
-            hasNonZeroModelPricing({
-                metered: { strategy: { contextWindow: { bands: [{ maxInputTokens: 128_000, prices: { outputPrice: 2 } }] } } },
-            }),
-        ).toBe(true)
-        expect(
-            hasNonZeroModelPricing({
-                metered: {
-                    strategy: { timeOfDay: { timeWindows: [{ startMinute: 60, endMinute: 120, prices: { outputPrice: 3 } }] } },
-                },
-            }),
-        ).toBe(true)
+        expect(screen.getByText("0.000")).toBeInTheDocument()
     })
 
     it("promotes billion-scale input and output token metrics from M to B", () => {

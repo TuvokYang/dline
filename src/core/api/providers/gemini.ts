@@ -3,7 +3,6 @@
 import type { GenerateContentConfig, GenerateContentResponseUsageMetadata } from "@google/genai"
 import { ApiError, FunctionCallingConfigMode, GoogleGenAI, FunctionDeclaration as GoogleTool } from "@google/genai"
 import { GeminiModelId, geminiDefaultModelId, geminiModels, ModelInfo } from "@shared/api"
-import { billableTokens, costOf, resolvePrices } from "@shared/billing"
 import { GEMINI_FLASH_MAX_OUTPUT_TOKENS, isGeminiFlashModel } from "@utils/model-utils"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { telemetryService } from "@/services/telemetry"
@@ -220,13 +219,17 @@ export class GeminiHandler extends ApiHandler {
             apiSuccess = true
 
             if (lastUsageMetadata) {
-                const totalCost = this.calculateCost({
-                    info,
-                    inputTokens: promptTokens,
-                    outputTokens,
-                    thoughtsTokenCount,
-                    cacheReadTokens,
-                })
+                const result = ApiHandler.calculateUsageCost(
+                    info.pricing,
+                    {
+                        inputTokens: promptTokens - cacheReadTokens,
+                        outputTokens: outputTokens + thoughtsTokenCount,
+                        thoughtsTokenCount,
+                        cacheReadTokens,
+                    },
+                    sdkCallStartTime,
+                )
+                const totalCost = result.kind === "calculated" ? result.amount : undefined
                 yield {
                     type: "usage",
                     inputTokens: promptTokens - cacheReadTokens,
@@ -236,6 +239,7 @@ export class GeminiHandler extends ApiHandler {
                     cacheReadTokens,
                     cacheWriteTokens: 0,
                     totalCost,
+                    ...(result.kind === "calculated" ? { currency: result.currency } : {}),
                     provider_metadata: responseId ? { response_id: responseId } : undefined,
                 }
             }
@@ -295,38 +299,6 @@ export class GeminiHandler extends ApiHandler {
                 Logger.warn("GeminiHandler: ulid not available for telemetry in createMessage.")
             }
         }
-    }
-
-    public calculateCost({
-        info,
-        inputTokens,
-        outputTokens,
-        thoughtsTokenCount = 0,
-        cacheReadTokens = 0,
-    }: {
-        info: ModelInfo
-        inputTokens: number
-        outputTokens: number
-        thoughtsTokenCount: number
-        cacheReadTokens?: number
-    }) {
-        const resolved = resolvePrices(info.pricing, { totalInputTokens: inputTokens })
-        if (resolved.kind === "not-billable") {
-            return undefined
-        }
-        // A published price of zero means "cost not reported" for this provider's
-        // UI, which is why it stays undefined instead of collapsing to 0.
-        if (!resolved.prices.inputPrice || !resolved.prices.outputPrice) {
-            return undefined
-        }
-
-        const tokens = billableTokens("openai", {
-            inputTokens,
-            outputTokens,
-            cacheReadTokens,
-            thinkingTokens: thoughtsTokenCount,
-        })
-        return costOf(resolved.prices, tokens)
     }
 
     getModel(): { id: GeminiModelId; info: ModelInfo } {

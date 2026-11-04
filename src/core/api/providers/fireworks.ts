@@ -58,13 +58,15 @@ export class FireworksHandler extends ApiHandler {
     @withRetry()
     async *createMessage(systemPrompt: string, messages: ClineStorageMessage[]): ApiStream {
         const client = this.ensureClient()
-        const modelId = this.getModel().id
+        const model = this.getModel()
+        const modelId = model.id
 
         const openAiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
             { role: "system", content: systemPrompt },
             ...convertToOpenAiMessages(messages),
         ]
 
+        const sentAtMs = Date.now()
         const stream = await client.chat.completions.create({
             model: modelId,
             messages: openAiMessages,
@@ -112,10 +114,12 @@ export class FireworksHandler extends ApiHandler {
                     cacheReadTokens: usage.prompt_cache_hit_tokens ?? usage.prompt_tokens_details?.cached_tokens,
                     cacheWriteTokens: usage.prompt_cache_miss_tokens,
                 })
+                const tokens = { ...inputUsage, outputTokens: usage.completion_tokens || 0 }
+                const cost = ApiHandler.calculateUsageCost(model.info.pricing, tokens, sentAtMs)
                 yield {
                     type: "usage",
-                    ...inputUsage,
-                    outputTokens: usage.completion_tokens || 0,
+                    ...tokens,
+                    ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                 }
             }
         }

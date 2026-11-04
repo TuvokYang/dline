@@ -1,19 +1,10 @@
-import type {
-    ContextWindowBand,
-    MeteredPricing,
-    ModelPricing,
-    PriceSet,
-    PricingSchedule,
-} from "@shared/proto/dline/models/metadata"
+import type { ContextWindowBand, ModelPricing, PriceSet, PricingSchedule } from "@shared/proto/dline/models/metadata"
 
 /**
  * Pricing constructors for the bundled catalog.
  *
- * A catalog entry carries 300+ price literals. Writing the full nested
- * `metered.strategy.flat.prices` shape at each of them made the price tables
- * unreadable, so these helpers wrap the shape once. They only fill defaults and
- * nest: no price is derived, discounted, or validated here. Consumers still read
- * strict proto shapes through `resolvePrices`.
+ * Constructors keep catalog literals readable while emitting only the canonical
+ * ModelPricing fields. They do not derive prices or select rates.
  */
 
 /** Price set for one rate. Cache prices default to zero, which is what an unpublished cache price means. */
@@ -36,12 +27,12 @@ export function flatPricing(
     currency = "USD",
     thinkingOutputPrice?: number,
 ): ModelPricing {
-    return metered({
+    return {
         currency,
         strategy: {
             flat: { prices: priceSet(inputPrice, outputPrice, cacheWritePrice, cacheReadPrice, thinkingOutputPrice) },
         },
-    })
+    }
 }
 
 /** One band of a context-window price. Omit `maxInputTokens` on the last band to leave it unbounded. */
@@ -61,7 +52,7 @@ export function band(
 
 /** A model billed by the request's total input tokens. The final band must be unbounded. */
 export function bandedPricing(bands: readonly ContextWindowBand[], currency = "USD"): ModelPricing {
-    return metered({ currency, strategy: { contextWindow: { bands: [...bands] } } })
+    return { currency, strategy: { contextWindow: { bands: [...bands] } } }
 }
 
 /** One window of a time-of-day price, billed at its own rate. */
@@ -86,7 +77,7 @@ export function timeOfDayPricing(input: {
     timeWindows?: readonly TimeWindowInput[]
     currency?: string
 }): ModelPricing {
-    return metered({
+    return {
         currency: input.currency ?? "USD",
         strategy: {
             timeOfDay: {
@@ -101,20 +92,5 @@ export function timeOfDayPricing(input: {
                 })),
             },
         },
-    })
-}
-
-/** A plan or prepaid quota covers the model, so no per-request cost is computed. */
-export function subscriptionPricing(): ModelPricing {
-    return { subscription: {} }
-}
-
-/** The model carries no charge and no quota. */
-export function freePricing(): ModelPricing {
-    return { free: {} }
-}
-
-/** Wrap a strategy in the metered mode. Exported because catalogs occasionally compose a strategy directly. */
-export function metered(pricing: MeteredPricing): ModelPricing {
-    return { metered: pricing }
+    }
 }

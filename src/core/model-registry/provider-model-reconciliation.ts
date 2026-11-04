@@ -11,7 +11,7 @@ function mergeBuiltInModelDefaults(seed: ModelInfo, stored: ModelInfo): ModelInf
             seed.capabilities || stored.capabilities
                 ? mergeCapabilities(seed.capabilities, stored.capabilities ?? {})
                 : undefined,
-        pricing: seed.pricing || stored.pricing ? { ...seed.pricing, ...stored.pricing } : undefined,
+        pricing: stored.pricing ?? seed.pricing,
         apiFormats: stored.apiFormats ?? seed.apiFormats,
     }
 }
@@ -73,7 +73,7 @@ function overlayRemoteModel(remote: ModelInfo, stored: ModelInfo): ModelInfo {
             remote.capabilities || stored.capabilities
                 ? mergeCapabilities(stored.capabilities, remote.capabilities ?? {})
                 : undefined,
-        pricing: remote.pricing ? { ...stored.pricing, ...withoutUndefined(remote.pricing) } : stored.pricing,
+        pricing: remote.pricing ?? stored.pricing,
         apiFormats: remote.apiFormats ?? stored.apiFormats,
         userDefined: stored.userDefined === true ? true : false,
     }

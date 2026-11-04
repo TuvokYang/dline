@@ -22,6 +22,11 @@ export class ProviderUsageIncrements {
         webFetchRequests: 0,
     }
     private totalCost = 0
+    private costCurrency: string | undefined
+
+    get currency(): string | undefined {
+        return this.costCurrency
+    }
     private cacheUsageReported = false
     private thoughtsUsageReported = false
     private costUsageReported = false
@@ -37,8 +42,9 @@ export class ProviderUsageIncrements {
         this.outputUsageReported ||= chunk.outputTokens !== undefined
         this.outputTokens += delta.outputTokens
         if (isReportedAmount(chunk.totalCost)) {
-            this.costUsageReported = true
             this.totalCost = isDelta ? this.totalCost + chunk.totalCost : chunk.totalCost
+            this.costCurrency = chunk.currency
+            this.costUsageReported = true
         }
         this.cacheUsageReported ||= chunk.cacheWriteTokens !== undefined || chunk.cacheReadTokens !== undefined
         this.thoughtsUsageReported ||= chunk.thoughtsTokenCount !== undefined

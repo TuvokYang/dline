@@ -149,6 +149,20 @@ describe("ModelSwitcher Profile transitions", () => {
         }
     })
 
+    it("shows declared flat prices without inventing a missing rate or currency", () => {
+        Object.assign(mocks.profileStore.profiles[0], {
+            modelInfo: { pricing: { currency: "CNY", strategy: { flat: { prices: { outputPrice: 0 } } } } },
+        })
+        render(<ModelSwitcher onOpenSettings={vi.fn()} />)
+        fireEvent.click(screen.getByRole("button", { name: "Select model" }))
+        const option = screen.getByRole("option", { name: /large-profile/ })
+        const priceSlots = option
+            .getAttribute("title")
+            ?.match(/In: (.*?)\/M \| Out: (.*?)\/M/)
+            ?.slice(1)
+        expect(priceSlots).toEqual(["—", "¥0"])
+    })
+
     it("routes an active Task selection through the Profile transition transaction", () => {
         render(<ModelSwitcher onOpenSettings={vi.fn()} />)
 

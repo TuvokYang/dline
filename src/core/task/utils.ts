@@ -1,10 +1,8 @@
 import { ApiHandler } from "@core/api"
 import { findLastIndex } from "@shared/array"
-import { readCurrency, readPriceSet } from "@shared/providers/pricing-shape"
 import { showApprovalNotification } from "@/integrations/notifications"
 import { calculateApiUsageStatistics } from "@/shared/api-usage"
 import { UiApiReqCancelReason, UiApiReqInfo } from "@/shared/ExtensionMessage"
-import { calculateApiCostAnthropic } from "@/utils/cost"
 import { MessageStateHandler } from "./message-state"
 
 export const showNotificationForApproval = (message: string, notificationsEnabled: boolean) => {
@@ -22,6 +20,7 @@ type UpdateApiReqMsgParams = {
     /** Input of the attempt that produced the turn, when attempts were separated. */
     contextInputTokens?: number
     totalCost?: number
+    currency?: string
     cacheHitRate?: number
     api: ApiHandler
     cancelReason?: UiApiReqCancelReason
@@ -70,19 +69,11 @@ export const updateApiReqMsg = async (params: UpdateApiReqMsgParams): Promise<vo
             tokensOut: params.outputTokens,
             cacheWrites: params.cacheWriteTokens,
             cacheReads: params.cacheReadTokens,
-            cost:
-                params.totalCost ??
-                calculateApiCostAnthropic(
-                    modelInfo,
-                    params.inputTokens,
-                    params.outputTokens,
-                    params.cacheWriteTokens,
-                    params.cacheReadTokens,
-                ),
+            cost: params.totalCost,
             cacheHitRate: Math.round(cacheHitRate * 100) / 100, // Round to 2 decimal places
-            currency: readCurrency(modelInfo.pricing) || "USD",
-            inputPrice: readPriceSet(modelInfo.pricing?.metered?.strategy?.flat?.prices).inputPrice,
-            outputPrice: readPriceSet(modelInfo.pricing?.metered?.strategy?.flat?.prices).outputPrice,
+            currency: params.totalCost === undefined ? undefined : params.currency,
+            inputPrice: modelInfo.pricing?.strategy?.flat?.prices?.inputPrice,
+            outputPrice: modelInfo.pricing?.strategy?.flat?.prices?.outputPrice,
             cancelReason: params.cancelReason,
             streamingFailedMessage: params.streamingFailedMessage,
         } satisfies UiApiReqInfo),

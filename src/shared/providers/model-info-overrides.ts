@@ -1,6 +1,6 @@
 import type { ModelInfo } from "@shared/proto/dline/models"
-import type { ModelCapabilities, ModelPricing } from "@shared/proto/dline/models/metadata"
-import { readCurrency } from "@shared/providers/pricing-shape"
+import type { ModelCapabilities } from "@shared/proto/dline/models/metadata"
+import { modelPricingForWrite } from "@shared/providers/pricing-shape"
 
 export type ModelCapabilityOverrideField = "maxTokens" | "contextWindow" | "supportsImages" | "supportsPromptCache"
 export type ModelPricingOverrideField = "inputPrice" | "outputPrice" | "cacheWritesPrice" | "cacheReadsPrice" | "currency"
@@ -72,73 +72,6 @@ function hasModelInfoContent(modelInfo: Partial<ModelInfo>): boolean {
     return Object.entries(modelInfo).some(([key, value]) => key !== "id" && value !== undefined)
 }
 
-/**
- * Map a public override field name onto the slot it edits in the price set.
- *
- * The public names are the settings contract; the price set uses singular slot
- * names. Keeping the mapping here means a settings key never has to follow an
- * internal rename again.
- */
-const PRICE_SET_FIELD: Record<string, "inputPrice" | "outputPrice" | "cacheWritePrice" | "cacheReadPrice"> = {
-    inputPrice: "inputPrice",
-    outputPrice: "outputPrice",
-    cacheWritesPrice: "cacheWritePrice",
-    cacheReadsPrice: "cacheReadPrice",
-}
-
-/**
- * Build the stored price override from the rates that differ from the registry.
- *
- * The override is written as a complete flat metered price so a reader never has
- * to know which subset of rates the profile happened to change. Unchanged slots
- * carry the registry value, which keeps the stored document self-describing.
- */
-function buildPricingOverride(
-    fields: ModelPricingOverrideField[],
-    candidatePricing: ModelPricing | undefined,
-    basePricing: ModelPricing | undefined,
-): ModelPricing | undefined {
-    const candidatePrices = candidatePricing?.metered?.strategy?.flat?.prices
-    const basePrices = basePricing?.metered?.strategy?.flat?.prices
-    const candidateCurrency = readCurrency(candidatePricing)
-    const baseCurrency = readCurrency(basePricing)
-
-    const changed: Record<string, number | string> = {}
-    for (const field of fields) {
-        if (field === "currency") {
-            if (candidateCurrency !== undefined && candidateCurrency !== baseCurrency) {
-                changed.currency = candidateCurrency
-            }
-            continue
-        }
-        const slot = PRICE_SET_FIELD[field]
-        const candidateValue = slot ? candidatePrices?.[slot] : undefined
-        if (slot && candidateValue !== undefined && candidateValue !== basePrices?.[slot]) {
-            changed[slot] = candidateValue
-        }
-    }
-
-    if (Object.keys(changed).length === 0) {
-        return undefined
-    }
-
-    return {
-        metered: {
-            currency: (changed.currency as string | undefined) ?? baseCurrency ?? "USD",
-            strategy: {
-                flat: {
-                    prices: {
-                        inputPrice: (changed.inputPrice as number | undefined) ?? basePrices?.inputPrice ?? 0,
-                        outputPrice: (changed.outputPrice as number | undefined) ?? basePrices?.outputPrice ?? 0,
-                        cacheWritePrice: (changed.cacheWritePrice as number | undefined) ?? basePrices?.cacheWritePrice,
-                        cacheReadPrice: (changed.cacheReadPrice as number | undefined) ?? basePrices?.cacheReadPrice,
-                    },
-                },
-            },
-        },
-    } as ModelPricing
-}
-
 export function getModelInfoOverrideFields(provider?: string): ModelInfoOverrideFields | undefined {
     return provider ? MODEL_INFO_OVERRIDE_POLICIES[provider]?.fields : undefined
 }
@@ -170,12 +103,9 @@ export function mergeModelInfo(base?: ModelInfo, override?: Partial<ModelInfo>):
         delete merged.capabilities
     }
 
-    const pricing = mergeDefined(
-        baseClone.pricing as Record<string, unknown> | undefined,
-        overrideClone.pricing as Record<string, unknown> | undefined,
-    )
+    const pricing = overrideClone.pricing ?? baseClone.pricing
     if (pricing) {
-        merged.pricing = pricing as unknown as ModelPricing
+        merged.pricing = pricing
     } else {
         delete merged.pricing
     }
@@ -232,9 +162,9 @@ export function pickModelInfoOverride(
     }
 
     if (fields.pricing?.length) {
-        const overridePricing = buildPricingOverride(fields.pricing, candidate.pricing, base.pricing)
-        if (overridePricing) {
-            override.pricing = overridePricing
+        const pricing = modelPricingForWrite(candidate.pricing)
+        if (pricing && !valuesEqual(pricing, modelPricingForWrite(base.pricing))) {
+            override.pricing = clone(pricing)
         }
     }
 
@@ -252,6 +182,6 @@ export function modelInfoToStorageJson(modelInfo: Partial<ModelInfo> | undefined
     if (!modelInfo) {
         return undefined
     }
-    const json = clone(modelInfo) as Record<string, unknown>
+    const json = clone({ ...modelInfo, pricing: modelPricingForWrite(modelInfo.pricing) }) as Record<string, unknown>
     return isObject(json) && (json.id !== undefined || Object.keys(json).length > 0) ? json : undefined
 }

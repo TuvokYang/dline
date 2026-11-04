@@ -1,6 +1,5 @@
 import { huggingFaceDefaultModelId, huggingFaceModels, ModelInfo } from "@shared/api"
 import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
-import { calculateApiCostOpenAI } from "@utils/cost"
 import OpenAI from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
 import { ClineStorageMessage } from "@/shared/messages/content"
@@ -53,14 +52,18 @@ export class HuggingFaceHandler extends ApiHandler {
         return this.client
     }
 
-    private async *yieldUsage(info: ModelInfo, usage: OpenAI.Completions.CompletionUsage | undefined): ApiStream {
+    private async *yieldUsage(
+        info: ModelInfo,
+        usage: OpenAI.Completions.CompletionUsage | undefined,
+        sentAtMs: number,
+    ): ApiStream {
         if (!usage) {
             return
         }
 
         const inputTokens = usage.prompt_tokens || 0
         const outputTokens = usage.completion_tokens || 0
-        const totalCost = calculateApiCostOpenAI(info, inputTokens, outputTokens)
+        const cost = ApiHandler.calculateUsageCost(info.pricing, { inputTokens, outputTokens }, sentAtMs)
 
         const usageData = {
             type: "usage" as const,
@@ -68,7 +71,7 @@ export class HuggingFaceHandler extends ApiHandler {
             outputTokens: outputTokens,
             cacheWriteTokens: 0,
             cacheReadTokens: 0,
-            totalCost: totalCost,
+            ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
         }
 
         yield usageData
@@ -95,6 +98,7 @@ export class HuggingFaceHandler extends ApiHandler {
         }
 
         const toolCallProcessor = new ToolCallProcessor()
+        const sentAtMs = Date.now()
         const stream = (await client.chat.completions.create(requestParams)) as any
 
         let _chunkCount = 0
@@ -117,7 +121,7 @@ export class HuggingFaceHandler extends ApiHandler {
             }
 
             if (chunk.usage) {
-                yield* this.yieldUsage(model.info, chunk.usage)
+                yield* this.yieldUsage(model.info, chunk.usage, sentAtMs)
             }
         }
     }

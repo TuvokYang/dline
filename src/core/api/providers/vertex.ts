@@ -7,6 +7,7 @@ import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { ClineTool } from "@/shared/tools"
 import { ApiHandler, ApiHandlerContext } from "../ApiHandler"
+import type { BillingTokens } from "../billing/types"
 import { withRetry } from "../retry"
 import { sanitizeAnthropicMessages } from "../transform/anthropic-format"
 import { ApiStream } from "../transform/stream"
@@ -137,17 +138,26 @@ export class VertexHandler extends ApiHandler {
         }
 
         const identity = ApiHandler.identifyProviderAttempt("vertex", requestBody)
-        const stream = await ApiHandler.observeProviderStream(
-            identity,
-            () => clientAnthropic.beta.messages.create(requestBody as any) as unknown as PromiseLike<AsyncIterable<any>>,
-        )
+        let sentAtMs = Number.NaN
+        const stream = await ApiHandler.observeProviderStream(identity, () => {
+            sentAtMs = Date.now()
+            return clientAnthropic.beta.messages.create(requestBody as any) as unknown as PromiseLike<AsyncIterable<any>>
+        })
 
         const lastStartedToolCall = { id: "", name: "", arguments: "" }
+        let responseTokens: BillingTokens | undefined
 
         for await (const chunk of stream) {
             switch (chunk?.type) {
                 case "message_start": {
                     const usage = chunk.message.usage
+                    responseTokens = {
+                        inputTokens: usage.input_tokens,
+                        outputTokens: usage.output_tokens,
+                        cacheWriteTokens: usage.cache_creation_input_tokens ?? undefined,
+                        cacheReadTokens: usage.cache_read_input_tokens ?? undefined,
+                        thoughtsTokenCount: usage.output_tokens_details?.thinking_tokens,
+                    }
                     yield {
                         type: "usage",
                         inputTokens: usage.input_tokens || 0,
@@ -158,14 +168,33 @@ export class VertexHandler extends ApiHandler {
                     }
                     break
                 }
-                case "message_delta":
+                case "message_delta": {
+                    const cost =
+                        responseTokens && chunk.delta?.stop_reason
+                            ? ApiHandler.calculateUsageCost(
+                                  model.info.pricing,
+                                  {
+                                      ...responseTokens,
+                                      outputTokens: Math.max(
+                                          responseTokens.outputTokens,
+                                          chunk.usage?.output_tokens ?? Number.NaN,
+                                      ),
+                                      thoughtsTokenCount:
+                                          chunk.usage?.output_tokens_details?.thinking_tokens ??
+                                          responseTokens.thoughtsTokenCount,
+                                  },
+                                  sentAtMs,
+                              )
+                            : undefined
                     yield {
                         type: "usage",
                         inputTokens: 0,
                         outputTokens: chunk.usage?.output_tokens || 0,
                         ...(chunk.usage ? getThinkingTokens(chunk.usage) : undefined),
+                        ...(cost?.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                     }
                     break
+                }
                 case "message_stop":
                     break
                 case "content_block_start":

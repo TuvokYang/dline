@@ -7,7 +7,7 @@ import { getAllApiKeys, resetAllStores } from "@core/storage/secrets"
 import { EmptyRequest } from "@shared/proto/dline/common"
 import { ServerTool } from "@shared/proto/dline/models/metadata"
 import { ApiProfile, ImageGenerationSource } from "@shared/proto/dline/profile"
-import { flatMeteredPricing, readPriceSet } from "@shared/providers/pricing-shape"
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import { PROVIDER_OPTIONS } from "@shared/providers/providers"
 import { Logger } from "@shared/services/Logger"
 import { expect } from "chai"
@@ -259,7 +259,7 @@ describe("getApiProfiles", () => {
 
         expect(profile.imageSource).to.equal(ImageGenerationSource.IMAGE_GENERATION_SOURCE_GPT_SUBSCRIPTION)
         expect(profile.imageModelId).to.equal("gpt-image-2.5")
-        expect(profile.schemaVersion).to.equal(4)
+        expect(profile.schemaVersion).to.equal(5)
     })
 
     it("keeps a legacy missing image source without image bindings as None", () => {
@@ -316,7 +316,7 @@ describe("getApiProfiles", () => {
         })
 
         expect(profile.anthropic?.disabledServerTools).to.deep.equal([])
-        expect(profile.schemaVersion).to.equal(4)
+        expect(profile.schemaVersion).to.equal(5)
     })
 
     it("keeps hosted tool disables chosen after the reset", () => {
@@ -330,10 +330,10 @@ describe("getApiProfiles", () => {
         })
 
         expect(profile.anthropic?.disabledServerTools).to.deep.equal([ServerTool.WEB_SEARCH])
-        expect(profile.schemaVersion).to.equal(4)
+        expect(profile.schemaVersion).to.equal(5)
     })
 
-    it("rewrites a legacy flat price into the published metered shape", () => {
+    it("rewrites a legacy flat price into the canonical pricing declaration", () => {
         // Stored before the published shape existed, so the rate sits directly on
         // the provider config. Reading it without rewriting would leave the old
         // spelling on disk for the next reader.
@@ -346,11 +346,12 @@ describe("getApiProfiles", () => {
             deepseek: { inputPrice: 0.28, outputPrice: 0.42, cacheReadsPrice: 0.028 },
         })
 
-        const prices = profile.deepseek?.pricing?.metered?.strategy?.flat?.prices
+        const prices = profile.deepseek?.pricing?.strategy?.flat?.prices
         expect(prices?.inputPrice).to.equal(0.28)
         expect(prices?.outputPrice).to.equal(0.42)
         expect(prices?.cacheReadPrice).to.equal(0.028)
-        expect(profile.schemaVersion).to.equal(4)
+        expect(profile.deepseek?.pricing?.metered).to.equal(undefined)
+        expect(profile.schemaVersion).to.equal(5)
     })
 
     it("moves a Profile stored against a retired OpenCode Go provider onto OpenCode", () => {
@@ -372,7 +373,7 @@ describe("getApiProfiles", () => {
         // OPEN_CODE_MODE_GO selects the catalog the retired id served.
         expect(profile.opencode?.mode).to.equal(2)
         expect(profile.opencode?.model?.customModelEnabled).to.equal(true)
-        expect(profile.schemaVersion).to.equal(4)
+        expect(profile.schemaVersion).to.equal(5)
     })
 
     it("moves a Profile stored against a retired mainland catalog onto its provider", () => {
@@ -404,9 +405,13 @@ describe("getApiProfiles", () => {
             deepseek: { pricing: stored },
         })
 
-        const prices = profile.deepseek?.pricing?.metered?.strategy?.flat?.prices
-        expect(readPriceSet(prices)).to.deep.equal(readPriceSet(stored.metered?.strategy?.flat?.prices))
-        expect(profile.schemaVersion).to.equal(4)
+        const prices = profile.deepseek?.pricing?.strategy?.flat?.prices
+        expect(prices?.inputPrice).to.equal(1.5)
+        expect(prices?.outputPrice).to.equal(2.5)
+        expect(prices?.cacheWritePrice).to.equal(0.75)
+        expect(prices?.cacheReadPrice).to.equal(0.25)
+        expect(profile.deepseek?.pricing?.metered).to.equal(undefined)
+        expect(profile.schemaVersion).to.equal(5)
     })
 
     it("carries no price when the legacy config declared no rate", () => {
@@ -863,9 +868,9 @@ describe("getApiProfiles", () => {
         expect(response.profiles[0].modelInfo?.capabilities?.contextWindow).to.equal(256_000)
         expect(response.profiles[0].modelInfo?.capabilities?.maxTokens).to.equal(8_192)
         expect(response.profiles[0].modelInfo?.capabilities?.supportsPromptCache).to.equal(true)
-        const responsePricing = readPriceSet(response.profiles[0].modelInfo?.pricing?.metered?.strategy?.flat?.prices)
-        expect(responsePricing.inputPrice).to.equal(1)
-        expect(responsePricing.outputPrice).to.equal(3)
+        const responsePricing = response.profiles[0].modelInfo?.pricing?.strategy?.flat?.prices
+        expect(responsePricing?.inputPrice).to.equal(1)
+        expect(responsePricing?.outputPrice).to.equal(3)
 
         const storedProfiles = JSON.parse(await fs.readFile(storedProfilesPath, "utf8"))
         // Compare the persisted document, not in-memory key presence: JSON drops
@@ -874,10 +879,8 @@ describe("getApiProfiles", () => {
             id: "gpt-compatible",
             capabilities: { contextWindow: 256_000 },
             pricing: {
-                metered: {
-                    currency: "USD",
-                    strategy: { flat: { prices: { inputPrice: 1, outputPrice: 3 } } },
-                },
+                currency: "USD",
+                strategy: { flat: { prices: { inputPrice: 1, outputPrice: 3 } } },
             },
         })
 

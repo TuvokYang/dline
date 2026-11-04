@@ -134,8 +134,9 @@ export async function createVercelAIGatewayStream(
         ...getOpenAIToolParams(tools),
     }
 
+    const sentAtMs = Date.now()
     // @ts-expect-error-next-line
     const stream = await client.chat.completions.create(requestPayload)
 
-    return stream
+    return { stream, sentAtMs }
 }

@@ -1,6 +1,5 @@
 import { ProfileCapabilityIcons } from "@components/settings/providers/ProfileCapabilityIcons"
 import type { ApiProfile } from "@shared/proto/dline/profile"
-import { readPriceSet } from "@shared/providers/pricing-shape"
 import { CheckIcon, SettingsIcon } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
@@ -8,6 +7,7 @@ import { useApiProfiles } from "@/components/settings/providers/useApiProfiles"
 import { updateSetting } from "@/components/settings/utils/settingsHandlers"
 import { Switch } from "@/components/ui/switch"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { getCurrencySymbol } from "@/utils/currency"
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip"
 import type { TransitionDraftComposer, TransitionDraftContent } from "../mode-switch/transitionDraft"
 import { ProfileSwitchDialog } from "../profile-switch/ProfileSwitchDialog"
@@ -108,9 +108,13 @@ const ModelSwitcher: React.FC<ModelSwitcherProps> = ({ onOpenSettings, draft, dr
     if (info) {
         if (info.capabilities?.contextWindow)
             tooltipLines.push(`Context: ${info.capabilities.contextWindow.toLocaleString()} tokens`)
-        const rates = readPriceSet(info.pricing?.metered?.strategy?.flat?.prices)
-        if (rates.inputPrice > 0 || rates.outputPrice > 0)
-            tooltipLines.push(`In: $${rates.inputPrice}/M | Out: $${rates.outputPrice}/M`)
+        if (info.pricing?.strategy?.flat) {
+            const prices = info.pricing.strategy.flat.prices
+            const symbol = info.pricing.currency?.trim() ? getCurrencySymbol(info.pricing.currency) : ""
+            const input = prices?.inputPrice === undefined ? "—" : `${symbol}${prices.inputPrice}`
+            const output = prices?.outputPrice === undefined ? "—" : `${symbol}${prices.outputPrice}`
+            tooltipLines.push(`In: ${input}/M | Out: ${output}/M`)
+        }
     }
     const tooltip = tooltipLines.join("\n")
 
@@ -325,11 +329,15 @@ const ModelSwitcher: React.FC<ModelSwitcherProps> = ({ onOpenSettings, draft, dr
                                     if (mi) {
                                         if (mi.capabilities?.contextWindow)
                                             capLines.push(`Context: ${mi.capabilities.contextWindow.toLocaleString()} tokens`)
-                                        {
-                                            const rates = readPriceSet(mi.pricing?.metered?.strategy?.flat?.prices)
-                                            if (mi.pricing?.metered?.strategy?.flat) {
-                                                capLines.push(`In: $${rates.inputPrice}/M | Out: $${rates.outputPrice}/M`)
-                                            }
+                                        if (mi.pricing?.strategy?.flat) {
+                                            const prices = mi.pricing.strategy.flat.prices
+                                            const symbol = mi.pricing.currency?.trim()
+                                                ? getCurrencySymbol(mi.pricing.currency)
+                                                : ""
+                                            const input = prices?.inputPrice === undefined ? "—" : `${symbol}${prices.inputPrice}`
+                                            const output =
+                                                prices?.outputPrice === undefined ? "—" : `${symbol}${prices.outputPrice}`
+                                            capLines.push(`In: ${input}/M | Out: ${output}/M`)
                                         }
                                         if (mi.capabilities?.supportsReasoning)
                                             capLines.push(

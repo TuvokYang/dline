@@ -5,7 +5,6 @@
 
 import type { ModelInfo } from "@shared/api"
 import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
-import { flatPricing } from "./pricing"
 
 /** Provider baseline used for newly listed Codex models that are not in the bundled catalog yet. */
 export const openAiCodexModelInfoSaneDefaults: Omit<ModelInfo, "id"> = {
@@ -19,10 +18,9 @@ export const openAiCodexModelInfoSaneDefaults: Omit<ModelInfo, "id"> = {
         supportsPromptCache: true,
         supportsStreaming: true,
     },
-    pricing: flatPricing(0, 0),
 }
 
-/** Subscription limits and costs remain provider-owned rather than copied from API-key pricing. */
+/** Subscription limits remain provider-owned; absent published prices stay absent. */
 function codexFrontierModel(id: string, details: Pick<ModelInfo, "name" | "description"> = {}): ModelInfo {
     return {
         id,
@@ -33,7 +31,6 @@ function codexFrontierModel(id: string, details: Pick<ModelInfo, "name" | "descr
             supportsReasoning: true,
             tools: [...(openAiCodexModelInfoSaneDefaults.capabilities?.tools ?? [])],
         },
-        pricing: { ...openAiCodexModelInfoSaneDefaults.pricing },
     }
 }
 

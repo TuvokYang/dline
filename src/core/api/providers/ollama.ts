@@ -69,6 +69,7 @@ export class OllamaHandler extends ApiHandler {
     @withRetry({ retryAllErrors: true })
     async *createMessage(systemPrompt: string, messages: ClineStorageMessage[], tools?: ChatCompletionTool[]): ApiStream {
         const client = this.ensureClient()
+        const model = this.getModel()
         const ollamaMessages: Message[] = [{ role: "system", content: systemPrompt }, ...convertToOllamaMessages(messages)]
 
         try {
@@ -77,7 +78,7 @@ export class OllamaHandler extends ApiHandler {
             let timedOut = false
 
             const request = {
-                model: this.getModel().id,
+                model: model.id,
                 messages: ollamaMessages,
                 stream: true as const,
                 options: {
@@ -86,9 +87,17 @@ export class OllamaHandler extends ApiHandler {
                 tools: tools as any,
             }
             const identity = ApiHandler.identifyProviderAttempt("ollama", request)
-            const apiPromise = ApiHandler.observeProviderStream(identity, () => client.chat(request), {
-                classifyError: () => (timedOut ? "failed" : undefined),
-            })
+            let sentAtMs = Number.NaN
+            const apiPromise = ApiHandler.observeProviderStream(
+                identity,
+                () => {
+                    sentAtMs = Date.now()
+                    return client.chat(request)
+                },
+                {
+                    classifyError: () => (timedOut ? "failed" : undefined),
+                },
+            )
             void apiPromise
                 .then(async (lateStream) => {
                     if (!timedOut) return
@@ -153,10 +162,15 @@ export class OllamaHandler extends ApiHandler {
                     }
                     // Handle token usage if available
                     if (chunk.eval_count !== undefined || chunk.prompt_eval_count !== undefined) {
+                        const tokens = { inputTokens: chunk.prompt_eval_count || 0, outputTokens: chunk.eval_count || 0 }
+                        const cost =
+                            chunk.done && chunk.prompt_eval_count !== undefined && chunk.eval_count !== undefined
+                                ? ApiHandler.calculateUsageCost(model.info.pricing, tokens, sentAtMs)
+                                : undefined
                         yield {
                             type: "usage",
-                            inputTokens: chunk.prompt_eval_count || 0,
-                            outputTokens: chunk.eval_count || 0,
+                            ...tokens,
+                            ...(cost?.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                         }
                     }
                 }

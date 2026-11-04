@@ -2,7 +2,7 @@
 import type { ModelInfo } from "@shared/proto/dline/models"
 import { type ModelCapabilities, type ModelPricing, ServerTool } from "@shared/proto/dline/models/metadata"
 import { flatMeteredPricing } from "@shared/providers/pricing-shape"
-import { fireEvent, render, screen } from "@testing-library/react"
+import { act, fireEvent, render, screen } from "@testing-library/react"
 import React from "react"
 import { describe, expect, it, vi } from "vitest"
 import { ModelConfiguration } from "./ModelConfiguration"
@@ -91,7 +91,7 @@ vi.mock("./DebouncedTextField", () => ({
 }))
 
 /**
- * A metered price whose strategy is token bands.
+ * A model price whose strategy is token bands.
  *
  * The pricing tier editor only edits the band strategy, so a fixture that used
  * the retired flat `{ tiers }` shape would leave the editor with nothing to
@@ -99,17 +99,13 @@ vi.mock("./DebouncedTextField", () => ({
  */
 function bandedPricing(bands: readonly { maxInputTokens?: number }[]): ModelPricing {
     return {
-        metered: {
-            currency: "USD",
-            strategy: {
-                contextWindow: {
-                    // Plain band objects: the generated `ContextWindowBand` is a
-                    // type-only export here, so it has no runtime factory.
-                    bands: bands.map((band) => ({
-                        maxInputTokens: band.maxInputTokens,
-                        prices: { inputPrice: 0, outputPrice: 0 },
-                    })),
-                },
+        currency: "USD",
+        strategy: {
+            contextWindow: {
+                bands: bands.map((band) => ({
+                    maxInputTokens: band.maxInputTokens,
+                    prices: { inputPrice: 0, outputPrice: 0 },
+                })),
             },
         },
     }
@@ -142,7 +138,7 @@ describe("ModelConfiguration", () => {
         expect(screen.getByLabelText("Supports Images")).toBeChecked()
     })
 
-    it("adds and edits custom context and pricing tiers", () => {
+    it("adds and edits custom context and pricing tiers", async () => {
         const onCapabilitiesUpdate = vi.fn()
         const onPricingUpdate = vi.fn()
 
@@ -168,16 +164,15 @@ describe("ModelConfiguration", () => {
             contextWindowTiers: [{ id: "long", contextWindow: 128_000, label: "128K", apiModelSuffix: "" }],
         })
 
-        fireEvent.click(screen.getByRole("button", { name: "Add Pricing Tier" }))
-        // A new band carries only the bound and the two base rates the editor owns.
-        // Cache rates stay unpublished rather than being invented as zero.
+        await act(async () => {
+            fireEvent.click(screen.getByRole("button", { name: "Add Pricing Tier" }))
+        })
+        // The sole initial band is unbounded; unpublished rates remain absent.
         expect(onPricingUpdate).toHaveBeenCalledWith({
-            metered: {
-                currency: "USD",
-                strategy: {
-                    contextWindow: {
-                        bands: [{ maxInputTokens: 128_000, prices: { inputPrice: 0, outputPrice: 0 } }],
-                    },
+            currency: "USD",
+            strategy: {
+                contextWindow: {
+                    bands: [{ prices: {} }],
                 },
             },
         })
@@ -209,7 +204,7 @@ describe("ModelConfiguration", () => {
             capabilities: {
                 contextWindowTiers: [{ id: "standard", contextWindow: 272_000, label: "272K" }],
             } as ModelCapabilities,
-            pricing: bandedPricing([{ maxInputTokens: 128_000 }]),
+            pricing: bandedPricing([{ maxInputTokens: 128_000 }, {}]),
         }
 
         render(
@@ -501,8 +496,8 @@ describe("ModelConfiguration", () => {
 
         expect(screen.getByLabelText("Input Price (¥/1M tokens)")).toHaveValue("3")
         expect(screen.getByLabelText("Output Price (¥/1M tokens)")).toHaveValue("6")
-        expect(screen.getByLabelText("Cache Writes (¥/M)")).toHaveValue("3")
-        expect(screen.getByLabelText("Cache Reads (¥/M)")).toHaveValue("0.025")
+        expect(screen.getByLabelText("Cache Writes (¥/1M tokens)")).toHaveValue("3")
+        expect(screen.getByLabelText("Cache Reads (¥/1M tokens)")).toHaveValue("0.025")
     })
 
     it("places options with temperature before capabilities and pricing", () => {

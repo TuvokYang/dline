@@ -45,8 +45,8 @@ describe("VercelAIGatewayHandler", () => {
             result.id.should.equal(selectedModelId)
             result.info.capabilities?.maxTokens?.should.equal(123456)
             result.info.description?.should.equal(customModelInfo.description)
-            readPriceSet(result.info.pricing?.metered?.strategy?.flat?.prices).inputPrice.should.equal(1.25)
-            readPriceSet(result.info.pricing?.metered?.strategy?.flat?.prices).outputPrice.should.equal(7.5)
+            readPriceSet(result.info.pricing?.strategy?.flat?.prices).inputPrice.should.equal(1.25)
+            readPriceSet(result.info.pricing?.strategy?.flat?.prices).outputPrice.should.equal(7.5)
         })
 
         it("should preserve configured model ID when model info is missing", () => {
@@ -107,6 +107,7 @@ describe("VercelAIGatewayHandler", () => {
                                     usage: {
                                         prompt_tokens: 11,
                                         completion_tokens: 7,
+                                        cost: 0,
                                     },
                                 },
                             ]),
@@ -148,6 +149,7 @@ describe("VercelAIGatewayHandler", () => {
                                     usage: {
                                         prompt_tokens: 1000,
                                         completion_tokens: 200,
+                                        cost: 0,
                                         prompt_tokens_details: {
                                             cached_tokens: 500,
                                         },

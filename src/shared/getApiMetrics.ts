@@ -66,10 +66,7 @@ export function getApiMetrics(messages: UiMessage[]): ApiMetrics {
                 }
                 if (typeof cost === "number") {
                     result.totalCost += cost
-                }
-                // Extract currency from the first message that has it
-                if (!result.currency && typeof parsedData.currency === "string") {
-                    result.currency = parsedData.currency
+                    result.currency = typeof parsedData.currency === "string" ? parsedData.currency : undefined
                 }
             } catch {
                 // Ignore JSON parse errors

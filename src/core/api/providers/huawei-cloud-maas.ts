@@ -66,6 +66,7 @@ export class HuaweiCloudMaaSHandler extends ApiHandler {
             { role: "system", content: systemPrompt },
             ...convertToOpenAiMessages(messages),
         ]
+        const sentAtMs = Date.now()
         const stream = await client.chat.completions.create({
             model: model.id,
             max_completion_tokens: model.info.capabilities?.maxTokens,
@@ -125,12 +126,17 @@ export class HuaweiCloudMaaSHandler extends ApiHandler {
             // Output usage when stream is finished
             if (!didOutputUsage && chunk.choices?.[0]?.finish_reason) {
                 if (finalUsage) {
-                    yield {
-                        type: "usage",
+                    const tokens = {
                         inputTokens: finalUsage.prompt_tokens || 0,
                         outputTokens: finalUsage.completion_tokens || 0,
                         cacheWriteTokens: 0,
                         cacheReadTokens: 0,
+                    }
+                    const cost = ApiHandler.calculateUsageCost(model.info.pricing, tokens, sentAtMs)
+                    yield {
+                        type: "usage",
+                        ...tokens,
+                        ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                     }
                 }
                 didOutputUsage = true

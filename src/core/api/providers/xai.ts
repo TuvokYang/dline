@@ -58,10 +58,12 @@ export class XAIHandler extends ApiHandler {
     @withRetry()
     async *createMessage(systemPrompt: string, messages: ClineStorageMessage[], tools?: OpenAITool[]): ApiStream {
         const client = this.ensureClient()
-        const modelId = this.getModel().id
+        const model = this.getModel()
+        const modelId = model.id
+        const sentAtMs = Date.now()
         const stream = await client.chat.completions.create({
             model: modelId,
-            max_completion_tokens: this.getModel().info.capabilities?.maxTokens,
+            max_completion_tokens: model.info.capabilities?.maxTokens,
             temperature: 0,
             messages: [{ role: "system", content: systemPrompt }, ...convertToOpenAiMessages(messages)],
             stream: true,
@@ -102,10 +104,12 @@ export class XAIHandler extends ApiHandler {
                     // @ts-expect-error-next-line
                     cacheWriteTokens: chunk.usage.prompt_cache_miss_tokens,
                 })
+                const tokens = { ...inputUsage, outputTokens: chunk.usage.completion_tokens || 0 }
+                const cost = ApiHandler.calculateUsageCost(model.info.pricing, tokens, sentAtMs)
                 yield {
                     type: "usage",
-                    ...inputUsage,
-                    outputTokens: chunk.usage.completion_tokens || 0,
+                    ...tokens,
+                    ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                 }
             }
         }

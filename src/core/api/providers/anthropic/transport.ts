@@ -12,6 +12,11 @@ export interface AnthropicTransportOptions {
 }
 
 type AnthropicMessagesStream = AsyncIterable<AnthropicMessagesStreamEvent>
+
+export interface OpenedAnthropicMessagesStream {
+    stream: AnthropicMessagesStream
+    sentAtMs: number
+}
 type BetaCreate = (
     params: AnthropicMessagesRequestBody,
     options?: AnthropicTransportOptions & { headers?: Record<string, string> },
@@ -25,7 +30,7 @@ type BetaCreate = (
  * retry stays with the provider.
  */
 export interface AnthropicMessagesTransport {
-    open(body: AnthropicMessagesRequestBody, headers: Record<string, string>): Promise<AnthropicMessagesStream>
+    open(body: AnthropicMessagesRequestBody, headers: Record<string, string>): Promise<OpenedAnthropicMessagesStream>
 }
 
 /** Per-request headers stay off the client defaults: the identity version is resolved for each request. */
@@ -47,18 +52,19 @@ export class ApiKeyAnthropicTransport implements AnthropicMessagesTransport {
         private readonly options?: AnthropicTransportOptions,
     ) {}
 
-    open(body: AnthropicMessagesRequestBody, headers: Record<string, string>): Promise<AnthropicMessagesStream> {
-        if (this.fastMode) {
-            return (this.client.beta.messages.create as unknown as BetaCreate)(
-                {
-                    ...body,
-                    betas: [ANTHROPIC_FAST_MODE_BETA],
-                    speed: "fast",
-                },
-                requestOptions(headers, this.options),
-            )
-        }
-        return this.client.messages.create(body, requestOptions(headers, this.options)) as Promise<AnthropicMessagesStream>
+    async open(body: AnthropicMessagesRequestBody, headers: Record<string, string>): Promise<OpenedAnthropicMessagesStream> {
+        const sentAtMs = Date.now()
+        const stream = this.fastMode
+            ? await (this.client.beta.messages.create as unknown as BetaCreate)(
+                  {
+                      ...body,
+                      betas: [ANTHROPIC_FAST_MODE_BETA],
+                      speed: "fast",
+                  },
+                  requestOptions(headers, this.options),
+              )
+            : await (this.client.messages.create(body, requestOptions(headers, this.options)) as Promise<AnthropicMessagesStream>)
+        return { stream, sentAtMs }
     }
 }
 
@@ -89,7 +95,7 @@ export class ClaudeCodeSubscriptionTransport implements AnthropicMessagesTranspo
         private readonly renewClient: () => Promise<Anthropic>,
     ) {}
 
-    async open(body: AnthropicMessagesRequestBody, headers: Record<string, string>): Promise<AnthropicMessagesStream> {
+    async open(body: AnthropicMessagesRequestBody, headers: Record<string, string>): Promise<OpenedAnthropicMessagesStream> {
         try {
             return await this.post(body, headers)
         } catch (error) {
@@ -99,10 +105,15 @@ export class ClaudeCodeSubscriptionTransport implements AnthropicMessagesTranspo
         }
     }
 
-    private post(body: AnthropicMessagesRequestBody, headers: Record<string, string>): Promise<AnthropicMessagesStream> {
-        return (this.client.beta.messages.create as unknown as BetaCreate)(
+    private async post(
+        body: AnthropicMessagesRequestBody,
+        headers: Record<string, string>,
+    ): Promise<OpenedAnthropicMessagesStream> {
+        const sentAtMs = Date.now()
+        const stream = await (this.client.beta.messages.create as unknown as BetaCreate)(
             { ...body, betas: buildClaudeCodeBetas() },
             { headers },
         )
+        return { stream, sentAtMs }
     }
 }

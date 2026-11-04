@@ -1,6 +1,7 @@
 import { discoverProviderModels } from "@core/model-registry/remote/model-refresh"
 import { ensureCacheDirectoryExists, GlobalFileNames } from "@core/storage/disk"
 import type { ModelInfo } from "@shared/api"
+import { migrateModelPricing } from "@shared/providers/pricing-shape"
 import { fileExistsAtPath } from "@utils/fs"
 import fs from "fs/promises"
 import path from "path"
@@ -43,7 +44,10 @@ export async function readClineModelsFromCache(): Promise<Record<string, ModelIn
         }
 
         const fileContents = await fs.readFile(filePath, "utf8")
-        return JSON.parse(fileContents)
+        const models = JSON.parse(fileContents) as Record<string, ModelInfo>
+        return Object.fromEntries(
+            Object.entries(models).map(([id, model]) => [id, { ...model, pricing: migrateModelPricing(model.pricing) }]),
+        )
     } catch (error) {
         Logger.error("Error reading cached Cline models:", error)
         return undefined

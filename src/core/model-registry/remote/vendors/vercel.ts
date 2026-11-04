@@ -69,13 +69,13 @@ export class VercelAiGatewayModelSource extends ModelListingSource {
         }
     }
 
-    protected override readPricing(raw: unknown): ModelPricing {
-        return flatMeteredPricing(
-            readPerMillionPrice(raw, "pricing.input") ?? 0,
-            readPerMillionPrice(raw, "pricing.output") ?? 0,
-            readPerMillionPrice(raw, "pricing.input_cache_write") ?? 0,
-            readPerMillionPrice(raw, "pricing.input_cache_read") ?? 0,
-        )
+    protected override readPricing(raw: unknown): ModelPricing | undefined {
+        const input = readPerMillionPrice(raw, "pricing.input")
+        const output = readPerMillionPrice(raw, "pricing.output")
+        const cacheWrite = readPerMillionPrice(raw, "pricing.input_cache_write")
+        const cacheRead = readPerMillionPrice(raw, "pricing.input_cache_read")
+        if ([input, output, cacheWrite, cacheRead].every((rate) => rate === undefined)) return undefined
+        return flatMeteredPricing(input, output, cacheWrite, cacheRead)
     }
 }
 

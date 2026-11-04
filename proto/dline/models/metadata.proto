@@ -84,8 +84,8 @@ message ModelCapabilities {
 
 /** One complete price set. Every applied unit price comes from exactly one of these. */
 message PriceSet {
-  double input_price = 1;
-  double output_price = 2;
+  optional double input_price = 1;
+  optional double output_price = 2;
   optional double cache_write_price = 3;
   optional double cache_read_price = 4;
   /** Billed instead of output_price while the model is in thinking mode. */
@@ -116,7 +116,7 @@ message ContextWindowPricing {
  * one of them and a request's price cannot depend on the order they are listed
  * in. Every instant no window covers bills at the schedule's default rate.
  */
-message TimeWindow {
+message PricingTimeWindow {
   /** Minutes from local midnight, inclusive. */
   uint32 start_minute = 1;
   /** Minutes from local midnight, exclusive. 1440 is the end of the day. */
@@ -180,7 +180,7 @@ message TimeOfDayPricing {
     ContextWindowPricing default_bands = 7;
   }
   /** Non-overlapping local-time intervals, each carrying its own rate. */
-  repeated TimeWindow time_windows = 8;
+  repeated PricingTimeWindow time_windows = 8;
 }
 
 /** How a model's price is chosen. Exactly one strategy applies. */
@@ -192,35 +192,41 @@ message PricingStrategy {
   }
 }
 
-/** Price per token, published by the seller. */
+/** Legacy envelope, retained only to read previously stored prices. */
 message MeteredPricing {
+  option deprecated = true;
   string currency = 1;
   PricingStrategy strategy = 2;
 }
 
-/** Covered by a plan or prepaid quota. Tracked, but not billed per request. */
+/** Legacy account-mode marker without a numeric model price. Read compatibility only. */
 message SubscriptionPricing {
+  option deprecated = true;
   reserved 1;
 }
 
-/** No charge and no quota. */
+/** Legacy account-mode marker without a currency or rate. Read compatibility only. */
 message FreePricing {
+  option deprecated = true;
   reserved 1;
 }
 
 /**
- * Per-model billing terms.
+ * One model price declaration, independent of account payment or quota mode.
  *
- * An absent ModelPricing means the seller publishes no terms, which callers must
- * treat as unknown rather than as free.
+ * Currency and strategy are the only fields written by current producers.
+ * Deprecated envelopes are consumed once at read boundaries and never written back.
+ * An absent price remains unknown; a published zero is represented by zero rates.
  */
 message ModelPricing {
-  // New fields start above the retired numbers: reusing 1-8 for the mode
-  // branches would silently reinterpret previously stored prices.
-  oneof mode {
-    MeteredPricing metered = 9;
-    SubscriptionPricing subscription = 10;
-    FreePricing free = 11;
+  optional string currency = 12;
+  optional PricingStrategy strategy = 13;
+
+  // Decode-only compatibility. Never reuse these numbers for canonical fields.
+  oneof legacy_mode {
+    MeteredPricing metered = 9 [deprecated = true];
+    SubscriptionPricing subscription = 10 [deprecated = true];
+    FreePricing free = 11 [deprecated = true];
   }
   // Former flat price and tier fields. Kept reserved so no later field reuses
   // their numbers with a different meaning.

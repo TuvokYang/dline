@@ -3,7 +3,6 @@ import { createOpenAIClient } from "@shared/net"
 import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import OpenAI from "openai"
 import { ClineStorageMessage } from "@/shared/messages/content"
-import { calculateApiCostOpenAI } from "@/utils/cost"
 import { ApiHandler, ApiHandlerContext } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { ApiStream } from "../transform/stream"
@@ -128,6 +127,7 @@ export class CerebrasHandler extends ApiHandler {
 
         try {
             const model = this.getModel()
+            const sentAtMs = Date.now()
             const stream = await client.chat.completions.create({
                 model: model.id,
                 messages: cerebrasMessages,
@@ -183,10 +183,14 @@ export class CerebrasHandler extends ApiHandler {
                 // Handle usage information from Cerebras API
                 // Usage is typically only available in the final chunk
                 if (chunk.usage) {
-                    const totalCost = this.calculateCost({
-                        inputTokens: chunk.usage.prompt_tokens || 0,
-                        outputTokens: chunk.usage.completion_tokens || 0,
-                    })
+                    const cost = ApiHandler.calculateUsageCost(
+                        model.info.pricing,
+                        {
+                            inputTokens: chunk.usage.prompt_tokens || 0,
+                            outputTokens: chunk.usage.completion_tokens || 0,
+                        },
+                        sentAtMs,
+                    )
 
                     yield {
                         type: "usage",
@@ -194,7 +198,7 @@ export class CerebrasHandler extends ApiHandler {
                         outputTokens: chunk.usage.completion_tokens || 0,
                         cacheReadTokens: 0,
                         cacheWriteTokens: 0,
-                        totalCost,
+                        ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                     }
                 }
             }
@@ -256,10 +260,5 @@ export class CerebrasHandler extends ApiHandler {
                 // Default rate limits for unknown models
                 return { requestsPerMinute: 30, tokensPerMinute: 60_000 }
         }
-    }
-
-    private calculateCost({ inputTokens, outputTokens }: { inputTokens: number; outputTokens: number }): number {
-        // Cerebras reports cache usage inclusively, which is the OpenAI convention.
-        return calculateApiCostOpenAI(this.getModel().info, inputTokens, outputTokens)
     }
 }

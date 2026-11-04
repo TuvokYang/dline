@@ -86,7 +86,7 @@ export function readString(source: unknown, ...paths: string[]): string | undefi
  * catalog stores. Vendors publish these either as numbers or as strings.
  */
 export function readPerMillionPrice(source: unknown, path: string): number | undefined {
-    const asNumber = readPositiveNumber(source, path)
+    const asNumber = readNonNegativeNumber(source, path)
     if (asNumber !== undefined) {
         return asNumber * 1_000_000
     }
@@ -95,7 +95,7 @@ export function readPerMillionPrice(source: unknown, path: string): number | und
         return undefined
     }
     const parsed = Number.parseFloat(asText)
-    return Number.isFinite(parsed) && parsed > 0 ? parsed * 1_000_000 : undefined
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed * 1_000_000 : undefined
 }
 
 /** Model ids that never belong in a chat model picker. */

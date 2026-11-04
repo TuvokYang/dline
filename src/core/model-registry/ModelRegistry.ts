@@ -7,17 +7,14 @@
 import { getDlineHomePath } from "@core/storage/disk"
 import { ServerTool, serverToolFromJSON } from "@shared/proto/dline/models/metadata"
 import { getProviderCatalog, getProviderCatalogKeys, getProviderSeedConfig } from "@shared/providers/model-infos"
+import { migrateModelPricing } from "@shared/providers/pricing-shape"
 import type { ImageModelInfo, ModelInfo, ProviderModelsConfig } from "@shared/providers/types"
 import { Logger } from "@shared/services/Logger"
 import chokidar, { type FSWatcher } from "chokidar"
 import fs from "fs/promises"
 import * as path from "path"
-import {
-    DEFERRED_PROVIDER_IDS,
-    isAlternativeCatalogKey,
-    isListingDerivedModel,
-    isListingOwnedPlanCatalog,
-} from "./provider-catalog-policy"
+import { mapCatalogPricing } from "./model-pricing-migration"
+import { DEFERRED_PROVIDER_IDS, isAlternativeCatalogKey, isListingDerivedModel } from "./provider-catalog-policy"
 import { getProviderConfigFileName, getProviderIdFromConfigFile } from "./provider-config-file"
 import { reconcileProviderModels } from "./provider-model-reconciliation"
 
@@ -29,23 +26,6 @@ function enrichMissingSeedMetadata(providerId: string, config: ProviderModelsCon
         return config
     }
     return reconcileProviderModels(seedConfig, config, "fill-missing")
-}
-
-/**
- * Strip the vendor's metered rates from a model the seed cannot describe.
- *
- * The plan owns billing, not the listing: a Go Profile is billed by subscription
- * or by a time-of-day schedule, and the listing's flat per-token rate is what the
- * cash balance would cost. Keeping that rate for a newly released model would
- * report a charge this Profile never incurs, so the entry keeps its capabilities
- * and protocols and is billed like the rest of the plan.
- */
-function withoutPlanBilling(storedModel: ModelInfo, modelId: string, catalogKey: string): ModelInfo {
-    if (!isListingOwnedPlanCatalog(catalogKey)) {
-        return { ...storedModel, id: modelId }
-    }
-    const { pricing: _vendorRate, ...rest } = storedModel
-    return { ...rest, id: modelId }
 }
 
 function withRequiredServerTool(model: ModelInfo, tool: ServerTool): ModelInfo {
@@ -75,7 +55,7 @@ function parseProviderModelsConfig(providerId: string, raw: string): ProviderMod
             .map((tool) => (typeof tool === "string" ? serverToolFromJSON(tool) : tool))
             .filter((tool) => tool !== ServerTool.UNRECOGNIZED)
     }
-    return enrichMissingSeedMetadata(config.provider || providerId, config)
+    return enrichMissingSeedMetadata(config.provider || providerId, mapCatalogPricing(config, migrateModelPricing))
 }
 
 export class ModelRegistry {
@@ -367,7 +347,7 @@ export class ModelRegistry {
                               return [modelId, storedModel]
                           }
                           if (!seedModel) {
-                              return [modelId, withoutPlanBilling(storedModel, modelId, catalogKey)]
+                              return [modelId, { ...storedModel, id: modelId }]
                           }
                           return [
                               modelId,
@@ -378,6 +358,7 @@ export class ModelRegistry {
                                   // including a declaration that only publishes a
                                   // support flag.
                                   capabilities: storedModel.capabilities ?? seedModel.capabilities,
+                                  pricing: storedModel.pricing ?? seedModel.pricing,
                               },
                           ]
                       }),

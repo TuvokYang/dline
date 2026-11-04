@@ -21,7 +21,7 @@ import {
 } from "@core/storage/secrets"
 import { GPT_IMAGE_2_5_MODEL_ID, GPT_IMAGE_2_SUBSCRIPTION_MODEL_ID } from "@shared/image-generation"
 import { EmptyRequest } from "@shared/proto/dline/common"
-import type { ModelCapabilities } from "@shared/proto/dline/models/metadata"
+import type { ModelCapabilities, ModelPricing } from "@shared/proto/dline/models/metadata"
 import { ApiProfile, ApiProfilesResponse, ImageGenerationSource } from "@shared/proto/dline/profile"
 import { AnthropicProviderConfig } from "@shared/proto/dline/provider/anthropic"
 import { BedrockProviderConfig } from "@shared/proto/dline/provider/bedrock"
@@ -38,7 +38,7 @@ import {
     pickModelInfoOverride,
 } from "@shared/providers/model-info-overrides"
 import { getProviderCatalog } from "@shared/providers/model-infos"
-import { flatMeteredPricing } from "@shared/providers/pricing-shape"
+import { flatMeteredPricing, migrateModelPricing, modelPricingForWrite } from "@shared/providers/pricing-shape"
 import { PROFILE_PROVIDER_KEYS, resolveProfileCatalogKey } from "@shared/providers/profile-model-info"
 import { readProviderConfigField, withProviderConfigField } from "@shared/providers/provider-config"
 import { declaredServerTools } from "@shared/providers/server-tool-switches"
@@ -67,8 +67,9 @@ const API_PROFILES_FILE = "api_profiles.json"
  *    `metered.strategy.flat` shape.
  * 4: move a Profile stored against a retired catalog provider id onto the
  *    provider that owns that catalog.
+ * 5: consume deprecated pricing envelopes; write only currency and strategy.
  */
-const CURRENT_PROFILE_SCHEMA_VERSION = 4
+const CURRENT_PROFILE_SCHEMA_VERSION = 5
 
 /**
  * Bring one stored profile up to the current storage revision.
@@ -188,8 +189,8 @@ function migrateLegacyFlatPricing(rawProfile: unknown): { profile: unknown; migr
     if (inputPrice === undefined && outputPrice === undefined) return { profile: rawProfile, migrated: false }
 
     const migrated = flatMeteredPricing(
-        inputPrice ?? 0,
-        outputPrice ?? 0,
+        inputPrice,
+        outputPrice,
         numberOrUndefined(configRecord.cacheWritesPrice),
         numberOrUndefined(configRecord.cacheReadsPrice),
     )
@@ -200,6 +201,32 @@ function migrateLegacyFlatPricing(rawProfile: unknown): { profile: unknown; migr
         profile: { ...record, [String(providerKey)]: withProviderConfigField(rest, "pricing", migrated) },
         migrated: true,
     }
+}
+
+/** Map declared prices at the Profile read/write boundary without interpreting rates. */
+function mapProfilePricing(
+    profile: ApiProfile,
+    project: (pricing: ModelPricing | undefined) => ModelPricing | undefined,
+): boolean {
+    let changed = false
+    const upgrade = (pricing: ModelPricing | undefined) => {
+        const next = project(pricing)
+        if (JSON.stringify(next) !== JSON.stringify(pricing)) changed = true
+        return next
+    }
+    if (profile.modelInfo?.pricing) {
+        profile.modelInfo = { ...profile.modelInfo, pricing: upgrade(profile.modelInfo.pricing) }
+    }
+    for (const key of new Set(Object.values(PROFILE_PROVIDER_KEYS))) {
+        if (!key) continue
+        const config = profile[key]
+        if (!isPlainRecord(config)) continue
+        const pricing = readProviderConfigField(config, "pricing") as ModelPricing | undefined
+        if (pricing !== undefined) {
+            Object.assign(profile, { [key]: withProviderConfigField(config, "pricing", upgrade(pricing)) })
+        }
+    }
+    return changed
 }
 
 let apiProfilesWriteQueue: Promise<void> = Promise.resolve()
@@ -448,6 +475,8 @@ function normalizeApiProfileWithMigration(profile: unknown): { profile: ApiProfi
         }
     }
 
+    if (mapProfilePricing(normalized, migrateModelPricing)) migrated = true
+
     if (normalized.provider === "anthropic" && normalized.modelId) {
         const originalModelId = normalized.modelId
         const hadLegacyLongContextSuffix = originalModelId.endsWith(":1m:fast") || originalModelId.endsWith(":1m")
@@ -649,8 +678,9 @@ async function hydrateModelInfoFromRegistry(profiles: ApiProfile[]): Promise<boo
 
 export function serializeApiProfilesForStorage(profiles: ApiProfile[]): unknown[] {
     return profiles.map((profile) => {
-        const modelInfo = getProfileModelInfoOverride(profile)
         const sanitized = stripEmbeddedProviderSecrets(profile)
+        mapProfilePricing(sanitized, modelPricingForWrite)
+        const modelInfo = getProfileModelInfoOverride(sanitized)
         const serialized = ApiProfile.toJSON({ ...sanitized, apiKey: "", modelInfo: undefined }) as Record<string, unknown>
         serialized.enabled = sanitized.enabled
         delete serialized.apiKey

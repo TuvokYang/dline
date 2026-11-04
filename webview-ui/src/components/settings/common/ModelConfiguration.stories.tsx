@@ -1,5 +1,5 @@
 import type { ModelInfo } from "@shared/proto/dline/models"
-import type { TimeWindow } from "@shared/proto/dline/models/metadata"
+import type { PricingTimeWindow } from "@shared/proto/dline/models/metadata"
 import {
     type ContextWindowBand,
     type ModelCapabilities,
@@ -65,8 +65,8 @@ function ConfigurationFixture({ profileCapabilities, profilePricing, tiersEnable
                 fields={PRICING_FIELDS}
                 onCapabilitiesUpdate={(updates) => setCapabilities((current) => ({ ...current, ...updates }))}
                 onPricingUpdate={(updates) => {
-                    setPricing((current) => ({ ...current, ...updates }))
-                    if (updates.metered?.strategy?.contextWindow) setPricingTiersEnabled(true)
+                    setPricing(updates)
+                    if (updates.strategy?.contextWindow) setPricingTiersEnabled(true)
                 }}
                 pricing={pricing}
                 pricingTiersEnabled={pricingTiersEnabled}
@@ -113,7 +113,9 @@ export const SwitchToContextWindow: Story = {
         await openConfiguration(context)
         const canvas = within(context.canvasElement)
         await userEvent.click(canvas.getByLabelText("Pricing Mode"))
-        await userEvent.click(await canvas.findByRole("option", { name: "By context size" }))
+        await userEvent.click(
+            await within(context.canvasElement.ownerDocument.body).findByRole("option", { name: "By context size" }),
+        )
 
         await expect(canvas.queryByLabelText("Input Price ($/1M tokens)")).toBeNull()
         await expect(canvas.getByText("Pricing Tiers")).toBeVisible()
@@ -131,22 +133,24 @@ export const SwitchToTimeOfDay: Story = {
         await openConfiguration(context)
         const canvas = within(context.canvasElement)
         await userEvent.click(canvas.getByLabelText("Pricing Mode"))
-        await userEvent.click(await canvas.findByRole("option", { name: "By time of day" }))
+        await userEvent.click(
+            await within(context.canvasElement.ownerDocument.body).findByRole("option", { name: "By time of day" }),
+        )
 
-        await expect(canvas.getByLabelText("Default Input ($/1M)")).toHaveValue("2.5")
-        await expect(canvas.getByLabelText("Default Output ($/1M)")).toHaveValue("10")
+        await expect(canvas.getByLabelText("Default Input Price ($/1M tokens)")).toHaveValue("2.5")
+        await expect(canvas.getByLabelText("Default Output Price ($/1M tokens)")).toHaveValue("10")
         await expect(canvas.getByText("Time Windows")).toBeVisible()
         await userEvent.click(canvas.getByRole("button", { name: "Add Time Window" }))
         await expect(canvas.getByRole("button", { name: "Remove Time Window" })).toBeVisible()
     },
 }
 
-/** Without a strategy the catalog declared, an undeclared profile starts empty. */
+/** A Profile without an override inherits the catalog declaration. */
 export const EmptyProfile: Story = {
     play: async (context) => {
         await openConfiguration(context)
         const canvas = within(context.canvasElement)
-        await expect(canvas.getByLabelText("Input Price ($/1M tokens)")).toHaveValue("")
+        await expect(canvas.getByLabelText("Input Price ($/1M tokens)")).toHaveValue("2.5")
         await expect(canvas.getByLabelText("Pricing Mode")).toHaveTextContent("Flat rate")
     },
 }
@@ -156,26 +160,24 @@ export const EmptyProfile: Story = {
  * rate. The selector reports the stored shape instead of defaulting to flat, and
  * the window editor shows the stored bounds and rate.
  */
-const storedWindow: TimeWindow = {
+const storedWindow: PricingTimeWindow = {
     startMinute: 60,
     endMinute: 300,
     prices: { inputPrice: 1.5, outputPrice: 7.5, cacheWritePrice: 3.75, cacheReadPrice: 0.3 },
 }
 
 const storedSchedule: ModelPricing = {
-    metered: {
-        currency: "USD",
-        strategy: {
-            timeOfDay: {
-                schedule: {
-                    timezoneOffsetMinutes: 480,
-                    dayRule: PricingDayRule.PRICING_DAY_RULE_WEEKDAYS,
-                    defaultOnPublicHolidays: true,
-                    holidayCalendar: "CN",
-                },
-                defaultPrices: { inputPrice: 3, outputPrice: 15, cacheWritePrice: 3.75, cacheReadPrice: 0.3 },
-                timeWindows: [storedWindow],
+    currency: "USD",
+    strategy: {
+        timeOfDay: {
+            schedule: {
+                timezoneOffsetMinutes: 480,
+                dayRule: PricingDayRule.PRICING_DAY_RULE_WEEKDAYS,
+                defaultOnPublicHolidays: true,
+                holidayCalendar: "CN",
             },
+            defaultPrices: { inputPrice: 3, outputPrice: 15, cacheWritePrice: 3.75, cacheReadPrice: 0.3 },
+            timeWindows: [storedWindow],
         },
     },
 }
@@ -186,10 +188,10 @@ export const StoredTimeOfDay: Story = {
         await openConfiguration(context)
         const canvas = within(context.canvasElement)
         await expect(canvas.getByLabelText("Pricing Mode")).toHaveTextContent("By time of day")
-        await expect(canvas.getByLabelText("Default Input ($/1M)")).toHaveValue("3")
+        await expect(canvas.getByLabelText("Default Input Price ($/1M tokens)")).toHaveValue("3")
         await expect(canvas.getByLabelText(/Window 1 Start/)).toHaveValue("01:00")
         await expect(canvas.getByLabelText(/Window 1 End/)).toHaveValue("05:00")
-        await expect(canvas.getByLabelText("Window 1 Input ($/1M)")).toHaveValue("1.5")
+        await expect(canvas.getByLabelText("Window 1 Input Price ($/1M tokens)")).toHaveValue("1.5")
         // The windows are clock times in the seller's published offset, so the
         // editor must state that offset instead of implying the reader's zone.
         await expect(canvas.getByText(/Times are read as UTC\+08:00/)).toBeVisible()
@@ -197,18 +199,17 @@ export const StoredTimeOfDay: Story = {
 }
 
 /**
- * Bands the profile already stores. `pricingTiersEnabled` is what tells the
- * editor that an empty tier list is an explicit override rather than "inherit",
- * so the enabled story and the derived one must both show the tier editor.
+ * Stored context bands include one final unbounded band. The strategy determines
+ * the editor; the historical editing flag does not change the pricing declaration.
  */
 const storedBands: readonly ContextWindowBand[] = [
     { maxInputTokens: 128_000, prices: { inputPrice: 2.5, outputPrice: 10 } },
-    { maxInputTokens: 0, prices: { inputPrice: 5, outputPrice: 20 } },
+    { prices: { inputPrice: 5, outputPrice: 20 } },
 ]
 
 export const StoredContextWindow: Story = {
     args: {
-        profilePricing: { metered: { currency: "USD", strategy: { contextWindow: { bands: [...storedBands] } } } },
+        profilePricing: { currency: "USD", strategy: { contextWindow: { bands: [...storedBands] } } },
         tiersEnabled: true,
     },
     play: async (context) => {
@@ -227,22 +228,20 @@ export const StoredContextWindow: Story = {
 export const TwoWindowsOverOneDefault: Story = {
     args: {
         profilePricing: {
-            metered: {
-                currency: "USD",
-                strategy: {
-                    timeOfDay: {
-                        schedule: {
-                            timezoneOffsetMinutes: 480,
-                            dayRule: PricingDayRule.PRICING_DAY_RULE_WEEKDAYS,
-                            defaultOnPublicHolidays: true,
-                            holidayCalendar: "CN",
-                        },
-                        defaultPrices: { inputPrice: 2, outputPrice: 8 },
-                        timeWindows: [
-                            { startMinute: 540, endMinute: 720, prices: { inputPrice: 4, outputPrice: 16 } },
-                            { startMinute: 840, endMinute: 1080, prices: { inputPrice: 5, outputPrice: 20 } },
-                        ],
+            currency: "USD",
+            strategy: {
+                timeOfDay: {
+                    schedule: {
+                        timezoneOffsetMinutes: 480,
+                        dayRule: PricingDayRule.PRICING_DAY_RULE_WEEKDAYS,
+                        defaultOnPublicHolidays: true,
+                        holidayCalendar: "CN",
                     },
+                    defaultPrices: { inputPrice: 2, outputPrice: 8 },
+                    timeWindows: [
+                        { startMinute: 540, endMinute: 720, prices: { inputPrice: 4, outputPrice: 16 } },
+                        { startMinute: 840, endMinute: 1080, prices: { inputPrice: 5, outputPrice: 20 } },
+                    ],
                 },
             },
         },
@@ -251,10 +250,10 @@ export const TwoWindowsOverOneDefault: Story = {
         await openConfiguration(context)
         const canvas = within(context.canvasElement)
         await expect(canvas.getByLabelText("Pricing Mode")).toHaveTextContent("By time of day")
-        await expect(canvas.getByLabelText("Default Input ($/1M)")).toHaveValue("2")
+        await expect(canvas.getByLabelText("Default Input Price ($/1M tokens)")).toHaveValue("2")
         await expect(canvas.getByLabelText(/Window 1 Start/)).toHaveValue("09:00")
         await expect(canvas.getByLabelText(/Window 2 Start/)).toHaveValue("14:00")
-        await expect(canvas.getByLabelText("Window 2 Output ($/1M)")).toHaveValue("20")
+        await expect(canvas.getByLabelText("Window 2 Output Price ($/1M tokens)")).toHaveValue("20")
     },
 }
 
@@ -266,30 +265,28 @@ export const TwoWindowsOverOneDefault: Story = {
 export const WindowWithContextBands: Story = {
     args: {
         profilePricing: {
-            metered: {
-                currency: "USD",
-                strategy: {
-                    timeOfDay: {
-                        schedule: {
-                            timezoneOffsetMinutes: 0,
-                            dayRule: PricingDayRule.PRICING_DAY_RULE_ALL_DAYS,
-                            defaultOnPublicHolidays: false,
-                            holidayCalendar: "",
-                        },
-                        defaultPrices: { inputPrice: 1, outputPrice: 4 },
-                        timeWindows: [
-                            {
-                                startMinute: 0,
-                                endMinute: 360,
-                                bands: {
-                                    bands: [
-                                        { maxInputTokens: 128_000, prices: { inputPrice: 2, outputPrice: 8 } },
-                                        { prices: { inputPrice: 4, outputPrice: 16 } },
-                                    ],
-                                },
-                            },
-                        ],
+            currency: "USD",
+            strategy: {
+                timeOfDay: {
+                    schedule: {
+                        timezoneOffsetMinutes: 0,
+                        dayRule: PricingDayRule.PRICING_DAY_RULE_ALL_DAYS,
+                        defaultOnPublicHolidays: false,
+                        holidayCalendar: "",
                     },
+                    defaultPrices: { inputPrice: 1, outputPrice: 4 },
+                    timeWindows: [
+                        {
+                            startMinute: 0,
+                            endMinute: 360,
+                            bands: {
+                                bands: [
+                                    { maxInputTokens: 128_000, prices: { inputPrice: 2, outputPrice: 8 } },
+                                    { prices: { inputPrice: 4, outputPrice: 16 } },
+                                ],
+                            },
+                        },
+                    ],
                 },
             },
         },
@@ -297,8 +294,8 @@ export const WindowWithContextBands: Story = {
     play: async (context) => {
         await openConfiguration(context)
         const canvas = within(context.canvasElement)
-        await expect(canvas.getByLabelText("Window 1 Rate")).toHaveTextContent("By context size")
+        await expect(canvas.getByLabelText("Rate")).toHaveTextContent("By context size")
         await expect(canvas.getByText("Pricing Tiers")).toBeVisible()
-        await expect(canvas.queryByLabelText("Window 1 Input ($/1M)")).toBeNull()
+        await expect(canvas.queryByLabelText("Window 1 Input Price ($/1M tokens)")).toBeNull()
     },
 }

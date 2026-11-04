@@ -121,10 +121,18 @@ describe("OcaHandler.createMessage", () => {
             const create = vi.fn().mockResolvedValue(emptyStream)
             const clientPorts = handler as unknown as { ensureOpenAIClient(): unknown; ensureAnthropicClient(): unknown }
             vi.spyOn(clientPorts, "ensureOpenAIClient").mockReturnValue({
+                withOptions() {
+                    return this
+                },
                 chat: { completions: { create } },
                 responses: { create },
             })
-            vi.spyOn(clientPorts, "ensureAnthropicClient").mockReturnValue({ messages: { create } })
+            vi.spyOn(clientPorts, "ensureAnthropicClient").mockReturnValue({
+                withOptions() {
+                    return this
+                },
+                messages: { create },
+            })
             await collectChunks(handler.createMessage("system", messages))
             const body = create.mock.calls[0][0]
             expect(body.model).to.equal(id)
@@ -174,10 +182,18 @@ describe("OcaHandler.createMessage", () => {
         const create = vi.fn().mockResolvedValue(emptyStream)
         const clientPorts = handler as unknown as { initializeOpenAIClient(): unknown; initializeAnthropicClient(): unknown }
         vi.spyOn(clientPorts, "initializeOpenAIClient").mockReturnValue({
+            withOptions() {
+                return this
+            },
             chat: { completions: { create } },
             responses: { create },
         })
-        vi.spyOn(clientPorts, "initializeAnthropicClient").mockReturnValue({ messages: { create } })
+        vi.spyOn(clientPorts, "initializeAnthropicClient").mockReturnValue({
+            withOptions() {
+                return this
+            },
+            messages: { create },
+        })
 
         await collectChunks(handler.createMessage("system", messages))
 
@@ -315,12 +331,14 @@ describe("OcaHandler.createMessage", () => {
             order.push("model-send")
             return emptyStream
         })
-        vi.spyOn(handler as any, "ensureOpenAIClient").mockReturnValue(
-            clientKind === "chat" ? { chat: { completions: { create } } } : { responses: { create } },
-        )
+        vi.spyOn(handler as any, "ensureOpenAIClient").mockReturnValue({
+            withOptions() {
+                return this
+            },
+            ...(clientKind === "chat" ? { chat: { completions: { create } } } : { responses: { create } }),
+        })
 
         await collectChunks(handler.createMessage("system", messages))
-        await handler.calculateCost({ id: "oca-model" }, 10, 20)
 
         expect(order).to.deep.equal(["input-rate", "output-rate", "model-send"])
         expect(getApiCosts.mock.calls).to.have.length(2)
@@ -336,7 +354,12 @@ describe("OcaHandler.createMessage", () => {
             mode: "act",
         })
         const create = vi.fn().mockResolvedValue(emptyStream)
-        vi.spyOn(handler as any, "ensureOpenAIClient").mockReturnValue({ responses: { create } })
+        vi.spyOn(handler as any, "ensureOpenAIClient").mockReturnValue({
+            withOptions() {
+                return this
+            },
+            responses: { create },
+        })
 
         await collectChunks(handler.createMessage("system", messages, tools, { serverTools: [ServerTool.WEB_SEARCH] }))
 
@@ -366,11 +389,26 @@ describe("OcaHandler.createMessage", () => {
             })
             const create = vi.fn().mockResolvedValue(emptyStream)
             if (testCase.client === "openai-chat") {
-                vi.spyOn(handler as any, "ensureOpenAIClient").mockReturnValue({ chat: { completions: { create } } })
+                vi.spyOn(handler as any, "ensureOpenAIClient").mockReturnValue({
+                    withOptions() {
+                        return this
+                    },
+                    chat: { completions: { create } },
+                })
             } else if (testCase.client === "openai-responses") {
-                vi.spyOn(handler as any, "ensureOpenAIClient").mockReturnValue({ responses: { create } })
+                vi.spyOn(handler as any, "ensureOpenAIClient").mockReturnValue({
+                    withOptions() {
+                        return this
+                    },
+                    responses: { create },
+                })
             } else {
-                vi.spyOn(handler as any, "ensureAnthropicClient").mockReturnValue({ messages: { create } })
+                vi.spyOn(handler as any, "ensureAnthropicClient").mockReturnValue({
+                    withOptions() {
+                        return this
+                    },
+                    messages: { create },
+                })
             }
 
             await collectChunks(
@@ -393,7 +431,12 @@ describe("OcaHandler.createMessage", () => {
             mode: "act",
         })
         const create = vi.fn().mockResolvedValue(createStream([{ choices: [{ delta: {}, finish_reason: "length" }] }]))
-        vi.spyOn(handler as any, "ensureOpenAIClient").mockReturnValue({ chat: { completions: { create } } })
+        vi.spyOn(handler as any, "ensureOpenAIClient").mockReturnValue({
+            withOptions() {
+                return this
+            },
+            chat: { completions: { create } },
+        })
 
         let caught: unknown
         try {
@@ -416,7 +459,12 @@ describe("OcaHandler.createMessage", () => {
             mode: "act",
         })
         const create = vi.fn().mockResolvedValue(emptyStream)
-        vi.spyOn(handler as any, "ensureOpenAIClient").mockReturnValue({ responses: { create } })
+        vi.spyOn(handler as any, "ensureOpenAIClient").mockReturnValue({
+            withOptions() {
+                return this
+            },
+            responses: { create },
+        })
 
         await collectChunks(handler.createMessage("system", messages, tools))
 
@@ -435,7 +483,12 @@ describe("OcaHandler.createMessage", () => {
             mode: "act",
         })
         const create = vi.fn().mockResolvedValue(emptyStream)
-        vi.spyOn(handler as any, "ensureAnthropicClient").mockReturnValue({ messages: { create } })
+        vi.spyOn(handler as any, "ensureAnthropicClient").mockReturnValue({
+            withOptions() {
+                return this
+            },
+            messages: { create },
+        })
 
         await collectChunks(handler.createMessage("system", messages, tools, { serverTools: [ServerTool.WEB_SEARCH] }))
 

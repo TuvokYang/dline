@@ -1,11 +1,11 @@
-import { flatMeteredPricing, readPriceSet } from "@shared/providers/pricing-shape"
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import type { ModelInfo, ProviderModelsConfig } from "@shared/providers/types"
 import { describe, expect, it } from "vitest"
 import { reconcileProviderModels } from "../provider-model-reconciliation"
 
 /** The input rate, which is what the stored-versus-vendor cases compare. */
 function inputPriceOf(model: ModelInfo | undefined): number | undefined {
-    return readPriceSet(model?.pricing?.metered?.strategy?.flat?.prices).inputPrice
+    return model?.pricing?.strategy?.flat?.prices?.inputPrice
 }
 
 function config(models: Record<string, ModelInfo>): ProviderModelsConfig {

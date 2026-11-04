@@ -135,7 +135,7 @@ describe("OpenCodeModelSource", () => {
 
     it("stores the published per-million price without scaling it again", async () => {
         const models = await fetchListing({ data: [openAiFamilyEntry()] })
-        const prices = models["claude-sonnet-5-5"].pricing?.metered?.strategy?.flat?.prices
+        const prices = models["claude-sonnet-5-5"].pricing?.strategy?.flat?.prices
 
         expect(prices?.inputPrice).toBe(3)
         expect(prices?.outputPrice).toBe(15)
@@ -147,7 +147,7 @@ describe("OpenCodeModelSource", () => {
         const models = await fetchListing({
             data: [openAiFamilyEntry({ id: "big-pickle", cost: { text: { input: { price: 0 }, output: { price: 0 } } } })],
         })
-        const prices = models["big-pickle"].pricing?.metered?.strategy?.flat?.prices
+        const prices = models["big-pickle"].pricing?.strategy?.flat?.prices
 
         // The listing states a public rate of zero. Treating it as missing would
         // leave every free model without a price set, which the usage surface
@@ -318,7 +318,7 @@ describe("OpenCodeModelSource", () => {
         })
         expect(entry.apiFormats).toEqual([ApiFormat.ANTHROPIC_CHAT])
 
-        const prices = entry.pricing?.metered?.strategy?.flat?.prices
+        const prices = entry.pricing?.strategy?.flat?.prices
         expect(prices?.inputPrice).toBe(10)
         expect(prices?.outputPrice).toBe(50)
         expect(prices?.cacheReadPrice).toBe(1)
@@ -408,7 +408,7 @@ describe("OpenCodeModelSource", () => {
         expect(entry.capabilities?.inputMediaTypes).toBeUndefined()
         expect(entry.capabilities?.supportsImages).toBe(false)
 
-        const prices = entry.pricing?.metered?.strategy?.flat?.prices
+        const prices = entry.pricing?.strategy?.flat?.prices
         expect(prices?.inputPrice).toBe(0)
         expect(prices?.outputPrice).toBe(0)
     })
@@ -478,7 +478,7 @@ describe("OpenCodeModelSource", () => {
         expect(entry.capabilities?.supportsPromptCache).toBe(true)
         expect(entry.apiFormats).toEqual([ApiFormat.OPENAI_RESPONSES, ApiFormat.OPENAI_CHAT])
 
-        const prices = entry.pricing?.metered?.strategy?.flat?.prices
+        const prices = entry.pricing?.strategy?.flat?.prices
         expect(prices?.inputPrice).toBe(0)
         expect(prices?.outputPrice).toBe(0)
         // `cache.read` is published as a real zero, so it must survive as a rate
@@ -516,7 +516,7 @@ describe("OpenCodeModelSource", () => {
         const entry = models["grok-4.5"]
 
         expect(entry.capabilities?.supportsPromptCache).toBe(true)
-        const prices = entry.pricing?.metered?.strategy?.flat?.prices
+        const prices = entry.pricing?.strategy?.flat?.prices
         expect(prices?.cacheReadPrice).toBe(0.3)
         expect(prices?.cacheWritePrice).toBeUndefined()
     })
@@ -560,7 +560,7 @@ describe("OpenCodeModelSource", () => {
         // `limit.input` is absent here, so the context total is the ceiling.
         expect(entry.capabilities?.contextWindow).toBe(1_000_000)
 
-        const bands = entry.pricing?.metered?.strategy?.contextWindow?.bands ?? []
+        const bands = entry.pricing?.strategy?.contextWindow?.bands ?? []
         expect(bands).toHaveLength(2)
         expect(bands[0].maxInputTokens).toBe(100_000)
         expect(bands[0].prices?.inputPrice).toBe(0.1)

@@ -574,9 +574,13 @@ export class SapAiCoreHandler extends ApiHandler {
             // Unlike the `messages` field that validates input, this does not validate
             // template placeholders such as {{?userResponse}}, allowing content to be
             // sent directly to the LLM with the Cline system prompt without validation errors.
+            let sentAtMs = Number.NaN
             const { response, stream } = await ApiHandler.observeProviderStreamResponse(
                 undefined,
-                () => orchestrationClient.stream({ messagesHistory: sapMessages }),
+                () => {
+                    sentAtMs = Date.now()
+                    return orchestrationClient.stream({ messagesHistory: sapMessages })
+                },
                 (response) => response.stream.toContentStream(),
             )
             if (!stream) throw new Error("SAP orchestration response stream is unavailable")
@@ -587,10 +591,19 @@ export class SapAiCoreHandler extends ApiHandler {
 
             const tokenUsage = response.getTokenUsage()
             if (tokenUsage) {
+                const tokens = { inputTokens: tokenUsage.prompt_tokens || 0, outputTokens: tokenUsage.completion_tokens || 0 }
+                const cost = ApiHandler.calculateUsageCost(
+                    model.info.pricing,
+                    {
+                        inputTokens: tokenUsage.prompt_tokens,
+                        outputTokens: tokenUsage.completion_tokens,
+                    },
+                    sentAtMs,
+                )
                 yield {
                     type: "usage",
-                    inputTokens: tokenUsage.prompt_tokens || 0,
-                    outputTokens: tokenUsage.completion_tokens || 0,
+                    ...tokens,
+                    ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                 }
             }
         } catch (error) {
@@ -784,10 +797,12 @@ export class SapAiCoreHandler extends ApiHandler {
         const identity = ApiHandler.identifyProviderAttempt("sapaicore", { ...payload, model: model.id })
 
         try {
+            let sentAtMs = Number.NaN
             if (model.id === "o3-mini") {
-                const response = await ApiHandler.observeProviderCall(identity, () =>
-                    axios.post(url, JSON.stringify(payload, null, 2), { headers, ...getAxiosSettings() }),
-                )
+                const response = await ApiHandler.observeProviderCall(identity, () => {
+                    sentAtMs = Date.now()
+                    return axios.post(url, JSON.stringify(payload, null, 2), { headers, ...getAxiosSettings() })
+                })
 
                 // Yield the usage information
                 if (response.data.usage) {
@@ -808,10 +823,15 @@ export class SapAiCoreHandler extends ApiHandler {
 
                 // Final usage yield
                 if (response.data.usage) {
-                    yield {
-                        type: "usage",
+                    const tokens = {
                         inputTokens: response.data.usage.prompt_tokens,
                         outputTokens: response.data.usage.completion_tokens,
+                    }
+                    const cost = ApiHandler.calculateUsageCost(model.info.pricing, tokens, sentAtMs)
+                    yield {
+                        type: "usage",
+                        ...tokens,
+                        ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                     }
                 }
                 return
@@ -819,19 +839,21 @@ export class SapAiCoreHandler extends ApiHandler {
 
             const { stream } = await ApiHandler.observeProviderStreamResponse(
                 identity,
-                () =>
-                    axios.post(url, JSON.stringify(payload, null, 2), {
+                () => {
+                    sentAtMs = Date.now()
+                    return axios.post(url, JSON.stringify(payload, null, 2), {
                         headers,
                         responseType: "stream",
                         validateStatus: () => true,
                         ...getAxiosSettings(),
-                    }),
+                    })
+                },
                 (response) => this.selectDeploymentStream(response),
             )
             if (!stream) throw new Error("SAP AI Core deployment response stream is unavailable")
 
             if (openAIModels.includes(model.id) || perplexityModels.includes(model.id)) {
-                yield* this.streamCompletionGPT(stream, model)
+                yield* this.streamCompletionGPT(stream, model, sentAtMs)
             } else if (
                 model.id === "anthropic--claude-4.5-opus" ||
                 model.id === "anthropic--claude-4.6-sonnet" ||
@@ -841,11 +863,11 @@ export class SapAiCoreHandler extends ApiHandler {
                 model.id === "anthropic--claude-4-opus" ||
                 model.id === "anthropic--claude-3.7-sonnet"
             ) {
-                yield* this.streamCompletionSonnet37(stream, model)
+                yield* this.streamCompletionSonnet37(stream, model, sentAtMs)
             } else if (geminiModels.includes(model.id)) {
-                yield* this.streamCompletionGemini(stream, model)
+                yield* this.streamCompletionGemini(stream, model, sentAtMs)
             } else {
-                yield* this.streamCompletion(stream, model)
+                yield* this.streamCompletion(stream, model, sentAtMs)
             }
         } catch (error: any) {
             if (error.response) {
@@ -910,9 +932,11 @@ export class SapAiCoreHandler extends ApiHandler {
 
     private async *streamCompletion(
         stream: any,
-        _model: { id: SapAiCoreModelId; info: ModelInfo },
+        model: { id: SapAiCoreModelId; info: ModelInfo },
+        sentAtMs: number,
     ): AsyncGenerator<any, void, unknown> {
         const usage = { input_tokens: 0, output_tokens: 0 }
+        let hasInputUsage = false
 
         try {
             for await (const chunk of stream) {
@@ -925,6 +949,7 @@ export class SapAiCoreHandler extends ApiHandler {
                             const data = JSON.parse(jsonData)
                             if (data.type === "message_start") {
                                 usage.input_tokens = data.message.usage.input_tokens
+                                hasInputUsage = true
                                 yield {
                                     type: "usage",
                                     inputTokens: usage.input_tokens,
@@ -942,10 +967,24 @@ export class SapAiCoreHandler extends ApiHandler {
                             } else if (data.type === "message_delta") {
                                 if (data.usage) {
                                     usage.output_tokens = data.usage.output_tokens
+                                    const cost =
+                                        hasInputUsage && data.delta?.stop_reason
+                                            ? ApiHandler.calculateUsageCost(
+                                                  model.info.pricing,
+                                                  {
+                                                      inputTokens: usage.input_tokens,
+                                                      outputTokens: usage.output_tokens,
+                                                  },
+                                                  sentAtMs,
+                                              )
+                                            : undefined
                                     yield {
                                         type: "usage",
                                         inputTokens: 0,
                                         outputTokens: data.usage.output_tokens,
+                                        ...(cost?.kind === "calculated"
+                                            ? { totalCost: cost.amount, currency: cost.currency }
+                                            : {}),
                                     }
                                 }
                             }
@@ -963,7 +1002,8 @@ export class SapAiCoreHandler extends ApiHandler {
 
     private async *streamCompletionSonnet37(
         stream: any,
-        _model: { id: SapAiCoreModelId; info: ModelInfo },
+        model: { id: SapAiCoreModelId; info: ModelInfo },
+        sentAtMs: number,
     ): AsyncGenerator<any, void, unknown> {
         const _usage = { input_tokens: 0, output_tokens: 0 }
 
@@ -992,10 +1032,21 @@ export class SapAiCoreHandler extends ApiHandler {
                                 const cacheWriteInputTokens = data.metadata.usage.cacheWriteInputTokens || 0
                                 inputTokens = inputTokens + cacheReadInputTokens + cacheWriteInputTokens
 
+                                const cost = ApiHandler.calculateUsageCost(
+                                    model.info.pricing,
+                                    {
+                                        inputTokens: data.metadata.usage.inputTokens || 0,
+                                        outputTokens,
+                                        cacheReadTokens: cacheReadInputTokens,
+                                        cacheWriteTokens: cacheWriteInputTokens,
+                                    },
+                                    sentAtMs,
+                                )
                                 yield {
                                     type: "usage",
                                     inputTokens,
                                     outputTokens,
+                                    ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                                 }
                             }
 
@@ -1042,7 +1093,8 @@ export class SapAiCoreHandler extends ApiHandler {
 
     private async *streamCompletionGPT(
         stream: any,
-        _model: { id: SapAiCoreModelId; info: ModelInfo },
+        model: { id: SapAiCoreModelId; info: ModelInfo },
+        sentAtMs: number,
     ): AsyncGenerator<any, void, unknown> {
         let _currentContent = ""
         let inputTokens = 0
@@ -1087,10 +1139,19 @@ export class SapAiCoreHandler extends ApiHandler {
                             if (data.usage) {
                                 inputTokens = data.usage.prompt_tokens || inputTokens
                                 outputTokens = data.usage.completion_tokens || outputTokens
+                                const cost = ApiHandler.calculateUsageCost(
+                                    model.info.pricing,
+                                    {
+                                        inputTokens: data.usage.prompt_tokens,
+                                        outputTokens: data.usage.completion_tokens,
+                                    },
+                                    sentAtMs,
+                                )
                                 yield {
                                     type: "usage",
                                     inputTokens,
                                     outputTokens,
+                                    ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                                 }
                             }
 
@@ -1118,12 +1179,15 @@ export class SapAiCoreHandler extends ApiHandler {
 
     private async *streamCompletionGemini(
         stream: any,
-        _model: { id: SapAiCoreModelId; info: ModelInfo },
+        model: { id: SapAiCoreModelId; info: ModelInfo },
+        sentAtMs: number,
     ): AsyncGenerator<any, void, unknown> {
         let promptTokens = 0
         let outputTokens = 0
         let cacheReadTokens = 0
         let thoughtsTokenCount = 0
+        let hasPromptUsage = false
+        let hasOutputUsage = false
 
         try {
             for await (const chunk of stream) {
@@ -1159,6 +1223,22 @@ export class SapAiCoreHandler extends ApiHandler {
                                 outputTokens = processed.usageMetadata.candidatesTokenCount ?? outputTokens
                                 thoughtsTokenCount = processed.usageMetadata.thoughtsTokenCount ?? thoughtsTokenCount
                                 cacheReadTokens = processed.usageMetadata.cachedContentTokenCount ?? cacheReadTokens
+                                hasPromptUsage ||= processed.usageMetadata.promptTokenCount !== undefined
+                                hasOutputUsage ||= processed.usageMetadata.candidatesTokenCount !== undefined
+                                const cost =
+                                    hasPromptUsage && hasOutputUsage
+                                        ? ApiHandler.calculateUsageCost(
+                                              model.info.pricing,
+                                              {
+                                                  inputTokens: promptTokens - cacheReadTokens,
+                                                  outputTokens: outputTokens + thoughtsTokenCount,
+                                                  thoughtsTokenCount,
+                                                  cacheReadTokens,
+                                                  cacheWriteTokens: 0,
+                                              },
+                                              sentAtMs,
+                                          )
+                                        : undefined
 
                                 yield {
                                     type: "usage",
@@ -1168,6 +1248,7 @@ export class SapAiCoreHandler extends ApiHandler {
                                     thoughtsTokenCount,
                                     cacheReadTokens,
                                     cacheWriteTokens: 0,
+                                    ...(cost?.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                                 }
                             }
                         } catch (error) {

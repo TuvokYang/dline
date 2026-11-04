@@ -1,7 +1,6 @@
 import { BasetenModelId, basetenDefaultModelId, basetenModels, ModelInfo } from "@shared/api"
 import { providerFetch } from "@shared/net"
 import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
-import { calculateApiCostOpenAI } from "@utils/cost"
 import OpenAI from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
@@ -52,6 +51,7 @@ export class BasetenHandler extends ApiHandler {
                     apiKey: this.apiKey,
                     defaultHeaders: buildExternalBasicHeaders(),
                     fetch: providerFetch,
+                    maxRetries: 0,
                 })
             } catch (error) {
                 throw new Error(`Error creating Baseten client: ${error.message}`)
@@ -78,18 +78,17 @@ export class BasetenHandler extends ApiHandler {
         return { id: model.id as BasetenModelId, info: model.info }
     }
 
-    private async *yieldUsage(modelInfo: ModelInfo, usage: OpenAI.CompletionUsage): ApiStream {
-        if (usage.prompt_tokens || usage.completion_tokens) {
-            const cost = calculateApiCostOpenAI(modelInfo, usage.prompt_tokens || 0, usage.completion_tokens || 0)
-
-            yield {
-                type: "usage",
-                inputTokens: usage.prompt_tokens || 0,
-                outputTokens: usage.completion_tokens || 0,
-                cacheWriteTokens: 0,
-                cacheReadTokens: 0,
-                totalCost: cost,
-            }
+    private async *yieldUsage(modelInfo: ModelInfo, usage: OpenAI.CompletionUsage, sentAtMs: number): ApiStream {
+        const inputTokens = usage.prompt_tokens || 0
+        const outputTokens = usage.completion_tokens || 0
+        const cost = ApiHandler.calculateUsageCost(modelInfo.pricing, { inputTokens, outputTokens }, sentAtMs)
+        yield {
+            type: "usage",
+            inputTokens,
+            outputTokens,
+            cacheWriteTokens: 0,
+            cacheReadTokens: 0,
+            ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
         }
     }
 
@@ -105,6 +104,7 @@ export class BasetenHandler extends ApiHandler {
             ...convertToOpenAiMessages(messages),
         ]
 
+        const sentAtMs = Date.now()
         const stream = await client.chat.completions.create({
             model: model.id,
             max_tokens: maxTokens,
@@ -144,7 +144,7 @@ export class BasetenHandler extends ApiHandler {
 
             // Handle usage information - only output once
             if (!didOutputUsage && chunk.usage) {
-                yield* this.yieldUsage(model.info, chunk.usage)
+                yield* this.yieldUsage(model.info, chunk.usage, sentAtMs)
                 didOutputUsage = true
             }
         }

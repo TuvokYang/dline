@@ -54,6 +54,19 @@ describe("getApiMetrics", () => {
         assert.ok(Math.abs(metrics.totalCost - 0.2) < 1e-9)
     })
 
+    it("keeps currency tied to the latest amount, including zero", () => {
+        const messages: UiMessage[] = [
+            { ts: 1, type: "say", say: "api_req_started", text: JSON.stringify({ cost: 0.12, currency: "CNY" }) },
+            { ts: 2, type: "say", say: "subagent_usage", text: JSON.stringify({ tokensIn: 10 }) },
+        ]
+        assert.equal(getApiMetrics(messages).currency, "CNY")
+        messages.push({ ts: 3, type: "say", say: "api_req_started", text: JSON.stringify({ cost: 0 }) })
+        const metrics = getApiMetrics(messages)
+        assert.equal(metrics.totalCost, 0.12)
+        assert.equal(metrics.currency, undefined)
+        assert.equal(metrics.totalTokensIn, 10)
+    })
+
     it("preserves an explicitly reported zero-percent cache hit rate", () => {
         const metrics = getApiMetrics([
             {

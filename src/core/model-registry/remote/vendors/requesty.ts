@@ -55,13 +55,13 @@ export class RequestyModelSource extends ModelListingSource {
         }
     }
 
-    protected override readPricing(raw: unknown): ModelPricing {
-        return flatMeteredPricing(
-            readPerMillionPrice(raw, "input_price") ?? 0,
-            readPerMillionPrice(raw, "output_price") ?? 0,
-            readPerMillionPrice(raw, "caching_price") ?? 0,
-            readPerMillionPrice(raw, "cached_price") ?? 0,
-        )
+    protected override readPricing(raw: unknown): ModelPricing | undefined {
+        const input = readPerMillionPrice(raw, "input_price")
+        const output = readPerMillionPrice(raw, "output_price")
+        const cacheWrite = readPerMillionPrice(raw, "caching_price")
+        const cacheRead = readPerMillionPrice(raw, "cached_price")
+        if ([input, output, cacheWrite, cacheRead].every((rate) => rate === undefined)) return undefined
+        return flatMeteredPricing(input, output, cacheWrite, cacheRead)
     }
 }
 

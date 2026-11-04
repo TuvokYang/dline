@@ -13,6 +13,8 @@ interface BaseUrlFieldProps {
     placeholder?: string
     disabled?: boolean
     showLockIcon?: boolean
+    enabled?: boolean
+    onEnabledChange?: (enabled: boolean) => void
 }
 
 /**
@@ -25,13 +27,17 @@ export const BaseUrlField = ({
     placeholder = "Default: https://api.example.com",
     disabled = false,
     showLockIcon = false,
+    enabled,
+    onEnabledChange,
 }: BaseUrlFieldProps) => {
-    const [isEnabled, setIsEnabled] = useState(!!initialValue)
+    const [localEnabled, setIsEnabled] = useState(!!initialValue)
+    const isEnabled = enabled ?? localEnabled
     const [localValue, setLocalValue] = useDebouncedInput(initialValue || "", onChange)
 
     const handleToggle = (e: any) => {
         const checked = e.target.checked === true
         setIsEnabled(checked)
+        onEnabledChange?.(checked)
         if (!checked) {
             setLocalValue("")
         }
