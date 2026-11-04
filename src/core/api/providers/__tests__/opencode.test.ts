@@ -5,6 +5,7 @@ import { BaseProviderConfig } from "@shared/proto/dline/provider/common"
 import { OpenCodeMode, OpenCodeProviderConfig } from "@shared/proto/dline/provider/opencode"
 import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { ClineErrorType } from "@/services/error"
 import type { ClineStorageMessage } from "@/shared/messages/content"
 import type { ClineTool } from "@/shared/tools"
 
@@ -817,6 +818,90 @@ describe("OpenCodeHandler", () => {
             // The shared Controller timer is what decides whether this surfaces
             // without the user pressing refresh.
             expect(handlerForMode(OpenCodeMode.OPEN_CODE_MODE_GO).supportsAccountUsagePolling).not.toBe(false)
+        })
+    })
+
+    describe("error classification", () => {
+        /** The refusal the user actually received from the gateway. */
+        const countryRefusal = {
+            status: 403,
+            message: "403 This model is not available in your country",
+        }
+
+        it("reports a country refusal as a region limit, not as a client or plan problem", () => {
+            const parsed = createHandler({}).parseError(countryRefusal, "crouton-alpha-free")
+
+            // The gateway named the reason, so the classification must repeat it
+            // rather than substitute the client-only explanation.
+            expect(parsed._error.code).to.equal("OPENCODE_MODEL_REGION_RESTRICTED")
+            expect(parsed._error.message).to.include("country or region")
+            // Stating the reason is not licence to explain it: how the gateway
+            // decides a country, and whether a purchase would change the answer,
+            // are not things the response said.
+            expect(parsed._error.message).not.to.include("Go plan")
+            expect(parsed._error.message).not.to.include("only available inside")
+            expect(parsed._error.message).not.to.match(/account|network|IP address/i)
+            expect(parsed._error.message).not.to.match(/switching plans|switch the plan|does not change/i)
+        })
+
+        it("keeps the gateway message, status and provider identity on a region refusal", () => {
+            const parsed = createHandler({}).parseError({ ...countryRefusal, request_id: "req-42" }, "crouton-alpha-free")
+
+            const serialized = JSON.parse(parsed.serialize())
+            expect(serialized).to.include({ status: 403, request_id: "req-42", providerId: "opencode" })
+            expect(serialized.details.providerMessage).to.equal(countryRefusal.message)
+        })
+
+        it("classifies a stated client restriction as one", () => {
+            const parsed = createHandler({}).parseError({
+                status: 403,
+                message:
+                    "This model is only available inside the OpenCode client. Choose a paid OpenCode model, or use the OpenCode Go plan.",
+            })
+
+            expect(parsed._error.code).to.equal("OPENCODE_MODEL_CLIENT_RESTRICTED")
+            expect(parsed._error.message).to.include("inside its own client")
+        })
+
+        it("stays neutral for a 403 whose reason it cannot read", () => {
+            const parsed = createHandler({}).parseError({ status: 403, message: "Forbidden" })
+
+            // An unexplained refusal is not evidence about the credential or the
+            // plan; guessing one would send the user to the wrong fix.
+            expect(parsed._error.code).to.equal("OPENCODE_REQUEST_FORBIDDEN")
+            expect(parsed._error.code).not.to.equal("OPENCODE_MODEL_RESTRICTED")
+            expect(parsed._error.message).not.to.include("Go plan")
+        })
+
+        it("stays neutral for a 403 that carries no message at all", () => {
+            const parsed = createHandler({}).parseError({ status: 403 })
+
+            expect(parsed._error.code).to.equal("OPENCODE_REQUEST_FORBIDDEN")
+            expect(parsed._error.details.providerMessage).to.equal("")
+        })
+
+        it("reads a refusal nested in the error body instead of the placeholder message", () => {
+            const parsed = createHandler({}).parseError({
+                status: 403,
+                message: "Request failed with status code 403",
+                error: { message: "This model is not available in your region" },
+            })
+
+            expect(parsed._error.code).to.equal("OPENCODE_MODEL_REGION_RESTRICTED")
+        })
+
+        it("does not state a mode cause for a 404, which can also mean a stale model or base URL", () => {
+            const parsed = createHandler({}).parseError({ status: 404, message: "404 page not found" })
+
+            expect(parsed._error.code).to.equal("OPENCODE_REQUEST_NOT_FOUND")
+            expect(parsed._error.message).to.include("base URL")
+            expect(parsed._error.message).not.to.include("switch the mode")
+        })
+
+        it("keeps 401 on the shared auth classification", () => {
+            const parsed = createHandler({}).parseError({ status: 401, message: "Unauthorized" })
+
+            expect(parsed.isErrorType(ClineErrorType.Auth)).to.equal(true)
         })
     })
 })

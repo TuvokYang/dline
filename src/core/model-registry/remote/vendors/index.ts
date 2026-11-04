@@ -22,9 +22,11 @@ import { openAiModelSource } from "./openai"
 import { openAiCodexModelSource } from "./openai-codex"
 import { openCodeModelSource } from "./opencode"
 import { openRouterModelSource } from "./openrouter"
+import { qwenModelSource } from "./qwen"
 import { requestyModelSource } from "./requesty"
 import { sapAiCoreModelSource } from "./sapaicore"
 import { vercelAiGatewayModelSource } from "./vercel"
+import { zAiModelSource } from "./zai"
 
 export const MODEL_SOURCES: readonly ProviderRemoteSource[] = [
     aiHubMixModelSource,
@@ -44,9 +46,11 @@ export const MODEL_SOURCES: readonly ProviderRemoteSource[] = [
     openAiCodexModelSource,
     openCodeModelSource,
     openRouterModelSource,
+    qwenModelSource,
     requestyModelSource,
     sapAiCoreModelSource,
     vercelAiGatewayModelSource,
+    zAiModelSource,
 ]
 
 const sourcesById = new Map<string, ProviderRemoteSource>(MODEL_SOURCES.map((source) => [source.providerId, source]))
@@ -61,6 +65,8 @@ const sourcesById = new Map<string, ProviderRemoteSource>(MODEL_SOURCES.map((sou
  */
 const CATALOG_KEY_OWNERS: Readonly<Record<string, string>> = {
     "opencode-go": "opencode",
+    "qwen-cn": "qwen",
+    "zai-cn": "zai",
 }
 
 export function getModelSource(providerId: string): ProviderRemoteSource | undefined {

@@ -82,7 +82,9 @@ describe("OpenAiHandler", () => {
             should(result.info.capabilities?.maxTokens).equal(12_345)
             should(result.info.capabilities?.supportsPromptCache).equal(true)
             should(result.info.capabilities?.temperature).equal(0.7)
-            should(readPriceSet(result.info.pricing?.metered?.strategy?.flat?.prices).inputPrice).equal(0.5)
+            // `metered` is the deprecated envelope; the current contract keeps the
+            // strategy at the top level, and the handler no longer copies it back.
+            should(readPriceSet(result.info.pricing?.strategy?.flat?.prices).inputPrice).equal(0.5)
         })
 
         it("reports hosted web search unavailable for the Chat transport", () => {

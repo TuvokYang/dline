@@ -45,15 +45,23 @@ const emptyModels: Record<string, any> = {}
 const firstKey = <T extends Record<string, unknown>>(obj: T): string => Object.keys(obj)[0] || ""
 
 export const allProviderModels: Record<string, ProviderModelsConfig> = {
-    // One selectable provider. The Go plan is a second catalog of this
-    // provider reached through the Profile's mode; its models come from the same
-    // gateway listing, so the catalog declares no model of its own.
+    // One selectable provider with one catalog per plan. The Profile's mode
+    // selects the catalog; neither declares a model, because the gateway listing
+    // is the only authority for what each plan serves.
     opencode: {
         provider: "opencode",
         providerName: "OpenCode",
         baseUrl: "https://opencode.ai/inference",
         billingUrl: "https://opencode.ai/console",
         billingMode: "console",
+        /**
+         * The Console catalog is this provider's own one, and the shared seed
+         * type keeps it at the top level.
+         *
+         * Declaring an empty `opencode-console` entry instead would make the
+         * registry answer the Console key from that empty document, and the built-in
+         * Console models above would disappear from every Console Profile.
+         */
         models: openCodeModels,
         catalogs: {
             "opencode-go": {

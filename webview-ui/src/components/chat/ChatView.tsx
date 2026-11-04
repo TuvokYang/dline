@@ -10,6 +10,7 @@ import { AskResponseRequest, CompactTaskRequest } from "@shared/proto/dline/task
 import { toProtoSemanticInputDocument } from "@shared/proto-conversions/input-semantics/document"
 import { resolveInputMediaTypes } from "@shared/providers/input-media"
 import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
+import { resolvePrimaryCatalogKey } from "@shared/providers/provider-catalog-key"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useApiProfiles } from "@/components/settings/providers/useApiProfiles"
 import { useProviderModels } from "@/components/settings/providers/useProviderModels"
@@ -409,7 +410,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         },
         [draftSubmission.projection.document, profileDisplay, taskViewState?.activeInteraction?.kind],
     )
-    const { models, defaultModelId } = useProviderModels(activeProfile?.provider ?? "")
+    const { models, defaultModelId } = useProviderModels(activeProfile ? resolvePrimaryCatalogKey(activeProfile.provider) : "")
     const selectedModelInfo = useMemo(() => {
         if (!activeProfile) {
             return EMPTY_MODEL_INFO

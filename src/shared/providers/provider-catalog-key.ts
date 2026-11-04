@@ -13,11 +13,23 @@
  * a wrongly priced one rather than as an error.
  */
 
-/** Catalog key of the user-visible OpenCode provider. */
-export const OPENCODE_CONSOLE_CATALOG = "opencode"
+/** Catalog key of the OpenCode Console plan. */
+export const OPENCODE_CONSOLE_CATALOG = "opencode-console"
 
 /** Catalog key of the OpenCode Go plan catalog. */
 export const OPENCODE_GO_CATALOG = "opencode-go"
+
+/**
+ * The catalog each provider reads when a Profile selects no option.
+ *
+ * A provider id stays the selectable identity a Profile stores, while the
+ * catalog it reads may carry a more specific key. Only entries whose primary
+ * catalog is *not* named after the provider belong here; every other provider
+ * reads the catalog keyed by its own id.
+ */
+export const PRIMARY_CATALOG_KEYS: Readonly<Record<string, string>> = {
+    opencode: OPENCODE_CONSOLE_CATALOG,
+}
 
 /** Catalog key of the mainland-China Qwen endpoint. */
 export const QWEN_MAINLAND_CATALOG = "qwen-cn"
@@ -67,8 +79,10 @@ export interface CatalogSelection {
  */
 export function resolveCatalogProviderKey(selection: Readonly<CatalogSelection>): string {
     // A provider without a catalog-selecting option reads its own catalog. This
-    // keeps every existing provider byte-for-byte equivalent.
-    if (selection.provider === OPENCODE_CONSOLE_CATALOG) {
+    // keeps every existing provider byte-for-byte equivalent. The match is on the
+    // selectable provider id, not on its primary catalog key: a Profile stores
+    // "opencode" whichever plan it selects.
+    if (selection.provider === "opencode") {
         // Every subscription tier reads the Go catalog; only the included monthly
         // allowance differs, which is a usage question rather than a catalog one.
         // An unknown mode name answers with the Console catalog: a value this build
@@ -86,6 +100,23 @@ export function resolveCatalogProviderKey(selection: Readonly<CatalogSelection>)
         case "zai":
             return ZAI_MAINLAND_CATALOG
         default:
-            return selection.provider
+            // A provider whose primary catalog is not keyed by its own id still
+            // resolves to that catalog, so a Profile that selects no option reads
+            // the models the provider actually publishes first.
+            return PRIMARY_CATALOG_KEYS[selection.provider] ?? selection.provider
     }
+}
+
+/**
+ * Resolve the catalog a provider id reads when no Profile option selects one.
+ *
+ * Distinct from {@link resolveCatalogProviderKey}, which needs a Profile to know
+ * the option. Callers that hold only a provider id — the settings cards, the chat
+ * model projection — use this to reach the same catalog the Profile would.
+ *
+ * @param providerId Selectable provider identity.
+ * @returns The primary catalog key for that provider.
+ */
+export function resolvePrimaryCatalogKey(providerId: string): string {
+    return PRIMARY_CATALOG_KEYS[providerId] ?? providerId
 }

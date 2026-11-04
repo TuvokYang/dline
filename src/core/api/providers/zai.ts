@@ -5,6 +5,7 @@ import {
     mainlandZAiDefaultModelId,
     mainlandZAiModels,
 } from "@shared/api"
+import type { ModelCapabilities } from "@shared/proto/dline/models/metadata"
 import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import OpenAI from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
@@ -17,6 +18,18 @@ import { convertToOpenAiMessages } from "../transform/openai-format"
 import { ApiStream } from "../transform/stream"
 import { getOpenAIToolParams, ToolCallProcessor } from "../transform/tool-call-processor"
 import { splitInclusiveInputUsage } from "../transform/usage-normalization"
+
+/**
+ * The `thinking` payload for a GLM model.
+ *
+ * The gateway treats an absent field as "use the model default", which is what a
+ * model without a reasoning capability wants. Every GLM-5 model declares one, so
+ * stating it keeps the wire format independent of whichever default the gateway
+ * picks next.
+ */
+function zaiThinkingParams(thinking: ModelCapabilities["thinking"] | undefined): Record<string, unknown> {
+    return thinking?.supported ? { thinking: { type: "enabled" } } : {}
+}
 
 export class ZAiHandler extends ApiHandler {
     private client: OpenAI | undefined
@@ -94,6 +107,10 @@ export class ZAiHandler extends ApiHandler {
             stream: true,
             stream_options: { include_usage: true },
             ...getOpenAIToolParams(tools),
+            // GLM-5.3 rejects an explicit `disabled`, and every GLM-5 model reads
+            // its depth from `reasoning_effort`; omitting both left the gateway
+            // defaults in charge with no way for a Profile to choose.
+            ...zaiThinkingParams(model.info.capabilities?.thinking),
         })
 
         const toolCallProcessor = new ToolCallProcessor()

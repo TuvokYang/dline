@@ -38,8 +38,10 @@ export async function discoverProviderModels(
         return {}
     }
 
-    // Only requests that share both the provider and the persistence intent are
-    // interchangeable; a preview must not satisfy a caller expecting a write.
+    // Only requests that share the provider, the catalog and the persistence
+    // intent are interchangeable: a preview must not satisfy a caller expecting
+    // a write, and a Console refresh must not satisfy a Go refresh, which reads a
+    // different listing.
     const key = `${providerId}:${resolved.profileId ?? "default"}:${options?.persist === true ? "persist" : "preview"}`
     const pending = inFlight.get(key)
     if (pending) {
@@ -48,7 +50,11 @@ export async function discoverProviderModels(
 
     const request = (async () => {
         try {
-            const models = await source.fetchModels({ ...resolved, signal: options?.signal })
+            // The provider id *is* the catalog key here: `providerId` is what the
+            // caller asked to refresh, and a plan-aware source uses it to pick the
+            // listing that answers for that plan. Passing only the resolved
+            // credentials is what made every plan read the Console listing.
+            const models = await source.fetchModels({ ...resolved, catalogKey: providerId, signal: options?.signal })
             if (options?.persist === true && Object.keys(models).length > 0) {
                 await persistProviderCatalog({
                     // The catalog key the caller asked for, not the source's own

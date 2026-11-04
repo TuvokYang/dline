@@ -3,6 +3,7 @@ import { OpenCodeMode, OpenCodeProviderConfig } from "@shared/proto/dline/provid
 import { describe, expect, it } from "vitest"
 import { buildEffectiveModelInfo } from "../effective-model-info"
 import { resolveProfileCatalogKey, resolveProfileOverrides } from "../profile-model-info"
+import { OPENCODE_CONSOLE_CATALOG } from "../provider-catalog-key"
 import { readProviderConfigField, withProviderConfigField } from "../provider-config"
 
 /** A Profile config the flattened OpenCode provider stores. */
@@ -129,6 +130,6 @@ describe("shared readers over a Profile config", () => {
                 provider: "opencode",
                 opencode: { mode: OpenCodeMode.OPEN_CODE_MODE_CONSOLE },
             } as never),
-        ).toBe("opencode")
+        ).toBe(OPENCODE_CONSOLE_CATALOG)
     })
 })

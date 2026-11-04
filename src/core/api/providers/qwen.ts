@@ -57,6 +57,10 @@ export class QwenHandler extends ApiHandler {
             }
             try {
                 this.client = createOpenAIClient({
+                    // Both endpoints are current. Alibaba now also offers a
+                    // workspace-scoped host per region and recommends migrating to it,
+                    // but states that these regional hosts keep working, and a Profile
+                    // can always override the URL.
                     baseURL:
                         this.baseUrl ||
                         (this.useChinaApi()

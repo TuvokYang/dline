@@ -5,6 +5,7 @@ import {
     type OpenCodeMode,
     QWEN_MAINLAND_CATALOG,
     resolveCatalogProviderKey,
+    resolvePrimaryCatalogKey,
     ZAI_MAINLAND_CATALOG,
 } from "@shared/providers/provider-catalog-key"
 import type { ProviderModelsConfig } from "@shared/providers/types"
@@ -13,9 +14,9 @@ import { describe, expect, it } from "vitest"
 const registry = allProviderModels as Record<string, ProviderModelsConfig>
 
 describe("resolveCatalogProviderKey", () => {
-    it("keeps every provider without a catalog-selecting option on its own catalog", () => {
+    it("keeps every provider without a catalog-selecting option on its primary catalog", () => {
         for (const config of Object.values(registry)) {
-            expect(resolveCatalogProviderKey({ provider: config.provider })).toBe(config.provider)
+            expect(resolveCatalogProviderKey({ provider: config.provider })).toBe(resolvePrimaryCatalogKey(config.provider))
         }
     })
 
@@ -24,23 +25,25 @@ describe("resolveCatalogProviderKey", () => {
         ["console", OPENCODE_CONSOLE_CATALOG],
         ["go", OPENCODE_GO_CATALOG],
     ] as const)("maps the OpenCode %s mode to its catalog", (mode: OpenCodeMode | undefined, expected: string) => {
-        expect(resolveCatalogProviderKey({ provider: OPENCODE_CONSOLE_CATALOG, opencodeMode: mode })).toBe(expected)
+        expect(resolveCatalogProviderKey({ provider: "opencode", opencodeMode: mode })).toBe(expected)
     })
 
     it("resolves both OpenCode catalogs to catalogs the provider declares", () => {
         // A key that resolves to no catalog would surface as an empty model list
-        // rather than as an error, so the registry is the oracle here.
+        // rather than as an error, so the registry is the oracle here. The stored
+        // provider identity stays "opencode"; only the catalog keys carry the plan.
         const consoleKey = resolveCatalogProviderKey({ provider: "opencode", opencodeMode: "console" })
         const goKey = resolveCatalogProviderKey({ provider: "opencode", opencodeMode: "go" })
 
-        expect(registry[consoleKey]?.provider).toBe(OPENCODE_CONSOLE_CATALOG)
-        const goCatalog = registry[OPENCODE_CONSOLE_CATALOG]?.catalogs?.[goKey]
-        // The catalog is declared here, but it holds no model of its own: the
-        // gateway listing fills it at run time.
-        expect(goCatalog, "the Go catalog must be declared by the OpenCode provider").toBeDefined()
+        expect(consoleKey).toBe(OPENCODE_CONSOLE_CATALOG)
+        expect(registry.opencode?.catalogs?.[goKey], "the Go catalog must be declared by the OpenCode provider").toBeDefined()
+        // The Console catalog is the provider's own one, so the seed keeps it at the
+        // top level rather than duplicating it under `catalogs`.
+        expect(registry.opencode?.models, "the Console catalog must carry the built-in models").toBeDefined()
         // A second selectable provider would expose the same models under its own
         // base URL, which is exactly what declaring the catalog avoids.
         expect(registry[goKey]).toBeUndefined()
+        expect(registry[consoleKey]).toBeUndefined()
     })
 
     it("maps a regional endpoint to the catalog that endpoint serves", () => {
@@ -64,5 +67,25 @@ describe("resolveCatalogProviderKey", () => {
         expect(resolveCatalogProviderKey({ provider: "opencode", opencodeMode: "team" as unknown as OpenCodeMode })).toBe(
             OPENCODE_CONSOLE_CATALOG,
         )
+    })
+})
+
+describe("resolvePrimaryCatalogKey", () => {
+    it("answers with the provider id for a provider whose catalog is keyed by it", () => {
+        expect(resolvePrimaryCatalogKey("qwen")).toBe("qwen")
+        expect(resolvePrimaryCatalogKey("zai")).toBe("zai")
+        expect(resolvePrimaryCatalogKey("anthropic")).toBe("anthropic")
+    })
+
+    it("answers with the declared primary catalog key for OpenCode", () => {
+        // The provider identity and its default catalog are two different facts: a
+        // Profile stores the identity, while the registry stores the catalog.
+        expect(resolvePrimaryCatalogKey("opencode")).toBe(OPENCODE_CONSOLE_CATALOG)
+        expect(resolvePrimaryCatalogKey("opencode-console")).toBe(OPENCODE_CONSOLE_CATALOG)
+    })
+
+    it("keeps a catalog key that is already a catalog key", () => {
+        expect(resolvePrimaryCatalogKey(OPENCODE_GO_CATALOG)).toBe(OPENCODE_GO_CATALOG)
+        expect(resolvePrimaryCatalogKey(QWEN_MAINLAND_CATALOG)).toBe(QWEN_MAINLAND_CATALOG)
     })
 })

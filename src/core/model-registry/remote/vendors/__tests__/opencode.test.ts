@@ -589,4 +589,37 @@ describe("OpenCodeModelSource", () => {
 
         expect(requested).toEqual([LISTING_URL])
     })
+
+    it("reads the Go listing when the caller refreshes the Go catalog", async () => {
+        const requested: string[] = []
+        await mockFetchForTesting(
+            (async (input: RequestInfo | URL) => {
+                requested.push(String(input))
+                return new Response(JSON.stringify({ data: [] }), { status: 200 })
+            }) as typeof fetch,
+            () => new OpenCodeModelSource().fetchModels({ apiKey: "", catalogKey: "opencode-go" }),
+        )
+
+        // Go publishes its own catalog; reading the Console one is what filled
+        // the Go picker with entries the plan does not serve.
+        expect(requested).toEqual([`${OPENCODE_BASE_URL}/go/v1/models`])
+    })
+
+    it("keeps the Go listing on the gateway even when the Profile carries a protocol base URL", async () => {
+        const requested: string[] = []
+        await mockFetchForTesting(
+            (async (input: RequestInfo | URL) => {
+                requested.push(String(input))
+                return new Response(JSON.stringify({ data: [] }), { status: 200 })
+            }) as typeof fetch,
+            () =>
+                new OpenCodeModelSource().fetchModels({
+                    apiKey: "",
+                    catalogKey: "opencode-go",
+                    baseUrl: `${OPENCODE_BASE_URL}/go/openai/v1`,
+                }),
+        )
+
+        expect(requested).toEqual([`${OPENCODE_BASE_URL}/go/v1/models`])
+    })
 })

@@ -3,6 +3,7 @@ import {
     getModelInfoOverrideFields,
     pickModelInfoOverride,
 } from "@shared/providers/model-info-overrides"
+import { resolvePrimaryCatalogKey } from "@shared/providers/provider-catalog-key"
 import { AIhubmixProvider } from "./AihubmixProvider"
 import { AnthropicProvider } from "./AnthropicProvider"
 import { AskSageProvider } from "./AskSageProvider"
@@ -61,7 +62,7 @@ interface ApiProfileEditorProps {
  */
 const ApiProfileEditor: React.FC<ApiProfileEditorProps> = ({ profile, isPopup, onUpdateProfile }) => {
     const showModelOptions = true
-    const { models } = useProviderModels(profile.provider || "")
+    const { models } = useProviderModels(profile.provider ? resolvePrimaryCatalogKey(profile.provider) : "")
 
     const onUpdate = (updates: Partial<ApiProfile>) => {
         const normalized = { ...updates }

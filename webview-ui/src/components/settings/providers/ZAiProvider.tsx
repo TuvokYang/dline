@@ -1,11 +1,13 @@
 import { ZAiProviderConfig } from "@shared/proto/dline/provider/zai"
-import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
-// Mode import removed — no longer needed in profile-driven architecture
+import { resolveProfileCatalogKey, resolveProfileModelId, resolveProfileModelInfo } from "@shared/providers/profile-model-info"
+import { resolvePrimaryCatalogKey, ZAI_MAINLAND_CATALOG } from "@shared/providers/provider-catalog-key"
 import { VSCodeDropdown, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
 import { ApiKeyField } from "../common/ApiKeyField"
+import { ModelAutocomplete } from "../common/ModelAutocomplete"
 import { ModelInfoView } from "../common/ModelInfoView"
-import { DropdownContainer, ModelSelector } from "../common/ModelSelector"
+import { DropdownContainer } from "../common/ModelSelector"
 import type { ApiProfile } from "./ProviderProfile"
+import { useProviderModelOptions } from "./useProviderModelOptions"
 import { useProviderModels } from "./useProviderModels"
 
 interface ZAiProviderProps {
@@ -20,9 +22,43 @@ export const ZAiProvider = ({ showModelOptions, isPopup, profile, onUpdate }: ZA
     const pc = profile.zai ?? ZAiProviderConfig.create()
     const zaiApiLine = pc.zaiApiLine || "international"
 
-    const { models: zaiModels, defaultModelId: zaiDefaultModelId } = useProviderModels("zai-intl")
+    // The catalog key is resolved from the profile, not hard-coded: the region
+    // option selects `zai-cn`, and a literal key named the international catalog
+    // would leave a mainland Profile reading a catalog the registry never holds.
+    const {
+        models: zaiModels,
+        defaultModelId: zaiDefaultModelId,
+        options: zaiModelOptions,
+        optionOrigins,
+        refreshRemoteModels,
+    } = useProviderModelOptions({
+        providerId: resolveProfileCatalogKey(profile),
+        profileId: profile.id,
+        baseUrl: profile.baseUrl,
+        apiKey: profile.apiKey,
+        selectedModelId: resolveProfileModelId(profile),
+    })
     const modelInfo = resolveProfileModelInfo(profile, { models: zaiModels, defaultModelId: zaiDefaultModelId })
     const modelId = modelInfo.id
+
+    // A region change swaps the catalog. The region option has exactly two values,
+    // so the catalog being entered is always the one this Profile does not read
+    // now; both groups are already cached, so this costs no extra request.
+    const otherCatalog = useProviderModels(
+        zaiApiLine === "china" ? resolvePrimaryCatalogKey(profile.provider) : ZAI_MAINLAND_CATALOG,
+    )
+    const changeEntrypoint = (line: string) => {
+        if (line === zaiApiLine) return
+        // A selection the new endpoint does not serve would be sent as-is and
+        // answered with an error. Fall back to that catalog's default, which
+        // `useProviderModels` already reduces to its first model when it states none.
+        const fallbackId = otherCatalog.models[modelId] ? modelId : otherCatalog.defaultModelId
+        onUpdate({
+            zai: { ...pc, zaiApiLine: line },
+            modelId: fallbackId,
+            modelInfo: otherCatalog.models[fallbackId],
+        })
+    }
 
     return (
         <div>
@@ -32,7 +68,7 @@ export const ZAiProvider = ({ showModelOptions, isPopup, profile, onUpdate }: ZA
                 </label>
                 <VSCodeDropdown
                     id="zai-entrypoint"
-                    onChange={(e) => onUpdate({ zai: { ...pc, zaiApiLine: (e.target as HTMLSelectElement).value } })}
+                    onChange={(e) => changeEntrypoint((e.target as HTMLSelectElement).value)}
                     style={{ minWidth: 130, position: "relative" }}
                     value={zaiApiLine}>
                     <VSCodeOption value="international">api.z.ai</VSCodeOption>
@@ -54,13 +90,18 @@ export const ZAiProvider = ({ showModelOptions, isPopup, profile, onUpdate }: ZA
             />
             {showModelOptions && (
                 <>
-                    <ModelSelector
+                    <ModelAutocomplete
                         label="Model"
-                        models={zaiModels}
-                        onChange={(e) => {
-                            const v = (e.target as HTMLSelectElement).value
-                            onUpdate({ modelId: v, modelInfo: zaiModels[v] })
+                        models={zaiModelOptions}
+                        onChange={(newModelId) => {
+                            // Only catalog entries carry metadata; a discovered id
+                            // keeps the profile's existing model info untouched.
+                            const nextModel = zaiModels[newModelId]
+                            onUpdate({ modelId: newModelId, ...(nextModel ? { modelInfo: nextModel } : {}) })
                         }}
+                        onOpen={refreshRemoteModels}
+                        optionOrigins={optionOrigins}
+                        placeholder="Search, select, or enter a model ID..."
                         selectedModelId={modelId}
                     />
                     <ModelInfoView isPopup={isPopup} modelInfo={modelInfo} selectedModelId={modelId} />

@@ -41,8 +41,10 @@ describe("Provider inclusive prompt usage boundary", () => {
     it("derives missing Dify completion usage from total minus prompt tokens", async () => {
         const source = await readFile(path.join(__dirname, "..", "dify.ts"), "utf8")
 
+        // The adapter is free to bind `usage` to a local before reading it, so the
+        // assertion has to describe the arithmetic rather than the binding name.
         expect(source).toMatch(
-            /parsed\.usage\.completion_tokens\s*\?\?\s*Math\.max\(0,\s*\(parsed\.usage\.total_tokens\s*\?\?\s*inputTokens\)\s*-\s*inputTokens\)/s,
+            /usage\.completion_tokens\s*\?\?\s*Math\.max\(0,\s*\(usage\.total_tokens\s*\?\?\s*inputTokens\)\s*-\s*inputTokens\)/s,
         )
         expect(source).not.toContain("completion_tokens || parsed.usage.total_tokens")
     })

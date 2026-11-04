@@ -168,14 +168,21 @@ export const OpenCodeProvider = ({ showModelOptions, isPopup, profile, onUpdate 
 
     const changePlan = (next: OpenCodePlan) => {
         const nextConfig: OpenCodeProviderConfig = { ...latest(), mode: PLAN_MODES[next] }
+        if (next === plan) {
+            publish(nextConfig)
+            onUpdate({ opencode: nextConfig })
+            return
+        }
         // A Plan change may leave the selection outside the new catalog, which the
-        // gateway answers with 404. Whether the id survives is decided against the
-        // catalog the new plan reads, never against the one being left.
-        const survives = next === plan || modelId === "" || otherCatalog.models[modelId] !== undefined
+        // gateway answers with 404. The fallback is the catalog the new plan reads,
+        // never the one being left, and never an empty id: a Profile without a
+        // selection cannot start a request at all.
+        const fallbackId = otherCatalog.models[modelId] ? modelId : otherCatalog.defaultModelId
         publish(nextConfig)
         onUpdate({
             opencode: nextConfig,
-            ...(survives ? {} : { modelId: "", modelInfo: undefined }),
+            modelId: fallbackId,
+            modelInfo: otherCatalog.models[fallbackId],
         })
     }
 

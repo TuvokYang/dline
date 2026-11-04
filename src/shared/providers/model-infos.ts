@@ -5,6 +5,7 @@
  */
 
 import { allProviderModels } from "../../core/api/providers/models/index"
+import { resolvePrimaryCatalogKey } from "./provider-catalog-key"
 import type { ProviderCatalog, ProviderModelsConfig } from "./types"
 
 export { allProviderModels }
@@ -31,9 +32,20 @@ export function getSeedProviderIds(): string[] {
 export function getProviderCatalog(catalogKey: string): ProviderCatalogSelection | undefined {
     const direct = allProviderModels[catalogKey]
     if (direct) {
-        return { provider: direct, catalog: direct }
+        // A provider whose primary catalog is not keyed by its own id answers with
+        // that catalog, so a caller holding only the provider id reaches the models
+        // the provider publishes first.
+        const primaryKey = resolvePrimaryCatalogKey(catalogKey)
+        const primary = primaryKey === catalogKey ? undefined : direct.catalogs?.[primaryKey]
+        return { provider: direct, catalog: primary ?? direct }
     }
     for (const provider of Object.values(allProviderModels)) {
+        // The primary catalog of such a provider is stored at the top level, not in
+        // `catalogs`, so the key has to be resolved before giving up: otherwise the
+        // primary catalog would be the one catalog nobody can look up by its key.
+        if (resolvePrimaryCatalogKey(provider.provider) === catalogKey) {
+            return { provider, catalog: provider }
+        }
         const catalog = provider.catalogs?.[catalogKey]
         if (catalog) {
             return { provider, catalog }
@@ -48,7 +60,17 @@ export interface ProviderCatalogSelection {
     readonly catalog: ProviderCatalog
 }
 
-/** Every catalog key a provider claims, including its own id. */
+/**
+ * Every catalog key a provider claims, primary first.
+ *
+ * A provider whose primary catalog is not keyed by its own id contributes that
+ * primary key rather than its id: the id is a selectable identity, not a stored
+ * catalog, and listing it would advertise a catalog no document supplies. Keys
+ * are de-duplicated because a provider may declare its primary key in `catalogs`
+ * and the provider id as well.
+ */
 export function getProviderCatalogKeys(provider: ProviderModelsConfig): string[] {
-    return [provider.provider, ...Object.keys(provider.catalogs ?? {})]
+    const primaryKey = resolvePrimaryCatalogKey(provider.provider)
+    const keys = [primaryKey, ...Object.keys(provider.catalogs ?? {})]
+    return [...new Set(keys)]
 }

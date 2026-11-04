@@ -608,22 +608,24 @@ export class OpenCodeHandler extends ApiHandler {
     /**
      * Map OpenCode gateway failures onto Dline's error contract.
      *
-     * A 403 from this gateway does not mean the credential is wrong: it is how
-     * the seller refuses a model that is only available inside its own client.
-     * Reporting that as an auth failure would send the user to re-enter a valid
-     * key. 401/429 and other statuses keep the shared classification.
+     * 403 and 404 are status codes, not explanations. The gateway reuses them
+     * for unrelated refusals — a country restriction, a client-only model, a
+     * retired model id, a wrong base URL — so the response message decides the
+     * wording. Only a reason the gateway itself stated is reported; an
+     * unrecognized refusal stays neutral instead of being described as a
+     * credential or plan problem the user cannot verify. 401/429 and other
+     * statuses keep the shared classification.
      */
     override parseError(error: any, modelId?: string): ClineError {
         const status = error?.status || error?.statusCode || error?.response?.status
-        const rawMessage = String(error?.message ?? error?.error?.message ?? "")
+        const providerMessage = readProviderMessage(error)
         if (status === 403) {
             return new ClineError(
                 {
                     status,
-                    code: "OPENCODE_MODEL_RESTRICTED",
-                    message:
-                        "This model is only available inside the OpenCode client. Choose a paid OpenCode model, or use the OpenCode Go plan.",
-                    details: { providerMessage: rawMessage },
+                    ...classifyForbidden(providerMessage),
+                    ...preservedRequestId(error),
+                    details: { providerMessage },
                 },
                 modelId,
                 "opencode",
@@ -633,9 +635,11 @@ export class OpenCodeHandler extends ApiHandler {
             return new ClineError(
                 {
                     status,
-                    code: "OPENCODE_MODEL_UNAVAILABLE",
-                    message: "The selected model is not available in this OpenCode mode. Pick another model or switch the mode.",
-                    details: { providerMessage: rawMessage },
+                    code: "OPENCODE_REQUEST_NOT_FOUND",
+                    message:
+                        "The OpenCode gateway returned 404 for this request. Check that the selected model still exists and that the base URL points at the gateway.",
+                    ...preservedRequestId(error),
+                    details: { providerMessage },
                 },
                 modelId,
                 "opencode",
@@ -659,6 +663,91 @@ export class OpenCodeHandler extends ApiHandler {
  * Reset times arrive either as an ISO 8601 string or as epoch seconds or
  * milliseconds, so both shapes are normalized to ISO here.
  */
+/**
+ * Read the message the gateway actually returned.
+ *
+ * The error reaches this handler in several shapes depending on which SDK
+ * carried the request: a plain `message`, a nested `error.message`, or an
+ * already-serialized JSON string. Reading only one shape is what let the 403
+ * branch replace a stated reason with a guessed one.
+ */
+function readProviderMessage(error: any): string {
+    // The SDK's own `message` is often a placeholder ("Request failed with
+    // status code 403") while the gateway's reason sits in the body, so the
+    // body is read first and the top-level text is only the fallback.
+    const fromBody = error?.error?.message ?? error?.response?.data?.error?.message ?? error?.response?.data?.message ?? ""
+    const direct = error?.message ?? ""
+    const message = String(fromBody || direct || "")
+    if (!message) return ""
+    // A JSON error string carries the vendor payload, not a readable sentence.
+    if (message.startsWith("{")) {
+        try {
+            const parsed = JSON.parse(message)
+            const nested = parsed?.error?.message ?? parsed?.message
+            if (typeof nested === "string" && nested.length > 0) return nested
+        } catch {
+            // Not JSON: the text itself is the message.
+        }
+    }
+    return message
+}
+
+/** Keep the gateway's request id when it published one; support needs it. */
+function preservedRequestId(error: any): { request_id?: string } {
+    const requestId =
+        error?.request_id ?? error?.requestId ?? error?.response?.headers?.["x-request-id"] ?? error?.headers?.["x-request-id"]
+    return typeof requestId === "string" && requestId.length > 0 ? { request_id: requestId } : {}
+}
+
+/**
+ * Reasons the gateway states about *where* a model may run, in its own words.
+ *
+ * These patterns match the published refusals only. A message that mentions no
+ * reason, or one this list does not know, must not be reported as a client or
+ * plan restriction: the user would be told to buy a plan for a request that a
+ * purchase cannot admit.
+ */
+const FORBIDDEN_REASONS: readonly { readonly pattern: RegExp; readonly code: string; readonly message: string }[] = [
+    {
+        // "This model is not available in your country", "not available in your region".
+        pattern: /\b(?:not available|unavailable|unsupported)\b[^.]*\b(?:country|region|territory|location)\b/i,
+        code: "OPENCODE_MODEL_REGION_RESTRICTED",
+        // Only the reason the gateway stated. How it decides a country, and
+        // whether a plan or client would change the answer, are things the
+        // response never said; asserting them here would trade one guessed
+        // cause for another.
+        message: "OpenCode does not offer this model in your country or region.",
+    },
+    {
+        // "This model is only available inside the OpenCode client."
+        pattern: /\bonly\b[^.]*\b(?:inside|in|within)\b[^.]*\b(?:opencode|official)\b[^.]*\bclient\b/i,
+        code: "OPENCODE_MODEL_CLIENT_RESTRICTED",
+        message:
+            "OpenCode serves this model only inside its own client. Choose a paid OpenCode model here, or use the OpenCode client for this one.",
+    },
+]
+
+/**
+ * Classify a 403 by the reason the gateway stated.
+ *
+ * Returns only `code` and `message`: the caller keeps `status`, the provider
+ * message and the request id so the refusal is still diagnosable. The neutral
+ * branch exists because a 403 is a refusal, not a statement about credentials;
+ * presenting it as an auth problem would send the user to replace a valid key.
+ */
+function classifyForbidden(providerMessage: string): { code: string; message: string } {
+    for (const reason of FORBIDDEN_REASONS) {
+        if (reason.pattern.test(providerMessage)) {
+            return { code: reason.code, message: reason.message }
+        }
+    }
+    return {
+        code: "OPENCODE_REQUEST_FORBIDDEN",
+        message:
+            "OpenCode refused this request with 403 but did not state a reason Dline recognizes. The gateway message is preserved in Details; a different model or the OpenCode client may behave differently.",
+    }
+}
+
 export function parseOpenCodeUsage(payload: unknown): UsageQuota[] | undefined {
     const windows = findOpenCodeUsageWindows(payload)
     if (!windows) return undefined

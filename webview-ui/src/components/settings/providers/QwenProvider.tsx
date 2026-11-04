@@ -1,14 +1,17 @@
 import { QwenApiRegions } from "@shared/api"
 import { QwenProviderConfig } from "@shared/proto/dline/provider/qwen"
 import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
-import { resolveProfileModelId } from "@shared/providers/profile-model-info"
+import { resolveProfileCatalogKey, resolveProfileModelId } from "@shared/providers/profile-model-info"
+import { QWEN_MAINLAND_CATALOG, resolvePrimaryCatalogKey } from "@shared/providers/provider-catalog-key"
 import { VSCodeDropdown, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
 import { DROPDOWN_Z_INDEX } from "../ApiOptions"
 import { ApiKeyField } from "../common/ApiKeyField"
+import { ModelAutocomplete } from "../common/ModelAutocomplete"
 import { ModelInfoView } from "../common/ModelInfoView"
-import { DropdownContainer, ModelSelector } from "../common/ModelSelector"
+import { DropdownContainer } from "../common/ModelSelector"
 import ThinkingControl from "../ThinkingControl"
 import type { ApiProfile } from "./ProviderProfile"
+import { useProviderModelOptions } from "./useProviderModelOptions"
 import { useProviderModels } from "./useProviderModels"
 
 interface QwenProviderProps {
@@ -25,8 +28,41 @@ export const QwenProvider = ({ showModelOptions, isPopup: _isPopup, profile, onU
     const pc = profile.qwen ?? QwenProviderConfig.create()
     const qwenApiLine = (pc.qwenApiLine as QwenApiRegions) || qwenApiOptions[0]
 
-    const { models: qwenModels, defaultModelId: qwenDefaultModelId } = useProviderModels("qwen")
+    // Resolved from the profile so the region option reaches `qwen-cn`; the
+    // listing source reads the same key to pick the matching host.
+    const {
+        models: qwenModels,
+        defaultModelId: qwenDefaultModelId,
+        options: qwenModelOptions,
+        optionOrigins,
+        refreshRemoteModels,
+    } = useProviderModelOptions({
+        providerId: resolveProfileCatalogKey(profile),
+        profileId: profile.id,
+        baseUrl: profile.baseUrl,
+        apiKey: profile.apiKey,
+        selectedModelId: resolveProfileModelId(profile),
+    })
     const modelId = resolveProfileModelId(profile, { defaultModelId: qwenDefaultModelId })
+
+    // Switching the API line swaps the catalog. The option has exactly two values,
+    // so the catalog being entered is the one this Profile does not read now; both
+    // groups are already cached.
+    const otherCatalog = useProviderModels(
+        qwenApiLine === QwenApiRegions.CHINA ? resolvePrimaryCatalogKey(profile.provider) : QWEN_MAINLAND_CATALOG,
+    )
+    const changeApiLine = (line: string) => {
+        if (line === qwenApiLine) return
+        // A selection the new endpoint does not serve would be sent as-is and
+        // answered with an error. Fall back to that catalog's default, which
+        // `useProviderModels` already reduces to its first model when it states none.
+        const fallbackId = otherCatalog.models[modelId] ? modelId : otherCatalog.defaultModelId
+        onUpdate({
+            qwen: { ...pc, qwenApiLine: line || "" },
+            modelId: fallbackId,
+            modelInfo: otherCatalog.models[fallbackId],
+        })
+    }
     const baseModel = profile.modelInfo?.id === modelId ? profile.modelInfo : qwenModels[modelId]
     const modelInfo = buildEffectiveModelInfo(modelId, baseModel, { capabilities: pc.capabilities, pricing: pc.pricing })
     const thinking = modelInfo.capabilities?.thinking
@@ -41,7 +77,7 @@ export const QwenProvider = ({ showModelOptions, isPopup: _isPopup, profile, onU
                 </label>
                 <VSCodeDropdown
                     id="qwen-line-provider"
-                    onChange={(e) => onUpdate({ qwen: { ...pc, qwenApiLine: (e.target as HTMLSelectElement).value || "" } })}
+                    onChange={(e) => changeApiLine((e.target as HTMLSelectElement).value)}
                     style={{ minWidth: 130, position: "relative" }}
                     value={qwenApiLine}>
                     {qwenApiOptions.map((line) => (
@@ -62,13 +98,18 @@ export const QwenProvider = ({ showModelOptions, isPopup: _isPopup, profile, onU
             />
             {showModelOptions && (
                 <>
-                    <ModelSelector
+                    <ModelAutocomplete
                         label="Model"
-                        models={qwenModels}
-                        onChange={(e) => {
-                            const v = (e.target as HTMLSelectElement).value
-                            onUpdate({ modelId: v || "", modelInfo: qwenModels[v || ""] })
+                        models={qwenModelOptions}
+                        onChange={(newModelId) => {
+                            // Only catalog entries carry metadata; a discovered id
+                            // keeps the profile's existing model info untouched.
+                            const nextModel = qwenModels[newModelId]
+                            onUpdate({ modelId: newModelId, ...(nextModel ? { modelInfo: nextModel } : {}) })
                         }}
+                        onOpen={refreshRemoteModels}
+                        optionOrigins={optionOrigins}
+                        placeholder="Search, select, or enter a model ID..."
                         selectedModelId={modelId}
                         zIndex={DROPDOWN_Z_INDEX - 2}
                     />

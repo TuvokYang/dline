@@ -1,5 +1,6 @@
 /**
- * OpenCode `GET https://opencode.ai/inference/v1/models`.
+ * OpenCode model listings: Console at `GET https://opencode.ai/inference/v1/models`,
+ * Go at `GET https://opencode.ai/inference/go/v1/models`.
  *
  * The gateway publishes its whole catalog — model ids, limits, capabilities,
  * prices and the API family each model is served on — to an unauthenticated
@@ -19,19 +20,25 @@
  * from the listing below; a hand-written description of a model would be a claim
  * the gateway never made.
  *
- * The Console and Go plans share this one listing: both catalogs are populated
- * from the same response.
+ * Each plan publishes its own listing. Console serves `/inference/v1/models`
+ * and Go serves `/inference/go/v1/models`, so the catalog key a discovery asks
+ * for decides which one is read; an entry present in one plan is not evidence
+ * that the other plan serves it.
  */
 
 import { ApiFormat, type ContextWindowBand, type ThinkingConfig } from "@shared/proto/dline/models/metadata"
 import { flatMeteredPricing, withBands } from "@shared/providers/pricing-shape"
+import { OPENCODE_GO_CATALOG } from "@shared/providers/provider-catalog-key"
 import type { ModelCapabilities, ModelInfo } from "@shared/providers/types"
 import type { ProviderModelReconciliationMode } from "../../provider-model-reconciliation"
 import { isRecord, ModelListingSource, readNonNegativeNumber, readPositiveNumber, readString } from "../model-listing-source"
 import type { ProviderRemoteContext } from "../model-source"
 
-/** Listing root, and the root every family base URL hangs off. */
+/** Gateway root: the Console listing root and the prefix every family base URL hangs off. */
 export const OPENCODE_BASE_URL = "https://opencode.ai/inference"
+
+/** The Go plan publishes its catalog and families under this segment. */
+const OPENCODE_GO_ROOT = `${OPENCODE_BASE_URL}/go`
 
 /**
  * The listing quotes per-million-token amounts (`cost.text.input.price`), which
@@ -279,13 +286,20 @@ export class OpenCodeModelSource extends ModelListingSource {
     protected override readonly defaultBaseUrl = OPENCODE_BASE_URL
 
     /**
-     * The catalog always lives at the gateway root.
+     * Pick the listing that belongs to the plan being refreshed.
      *
-     * A Profile may carry a `baseUrl` override pointing at a protocol root
-     * (`…/inference/openai/v1`), so joining onto it would ask the wrong path.
+     * Each plan publishes its own catalog: Console at `/v1/models`, Go at
+     * `/go/v1/models`. Reading the Console listing for a Go catalog is what put
+     * Console-only entries into the Go picker and left Go-only entries missing.
+     *
+     * Plan roots are fixed at the gateway, like `baseUrl` below: a Profile may
+     * carry a `baseUrl` override pointing at a protocol root
+     * (`…/inference/openai/v1`), so joining onto it would ask the wrong path, and
+     * a caller with no catalog key gets the primary (Console) listing.
      */
-    protected override buildListingUrl(_context: ProviderRemoteContext): string {
-        return `${OPENCODE_BASE_URL}/v1/models`
+    protected override buildListingUrl(context: ProviderRemoteContext): string {
+        const planRoot = context.catalogKey === OPENCODE_GO_CATALOG ? OPENCODE_GO_ROOT : OPENCODE_BASE_URL
+        return `${planRoot}/v1/models`
     }
 
     /**

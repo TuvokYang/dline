@@ -152,7 +152,8 @@ vi.mock("../common/ModelInfoView", () => ({
     ModelInfoView: ({ modelInfo }: { modelInfo: ModelInfo }) => (
         <div>
             <span>max:{modelInfo.capabilities?.maxTokens}</span>
-            <span>input:{modelInfo.pricing?.metered?.strategy?.flat?.prices?.inputPrice}</span>
+            {/* `metered` is the deprecated envelope; current pricing writes the top-level strategy. */}
+            <span>input:{modelInfo.pricing?.strategy?.flat?.prices?.inputPrice}</span>
             <span>context:{modelInfo.capabilities?.contextWindow}</span>
         </div>
     ),

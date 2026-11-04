@@ -18,6 +18,16 @@ export interface ProviderRemoteContext {
     readonly apiKey?: string
     /** Absent when the vendor exposes a single fixed endpoint. */
     readonly baseUrl?: string
+    /**
+     * Which catalog of the provider this discovery fills.
+     *
+     * A provider that publishes one listing per plan (OpenCode serves Console
+     * and Go from different endpoints) needs this to pick the endpoint that
+     * actually answers for the plan the caller is refreshing. It is internal
+     * discovery context: absent means the provider's primary catalog, and no
+     * source is required to read it.
+     */
+    readonly catalogKey?: string
     readonly signal?: AbortSignal
     /**
      * Vendor-specific credential fields that do not generalise, such as an

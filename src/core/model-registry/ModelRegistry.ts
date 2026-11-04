@@ -8,6 +8,7 @@ import { getDlineHomePath } from "@core/storage/disk"
 import { ServerTool, serverToolFromJSON } from "@shared/proto/dline/models/metadata"
 import { getProviderCatalog, getProviderCatalogKeys, getProviderSeedConfig } from "@shared/providers/model-infos"
 import { migrateModelPricing } from "@shared/providers/pricing-shape"
+import { resolvePrimaryCatalogKey } from "@shared/providers/provider-catalog-key"
 import type { ImageModelInfo, ModelInfo, ProviderModelsConfig } from "@shared/providers/types"
 import { Logger } from "@shared/services/Logger"
 import chokidar, { type FSWatcher } from "chokidar"
@@ -310,7 +311,9 @@ export class ModelRegistry {
         if (direct) return direct
         // An alternative catalog key resolves to its owner, but only when that
         // owner is already loaded: answering from the seed would let a deferred
-        // catalog look available before startup finished loading it.
+        // catalog look available before startup finished loading it. A primary
+        // catalog key that is not the provider id resolves back to that id first,
+        // because the cached entry is always stored under the provider identity.
         const ownerId = getProviderCatalog(providerId)?.provider.provider
         return ownerId ? this.cache.get(ownerId) : undefined
     }
@@ -330,11 +333,15 @@ export class ModelRegistry {
         if (catalog === selection.provider) {
             return provider
         }
+        // The stored lookups below address the catalog the key actually names, not
+        // the caller's argument: a provider id resolves to its primary catalog,
+        // which may carry a different key.
+        const storedKey = selection.provider.provider === catalogKey ? catalogKey : resolvePrimaryCatalogKey(catalogKey)
         // The stored catalog is the authority for this projection: discovery
         // writes the vendor's own statement into it, marked `userDefined: false`,
         // and the seed only fills fields that entry leaves absent. A catalog whose
         // seed states nothing therefore reads back exactly what discovery wrote.
-        const storedModels = provider.catalogs?.[catalogKey]?.models
+        const storedModels = provider.catalogs?.[storedKey]?.models
         const models = storedModels
             ? {
                   ...catalog.models,
@@ -370,7 +377,7 @@ export class ModelRegistry {
             models,
             // The stored catalog's default is a decision the listing wrote; the
             // seed default may name a model this catalog no longer contains.
-            defaultModelId: provider.catalogs?.[catalogKey]?.defaultModelId ?? catalog.defaultModelId ?? provider.defaultModelId,
+            defaultModelId: provider.catalogs?.[storedKey]?.defaultModelId ?? catalog.defaultModelId ?? provider.defaultModelId,
             imageModels: catalog.imageModels ?? provider.imageModels,
             defaultImageModelId: catalog.defaultImageModelId ?? provider.defaultImageModelId,
         }
@@ -449,8 +456,13 @@ export class ModelRegistry {
                 // projection, so a listing statement cannot differ between them.
                 const catalog = this.getProviderCatalog(catalogKey)
                 if (!catalog) continue
+                // An alternative catalog is a separate selectable model set, so it
+                // keeps its own group. The primary catalog answers as the provider
+                // itself: a Profile stores the provider id, and the Webview looks
+                // the models up by that value.
+                const groupProvider = catalogKey === resolvePrimaryCatalogKey(config.provider) ? config.provider : catalogKey
                 result.push({
-                    provider: catalogKey,
+                    provider: groupProvider,
                     providerName: config.providerName,
                     models: Object.values(catalog.models),
                     defaultModelId: catalog.defaultModelId,

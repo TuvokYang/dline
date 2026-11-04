@@ -4,6 +4,7 @@ import { type ImageGenerationProfile, ImageGenerationSource } from "@shared/prot
 import { AnthropicProviderConfig } from "@shared/proto/dline/provider/anthropic"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
 import { PROFILE_PROVIDER_KEYS, resolveProfileModelInfo } from "@shared/providers/profile-model-info"
+import { resolvePrimaryCatalogKey } from "@shared/providers/provider-catalog-key"
 import { clampThinkingBudget, resolveThinkingBudgetBounds } from "@shared/providers/thinking-budget"
 import type { Mode } from "@shared/storage/types"
 import { resolveProfileReasoningConfig, resolveTaskThinkingConfig } from "@shared/task-reasoning"
@@ -84,7 +85,7 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
     const modelLabel = profile.modelId || (hasProvider ? "Select model..." : "")
     const profileName =
         profile.name || (hasProvider && profile.modelId ? `${profile.provider}:${profile.modelId}` : "Unnamed profile")
-    const currentCatalog = useProviderModels(profile.provider || "")
+    const currentCatalog = useProviderModels(profile.provider ? resolvePrimaryCatalogKey(profile.provider) : "")
     const source =
         profile.imageSource === ImageGenerationSource.IMAGE_GENERATION_SOURCE_GPT_SUBSCRIPTION ||
         profile.imageSource === ImageGenerationSource.IMAGE_GENERATION_SOURCE_GPT_API ||
@@ -97,7 +98,7 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
         source === ImageGenerationSource.IMAGE_GENERATION_SOURCE_INDEPENDENT
             ? selectedImageProfile?.provider || ""
             : profile.provider || ""
-    const selectedCatalog = useProviderModels(imageProvider)
+    const selectedCatalog = useProviderModels(imageProvider ? resolvePrimaryCatalogKey(imageProvider) : "")
     const hasIndependent = imageProfiles.some((candidate) => candidate.enabled)
     const imageModels = Object.fromEntries(
         Object.entries(selectedCatalog.imageModels).filter(([modelId]) => modelId !== GPT_IMAGE_2_SUBSCRIPTION_MODEL_ID),

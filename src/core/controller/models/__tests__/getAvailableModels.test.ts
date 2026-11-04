@@ -5,7 +5,7 @@
 // sinon import removed: using vitest globals
 import { ModelRegistry } from "@core/model-registry/ModelRegistry"
 import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
-import { readCurrency } from "@shared/providers/pricing-shape"
+import { migrateModelPricing, readCurrency } from "@shared/providers/pricing-shape"
 import { expect } from "chai"
 import { afterEach, beforeEach, describe, it, vi } from "vitest"
 import { getAvailableModels } from "../getAvailableModels"
@@ -216,8 +216,11 @@ describe("getAvailableModels handler", () => {
                                 contextWindow: 128000,
                             },
                             description: "A model for testing",
+                            // The current declaration: `metered` is deprecated read-compatibility
+                            // only, and writers emit `currency`/`strategy` at the top level.
                             pricing: {
-                                metered: { currency: "USD", strategy: { flat: { prices: { inputPrice: 0, outputPrice: 0 } } } },
+                                currency: "USD",
+                                strategy: { flat: { prices: { inputPrice: 0, outputPrice: 0 } } },
                             },
                         },
                     ],
@@ -234,6 +237,45 @@ describe("getAvailableModels handler", () => {
         expect(model.capabilities?.supportsPromptCache).to.be.true
         expect(model.description).to.equal("A model for testing")
         expect(readCurrency(model.pricing)).to.equal("USD")
+    })
+
+    it("keeps a stored deprecated metered currency readable instead of reporting no currency", async () => {
+        // Profiles saved before pricing moved to the current fields carry
+        // `metered.currency`. A read must still answer with that currency, which
+        // is why the registry migrates it inbound; the deprecated envelope itself
+        // must not survive into what the Webview receives.
+        const mockRegistry = {
+            isInitialized: true,
+            waitForDeferredProviders: vi.fn().mockResolvedValue(undefined),
+            getAllModels: vi.fn().mockReturnValue([
+                {
+                    provider: "test-provider",
+                    providerName: "Test Provider",
+                    models: [
+                        {
+                            id: "legacy-model",
+                            name: "Legacy Model",
+                            maxTokens: 4096,
+                            contextWindow: 128000,
+                            pricing: migrateModelPricing({
+                                metered: {
+                                    currency: "EUR",
+                                    strategy: { flat: { prices: { inputPrice: 1, outputPrice: 2 } } },
+                                },
+                            }),
+                        },
+                    ],
+                },
+            ]),
+        }
+        vi.spyOn(ModelRegistry, "getInstance").mockReturnValue(mockRegistry as any)
+
+        const response = await getAvailableModels({} as any)
+        const model = response.providers?.[0].models?.[0]
+
+        expect(readCurrency(model?.pricing)).to.equal("EUR")
+        expect(model?.pricing?.metered).to.equal(undefined)
+        expect(model?.pricing?.strategy?.flat?.prices?.outputPrice).to.equal(2)
     })
 
     it("preserves API formats and server-tool capabilities for the Webview catalog", async () => {

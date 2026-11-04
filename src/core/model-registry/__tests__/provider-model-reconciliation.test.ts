@@ -216,6 +216,73 @@ describe("reconcileProviderModels refresh-built-ins", () => {
     })
 })
 
+describe("reconcileProviderModels refresh-built-ins catalogs", () => {
+    /** A provider with one alternative catalog, so the cleanup path is exercised. */
+    function catalogConfig(
+        models: Record<string, ModelInfo>,
+        catalogModels: Record<string, ModelInfo>,
+        defaultModelId?: string,
+    ): ProviderModelsConfig {
+        return {
+            provider: "qwen",
+            providerName: "Alibaba Qwen",
+            billingMode: "token",
+            models,
+            catalogs: { "qwen-cn": { models: catalogModels, ...(defaultModelId ? { defaultModelId } : {}) } },
+        }
+    }
+
+    it("removes a built-in entry the seed no longer declares inside an alternative catalog", () => {
+        // `userDefined` is absent on entries written before the marker existed and
+        // on every listing-persisted entry, so absent has to mean built-in. Reading
+        // it literally is what left stale vendor models in the file forever.
+        const stored = catalogConfig({}, { "retired-listing-model": { id: "retired-listing-model", name: "Retired" } })
+        const seed = catalogConfig({}, { "current-model": { id: "current-model", name: "Current" } })
+
+        const merged = reconcileProviderModels(seed, stored, "refresh-built-ins")
+
+        expect(Object.keys(merged.catalogs?.["qwen-cn"]?.models ?? {})).toEqual(["current-model"])
+    })
+
+    it("keeps an explicitly user-defined entry the seed does not declare inside a catalog", () => {
+        const stored = catalogConfig({}, { "private-model": { id: "private-model", name: "Private", userDefined: true } })
+        const seed = catalogConfig({}, { "current-model": { id: "current-model", name: "Current" } })
+
+        const merged = reconcileProviderModels(seed, stored, "refresh-built-ins")
+
+        expect(Object.keys(merged.catalogs?.["qwen-cn"]?.models ?? {}).sort()).toEqual(["current-model", "private-model"])
+        expect(merged.catalogs?.["qwen-cn"]?.models["private-model"].userDefined).toBe(true)
+    })
+
+    it("leaves a fully listing-derived catalog untouched", () => {
+        // The OpenCode plans declare no model, so discovery owns every entry there.
+        // Treating them as retired built-ins would empty the plan on each startup.
+        const stored = catalogConfig({}, { "listed-model": { id: "listed-model", name: "Listed", userDefined: false } })
+        const seed = catalogConfig({}, {})
+
+        const merged = reconcileProviderModels(seed, stored, "refresh-built-ins")
+
+        expect(Object.keys(merged.catalogs?.["qwen-cn"]?.models ?? {})).toEqual(["listed-model"])
+    })
+
+    it("drops a default that names a model the cleanup removed", () => {
+        // A default pointing at nothing would leave the catalog with no usable
+        // selection even though it still lists models.
+        const stored = catalogConfig(
+            {},
+            { "retired-default": { id: "retired-default", name: "Retired" }, "current-model": { id: "current-model" } },
+            "retired-default",
+        )
+        const seed = catalogConfig({}, { "current-model": { id: "current-model", name: "Current" } })
+
+        const merged = reconcileProviderModels(seed, stored, "refresh-built-ins")
+
+        const defaultModelId = merged.catalogs?.["qwen-cn"]?.defaultModelId
+        expect(defaultModelId === undefined || merged.catalogs?.["qwen-cn"]?.models[defaultModelId]).toBeTruthy()
+        expect(defaultModelId).not.toBe("retired-default")
+    })
+})
+
 describe("reconcileProviderModels replace", () => {
     it("drops stored models so that vendor-derived catalogs stay authoritative", () => {
         const stored = config({

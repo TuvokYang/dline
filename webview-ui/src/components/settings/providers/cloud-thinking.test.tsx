@@ -226,7 +226,7 @@ for (const [provider, configKey, Panel] of [
                 pricing: flatMeteredPricing(0, 0),
             })
             // The carried price set survives as a readable rate, not an empty shell.
-            expect(readPriceSet(projected.pricing.metered.strategy.flat.prices).inputPrice).toBe(0)
+            expect(readPriceSet(projected.pricing.strategy.flat.prices).inputPrice).toBe(0)
             expect(screen.getByRole("textbox", { name: "Model" })).toHaveValue("opaque-ui")
             expect(onUpdate).not.toHaveBeenCalled()
         })
@@ -252,7 +252,7 @@ for (const [provider, configKey, Panel] of [
                 },
             })
             // The override's carried rates reach the projection as real prices.
-            expect(readPriceSet(catalogProjection.pricing.metered.strategy.flat.prices)).toEqual({
+            expect(readPriceSet(catalogProjection.pricing.strategy.flat.prices)).toEqual({
                 inputPrice: 0,
                 outputPrice: 0,
                 cacheWritePrice: 0,
