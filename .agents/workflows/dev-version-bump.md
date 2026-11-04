@@ -1,13 +1,13 @@
 ---
 name: dev-version-bump
-description: Prepare package, bilingual changelog, and bilingual What's New versions on dev or an isolated branch, with independent source branches required only when creating a PR into dev.
+description: Prepare a release version and bilingual notes on dev or an isolated branch; optionally create an authorized dev pre-release after integration. Production promotion remains in release.
 ---
 
-# Development Version Preparation
+# Version and Development Pre-release Preparation
 
-Prepare a release version directly on `dev` or on a recommended isolated branch. This workflow does not publish, promote `main`, or create a production tag.
+Prepare version files for a production release, patch or pre-release directly on `dev` or a recommended isolated branch. This is the shared version-writing procedure used by `release` and `hotfix-release`. The optional development-tag stage applies only when the user requests a pre-release; it does not promote `main` or create a production tag.
 
-Follow `repository-and-release` first.
+Follow `repository-and-release` for branch and version policy.
 
 ## 1. Confirm the development branch
 
@@ -25,9 +25,9 @@ Do not include unrelated or unknown working-tree changes.
 
 ## 2. Establish the version range
 
-Confirm the target `X.Y.Z` and a precise previous version ref. Never infer the base from the newest lexicographic tag alone because development and production tags have different roles.
+Confirm the requested channel, target `X.Y.Z` and exact previous release ref. For production notes, use the preceding valid `vX.Y.Z` in verified `main` history. For a pre-release delta, use the preceding applicable `dev-vX.Y.Z` on that line; for its first pre-release, explicitly establish the preceding production baseline instead. Resolve refs to commits and inspect ancestry, not just spelling. Never choose a baseline by lexicographic tag order or substitute `HEAD` when it is unresolved.
 
-Choose the target by the version bump rules in repository-and-release: a production release (`vX.Y.Z`) uses an even minor, a pre-release (`dev-vX.Y.Z`) uses an odd minor, and the minor never decreases. Start a new production line at the next even minor, a fix release at the next patch of the current even minor, and a pre-release line at the next odd minor. Stop when the requested target has the wrong parity for its channel; packaging rejects it.
+Choose the target using `scripts/release-version-policy.mjs` and the version policy in `repository-and-release`: production has an even minor, pre-release an odd minor, and the minor never decreases. Start a production line at the next even minor, a fix release at the next patch of the current even minor, and a pre-release line at the next odd minor. Stop on wrong parity or a requested older minor. If a hotfix would require lowering the current dev line or excluding its changes, use the exceptional-strategy decision in `hotfix-release`; do not silently downgrade version files.
 
 ```text
 git --no-pager log --oneline <previous-version-ref>..HEAD
@@ -108,10 +108,38 @@ chore(release): prepare X.Y.Z
 
 Push and PR creation require separate authorization. If an ordinary PR is created, its head must be an independent release-preparation branch and its base must be `dev`; direct `dev` work is not itself submitted as a PR source.
 
-Do not create `vX.Y.Z` here. A `dev-vX.Y.Z` development release tag may be created only after the prepared commit is the exact `dev` head, its target SHA is explicit, and tag creation is separately authorized. Pushing the tag triggers `Publish Draft Release (Dev)`; GitHub draft release creation remains blocked until the complete reusable Tests workflow finishes full Vitest, packages one VSIX, and runs the three-platform work smoke plus four daily workflows against that same artifact.
+Do not create `vX.Y.Z` here. Preparation, commit, push and PR operations do not authorize a development tag either; use the guarded stage below only for a requested pre-release.
 
 ## 6. After merge to dev
 
-Re-run the integrated checks on the exact `dev` commit. Only the production release workflow may promote a passing release candidate to `main` and create `vX.Y.Z`.
+Re-run the integrated checks on exact `dev` head, whether preparation was direct or arrived through a PR. For production or a production patch, hand the prepared candidate to `release`; for a development pre-release, continue below only when that operation is requested.
 
-Report the target version, previous ref, changed release files including both What's New editions, verification evidence, and any uncommitted, unpushed, or unmerged work.
+## 7. Development pre-release only
+
+1. Resolve the writable repository/remote through `repository-and-release` and refresh remote facts only under the applicable network authorization. Verify that the prepared commit is both local and resolved remote `dev` head. Stop if dev moved, the version is not an odd minor, the release files disagree, or the exact tag already exists locally or remotely.
+2. Show repository and push URL, exact dev SHA, tag name and destination ref. Obtain local tag-creation authorization separately from tag-push authorization; a user instruction may grant both explicitly.
+3. Only after local tag creation is authorized, create it at the verified dev commit:
+
+   ```text
+   git tag -a dev-vX.Y.Z <verified-dev-sha> -m "Dline X.Y.Z pre-release"
+   ```
+
+   Inspect its target read-only and require equality with the verified dev SHA:
+
+   ```text
+   git rev-parse "dev-vX.Y.Z^{commit}"
+   ```
+
+4. Refresh the dev-head fact under the applicable network authorization and stop if it moved. Show the tag object, target SHA and exact destination in the push preview. Only after tag push is authorized, run:
+
+   ```text
+   git push <remote> refs/tags/dev-vX.Y.Z:refs/tags/dev-vX.Y.Z
+   ```
+
+   Never move or overwrite an existing tag. Local creation does not authorize this remote write.
+5. Observe `release-draft.yml` (`Publish Pre-release`): it checks exact dev head, calls `test.yml` with the pre-release channel, then publishes the same tested VSIX only after full Vitest, one package job, one Linux work smoke and all four daily workflows on Linux, macOS and Windows. Record commit, run, artifact name and SHA-256.
+6. Verify the public GitHub pre-release and `publish-vsix-registries.yml` results. Registry publication defaults to Open VSX; Marketplace is disabled unless explicitly enabled by the caller. Report disabled/skipped separately from published. Do not rebuild or replace the tested asset to repair a publication failure.
+
+## 8. Report
+
+Report channel, target version, exact baseline and candidate SHAs, changed release files, verification and outstanding commit/push/PR work. For a requested pre-release, also report tag target, tag-push status, workflow run, tested VSIX identity and actual publication results. Do not imply production promotion occurred.

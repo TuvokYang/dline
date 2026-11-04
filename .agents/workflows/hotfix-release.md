@@ -7,7 +7,7 @@ description: Ship an urgent patch through dev, optionally using an isolated bugf
 
 Ship an urgent patch through the same protected branch and release path as ordinary development.
 
-Follow `repository-and-release` and load `release` before using this workflow.
+Follow `repository-and-release`. This workflow owns the production-symptom and releasable-dev decision; use `dev-version-bump` for version files in step 3 and `release` for production promotion in step 4.
 
 ## Default path
 
@@ -28,7 +28,7 @@ Dynamically discover `<repository>`, the remote containing the production refs, 
 
 Do not select `dev-vX.Y.Z` as the production baseline. It identifies a tested pre-release from `dev`; verify that the chosen production tag belongs to `main` history.
 
-Record the production symptom, affected versions, exact fixes required, non-goals, and recovery requirements.
+Record the production symptom, affected versions, exact fixes required, non-goals, and recovery requirements. Compare dev with that production baseline before starting the default path: if dev contains changes that cannot ship, or the requested production patch would lower its current minor line, stop at section 5 before preparing version files or proposing promotion.
 
 ## 2. Implement on dev or an isolated branch
 
@@ -40,23 +40,15 @@ Commit, push, and PR creation are separate operations. The ordinary hotfix PR ba
 
 ## 3. Prepare the patch version
 
-Load `dev-version-bump` on `dev` or a recommended independent release-preparation branch to update:
+Load `dev-version-bump` on `dev` or an independent release-preparation branch. It owns the package/lockfile, paired changelogs, cumulative scope and bilingual What's New edits; do not duplicate that writing procedure here. A normal production hotfix targets the next patch of the current even production minor, subject to the non-decreasing version policy and the releasable-dev decision above.
 
-- `CHANGELOG.md`;
-- `docs/changelog/CHANGELOG_en.md`;
-- `docs/whats-new/WHATS_NEW.md` and `docs/whats-new/WHATS_NEW_en.md`, with a new `## X.Y.Z` section that carries forward the current minor's highlights and adds the hotfix;
-- `package.json`;
-- `package-lock.json`.
-
-Merge both the fix and version preparation into `dev`, then run the complete integrated gate on the exact resulting commit.
+Ensure both the fix and version preparation are integrated into `dev`, directly or through independent PRs, then run the complete integrated gate on the exact resulting commit.
 
 ## 4. Promote and release
 
 Only after the `dev` gate passes, load `release` to squash `dev` into one `main` commit, back-merge it into `dev`, re-verify the final `main` commit, and create the production `vX.Y.Z` tag.
 
-A hotfix releases the next patch of the current even production minor (for example `0.10.0` to `0.10.1`), as the version bump rules in repository-and-release require; never ship a hotfix under an odd pre-release minor.
-
-The standard Release and Marketplace workflows must package and publish the tested artifact. Do not rebuild or manually replace the release VSIX.
+Follow the automatic validation, functional-test, GitHub Release and enabled-registry stages in `release`. Open VSX is currently enabled by default; Marketplace is not an automatic guaranteed target. Do not rebuild or manually replace the release VSIX, or invoke the separate manual override as a normal hotfix step.
 
 ## 5. When dev contains changes that cannot ship
 

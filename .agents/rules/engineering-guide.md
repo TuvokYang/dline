@@ -2,6 +2,8 @@
 
 This file records high-signal project conventions that are easy to miss and expensive to rediscover. Add guidance only when it cannot be learned quickly from nearby code, tests, or an existing specialized rule.
 
+Rules describe project architecture and conventions. Skills teach concrete work techniques. Workflows organize long implementation and operational sequences.
+
 ## File editing
 
 - Modify existing files with `replace_in_file`; use `write_to_file` only for new files.
@@ -51,128 +53,54 @@ Before editing, inspect the owning implementation, tests, generated contracts, a
 
 Check `package.json` before choosing a verification command. Current primary scripts include `check-types`, `lint`, `format`, `test:smoke`, `test:run`, `test:e2e:work`, `protos`, `package`, and `vsix`.
 
-## Test assertion quality
+## Test and verification contracts
 
-Every test must have an independent behavioral oracle and must fail for a plausible defect in the contract it claims to protect. Do not add tests merely to increase counts or freeze implementation-owned spelling.
+- Tests assert observable results against an independent oracle: inputs, parsed structure, ordering, state transitions or side effects. Each case must distinguish a plausible incorrect implementation.
+- `expect(text).toContain("implementation-owned prose")`, copied labels/endpoints, tag presence and string snapshots alone do not establish behavior. Exact tokens belong in tests when a parser, protocol, compatibility or accessibility consumer depends on them; exercise that consumer.
+- Assigning the same source value to both sides, deriving expected and actual through the same implementation, or returning a mock value and only asserting that value is not an independent test.
+- Remove such low-value assertions in a touched test scope. Replace them with the underlying invariant when one exists. This is not a ban on text: a caller-visible error matched by downstream code is a testable contract.
+- Generated snapshots record intentional aggregate output; regenerate them with repository commands and pair them with focused semantic checks.
 
-- Do not assert prose, labels, tags, HTML, generated prompt text, or serialized output only with `contains`, `toContain`, substring search, or equivalent text matching. Such assertions are allowed only when the exact token is itself a public parser, protocol, compatibility, or accessibility contract and the test demonstrates that boundary rather than restating a source literal.
-- Do not create self-fulfilling assertions such as assigning the same source value to `a` and `b` and asserting `a === b`, deriving expected and actual values through the same implementation, returning a value from a mock and only asserting that value, or copying production constants/logic into the test.
-- Do not use tag-presence or string snapshots as a substitute for semantic verification. Parse structured output and assert its schema, ordering, identity, behavior, state transition, error path, or observable side effect. Repository-owned generated snapshots may record intentional aggregate output, but they do not replace focused behavioral assertions.
-- Prefer real inputs and outputs at the smallest stable boundary. A useful test distinguishes success from failure, covers meaningful edge or recovery paths, and proves ownership or side effects where those are the contract.
-- Before adding a test, state the defect or mutation it would catch. If no plausible incorrect implementation would make the assertion fail, omit the test.
+Load `use-vitest` for execution/snapshot methods and `use-e2e` for host integration and diagnostics.
 
-### Low-value assertion tests are deleted, not kept
+E2E evidence must match the changed boundary. Focused functional tests are for stable regressions; full functional runs only in production validation or explicit investigation. Dev fault-injection and pressure/soak are not routine CI/release gates. Required CI/release uses one tested VSIX, one Linux work smoke, then four daily workflows each on Linux/macOS/Windows. Load `use-e2e` for tiers, source/package mode, dist lock, run isolation and diagnostics, and `e2e-validation` for the multi-stage validation procedure. Do not destroy active locks/artifacts, inflate timeouts, or broaden tests instead of diagnosing the first failed boundary.
 
-A test that restates a source literal is not coverage. Copying UI copy, an endpoint, a label, or a constant into an assertion and then asserting that the rendered output contains it proves only that the same string appears twice; it fails when the wording is edited, not when behavior breaks. The same applies to `expect(text).toContain("...")`, `toContain`, substring matching, and equivalent text lookups aimed at prose the implementation owns.
+## Type checking and emission
 
-- **Delete on sight.** When reviewing or touching a test file, remove any assertion of this kind instead of carrying it forward, even when it predates the current task. Do not preserve it as historical coverage and do not replace it with a slightly different string check.
-- **Replace only with a real invariant.** If a meaningful contract sits behind the assertion, assert the structure, state, side effect, ordering, or error path that a plausible defect would break. Otherwise leave the case uncovered and say so.
-- **Allowed exception.** An exact token may be asserted when that token is itself a parser, protocol, compatibility, or accessibility contract. The test must then demonstrate the boundary it protects, not that a prose sentence exists.
-- **Do not widen the rule into "never assert text".** Semantic contracts expressed through text, such as an error message a caller matches on, still deserve a behavioral test at the boundary that consumes them.
-- When a touched scope already contains a low-value assertion of these forms, remove it or replace it with a behavioral test; do not preserve it merely as historical coverage.
+`npm run check-types` checks the root project and `webview-ui/tsconfig.app.json` without emitting. Root tsconfig keeps `noEmit: true`; `scripts/build-tests.js` and `watch-tests` opt into output with `--noEmit false`. Production bundling uses esbuild through `npm run package`.
 
-## E2E validation tiers
-
-Load `use-e2e` for test selection and diagnostics, and load `e2e-validation` for the ordered validation procedure.
-
-- `src/test/e2e/work/` is the required continuous gate: one 120-second smoke project plus four single-file, single-top-level-test daily workflows with 600-second hard timeouts. Run the complete local gate with `npm run test:e2e:work`.
-- `dist/` is the one E2E resource that is not run-scoped. `scripts/with-dist-lock.mjs` guards it with a reader/writer lock: builds are exclusive, Playwright runs are shared. To run tiers concurrently, build once and then start read-only runs; inspect holders with `npm run e2e:lock:status` rather than deleting `dist/.e2e-lock/`.
-- Whether a tier installs the packaged VSIX is decided by `PACKAGED_E2E_LIFECYCLES` in `src/test/e2e/utils/vscode-launch-isolation.ts`. `test:e2e:work` and `test:e2e:functional` run in source mode against the `pree2e` dev bundle; adding a VSIX build to them would ship a production bundle into a source-mode run without changing what is tested.
-- `src/test/e2e/functional/` holds stable focused black-box regressions. Run only the files or test names required by the changed behavior; full functional execution runs only in production release validation or explicit investigation.
-- `src/test/e2e/dev/` holds fault injection, forensic capture, and narrowly scoped reproduction. It uses one worker, no retries, and retained failure traces, and it never enters required CI or release gates.
-- `playwright.pressure.config.ts` remains the explicit pressure/soak tier. Do not use it as routine completion evidence.
-- Keep `demo/`, `fixtures/`, and `utils/` in their existing roles. Work journeys must not duplicate functional implementation geometry or state matrices.
-- Every E2E process uses a unique `DLINE_E2E_RUN_ID`. Preserve failed artifacts and diagnose the first unmet boundary before increasing a timeout or broadening scope.
-
-### Never hand-roll a tsc invocation
-
-Type checking is `npm run check-types`. It already covers the root project and `webview-ui/tsconfig.app.json`; there is no reason to assemble a tsc command by hand.
-
-Two failure modes have repeatedly scattered thousands of `.js`/`.js.map` files through `src/`:
-
-- `tsc -b` is the project-references **build** mode. It is meant to emit. Use `--noEmit` to check.
-- `npm --prefix <dir>` only changes where npm resolves `package.json` and `node_modules`; it does **not** change the process working directory. `npm --prefix webview-ui exec -- tsc -b` therefore runs tsc against the **root** config.
-
-The root `tsconfig.json` now sets `noEmit: true` specifically to make that mistake inert, because `rootDir` is the repo root and there is no `outDir`. Scripts that genuinely need output pass `--noEmit false` explicitly: `scripts/build-tests.js` and the `watch-tests` script. Keep that opt-in; do not remove the guard to make a one-off command work.
-
-To scope a check to another project, pass `-p <path>` from the repo root rather than trying to change directories. When a command must run elsewhere, use the tool's `workdirectory` parameter.
-
-Production bundling is esbuild (`npm run package` → `esbuild.mjs --production`), not tsc, so it is unaffected.
+`tsc -b` is project-references build mode, not a no-output check. `npm --prefix webview-ui exec -- tsc -b` still runs from the original process directory: npm --prefix changes package resolution, not cwd. For an explicitly scoped check, pass `--noEmit -p <config-path>`; select a different execution directory with workdirectory.
 
 ## Protobuf and ProtoBus
 
-Follow `protobuf-development` for protocol changes.
+Dline uses Protobuf across application/Webview services, host bridges, and retained standalone transports. Sources live under `proto/dline/` with `dline...` namespaces and imports rooted under `dline/`. Webview RPC is generated ProtoBus envelopes over VS Code `postMessage`, not a network gRPC socket.
 
-Proto files use the `dline` namespace and live under `proto/dline/`. `npm run protos` regenerates shared types, grpc-js/nice-grpc bindings, host glue, the Webview ProtoBus client, and the descriptor set. Never edit generated output as the source change.
+- Proto (or the owning state-key generator for generated Settings/Secrets) is authoritative. Never hand-edit generated projections; fix their source or generator.
+- Field numbers retain their meaning. Never reuse or renumber a field for another purpose; reserve removed numbers/names when compatibility requires it. Define presence/default, errors/cancellation, and old-consumer behavior explicitly.
+- Generated service/method registration owns RPC wiring. Do not add parallel registries or ad-hoc messages where an RPC owns the interaction. Keep transport DTOs at the boundary and convert to domain/runtime values.
+- A generated field is not automatically part of persistence, validation, Controller projection, or UI/CLI defaults; both conversion directions and the real round trip must agree.
 
-A new RPC normally requires the proto service method, regenerated output, a backend/host handler, a generated client call, and transport/handler tests.
+Load `changing-protobuf-contracts` for schema, generation, handler/client, compatibility and verification methods with complete examples. A separate workflow is not required for an ordinary protocol edit.
 
 ## Providers and ModelRegistry
 
-When adding or materially changing a provider:
-
-1. inspect `src/core/api/index.ts` and a current analogous handler;
-2. update the provider/profile proto and conversion boundaries that actually carry the configuration;
-3. keep runtime model metadata in `ModelRegistry` seed/remote policy rather than a deleted static provider JSON catalog;
-4. update settings normalization, validation, and provider UI only where the provider contract requires it;
-5. set the correct `ApiFormat` and server-tool capabilities in model metadata;
-6. use proxy-aware and observed transports from `@shared/net`;
-7. test configuration round-trip, handler selection, model reconciliation, native/XML tools, cancellation, and sanitized failures.
+Model metadata authority remains in ModelRegistry, not a deleted static provider JSON catalog. Load `add-new-provider` for implementation techniques and model-source/plan changes; load `integrate-new-provider` for a new provider's long cross-layer integration workflow.
 
 Responses API support is driven by API format and provider capabilities. Do not add an `isNextGenModelProvider()` branch or model-family prompt variant.
 
 ## Prompt and tool changes
 
-Follow `prompt-engineering` for model-visible contracts, implementation-detail boundaries, effective parameters, and behavioral verification.
-
-The only stable prompt profiles are Standard and Lite. Tool descriptors have one canonical source in `src/core/prompts/tools/tool-specs.ts`, with ordered inclusion in `tool-ids.ts`. Native and XML definitions are projected from that source.
-
-Do not create `system-prompt/tools/<tool>.ts` model-family variants or edit generated provider schemas independently.
-
-### Where prompt text lives
-
-Every sentence the model reads lives in the English i18n tree under `src/core/prompts/i18n/en/`, never inline in descriptors, handlers, or continuations:
-
-- **Tool descriptor text** (description, parameter instructions and usage examples) goes in `i18n/en/tools/<toolName>.ts`, a key-value module with no logic, registered in `i18n/en/tools/index.ts` with `defineLegacyModule("<toolName>", "tools", module, contracts)`. `tool-specs.ts` reads it with `getPrompt("<toolName>", "<key>")`.
-- **Runtime values** are written as `@NAME@` in the text and declared with `createRuntimeContract("NAME", ...)` in that module's registration.
-- **Handler-side text** (tool results, errors, feedback wrappers, recovery answers) goes in `i18n/en/tools/toolHandlers.ts` and is rendered through a `formatResponse` entry in `src/core/prompts/responses.ts`. When a live handler and a restored answer produce the same result, both call the same function so the model reads identical text.
-- **Slash-command and explicit-instruction text** (for example `/newtask`) goes in `i18n/en/commands/`.
-- Inline literals are acceptable only for protocol markers and structural tags a parser depends on, not for prose.
-- `i18n/__tests__/prompt-asset-inventory.test.ts` locks the module inventory; update it when adding or removing a module, and delete a module once no `getPrompt` reader remains.
-- `zh-CN` currently overlays only `system`; tool and command text is English-only.
-
-For a new tool, load `add-new-tool`. The change may include:
-
-- `DlineDefaultTool` and read-only classification;
-- i18n prompt module registration;
-- canonical descriptor and Standard/Lite membership;
-- handler and executor coordination;
-- host bridge only for IDE-native capabilities;
-- grouped, say/ask, or backend-owned presentation;
-- approval, turn-ending, native/XML, cancellation, and recovery tests.
+Follow `prompt-engineering` for model-visible contracts and canonical/i18n ownership. Load `reviewing-prompt-contracts` for review techniques, `add-new-tool` for implementation skills, and `integrate-new-tool` for the complete long integration workflow.
 
 ## Capabilities metadata
 
-Skills and workflows are advertised from YAML frontmatter. Every workflow file must include:
+Skills and workflows are advertised from YAML frontmatter. Both name and a non-empty, task-specific description are required; workflow names match their .md filenames and skill names match their directories. Parser fallbacks are not authoring defaults. Load `write-workflow` for metadata examples and workflow authoring techniques.
 
-```yaml
----
-name: stable-workflow-name
-description: One concise sentence explaining when and why to load it.
----
-```
-
-The workflow parser falls back to the file name for a missing name, but missing descriptions produce empty or fallback catalog text. Treat both fields as required. Skill names must match their directory names.
+Standard advertises enabled capabilities with their loaders. Lite omits the skill catalog and load_skill/load_workflow tools; explicit skill/workflow slash injection remains a separate user entry point. Supporting references are read explicitly.
 
 ## State and storage keys
 
-Follow `storage` before adding persistent state.
-
-- Add keys to the correct category in `src/shared/storage/state-keys.ts`.
-- Access runtime state through `StateManager` or the owning repository, never directly through VS Code `ExtensionContext`.
-- Settings, global state, workspace settings/state, secrets, and task settings have different persistence and consistency boundaries.
-- User-toggleable state must round-trip through the relevant proto/controller/Webview or CLI surface.
-- Startup migrations may read legacy VS Code storage, but new runtime behavior must not make it authoritative again.
+Follow `storage` for owner, scope and authority before adding persistent state; load `changing-persistent-state` for mutation, migration and durability techniques. Keys, repositories and UI/Proto round trips must use their owning contracts rather than direct ExtensionContext persistence or ad-hoc files.
 
 ## Loading, cancellation, and recovery UI
 

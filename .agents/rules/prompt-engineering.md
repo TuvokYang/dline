@@ -28,10 +28,22 @@ This rule governs product-authored text sent to a model: system sections, tool d
 - Retain actionable failure diagnostics, but avoid revealing unnecessary permission-matching rules or internal reasons merely to explain a refusal. Keep detailed engineering diagnostics in the appropriate user-facing logs or UI.
 - Do not rely on prompt secrecy to enforce permissions. Authorization and state validation remain runtime responsibilities.
 
+## Project authorities and asset locations
+
+The only stable prompt profiles are Standard and Lite. Tool descriptors have one canonical source in `src/core/prompts/tools/tool-specs.ts`, with ordered inclusion in `tool-ids.ts`. Native and XML definitions are projected from that source. Do not create `system-prompt/tools/<tool>.ts` model-family variants or edit generated provider schemas independently.
+
+Every sentence the model reads lives in the English i18n tree under `src/core/prompts/i18n/en/`, never inline in descriptors, handlers, or continuations:
+
+- **Tool descriptor text** (description, parameter instructions and usage examples) goes in `i18n/en/tools/<toolName>.ts`, a key-value module with no logic, registered in `i18n/en/tools/index.ts` with `defineLegacyModule("<toolName>", "tools", module, contracts)`. `tool-specs.ts` reads it with `getPrompt("<toolName>", "<key>")`.
+- **Runtime values** are written as `@NAME@` in the text and declared with `createRuntimeContract("NAME", ...)` in that module's registration.
+- **Shared handler-side text** (tool results, errors, feedback wrappers, recovery answers) goes in `i18n/en/tools/toolHandlers.ts` and is rendered through a `formatResponse` entry in `src/core/prompts/responses.ts`. Existing tool-specific diagnostics may retain their owning tool module; do not duplicate the same outcome. Live and restored answers for the same outcome call the same formatter.
+- **Slash-command and explicit-instruction text** (for example `/newtask`) goes in `i18n/en/commands/`.
+- Inline literals are acceptable only for protocol markers and structural tags a parser depends on, not for prose.
+- `i18n/__tests__/prompt-asset-inventory.test.ts` locks the module inventory; update it when adding or removing a module, and delete a module once no `getPrompt`/`renderPrompt` reader remains.
+- `zh-CN` currently overlays only `system`; tool and command text is English-only.
+
 ## Ownership and verification
 
-- Follow `engineering-guide` for prompt asset locations, runtime placeholders, canonical descriptors, and Standard/Lite projections. Do not create a second prompt authority.
-- Check the exact consumed key and its callers; an unused legacy string is not evidence that a current model request contains it.
-- Inspect all affected consumers, including native/XML projection, local/hosted routes, dynamic tool results, subagent requests, and recovery where applicable.
-- Test behavioral contracts and structured outputs. Parameter presence, required fields, route selection, real results, cancellation, and persistence are valid oracles; prose-presence assertions and mock call counts alone are not.
-- Regenerate repository-owned prompt snapshots with `npm run test:snapshot` after intentional prompt changes, review the diff, then run the owning tests without update flags. Do not hand-edit snapshots.
+Load `reviewing-prompt-contracts` for model-visible text, parameters, results and restored-answer review techniques. For a new tool, `add-new-tool` teaches implementation and `integrate-new-tool` orders the long integration. Load `use-vitest` for execution and prompt snapshot regeneration.
+
+Verify effective inputs, route selection, results and restored continuations at their consuming boundary. Intentional generated prompt changes require repository snapshot regeneration, diff review and owning tests without update flags; generated snapshots are not hand-edited.

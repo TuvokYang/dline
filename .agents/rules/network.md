@@ -6,37 +6,13 @@ Dline currently runs as a VS Code extension. Extension-host network traffic must
 
 Do not use global `fetch` or a default Axios instance outside the shared networking implementation.
 
-Use `@shared/net`:
-
-```typescript
-import { fetch } from "@shared/net"
-
-const response = await fetch(url, { signal })
-```
-
-For Axios, include the shared settings:
-
-```typescript
-import axios from "axios"
-import { getAxiosSettings } from "@shared/net"
-
-const response = await axios.get(url, {
-  signal,
-  ...getAxiosSettings(),
-})
-```
+Non-provider traffic uses `fetch` from `@shared/net`; Axios uses `getAxiosSettings()` from the same module. Load `using-shared-network` for the complete fetch/Axios/providerFetch examples, SDK injection, bounded cancellation, stream cleanup, and scoped transport mocking skills.
 
 `src/shared/net.ts` is allowed to use lower-level primitives because it owns the wrappers.
 
 ## Provider traffic
 
-API provider requests should use `providerFetch` so the request participates in provider-attempt observation and shared transport behavior:
-
-```typescript
-import { providerFetch } from "@shared/net"
-
-const response = await providerFetch(url, { method: "POST", signal })
-```
+Model generation requests use `providerFetch` so the request participates in provider-attempt observation and shared transport behavior. Auxiliary metadata/account traffic is not automatically a generation attempt.
 
 For OpenAI-compatible SDKs, prefer `createOpenAIClient()` or the provider-specific shared factory, such as `createOpenAIClientForProfile()`. These factories inject `providerFetch`, proxy support, external headers, and profile-specific authentication behavior.
 
@@ -64,17 +40,8 @@ Every new network boundary must define:
 
 Do not retry authentication, billing, or non-idempotent writes generically.
 
-## Tests
+## Verification ownership
 
-Use `mockFetchForTesting` to replace the shared transport for a bounded callback or promise. Restore is automatic when the callback settles.
+The changed boundary must demonstrate shared transport/SDK injection, signal and timeout propagation, retry/fallback identity, stream cleanup, and sanitized failures as applicable. Proxy behavior for the target host must be covered or explicitly reported as unverified. `using-shared-network` contains the concrete `mockFetchForTesting` callback-lifetime, status/error, cancellation, and resource-cleanup examples.
 
-Provider tests should assert that the shared factory or `providerFetch` is used, and should cover cancellation, timeout, retry/fallback identity, stream cleanup, and sanitized failures as applicable.
-
-## Verification checklist
-
-1. No global `fetch` or default Axios was introduced in core/extension code.
-2. Provider traffic uses `providerFetch` or an approved shared client factory.
-3. Third-party clients receive the custom transport.
-4. Abort and timeout reach the underlying request.
-5. Errors and logs omit secrets and unnecessary user data.
-6. Proxy-aware behavior is covered or explicitly documented as unverified for the target host.
+Load `add-new-provider` for provider-specific model and accounting techniques.

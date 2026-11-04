@@ -1,17 +1,17 @@
 ---
 name: release
-description: Squash a fully verified release candidate from dev into one main commit, back-merge it into dev, create the production tag, and observe the tested GitHub Release and Marketplace gates.
+description: Promote a verified dev candidate through a main squash, content-preserving back-merge and production tag, then observe automatic validation, the tested GitHub Release and enabled registries.
 ---
 
 # Production Release
 
-Squash a verified release candidate from `dev` into one `main` commit, back-merge that commit into `dev`, create the production tag, and observe the automated GitHub Release and Marketplace gates. `main` keeps one commit per release, not the `dev` history.
+Squash a verified release candidate from `dev` into one `main` commit, back-merge it into `dev`, create the production tag, and observe the actual validation/publication chain. `main` keeps one commit per release, not the `dev` history. Version selection and writing the bilingual release files belong to `dev-version-bump`; this workflow verifies those prepared files, not a second copy of their writing procedure.
 
-Follow `repository-and-release` before using this workflow. Repository identity, remote aliases, URLs, and writable destinations must be discovered at runtime.
+Follow `repository-and-release`. Discover repository identity, remote URLs and writable destinations from the current checkout.
 
 ## Preconditions
 
-- Release preparation was completed on `dev`, either directly or by merging an ordinary PR from an independent source branch.
+- `dev-version-bump` preparation was completed on `dev`, either directly or through an ordinary PR from an independent source branch.
 - The integrated `dev` commit is unambiguous and the working tree used for verification is clean.
 - `package.json`, `package-lock.json`, `CHANGELOG.md`, `docs/changelog/CHANGELOG_en.md`, `docs/whats-new/WHATS_NEW.md`, and `docs/whats-new/WHATS_NEW_en.md` describe the same target version.
 - No unresolved release blocker or unrelated work is being included.
@@ -26,6 +26,7 @@ Run the read-only discovery required by the repository contract, then resolve `<
 git branch --show-current
 git status --short
 git remote -v
+git rev-parse --abbrev-ref --symbolic-full-name "@{upstream}"
 git branch -vv
 ```
 
@@ -64,23 +65,23 @@ Do not repair a version mismatch directly on `main`. Fix it on `dev` directly, o
 
 ## 3. Complete the integrated dev gate
 
-Load `e2e-validation`, then use the current project scripts and the actual blast radius. The complete local release gate includes:
+Load `e2e-validation`, then use current scripts and the actual blast radius. These local development/preparation checks are useful, but the source-mode work run followed by a new package is not evidence that the resulting VSIX passed the release gate:
 
 ```text
 npm run check-types
 npm run format -- --since=<comparison-base>
 npm run lint
 npm run test:smoke
-npm run test:run
+npm run test:run -- <focused-test-file>
 npm run test:e2e:work
 npm run vsix
 ```
 
-`test:e2e:work` is the required local Electron gate. Full functional E2E is not a local release prerequisite: Production Release Validation runs it after the production tag is pushed, one shard per functional folder against the release VSIX. Locally, run focused functional files when the release changes their contracts, and run the full suite only on explicit request. Dev-tier E2E never satisfies a release gate.
+Load `use-vitest` for the complete Vitest run through its repository-identified background UI process; the focused command above is not a substitute for that full gate. `test:e2e:work` defaults to source mode. A later `npm run vsix` creates a different artifact boundary; never attach the source-run result to that VSIX. Use `use-e2e` for packaged-mode inspection/reproduction and keep exact artifact identity in the required CI/release evidence below. Full functional E2E runs in Production Release Validation after the production tag is pushed, one shard per functional folder against the release VSIX; locally use focused files when contracts change, and full functional only on explicit request. Dev-tier E2E never satisfies a release gate.
 
-Equivalent successful CI evidence from the exact `dev` commit may satisfy a check. The reusable Tests workflow must package one VSIX before E2E, run the three-platform work smoke and four daily workflows against that exact artifact, and expose the same artifact to release jobs. Record the workflow/run, SHA, and artifact identity rather than assuming a feature-branch run covers integrated `dev`.
+Equivalent successful CI evidence from the exact `dev` commit may satisfy a check. The reusable Tests workflow must package one VSIX before E2E, run one work smoke on Linux, then each of four daily workflows on Linux, macOS, and Windows against that exact artifact, and expose it to release jobs. Record the workflow/run, SHA, and artifact identity rather than assuming a feature-branch run covers integrated `dev`.
 
-Inspect the produced VSIX identity, version, release channel, and required packaged assets. A failed or incomplete gate blocks promotion.
+`npm run vsix` invokes `scripts/package-vsix.mjs`. Use `npm run vsix -- --out <artifact-path>` to select the .vsix output path; the script logs the resolved tag, channel and version. Inspect the artifact's publisher/name/version, pre-release marker and packaged assets against that resolved channel.
 
 ## 4. Preview dev-to-main promotion
 
@@ -94,11 +95,11 @@ Show the user:
 - verification evidence;
 - recovery approach if the destination changes before the write.
 
-Obtain a separate authorization to write `main`; it covers the squash commit, the `main` push, and the back-merge push to `dev`. If a hosting platform represents promotion as a PR, use its squash-merge mode with head `dev` and base `main`; this is a release promotion, not an ordinary feature PR, and the back-merge below is still required.
+Confirm explicit authorization for the `main` squash/commit, `main` push, `dev` back-merge, and `dev` push as distinct operations. Approval for one does not cover the others; a user instruction can explicitly authorize several, and an already granted scope need not be asked again. This workflow grants none. If a hosting platform represents promotion as a PR, use its squash-merge mode with head `dev` and base `main`; this is a release promotion, not an ordinary feature PR, and the back-merge below is still required.
 
 ## 5. Squash, back-merge, and re-verify
 
-Perform only the approved promotion. Do not merge a feature or bugfix branch directly to `main`, and never fast-forward or `--no-ff` merge `dev` into `main`.
+Perform only the approved operations in the examples below, stopping before any write not covered by the user's authorization. Preview each push as `repository-and-release` requires. Do not merge a feature or bugfix branch directly to `main`, and never fast-forward or `--no-ff` merge `dev` into `main`.
 
 On a checkout of `main` that matches `refs/remotes/<remote>/main`:
 
@@ -140,7 +141,7 @@ If remote `main` or `dev` moved unexpectedly, stop instead of overwriting it.
 
 ## 6. Create and push the production tag
 
-Tag creation and tag push require authorization separate from the `main` promotion.
+Tag creation and tag push are distinct authorizations, both separate from `main` promotion. A request for local tag creation alone does not authorize pushing it.
 
 Create `vX.Y.Z` only at the final verified squash commit at the `main` head, then show the tag object and target SHA before pushing it to the resolved remote. `release.yml` rejects a tag that is not the current `main` head.
 
@@ -148,16 +149,16 @@ Never move an existing tag and never create a production tag from a commit outsi
 
 ## 7. Observe automated release gates
 
-Pushing `vX.Y.Z` triggers `.github/workflows/release.yml` (`Production Release`), which:
+Pushing `vX.Y.Z` triggers `release.yml` (`Production Release Validation`). Follow the jobs in the repository rather than inferring behavior from a filename:
 
-1. verifies tag format, package version, and `main` ancestry;
-2. calls `.github/workflows/test.yml` with the `release` package profile;
-3. runs TypeScript, Biome/protobuf lint, smoke, and Vitest, then packages one VSIX and runs the three-platform work smoke plus four daily workflows against that artifact;
-4. creates or updates the non-draft, non-prerelease GitHub Release with the same tested `dline-X.Y.Z.vsix`.
+1. `verify-tag` checks the exact tag format, package version and current `main` head.
+2. `tests` calls `test.yml` with `package_profile: release` and `package_channel: production`. It runs the type/lint/smoke/Vitest gates, packages one VSIX, then runs one Linux work smoke and all four daily workflows on Linux, macOS and Windows against that artifact.
+3. `functional-e2e` runs the production functional folders against that same release VSIX; a successful reusable Tests run alone is not the whole production gate.
+4. Only after those jobs pass, `publish` calls `publish-production-release.yml`. It verifies and publishes the existing tested VSIX to the stable GitHub Release, then passes that artifact and its SHA-256 to `publish-vsix-registries.yml`.
 
-After that workflow succeeds, `.github/workflows/publish-vscode-marketplace.yml` verifies the triggering workflow, release asset, tag ancestry, tested-artifact SHA-256, VSIX identity, version, and release channel before entering the protected Marketplace environment.
+Registry publication defaults to Open VSX. The Marketplace job runs only when the registry workflow's caller explicitly enables `publish_marketplace`; disabled/skipped is not published. Verify the actual GitHub Release asset and each enabled registry result. Do not replace the release asset or substitute a locally rebuilt VSIX.
 
-Do not manually replace the release asset or publish a locally rebuilt VSIX. Marketplace publication must use the verified tested artifact.
+`publish-vscode-marketplace.yml` is currently `Production Release (Manual Override)`, invoked by dispatch with a tag and reason. It is not an automatic follow-up: it validates main ancestry and builds a fresh package before invoking the shared production publisher. Do not invoke it as a routine retry or use it to claim the normal tested-artifact gate passed. Any exceptional override needs its own explicit authorization and an assessment of the validation/artifact evidence it lacks.
 
 ## 8. Final report
 
@@ -167,5 +168,5 @@ Report:
 - release version and production tag;
 - dev integration and production workflow evidence;
 - GitHub Release and VSIX asset status;
-- Marketplace workflow status;
+- each registry's actual published, failed or disabled/skipped status;
 - any operation that remains unperformed or requires separate authorization.

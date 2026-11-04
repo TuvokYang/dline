@@ -5,7 +5,7 @@ description: Create or revise Dline workflows as concise ordered procedures with
 
 # Write a Workflow
 
-Use this skill to create, replace, or revise a workflow that Dline can discover and load with `load_workflow` or inject through the `/workflow:<name>` slash command. Both paths deliver only the file body, so the workflow must be self-contained.
+Use this skill to create, replace, or revise a workflow discoverable through `load_workflow` or `/workflow:<name>`. The loader returns parsed body; the slash path currently injects the file content, including frontmatter. In either case the procedure itself must be self-contained.
 
 ## Workflow vs. Skill
 
@@ -13,13 +13,13 @@ Choose the artifact before writing:
 
 | Workflow | Skill |
 | --- | --- |
-| An ordered procedure for completing a recognizable operation | Reusable methods, domain expertise, constraints, and best practices |
+| A long, multi-stage implementation or operation with meaningful ordering and integration, such as adding a tool/provider or releasing | Concrete work skills: judgment, implementation, diagnosis and verification with examples |
 | Loaded with `load_workflow` | Loaded with `load_skill` |
 | Tells the agent what sequence to execute and where to stop | Teaches the agent how to reason and work in a domain |
 | Stored as one Markdown workflow file | Stored in a named skill directory with `SKILL.md` |
 | Should be short, operational, and outcome-oriented | May be broader and include patterns, examples, and diagnostic guidance |
 
-Do not use this skill to create or revise a skill. If the requested content is primarily reusable knowledge rather than an ordered operation, stop and recommend skill authoring instead. Do not create a `SKILL.md` file from this procedure.
+A workflow is optional. Do not wrap a short skill in a second capability merely to complete a rules/skill/workflow trio. Keep architecture and project constraints in rules; teach concrete methods in skills. Use a workflow when the sequence, dependencies and conditional integration branches have independent value. Do not use this skill to author a SKILL.md; use the advertised skill-authoring capability when available.
 
 ## 1. Confirm the Workflow Contract
 
@@ -114,7 +114,7 @@ Do not infer one authorization from another. A workflow may describe an operatio
 
 Commands must be shell-neutral where possible. When shell-specific syntax is necessary, label the shell. Do not use repository-local temporary files, hidden fallback branches, guessed remotes, or destructive cleanup to make the procedure appear successful.
 
-For Git, pull-request, or release workflows, follow the authoring and minimum-verification sections of repository-and-release, including failing when a base cannot be determined instead of falling back to `HEAD`.
+Keep domain-specific policy in its owning project rule. This skill teaches how a workflow expresses inputs, ordering, decisions and authorization; it does not become the authority for the operation the workflow performs.
 
 ## 6. Reference Capabilities by Name
 

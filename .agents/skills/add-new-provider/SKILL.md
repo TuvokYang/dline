@@ -1,29 +1,21 @@
 ---
 name: add-new-provider
-description: Integrates an API provider into Dline across its Profile contract, handler, model metadata authority, remote listing, protocol selection, pricing, usage accounting, error mapping, and settings surface. Use when adding a provider, adding a plan or catalog key to one, or changing where its models come from. Do not use for editing a single model entry or for prompt changes.
+description: Implement or diagnose Dline provider Profile, handler, metadata authority, catalog-source/plan changes, listing triggers, formats, usage, quota and settings; use integrate-new-provider for the full integration workflow.
 ---
 
 # Add a New Dline Provider
 
-Read the nearest analogous provider end to end before editing: its Profile message, handler, model metadata, remote source, settings component, and tests. A provider is complete only when every layer agrees about the same model.
+Use for provider development, adding a plan/catalog key, or changing where a provider's models come from; not for editing a single model entry or prompt text. Read an analogous Profile, handler, model metadata, remote source, settings component and tests first. Load `integrate-new-provider` for a new provider's long implementation workflow; use the relevant technical topics here for targeted changes without running that whole workflow.
 
 ---
 
-## Architecture Contract
-
-Read this first; every step follows from it.
-
-- **One provider, one handler.** `ApiHandler` owns request construction, stream decoding, usage normalization, and error mapping. It must not own model metadata the vendor publishes.
-- **Each model fact has one authority.** A vendor listing decides the model set and what it publishes. A local catalog decides only what a listing cannot express. Never hand-copy a number the listing carries.
-- **Protocol is a default, not a whitelist.** Derive the initial `ApiFormat` from the vendor's own data, then let the user store any format the provider can carry.
-- **Prices have one unit and one conversion.** Convert at the boundary, once, and assert the magnitude.
-- **Usage has three separate contracts** that must not be merged: token accounting, the cost of one request, and the account's subscription quota.
+Handler/model-fact ownership and the separate token, request-cost and account-quota contracts are defined in `dline-overview`. The following topics show how to implement them.
 
 ---
 
-## Step 0: Decide the Metadata Authority
+## Decide the Metadata Authority
 
-Answer "who knows this model?" before writing any reader. This is the decision most likely to be wrong, and it determines whether Step 3 or Step 4 produces the catalog.
+Answer "who knows this model?" before writing any reader. This determines whether local catalog entries, remote listing, or both supply the catalog.
 
 | Vendor shape | Authority | Consequence |
 | --- | --- | --- |
@@ -43,23 +35,23 @@ State the chosen authority in the provider's source header so the next reader do
 
 ---
 
-## Step 1: Profile Contract
+## Profile Contract
 
-A provider exists in the data model before it exists in the UI. Follow the nearest existing provider's shape.
+For a new provider, establish its identity before wiring the UI. For an existing provider's plan or catalog change, keep the provider identity and handler and change only the affected config/catalog selection. `opencode-go` in `allProviderModels.opencode.catalogs` is the existing example of a catalog key that is not a provider id.
 
-1. `src/shared/api.ts`: add the id to the `ApiProvider` union.
-2. `src/core/api/providers/models/index.ts`: add a `ProviderModelsConfig` entry to `allProviderModels`, carrying `provider`, `providerName`, `baseUrl`, `billingUrl`, `billingMode`, and `defaultModelId`. This registry entry is what makes the provider selectable — `PROVIDER_OPTIONS` in `src/shared/providers/providers.ts` is derived from it, so nothing else needs editing to appear in the selector. Use `catalogs` when one provider serves alternative model sets reached through the Profile.
-3. `proto/dline/provider/<provider>.proto`: declare the provider's config message in the `dline.provider` namespace. It carries only provider-owned fields — plan or region selection, an endpoint that is not the shared base URL, a console link, a model override.
-4. `proto/dline/profile.proto`: add one arm to the `oneof provider_config`. Adding an arm is a **persisted contract change**; confirm it with the user before implementing, and never reuse a field number.
+1. For a new provider, add its id to `ApiProvider` in `src/shared/api.ts`; an existing provider's plan keeps that id.
+2. Add a new provider's `ProviderModelsConfig` entry to `allProviderModels` in `src/core/api/providers/models/index.ts`, with its name, models, billing mode and applicable endpoint/default metadata. `PROVIDER_OPTIONS` in `src/shared/providers/providers.ts` is derived from this registry. For an existing provider's alternative model set, extend its `catalogs` and Profile-to-catalog selection instead of adding a selectable provider. Do not invent a default model for an initially empty remote catalog.
+3. Reuse `BaseProviderConfig` when shared model fields suffice; DeepSeek and Nebius already use it in `proto/dline/profile.proto`. Create `proto/dline/provider/<provider>.proto` only for provider-specific fields such as a plan, region or separate account endpoint, using the `dline.provider` namespace.
+4. Add a `oneof provider_config` arm only when the chosen stored contract needs a new one. An existing provider's plan normally keeps its arm. Adding an arm is a **persisted contract change**; confirm it with the user before implementing, and never reuse a field number.
 5. Run `npm run protos`. Never edit generated output.
-6. Read and write the config through `readProviderConfigField` / `withProviderConfigField` in `src/shared/providers/provider-config.ts`, so nested and flat shapes agree. Do not hand-read `profile.<provider>` at call sites.
+6. Lift the provider's typed config from the Profile. Read and write its **shared fields** through `readProviderConfigField` / `withProviderConfigField` in `src/shared/providers/provider-config.ts`; their `ProviderConfigField` union is not an arbitrary-key API. Read and immutably update provider-specific fields through that typed config. `OpenCodeProvider` uses the helpers for `apiFormat` and `reasoning`, but updates its own `mode` field in `changePlan`.
 7. Bump `schema_version` on the `ApiProfile` message only when an older stored profile cannot be read as written, and add the migration in the same change.
 
-Acceptance: an existing stored profile without the new arm still loads, and a new arm round-trips through save and reload.
+Acceptance: an existing stored profile still loads, and every changed config field round-trips through save and reload. A new oneof arm is tested only when the chosen contract adds one.
 
 ---
 
-## Step 2: Handler
+## Handler
 
 File: `src/core/api/providers/<provider>.ts`, registered in the construction switch in `src/core/api/index.ts`.
 
@@ -70,9 +62,9 @@ Required:
 - `getModel()` returning `{ id, info }` resolved from the Profile.
 
 Optional, each with a real reason:
-- `parseError(error, modelId?)` — Step 9;
-- `getAccountUsage()` and `supportsAccountUsagePolling` — Step 8;
-- a `getApiStreamUsage` callback on the object returned by `getModel()` when the model reports usage out of band;
+- `parseError(error, modelId?)` — see Error Parsing;
+- `getAccountUsage()` and `supportsAccountUsagePolling` — see Account Usage;
+- the handler's `getApiStreamUsage()` method when usage is available out of band; `ApiHandlerModel` returned by `getModel()` contains `id` and `info`, not this callback;
 - `abort()` that cancels every in-flight request the handler owns;
 - `getSelectedApiFormat()` when the effective format differs from the stored default;
 - `countInputTokens`, `supportsServerTool`, `getDisabledServerTools` only when the provider really implements them.
@@ -87,9 +79,9 @@ Acceptance: `abort()` cancels both the streaming request and any auxiliary reque
 
 ---
 
-## Step 3: Local Catalog Entries
+## Local Catalog Entries
 
-Skip this step when Step 0 chose remote-only.
+Skip local entries when the metadata-authority decision is remote-only.
 
 Catalog file: `src/core/api/providers/models/<provider>.ts`, wired through `allProviderModels` in `src/core/api/providers/models/index.ts`.
 
@@ -106,7 +98,7 @@ Acceptance: for each fact in the entry, you can name the source that owns it —
 
 ---
 
-## Step 4: Remote Listing Source
+## Remote Listing Source
 
 Five layers; do not invent a parallel path.
 
@@ -118,7 +110,9 @@ Five layers; do not invent a parallel path.
 | Registry | `src/core/model-registry/remote/vendors/index.ts` |
 | Orchestration | `src/core/model-registry/remote/model-refresh.ts` |
 
-Extend `ModelListingSource` and implement only what the vendor differs on:
+For a vendor exposing a supported listing, extend `ModelListingSource` and implement only what the vendor differs on. `ProviderRemoteSource` is the contract for a source needing a different implementation. A curated/manual provider without a listing does not need a guessed source or endpoint.
+
+The common listing subclass exposes:
 
 - `providerId`, `providerName`, `billingMode`, `reconciliation`;
 - `defaultBaseUrl` — required; the endpoint used when the Profile carries no base URL;
@@ -142,11 +136,11 @@ Register the instance in `MODEL_SOURCES`. When a selectable catalog key is not t
 | `fill-missing` | Stored entries win for known ids; local metadata only fills gaps. |
 | `refresh-built-ins` | Built-in entries are refreshed while user-defined entries are preserved. |
 
-Acceptance: `getModelSource(everySelectableKey)` returns a source, and a listing that omits a curated model does not delete its metadata.
+Acceptance: every key intended for remote discovery resolves to its owning source, static/manual catalogs remain usable without a source, and the chosen reconciliation preserves curated metadata where required. `discoverProviderModels` deliberately returns an empty discovery result when no source exists; that is not permission to fabricate one.
 
 ---
 
-## Step 5: Trigger the Fetch
+## Trigger the Fetch
 
 Registering a source makes a listing possible; it does not make it happen. Trace one real path end to end:
 
@@ -161,37 +155,38 @@ Two different intents reach the same source, and they are not interchangeable:
 
 | Intent | Entry point | Writes to disk |
 | --- | --- | --- |
-| Populate the picker while the user edits the Profile | `refreshProviderModels` → `discoverProviderModels(...)` | No |
-| Materialise the provider catalog | `discoverProviderModels(..., { persist: true })` | Yes, then reloads the registry |
+| Preview model IDs while the user edits a Profile | `refreshProviderModels` for a key outside its `PERSISTED_DISCOVERY_PROVIDER_IDS` | No |
+| Refresh a remote-authoritative picker catalog | `refreshProviderModels` for a key in that set (`opencode`, `opencode-go`) | Yes, then posts state to the Webview |
+| Materialise a catalog from another caller | `discoverProviderModels(..., { persist: true })` | Yes, then reloads the registry |
 
 Rules:
 - Bind a real UI event — focus, open, or an explicit action button. A description that mentions refreshing is not a trigger.
 - `useModelProbe` does not fetch on mount; it fetches when the caller invokes `refresh()`. A card whose model control only renders the catalog never issues a request.
-- A provider whose catalog must survive a restart needs the persisting entry point, not the dropdown preview.
+- A provider whose catalog must survive a restart needs persistent discovery. In the settings route, choose its key in `PERSISTED_DISCOVERY_PROVIDER_IDS` in `src/core/controller/models/refreshProviderModels.ts` and preserve the state publication after persistence. `useProviderModelOptions` receives IDs from the RPC; a preview alone does not make the source's pricing or capabilities available to the registry-backed UI.
 - Concurrent-call de-duplication keys on provider, profile, and persistence intent, so a preview never satisfies a caller expecting a write — and it is not a cache.
 
 Acceptance: from a cold start, a user can open the provider's settings card and see models without typing an id.
 
 ---
 
-## Step 6: Units, Capabilities, Protocol
+## Units, Capabilities, Protocol
 
-**Prices.** Store per-million amounts, because that is what `flatMeteredPricing` in `src/shared/providers/pricing-shape.ts` expects. Its signature is `(input, output, cacheWrite?, cacheRead?)`; do not swap the cache arguments. Convert exactly once: a published figure may already be per-million, and scaling it again overstates every charge by a factor of one million. A time-window price must state the zone it is read in.
+**Prices.** Store per-million amounts and the vendor's declared currency. `flatMeteredPricing` in `src/shared/providers/pricing-shape.ts` accepts `(input, output, cacheWrite?, cacheRead?, currency = "USD")`; do not swap the cache arguments or rely on its USD default for a source declaring another currency. Convert exactly once: scaling an already-per-million figure again overstates every charge by one million. Time-window pricing also declares its schedule and timezone; the calculation uses the request's send time, not the time its last usage chunk arrives.
 
 **Capabilities.** Read the flag the vendor states. Never infer a capability from a price: a free model can publish a cache rate of `0` while supporting no cache at all. Read modality entries as written — a MIME string never equals a bare `"image"`; match the prefix.
 
-**Protocol.** The formats a new provider can offer are `OPENAI_CHAT`, `OPENAI_RESPONSES`, and `ANTHROPIC_CHAT`. The `ApiFormat` enum is generated from the models proto; `src/shared/providers/api-format.ts` maps each value to its user-facing label and holds the resolution helpers. A provider whose base URL serves more than one family offers the choice.
+**Protocol.** Choose the formats the handler actually carries. OpenAI/Anthropic-compatible gateways commonly offer `OPENAI_CHAT`, `OPENAI_RESPONSES`, and `ANTHROPIC_CHAT`; the generated `ApiFormat` enum also has native and WebSocket formats, so those three are not a project-wide whitelist. `src/shared/providers/api-format.ts` owns shared labels and model-declaration resolution. A provider carrying several families offers the supported choice in both handler and UI.
 
 - Derive the default from the base-URL family the listing points at, not from the protocol's name: one OpenAI-compatible base commonly serves both Chat Completions and Responses.
 - The derived value is a default. Reject only a format the provider cannot carry at all, and say so before the request is built.
-- Resolve a stored selection through `resolveApiFormat` in `src/shared/providers/api-format.ts`: it keeps the user's choice when the model declares it, and falls back to the model's first format otherwise. A handler that treats the derivation as a whitelist, or a UI that drops a stored value the derivation did not list, silently discards a deliberate choice.
+- Use `resolveApiFormat` when the model's declared formats are the supported set: it preserves a listed choice and otherwise falls back to the first declaration. When a gateway can translate protocols beyond that derived declaration, use its handler-supported resolver in both handler and UI instead. `OpenCodeProviderCard.resolveOpenCodeApiFormat` is the concrete example; blindly using the model-declaration resolver there would discard a choice the gateway can carry.
 - A provider that serves several families declares them all on the model's `apiFormats`, ordered with the preferred default first.
 
-Acceptance: a test asserts one published price value, not merely its presence, and both a Chat and a Responses model reach the handler with the format the user stored.
+Acceptance: a published price is asserted by value, not merely by presence. A handler carrying Chat and Responses is tested with both stored selections; a native-only handler is tested against its actual supported format rather than being required to implement another protocol.
 
 ---
 
-## Step 7: Streaming Usage and Cost
+## Streaming Usage and Cost
 
 Token accounting (`ApiStreamUsageChunk` in `src/core/api/transform/stream.ts`) has three separate questions:
 
@@ -201,20 +196,21 @@ Token accounting (`ApiStreamUsageChunk` in `src/core/api/transform/stream.ts`) h
 
 Cost:
 - When the vendor reports what it charged, that number is authoritative — read it and write it to `totalCost`. A local price table cannot see tiering or discounts.
-- Fall back to the price table only when the charge is absent. An absent charge is unknown, not free.
+- When the charge is absent, call `ApiHandler.calculateUsageCost(pricing, tokens, sentAtMs)` with the same disjoint cache/input segments and inclusive output count emitted in the usage chunk. Preserve a calculated amount and its currency; keep unavailable or invalid pricing distinct from a zero amount. Do not introduce another money calculator in the handler.
+- Capture `sentAtMs` immediately before each real send, including a retry or protocol fallback. Do not use stream-completion time or the first failed attempt's time for a successful later attempt. `src/core/api/billing/__tests__/provider-sent-time.test.ts` covers both cases and checks cache/reasoning amounts with the source currency.
 - Keep a genuine `0`; it means the request itself cost nothing.
 - Do not clamp a reported charge.
-- For Responses-shaped traffic, `handleResponsesApiStreamResponse` in `src/core/api/utils/responses_api_support.ts` takes an optional `readReportedCost` callback. Use it instead of duplicating the wrapper's logic.
+- For Responses-shaped traffic, `handleResponsesApiStreamResponse` in `src/core/api/utils/responses_api_support.ts` takes an optional `readReportedCost` callback returning `{ totalCost, currency? }`, not a bare number. Use it instead of duplicating the wrapper's logic. Currency absent from a reported amount remains unknown; do not borrow the Profile's pricing currency.
 
 Acceptance: a reported charge beats the table; a missing charge falls back without becoming `0`; the normalized token split and the raw totals used for cost are both correct.
 
 ---
 
-## Step 8: Account Usage
+## Account Usage
 
 Add this only when the provider publishes a subscription quota. Establish it from written sources — vendor documentation first, then a published client's concrete choices. A request that happens to answer proves only that some route answered; it does not establish the path, the auth model, or what the numbers mean.
 
-Contract: `getAccountUsage()` returns `AccountUsage` or `undefined`; `supportsAccountUsagePolling` defaults to polling every 60 seconds.
+Contract: `getAccountUsage()` returns `AccountUsage` or `undefined`; `supportsAccountUsagePolling` is an optional handler capability flag. The polling consumer owns scheduling; declaring the flag does not create a timer in `ApiHandler`.
 
 - **The quota endpoint is not the inference base URL.** It usually hangs off a plan or console host, while a Profile `baseUrl` may point at a relay. Keep it a separate constant; never derive it from `baseUrl`.
 - Take the window definitions from the vendor's documentation. If the quota model is not documented, it is unknown — do not guess, and do not invent a window. When sources disagree, follow the current documentation and record the divergence in the constant's comment rather than blending two contracts.
@@ -231,7 +227,7 @@ Acceptance: a well-formed full payload yields one quota per documented window; a
 
 ---
 
-## Step 9: Error Parsing
+## Error Parsing
 
 `parseError(error, modelId?)` maps a provider failure to the shared error types:
 
@@ -251,33 +247,26 @@ Acceptance: each mapped status is asserted in a test, and no mapped error carrie
 
 ---
 
-## Step 10: Settings Surface
+## Settings Surface
 
 - Add the provider's component case to `webview-ui/src/components/settings/providers/ProviderProfileEditor.tsx`.
 - Read models through `useProviderModelOptions`, which merges the remote listing with the local catalog as `{ ...discovered, ...catalog.models }` and reports each option's origin. Do not build a second merge. Two consequences follow: catalog metadata wins for a known id, and a listing-only entry reaches the picker with identity only, so it must not inherit another model's limits or prices.
 - Provider-specific controls live in the nested provider config. Shared base fields such as `apiFormat`, `model`, and `reasoning` use the provider config helpers, not ad-hoc property writes.
 - A capability the user can change must be a control, not a fixed derivation. Show the derived value as the initial selection and let the user override it.
-- Mount the usage surface only where the provider reports a quota (Step 8).
+- Mount the usage surface only where the provider reports a quota (see Account Usage).
 - Copy that promises behavior is a contract: update it when the behavior changes.
 
-Acceptance: changing a control writes through the config helper; a stored value always wins over a derived default; the card renders for a profile with no provider config yet.
+Acceptance: shared-field controls update through the config helpers, provider-specific controls update their typed config, and both survive save/reload. A supported stored value wins over a derived default; the card renders for a profile with no provider config yet.
 
 ---
 
-## Step 11: Documentation
+## Documentation Consumer
 
-A shipped provider needs a page in both language trees, because the docs site publishes each edition from its own file.
-
-- Write `docs/src/content/docs/provider-config/<provider>.mdx` and `docs/src/content/docs/zh-cn/provider-config/<provider>.mdx` for the same scope. The two editions must carry equivalent facts, not a translation of one into the other.
-- Register the page in `docs/src/data/navigation.mjs`. A page that is absent from the navigation is unreachable in the built site.
-- State the plan or region options, the protocols offered, what the usage surface reports, and what a reported per-request cost means. Do not promise behavior the code does not implement.
-- Run `npm run docs:verify`.
-
-Acceptance: both editions exist, both are in the navigation, and their claims match the implementation.
+The complete bilingual page/navigation delivery stage is in `integrate-new-provider`; load `writing-documentation` for writing and site verification techniques. A provider's public documentation must describe only implemented behavior.
 
 ---
 
-## Step 12: Tests
+## Design Tests at the Fact's Boundary
 
 Write tests at the boundary that owns the fact, and make each one fail for a plausible defect:
 
@@ -285,71 +274,17 @@ Write tests at the boundary that owns the fact, and make each one fail for a pla
 2. **Magnitude.** A published price is asserted as a value, so a wrong unit conversion fails.
 3. **Capability source.** A zero cache price without the cache flag is not cache support.
 4. **Protocol.** Both families of one base yield their format; the stored format reaches the handler unchanged.
-5. **Usage.** Inclusive and exclusive input splits, cache read and write, reasoning subset, and the reported-versus-computed cost fallback.
+5. **Usage.** Inclusive and exclusive input splits, cache read and write, reasoning subset, reported-versus-computed cost fallback, source currency, and send-time selection across a price boundary, retry or fallback.
 6. **Quota.** A full payload, a malformed window, an unavailable plan, a rejected request, and an abort.
 7. **Errors.** One case per mapped status, asserting the shared error type and that nothing sensitive survives.
 8. **Trigger.** A test proving the settings entry point reaches the controller, because a missing binding passes every source-level test.
+
+For provider changes that affect tool support or transport, verify native and XML tool contracts on the real selected route, including configuration round-trip, handler selection, model reconciliation, cancellation and sanitized failures. Load `reviewing-prompt-contracts` for effective-input/projection examples; source registration alone does not prove either route works.
 
 Replace the shared transport with `mockFetchForTesting` from `@shared/net`. Assigning `globalThis.fetch` does not intercept the shared wrapper and silently hits the real network.
 
 ---
 
-## Step 13: Verify
+## Execute the Relevant Checks
 
-```text
-npm run check-types                           # includes npm run protos
-npm run lint
-npm run test:run -- <focused test files>
-npm run test:webview                          # settings component changed
-npm run docs:verify                           # documentation changed
-```
-
-Report which checks ran and which did not, and never treat an unrun check as passing.
-
----
-
-## Completion Checklist
-
-### Contract and identity
-- [ ] `ApiProvider` union updated (`src/shared/api.ts`) and a `ProviderModelsConfig` entry added to `allProviderModels` (`src/core/api/providers/models/index.ts`)
-- [ ] provider config message declared; `oneof provider_config` arm added; `npm run protos` run and its generated diff inspected
-- [ ] config read and written only through `readProviderConfigField` / `withProviderConfigField`
-- [ ] `schema_version` bumped only if an old profile would misread, with its migration
-
-### Handler
-- [ ] handler registered in the construction switch (`src/core/api/index.ts`)
-- [ ] every request uses the shared transport, with a timeout and an abort path
-- [ ] `abort()` cancels the streaming request and every auxiliary request
-- [ ] errors sanitized before leaving the handler
-
-### Metadata
-- [ ] metadata authority chosen and stated in the source header
-- [ ] local entries cite the vendor page and date, and declare only what the listing cannot
-- [ ] remote source implemented, registered in `MODEL_SOURCES`, catalog keys in `CATALOG_KEY_OWNERS`
-- [ ] `reconciliation` and `requiresApiKey` chosen deliberately
-- [ ] a real UI trigger is bound and its persistence intent is stated
-
-### Data correctness
-- [ ] prices stored per million, converted once, asserted by value, cache arguments in order
-- [ ] capabilities read from vendor flags, not inferred from prices
-- [ ] `ApiFormat` derived as a default and overridable in both handler and UI
-- [ ] token accounting follows the vendor's inclusive/exclusive convention
-- [ ] reported per-request cost preferred; absent cost is unknown; genuine `0` kept
-- [ ] quota endpoint kept separate from the inference base URL; windows and direction taken from documentation
-- [ ] malformed quota readings dropped rather than zeroed; reads bounded and cancellable
-
-### Presentation
-- [ ] settings component registered; provider config written through the helpers
-- [ ] usage surface mounted only where the provider reports a quota
-- [ ] no control promises behavior the handler does not implement
-
-### Documentation
-- [ ] English and Chinese provider pages exist for the same scope
-- [ ] both pages registered in `docs/src/data/navigation.mjs`
-- [ ] `npm run docs:verify` passes
-
-### Verification
-- [ ] focused tests cover authority, magnitude, protocol, usage, quota, errors, and the trigger
-- [ ] `npm run check-types` and `npm run lint` pass
-- [ ] `npm run test:webview` passes when the settings component changed
-- [ ] every check that ran, and every check that did not, is reported with its result
+Load `use-vitest` for focused execution. `integrate-new-provider` owns the cross-layer implementation order, documentation delivery and completion checklist.

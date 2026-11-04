@@ -14,13 +14,11 @@ Dline intentionally resolves three independent roots:
 
 `DLINE_DIR` and `DLINE_HOME_DIR` happen to resolve under `~/.dline` by default, but they are separate override contracts. `DLINE_DOCS_DIR` is already the final Dline documents root; do not append another `dline` segment to an explicit override.
 
-The synchronous documents resolver depends on startup cache warm-up to discover the platform Documents directory. Host startup must call `warmupDocumentsPathCache()` before synchronous consumers. Tests that need full isolation should set `DLINE_DIR`, `DLINE_HOME_DIR`, and `DLINE_DOCS_DIR`; overriding only one root does not isolate the others.
-
-`StorageContextOptions.clineDir` is a compatibility/test injection boundary. When supplied, it places state below `<clineDir>/data` and the TaskHistory paths below `<clineDir>/tasks`; normal task artifact helpers still resolve through the documents root. Do not use this option as evidence that production roots are co-located.
+Hosts initialize storage through `createHostStorageContext()`, which resolves the system Documents directory before synchronous consumers use it. Runtime callers use the resolved `StorageContext` paths rather than constructing a second root.
 
 ## Current layouts
 
-The state/data root is approximately:
+Shared state/data files are laid out below. Provider-specific credential stores define their additional files under `secrets/`.
 
 ```text
 <data-root>/
@@ -31,15 +29,14 @@ The state/data root is approximately:
 │   └── api_profiles.json
 ├── secrets/
 │   ├── api_keys.json
-│   ├── provider_secrets.json
-│   └── profile-specific credential documents
+│   └── provider_secrets.json
 └── workspaces/
     └── <workspace-hash>/
         ├── workspaceState.json
         └── settings.json
 ```
 
-The documents root is approximately:
+The documents root contains these task and global-capability directories:
 
 ```text
 <documents-root>/
@@ -59,13 +56,13 @@ The documents root is approximately:
 
 The resource home currently owns `providers/`, `cache/`, and `puppeteer/`. Cached marketplace and remote-configuration documents belong to the cache owner and are not canonical settings.
 
-Workspace capabilities are separate from persistent runtime state. Current project capability roots include `.agents/rules`, `.agents/workflows`, `.agents/skills`, and `.agents/subagents`; project hooks and MCP/plugin descriptors live under `.dline`. Legacy compatibility roots may still be scanned, but new Dline content must use the current roots.
+Workspace capabilities are separate from persistent runtime state. Project rules, workflows, skills, subagents and hooks use `.agents/rules`, `.agents/workflows`, `.agents/skills`, `.agents/subagents` and `.agents/hooks`. Project MCP and plugin descriptors use `.dline/mcp` and `.dline/plugin`. Legacy compatibility roots do not change these current locations.
 
 ## StorageContext
 
 `createStorageContext()` is the process boundary for global key-value state, settings paths, secrets, workspace storage, and TaskHistory paths. Callers receive resolved paths and store interfaces; they must not reconstruct these paths independently.
 
-Workspace storage uses either an explicit `workspaceStorageDir` supplied by a host or a hash-derived directory below the state/data root. `workspaceId` is a SHA-256-derived, non-sensitive identity of the normalized resolved workspace storage boundary. Do not expose or persist the original workspace path when the stable identity is sufficient.
+Workspace storage uses either an explicit `workspaceStorageDir` supplied by a host or a workspace-specific directory below the state/data root. Use the resolved boundary and its non-sensitive `workspaceId`; do not expose or persist the original workspace path when the identity is sufficient.
 
 ## State ownership
 
@@ -109,17 +106,14 @@ global override -> workspace override -> task override
 
 An absent resource key means “inherit”, not “disabled”. Discovery is read-only and must never populate toggle maps. Use `getScopedCapabilityToggles()` and `mutateScopedCapabilityToggles()` for explicit scope access; routing workspace or task updates through generic global APIs collapses the scope chain.
 
-## Multi-instance behavior
+## Shared storage framework
 
-Dline can have multiple windows and hosts writing the same storage boundary.
-
-- `SettingsRepository` serializes in-process operations, locks the file across processes, reads the latest disk revision while locked, atomically replaces the document, and watches for external commits.
-- `ProfileCatalogRepository` merges one client's stable-ID diff into the latest catalog while locked, then broadcasts external catalog changes.
-- `TaskHistory` watches both `taskHistory.db` and its WAL, coalesces reload notifications, and drains queued metadata writes at durability boundaries.
-- Buffered JSONL message stores stage transient updates in memory and expose explicit flush/close barriers. Do not assume every in-memory streaming update is already durable.
-- `StateManager.flushPendingState()` drains repeated batches until no mutations remain; shutdown rejects new mutations before the final drain.
-
-Never replace a shared document with a stale full-file snapshot. Use the owning repository's mutation API.
+- `StateManager` coordinates state/settings caches and buffered writes. Global and workspace settings use separate `SettingsRepository` instances; `ProfileCatalogRepository` owns the profile catalog. Shared documents mutate the latest value under the repository's cross-process lock, not a stale full-file snapshot.
+- `src/core/storage/backend/api/` defines the entity schemas, queries, `UnifyStore` and database transaction contracts. Consumers use these contracts rather than introducing a parallel storage abstraction or depending on backend-specific queries.
+- SQLite and JSONL backends preserve the same transaction, unique-index, blob and ordering contracts. `InstanceStorage` resolves existing databases through the backend framework; `DLINE_INSTANCE_STORAGE_BACKEND` selects the backend for new instance databases, defaulting to SQLite.
+- Database-wide transactions use their transaction-scoped handles. Calling an independently opened store on the same database from inside that transaction can deadlock.
+- `UnifyStore` writes resolve after their physical transaction commits. `BufferedUnifyStore` adds staged, in-memory updates for ordered message stores; owners must distinguish staging from durable commit and await the appropriate flush/close boundary.
+- `StateManager.flushPendingState()` is the shared state/settings durability barrier. Shutdown rejects new mutations before the final drain; do not add an independent persistence queue beside the owning store.
 
 ## Task history
 
@@ -127,11 +121,11 @@ Never replace a shared document with a stale full-file snapshot. Use the owning 
 
 Task metadata writes may be queued off the UI hot path. Call `TaskHistory.flush()` when a lifecycle boundary requires durability. Completion projection updates are revision-aware transactional patches and must not be recreated as ordinary metadata overwrites.
 
-Legacy `taskHistory.jsonl` and `taskHistory.json` functions remain migration/compatibility paths only. On initialization, absence of `taskHistory.db` is the one-time import marker; once the database exists, the legacy files are not the runtime authority.
-
 ## Per-task storage
 
 A task directory is an instance root. A subagent run uses the same layout under `tasks/<task-id>/subagents/<subagent-id>/`; `InstanceLayout` and `resolveInstanceLayout()` in `src/core/storage/instance/` are the only source of these paths.
+
+The canonical SQLite layout is shown below; SQLite sidecars and legacy import files are omitted. The JSONL backend stores each logical database in a same-named directory without the `.db` suffix.
 
 ```text
 tasks/<task-id>/
@@ -139,6 +133,7 @@ tasks/<task-id>/
 ├── messages.db
 ├── activities.db
 ├── metrics.db
+├── trajectory.db             (derived cache)
 ├── state.json
 ├── state.json.bak
 ├── context.json
@@ -162,47 +157,32 @@ Ownership matters more than the physical filename:
 
 - Each `.db` is opened through `openInstanceStorage(root)` and has exactly one high-frequency writer per process, registered by name on first write. Low-frequency maintenance writers are exempt. Do not open an instance database with a second writer to work around ownership.
 - Only the window holding the task lock writes a task's instance storage. A window that opens the task without the lock gets a read-only session: `TaskRuntime` rejects submissions with `task_read_only`, upgrade imports and restored commands wait until the window owns the task, and the Controller projects a read-only view. Do not add a write path that bypasses this ownership check.
-  - Two writes are allowed to a history display that holds no lock, and only while the lock check finds the task ownerless: orphan activity recovery (`HistoryDisplaySession`), and maintenance of the derived `trajectory.db` cache (`TrajectoryMaintainer`, admitted through `OpeningTrajectoryAccess`). The trajectory cache is rebuildable from `messages.db`, every write is a compare-and-set on its meta stamp, and the display re-reads the lock every 2 seconds and stops writing as soon as another window holds it. Neither exception extends to any other task file.
-- `journal.db` holds the conversation journal, command publication, and task payloads, committed in one transaction. It is the provider conversation authority; `JournalConversationView` renders it in memory and `readJournalConversation()` / `readTaskConversation()` are the read ports. `api_conversation_history.jsonl` is read-compatible only: while the journal holds nothing but that import, `ApiHistoryImport` appends its messages as `api_history_message` entries keyed by operation ID, and the file itself is never modified.
-- `messages.db` owns chat rows (`task-ui-message` plus the attachment table) through the buffered UI message store. `ui_messages.jsonl` (and older `ui_messages.json` / `claude_messages.json`) is imported once, verified by reading it back, and renamed to `*.migrated`.
-- `activities.db` owns append-only activity events. The legacy `activities.json` is imported once, verified, and renamed to `activities.json.migrated`.
-- `metrics.db` owns API rate metrics and request/response execution data. The legacy per-task `<task-id>.db` (with its WAL/SHM files) is moved to `metrics.db` once, and `api_rate_metrics.jsonl` is imported into it; a lock file that cannot be read is treated as unlocked.
-- `snapshot.json`, written by earlier versions, is not a runtime source. `SnapshotQueueImport` reads only its `inputQueue` into `state.json` with a fingerprinted marker and then removes the queue from it; completion and lifecycle state in it are ignored.
-- `FileTaskStateVault` owns `state.json` (runtime snapshot) with coalesced atomic writes and a `.bak` fallback. A missing snapshot rebuilds the task from the journal as an expected observation; an unreadable one is recorded as a failure and then rebuilt. Runtime transitions, interactions, activities, and snapshots must agree; one file is not a substitute for the others.
-- Every JSON document is written through `src/shared/storage/atomic-file` (`writeJsonAtomic` / `readJsonWithBackup`: same-directory temp file then rename, busy retry, optional `.bak`, two-space indentation, trailing newline). Do not hand-roll temp-and-rename writes.
-- The UnifyStore backend defaults to SQLite. `DLINE_INSTANCE_STORAGE_BACKEND=jsonl` selects the JSONL backend, which implements the same transactional, unique-index, blob, and ordering contracts so the two can be switched and copied without loss; it loads collections into memory. TaskHistory remains SQLite.
+  - Two writes are allowed to a history display that holds no lock, and only while the task is ownerless: orphan activity recovery (`HistoryDisplaySession`), and maintenance of the derived `trajectory.db` cache (`TrajectoryMaintainer`, admitted through `OpeningTrajectoryAccess`). The cache is rebuildable from `messages.db`; writes use its compare-and-set contract and stop when another window owns the task. Neither exception extends to other task data.
+- `journal.db` holds the conversation journal, command publication and task payloads in one transaction. It is the provider conversation authority; `JournalConversationView` renders it in memory and `readJournalConversation()` / `readTaskConversation()` are the read ports.
+- `messages.db` owns chat rows and attachments through the UI message store.
+- `activities.db` owns activity persistence through `TaskActivityPersistence` / `TaskActivityRowStore`.
+- `metrics.db` owns API rate metrics and request/response execution data.
+- `trajectory.db` is a derived message cache, not a conversation authority.
+- `FileTaskStateVault` owns `state.json` and its `.bak` fallback. Runtime transitions, interactions, activity terminal states and journal identity must agree; a snapshot is not a substitute for those authorities. Legacy `snapshot.json` is not a runtime source.
 - Task context helpers own `context.json` and `context_history.jsonl`.
 - Artifact APIs own `artifacts/` and enforce task-relative paths. Do not expose conversation, snapshot, settings, or database files through the artifact read scope.
-- `src/core/storage/task-temp.ts` owns `tmp/` and is the only source of that path. Command logs and shell diagnostics belong to the owning task; `command-logs` survives across sessions because chat rows and Activities keep a clickable path to it, so age alone never deletes a log. It is bounded only by a per-task total size budget enforced on the locked task, which drops the oldest logs first. `image-previews` and `image-viewer` stay process-ephemeral. Command execution without a task identity keeps using the process-level temp directory owned by `DlineRuntimeFileManager`, which also retains pre-migration logs.
-- `InputResourceStore` (`src/core/input-semantics/`) owns the composer's input resources. A task's resources live in `tmp/input-resources/<resource-id>/` and share the task's lifetime; a composer draft's resources live in the `DlineRuntimeFileManager` attachment area, which ages out directories nobody verified recently. Each resource directory is private (`0700`/`0600`), assembled under a `.staging` sibling and published by one rename, and honored only when its record, owner, generation and frozen content hash all match the reference. Admission adopts draft resources into the task under the same identity; never read or write a resource directory except through the store.
+- `src/core/storage/task-temp.ts` owns `tmp/` and its cleanup policy. Command logs share the task's lifetime and size budget; do not add age-based deletion independent of that owner.
+- `InputResourceStore` (`src/core/input-semantics/`) owns composer and task input resources, private permissions, and identity/owner/generation/hash validation. Access those resources through the store, not direct file operations.
 
-Do not read or rewrite task files directly from controllers or UI code when an owning store exists. Task deletion must go through the task deletion coordinator so locks, active controllers, panels, TaskHistory, known databases, WAL/SHM files, and checkpoint ownership are handled coherently. When adding a task-owned file or directory, update deletion/recovery ownership explicitly; do not assume removing the task directory will succeed while unknown contents remain.
+Do not read or rewrite task files directly from controllers or UI code when an owning store exists. Task deletion goes through the deletion coordinator, which coordinates locks, active sessions, TaskHistory, database handles and owned files. New task-owned storage must participate in deletion and recovery ownership.
 
-## Migration boundaries
+## Atomic file I/O
 
-Migration is directional and fail-safe:
+`src/shared/storage/atomic-file.ts` is the shared extension-host file replacement primitive. Use `writeJsonAtomic()` for JSON and `writeFileAtomic()` for other content; use their existing synchronous variants only where the owning path is synchronous. Do not introduce another temporary-file replacement implementation or import this Node-only module into the Webview.
 
-1. VS Code bootstrap may read legacy `ExtensionContext` global state, workspace state, and secrets and export them into `StorageContext`.
-2. Global and workspace migration use independent version sentinels so a newly opened workspace can migrate without replaying global migration.
-3. Existing file-backed values win over legacy VS Code values; failed batches do not advance their sentinel.
-4. `StateManager` migrates supported settings out of legacy global state into the revisioned settings document, then removes legacy duplicates only after the canonical document owns them.
-5. TaskHistory imports legacy JSONL only when the SQLite database is absent.
-6. Chat rows and activities import their legacy JSON/JSONL files into `messages.db` and `activities.db`, verify the copy by reading it back, and only then rename the source to `*.migrated`; a failed import leaves the source in place and retries on the next open.
-7. API rate metrics move the legacy `<task-id>.db` to `metrics.db` once and import legacy JSONL into it with integrity checks and an idempotent marker.
-8. A task written before the journal runtime is upgraded by `importTaskUpgrade()` before the kernel hydrates: the conversation is imported into `journal.db` first, then the `snapshot.json` input queue into `state.json`. Only the lock-holding window runs it; a failed conversation import refuses to open the task instead of continuing without history. Such a task may reopen as interrupted, and there is no downgrade path.
+- Writes replace the target from a temporary file in the same directory, so published content is complete. Backup rotation, `fsync` and file permissions are explicit options, not guarantees enabled by every call.
+- `readJsonWithBackup()` validates through the supplied parser and tries the backup when the primary is missing or invalid. Its `primary`, `backup`, `missing` and `invalid` results remain distinct; the owning store decides recovery and diagnostics.
+- Atomic replacement is not a cross-process read-modify-write transaction. Shared settings and catalog documents still require their repository's locking and latest-value mutation contract.
 
-Legacy sources may be preserved as backup/import evidence. New runtime behavior must never restore a second read path that competes with the current authority.
+## State evolution boundaries
 
-## Adding or changing persistent state
+Legacy `ExtensionContext` state and old task formats are import sources, not parallel runtime authorities. Only the task-lock holder upgrades task storage.
 
-1. Identify the owner, root, scope, authority, consistency requirement, and cleanup path before adding a field or file.
-2. Add a key to `state-keys.ts` only when the value truly belongs to StateManager-managed global state, settings, workspace state, or secrets. Regenerate `proto/dline/state.proto` through the project generator when the projected state contract changes.
-3. Use global/workspace `SettingsRepository` mutations for user settings. Use explicit scoped capability APIs for sparse capability overrides.
-4. Use task settings only for task-owned overrides. Do not turn a task snapshot into a global default.
-5. Use specialized repositories for profile catalogs, API keys, provider credentials, OAuth records, TaskHistory, messages, activities, metrics, and artifacts.
-6. Propagate user-visible settings through the owning Proto/controller/Webview or CLI round trip; a field added only to an in-memory state payload is not persistent.
-7. Define finite flush/close behavior for buffered writes and invoke it at task, controller, host shutdown, and recovery boundaries as applicable.
-8. For secrets, verify owner-only permissions, redaction, migration, deletion, and that credentials are not duplicated into profile or settings documents.
-9. Test restart recovery, concurrent windows, stale writers, workspace/task isolation, migration retries, malformed or partial files, and cleanup/deletion according to the changed owner.
+Use `state-keys.ts` only for StateManager-owned categories and regenerate projected state contracts through their owner. User-visible settings must preserve validation, defaults and the Proto/controller/consumer round trip. Specialized credentials retain their own stores, permissions and deletion behavior.
 
-Do not introduce direct `ExtensionContext` persistence, ad-hoc JSON writes, parallel authorities, or path construction outside the owning storage boundary.
+Load `changing-persistent-state` for concrete setting changes, mutation examples and migration development methods.
