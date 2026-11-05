@@ -13,6 +13,11 @@ on:
         type: string
         required: false
         default: ci
+      registry:
+        description: Target registry identity (open-vsx or vscode-marketplace).
+        type: string
+        required: false
+        default: open-vsx
       source_ref:
         description: Optional branch, tag, or SHA to package instead of the caller SHA.
         type: string
@@ -54,6 +59,7 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  VSIX_REGISTRY: ${{ inputs.registry }}
 
 jobs:
   validate-profile:
@@ -82,6 +88,10 @@ jobs:
           fi
           if [[ "$PROFILE" == "ci" && "$CHANNEL" == "production" ]]; then
             echo "Error: the production channel requires the release profile"
+            exit 1
+          fi
+          if [[ "$VSIX_REGISTRY" != "open-vsx" && "$VSIX_REGISTRY" != "vscode-marketplace" ]]; then
+            echo "Error: registry must be 'open-vsx' or 'vscode-marketplace'"
             exit 1
           fi
           if [[ -n "$ARTIFACT_KEY" && ! "$ARTIFACT_KEY" =~ ^[A-Za-z0-9._-]+$ ]]; then
@@ -157,15 +167,29 @@ jobs:
               exit 1
               ;;
           esac
+          artifact_prefix=dline
+          if [[ "$VSIX_REGISTRY" == "vscode-marketplace" ]]; then
+            artifact_prefix=dline-vscode-marketplace
+          fi
           echo "filename=$filename" >> "$GITHUB_OUTPUT"
-          echo "artifact_name=dline-vsix-$artifact_key" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=${artifact_prefix}-vsix-$artifact_key" >> "$GITHUB_OUTPUT"
           echo "commit_sha=$commit_sha" >> "$GITHUB_OUTPUT"
 
       - name: Build channel VSIX
         env:
           CHANNEL: ${{ inputs.channel }}
           DLINE_ENVIRONMENT: production
-        run: node scripts/package-vsix.mjs --channel "$CHANNEL" --out "dist/${{ steps.package.outputs.filename }}"
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$VSIX_REGISTRY" == "vscode-marketplace" ]]; then
+            # Historical release tags may predate the publisher-specific npm command.
+            original_manifest="$RUNNER_TEMP/package-before-publisher.json"
+            cp package.json "$original_manifest"
+            trap 'cp "$original_manifest" package.json' EXIT
+            npm pkg set publisher=tuvokyangdline
+          fi
+          npm run vsix -- --channel "$CHANNEL" --out "dist/${{ steps.package.outputs.filename }}"
 
       - name: Inspect packaged VSIX
         id: artifact
@@ -249,8 +273,12 @@ jobs:
           version=$(node -p "require('./package.json').version")
           commit_sha=$(git rev-parse HEAD)
           artifact_key="${ARTIFACT_KEY:-$commit_sha}"
+          artifact_prefix=dline
+          if [[ "$VSIX_REGISTRY" == "vscode-marketplace" ]]; then
+            artifact_prefix=dline-vscode-marketplace
+          fi
           echo "filename=dline-${version}.vsix" >> "$GITHUB_OUTPUT"
-          echo "artifact_name=dline-vsix-$artifact_key" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=${artifact_prefix}-vsix-$artifact_key" >> "$GITHUB_OUTPUT"
           echo "commit_sha=$commit_sha" >> "$GITHUB_OUTPUT"
 
       - name: Build production VSIX
@@ -262,7 +290,17 @@ jobs:
           OTEL_EXPORTER_OTLP_PROTOCOL: ${{ secrets.OTEL_EXPORTER_OTLP_PROTOCOL }}
           OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT }}
           OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
-        run: node scripts/package-vsix.mjs --channel production --out "dist/${{ steps.package.outputs.filename }}"
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$VSIX_REGISTRY" == "vscode-marketplace" ]]; then
+            # Historical release tags may predate the publisher-specific npm command.
+            original_manifest="$RUNNER_TEMP/package-before-publisher.json"
+            cp package.json "$original_manifest"
+            trap 'cp "$original_manifest" package.json' EXIT
+            npm pkg set publisher=tuvokyangdline
+          fi
+          npm run vsix -- --channel production --out "dist/${{ steps.package.outputs.filename }}"
 
       - name: Inspect packaged VSIX
         id: artifact

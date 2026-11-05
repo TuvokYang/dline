@@ -421,6 +421,7 @@
         "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
         "package": "npm run check-types && npm run build:webview && npm run lint && node esbuild.mjs --production",
         "vsix": "node scripts/package-vsix.mjs",
+        "vsix:vscode-marketplace": "node scripts/package-vsix.mjs --publisher tuvokyangdline",
         "vsix:dev": "node scripts/package-dev.mjs",
         "protos": "node scripts/build-proto.mjs",
         "protos-python": "node scripts/build-python-proto.mjs",

@@ -137,8 +137,8 @@ Re-run the integrated checks on exact `dev` head, whether preparation was direct
    ```
 
    Never move or overwrite an existing tag. Local creation does not authorize this remote write.
-5. Observe `release-draft.yml` (`Publish Pre-release`): it checks exact dev head, calls `test.yml` with the pre-release channel, then publishes the same tested VSIX only after full Vitest, one package job, one Linux work smoke and all four daily workflows on Linux, macOS and Windows. Record commit, run, artifact name and SHA-256.
-6. Verify the public GitHub pre-release and `publish-vsix-registries.yml` results. Registry publication defaults to Open VSX; Marketplace is disabled unless explicitly enabled by the caller. Report disabled/skipped separately from published. Do not rebuild or replace the tested asset to repair a publication failure.
+5. Observe `release-draft.yml` (`Publish Pre-release`): it checks exact dev head and calls `test.yml` with the pre-release channel. Publication waits for full Vitest and both publisher-specific final VSIX files to pass one Linux work smoke and all four daily workflows on Linux, macOS and Windows. Record commit, run, and each artifact's name and SHA-256.
+6. Verify the public GitHub pre-release and `publish-vsix-registries.yml` results. Both registries are enabled by default and each receives its own tested artifact; Marketplace uploads run only in GitHub Actions. Report each result separately because the aggregate gate requires at least one registry to succeed; disabled/skipped is not published. Do not rebuild or replace a tested asset to repair a publication failure.
 
 ## 8. Report
 

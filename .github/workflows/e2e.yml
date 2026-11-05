@@ -12,12 +12,19 @@ on:
         type: string
         required: true
 
+      registry:
+        description: Registry identity of the tested VSIX (open-vsx or vscode-marketplace).
+        type: string
+        required: false
+        default: open-vsx
+
 permissions:
   contents: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   DLINE_E2E_INSTALL_VSIX: "1"
+  VSIX_ARTIFACT_PREFIX: ${{ inputs.registry == 'vscode-marketplace' && 'dline-vscode-marketplace' || 'dline' }}
 
 jobs:
   work-smoke:
@@ -26,7 +33,7 @@ jobs:
     timeout-minutes: 30
     env:
       DLINE_E2E_PROFILE: mock-openai
-      DLINE_E2E_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}-ubuntu-smoke
+      DLINE_E2E_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.registry }}-ubuntu-smoke
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -52,7 +59,7 @@ jobs:
           COMMIT_SHA: ${{ inputs.commit_sha }}
         run: |
           $ErrorActionPreference = "Stop"
-          $expectedArtifact = "dline-vsix-$env:COMMIT_SHA"
+          $expectedArtifact = "$env:VSIX_ARTIFACT_PREFIX-vsix-$env:COMMIT_SHA"
           if ($env:ARTIFACT_NAME -ne $expectedArtifact) {
             throw "Expected artifact '$expectedArtifact', got '$env:ARTIFACT_NAME'."
           }
@@ -86,7 +93,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v5
         with:
-          name: playwright-work-smoke-ubuntu-${{ github.sha }}
+          name: playwright-work-smoke-${{ inputs.registry }}-ubuntu-${{ github.sha }}
           path: tmp/test-result/
           if-no-files-found: warn
           include-hidden-files: true
@@ -121,7 +128,7 @@ jobs:
     timeout-minutes: 30
     env:
       DLINE_E2E_PROFILE: mock-openai
-      DLINE_E2E_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.runner }}-shard-${{ matrix.shard.id }}-${{ matrix.shard.slug }}
+      DLINE_E2E_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.registry }}-${{ matrix.runner }}-shard-${{ matrix.shard.id }}-${{ matrix.shard.slug }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -147,7 +154,7 @@ jobs:
           COMMIT_SHA: ${{ inputs.commit_sha }}
         run: |
           $ErrorActionPreference = "Stop"
-          $expectedArtifact = "dline-vsix-$env:COMMIT_SHA"
+          $expectedArtifact = "$env:VSIX_ARTIFACT_PREFIX-vsix-$env:COMMIT_SHA"
           if ($env:ARTIFACT_NAME -ne $expectedArtifact) {
             throw "Expected artifact '$expectedArtifact', got '$env:ARTIFACT_NAME'."
           }
@@ -187,7 +194,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v5
         with:
-          name: playwright-work-shard-${{ matrix.shard.id }}-${{ matrix.shard.slug }}-${{ matrix.runner }}-${{ github.sha }}
+          name: playwright-work-shard-${{ inputs.registry }}-${{ matrix.shard.id }}-${{ matrix.shard.slug }}-${{ matrix.runner }}-${{ github.sha }}
           path: tmp/test-result/
           if-no-files-found: warn
           include-hidden-files: true

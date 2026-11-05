@@ -115,7 +115,7 @@ npm run vsix
 | `dev` with a `dev-vX.Y.Z` tag | `dline` | `X.Y.Z` from the tag | Pre-release |
 | `dev` without a tag | `dline-insiders` | `major.minor.<Unix seconds>` | Release |
 
-A pre-release is the same `tuvokyang.dline` extension as the stable release; the VSIX is packaged with the pre-release flag, so users who switch to the pre-release version receive it.
+A pre-release keeps the stable extension ID for its registry; the VSIX pre-release flag selects the pre-release track rather than a separate extension name.
 
 On any other branch, packaging is rejected by default. To build a local test package on a feature branch, name the channel explicitly:
 
@@ -125,4 +125,20 @@ npm run vsix -- --channel ci
 
 The available channels are `auto`, `ci`, `insiders`, `pre-release`, and `production`; `--out <path>` sets the output path.
 
-Packaging is not publishing. Marketplace publication is done by the release workflows in GitHub Actions.
+### Build for the VS Code Marketplace publisher
+
+The source manifest and Open VSX packages retain publisher `tuvokyang`. To compile and package for the VS Code Marketplace publisher `tuvokyangdline`, use:
+
+```bash
+npm run vsix:vscode-marketplace
+```
+
+This command uses the same channel rules above. For a local stable-identity test package without a release tag:
+
+```bash
+npm run vsix:vscode-marketplace -- --channel ci --out dist/tuvokyangdline.dline.vsix
+```
+
+The publisher is replaced before compiling the extension, then the source manifest and README are restored. Stable and pre-release Marketplace packages use `tuvokyangdline.dline`; Insiders uses `tuvokyangdline.dline-insiders`. A different publisher is a different extension ID, not an automatic update of an installation from the old publisher.
+
+Both local commands only build and package. VS Code Marketplace uploads must run through GitHub Actions, not a local publish command. The release workflows enable both registries, build separate publisher-specific VSIX files, and test each final package before automatic publication. Each registry receives its own artifact and SHA-256; a package must not be rebuilt or have its manifest rewritten after testing. Check each registry's result separately: the aggregate publishing stage succeeds when at least one registry succeeds.

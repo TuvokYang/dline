@@ -115,7 +115,7 @@ npm run vsix
 | `dev` 且有 `dev-vX.Y.Z` 标签 | `dline` | 标签中的 `X.Y.Z` | 预发布版 |
 | `dev` 且没有标签 | `dline-insiders` | `主版本.次版本.<Unix 秒>` | 正式版 |
 
-预发布版与正式版是同一个扩展 `tuvokyang.dline`，VSIX 打包时带有预发布标记，只有切换到预发布版本的用户才会收到。
+预发布版保留其目标市场的正式版扩展 ID，通过 VSIX 预发布标记选择预发布轨道，而不是使用另一个扩展名。
 
 在其他分支上默认会拒绝打包。需要在功能分支上打一个本地测试包时，显式指定渠道：
 
@@ -123,6 +123,22 @@ npm run vsix
 npm run vsix -- --channel ci
 ```
 
-可用的渠道为 `auto`、`ci`、`insiders`、`pre-release`、`production`，
+可用的渠道为 `auto`、`ci`、`insiders`、`pre-release`、`production`；`--out <path>` 指定输出路径。
 
-打包不等于发布。发布到扩展市场由 GitHub Actions 中的发布流程完成。
+### 为 VS Code Marketplace 的发布者打包
+
+源码清单和 Open VSX 包继续使用发布者 `tuvokyang`。需要为 VS Code Marketplace 的发布者 `tuvokyangdline` 编译和打包时，运行：
+
+```bash
+npm run vsix:vscode-marketplace
+```
+
+该命令沿用上表的渠道规则。没有发布标签时，可以构建使用正式版扩展身份的本地测试包：
+
+```bash
+npm run vsix:vscode-marketplace -- --channel ci --out dist/tuvokyangdline.dline.vsix
+```
+
+发布者在编译扩展之前替换，完成后恢复源码清单和 README。Marketplace 正式版与预发布版使用 `tuvokyangdline.dline`，Insiders 使用 `tuvokyangdline.dline-insiders`。不同发布者对应不同扩展 ID，不会自动更新旧发布者的安装。
+
+两个本地命令都只编译和打包。VS Code Marketplace 上传必须通过 GitHub Actions，不能在本地执行发布命令。发布工作流启用两个市场，分别构建对应发布者的 VSIX，并在自动发布前测试各自的最终产物。两个市场分别接收自己的 artifact 和 SHA-256，不能在测试后重新打包或改写清单。需要分别核对各市场的结果：汇总发布阶段只要求至少一个市场成功。

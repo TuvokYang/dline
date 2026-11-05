@@ -18,6 +18,16 @@ on:
         type: string
         required: false
         default: auto
+    outputs:
+      marketplace_artifact_name:
+        description: Marketplace VSIX artifact tested by this workflow.
+        value: ${{ jobs.package-marketplace.outputs.artifact_name }}
+      marketplace_asset_name:
+        description: Marketplace VSIX filename.
+        value: ${{ jobs.package-marketplace.outputs.asset_name }}
+      marketplace_sha256:
+        description: SHA-256 of the tested Marketplace VSIX.
+        value: ${{ jobs.package-marketplace.outputs.sha256 }}
     secrets:
       OTEL_TELEMETRY_ENABLED:
         required: false
@@ -216,10 +226,33 @@ jobs:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${{ needs.typecheck.outputs.package_profile == 'release' && secrets.OTEL_EXPORTER_OTLP_ENDPOINT || '' }}
       OTEL_EXPORTER_OTLP_HEADERS: ${{ needs.typecheck.outputs.package_profile == 'release' && secrets.OTEL_EXPORTER_OTLP_HEADERS || '' }}
 
+  package-marketplace:
+    name: Package Marketplace VSIX
+    needs: [typecheck, vitest]
+    uses: ./.github/workflows/package.yml
+    with:
+      profile: ${{ needs.typecheck.outputs.package_profile }}
+      channel: ${{ needs.typecheck.outputs.package_channel }}
+      registry: vscode-marketplace
+    secrets:
+      OTEL_TELEMETRY_ENABLED:
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${{ needs.typecheck.outputs.package_profile == 'release' && secrets.OTEL_EXPORTER_OTLP_PROTOCOL || '' }}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ needs.typecheck.outputs.package_profile == 'release' && secrets.OTEL_EXPORTER_OTLP_ENDPOINT || '' }}
+      OTEL_EXPORTER_OTLP_HEADERS: ${{ needs.typecheck.outputs.package_profile == 'release' && secrets.OTEL_EXPORTER_OTLP_HEADERS || '' }}
+
   e2e:
-    name: E2E
+    name: E2E (Open VSX)
     needs: package
     uses: ./.github/workflows/e2e.yml
     with:
       artifact_name: ${{ needs.package.outputs.artifact_name }}
       commit_sha: ${{ needs.package.outputs.commit_sha }}
+
+  e2e-marketplace:
+    name: E2E (Marketplace)
+    needs: package-marketplace
+    uses: ./.github/workflows/e2e.yml
+    with:
+      artifact_name: ${{ needs.package-marketplace.outputs.artifact_name }}
+      commit_sha: ${{ needs.package-marketplace.outputs.commit_sha }}
+      registry: vscode-marketplace

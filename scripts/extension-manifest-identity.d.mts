@@ -18,4 +18,9 @@ export interface DistributionContributionIdentity {
 
 export function getDistributionIdentity(packageName: string): DistributionContributionIdentity
 
-export function createDistributionManifest<T extends object>(sourceManifest: T, packageName: string, version: string): T
+export function createDistributionManifest<T extends object>(
+    sourceManifest: T,
+    packageName: string,
+    version: string,
+    publisher?: string,
+): T

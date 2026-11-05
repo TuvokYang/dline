@@ -60,7 +60,7 @@ function targetCommandId(commandId, sourceNamespace, targetNamespace) {
  * a structurally transformed manifest so every VS Code-global registration is
  * owned by its own extension instead of colliding with tuvokyang.dline.
  */
-export function createDistributionManifest(sourceManifest, packageName, version) {
+export function createDistributionManifest(sourceManifest, packageName, version, publisher = sourceManifest.publisher) {
     const source = getDistributionIdentity(STABLE_PACKAGE_NAME)
     const target = getDistributionIdentity(packageName)
     const manifest = cloneJson(sourceManifest)
@@ -73,6 +73,7 @@ export function createDistributionManifest(sourceManifest, packageName, version)
     }
 
     manifest.name = target.packageName
+    manifest.publisher = publisher
     manifest.displayName = target.displayName
     manifest.version = version
     if (target.preview) manifest.preview = true

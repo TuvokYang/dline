@@ -35,6 +35,8 @@ jobs:
       asset_name: ${{ steps.vsix.outputs.asset_name }}
       version: ${{ steps.vsix.outputs.version }}
       sha256: ${{ steps.vsix.outputs.sha256 }}
+      marketplace_asset_name: ${{ steps.vsix.outputs.marketplace_asset_name }}
+      marketplace_sha256: ${{ steps.vsix.outputs.marketplace_sha256 }}
     steps:
       - name: Verify triggering workflow and current dev head
         id: trigger
@@ -76,40 +78,59 @@ jobs:
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
 
-      - name: Verify Insiders identity
+      - name: Download tested Marketplace VSIX artifact
+        if: steps.trigger.outputs.eligible == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: dline-vscode-marketplace-vsix-${{ github.event.workflow_run.head_sha }}
+          path: tested-marketplace-artifact
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Verify Insiders identities
         if: steps.trigger.outputs.eligible == 'true'
         id: vsix
         shell: bash
         run: |
           set -euo pipefail
 
-          mapfile -t assets < <(find tested-artifact -maxdepth 1 -type f -name '*.vsix' -print)
-          if [[ "${#assets[@]}" -ne 1 ]]; then
-            echo "Error: expected exactly one tested VSIX, found ${#assets[@]}"
-            exit 1
-          fi
+          for registry in open-vsx vscode-marketplace; do
+            artifact_dir=tested-artifact
+            publisher=tuvokyang
+            output_prefix=""
+            if [[ "$registry" == 'vscode-marketplace' ]]; then
+              artifact_dir=tested-marketplace-artifact
+              publisher=tuvokyangdline
+              output_prefix=marketplace_
+            fi
+            mapfile -t assets < <(find "$artifact_dir" -maxdepth 1 -type f -name '*.vsix' -print)
+            if [[ "${#assets[@]}" -ne 1 ]]; then
+              echo "Error: expected exactly one tested $registry VSIX, found ${#assets[@]}"
+              exit 1
+            fi
 
-          vsix_path="${assets[0]}"
-          asset_name=$(basename "$vsix_path")
-          manifest_path="$RUNNER_TEMP/vsix-package.json"
-          unzip -p "$vsix_path" extension/package.json > "$manifest_path"
-          if ! jq -e '
-            .name == "dline-insiders" and
-            .publisher == "tuvokyang" and
-            (.preview == true) and
-            (.version | test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))
-          ' "$manifest_path" >/dev/null; then
-            echo "Error: tested VSIX identity or version does not match the Insiders channel."
-            jq '{name, publisher, version, preview}' "$manifest_path"
-            exit 1
-          fi
+            vsix_path="${assets[0]}"
+            asset_name=$(basename "$vsix_path")
+            manifest_path="$RUNNER_TEMP/${registry}-package.json"
+            unzip -p "$vsix_path" extension/package.json > "$manifest_path"
+            if ! jq -e --arg publisher "$publisher" '
+              .name == "dline-insiders" and
+              .publisher == $publisher and
+              (.preview == true) and
+              (.version | test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))
+            ' "$manifest_path" >/dev/null; then
+              echo "Error: tested $registry VSIX identity or version does not match the Insiders channel."
+              jq '{name, publisher, version, preview}' "$manifest_path"
+              exit 1
+            fi
 
-          version=$(jq -r '.version' "$manifest_path")
-          sha256=$(sha256sum "$vsix_path" | cut -d' ' -f1)
-          echo "$sha256  $vsix_path"
-          echo "asset_name=$asset_name" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+            version=$(jq -r '.version' "$manifest_path")
+            sha256=$(sha256sum "$vsix_path" | cut -d' ' -f1)
+            echo "$sha256  $vsix_path"
+            echo "${output_prefix}asset_name=$asset_name" >> "$GITHUB_OUTPUT"
+            echo "${output_prefix}version=$version" >> "$GITHUB_OUTPUT"
+            echo "${output_prefix}sha256=$sha256" >> "$GITHUB_OUTPUT"
+          done
 
       - name: Upload verified registry package
         if: steps.trigger.outputs.eligible == 'true'
@@ -117,6 +138,16 @@ jobs:
         with:
           name: registry-vsix-${{ github.event.workflow_run.head_sha }}
           path: tested-artifact/${{ steps.vsix.outputs.asset_name }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Upload verified Marketplace package
+        if: steps.trigger.outputs.eligible == 'true'
+        uses: actions/upload-artifact@v5
+        with:
+          name: dline-vscode-marketplace-vsix-${{ github.event.workflow_run.head_sha }}
+          path: tested-marketplace-artifact/${{ steps.vsix.outputs.marketplace_asset_name }}
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
@@ -250,4 +281,7 @@ jobs:
       artifact_name: registry-vsix-${{ github.event.workflow_run.head_sha }}
       asset_name: ${{ needs.verify-insiders.outputs.asset_name }}
       expected_sha256: ${{ needs.verify-insiders.outputs.sha256 }}
+      marketplace_artifact_name: dline-vscode-marketplace-vsix-${{ github.event.workflow_run.head_sha }}
+      marketplace_asset_name: ${{ needs.verify-insiders.outputs.marketplace_asset_name }}
+      marketplace_expected_sha256: ${{ needs.verify-insiders.outputs.marketplace_sha256 }}
     secrets: inherit

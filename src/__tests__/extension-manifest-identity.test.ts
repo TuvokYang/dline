@@ -55,6 +55,25 @@ function extensionOwnedCommandIds(manifest: ExtensionManifest): string[] {
 }
 
 describe("extension distribution manifest identity", () => {
+    it.each([
+        { packageName: "dline", version: "0.12.2", expectedId: "tuvokyangdline.dline" },
+        { packageName: "dline", version: "0.13.0", expectedId: "tuvokyangdline.dline" },
+        { packageName: "dline-insiders", version: "0.13.1893456000", expectedId: "tuvokyangdline.dline-insiders" },
+    ])("targets the Marketplace publisher for $packageName@$version", async ({ packageName, version, expectedId }) => {
+        const { createExtensionRegistryInfo } = await import("../registry")
+        const manifest = createDistributionManifest(sourceManifest, packageName, version, "tuvokyangdline")
+        const runtime = createExtensionRegistryInfo(manifest)
+
+        expect(manifest.publisher).toBe("tuvokyangdline")
+        expect(manifest.name).toBe(packageName)
+        expect(manifest.version).toBe(version)
+        expect(runtime.id).toBe(expectedId)
+        expect(runtime.walkthrough.qualifiedId).toBe(`${expectedId}#DlineWalkthrough`)
+        expect(sourceManifest.publisher).toBe("tuvokyang")
+        expect(sourceManifest.name).toBe("dline")
+        expect(project(packageName, version).publisher).toBe("tuvokyang")
+    })
+
     it("leaves the stable VS Code identity unchanged", () => {
         const stable = project(STABLE_PACKAGE_NAME, sourceManifest.version)
 

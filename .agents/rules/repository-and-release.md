@@ -104,7 +104,7 @@ After changes enter `dev`, run and record the checks required by the actual blas
 - formatting and lint;
 - Smoke and Vitest;
 - applicable Webview, Storybook, or focused functional E2E tests;
-- one VSIX packaged before the required E2E gate, one Linux work smoke, then each of four daily workflows on Linux, macOS and Windows against that exact artifact;
+- one final VSIX per registry publisher, each packaged before its own required E2E gate: one Linux work smoke, then each of four daily workflows on Linux, macOS and Windows against that exact artifact;
 - full functional E2E only in production release validation or explicit investigation, and no dev-tier E2E in required CI or release gates;
 - VSIX identity, content, and tested-artifact verification;
 - version, lockfile, bilingual changelog, bilingual What's New, and manifest consistency for a release candidate.
@@ -148,7 +148,7 @@ Until that strategy is approved, the hotfix workflow must stop instead of invent
 
 ## 9. Tag semantics
 
-- A development release tag must match `dev-vX.Y.Z` and point to exact current `dev` head. `Publish Pre-release` gates publication on full Vitest, one packaged VSIX, one Linux work smoke and each of four daily workflows on Linux, macOS and Windows against that artifact. Version preparation and the separately authorized development tag operations belong to `dev-version-bump`.
+- A development release tag must match `dev-vX.Y.Z` and point to exact current `dev` head. `Publish Pre-release` gates publication on full Vitest and each registry publisher's packaged VSIX passing one Linux work smoke and each of four daily workflows on Linux, macOS and Windows. Version preparation and the separately authorized development tag operations belong to `dev-version-bump`.
 - A `dev-vX.Y.Z` tag is never a production baseline and must not trigger the Production Release or production Marketplace workflow.
 - A production tag must match `vX.Y.Z` and point to a verified `main` commit.
 - Creating a local tag, pushing it, and replacing a remote tag are separate operations.
@@ -164,7 +164,9 @@ Until that strategy is approved, the hotfix workflow must stop instead of invent
 | `dev` + `dev-vX.Y.Z` | `dline` | `X.Y.Z` from the tag; `Y` odd | `pre-release` | Pre-release |
 | `dev` without a tag | `dline-insiders` | `major.<pre-release minor>.<unix-seconds>` | `insiders` | Release |
 
-`tuvokyang.dline` carries both the release and the pre-release track; `dline-insiders` is a separate extension with its own version sequence. A pre-release keeps the production manifest identity and differs only by the VSIX pre-release marker (`Microsoft.VisualStudio.Code.PreRelease`, set by vsce `preRelease`) and by the GitHub asset name `dline-X.Y.Z-pre-release.vsix`. Registry gates reject a pre-release VSIX without the marker and a production VSIX that carries it. A Marketplace `version` accepts only three numeric segments, so a semver pre-release suffix such as `0.9.4-rc.1` cannot be published.
+The source manifest and Open VSX retain publisher `tuvokyang`; VS Code Marketplace packages use `tuvokyangdline`, applied before compilation through `npm run vsix:vscode-marketplace`. These are separate extension IDs and separate compiled artifacts. Both local `vsix` commands only build and package; VS Code Marketplace uploads must run through GitHub Actions, never locally.
+
+Within each registry, `dline` carries both the release and pre-release tracks; `dline-insiders` is a separate extension with its own version sequence. A pre-release keeps its registry's production manifest identity and differs only by the VSIX pre-release marker (`Microsoft.VisualStudio.Code.PreRelease`, set by vsce `preRelease`) and by the GitHub asset name `dline-X.Y.Z-pre-release.vsix`. Registry gates reject a pre-release VSIX without the marker and a production VSIX that carries it. A Marketplace `version` accepts only three numeric segments, so a semver pre-release suffix such as `0.9.4-rc.1` cannot be published.
 
 Release-content invariants:
 
@@ -202,7 +204,7 @@ A deleted Marketplace extension ID cannot be reused, so renaming a channel means
 
 Packaging is not publishing. Producing a VSIX never implies authorization to publish it; Marketplace publication remains a separate external write under §3.
 
-Registry publication currently defaults to Open VSX only. `publish-vsix-registries.yml` skips the VS Code Marketplace job unless a caller passes `publish_marketplace: true`; a skipped/disabled target is not a successful publication. The ordered automatic and manual paths are documented in `release`.
+Registry publication enables both Open VSX and the VS Code Marketplace by default. Each receives its own verified publisher-specific VSIX and SHA-256; do not rewrite a manifest or rebuild after testing. The aggregate gate requires at least one registry to succeed, so report each registry's result separately; skipped/disabled is not published. The GitHub Release retains the default-publisher VSIX asset. The ordered automatic and manual paths are documented in `release`.
 
 The Open VSX job checks the track of an existing version before publishing. A track mismatch fails; a skipped duplicate is not reported as a new publication.
 
@@ -234,5 +236,5 @@ After changing a Git workflow or skill, verify at least:
 9. rejection of ordinary development or PR creation from `main`;
 10. rejection of promotion when the `dev` gate fails;
 11. authorized squash promotion after the complete `dev` gate passes, with a tree-equality check against the verified `dev` SHA and the `ours` back-merge into `dev`;
-12. `dev-vX.Y.Z` development release tags only from exact `dev` head, with GitHub pre-release and enabled registry publication blocked until full Vitest, one package job, one Linux work smoke and all four daily workflows on all three platforms pass against the same VSIX;
+12. `dev-vX.Y.Z` development release tags only from exact `dev` head, with GitHub pre-release and enabled registry publication blocked until full Vitest and each registry publisher's final VSIX passes one Linux work smoke and all four daily workflows on all three platforms;
 13. production tag creation only from the final verified `main` commit.

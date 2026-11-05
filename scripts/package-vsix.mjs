@@ -301,11 +301,12 @@ function resolveRequestedChannel(requestedChannel, packageVersion) {
  * Parse CLI options used by CI and local packaging.
  *
  * @param {string[]} argv Command-line arguments.
- * @returns {{requestedChannel: string, outputPath: string|null}}
+ * @returns {{requestedChannel: string, outputPath: string|null, publisherOverride: string|null}}
  */
 function parseArguments(argv) {
     let requestedChannel = "auto"
     let outputPath = null
+    let publisherOverride = null
 
     for (let index = 0; index < argv.length; index += 1) {
         const argument = argv[index]
@@ -315,8 +316,13 @@ function parseArguments(argv) {
         } else if (argument === "--out") {
             outputPath = argv[index + 1]
             index += 1
+        } else if (argument === "--publisher") {
+            publisherOverride = argv[index + 1]
+            index += 1
         } else if (argument === "--help" || argument === "-h") {
-            console.log("Usage: npm run vsix -- [--channel auto|ci|insiders|pre-release|production] [--out <path>]")
+            console.log(
+                "Usage: npm run vsix -- [--channel auto|ci|insiders|pre-release|production] [--out <path>] [--publisher <id>]",
+            )
             process.exit(0)
         } else {
             fail(`Unknown argument '${argument}'.`)
@@ -330,7 +336,10 @@ function parseArguments(argv) {
         fail("--out requires a path.")
     }
 
-    return { requestedChannel, outputPath }
+    if (argv.includes("--publisher") && !publisherOverride) {
+        fail("--publisher requires an ID.")
+    }
+    return { requestedChannel, outputPath, publisherOverride }
 }
 
 /**
@@ -343,12 +352,14 @@ function parseArguments(argv) {
  * @param {object} pkg Parsed package.json.
  * @param {"ci"|"production"|"pre-release"|"insiders"} channel Target channel.
  * @param {string} version Version to publish.
+ * @param {string|null} publisherOverride Publisher for this package only.
  * @returns {boolean} True when the manifest was modified.
  */
-function applyChannelIdentity(pkg, channel, version) {
-    if (channel !== "insiders") return false
+function applyChannelIdentity(pkg, channel, version, publisherOverride) {
+    if (channel !== "insiders" && publisherOverride === null) return false
 
-    const transformed = createDistributionManifest(pkg, INSIDERS_PACKAGE_NAME, version)
+    const packageName = channel === "insiders" ? INSIDERS_PACKAGE_NAME : pkg.name
+    const transformed = createDistributionManifest(pkg, packageName, version, publisherOverride ?? pkg.publisher)
     for (const key of Object.keys(pkg)) delete pkg[key]
     Object.assign(pkg, transformed)
     return true
@@ -356,7 +367,7 @@ function applyChannelIdentity(pkg, channel, version) {
 
 // --- Main ---
 
-const { requestedChannel, outputPath } = parseArguments(process.argv.slice(2))
+const { requestedChannel, outputPath, publisherOverride } = parseArguments(process.argv.slice(2))
 const packageVersion = readPackageJson().version
 const { channel, version, tag } = resolveRequestedChannel(requestedChannel, packageVersion)
 const resolvedOutputPath = outputPath ? (path.isAbsolute(outputPath) ? outputPath : path.join(PROJECT_ROOT, outputPath)) : null
@@ -381,9 +392,11 @@ await withMarketplaceReadme(
             fs.writeFileSync(PACKAGE_JSON_PATH, originalContent)
         })
 
-        if (applyChannelIdentity(pkg, channel, version)) {
+        if (applyChannelIdentity(pkg, channel, version, publisherOverride)) {
             writePackageJson(pkg)
-            console.log(`[package-vsix] Applied ${channel} identity: name=${pkg.name}, version=${pkg.version}`)
+            console.log(
+                `[package-vsix] Applied ${channel} identity: publisher=${pkg.publisher}, name=${pkg.name}, version=${pkg.version}`,
+            )
         } else {
             console.log(`[package-vsix] Packaging ${channel} identity: name=${pkg.name}, version=${pkg.version}`)
         }
