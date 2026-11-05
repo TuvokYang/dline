@@ -17,7 +17,6 @@ Format rules, enforced by webview-ui/vite-whats-new.ts at build time:
 
 ## 0.12.2
 
-- **MCP tools on demand**
 - **Composer button interaction**: send, restore, queue, and cancel share a single button that queues the draft while a task runs and turns into cancel after a three-second hover on the queue state.
 - **More reliable interruption and recovery**: a task that was interrupted, lost its window, or was reopened from history resumes with the result you expect instead of a scrambled or repeated state.
 - **OpenCode provider**: one Profile covers all of its paid text models on a pay-as-you-go balance or a Go, Go Plus, or Go Teams subscription, and each model can be reached over OpenAI Chat Completions, OpenAI Responses, or Anthropic Messages, with your plan deciding the prices and available models.

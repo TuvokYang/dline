@@ -16,7 +16,6 @@ Dline 侧边栏的 What's New 对话框展示本目录下英文版 `WHATS_NEW_en
 
 ## 0.12.2
 
-- **MCP 工具按需加载**：设置「Load MCP Tools on Demand」（默认开启）不再把每个 MCP 工具的完整定义随每次请求发送，模型先从提示词中的目录选择工具，再用 `load_mcp` 取回参数 schema。
 - **按钮交互优化**：发送、恢复、排队、取消共用一个按钮，任务运行时把草稿排入队列，悬停排队按钮 3 秒后切换为取消。
 - **中断与恢复更可靠**：任务被中断、关闭窗口或切换到历史任务后，恢复结果准确可预期，不再出现状态错乱或重复执行。
 - **OpenCode 服务商**：一个 Profile 即可使用其全部付费文本模型，支持按量余额与 Go、Go Plus、Go Teams 订阅；同一模型可从 OpenAI Chat Completions、OpenAI Responses 或 Anthropic Messages 中选择接入方式，套餐决定价格与可用模型。
