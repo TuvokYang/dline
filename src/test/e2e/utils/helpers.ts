@@ -8,6 +8,7 @@ import {
     type RmOptions,
     readdirSync,
     readFileSync,
+    realpathSync,
     statSync,
     writeFileSync,
 } from "node:fs"
@@ -638,8 +639,14 @@ export const e2e = test
         workspaceDir: async ({}, use) => {
             const fixtureRoot = path.join(E2ETestHelper.E2E_TESTS_DIR, "fixtures")
             const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), "dline-e2e-workspace-"))
-            const workspaceDir = path.join(temporaryRoot, "workspace")
-            cpSync(path.join(fixtureRoot, "workspace"), workspaceDir, { recursive: true })
+            const copiedWorkspaceDir = path.join(temporaryRoot, "workspace")
+            cpSync(path.join(fixtureRoot, "workspace"), copiedWorkspaceDir, { recursive: true })
+            // Hand tests the file system's own spelling of this directory, because the product
+            // resolves the path it is given. macOS reports the temp root through `/var` while the
+            // real path is `/private/var`, and the Windows CI runner reports the `RUNNER~1` short
+            // name while the real path carries the long user name. `native` is what expands the
+            // 8.3 name on Windows; the plain call leaves it as the short form.
+            const workspaceDir = realpathSync.native(copiedWorkspaceDir)
             try {
                 await use(workspaceDir)
             } finally {
