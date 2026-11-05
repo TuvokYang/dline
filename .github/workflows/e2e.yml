@@ -33,7 +33,11 @@ jobs:
     timeout-minutes: 30
     env:
       DLINE_E2E_PROFILE: mock-openai
-      DLINE_E2E_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.registry }}-ubuntu-smoke
+      # Kept short on purpose: the run id prefixes the temporary DLINE dirs, and the
+      # checkpoints shadow git appends `/.git/objects/xx/<38-char-hash>` to them. Windows
+      # rejects a path past MAX_PATH, so a long id fails checkpoint creation on the Windows
+      # runners. The job name already identifies registry, runner and shard.
+      DLINE_E2E_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}-smoke
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -128,7 +132,9 @@ jobs:
     timeout-minutes: 30
     env:
       DLINE_E2E_PROFILE: mock-openai
-      DLINE_E2E_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.registry }}-${{ matrix.runner }}-shard-${{ matrix.shard.id }}-${{ matrix.shard.slug }}
+      # Kept short on purpose: see the work-smoke note above. The registry, runner and
+      # shard are already unique per job, and their names stay in the job title.
+      DLINE_E2E_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}-s${{ matrix.shard.id }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6

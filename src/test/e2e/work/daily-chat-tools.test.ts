@@ -1,4 +1,3 @@
-import { realpathSync } from "node:fs"
 import { readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { expectComposerText } from "@e2e/utils/composer"
@@ -203,12 +202,7 @@ e2e(
         await commandCard.getByRole("button", { name: COMMAND, exact: true }).click()
         const workdirectory = commandCard.getByTestId("command-workdirectory")
         await expect(workdirectory).toBeVisible()
-        // The card shows the resolved working directory, not the literal one the fixture
-        // built: macOS reports the temp root through `/var` while the file system real path
-        // is `/private/var`, and the Windows CI runner reports the `RUNNER~1` short name
-        // while the resolved path carries the long user name. `native` is what resolves the
-        // 8.3 name on Windows; the plain call leaves it as the short form.
-        await expect(workdirectory).toHaveText(realpathSync.native(workspaceDir))
+        await expect(workdirectory).toHaveText(workspaceDir)
         const commandTaskId = await workTaskIdByMarker(dlineDocsDir, TASK_TEXT)
         const storedCommand = (await readTaskUiMessages(dlineDocsDir, commandTaskId)).find(
             (message) => message.command === COMMAND,
