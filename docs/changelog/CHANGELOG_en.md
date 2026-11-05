@@ -29,8 +29,6 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 ## [0.12.2]
 
-0.12.2 is the production release after 0.10.0 and contains every user-visible change from the 0.11.0, 0.11.1, and 0.11.2 pre-releases, summarized below by final behavior.
-
 ### Added
 - Conversation trajectory rail: while the chat scrolls, a column of short bars appears on the right, one per user turn; hovering previews that turn's message, round count and tool calls, and clicking jumps to the message even when it is not loaded yet; the rail follows checkpoint restores and context compaction
 
