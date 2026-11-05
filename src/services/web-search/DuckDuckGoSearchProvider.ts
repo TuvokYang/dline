@@ -17,11 +17,13 @@ function resolveDuckDuckGoUrl(value: string): string {
 }
 
 export class DuckDuckGoSearchProvider extends BrowserHtmlSearchProvider {
-    readonly descriptor = {
+    static readonly descriptor = {
         id: "duckduckgo" as const,
         label: "Browser / DuckDuckGo",
         execution: "dline" as const,
+        supportsPrompt: false,
     }
+    readonly descriptor = DuckDuckGoSearchProvider.descriptor
     protected readonly selectors = {
         result: ".result",
         link: ".result__a",

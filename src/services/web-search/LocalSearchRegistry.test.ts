@@ -8,7 +8,7 @@ import {
 
 function provider(id: "duckduckgo" | "bing" | "searxng"): LocalSearchProvider {
     return {
-        descriptor: { id, label: id, execution: "dline" },
+        descriptor: { id, label: id, execution: "dline", supportsPrompt: false },
         search: vi.fn(async (request: LocalSearchRequest) => ({
             engineId: id,
             query: request.query,

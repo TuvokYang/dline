@@ -27,6 +27,7 @@ import { DEFAULT_TERMINAL_COMMAND_TIMEOUT_SECONDS } from "@shared/terminal-setti
 import { DlineDefaultTool } from "@shared/tools"
 import { recordPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
+import { resolveLocalWebToolCapabilities } from "@/services/web-tools/LocalWebToolCapabilities"
 import { ClineClient } from "@/shared/cline"
 import { Logger } from "@/shared/services/Logger"
 import type { TaskPromptContextHost } from "../composition/TaskSessionPorts"
@@ -252,6 +253,9 @@ export class TaskPromptContextOwner {
             subagentsEnabled: this.options.stateManager.getGlobalSettingsKey("subagentsEnabled"),
             clineWebToolsEnabled: webToolsEnabled,
             webSearchRoutingPlan,
+            localWebToolCapabilities: resolveLocalWebToolCapabilities(
+                this.options.stateManager.getGlobalSettingsKey("localWebSearchEngine"),
+            ),
             imageGenerationAvailable: boundImageModelId !== undefined,
             imageModelId: boundImageModelId,
             isMultiRootEnabled: multiRootEnabled,

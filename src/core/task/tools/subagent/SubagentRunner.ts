@@ -54,6 +54,7 @@ import {
     shouldCompactProjectedUsage,
 } from "@/core/context/context-management/context-window-utils"
 import { HostRegistryInfo } from "@/registry"
+import { resolveLocalWebToolCapabilities } from "@/services/web-tools/LocalWebToolCapabilities"
 import { boundToolText, MAX_TOOL_RESULT_TEXT_BYTES } from "@/shared/content-limits"
 import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
 import { isNativeToolCallingConfig, isNextGenModelFamily } from "@/utils/model-utils"
@@ -930,6 +931,9 @@ export class SubagentRunner {
                 disableTools: Object.values(DlineDefaultTool).filter((tool) => !allowedTools.has(tool)),
                 clineWebToolsEnabled: webToolsEnabled,
                 webSearchRoutingPlan,
+                localWebToolCapabilities: resolveLocalWebToolCapabilities(
+                    this.baseConfig.services.stateManager.getGlobalSettingsKey("localWebSearchEngine"),
+                ),
                 imageGenerationAvailable: imageGenerationService.hasAvailableProfile(),
             }
 

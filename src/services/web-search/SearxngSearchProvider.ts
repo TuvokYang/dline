@@ -52,11 +52,13 @@ function buildSearchUrl(baseUrl: string, query: string): string {
 }
 
 export class SearxngSearchProvider implements LocalSearchProvider {
-    readonly descriptor = {
+    static readonly descriptor = {
         id: "searxng" as const,
         label: "SearXNG",
         execution: "dline" as const,
+        supportsPrompt: false,
     }
+    readonly descriptor = SearxngSearchProvider.descriptor
 
     private readonly fetchImpl: typeof fetch
 

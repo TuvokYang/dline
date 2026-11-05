@@ -10,6 +10,7 @@ const prompts: Record<string, string> = {
 - This tool is read-only and does not modify any files`,
     standardDescription: "Searches the web and returns result titles, URLs, and available excerpts.",
     queryInstruction: "The search query to use",
+    promptInstruction: "Optional instructions for the selected tool to process the search results.",
     queryUsage: "latest developments in AI",
     allowedDomainsInstruction: "JSON array of domains to restrict results to",
     allowedDomainsUsage: '["example.com", "github.com"]',

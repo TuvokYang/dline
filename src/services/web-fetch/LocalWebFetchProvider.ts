@@ -8,6 +8,7 @@ export interface UrlContentFetcherPort {
 
 export interface LocalWebFetchRequest {
     readonly url: string
+    readonly prompt?: string
     readonly signal?: AbortSignal
     readonly timeoutMs?: number
 }
@@ -23,6 +24,7 @@ export interface LocalWebFetchResponse {
 }
 
 export interface LocalWebFetchProvider {
+    readonly supportsPrompt: boolean
     fetch(request: LocalWebFetchRequest): Promise<LocalWebFetchResponse>
 }
 
@@ -79,6 +81,9 @@ function createCancellationScope(externalSignal: AbortSignal | undefined, timeou
 
 /** Fetch and clean one webpage with an isolated browser lifecycle. */
 export class BrowserWebFetchProvider implements LocalWebFetchProvider {
+    static readonly supportsPrompt = false
+    readonly supportsPrompt = BrowserWebFetchProvider.supportsPrompt
+
     constructor(private readonly createFetcher: () => UrlContentFetcherPort = () => new UrlContentFetcher()) {}
 
     async fetch(request: LocalWebFetchRequest): Promise<LocalWebFetchResponse> {

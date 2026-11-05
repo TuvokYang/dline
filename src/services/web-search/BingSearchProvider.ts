@@ -2,11 +2,13 @@ import { BrowserHtmlSearchProvider } from "./BrowserHtmlSearchProvider"
 import { type BrowserSearchPageLoader, PuppeteerBrowserSearchPageLoader } from "./BrowserSearchPageLoader"
 
 export class BingSearchProvider extends BrowserHtmlSearchProvider {
-    readonly descriptor = {
+    static readonly descriptor = {
         id: "bing" as const,
         label: "Browser / Bing",
         execution: "dline" as const,
+        supportsPrompt: false,
     }
+    readonly descriptor = BingSearchProvider.descriptor
     protected readonly selectors = {
         result: "li.b_algo",
         link: "h2 a",

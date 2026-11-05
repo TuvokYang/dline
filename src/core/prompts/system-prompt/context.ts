@@ -5,6 +5,7 @@ import type { McpServer } from "@shared/mcp"
 import type { ApiFormat } from "@shared/proto/dline/models/metadata"
 import type { ApiProviderInfo } from "@/core/api"
 import type { WebSearchRoutingPlan } from "@/core/api/server-tools"
+import type { LocalWebToolCapabilities } from "@/services/web-tools/LocalWebToolCapabilities"
 import type { BrowserSettings } from "@/shared/BrowserSettings"
 import type { FocusChainSettings } from "@/shared/FocusChainSettings"
 import type { SkillMetadata } from "@/shared/skills"
@@ -43,6 +44,7 @@ export interface SystemPromptContext {
     readonly subagentsEnabled?: boolean
     readonly clineWebToolsEnabled?: boolean
     readonly webSearchRoutingPlan?: WebSearchRoutingPlan
+    readonly localWebToolCapabilities?: LocalWebToolCapabilities
     readonly imageGenerationAvailable?: boolean
     /** Image model ID of the currently bound image profile, used to select model-specific tool guidance. */
     readonly imageModelId?: string

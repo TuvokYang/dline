@@ -1,7 +1,24 @@
 import { BingSearchProvider } from "./BingSearchProvider"
 import { DuckDuckGoSearchProvider } from "./DuckDuckGoSearchProvider"
-import { type LocalSearchProvider, LocalSearchRegistry } from "./LocalSearchProvider"
+import {
+    type LocalSearchEngineId,
+    type LocalSearchProvider,
+    type LocalSearchProviderDescriptor,
+    LocalSearchRegistry,
+} from "./LocalSearchProvider"
 import { SearxngSearchProvider } from "./SearxngSearchProvider"
+
+/** Read provider-owned metadata without creating browser or network clients. */
+export function getLocalSearchProviderDescriptor(engineId: LocalSearchEngineId): LocalSearchProviderDescriptor {
+    switch (engineId) {
+        case "duckduckgo":
+            return DuckDuckGoSearchProvider.descriptor
+        case "bing":
+            return BingSearchProvider.descriptor
+        case "searxng":
+            return SearxngSearchProvider.descriptor
+    }
+}
 
 export interface LocalSearchRegistryOptions {
     readonly searxngSearchUrl?: string

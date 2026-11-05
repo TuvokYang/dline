@@ -6,10 +6,12 @@ export interface LocalSearchProviderDescriptor {
     readonly id: LocalSearchEngineId
     readonly label: string
     readonly execution: "dline"
+    readonly supportsPrompt: boolean
 }
 
 export interface LocalSearchRequest {
     readonly query: string
+    readonly prompt?: string
 }
 
 export interface LocalSearchResultItem {

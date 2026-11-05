@@ -139,7 +139,12 @@ export class WebFetchToolHandler implements IFullyManagedTool {
             }
 
             throwIfCancelled(operationSignal)
-            const result = await this.provider.fetch({ url, signal: operationSignal })
+            const prompt = this.provider.supportsPrompt ? block.params.prompt : undefined
+            const result = await this.provider.fetch({
+                url,
+                signal: operationSignal,
+                ...(prompt === undefined ? {} : { prompt }),
+            })
             throwIfCancelled(operationSignal)
             const completedMessage: UiSayTool = {
                 ...sharedMessageProps,
