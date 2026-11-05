@@ -5,8 +5,10 @@
  * still typing, and profile creation calls it with `persist` so the result
  * lands in ~/.dline/providers/<id>.json. Nothing refreshes on startup.
  */
+import { resolvePrimaryCatalogKey } from "@shared/providers/provider-catalog-key"
 import type { ModelInfo } from "@shared/providers/types"
 import { Logger } from "@shared/services/Logger"
+import { ModelRegistry } from "../ModelRegistry"
 import { persistProviderCatalog } from "../provider-catalog-storage"
 import { resolveSavedCredentials } from "./model-credentials"
 import type { ProviderRemoteContext } from "./model-source"
@@ -20,8 +22,13 @@ export interface DiscoverProviderModelsOptions {
     readonly throwOnError?: boolean
 }
 
-/** Concurrent callers for one provider share a single request. */
-const inFlight = new Map<string, Promise<Record<string, ModelInfo>>>()
+const MODEL_CATALOG_TTL_MS = 30 * 60 * 1000
+interface CatalogFetch {
+    fetchedAt: number
+    request: Promise<Record<string, ModelInfo>>
+}
+/** Fetch state follows the registry lifetime and is never written into provider configuration. */
+const catalogFetches = new WeakMap<ModelRegistry, Map<string, CatalogFetch>>()
 
 export async function discoverProviderModels(
     providerId: string,
@@ -38,48 +45,41 @@ export async function discoverProviderModels(
         return {}
     }
 
-    // Only requests that share the provider, the catalog and the persistence
-    // intent are interchangeable: a preview must not satisfy a caller expecting
-    // a write, and a Console refresh must not satisfy a Go refresh, which reads a
-    // different listing.
-    const key = `${providerId}:${resolved.profileId ?? "default"}:${options?.persist === true ? "persist" : "preview"}`
-    const pending = inFlight.get(key)
-    if (pending) {
-        return pending
+    const catalogKey = resolvePrimaryCatalogKey(providerId)
+    const registry = ModelRegistry.getInstance()
+    let cache = catalogFetches.get(registry)
+    if (!cache) {
+        cache = new Map()
+        catalogFetches.set(registry, cache)
     }
-
-    const request = (async () => {
-        try {
-            // The provider id *is* the catalog key here: `providerId` is what the
-            // caller asked to refresh, and a plan-aware source uses it to pick the
-            // listing that answers for that plan. Passing only the resolved
-            // credentials is what made every plan read the Console listing.
-            const models = await source.fetchModels({ ...resolved, catalogKey: providerId, signal: options?.signal })
-            if (options?.persist === true && Object.keys(models).length > 0) {
-                await persistProviderCatalog({
-                    // The catalog key the caller asked for, not the source's own
-                    // provider id: a Go Profile reads `opencode-go`, and writing
-                    // that result under `opencode` would leave the Go catalog on
-                    // its local declarations.
-                    providerId,
-                    providerName: source.providerName,
-                    baseUrl: resolved.baseUrl,
-                    billingMode: source.billingMode,
-                    models,
-                    preferredDefaultModelId: source.preferredDefaultModelId,
-                    reconciliationMode: source.reconciliation,
-                })
+    // Connection identity separates private catalogs; persistence is not a network identity.
+    const key = JSON.stringify([catalogKey, resolved.profileId, resolved.baseUrl, resolved.apiKey, resolved.vendorCredentials])
+    try {
+        let fetched = cache.get(key)
+        const now = Date.now()
+        if (!fetched || now - fetched.fetchedAt >= MODEL_CATALOG_TTL_MS) {
+            fetched = {
+                fetchedAt: now,
+                request: source.fetchModels({ ...resolved, catalogKey, signal: options?.signal }),
             }
-            return models
-        } catch (error) {
-            Logger.warn(`[${providerId}] Model discovery failed: ${error instanceof Error ? error.message : String(error)}`)
-            if (options?.throwOnError) throw error
-            return {}
-        } finally {
-            inFlight.delete(key)
+            cache.set(key, fetched)
         }
-    })()
-
-    inFlight.set(key, request)
-    return request
+        const models = await fetched.request
+        if (options?.persist === true && Object.keys(models).length > 0) {
+            await persistProviderCatalog({
+                providerId: catalogKey,
+                providerName: source.providerName,
+                baseUrl: resolved.baseUrl,
+                billingMode: source.billingMode,
+                models,
+                preferredDefaultModelId: source.preferredDefaultModelId,
+                reconciliationMode: source.reconciliation,
+            })
+        }
+        return models
+    } catch (error) {
+        Logger.warn(`[${providerId}] Model discovery failed: ${error instanceof Error ? error.message : String(error)}`)
+        if (options?.throwOnError) throw error
+        return {}
+    }
 }

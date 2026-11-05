@@ -8,11 +8,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { AccountServiceClient } from "@/services/grpc-client"
 import { formatCurrencyAmount } from "@/utils/currency"
-import { formatTokenMetric } from "@/utils/format"
 import {
     isReadableUsageQuota,
-    localTodayInput,
-    localTodayOutput,
     ProviderUsageDetails,
     selectEffectiveUsageQuota,
     usageRemainingPercent,
@@ -146,23 +143,13 @@ export const UsageBar = () => {
     // so it is dropped rather than rendered as a number the user would act on.
     const quotas = usage.quotas?.filter(isReadableUsageQuota) ?? []
     const effectiveQuota = selectChatInputUsageQuota(quotas)
-    const localInput = localTodayInput(usage)
-    const localOutput = localTodayOutput(usage)
-    const hasLocal = localInput !== undefined || localOutput !== undefined
     // The provider names its own window: a calendar week and a rolling seven
     // days are different things, so the bar no longer derives "7d" from a type.
-    //
-    // A remote capability is preferred when it exists, because it describes the
-    // account's own limit. A Profile that only has this installation's committed
-    // facts still deserves a bar: hiding it would drop the one reading the user can
-    // act on, so the local day total becomes the summary instead.
     const summary = effectiveQuota
         ? `${effectiveQuota.shortLabel ?? effectiveQuota.label}: ${usageRemainingPercent(effectiveQuota).toFixed(0)}%`
         : !usage.planType && usage.remainingBalance !== undefined
           ? formatCurrencyAmount(usage.remainingBalance, usage.currency)
-          : hasLocal && localInput !== undefined
-            ? `Today: ${formatTokenMetric(localInput)} in`
-            : undefined
+          : undefined
     if (!summary) return null
 
     const refresh = async () => {

@@ -555,16 +555,7 @@ export class OpenCodeHandler extends ApiHandler {
      */
     override async getAccountUsage(): Promise<AccountUsage | undefined> {
         const apiKey = this.apiKey
-        if (!apiKey) return undefined
-        if (this.mode !== "go") {
-            return {
-                currency: "USD",
-                isAvailable: false,
-                planType: this.planType,
-                providerId: "opencode",
-                retrievedAt: new Date().toISOString(),
-            }
-        }
+        if (!apiKey || this.mode !== "go") return undefined
 
         this.accountUsageController?.abort()
         const controller = new AbortController()

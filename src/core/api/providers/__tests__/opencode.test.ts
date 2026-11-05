@@ -743,13 +743,11 @@ describe("OpenCodeHandler", () => {
             ])
         })
 
-        it("reports the console as the only source for a pay-as-you-go Profile and never calls the endpoint", async () => {
+        it("returns no account usage for a pay-as-you-go Profile without calling the endpoint", async () => {
             const usage = await handlerForMode(OpenCodeMode.OPEN_CODE_MODE_CONSOLE).getAccountUsage()
 
             expect(mocks.fetch).not.toHaveBeenCalled()
-            // A balance Provider must not claim a zero balance it never read.
-            expect(usage).to.include({ isAvailable: false, providerId: "opencode" })
-            expect(usage?.quotas).to.equal(undefined)
+            expect(usage).to.equal(undefined)
         })
 
         it("reads the windows without the usage wrapper the vendor may omit", () => {

@@ -245,7 +245,7 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
                                     provider,
                                     apiKey: "",
                                     baseUrl: undefined,
-                                    modelId: getCachedProviderDefaultModelId(provider),
+                                    modelId: getCachedProviderDefaultModelId(resolvePrimaryCatalogKey(provider)),
                                     imageSource,
                                     imageProfileId: keepsIndependentSource ? profile.imageProfileId : undefined,
                                     imageModelId: imageModelId || undefined,

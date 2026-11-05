@@ -169,6 +169,9 @@ Until that strategy is approved, the hotfix workflow must stop instead of invent
 Release-content invariants:
 
 - The paired changelogs have equivalent headings and user-visible scope. `Unreleased` records implemented, verified dev changes, not plans or internal-only churn.
+- `Unreleased` is the cumulative user-visible difference from the latest published production release. Verify that release's tag/commit and its shipped behavior before writing entries; the preceding commit, PR, local version bump, or development checkpoint is not the baseline.
+- Describe an unreleased feature once by its final behavior. Correct its existing Added/Changed entry as development evolves; do not list fixes to its unshipped intermediate versions as released-product regressions.
+- Use Fixed only for a defect present in the release baseline. Omit reverted experiments, intermediate implementations, and changes with no net user-visible difference from that release; commit history is evidence, not a changelog outline.
 - Tagged sections are non-empty. A production section covers all user-visible changes since the preceding production release, including the pre-release changes, rather than linking to a partial delta.
 - A prepared version agrees across package, lockfile, both changelogs and both top What's New sections. The What's New editions agree on version and item count and follow the parser's supported syntax.
 - Insiders is rolling: an untagged integration does not create a permanent version section or bump package/What's New for each commit.

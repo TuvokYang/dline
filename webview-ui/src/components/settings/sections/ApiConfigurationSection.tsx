@@ -31,6 +31,7 @@ const ApiConfigurationSection = ({ renderSectionHeader }: ApiConfigurationSectio
         providerOptions,
         loaded,
         error,
+        saveError,
         reloadProfiles,
     } = useApiProfiles()
     const imageProfiles = useImageGenerationProfiles()
@@ -39,6 +40,11 @@ const ApiConfigurationSection = ({ renderSectionHeader }: ApiConfigurationSectio
         <div>
             {renderSectionHeader?.("api-config")}
             <Section>
+                {saveError && (
+                    <div className="py-3 text-sm text-errorForeground" role="alert">
+                        Failed to save API profiles. Your changes have not been confirmed.
+                    </div>
+                )}
                 {!loaded && !error && <div className="py-3 text-sm text-description">Loading API profiles…</div>}
                 {error && (
                     <div className="py-3 text-sm text-errorForeground">

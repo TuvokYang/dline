@@ -8,6 +8,12 @@ import { describe, expect, it, vi } from "vitest"
 import ProviderProfileCard from "./ProviderProfileCard"
 
 const providerCatalog = vi.hoisted(() => ({
+    "opencode-console": {
+        defaultModelId: "console-chat",
+        defaultImageModelId: "",
+        models: { "console-chat": { id: "console-chat", name: "Console Chat" } },
+        imageModels: {},
+    },
     anthropic: {
         defaultModelId: "claude-chat",
         defaultImageModelId: "",
@@ -96,6 +102,7 @@ vi.mock("./ProviderProfileEditor", () => ({
 }))
 
 const providerOptions = [
+    { value: "opencode", label: "OpenCode" },
     { value: "openai", label: "OpenAI" },
     { value: "openai-codex", label: "OpenAI Codex" },
     { value: "gemini", label: "Google Gemini" },
@@ -119,6 +126,24 @@ function buildProfile(): ApiProfile {
 }
 
 describe("ProviderProfileCard", () => {
+    it("selects the Console default without changing the OpenCode provider identity", () => {
+        const onUpdate = vi.fn()
+        render(
+            <ProviderProfileCard
+                currentMode="act"
+                editMode={false}
+                isExpanded={true}
+                onDelete={vi.fn()}
+                onToggleExpand={vi.fn()}
+                onUpdate={onUpdate}
+                profile={buildProfile()}
+                providerOptions={providerOptions}
+            />,
+        )
+        fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "opencode" } })
+        expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ provider: "opencode", modelId: "console-chat" }))
+    })
+
     it("renders the profile name as text while collapsed outside Manage mode", () => {
         render(
             <ProviderProfileCard

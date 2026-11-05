@@ -10,8 +10,12 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 ### Changed
 - Aggressive rendering offers three folding levels: standard rows, activity folded between messages, and activity folded across a whole user turn; bulk expand and collapse are available, live work, failures, pending approvals and checked-out checkpoints stay visible, and expanding everything restores the standard order
+- Remote model lists are cached for 30 minutes in the current extension process per catalog and connection; the next access after expiry refreshes them, and failures do not trigger repeated requests within the window
+- Subscription usage shows the provider's own readings without filling unreported daily totals from local tokens
 
 ### Fixed
+- Settings still save automatically, while Done only closes the page without waiting, saving again, or blocking exit after a save failure
+- Failed Profile saves show an error and reload the saved values without removing the editor or retrying the failed write when the page closes
 - Fixed model pricing configuration and rendering: DeepSeek shows an editable time-of-day price chart, OpenAI and Anthropic expose pricing strategies after a custom base URL is enabled, and consecutive input no longer loses values
 - Improved Thinking reading: basic Markdown layout, follow the newest line while content streams, pause following when you scroll up and resume at the bottom, and no more folding, image loading or file opening from clicking the text
 - Fixed TODO progress capture and restore: plan, Q&A and report progress save and refresh the header right after they are shown, indented completed items advance the next phase, and external edits are no longer overwritten by stale progress
@@ -21,7 +25,6 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Fixed the bulk toggle for activity folding: expanding all no longer collapses blocks that were already open, and no dead button appears when nothing can be expanded
 - Fixed the display of consecutive reads when messages are folded: an older finished prefix stays folded while a new read is still running
 - Fixed the elapsed time and TPS missing from folded headers: completed requests and usage revisions refresh the statistics, bounded retries cover temporary failures, and the last usable figure is kept
-- Fixed inconsistent OpenCode thinking settings: an unset temporary value inherits the Profile, the settings page and footer share the default effort, and explicit settings are no longer overridden
 - Report Bug requests a temporary diagnostics authorization before the preview appears, a failed request does not block the ordinary GitHub issue, and unchecking discards the matching authorization
 
 ## [0.12.2]

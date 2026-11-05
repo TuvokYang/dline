@@ -1,4 +1,5 @@
 import { Anthropic } from "@anthropic-ai/sdk"
+import { readLocalUsageSnapshot } from "@core/metrics/LocalUsageSnapshot"
 import { deepSeekDefaultModelId, deepSeekModels, ModelInfo } from "@shared/api"
 import { providerFetch } from "@shared/net"
 import OpenAI from "openai"
@@ -362,17 +363,7 @@ export class DeepSeekHandler extends ApiHandler {
         }
     }
 
-    /**
-     * Query the documented account balance.
-     *
-     * Only `/user/balance` is public API. Daily usage used to be read from
-     * `platform.deepseek.com`, which is the web console's private endpoint: it is not
-     * documented, not stable, and returns nothing when the caller is not signed in to
-     * that console. Today's tokens are now derived from Dline's own committed facts, so
-     * this method reports the balance and nothing else.
-     *
-     * @see https://api-docs.deepseek.com/zh-cn/api/get-user-balance
-     */
+    /** Read the account balance and this Profile's committed daily usage. */
     override async getAccountUsage(): Promise<AccountUsage | undefined> {
         if (!this.apiKey) {
             return undefined
@@ -417,6 +408,7 @@ export class DeepSeekHandler extends ApiHandler {
                 toppedUpBalance: Number.parseFloat(firstBalance.topped_up_balance),
                 grantedBalance: Number.parseFloat(firstBalance.granted_balance),
                 isAvailable: balanceData.is_available,
+                local: await readLocalUsageSnapshot(this.ctx.profile.id),
             }
         } catch (e) {
             Logger.warn(`[DeepSeek] getAccountUsage error: ${e}`)

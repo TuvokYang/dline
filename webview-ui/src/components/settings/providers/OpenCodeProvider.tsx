@@ -3,7 +3,7 @@ import { type ModelCapabilities } from "@shared/proto/dline/models/metadata"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
 import { OpenCodeMode, OpenCodeProviderConfig } from "@shared/proto/dline/provider/opencode"
 import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
-import { resolveOpenCodeReasoningConfig } from "@shared/providers/opencode-reasoning"
+import { resolveOpenCodeReasoningConfig, resolveOpenCodeThinkingBudget } from "@shared/providers/opencode-reasoning"
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import { OPENCODE_CONSOLE_CATALOG, OPENCODE_GO_CATALOG } from "@shared/providers/provider-catalog-key"
 import { readProviderConfigField, withProviderConfigField } from "@shared/providers/provider-config"
@@ -167,23 +167,16 @@ export const OpenCodeProvider = ({ showModelOptions, isPopup, profile, onUpdate 
     const reasoning = resolveOpenCodeReasoningConfig(modelInfo.capabilities, storedReasoning)
 
     const changePlan = (next: OpenCodePlan) => {
-        const nextConfig: OpenCodeProviderConfig = { ...latest(), mode: PLAN_MODES[next] }
-        if (next === plan) {
-            publish(nextConfig)
-            onUpdate({ opencode: nextConfig })
+        const current = latest()
+        const nextConfig = { ...current, mode: PLAN_MODES[next] }
+        if (catalogKeyForPlan(next) === catalogKeyForPlan(planOf(current))) {
+            writeConfig(nextConfig)
             return
         }
-        // A Plan change may leave the selection outside the new catalog, which the
-        // gateway answers with 404. The fallback is the catalog the new plan reads,
-        // never the one being left, and never an empty id: a Profile without a
-        // selection cannot start a request at all.
-        const fallbackId = otherCatalog.models[modelId] ? modelId : otherCatalog.defaultModelId
+        const nextModelId = otherCatalog.models[modelId] ? modelId : otherCatalog.defaultModelId
         publish(nextConfig)
-        onUpdate({
-            opencode: nextConfig,
-            modelId: fallbackId,
-            modelInfo: otherCatalog.models[fallbackId],
-        })
+        const nextModel = otherCatalog.models[nextModelId]
+        onUpdate({ opencode: nextConfig, modelId: nextModel ? nextModelId : "", modelInfo: nextModel })
     }
 
     return (
@@ -207,7 +200,14 @@ export const OpenCodeProvider = ({ showModelOptions, isPopup, profile, onUpdate 
                     writeBaseField("reasoning", {
                         ...reasoning,
                         enableThinking: enabled,
-                        ...(enabled ? {} : { thinkingBudget: 0 }),
+                        ...(enabled && modelInfo.capabilities?.thinking?.mode === "budget"
+                            ? {
+                                  thinkingBudget: resolveOpenCodeThinkingBudget(
+                                      modelInfo.capabilities.thinking,
+                                      reasoning?.thinkingBudget,
+                                  ),
+                              }
+                            : {}),
                     })
                 }
                 onModelChange={(nextModelId) =>

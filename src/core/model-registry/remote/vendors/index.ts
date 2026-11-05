@@ -4,6 +4,7 @@
  * Adding a provider means adding one subclass file and one entry here; the
  * orchestration, storage, credential and merge layers stay untouched.
  */
+import { getProviderCatalog } from "@shared/providers/model-infos"
 import type { ProviderRemoteSource } from "../model-source"
 import { aiHubMixModelSource } from "./aihubmix"
 import { anthropicModelSource } from "./anthropic"
@@ -63,17 +64,11 @@ const sourcesById = new Map<string, ProviderRemoteSource>(MODEL_SOURCES.map((sou
  * that catalog key, so it must resolve to the owning provider's source instead
  * of reporting that the provider cannot be listed.
  */
-const CATALOG_KEY_OWNERS: Readonly<Record<string, string>> = {
-    "opencode-go": "opencode",
-    "qwen-cn": "qwen",
-    "zai-cn": "zai",
-}
-
 export function getModelSource(providerId: string): ProviderRemoteSource | undefined {
     const direct = sourcesById.get(providerId)
     if (direct) {
         return direct
     }
-    const ownerId = CATALOG_KEY_OWNERS[providerId]
+    const ownerId = getProviderCatalog(providerId)?.provider.provider
     return ownerId ? sourcesById.get(ownerId) : undefined
 }

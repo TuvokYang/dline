@@ -43,6 +43,18 @@ function renderCard(overrides: Partial<React.ComponentProps<typeof OpenCodeProvi
 }
 
 describe("OpenCodeProviderCard", () => {
+    it("does not show account usage for the Console plan", () => {
+        renderCard({ plan: "balance" })
+
+        expect(screen.queryByRole("group", { name: "Provider usage" })).not.toBeInTheDocument()
+    })
+
+    it.each(["go", "go-plus", "go-teams"] as const)("shows account usage for %s", (plan) => {
+        renderCard({ plan })
+
+        expect(screen.getByRole("group", { name: "Provider usage" })).toBeInTheDocument()
+    })
+
     it("offers a thinking level control only for a model that declares effort levels", () => {
         const effort: ModelCapabilities = {
             supportsReasoning: true,

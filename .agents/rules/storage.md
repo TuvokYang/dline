@@ -185,4 +185,12 @@ Legacy `ExtensionContext` state and old task formats are import sources, not par
 
 Use `state-keys.ts` only for StateManager-owned categories and regenerate projected state contracts through their owner. User-visible settings must preserve validation, defaults and the Proto/controller/consumer round trip. Specialized credentials retain their own stores, permissions and deletion behavior.
 
+### Migration baseline
+
+- Base configuration migrations on the applicable persisted format already pushed to GitHub `dev` or `main` and exposed to users. Verify that remote commit or release tag before treating its format as a compatibility obligation; an arbitrary local commit is not a baseline.
+- Unpushed development formats are intermediate implementations, not supported historical versions. A local commit, package version bump or schema revision alone does not justify another migration.
+- If the external baseline is S and unpushed development changes it through A, B and C, implement only the necessary S-to-C migration. Do not retain S-to-A-to-B-to-C converters, fallback readers or compatibility branches for A and B.
+- When a later local edit replaces an unpushed format, revise that implementation and its tests directly. Do not add an old-Profile-to-new-Profile conversion merely to preserve that intermediate format.
+- Preserve migration coverage for actual supported external baselines. Updating these rules does not authorize deleting user data, running migrations on real data or rewriting previously published contracts.
+
 Load `changing-persistent-state` for concrete setting changes, mutation examples and migration development methods.

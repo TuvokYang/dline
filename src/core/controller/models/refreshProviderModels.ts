@@ -3,6 +3,7 @@ import { discoverProviderModels } from "@core/model-registry/remote/model-refres
 import * as SecretsManager from "@core/storage/secrets"
 import { StringArray } from "@shared/proto/dline/common"
 import { ProviderModelsRequest } from "@shared/proto/dline/models"
+import { getProviderCatalog } from "@shared/providers/model-infos"
 import { Logger } from "@shared/services/Logger"
 import { Controller } from ".."
 
@@ -15,7 +16,7 @@ import { Controller } from ".."
  * keep the preview behaviour: their listings either omit metadata or already
  * have a persisted writer.
  */
-const PERSISTED_DISCOVERY_PROVIDER_IDS: ReadonlySet<string> = new Set(["opencode", "opencode-go"])
+const PERSISTED_DISCOVERY_PROVIDER_IDS: ReadonlySet<string> = new Set(["opencode"])
 
 /**
  * List the model ids a provider currently exposes.
@@ -49,7 +50,8 @@ export async function refreshProviderModels(controller: Controller, request: Pro
         const saved = request.profileId
             ? { apiKey: SecretsManager.getApiKey(request.profileId), baseUrl: undefined }
             : resolveSavedCredentials(providerId)
-        const persist = PERSISTED_DISCOVERY_PROVIDER_IDS.has(providerId)
+        const ownerId = getProviderCatalog(providerId)?.provider.provider ?? providerId
+        const persist = PERSISTED_DISCOVERY_PROVIDER_IDS.has(ownerId)
         const models = await discoverProviderModels(
             providerId,
             {

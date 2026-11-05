@@ -1,5 +1,6 @@
 import { getProviderCatalog, getProviderSeedConfig } from "@shared/providers/model-infos"
 import { migrateModelPricing, modelPricingForWrite } from "@shared/providers/pricing-shape"
+import { resolvePrimaryCatalogKey } from "@shared/providers/provider-catalog-key"
 import type { ModelInfo, ProviderModelsConfig } from "@shared/providers/types"
 import { Logger } from "@shared/services/Logger"
 import fs from "fs/promises"
@@ -91,7 +92,8 @@ async function writeOwnerCatalog(
     // document here means only the target catalog is replaced.
     const storedOwner = await readStoredOwner(filePath, ownerId)
     const owner = storedOwner ?? registry.getProviderModels(ownerId)
-    const existing = catalogForWrite(registry, owner, options.providerId)
+    const catalogKey = resolvePrimaryCatalogKey(options.providerId)
+    const existing = catalogForWrite(registry, owner, ownerId, catalogKey)
     const incoming = Object.fromEntries(
         Object.entries(options.models).map(([modelId, model]) => [
             modelId,
@@ -111,7 +113,7 @@ async function writeOwnerCatalog(
             : modelIds[0])
 
     const config = buildConfig(ownerId, owner, options, models, defaultModelId, {
-        catalogKey: options.providerId,
+        catalogKey,
     })
 
     await fs.mkdir(registry.providersDir, { recursive: true })
@@ -154,15 +156,16 @@ async function readStoredOwner(filePath: string, ownerId: string): Promise<Provi
 /**
  * The catalog a write targets, as the document on disk states it.
  *
- * A primary write replaces the primary catalog wholesale, so it needs no
- * existing value. An alternative write overlays its own reconciliation, and that
- * decision belongs to the catalog the document currently holds.
+ * Both primary and alternative reconciliation must use the latest stored
+ * catalog, including edits not yet observed by the registry watcher.
  */
 function catalogForWrite(
     registry: ModelRegistry,
     owner: ProviderModelsConfig | undefined,
+    ownerId: string,
     catalogKey: string,
 ): ProviderModelsConfig | undefined {
+    if (catalogKey === resolvePrimaryCatalogKey(ownerId)) return owner ?? registry.getProviderCatalog(catalogKey)
     const stored = owner?.catalogs?.[catalogKey]
     if (stored) {
         return { ...owner, ...stored, models: stored.models ?? {} }
@@ -187,7 +190,7 @@ function buildConfig(
     defaultModelId: string | undefined,
     target: { catalogKey: string },
 ): ProviderModelsConfig {
-    const isPrimary = target.catalogKey === ownerId
+    const isPrimary = target.catalogKey === resolvePrimaryCatalogKey(ownerId)
     const ownerFields = withoutEmptyImageModels(owner)
     if (isPrimary) {
         return {

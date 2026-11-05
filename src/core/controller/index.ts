@@ -27,8 +27,7 @@ import { HookTaskStartContext } from "@core/hooks/TaskStartContextPort"
 import { IgnoreController } from "@core/ignore/IgnoreController"
 import { bindDraftDocument, releaseOpeningOnceDurable } from "@core/input-semantics/OpeningDocumentBinding"
 import { TaskLockService } from "@core/locks/TaskLockService"
-import { readLocalUsageSnapshot } from "@core/metrics/LocalUsageSnapshot"
-import { type ResolvedProfileBinding, resolveProfileReference } from "@core/profiles/profile-binding"
+import { resolveProfileReference } from "@core/profiles/profile-binding"
 import { getProfileCatalogRevision } from "@core/profiles/profile-catalog-state"
 import { settingsAffectPromptFreshness } from "@core/prompts/system-prompt-cache/PromptFreshnessProjection"
 import * as SecretsManager from "@core/storage/secrets"
@@ -584,18 +583,6 @@ export class Controller {
         return resolution.status === "resolved" && resolution.profile.id === profileId
     }
 
-    /**
-     * Today's locally measured usage for one Profile.
-     *
-     * Read from the same committed facts the metrics view shows, so this number
-     * cannot disagree with the ledger that produced it. Nothing writes a second
-     * per-Profile counter: a request is counted once, at settlement, into the
-     * ledger, and this only projects the day's rows.
-     */
-    private async readLocalDailyTokens(profileId: string) {
-        return await readLocalUsageSnapshot(profileId)
-    }
-
     /** Publish a shared snapshot only when its Profile is still active for the current mode. */
     async publishAccountUsageSnapshot(profileId: string, usage: AccountUsage): Promise<void> {
         if (!this.isActiveProviderUsageProfile(profileId)) return
@@ -622,7 +609,6 @@ export class Controller {
             const usage = decorateProviderAccountUsage(
                 target.profile,
                 target.handler.getAccountUsage ? await target.handler.getAccountUsage() : undefined,
-                await this.readLocalDailyTokens(target.profile.id),
             ) ?? {
                 profileId: target.profile.id,
                 providerId: target.profile.provider,
@@ -651,7 +637,6 @@ export class Controller {
             const usage = decorateProviderAccountUsage(
                 target.profile,
                 target.handler.getAccountUsage ? await target.handler.getAccountUsage() : undefined,
-                await this.readLocalDailyTokens(target.profile.id),
             ) ?? {
                 profileId: target.profile.id,
                 providerId: target.profile.provider,
@@ -3499,7 +3484,6 @@ export class Controller {
             this._accountUsage = undefined
             await sendAccountUsageUpdate(this, undefined)
         }
-        let resolvedProfile: ResolvedProfileBinding["profile"] | undefined
         try {
             const taskId = this.task?.taskId
             const apiConfig = this.stateManager.getApiConfigurationForTask(taskId)
@@ -3512,7 +3496,6 @@ export class Controller {
                 throw new Error("Selected Profile is unavailable")
             }
             const profile = profileResolution.profile
-            resolvedProfile = profile
             const profileSignature = createHash("sha256").update(JSON.stringify(profile)).digest("hex")
             const credentialRevision =
                 profile.provider === "openai-codex" ? openAiCodexOAuthManager.getRuntimeRevision(profile.id) : 0
@@ -3526,29 +3509,10 @@ export class Controller {
             const loadAccountUsage = handler.getAccountUsage?.bind(handler)
             if (!loadAccountUsage || decideAccountUsageRead(handler, profileKey, this.accountUsageSingleReadKey) === "skip") {
                 handler.abort?.()
-                // The remote endpoint may be skipped or absent, but this installation's
-                // own ledger is still readable and still changed since the last poll.
-                // Publishing it here is what keeps a polling-opted-out provider from
-                // freezing its local numbers at whatever the first read produced.
-                const refreshedUsage = decorateProviderAccountUsage(
-                    profile,
-                    this._accountUsage,
-                    await this.readLocalDailyTokens(profile.id),
-                )
-                if (refreshedUsage === undefined) {
-                    // Only a provider that cannot report usage at all invalidates the
-                    // published snapshot; a skipped repeat must keep showing the one
-                    // reading this Profile already produced.
-                    if (!loadAccountUsage) await clearStaleUsage()
-                    return
-                }
-                if (generation !== this.accountUsagePollGeneration || this.accountUsageProfileKey !== profileKey) return
-                this._accountUsage = refreshedUsage
-                await sendAccountUsageUpdate(this, refreshedUsage)
+                if (!loadAccountUsage) await clearStaleUsage()
                 return
             }
-            const getAccountUsage = async () =>
-                decorateProviderAccountUsage(profile, await loadAccountUsage(), await this.readLocalDailyTokens(profile.id))
+            const getAccountUsage = async () => decorateProviderAccountUsage(profile, await loadAccountUsage())
             this.accountUsageHandler = handler
             let usage: AccountUsage | undefined
             try {
@@ -3577,23 +3541,7 @@ export class Controller {
             Logger.debug("[UsagePoll] accountUsage updated")
             await sendAccountUsageUpdate(this, usage)
         } catch (e) {
-            // A remote failure describes the remote endpoint only. When this
-            // installation has its own numbers, publish those instead of erasing the
-            // whole snapshot, so an unavailable balance does not hide local usage.
-            const localOnly =
-                resolvedProfile === undefined
-                    ? undefined
-                    : decorateProviderAccountUsage(
-                          resolvedProfile,
-                          undefined,
-                          await this.readLocalDailyTokens(resolvedProfile.id),
-                      )
-            if (localOnly === undefined || generation !== this.accountUsagePollGeneration) {
-                await clearStaleUsage()
-            } else {
-                this._accountUsage = localOnly
-                await sendAccountUsageUpdate(this, localOnly)
-            }
+            await clearStaleUsage()
             Logger.warn(`[UsagePoll] Failed: ${e}`)
         }
     }

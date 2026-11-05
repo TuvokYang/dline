@@ -456,13 +456,8 @@ export class ModelRegistry {
                 // projection, so a listing statement cannot differ between them.
                 const catalog = this.getProviderCatalog(catalogKey)
                 if (!catalog) continue
-                // An alternative catalog is a separate selectable model set, so it
-                // keeps its own group. The primary catalog answers as the provider
-                // itself: a Profile stores the provider id, and the Webview looks
-                // the models up by that value.
-                const groupProvider = catalogKey === resolvePrimaryCatalogKey(config.provider) ? config.provider : catalogKey
                 result.push({
-                    provider: groupProvider,
+                    provider: catalogKey,
                     providerName: config.providerName,
                     models: Object.values(catalog.models),
                     defaultModelId: catalog.defaultModelId,

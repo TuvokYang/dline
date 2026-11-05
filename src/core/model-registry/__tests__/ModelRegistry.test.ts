@@ -298,7 +298,7 @@ describe("ModelRegistry", () => {
 
             const response = await getAvailableModels({} as never)
             expect(registry.getAllProviders().map((provider) => provider.provider)).to.deep.equal(["opencode"])
-            expect(response.providers.map((group) => group.provider)).to.deep.equal(["opencode", "opencode-go"])
+            expect(response.providers.map((group) => group.provider)).to.deep.equal(["opencode-console", "opencode-go"])
             expect(response.providers[0].models.map((model) => model.id)).to.deep.equal(["console-only"])
             // The Go catalog declares no model of its own; it is populated by
             // discovery, so an empty stored catalog reads back empty.
@@ -897,7 +897,7 @@ describe("ModelRegistry", () => {
             expect(registry.getProviderModels("opencode")?.models).to.not.have.property("old")
         })
 
-        it("posts the state after a listing that was written to disk", async () => {
+        it.each(["opencode-console", "opencode-go"])("posts the state after persisting %s", async (providerId) => {
             const postStateToWebview = vi.fn(async () => undefined)
             await mockFetchForTesting(
                 (async () =>
@@ -919,7 +919,7 @@ describe("ModelRegistry", () => {
                     refreshProviderModels(
                         { postStateToWebview } as unknown as Controller,
                         {
-                            providerId: "opencode-go",
+                            providerId,
                         } as ProviderModelsRequest,
                     ),
             )
@@ -927,7 +927,7 @@ describe("ModelRegistry", () => {
             // The registry applies its own write silently, so without this post the
             // open settings page keeps showing pre-refresh limits and cache flags.
             expect((postStateToWebview as unknown as { mock: { calls: unknown[] } }).mock.calls).to.have.lengthOf(1)
-            expect(registry.getProviderCatalog("opencode-go")?.models["deepseek-v4.1-flash"]?.capabilities).to.include({
+            expect(registry.getProviderCatalog(providerId)?.models["deepseek-v4.1-flash"]?.capabilities).to.include({
                 contextWindow: 1_000_000,
                 supportsPromptCache: true,
             })
@@ -1258,6 +1258,77 @@ describe("ModelRegistry", () => {
             const written = JSON.parse(await fsPromises.readFile(path.join(tempDir, "opencode.json"), "utf8"))
             expect(written.models).to.have.property("deepseek-v4.1-flash")
             expect(written.catalogs?.["opencode-go"]?.models).to.have.property("deepseek-v4.1-flash")
+        })
+
+        it("refreshes the canonical Console catalog from its disk owner and keeps Go across a restart", async () => {
+            const ownerPath = path.join(tempDir, "opencode.json")
+            const original = {
+                provider: "opencode",
+                providerName: "OpenCode",
+                billingMode: "console",
+                models: { "saved-custom": { id: "saved-custom", userDefined: true } },
+                catalogs: { "opencode-go": { models: { "go-kept": { id: "go-kept" } } } },
+            }
+            await fsPromises.writeFile(ownerPath, JSON.stringify(original))
+            await registry.initialize()
+            await registry.waitForDeferredProviders()
+            // A write reads the current owner document, including edits not yet
+            // published by the watcher, rather than a stale registry baseline.
+            await fsPromises.writeFile(
+                ownerPath,
+                JSON.stringify({
+                    ...original,
+                    defaultModelId: "disk-custom",
+                    models: { ...original.models, "disk-custom": { id: "disk-custom", userDefined: true } },
+                }),
+            )
+            const requestedUrls: string[] = []
+            await mockFetchForTesting(
+                (async (input) => {
+                    requestedUrls.push(String(input))
+                    return new Response(
+                        JSON.stringify({
+                            data: [
+                                {
+                                    id: "listed-console",
+                                    limit: { input: 32768, output: 4096 },
+                                    api: { "chat-completions": { base_url: "https://opencode.ai/inference/openai/v1" } },
+                                },
+                            ],
+                        }),
+                        { status: 200 },
+                    )
+                }) as typeof fetch,
+                async () => {
+                    const models = await discoverProviderModels("opencode-console", {}, { persist: true, throwOnError: true })
+                    expect(Object.keys(models)).to.deep.equal(["listed-console"])
+                },
+            )
+            expect(requestedUrls).to.deep.equal(["https://opencode.ai/inference/v1/models"])
+            const written = JSON.parse(await fsPromises.readFile(ownerPath, "utf8"))
+            expect(written.provider).to.equal("opencode")
+            expect(written.models).to.have.keys("saved-custom", "disk-custom", "listed-console")
+            expect(written.defaultModelId).to.equal("disk-custom")
+            expect(written.catalogs["opencode-go"].models).to.have.property("go-kept")
+            expect(written.catalogs).not.to.have.property("opencode-console")
+            expect(await fsPromises.readdir(tempDir)).to.deep.equal(["opencode.json"])
+
+            await registry.dispose()
+            Reflect.set(ModelRegistry, "instance", undefined)
+            registry = ModelRegistry.getInstance()
+            Object.defineProperty(registry, "providersDir", { get: () => tempDir, configurable: true })
+            Object.defineProperty(registry, "startWatch", { value: vi.fn(), configurable: true })
+            await registry.initialize()
+            await registry.waitForDeferredProviders()
+            const response = await getAvailableModels({} as Controller)
+            const consoleModels = response.providers.find((group) => group.provider === "opencode-console")
+            expect(consoleModels?.defaultModelId).to.equal("disk-custom")
+            expect(consoleModels?.models.find((model) => model.id === "listed-console")?.capabilities?.contextWindow).to.equal(
+                32768,
+            )
+            expect(
+                response.providers.find((group) => group.provider === "opencode-go")?.models.map((model) => model.id),
+            ).to.include("go-kept")
         })
 
         it("writes a Go listing into its own catalog and keeps it across a restart", async () => {

@@ -19,6 +19,7 @@ let sharedProfiles: ApiProfile[] = []
 let sharedExpandedId: string | null = null
 let sharedLoaded = false
 let sharedLoadError: Error | undefined
+let sharedSaveError: Error | undefined
 let sharedLoadPromise: Promise<ApiProfile[]> | undefined
 let sharedCatalogRevision = -1
 /** Revision whose load failed, so a later attempt is never suppressed as "already tried". */
@@ -135,7 +136,7 @@ function loadSharedProfiles(catalogRevision?: number, force = false): Promise<Ap
     return request
 }
 
-/** Wait until every optimistic Profile Catalog mutation has settled at the backend boundary. */
+/** Wait for automatic Profile writes without scheduling another save. */
 export async function flushPendingApiProfileWrites(): Promise<void> {
     await sharedPersistQueue
 }
@@ -154,12 +155,14 @@ function persistSharedProfiles(profiles: ApiProfile[], clearApiKeyProfileIds: re
             await FileServiceClient.updateApiProfiles(
                 UpdateApiProfilesRequest.create({ profiles, clearApiKeyProfileIds: [...clearApiKeyProfileIds] }),
             )
+            if (writeGeneration === sharedLocalWriteGeneration) sharedSaveError = undefined
             settle()
+            notifyProfileListeners()
         })
         .catch((error: unknown) => {
             sharedNeedsPostWriteReload = true
+            sharedSaveError = error instanceof Error ? error : new Error(String(error))
             settle()
-            sharedLoadError = error instanceof Error ? error : new Error(String(error))
             notifyProfileListeners()
         })
 }
@@ -372,6 +375,7 @@ export function useApiProfiles() {
         providerOptions,
         loaded: sharedLoaded,
         error: sharedLoadError,
+        saveError: sharedSaveError,
         reloadProfiles: () => loadSharedProfiles(profileCatalogRevision, true),
     }
 }

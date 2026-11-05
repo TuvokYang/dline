@@ -1,4 +1,5 @@
 import { ApiFormat, type ModelCapabilities } from "@shared/proto/dline/models/metadata"
+import { openCodeThinkingBudgetOptions, resolveOpenCodeThinkingBudget } from "@shared/providers/opencode-reasoning"
 import { VSCodeCheckbox, VSCodeDropdown, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
 import { useEffect, useId, useState } from "react"
 import { ApiKeyField } from "../common/ApiKeyField"
@@ -281,8 +282,8 @@ export function OpenCodeProviderCard({
                                 className="min-h-7 w-full"
                                 id={budgetId}
                                 onChange={dropdownChangeHandler((value) => onThinkingBudgetChange?.(Number(value)))}
-                                value={String(budgetForSelection(thinking, thinkingBudget))}>
-                                {thinkingBudgetOptions(thinking).map((option) => (
+                                value={String(resolveOpenCodeThinkingBudget(thinking, thinkingBudget))}>
+                                {openCodeThinkingBudgetOptions(thinking, thinkingBudget).map((option) => (
                                     <VSCodeOption key={option} value={String(option)}>
                                         {option.toLocaleString()} tokens
                                     </VSCodeOption>
@@ -293,7 +294,7 @@ export function OpenCodeProviderCard({
                 </div>
             )}
 
-            <ProviderUsage enabled profileId={profileId} />
+            {plan !== "balance" && <ProviderUsage enabled profileId={profileId} />}
         </div>
     )
 }
@@ -311,37 +312,6 @@ function resolveThinking(capabilities: ModelCapabilities | undefined): ModelCapa
     if (capabilities?.supportsReasoning === false) return undefined
     if (thinking.mode !== "effort" && thinking.mode !== "budget") return undefined
     return thinking
-}
-
-/**
- * Budgets offered for a budget-mode model.
- *
- * Only the declared bounds are meaningful, so the list is derived from them
- * rather than from a fixed table. Rounding to whole steps keeps the values the
- * model documents instead of inventing an arbitrary ladder.
- */
-function thinkingBudgetOptions(thinking: NonNullable<ModelCapabilities["thinking"]>): readonly number[] {
-    const min = thinking.minBudget ?? DEFAULT_THINKING_BUDGET_STEP
-    const max = thinking.maxBudget
-    if (max === undefined || max < min) return [min]
-    const options: number[] = []
-    for (let value = min; value <= max; value += DEFAULT_THINKING_BUDGET_STEP) options.push(value)
-    return options.length > 0 ? options : [min]
-}
-
-/** Whole-step budget increment, matching the granularity models publish. */
-const DEFAULT_THINKING_BUDGET_STEP = 1_024
-
-/**
- * The budget the dropdown shows as selected.
- *
- * A Profile that never stored a budget, or that stored one this model does not
- * offer, still has to render a valid selection: the control falls back to the
- * lowest declared budget instead of an empty value.
- */
-function budgetForSelection(thinking: NonNullable<ModelCapabilities["thinking"]>, budget: number | undefined): number {
-    const options = thinkingBudgetOptions(thinking)
-    return budget !== undefined && options.includes(budget) ? budget : options[0]
 }
 
 /**

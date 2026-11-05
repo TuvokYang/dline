@@ -143,10 +143,7 @@ describe("ProviderUsage polling policy", () => {
         expect(mocks.getProviderUsage).toHaveBeenCalledTimes(1)
     })
 
-    it("shows committed local usage without spending a remote read", async () => {
-        // The Controller publishes this snapshot from facts the installation already
-        // committed. Rendering it must not trigger the metered usage endpoint, and it
-        // must remain visible when the provider has no remote capability to report.
+    it("does not expand a snapshot that has only local statistics", () => {
         mocks.extensionState.accountUsage = {
             profileId: "profile-deepseek",
             providerId: "deepseek",
@@ -156,7 +153,7 @@ describe("ProviderUsage polling policy", () => {
 
         render(<ProviderUsage enabled pollIntervalMs={null} profileId="profile-deepseek" />)
 
-        expect(screen.getByRole("button", { name: /^Usage Local usage only/ })).toBeInTheDocument()
+        expect(screen.getByRole("button", { name: /^Usage No usage data/ })).toBeDisabled()
         expect(mocks.getProviderUsage).not.toHaveBeenCalled()
     })
 })
