@@ -134,7 +134,7 @@ jobs:
 
       - name: Upload verified registry package
         if: steps.trigger.outputs.eligible == 'true'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: registry-vsix-${{ github.event.workflow_run.head_sha }}
           path: tested-artifact/${{ steps.vsix.outputs.asset_name }}
@@ -144,7 +144,7 @@ jobs:
 
       - name: Upload verified Marketplace package
         if: steps.trigger.outputs.eligible == 'true'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: dline-vscode-marketplace-vsix-${{ github.event.workflow_run.head_sha }}
           path: tested-marketplace-artifact/${{ steps.vsix.outputs.marketplace_asset_name }}
