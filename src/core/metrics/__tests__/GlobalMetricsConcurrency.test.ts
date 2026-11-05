@@ -1,19 +1,55 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import type { UsageEvent } from "@shared/metrics/events"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import * as esbuild from "esbuild"
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest"
 import { MetricsFlushHost } from "../MetricsFlushHost"
 import { MetricsLedger } from "../MetricsLedger"
 import type { MetricsScope } from "../MetricsScope"
 
 /**
- * The compiled worker, produced by `npm run package`.
+ * The worker bundle these cases run against, built here rather than consumed from `dist/`.
  *
- * These cases assert the real write path end to end, so they need the real worker
- * bundle: a stubbed worker could not show that one connection serializes several
- * tasks, which is the property under test.
+ * `MetricsFlushHost` starts a worker thread from a compiled entry, because a worker has no
+ * extension-host module graph and cannot resolve this project's TypeScript aliases. The
+ * production bundle is therefore an esbuild output that only a package build emits, so a
+ * test run against `dist/` inherits whatever an earlier `npm run package` happened to leave
+ * there: absent in a clean checkout, stale after a source change.
+ *
+ * These cases assert the real write path end to end, so they cannot substitute a stub: one
+ * connection serializing several tasks is the property under test. Building from the same
+ * entry and the same `tsconfig.json` the release build compiles keeps the test independent of
+ * build history while still exercising the real bundle.
  */
-const WORKER_PATH = path.join(process.cwd(), "dist", "metrics-worker.js")
+const PROJECT_ROOT = process.cwd()
+const WORKER_ENTRY = path.join(PROJECT_ROOT, "src", "core", "metrics", "MetricsWorker.ts")
+/**
+ * Test-owned output, never `dist/`: `dist/` is shared with packaging and E2E builds, and a
+ * test must not depend on or disturb what those left behind.
+ */
+const WORKER_PATH = path.join(PROJECT_ROOT, "tmp", "metrics-worker.js")
+
+beforeAll(async () => {
+    await fs.mkdir(path.dirname(WORKER_PATH), { recursive: true })
+    await esbuild.build({
+        entryPoints: [WORKER_ENTRY],
+        outfile: WORKER_PATH,
+        bundle: true,
+        platform: "node",
+        format: "cjs",
+        target: "es2022",
+        tsconfig: path.join(PROJECT_ROOT, "tsconfig.json"),
+        // A worker thread has no extension-host API surface, so the module must stay
+        // unresolved here exactly as it is in the packaged build.
+        external: ["vscode"],
+        // A worker entry has to be self-contained: it cannot require sibling chunks lazily.
+        splitting: false,
+        sourcemap: false,
+        // A missing entry or alias must fail this suite loudly instead of yielding a bundle
+        // the worker cannot load, which would surface later as silently dropped writes.
+        logLevel: "silent",
+    })
+}, 60_000)
 
 const T0 = Date.UTC(2026, 0, 2, 3, 4, 0)
 
