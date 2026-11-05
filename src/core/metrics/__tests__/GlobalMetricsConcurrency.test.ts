@@ -8,29 +8,25 @@ import { MetricsLedger } from "../MetricsLedger"
 import type { MetricsScope } from "../MetricsScope"
 
 /**
- * The worker bundle these cases run against, built here rather than consumed from `dist/`.
+ * The worker bundle these cases run against.
  *
  * `MetricsFlushHost` starts a worker thread from a compiled entry, because a worker has no
  * extension-host module graph and cannot resolve this project's TypeScript aliases. The
  * production bundle is therefore an esbuild output that only a package build emits, so a
- * test run against `dist/` inherits whatever an earlier `npm run package` happened to leave
- * there: absent in a clean checkout, stale after a source change.
+ * test run that just reads `dist/` inherits whatever an earlier `npm run package` happened
+ * to leave there: absent in a clean checkout, stale after a source change.
  *
  * These cases assert the real write path end to end, so they cannot substitute a stub: one
- * connection serializing several tasks is the property under test. Building from the same
- * entry and the same `tsconfig.json` the release build compiles keeps the test independent of
- * build history while still exercising the real bundle.
+ * connection serializing several tasks is the property under test. The suite therefore emits
+ * the same bundle a package build emits, from the same entry, through the same `tsconfig.json`,
+ * at the same path `metricsWorkerPath(__dirname)` resolves in the packaged extension.
  */
 const PROJECT_ROOT = process.cwd()
 const WORKER_ENTRY = path.join(PROJECT_ROOT, "src", "core", "metrics", "MetricsWorker.ts")
-/**
- * Test-owned output, never `dist/`: `dist/` is shared with packaging and E2E builds, and a
- * test must not depend on or disturb what those left behind.
- */
-const WORKER_PATH = path.join(PROJECT_ROOT, "tmp", "metrics-worker.js")
+/** The packaged location, so the suite exercises the path the extension really loads. */
+const WORKER_PATH = path.join(PROJECT_ROOT, "dist", "metrics-worker.js")
 
 beforeAll(async () => {
-    await fs.mkdir(path.dirname(WORKER_PATH), { recursive: true })
     await esbuild.build({
         entryPoints: [WORKER_ENTRY],
         outfile: WORKER_PATH,
