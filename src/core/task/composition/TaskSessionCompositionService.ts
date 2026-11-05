@@ -12,6 +12,7 @@ import { StoreResourceVerifier } from "@core/input-semantics/StoreResourceVerifi
 import { TaskCommandExpander, TaskMentionResolver } from "@core/input-semantics/TaskEntityResolvers"
 import { openTaskInputResources } from "@core/input-semantics/TaskInputResourceStore"
 import { TaskSemanticInputAdmission } from "@core/input-semantics/TaskSemanticInputAdmission"
+import { openGlobalMetricsRuntime } from "@core/metrics/GlobalMetricsRuntime"
 import { formatResponse } from "@core/prompts/responses"
 import { executeReportBugOutcome } from "@core/reporting/ReportBugWorkflow"
 import type { StateManager } from "@core/storage/StateManager"
@@ -23,6 +24,7 @@ import { Logger } from "@shared/services/Logger"
 import type { TaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
 import type { ApiConversation } from "../../storage/ApiConversation"
 import type { UIMessage } from "../../storage/UIMessage"
+import { resolveTaskApiProfile } from "../ApiProfileRecovery"
 import { type CommandRowSurface, settleInterruptedCommandRows } from "../activity/interruptedCommandRows"
 import { TaskActivityPersistence } from "../activity/TaskActivityPersistence"
 import { TaskActivityStore } from "../activity/TaskActivityStore"
@@ -55,8 +57,10 @@ import { MessageStateHandler } from "../message-state"
 import { createSuccessorHandoffPublisher, type TaskSuccessorPort } from "../new-task/successor-handoff"
 import { observeTaskStateVault, TaskTurnTelemetry } from "../observability/task-turn-telemetry"
 import { formatApiRequestTiming } from "../performance/api-request-timing"
+import type { FrozenMetricsIdentity } from "../performance/metrics-emitter"
 import { TaskPerformanceOwner } from "../performance/TaskPerformanceOwner"
 import { TaskPerformanceRequestReporter } from "../performance/TaskPerformanceRequestReporter"
+import { metricsWorkerPath, openTaskMetricsRuntime, reportMetricsUnavailable } from "../performance/task-metrics-runtime"
 import { TaskPromptContextOwner } from "../prompt/TaskPromptContextOwner"
 import { TaskPromptLifecycle } from "../prompt/TaskPromptLifecycle"
 import { PromptCacheHealthTracker } from "../prompt-cache/PromptCacheHealthTracker"
@@ -101,6 +105,55 @@ import { ToolValidator } from "../tools/ToolValidator"
 import type { TaskSessionHostFactory } from "./TaskSessionHostFactory"
 import type { TaskSessionPorts } from "./TaskSessionPorts"
 import { importTaskUpgrade, taskUpgradeImportPending } from "./TaskUpgradeImport"
+
+/**
+ * Freeze the identity a Task's unified metrics belong to, then wire the writer.
+ *
+ * The identity comes from the handler actually serving this session and from the
+ * task's own configuration, so a later Profile or Mode switch cannot restate who a
+ * historical number belonged to. `workspaceId` is the host's workspace identity, not a
+ * metrics level: usage is accounted per Profile and per Task.
+ */
+async function openTaskMetricsFor(
+    options: OpenTaskSessionCompositionOptions,
+    api: TaskApiHandlerOwner,
+    taskIncarnationId: string,
+): Promise<Awaited<ReturnType<typeof openTaskMetricsRuntime>>> {
+    // The global level exists once for the process, so opening it here is safe and
+    // idempotent: the first Task that records a fact creates it, and every later Task
+    // offers to that same queue instead of opening a writer of its own. Opening also
+    // starts the writer, so a settlement never pays worker startup on the hot path.
+    const global = openGlobalMetricsRuntime({ workerPath: metricsWorkerPath(__dirname) })
+    void global.start().catch((error: unknown) => {
+        // A global write path that cannot start degrades the global level only. This is
+        // deliberately not reported through the Task's own metrics path: that path is
+        // healthy here, and telling the user a Task's numbers are unavailable would be
+        // wrong. The global writer records its own health when a pass fails.
+        Logger.warn(`[Metrics] Global metrics writer failed to start: ${error instanceof Error ? error.message : String(error)}`)
+    })
+    const configuration = options.stateManager.getApiConfigurationForTask(options.taskId)
+    // The task's own mode, never the global one. `TaskStateManager.mode` is deliberately
+    // per-task ("never fall back to global state"), and the session builds its handler
+    // from it, so resolving here with the global mode would label the first requests with
+    // a Profile the handler never used whenever the two modes select different Profiles.
+    const resolution = resolveTaskApiProfile(configuration, options.stateManager.getSettingsKeyForTask("mode", options.taskId))
+    const profile = resolution.resolvedApiProfile
+    const handler = api.current()
+    const identity: FrozenMetricsIdentity = {
+        workspaceId: configuration.workspaceId ?? "",
+        taskId: options.taskId,
+        profileId: profile?.id ?? "",
+        providerId: profile?.provider ?? handler.getProviderId?.() ?? "",
+        modelId: profile?.modelId || profile?.modelInfo?.id || handler.getModel().id,
+        // Only the fingerprint is kept; the key never leaves the Profile store.
+        ...(profile?.apiKey ? { apiKey: profile.apiKey } : {}),
+    }
+    void taskIncarnationId
+    // The writer must be started here: `emit` only buffers, and a Task that never
+    // starts its host would accumulate neutral events it never writes. Nothing else
+    // in the composition path starts it, so this is the owner's one start.
+    return await openTaskMetricsRuntime({ identity, workerPath: metricsWorkerPath(__dirname), startImmediately: true })
+}
 
 /**
  * Message stores the caller opened for this incarnation.
@@ -414,6 +467,27 @@ export class TaskSessionCompositionService {
         )
         taskTelemetry.registerAlias(taskIncarnationId)
         resources.add({ release: async () => taskTelemetry.dispose() })
+        // Unified metrics are wired from the Profile this Task actually runs under,
+        // frozen now: a later Profile switch must not restate who a historical number
+        // belonged to. A failure here degrades the feature, never the Task.
+        const metricsRuntime = await openTaskMetricsFor(options, api, taskIncarnationId).catch((error: unknown) => {
+            reportMetricsUnavailable(options.taskId, error)
+            return undefined
+        })
+        if (metricsRuntime) {
+            resources.add({
+                release: async () => {
+                    // A writer that could not confirm it stopped is reported, not
+                    // assumed safe: a deletion path must not remove a file it still holds.
+                    const stopped = await metricsRuntime.attachment.release()
+                    if (!stopped.released) {
+                        Logger.warn(
+                            `[Task ${options.taskId}] Unified metrics writer did not stop: ${stopped.reason ?? "unknown"}`,
+                        )
+                    }
+                },
+            })
+        }
         performance = await TaskPerformanceOwner.open({
             taskId: options.taskId,
             readState,
@@ -421,6 +495,39 @@ export class TaskSessionCompositionService {
             onChanged: () => void options.publishState().catch(() => undefined),
             attemptUsage: taskTelemetry,
             readUsagePolicyGeneration: () => taskTelemetry.usagePolicyGeneration(),
+            // Read at admission, so a Profile switched between sends attributes each
+            // request's tokens to the Profile that actually served it.
+            readServingIdentity: () => {
+                // This runs on the send path, so it must never be able to fail a request:
+                // an unreadable Profile list degrades attribution to the opening identity,
+                // which is still a real Profile this Task was opened with.
+                try {
+                    const configuration = options.stateManager.getApiConfigurationForTask(options.taskId)
+                    // The task's own mode, then the Profiles: `settings` here is the task's
+                    // settings override, so the reference it yields is the one the handler
+                    // was built from.
+                    const mode = options.stateManager.getSettingsKeyForTask("mode", options.taskId)
+                    const serving = resolveTaskApiProfile(configuration, mode).resolvedApiProfile
+                    if (!serving) return undefined
+                    const handler = api.current()
+                    return {
+                        profileId: serving.id,
+                        providerId: serving.provider || handler.getProviderId?.() || "",
+                        modelId: serving.modelId || serving.modelInfo?.id || handler.getModel().id,
+                        ...(serving.apiKey ? { apiKey: serving.apiKey } : {}),
+                    }
+                } catch (error) {
+                    Logger.debug(`[Task ${options.taskId}] Serving Profile could not be read: ${String(error)}`)
+                    return undefined
+                }
+            },
+            ...(metricsRuntime
+                ? {
+                      metrics: metricsRuntime.attachment,
+                      metricsQuery: metricsRuntime.reader,
+                      metricsScope: metricsRuntime.scope,
+                  }
+                : {}),
             // Usage reports which tool each settled call ran. The kernel keeps the
             // call, not its tool, so the name comes from the stored invocation.
             resolveInvocationToolName: async (invocationRef) => {
@@ -953,20 +1060,6 @@ export class TaskSessionCompositionService {
                     retryView: {
                         showRow: (row) => options.prompt.ports.presentation.publish(row),
                         publishState: () => options.publishState({ immediate: true }),
-                    },
-                    // Subscriptions report no token counts, so today's figures on the
-                    // usage surfaces are counted here, against the Profile that served the request.
-                    profileTokens: {
-                        activeProfileId: () => activeProfile().profileId,
-                        record: (profileId, increment) => {
-                            void options.prompt.ports.profileUsage
-                                .record(profileId, increment)
-                                .catch((error) =>
-                                    Logger.debug(
-                                        `[Task ${options.taskId}] Failed to record daily Profile tokens: ${String(error)}`,
-                                    ),
-                                )
-                        },
                     },
                 }),
                 performance,

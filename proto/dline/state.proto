@@ -301,6 +301,38 @@ message AccountUsage {
   // until the user refreshes it, so the surfaces state its age rather than
   // implying the numbers are current.
   optional string retrieved_at = 18;
+  // Today's usage derived from this installation's own committed facts.
+  //
+  // It is deliberately separate from the remote balance fields above: the balance
+  // is read from the provider, these numbers are this installation's record, and a
+  // surface must be able to show one without implying the other is current.
+  optional AccountUsageLocal local = 19;
+}
+
+// Usage measured locally, from facts this installation already committed.
+message AccountUsageLocal {
+  // Fresh input: cache reads and writes are reported separately and never overlap it.
+  int64 input_tokens = 1;
+  // Generated output, already including thoughts tokens; a consumer must not add them.
+  int64 output_tokens = 2;
+  // Absent when the provider reported no breakdown, so a surface can say "not
+  // reported" instead of drawing a zero it would have to call measured.
+  optional int64 thoughts_tokens = 3;
+  optional int64 cache_write_tokens = 4;
+  optional int64 cache_read_tokens = 5;
+  // Input the provider reported as cache hits and misses, when it reports them.
+  optional int64 cache_hit_tokens = 6;
+  optional int64 cache_miss_tokens = 7;
+  // True when the provider reported usage at all; absence is not zero.
+  bool usage_reported = 8;
+  // Inclusive legacy input folded in from the pre-migration day ledger.
+  optional int64 legacy_input_tokens = 9;
+  // True when an older day total contributes and cannot be split by model or key.
+  bool legacy_partial = 10;
+  // True when the source could not be read completely, so the numbers are incomplete.
+  bool degraded = 11;
+  // ISO timestamp of the read that produced these numbers.
+  optional string retrieved_at = 12;
 }
 
 message State {

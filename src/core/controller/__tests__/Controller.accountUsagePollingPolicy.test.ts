@@ -6,7 +6,8 @@ import {
 } from "@core/account-usage/provider-usage"
 import type { ApiHandlerContext } from "@core/api"
 import { ClaudeCodeHandler } from "@core/api/providers/claude-code"
-import type { ApiProfile } from "@shared/proto/dline/profile"
+import { OpenAiCodexHandler } from "@core/api/providers/openai-codex"
+import { ApiProfile } from "@shared/proto/dline/profile"
 import { describe, expect, it } from "vitest"
 
 /** The handler only stores its context, so an unused Profile is enough here. */
@@ -30,6 +31,16 @@ describe("account usage polling policy", () => {
         // Opting out of the timer must not remove the capability itself; the
         // manual refresh RPC resolves the same method.
         expect(typeof handler.getAccountUsage).toBe("function")
+    })
+
+    it("keeps OpenAI Codex account usage automatically refreshed", () => {
+        const handler = new OpenAiCodexHandler({
+            profile: ApiProfile.create({ id: "codex-under-test", provider: "openai-codex" }),
+            mode: "act",
+        })
+
+        expect(allowsAccountUsagePolling(handler)).toBe(true)
+        expect(decideAccountUsageRead(handler, "codex-under-test", "codex-under-test")).toBe("read")
     })
 
     it("polls a handler that exposes usage without opting out", () => {

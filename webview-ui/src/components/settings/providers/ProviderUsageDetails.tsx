@@ -77,6 +77,70 @@ export function providerUsageRemainingLabel(quota: AccountUsageQuotaData): strin
     return `${quota.label} ${usageRemainingPercent(quota).toFixed(0)}%`
 }
 
+/**
+ * The local day total a reader should show, or `undefined` when there is none.
+ *
+ * `Today In` is fresh input plus the cache traffic the provider reported, because
+ * cache reads and writes are inputs the account paid for and are never part of the
+ * fresh count. The inclusive legacy day total is added only when it is present and
+ * still marked as a baseline contribution.
+ */
+export function localTodayInput(usage: AccountUsageData): number | undefined {
+    const local = usage.local
+    if (!local) return undefined
+    // A snapshot that reported no usage at all says nothing about today: showing 0
+    // would claim a quiet day rather than an unmeasured one.
+    if (!local.usageReported && local.legacyInputTokens === undefined) return undefined
+    // `inputTokens` is fresh input only: the cache segments are input the account also
+    // paid for, reported apart from it. Omitting them made the day total understate
+    // usage on exactly the providers that cache aggressively.
+    return local.inputTokens + (local.cacheWriteTokens ?? 0) + (local.cacheReadTokens ?? 0) + (local.legacyInputTokens ?? 0)
+}
+
+/** The local day's output, or `undefined` when the source reported nothing. */
+export function localTodayOutput(usage: AccountUsageData): number | undefined {
+    const local = usage.local
+    if (!local) return undefined
+    if (!local.usageReported && local.outputTokens === 0 && local.legacyInputTokens === undefined) return undefined
+    return local.outputTokens
+}
+
+/**
+ * The cache hit rate, or `undefined` when the provider reported no hit/miss split.
+ *
+ * A provider that does not report cache hits has no rate; rendering 0% would state
+ * that every cached token missed, which is a different claim from "not reported".
+ */
+export function localCacheHitRate(usage: AccountUsageData): number | undefined {
+    const local = usage.local
+    if (!local) return undefined
+    const hit = local.cacheHitTokens
+    const miss = local.cacheMissTokens
+    if (hit === undefined || miss === undefined) return undefined
+    const total = hit + miss
+    if (total <= 0) return undefined
+    return (hit / total) * 100
+}
+
+/**
+ * Say what a reader has to know about a local snapshot before trusting it.
+ *
+ * Degradation and an inclusive legacy contribution are both stated, because either
+ * one makes the number smaller or larger than a fresh, complete read would be.
+ */
+export function localUsageNotes(usage: AccountUsageData): string[] {
+    const local = usage.local
+    if (!local) return []
+    const notes: string[] = []
+    if (local.legacyInputTokens !== undefined) {
+        notes.push(
+            local.legacyPartial ? "Includes an earlier day total that cannot be split by model" : "Includes an earlier day total",
+        )
+    }
+    if (local.degraded) notes.push("Local usage is incomplete")
+    return notes
+}
+
 function progressColor(tone: ProviderUsageProgressTone): string {
     switch (tone) {
         case "danger":
@@ -131,6 +195,50 @@ function resetResultMessage(outcome: string, quotaTypesReset: readonly string[])
         default:
             return "The reset request returned an unknown result."
     }
+}
+
+/**
+ * Today's tokens, preferring this installation's committed facts.
+ *
+ * Two sources can describe the same day: the provider's own day counters and the
+ * facts this installation committed. The committed record is preferred because it
+ * carries the degradation and legacy notes a reader needs; the provider counters
+ * remain the fallback so a snapshot read before any local fact existed still shows
+ * a day total. A source that reported nothing renders nothing rather than zero.
+ */
+function LocalDailyUsage({ usage }: { usage: AccountUsageData }) {
+    const localInput = localTodayInput(usage)
+    const localOutput = localTodayOutput(usage)
+    const localHitRate = localCacheHitRate(usage)
+    const notes = localUsageNotes(usage)
+
+    if (localInput === undefined || localOutput === undefined) {
+        return usage.dailyInputTokens !== undefined || usage.dailyOutputTokens !== undefined ? (
+            // Each metric stays on one line; a narrow tooltip moves the whole
+            // second metric down instead of splitting a label from its value.
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-description">
+                <span className="whitespace-nowrap">Today In: {formatTokenMetric(usage.dailyInputTokens ?? 0)}</span>
+                <span className="whitespace-nowrap">Today Out: {formatTokenMetric(usage.dailyOutputTokens ?? 0)}</span>
+            </div>
+        ) : null
+    }
+
+    return (
+        <div className="flex flex-col gap-1 text-description">
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
+                <span className="whitespace-nowrap">Today In: {formatTokenMetric(localInput)}</span>
+                <span className="whitespace-nowrap">Today Out: {formatTokenMetric(localOutput)}</span>
+                {localHitRate === undefined ? null : (
+                    <span className="whitespace-nowrap">Cache hit: {localHitRate.toFixed(0)}%</span>
+                )}
+            </div>
+            {notes.map((note) => (
+                <span className="text-[10px] text-description" key={note}>
+                    {note}
+                </span>
+            ))}
+        </div>
+    )
 }
 
 export interface ProviderUsageDetailsProps {
@@ -194,14 +302,7 @@ export function ProviderUsageDetails({
                         </span>
                     </div>
                 ) : null}
-                {usage.dailyInputTokens !== undefined || usage.dailyOutputTokens !== undefined ? (
-                    // Each metric stays on one line; a narrow tooltip moves the whole
-                    // second metric down instead of splitting a label from its value.
-                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-description">
-                        <span className="whitespace-nowrap">Today In: {formatTokenMetric(usage.dailyInputTokens ?? 0)}</span>
-                        <span className="whitespace-nowrap">Today Out: {formatTokenMetric(usage.dailyOutputTokens ?? 0)}</span>
-                    </div>
-                ) : null}
+                <LocalDailyUsage usage={usage} />
                 {/* Filtered like the chat bar: an unusable reading rendered as
 				    "0% remaining" would claim the window is exhausted. */}
                 {usage.quotas?.filter(isReadableUsageQuota).map((quota, index) => {

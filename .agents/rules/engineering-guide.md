@@ -118,9 +118,39 @@ Follow `network`. Extension/core code must not introduce global `fetch`, an unco
 - `.agents` files use English.
 - `docs/` changes require Chinese and English deliverables for the same scope.
 - Root README and changelog files follow their established bilingual pairs.
-- Every version update adds a section to both What's New editions under `docs/whats-new/`; follow repository-and-release and dev-version-bump.
 
 Load `writing-documentation` for documentation work.
+
+## What's New and changelog content
+
+`CHANGELOG.md` (Chinese) and `docs/changelog/CHANGELOG_en.md` (English) record what shipped. `docs/whats-new/WHATS_NEW.md` (Chinese) and `docs/whats-new/WHATS_NEW_en.md` (English, the edition the dialog renders) present the highlights of one release. Users read all four; maintainers and the implementation are not the audience.
+
+Write what changed in the product a user can see and do:
+
+- State the user-visible behavior: where the control is, what it now does, what it no longer does, and any limit or condition that changes how the user works with it.
+- Prefer the outcome over the mechanism. "Interrupted tasks resume with the result you expect" belongs in What's New; "task state is driven by runtime events and a reducer" does not.
+- Omit detail that cannot change a user decision: runtime and class names, database tables and files, RPC and protocol names, queue, transaction and migration mechanics, lifecycle and reducer design, telemetry schemas and endpoint paths, and feature-flag plumbing.
+- Keep one entry per user-visible change: one sentence, plus one clause only when a limit or condition matters. Split unrelated changes into separate entries instead of chaining them in a paragraph.
+- Do not add adjectives, restated benefits, or migration chatter, and never claim behavior that was not verified.
+- Internal refactors, test coverage, and tooling changes appear in neither surface unless they change something the user can observe.
+
+Both pairs must cover the same scope: the same version sections and headings, in the same order, describing the same user-visible changes. The two languages may phrase naturally but must not differ in features, defaults, limits, or support status. Never edit a released section to describe later work; add the change under `Unreleased` instead.
+
+### What's New rules
+
+- Every version update adds a `## X.Y.Z` section to both editions. Selection and procedure belong to `dev-version-bump`; lifecycle and tags belong to `repository-and-release`.
+- The newest section is a bare `## X.Y.Z` heading, matches `package.json`, and older sections stay below as history.
+- Each section holds one flat `- ` list with two-space continuation lines. Allowed inline syntax is `**bold**`, backtick code, and an absolute `https://` link, without nesting; the webview build rejects anything else.
+- Highlights select the changes a user would notice, not the largest technical change.
+
+### Changelog rules
+
+- `Unreleased` collects integrated, verified dev changes under `### Added`, `### Changed`, `### Fixed`, and `### Removed`, keeping only the sections that have entries.
+- Group a change by the reader's question: added answers "what can I do now", changed answers "what behaves differently", fixed answers "what was broken".
+- A released production section covers every user-visible change since the previous production release, so pre-release sections remain history without making the production section a partial delta.
+- Routine dev integrations update only `Unreleased`; package versions and What's New change during version preparation.
+
+After editing either edition, run the What's New test at `webview-ui/src/__tests__/vite-whats-new.test.ts`. It fails on a malformed section, on a first version that differs from `package.json`, and on editions that differ in version or item count.
 
 ## Git and release work
 

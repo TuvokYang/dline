@@ -11,7 +11,7 @@ import type { AccountUsageData } from "@shared/ExtensionMessage"
 /** A reading taken a few minutes ago, so the "Updated" line renders. */
 const recentlyRetrievedAt = new Date(Date.now() - 12 * 60_000).toISOString()
 
-/** Balance account (DeepSeek): no plan, so the balance and daily tokens are shown. */
+/** Balance account with committed local usage and a reported 75% cache hit rate. */
 export const balanceUsageFixture: AccountUsageData = {
     profileId: "profile-story",
     providerId: "deepseek",
@@ -20,9 +20,45 @@ export const balanceUsageFixture: AccountUsageData = {
     toppedUpBalance: 80,
     grantedBalance: 6.42,
     isAvailable: true,
-    dailyInputTokens: 1_284_300,
-    dailyOutputTokens: 96_512,
+    local: {
+        inputTokens: 321_075,
+        outputTokens: 96_512,
+        cacheWriteTokens: 0,
+        cacheReadTokens: 963_225,
+        cacheHitTokens: 963_225,
+        cacheMissTokens: 321_075,
+        usageReported: true,
+        retrievedAt: recentlyRetrievedAt,
+    },
     retrievedAt: recentlyRetrievedAt,
+}
+
+/** Cache was reported, but every input token missed. This is a measured 0%. */
+export const zeroCacheHitUsageFixture: AccountUsageData = {
+    ...balanceUsageFixture,
+    local: {
+        inputTokens: 1_284_300,
+        outputTokens: 96_512,
+        cacheWriteTokens: 0,
+        cacheReadTokens: 0,
+        cacheHitTokens: 0,
+        cacheMissTokens: 1_284_300,
+        usageReported: true,
+        retrievedAt: recentlyRetrievedAt,
+    },
+}
+
+/** Tokens were reported without a cache split, so the rate must remain absent. */
+export const unreportedCacheUsageFixture: AccountUsageData = {
+    ...balanceUsageFixture,
+    local: {
+        inputTokens: 1_284_300,
+        outputTokens: 96_512,
+        cacheWriteTokens: 0,
+        cacheReadTokens: 0,
+        usageReported: true,
+        retrievedAt: recentlyRetrievedAt,
+    },
 }
 
 /** Codex windows are rolling durations, so its weekly window reads "7 day". */
@@ -33,9 +69,14 @@ export const codexUsageFixture: AccountUsageData = {
     planType: "plus",
     isAvailable: true,
     retrievedAt: recentlyRetrievedAt,
-    // Counted by Dline from its own requests; the subscription reports none.
-    dailyInputTokens: 2_486_120,
-    dailyOutputTokens: 41_380,
+    local: {
+        inputTokens: 2_486_120,
+        outputTokens: 41_380,
+        cacheWriteTokens: 0,
+        cacheReadTokens: 0,
+        usageReported: true,
+        retrievedAt: recentlyRetrievedAt,
+    },
     quotas: [
         { type: "5hour", label: "5 hour", shortLabel: "5h", used: 20, limit: 100, resetAt: "2030-01-01T12:00:00.000Z" },
         { type: "weekly", label: "7 day", shortLabel: "7d", used: 83, limit: 100, resetAt: "2030-01-07T12:00:00.000Z" },
@@ -57,8 +98,14 @@ export const claudeUsageFixture: AccountUsageData = {
     currency: "USD",
     isAvailable: true,
     retrievedAt: recentlyRetrievedAt,
-    dailyInputTokens: 18_734_902,
-    dailyOutputTokens: 212_455,
+    local: {
+        inputTokens: 18_734_902,
+        outputTokens: 212_455,
+        cacheWriteTokens: 0,
+        cacheReadTokens: 0,
+        usageReported: true,
+        retrievedAt: recentlyRetrievedAt,
+    },
     quotas: [
         // Unused, so the chat bar does not prefer it: an active five-hour
         // window wins the bar, and these stories are meant to show "week".
@@ -156,8 +203,7 @@ export const openCodeBalanceUsageFixture: AccountUsageData = {
     planType: "Pay-as-you-go",
     isAvailable: true,
     retrievedAt: recentlyRetrievedAt,
-    dailyInputTokens: 1_284_300,
-    dailyOutputTokens: 96_512,
+    local: unreportedCacheUsageFixture.local,
 }
 
 /** OpenCode Go ($10/month): the lowest per-model monthly limit. */

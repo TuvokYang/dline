@@ -13,6 +13,8 @@ import {
     openCodeGoTeamsUsageFixture,
     openCodeGoUsageFixture,
     openCodeNoDataUsageFixture,
+    unreportedCacheUsageFixture,
+    zeroCacheHitUsageFixture,
 } from "./usageStoryFixtures"
 
 /**
@@ -50,11 +52,36 @@ const meta = {
 export default meta
 type Story = StoryObj<typeof meta>
 
-/** Balance account (DeepSeek): balance summary plus today's token counts. */
+/** Balance and local day totals, including a measured 75% cache hit rate. */
 export const Balance: Story = {
     args: { title: "DeepSeek" },
     decorators: withUsage(balanceUsageFixture),
-    play: expandCard,
+    play: async (context) => {
+        await expandCard(context)
+        await expect(within(context.canvasElement).getByText("Cache hit: 75%")).toBeVisible()
+    },
+}
+
+/** A reported zero must render as 0%, not disappear as unknown. */
+export const CacheHitZero: Story = {
+    args: { title: "DeepSeek" },
+    decorators: withUsage(zeroCacheHitUsageFixture),
+    play: async (context) => {
+        await expandCard(context)
+        await expect(within(context.canvasElement).getByText("Cache hit: 0%")).toBeVisible()
+    },
+}
+
+/** A missing cache split must not be presented as a measured zero. */
+export const CacheNotReported: Story = {
+    args: { title: "DeepSeek" },
+    decorators: withUsage(unreportedCacheUsageFixture),
+    play: async (context) => {
+        await expandCard(context)
+        const canvas = within(context.canvasElement)
+        await expect(canvas.getByText(/^Today In:/)).toBeVisible()
+        await expect(canvas.queryByText(/^Cache hit:/)).not.toBeInTheDocument()
+    },
 }
 
 /** Codex subscription: rolling "5 hour" / "7 day" windows with reset cards. */

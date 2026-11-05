@@ -34,6 +34,7 @@ import { improveWithCline } from "./core/controller/commands/improveWithCline"
 import { sendAddToInputEvent } from "./core/controller/ui/subscribeToAddToInput"
 import { sendShowWebviewEvent } from "./core/controller/ui/subscribeToShowWebview"
 import { HookDiscoveryCache } from "./core/hooks/HookDiscoveryCache"
+import { currentGlobalMetricsRuntime } from "./core/metrics/GlobalMetricsRuntime"
 import { OrchestratorController } from "./core/orchestrator/OrchestratorController"
 import {
     cleanupMcpMarketplaceCatalogFromGlobalState,
@@ -957,6 +958,14 @@ async function getBinaryLocation(name: string): Promise<string> {
 export async function deactivate() {
     await awaySettings?.dispose()
     awaySettings = undefined
+    // The global metrics writer is process-level and no Task owns it, so nothing else
+    // would write what is still buffered. `release` drains under its own budget; calling
+    // `flush` first would wait on the worker's request deadline with no time bound at
+    // all, and a wedged writer must never hold the window open.
+    const globalMetrics = currentGlobalMetricsRuntime()
+    if (globalMetrics) {
+        await globalMetrics.release().catch(() => undefined)
+    }
     // Dispose Non-VSCode-specific services
     await tearDown()
 

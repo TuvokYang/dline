@@ -17,32 +17,31 @@ Format rules, enforced by webview-ui/vite-whats-new.ts at build time:
 
 ## 0.12.2
 
-- **Approvals in one place**: a call waiting for approval shows its full card only in the approval panel above Approve and Reject; once approved or rejected it appears in the chat as a single row through to its result.
-- **MCP tools on demand**: the "Load MCP Tools on Demand" setting (on by default) stops sending every MCP tool definition with each request; the model picks a tool from a prompt catalog and calls `load_mcp` for its parameter schema.
+- **MCP tools on demand**
 - **Composer button interaction**: send, restore, queue, and cancel share a single button that queues the draft while a task runs and turns into cancel after a three-second hover on the queue state.
-- **Unified task runtime and recovery**: task state is driven by runtime events and a reducer, so interruption, resume and handoff follow an explicit state machine instead of being inferred when a history task reopens.
-- **OpenCode provider**: one gateway Profile covers its paid text models on a pay-as-you-go balance or a Go, Go Plus, or Go Teams subscription, and each model reaches the same catalog through OpenAI Chat Completions, OpenAI Responses, or Anthropic Messages, with the plan choosing the prices and the model list.
+- **More reliable interruption and recovery**: a task that was interrupted, lost its window, or was reopened from history resumes with the result you expect instead of a scrambled or repeated state.
+- **OpenCode provider**: one Profile covers all of its paid text models on a pay-as-you-go balance or a Go, Go Plus, or Go Teams subscription, and each model can be reached over OpenAI Chat Completions, OpenAI Responses, or Anthropic Messages, with your plan deciding the prices and available models.
 
 ## 0.11.2
 
 - **Conversation trajectory rail**: while the chat scrolls, a column of short bars on the right marks each user turn; hover one to preview the turn and click it to jump there, even outside the loaded range.
 - **Manual compaction anywhere**: `/compact` shows one card per compaction and works while a task runs or a dialog waits, without sending an empty message.
-- **Unified task runtime and recovery**: task state is driven by runtime events and a reducer, so interruption, resume and handoff follow an explicit state machine instead of being inferred when a history task reopens.
+- **More reliable interruption and recovery**: a task that was interrupted, lost its window, or was reopened from history resumes with the result you expect instead of a scrambled or repeated state.
 
 ## 0.11.1
 
-- **Unified task runtime and recovery**: task state is driven by runtime events and a reducer, so interruption, resume and handoff follow an explicit state machine instead of being inferred when a history task reopens.
-- **Semantic composer**: a structured composer replaces the plain text area, splitting the prompt by source (mentions, commands, pastes, drops) and passing unreadable content through to the model byte for byte.
-- **Task performance**: chat history is validated and replaced at the tail instead of being read and rewritten whole on every update, so the cost no longer grows with task length.
+- **More reliable interruption and recovery**: a task that was interrupted, lost its window, or was reopened from history resumes with the result you expect instead of a scrambled or repeated state.
+- **More accurate input**: mentions, slash commands, pastes and drops are handled by source, and a file the model cannot read is still passed through unchanged.
+- **Longer tasks stay responsive**: operations and refreshes no longer slow down as a task grows.
 - **MCP tools on demand**: the "Load MCP Tools on Demand" setting (on by default) stops sending every MCP tool definition with each request; the model picks a tool from a prompt catalog and calls `load_mcp` for its parameter schema.
 - **Composer button interaction**: send, restore, queue, and cancel share a single button that queues the draft while a task runs and turns into cancel after a three-second hover on the queue state.
 
 ## 0.11.0
 
-- **Unified task runtime and recovery**: task state is driven by runtime events and a reducer, so interruption, resume and handoff follow an explicit state machine instead of being inferred when a history task reopens.
-- **Semantic composer**: a structured composer replaces the plain text area, splitting the prompt by source (mentions, commands, pastes, drops) and passing unreadable content through to the model byte for byte.
-- **Input resource store**: a task-level resource store and typed RPCs keep images and files as managed resources with the task instead of scattering them through message text.
-- **Task performance**: chat history is now validated and replaced at the tail instead of being read and rewritten whole on every update, so the cost no longer grows with task length.
+- **More reliable interruption and recovery**: a task that was interrupted, lost its window, or was reopened from history resumes with the result you expect instead of a scrambled or repeated state.
+- **More accurate input**: mentions, slash commands, pastes and drops are handled by source, and a file the model cannot read is still passed through unchanged.
+- **Attachments stay available**: images and files are saved with the task, so they still open after you switch or reopen it instead of being scattered through message text.
+- **Longer tasks stay responsive**: operations and refreshes no longer slow down as a task grows.
 - **MCP tools on demand**: a new "Load MCP Tools on Demand" setting (on by default) stops sending every MCP tool definition with each request; the model picks a tool from a prompt catalog and calls `load_mcp` for its parameter schema.
 - **Composer button interaction**: send, restore, queue, and cancel are merged into a single button that queues the draft while a task runs and turns into cancel after a three-second hover on the queue state.
 

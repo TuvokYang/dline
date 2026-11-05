@@ -363,9 +363,14 @@ export class DeepSeekHandler extends ApiHandler {
     }
 
     /**
-     * Query DeepSeek account balance + daily usage.
-     * Calls /user/balance for balance and /api/v0/usage/amount for daily tokens.
-     * Returns AccountUsage with balance breakdown and today's usage for the current model.
+     * Query the documented account balance.
+     *
+     * Only `/user/balance` is public API. Daily usage used to be read from
+     * `platform.deepseek.com`, which is the web console's private endpoint: it is not
+     * documented, not stable, and returns nothing when the caller is not signed in to
+     * that console. Today's tokens are now derived from Dline's own committed facts, so
+     * this method reports the balance and nothing else.
+     *
      * @see https://api-docs.deepseek.com/zh-cn/api/get-user-balance
      */
     override async getAccountUsage(): Promise<AccountUsage | undefined> {
@@ -406,83 +411,12 @@ export class DeepSeekHandler extends ApiHandler {
                 return undefined
             }
 
-            // Fetch daily usage
-            const now = new Date()
-            const month = now.getMonth() + 1
-            const year = now.getFullYear()
-            const todayStr = `${year}-${String(month).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`
-
-            let dailyInputTokens = 0
-            let dailyOutputTokens = 0
-            let dailyCacheHitTokens = 0
-            let dailyCacheMissTokens = 0
-
-            try {
-                const usageResp = await fetch(`https://platform.deepseek.com/api/v0/usage/amount?month=${month}&year=${year}`, {
-                    headers,
-                    signal: accountUsageController.signal,
-                })
-                if (usageResp.ok) {
-                    const usageData = (await usageResp.json()) as {
-                        code: number
-                        data?: {
-                            biz_data?: {
-                                days?: Array<{
-                                    date: string
-                                    data?: Array<{
-                                        model: string
-                                        usage?: Array<{ type: string; amount: string }>
-                                    }>
-                                }>
-                            }
-                        }
-                    }
-                    // Find today's data and match current model
-                    const today = usageData?.data?.biz_data?.days?.find((d) => d.date === todayStr)
-                    if (today?.data) {
-                        // The usage endpoint reports the provider's own model names,
-                        // which need not equal the id Dline displays. Matching the exact
-                        // id plus one hardcoded family left any renamed model reporting a
-                        // silent zero, so a day with no exact match now falls back to
-                        // every model of that day instead of reporting nothing.
-                        const model = this.getModel()
-                        const modelData = today.data.find((d) => d.model === model.id)
-                        const rows = modelData ? [modelData] : today.data
-                        for (const row of rows) {
-                            for (const u of row.usage ?? []) {
-                                const amt = Number.parseInt(u.amount, 10) || 0
-                                switch (u.type) {
-                                    case "PROMPT_CACHE_HIT_TOKEN":
-                                        dailyCacheHitTokens += amt
-                                        break
-                                    case "PROMPT_CACHE_MISS_TOKEN":
-                                        dailyCacheMissTokens += amt
-                                        break
-                                    case "RESPONSE_TOKEN":
-                                        dailyOutputTokens += amt
-                                        break
-                                }
-                            }
-                        }
-                        dailyInputTokens = dailyCacheHitTokens + dailyCacheMissTokens
-                    }
-                } else {
-                    Logger.warn(`[DeepSeek] Usage API failed: ${usageResp.status}`)
-                }
-            } catch (e) {
-                Logger.warn(`[DeepSeek] Usage API error: ${e}`)
-            }
-
             return {
                 currency: firstBalance.currency,
                 remainingBalance: Number.parseFloat(firstBalance.total_balance),
                 toppedUpBalance: Number.parseFloat(firstBalance.topped_up_balance),
                 grantedBalance: Number.parseFloat(firstBalance.granted_balance),
                 isAvailable: balanceData.is_available,
-                dailyInputTokens,
-                dailyOutputTokens,
-                dailyCacheHitTokens,
-                dailyCacheMissTokens,
             }
         } catch (e) {
             Logger.warn(`[DeepSeek] getAccountUsage error: ${e}`)

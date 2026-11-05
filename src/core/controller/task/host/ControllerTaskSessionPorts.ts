@@ -23,12 +23,8 @@ export class ControllerTaskSessionPorts implements TaskSessionPorts {
     readonly presentation: TaskSessionPorts["presentation"]
     readonly semanticCatalog: TaskSessionPorts["semanticCatalog"]
     readonly successor: TaskSessionPorts["successor"]
-    readonly profileUsage: TaskSessionPorts["profileUsage"]
 
-    constructor(
-        private readonly controller: Controller,
-        opening: TaskOpening,
-    ) {
+    constructor(controller: Controller, opening: TaskOpening) {
         const semanticCatalog = inputSemanticCatalogService(controller)
         this.collaboration = OrchestratorController.getInstance().collaboration
         this.promptContext = {
@@ -63,9 +59,6 @@ export class ControllerTaskSessionPorts implements TaskSessionPorts {
                 if (sourceTaskId !== opening.taskId) return
                 await controller.startSuccessorTask(opening, handoff)
             },
-        }
-        this.profileUsage = {
-            record: (profileId, increment) => controller.recordProfileTokenUsage(profileId, increment),
         }
     }
 }

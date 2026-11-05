@@ -1,8 +1,12 @@
+import { openGlobalMetricsRuntime, resetGlobalMetricsRuntimeForTests } from "@core/metrics/GlobalMetricsRuntime"
+import type { MetricsEvent } from "@shared/metrics/events"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { TaskState } from "../kernel"
 import { ApiRequestRoundLifecycle } from "./api-request-round-lifecycle"
+import { API_REQUEST_ROUND_SCHEMA_VERSION, type ApiRequestRoundRecord } from "./api-request-round-types"
+import { type TaskMetricsAttachment, TaskMetricsEmitter } from "./metrics-emitter"
 import type { ProviderRequestRoundAdmission } from "./provider-request-round-port"
-import { TaskPerformanceOwner } from "./TaskPerformanceOwner"
+import { TaskMetricsEmission, TaskPerformanceOwner } from "./TaskPerformanceOwner"
 import { TaskProviderRequestRoundOwner } from "./TaskProviderRequestRoundOwner"
 import { TaskApiRateMetricsService } from "./task-api-rate-metrics-service"
 
@@ -231,5 +235,188 @@ describe("TaskPerformanceOwner", () => {
         expect(usage).not.toHaveBeenCalled()
         // TPM is a generation rate: the prompt read before streaming must not count toward it.
         expect(rateUsage.mock.calls).toEqual([[{ outputTokens: 2 }]])
+    })
+})
+
+describe("TaskMetricsEmission", () => {
+    function emitterInto(events: MetricsEvent[]): TaskMetricsEmitter {
+        return new TaskMetricsEmitter(
+            { workspaceId: "ws", taskId: "task-1", profileId: "profile-a", providerId: "openai", modelId: "gpt-5" },
+            {
+                offer: (event) => {
+                    events.push(event)
+                    return true
+                },
+            },
+        )
+    }
+
+    function attachmentOf(emitter: TaskMetricsEmitter): TaskMetricsAttachment {
+        return { emitter, start: () => undefined, release: async () => ({ released: true }) }
+    }
+
+    function round(overrides: Partial<ApiRequestRoundRecord> = {}): ApiRequestRoundRecord {
+        return {
+            schemaVersion: API_REQUEST_ROUND_SCHEMA_VERSION,
+            taskId: "task-1",
+            roundId: "task-1:turn-a:provider:0",
+            revision: 1,
+            logicalRequestId: "turn-a",
+            apiIndex: 0,
+            taskAttempt: 0,
+            providerAttempt: 0,
+            startedAtMs: 1_000,
+            completedAtMs: 1_700,
+            providerDurationMs: 700,
+            status: "completed",
+            inputTokens: 900,
+            outputTokens: 100,
+            thoughtsTokens: 0,
+            cacheWriteTokens: 0,
+            cacheReadTokens: 0,
+            cacheUsageReported: true,
+            totalCost: 0.25,
+            currency: "USD",
+            usageQuality: "exact",
+            ...overrides,
+        }
+    }
+
+    // The unified numbers must describe the send the round recorded. Emitting from a
+    // second measurement would let the two disagree, so the assertion is on the exact
+    // values the round already settled.
+    it("re-expresses the settled round instead of measuring it again", () => {
+        const events: MetricsEvent[] = []
+        const emission = new TaskMetricsEmission(attachmentOf(emitterInto(events)), "task-1")
+        const settled = round()
+
+        emission.usage(settled)
+        emission.provider(settled)
+
+        expect(events.map((event) => event.kind)).toEqual(["usage", "performance"])
+        expect(events[0]).toMatchObject({
+            eventId: "usage:task-1:turn-a:provider:0",
+            observedAtMs: 1_700,
+            roundId: "task-1:turn-a:provider:0",
+            inputTokens: 900,
+            outputTokens: 100,
+            usageReported: true,
+            cost: 0.25,
+            currency: "USD",
+            costComplete: true,
+            usageQuality: "exact",
+        })
+        // A provider fact carries its own duration; the execution fact owns RPM.
+        expect(events[1]).toMatchObject({
+            eventId: "provider:task-1:turn-a:provider:0",
+            factKind: "provider",
+            providerDurationMs: 700,
+            status: "completed",
+        })
+        expect(events[1]).not.toHaveProperty("executionDurationMs")
+    })
+
+    // A retried revision of the same round is the same fact. Re-emitting would make
+    // the receiver's idempotency the only thing standing between a retry and a
+    // double count, which is a weaker guarantee than not emitting twice.
+    it("emits one fact per round even when the round is reported again", () => {
+        const events: MetricsEvent[] = []
+        const emission = new TaskMetricsEmission(attachmentOf(emitterInto(events)), "task-1")
+
+        emission.usage(round())
+        emission.usage(round({ revision: 2 }))
+        emission.provider(round())
+        emission.provider(round({ revision: 2 }))
+
+        expect(events).toHaveLength(2)
+    })
+
+    // A send that reported no usage has no usage fact at all. Emitting zero tokens
+    // would turn "the Provider told us nothing" into "it told us zero".
+    it("emits no usage fact for a round that reported no usage", () => {
+        const events: MetricsEvent[] = []
+        const emission = new TaskMetricsEmission(attachmentOf(emitterInto(events)), "task-1")
+
+        emission.usage(round({ usageQuality: "none", inputTokens: undefined, outputTokens: undefined }))
+
+        expect(events).toHaveLength(0)
+    })
+
+    // One settlement feeds both levels. The global row must be the *same* fact, so a
+    // retry is deduplicated by the same receipt identity instead of counting twice, and
+    // the Task's own row must still be offered even when no global runtime is open.
+    it("offers each settled fact to the global level with the same identity", () => {
+        const taskEvents: MetricsEvent[] = []
+        const globalEvents: MetricsEvent[] = []
+        const runtime = openGlobalMetricsRuntime({ workerPath: "unused-worker.js" })
+        const collect = vi.spyOn(runtime.sink, "offer").mockImplementation((event) => {
+            globalEvents.push(event)
+            return true
+        })
+        try {
+            const emission = new TaskMetricsEmission(attachmentOf(emitterInto(taskEvents)), "task-1")
+            const settled = round()
+
+            emission.usage(settled)
+            emission.provider(settled)
+
+            expect(taskEvents.map((event) => event.eventId)).toEqual([
+                "usage:task-1:turn-a:provider:0",
+                "provider:task-1:turn-a:provider:0",
+            ])
+            expect(globalEvents).toEqual(taskEvents)
+        } finally {
+            collect.mockRestore()
+            resetGlobalMetricsRuntimeForTests()
+        }
+    })
+
+    // A caller that redirects one observation to another sink keeps that fact local on
+    // purpose: the redirect is the whole point, so the global level must not also see it.
+    // The redirect belongs to the emitter, which owns event construction.
+    it("does not offer a redirected observation to the global level", () => {
+        const redirected: MetricsEvent[] = []
+        const globalSeen: MetricsEvent[] = []
+        const runtime = openGlobalMetricsRuntime({ workerPath: "unused-worker.js" })
+        const collect = vi.spyOn(runtime.sink, "offer").mockImplementation((event) => {
+            globalSeen.push(event)
+            return true
+        })
+        try {
+            const emitter = new TaskMetricsEmitter(
+                { workspaceId: "ws", taskId: "task-1", profileId: "p", providerId: "openai", modelId: "gpt-5" },
+                undefined,
+            )
+
+            emitter.emitUsage(
+                {
+                    eventId: "usage:redirected",
+                    observedAtMs: 1_700,
+                    roundId: "round",
+                    logicalRequestId: "turn-a",
+                    sequence: 1,
+                    inputTokens: 10,
+                    outputTokens: 2,
+                    usageReported: true,
+                    costComplete: false,
+                    currencyMixed: false,
+                    usageQuality: "exact",
+                },
+                {
+                    sink: {
+                        offer: (event) => {
+                            redirected.push(event)
+                            return true
+                        },
+                    },
+                },
+            )
+
+            expect(redirected).toHaveLength(1)
+            expect(globalSeen).toHaveLength(0)
+        } finally {
+            collect.mockRestore()
+            resetGlobalMetricsRuntimeForTests()
+        }
     })
 })

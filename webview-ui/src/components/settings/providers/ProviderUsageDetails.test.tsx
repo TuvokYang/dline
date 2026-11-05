@@ -1,6 +1,13 @@
-import type { AccountUsageQuotaData } from "@shared/ExtensionMessage"
+import type { AccountUsageData, AccountUsageLocalData, AccountUsageQuotaData } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
-import { formatUsageRetrievedAt, isReadableUsageQuota, usageRemainingPercent } from "./ProviderUsageDetails"
+import {
+    formatUsageRetrievedAt,
+    isReadableUsageQuota,
+    localCacheHitRate,
+    localTodayInput,
+    localUsageNotes,
+    usageRemainingPercent,
+} from "./ProviderUsageDetails"
 
 /**
  * Both provider subscriptions are read once and then held until the user
@@ -51,5 +58,74 @@ describe("isReadableUsageQuota", () => {
 
     it("shows why an unfiltered quota would misreport the account", () => {
         expect(usageRemainingPercent(quota({ used: Number.NaN }))).toBe(0)
+    })
+})
+
+/** The local day total, which is this installation's own committed usage. */
+function localUsage(overrides: Partial<AccountUsageLocalData> = {}): AccountUsageData {
+    return {
+        profileId: "profile-a",
+        providerId: "deepseek",
+        currency: "",
+        local: { inputTokens: 100, outputTokens: 20, usageReported: true, ...overrides },
+    }
+}
+
+describe("localTodayInput", () => {
+    it("separates fresh input from cache traffic and adds the inclusive legacy total", () => {
+        const usage = localUsage({ inputTokens: 100, cacheReadTokens: 900, legacyInputTokens: 50 })
+
+        // Cache traffic is input the account paid for but reported apart from fresh
+        // input, so the day total has to include it: 100 fresh + 900 cache read + 50
+        // legacy. The legacy total is inclusive and only counts while it is still marked.
+        expect(localTodayInput(usage)).toBe(1050)
+    })
+
+    it("adds cache writes to the fresh input as well", () => {
+        expect(localTodayInput(localUsage({ inputTokens: 10, cacheWriteTokens: 5 }))).toBe(15)
+    })
+
+    it("reports nothing when this installation recorded no usage at all", () => {
+        // A snapshot with no reported usage is an unmeasured day, not a zero day.
+        expect(localTodayInput(localUsage({ inputTokens: 0, outputTokens: 0, usageReported: false }))).toBeUndefined()
+    })
+
+    it("keeps an explicit zero distinguishable from a missing record", () => {
+        expect(localTodayInput(localUsage({ inputTokens: 0, outputTokens: 0, usageReported: true }))).toBe(0)
+        expect(localTodayInput({ profileId: "p", providerId: "deepseek", currency: "" })).toBeUndefined()
+    })
+
+    it("counts a legacy baseline even when this session reported no fresh usage", () => {
+        expect(localTodayInput(localUsage({ inputTokens: 0, usageReported: false, legacyInputTokens: 40 }))).toBe(40)
+    })
+})
+
+describe("localCacheHitRate", () => {
+    it("computes the rate from the reported hit and miss counts", () => {
+        expect(localCacheHitRate(localUsage({ cacheHitTokens: 30, cacheMissTokens: 70 }))).toBe(30)
+    })
+
+    it("reports nothing when the provider did not split cache hits", () => {
+        // Rendering 0% would state that every cached token missed, which the
+        // provider never said; absence is not a zero rate.
+        expect(localCacheHitRate(localUsage())).toBeUndefined()
+        expect(localCacheHitRate(localUsage({ cacheHitTokens: 0, cacheMissTokens: 0 }))).toBeUndefined()
+    })
+})
+
+describe("localUsageNotes", () => {
+    it("says when a legacy total is inclusive and whether it can be split", () => {
+        expect(localUsageNotes(localUsage({ legacyInputTokens: 10, legacyPartial: true }))).toEqual([
+            "Includes an earlier day total that cannot be split by model",
+        ])
+        expect(localUsageNotes(localUsage({ legacyInputTokens: 10 }))).toEqual(["Includes an earlier day total"])
+    })
+
+    it("says when the numbers are incomplete", () => {
+        expect(localUsageNotes(localUsage({ degraded: true }))).toEqual(["Local usage is incomplete"])
+    })
+
+    it("says nothing about a complete, fresh record", () => {
+        expect(localUsageNotes(localUsage())).toEqual([])
     })
 })

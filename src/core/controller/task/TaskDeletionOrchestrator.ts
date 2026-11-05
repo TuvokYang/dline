@@ -1,7 +1,9 @@
 import fs from "node:fs/promises"
+import { releaseTaskMetricsBeforeDeletion } from "@core/metrics/MetricsDeletionGuard"
 import { OrchestratorController } from "@/core/orchestrator/OrchestratorController"
 import { getDlineCheckpointsDir } from "@/core/storage/disk"
 import { closeInstanceStoragesUnder } from "@/core/storage/instance"
+import { findExistingTaskMetricsDatabase } from "@/core/storage/task-metrics-database"
 import { WebviewProviderRegistry } from "@/core/webview/WebviewProviderRegistry"
 import { Logger } from "@/shared/services/Logger"
 import type { TaskLockService } from "../../locks/TaskLockService"
@@ -124,6 +126,24 @@ export class TaskDeletionOrchestrator {
             // settings, snapshots, artifacts, SQLite sidecars, and future task files.
             // Open instance databases, including subagent ones, are closed first:
             // Windows refuses to remove a database, -wal or -shm that is still open.
+            //
+            // The unified metrics database needs one more step. Its writer runs on a
+            // worker thread and a history view opens a read-only lease, and neither is
+            // registered with the instance storage registry this closes. Removing the
+            // directory while either still holds the file would report success over a
+            // half-removed task, so the release is proven first.
+            const metricsDatabase = await findExistingTaskMetricsDatabase(taskId)
+            if (metricsDatabase) {
+                const released = await releaseTaskMetricsBeforeDeletion({ taskId, databasePath: metricsDatabase })
+                if (!released.released) {
+                    return {
+                        success: false,
+                        taskId,
+                        skippedLocked: false,
+                        error: `Metrics database could not be released before deletion: ${released.reason ?? "unknown"}`,
+                    }
+                }
+            }
             await closeInstanceStoragesUnder(taskPaths.taskDirPath)
             await this.removeTaskDirectory(taskPaths.taskDirPath)
 

@@ -1,4 +1,3 @@
-import type { TokenIncrement } from "@core/account-usage/daily-token-ledger"
 import type { SystemPromptContext } from "@core/prompts/system-prompt"
 import type { ClineRulesToggles } from "@shared/cline-rules"
 import type { UiMessage } from "@shared/ExtensionMessage"
@@ -58,11 +57,6 @@ export interface TaskSessionSuccessorPort {
     start(sourceTaskId: string, handoff: NewTaskHandoff): Promise<void>
 }
 
-/** Records request usage against the Profile that served it. */
-export interface TaskSessionProfileUsagePort {
-    record(profileId: string, increment: TokenIncrement): Promise<void>
-}
-
 /** Host-owned effects used by the otherwise host-neutral task composition. */
 export interface TaskSessionPorts {
     readonly collaboration: TaskCollaborationRuntime
@@ -71,5 +65,4 @@ export interface TaskSessionPorts {
     readonly presentation: TaskSessionPresentationPort
     readonly semanticCatalog: TaskSessionSemanticCatalogPort
     readonly successor: TaskSessionSuccessorPort
-    readonly profileUsage: TaskSessionProfileUsagePort
 }

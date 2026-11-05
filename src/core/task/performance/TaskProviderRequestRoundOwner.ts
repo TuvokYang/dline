@@ -9,6 +9,7 @@ import type { ApiRequestRoundHandle } from "./api-request-round-tracker"
 import type { ApiRequestRoundUsage } from "./api-request-round-types"
 import type { ApiResponseExecutionToolSummary } from "./api-response-execution-types"
 import type { ProviderRequestRoundAdmission, ProviderRequestRoundAdmissionInput } from "./provider-request-round-port"
+import type { ServingMetricsIdentity } from "./TaskPerformanceOwner"
 
 interface ProviderRequestRoundLifecyclePort {
     createObserver(input: ApiRequestRoundScopeInput): ProviderAttemptObserver<ApiRequestRoundHandle>
@@ -41,6 +42,8 @@ export interface TaskProviderRequestRoundOwnerOptions {
         awaitingBlockId?: string,
     ) => Promise<readonly UsageToolCall[]>
     readonly readPolicyGeneration?: () => number | undefined
+    /** The Profile a send is actually served under, sampled once per admission. */
+    readonly readServingIdentity?: () => ServingMetricsIdentity | undefined
 }
 
 type ActiveProviderExecution = ProviderExecutionRegistration
@@ -58,7 +61,17 @@ export class TaskProviderRequestRoundOwner {
     private readonly activeExecutions = new Map<ProviderRequestRoundAdmission, ActiveProviderExecution>()
     private readonly turnEndExecutions = new Map<string, TurnEndProviderExecution>()
     private readonly completedAdmissions = new Set<ProviderRequestRoundAdmission>()
+    /**
+     * The last attempt handle that reached a terminal, per admission.
+     *
+     * Keyed by the admission instead of by api index: ordinary rounds and auxiliary
+     * sends allocate their indexes from separate counters that both start at zero, so
+     * a bare index would let one send read another send's terminal.
+     */
+    private readonly latestTerminals = new WeakMap<ProviderRequestRoundAdmission, ApiRequestRoundHandle>()
     private readonly pendingCompletions = new Set<Promise<void>>()
+    /** Who served each admitted round, frozen when the send was admitted. */
+    private readonly servingIdentities = new WeakMap<ProviderRequestRoundAdmission, ServingMetricsIdentity>()
     private nextAuxiliaryApiIndex = 0
 
     constructor(private readonly options: TaskProviderRequestRoundOwnerOptions) {}
@@ -66,40 +79,52 @@ export class TaskProviderRequestRoundOwner {
     admit(input: ProviderRequestRoundAdmissionInput): ProviderRequestRoundAdmission {
         const apiIndex = input.apiIndex ?? this.nextAuxiliaryApiIndex++
         const logicalRequestId = `${input.source}:${ulid()}`
-        let latestTerminal: ApiRequestRoundHandle | undefined
-        const createAttemptObserver = (
-            taskAttempt: number,
-            _adapter = input.servedBy ? { provider: input.servedBy.provider } : undefined,
-        ): ProviderAttemptObserver<ApiRequestRoundHandle> => {
-            const policyGeneration = this.options.readPolicyGeneration?.()
-            const observer = this.options.lifecycle.createObserver({
-                logicalRequestId,
-                apiIndex,
-                taskAttempt,
-                role: input.source,
-                ...(policyGeneration === undefined ? {} : { policyGeneration }),
-            })
-            return {
-                beginAttempt: (identity) => observer.beginAttempt(this.projectIdentity(identity)),
-                finishAttempt: async (handle, status, failure) => {
-                    await observer.finishAttempt(handle, status, failure)
-                    latestTerminal = handle
-                },
-            }
-        }
-        return {
-            createAttemptObserver,
+        // Sampled once, at the real send. A Profile switch replaces the handler for the
+        // next request, so reading this later would attribute these tokens to whichever
+        // Profile the Task happened to run under when the batch was finally written.
+        const servingIdentity = this.options.readServingIdentity?.()
+        const admission: ProviderRequestRoundAdmission = {
+            createAttemptObserver: (taskAttempt, _adapter) =>
+                this.createAttemptObserver(admission, input, logicalRequestId, apiIndex, taskAttempt),
             attachExactUsage: (usage) => {
-                if (!latestTerminal) return
+                const terminal = this.latestTerminals.get(admission)
+                if (!terminal) return
                 // The ApiHandler wrapper accumulates a send's usage and delivers it once when the stream closes.
-                this.options.lifecycle.attachExactUsage(latestTerminal, usage)
-                this.options.lifecycle.finalizeTokens(latestTerminal)
+                this.options.lifecycle.attachExactUsage(terminal, usage)
+                this.options.lifecycle.finalizeTokens(terminal)
             },
             expectTools: () => this.options.lifecycle.expectTools(logicalRequestId),
             completeProviderOnly: () => this.options.lifecycle.completeProviderOnly(logicalRequestId),
             completeTools: (summary, toolCalls) => this.options.lifecycle.completeTools(logicalRequestId, summary, toolCalls),
             completeTurnEndAwaitingUser: (summary, toolCalls) =>
                 this.options.lifecycle.completeTurnEndAwaitingUser(logicalRequestId, summary, toolCalls),
+        }
+        if (servingIdentity) this.servingIdentities.set(admission, servingIdentity)
+        return admission
+    }
+
+    /** Observe one attempt of `admission`, keeping its latest terminal under that admission. */
+    private createAttemptObserver(
+        admission: ProviderRequestRoundAdmission,
+        input: ProviderRequestRoundAdmissionInput,
+        logicalRequestId: string,
+        apiIndex: number,
+        taskAttempt: number,
+    ): ProviderAttemptObserver<ApiRequestRoundHandle> {
+        const policyGeneration = this.options.readPolicyGeneration?.()
+        const observer = this.options.lifecycle.createObserver({
+            logicalRequestId,
+            apiIndex,
+            taskAttempt,
+            role: input.source,
+            ...(policyGeneration === undefined ? {} : { policyGeneration }),
+        })
+        return {
+            beginAttempt: (identity) => observer.beginAttempt(this.projectIdentity(identity)),
+            finishAttempt: async (handle, status, failure) => {
+                await observer.finishAttempt(handle, status, failure)
+                this.latestTerminals.set(admission, handle)
+            },
         }
     }
 
@@ -117,8 +142,69 @@ export class TaskProviderRequestRoundOwner {
         return this.ordinaryRounds.get(apiIndex)
     }
 
+    /**
+     * The attempt that last reached its terminal for one ordinary round.
+     *
+     * A consumer that reports the settled numbers of the round reads them through this
+     * handle; the admission itself stays opaque so usage storage does not leak out.
+     */
+    settledRound(apiIndex: number): ApiRequestRoundHandle | undefined {
+        const admission = this.ordinaryRounds.get(apiIndex)
+        return admission === undefined ? undefined : this.latestTerminals.get(admission)
+    }
+
+    /** Who served the send admitted under `apiIndex`, frozen at its admission. */
+    servingIdentityOf(apiIndex: number): ServingMetricsIdentity | undefined {
+        const admission = this.ordinaryRounds.get(apiIndex)
+        return admission === undefined ? undefined : this.servingIdentities.get(admission)
+    }
+
+    /**
+     * Forget a settled round's frozen serving identity once its numbers are emitted.
+     *
+     * Called only when the send is fully finished: its usage, provider and execution
+     * facts all read this identity, and the execution settles after the provider stream.
+     */
+    forgetServingIdentity(apiIndex: number): void {
+        const admission = this.ordinaryRounds.get(apiIndex)
+        if (admission === undefined) return
+        this.servingIdentities.delete(admission)
+        this.latestTerminals.delete(admission)
+    }
+
     attachOrdinaryExactUsage(apiIndex: number, usage: ApiRequestRoundUsage): void {
         this.ordinaryRounds.get(apiIndex)?.attachExactUsage(usage)
+    }
+
+    /**
+     * The attempt that last reached its terminal for one auxiliary admission.
+     *
+     * An auxiliary send settles through its own admission, whose terminal handle is
+     * private to the admission closure. A consumer that re-expresses its numbers needs
+     * the handle, not the admission, so this reads it back by the admission's api index.
+     */
+    settledAuxiliaryRound(admission: ProviderRequestRoundAdmission): ApiRequestRoundHandle | undefined {
+        return this.latestTerminals.get(admission)
+    }
+
+    /** Who served an auxiliary send, frozen at its admission. */
+    servingIdentityOfAdmission(admission: ProviderRequestRoundAdmission): ServingMetricsIdentity | undefined {
+        return this.servingIdentities.get(admission)
+    }
+
+    /**
+     * Who served the send that produced one logical execution.
+     *
+     * The execution settles at the tool or turn boundary, which is later than the
+     * Provider stream. Reading the identity by admission keeps it correct for that
+     * longer life instead of falling back to the Task's opening identity.
+     */
+    servingIdentityOfExecution(execution: { readonly roundId: string }): ServingMetricsIdentity | undefined {
+        for (const admission of this.ordinaryRounds.values()) {
+            if (this.latestTerminals.get(admission)?.roundId !== execution.roundId) continue
+            return this.servingIdentities.get(admission)
+        }
+        return undefined
     }
 
     registerExecution(admission: ProviderRequestRoundAdmission, registration: ProviderExecutionRegistration): void {

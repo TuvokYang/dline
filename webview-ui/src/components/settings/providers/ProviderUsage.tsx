@@ -4,6 +4,8 @@ import { cn } from "@/lib/utils"
 import { formatCurrencyAmount } from "@/utils/currency"
 import {
     formatUsageRetrievedAt,
+    localTodayInput,
+    localTodayOutput,
     ProviderUsageDetails,
     providerUsageRemainingLabel,
     selectEffectiveUsageQuota,
@@ -20,19 +22,27 @@ export function ProviderUsage({
     const [expanded, setExpanded] = useState(false)
     const usage = state.usage
     const effectiveQuota = selectEffectiveUsageQuota(usage?.quotas ?? [])
-    const canExpand = usage?.isAvailable === true
+    // A snapshot with no remote capability can still carry this installation's own
+    // committed numbers, so it must stay expandable and state what it does know.
+    const localUsage = usage ? localTodayInput(usage) !== undefined || localTodayOutput(usage) !== undefined : false
+    const canExpand = usage?.isAvailable === true || localUsage
     const summary = state.loading
         ? "Loading usage…"
         : state.error
-          ? "Usage unavailable"
+          ? localUsage
+              ? "Local usage only"
+              : "Usage unavailable"
           : effectiveQuota
             ? providerUsageRemainingLabel(effectiveQuota)
             : !usage?.planType && usage?.remainingBalance !== undefined
               ? formatCurrencyAmount(usage.remainingBalance, usage.currency)
-              : "No usage data"
+              : localUsage
+                ? "Local usage only"
+                : "No usage data"
     // The snapshot is held until refreshed, so its age is shown next to it
-    // rather than letting an old reading look current.
-    const retrievedAt = formatUsageRetrievedAt(usage?.retrievedAt)
+    // rather than letting an old reading look current. A local-only snapshot states
+    // its own age: the remote reading does not exist, so borrowing its age would lie.
+    const retrievedAt = formatUsageRetrievedAt(usage?.local?.retrievedAt ?? usage?.retrievedAt)
 
     return (
         <div

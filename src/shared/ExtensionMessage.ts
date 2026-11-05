@@ -273,6 +273,44 @@ export interface AccountUsageData {
     dailyOutputTokens?: number
     dailyCacheHitTokens?: number
     dailyCacheMissTokens?: number
+    /**
+     * Usage measured from this installation's own committed facts.
+     *
+     * It is separate from the remote balance above rather than merged into it: the
+     * balance is read from the provider, these numbers are this installation's own
+     * record, and a surface must be able to show one while the other is unavailable.
+     */
+    local?: AccountUsageLocalData
+}
+
+/**
+ * Today's usage derived from facts this installation already committed.
+ *
+ * Every field is a measured value. A missing number means the source did not report
+ * it, which is why `usageReported` exists instead of treating zero as absent, and why
+ * `degraded` accompanies numbers that may be incomplete.
+ */
+export interface AccountUsageLocalData {
+    /** Fresh input; cache reads and writes are reported separately and never overlap it. */
+    inputTokens: number
+    /** Generated output, already including thoughts tokens. */
+    outputTokens: number
+    thoughtsTokens?: number
+    cacheWriteTokens?: number
+    cacheReadTokens?: number
+    /** Input the provider reported as cache hits and misses, when it reports them. */
+    cacheHitTokens?: number
+    cacheMissTokens?: number
+    /** True when the provider reported usage at all; absence is not zero. */
+    usageReported: boolean
+    /** Inclusive legacy input folded in from the pre-migration day ledger. */
+    legacyInputTokens?: number
+    /** True when an older day total contributes and cannot be split by model or key. */
+    legacyPartial?: boolean
+    /** True when the source could not be read completely, so the numbers are incomplete. */
+    degraded?: boolean
+    /** ISO timestamp of the read that produced these numbers. */
+    retrievedAt?: string
 }
 
 /** Single provider-owned reset credit that can be consumed through the shared usage action. */

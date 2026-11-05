@@ -1,6 +1,6 @@
 import type { AccountUsage, ApiHandler } from "@core/api"
+import type { AccountUsageLocalData } from "@shared/ExtensionMessage"
 import type { ApiProfile } from "@shared/proto/dline/profile"
-import type { TokenIncrement } from "./daily-token-ledger"
 
 /** The handler surface the polling policy depends on. */
 type AccountUsageSource = Pick<ApiHandler, "getAccountUsage" | "supportsAccountUsagePolling">
@@ -53,18 +53,71 @@ export function decideAccountUsageRead(
 export function decorateProviderAccountUsage(
     profile: ApiProfile,
     usage: AccountUsage | undefined,
-    localDailyTokens?: TokenIncrement,
+    localSnapshot?: AccountUsageLocalData,
 ): AccountUsage | undefined {
-    if (!usage) return undefined
-    return applyLocalDailyTokens(
-        {
-            ...usage,
-            profileId: profile.id,
-            providerId: profile.provider,
-            retrievedAt: usage.retrievedAt ?? new Date().toISOString(),
+    const returnedAt = usage?.retrievedAt ?? new Date().toISOString()
+    // A failed or skipped provider read must not hide numbers this installation
+    // measured itself: the local ledger is independent of the remote endpoint, so it
+    // still publishes a snapshot that says exactly that.
+    // `currency` is required by the DTO but has no meaning without a remote balance
+    // figure; an empty string keeps it present while claiming no amount.
+    const decorated: AccountUsage = {
+        ...usage,
+        profileId: profile.id,
+        providerId: profile.provider,
+        currency: usage?.currency ?? "",
+        retrievedAt: returnedAt,
+    }
+    if (!usage && localSnapshot === undefined) return undefined
+    // The local snapshot describes this installation's own record, so it is attached
+    // for every provider. A balance-style provider reports no daily token counts at
+    // all, and that is exactly the case where a locally measured total is the only
+    // number the user can see. It is passed through whole: the ledger reports cache
+    // segments and a legacy baseline as well, and rebuilding the snapshot from two
+    // fields here would silently drop them.
+    const withLocal = localSnapshot === undefined ? decorated : { ...decorated, local: localSnapshot }
+    return applyLocalDailyTokens(withLocal, localSnapshot)
+}
+
+/**
+ * Attach this installation's own committed usage to a snapshot.
+ *
+ * Every provider gets `local`, including the balance-style ones that report no daily
+ * token counts at all: the numbers come from Dline's ledger, not from the provider, so a
+ * balance read and a local total are independent facts that a surface shows side by
+ * side. A provider that never reported usage still gets a snapshot whose
+ * `usageReported` is false, which is what keeps "nothing measured" distinguishable
+ * from "measured zero".
+ */
+export function attachLocalUsageSnapshot(
+    usage: AccountUsage,
+    snapshot: {
+        readonly inputTokens: number
+        readonly outputTokens: number
+        readonly cacheWriteTokens?: number
+        readonly cacheReadTokens?: number
+        readonly cacheHitTokens?: number
+        readonly cacheMissTokens?: number
+        readonly returnedAt: string
+    },
+): AccountUsage {
+    return {
+        ...usage,
+        local: {
+            inputTokens: snapshot.inputTokens,
+            outputTokens: snapshot.outputTokens,
+            ...(snapshot.cacheWriteTokens === undefined ? {} : { cacheWriteTokens: snapshot.cacheWriteTokens }),
+            ...(snapshot.cacheReadTokens === undefined ? {} : { cacheReadTokens: snapshot.cacheReadTokens }),
+            ...(snapshot.cacheHitTokens === undefined ? {} : { cacheHitTokens: snapshot.cacheHitTokens }),
+            ...(snapshot.cacheMissTokens === undefined ? {} : { cacheMissTokens: snapshot.cacheMissTokens }),
+            // A snapshot exists only because the ledger was actually read, so a real
+            // zero is a report of zero rather than an absent measurement. Deriving the
+            // flag from a positive count conflated "reported 0" with "never reported",
+            // and the UI then hid a genuinely quiet day.
+            usageReported: true,
+            retrievedAt: snapshot.returnedAt,
         },
-        localDailyTokens,
-    )
+    }
 }
 
 /** A subscription reports quota windows or a plan, never a balance-style token count. */
@@ -79,7 +132,10 @@ export function isSubscriptionUsage(usage: AccountUsage): boolean {
  * the requests Dline itself sent. A provider that reports its own daily
  * counts keeps them, and balance providers are left untouched.
  */
-export function applyLocalDailyTokens(usage: AccountUsage, localDailyTokens: TokenIncrement | undefined): AccountUsage {
+export function applyLocalDailyTokens(
+    usage: AccountUsage,
+    localDailyTokens: Pick<AccountUsageLocalData, "inputTokens" | "outputTokens"> | undefined,
+): AccountUsage {
     if (!localDailyTokens || !isSubscriptionUsage(usage)) return usage
     // Zero is not a report, it is the absence of one. A provider whose model
     // matching fails returns a defined zero for the day, and treating that as

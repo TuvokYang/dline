@@ -156,10 +156,28 @@ describe("OpenAiCodexProvider OAUTH control", () => {
         const signOut = screen.getByRole("button", { name: "Sign out" })
         expect(accountCard).toContainElement(signInAgain)
         expect(accountCard).toContainElement(signOut)
-        // The Controller reads usage once when the Profile becomes active. The
-        // panel remounts on every expand and tab switch, so it shows that
-        // snapshot and reads only when the user refreshes.
-        expect(mocks.getUsage).not.toHaveBeenCalled()
+        await waitFor(() => expect(mocks.getUsage).toHaveBeenCalledWith({ profileId: profile.id }))
+    })
+
+    it("automatically refreshes account usage while signed in", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true })
+        const view = renderProvider
+        mocks.getStatus.mockResolvedValue({
+            profileId: profile.id,
+            status: OpenAiCodexAuthStatus.OPEN_AI_CODEX_AUTH_STATUS_AUTHENTICATED,
+        })
+        const rendered = view()
+        try {
+            await waitFor(() => expect(mocks.getUsage).toHaveBeenCalledTimes(1))
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(60_000)
+            })
+            expect(mocks.getUsage).toHaveBeenCalledTimes(2)
+            expect(screen.getByRole("button", { name: "Usage 7 day 17%" })).toBeInTheDocument()
+        } finally {
+            rendered.unmount()
+            vi.useRealTimers()
+        }
     })
 
     it("opens the OAUTH dialog immediately and then shows the transient authorization URI", async () => {

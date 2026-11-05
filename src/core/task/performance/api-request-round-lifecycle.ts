@@ -32,6 +32,17 @@ export interface ApiRequestRoundScopeInput {
 }
 
 /**
+ * Told about each logical execution the Task settles.
+ *
+ * It is the same terminal record Usage already publishes, so a unified row cannot
+ * disagree with the execution the Task's own tables hold. Absent for an assembly that
+ * records no unified metrics.
+ */
+export interface LogicalExecutionObserver {
+    observe(execution: ApiResponseExecutionRecord, roundId: string): void
+}
+
+/**
  * Bridges transport-level attempt observation to Task-local round persistence
  * and forwards each Provider fact in order. It owns no clock: the usage port
  * decides when tokens are final, so logical settlement never gates a send.
@@ -54,6 +65,7 @@ export class ApiRequestRoundLifecycle {
         private readonly tracker: ApiRequestRoundTracker,
         private readonly executions?: ApiResponseExecutionLifecycle,
         private readonly usage?: ProviderAttemptUsagePort,
+        private readonly executionsObserved?: LogicalExecutionObserver,
     ) {}
 
     createObserver(input: ApiRequestRoundScopeInput): ProviderAttemptObserver<ApiRequestRoundHandle> {
@@ -246,6 +258,13 @@ export class ApiRequestRoundLifecycle {
         }
         if (!execution) return
         this.publish({ kind: "logical_execution", handle, execution, ...(toolCalls ? { toolCalls: [...toolCalls] } : {}) })
+        // The unified level counts the same terminal. A failing observer must not stop
+        // Usage from receiving the fact it was told about, so it is isolated.
+        try {
+            this.executionsObserved?.observe(execution, handle.roundId)
+        } catch (error) {
+            Logger.debug(`[usage] logical execution of ${handle.roundId} could not be observed: ${String(error)}`)
+        }
     }
 
     /** Usage is an observer: a failing consumer never breaks the Task's own round persistence. */

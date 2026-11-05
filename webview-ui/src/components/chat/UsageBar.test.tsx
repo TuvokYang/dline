@@ -202,6 +202,84 @@ describe("UsageBar", () => {
         expect(document.querySelector('[data-slot="popover-content"]')).not.toBeInTheDocument()
     })
 
+    it("shows the committed local total when the provider exposes no remote capability", () => {
+        mockedContext.value = {
+            accountUsage: {
+                profileId: "profile-local",
+                providerId: "deepseek",
+                currency: "",
+                local: {
+                    inputTokens: 1_200,
+                    outputTokens: 300,
+                    usageReported: true,
+                },
+            },
+        }
+
+        render(<UsageBar />)
+
+        // Until now the bar returned nothing without a quota or a balance, so a
+        // Profile whose only reading is this installation's own facts had no bar at
+        // all. The local day total is a real reading and belongs in the summary.
+        expect(screen.getByRole("button", { name: "Provider usage" })).toHaveTextContent("Today: 1.2K in")
+    })
+
+    it("keeps the remote summary when both a quota and local facts exist", () => {
+        mockedContext.value = {
+            accountUsage: {
+                ...usage([{ ...codexFiveHour, used: 20, limit: 100 }]),
+                local: { inputTokens: 900, outputTokens: 100, usageReported: true },
+            },
+        }
+
+        render(<UsageBar />)
+
+        // The account's own limit is what blocks the next request, so it stays the
+        // headline; the local numbers are still reachable in the expanded details.
+        expect(screen.getByRole("button", { name: "Provider usage" })).toHaveTextContent("5h: 80%")
+    })
+
+    it("shows a local total in the details even when the remote read failed", async () => {
+        mockedContext.value = {
+            accountUsage: {
+                profileId: "profile-local",
+                providerId: "deepseek",
+                currency: "",
+                local: {
+                    inputTokens: 700,
+                    outputTokens: 200,
+                    usageReported: true,
+                    retrievedAt: new Date().toISOString(),
+                },
+            },
+        }
+        usageServiceMocks.getProviderUsage.mockRejectedValue(new Error("network down"))
+
+        render(<UsageBar />)
+        fireEvent.click(screen.getByRole("button", { name: "Provider usage" }))
+
+        const menu = await screen.findByRole("dialog", { name: "Provider usage details" })
+        expect(within(menu).getByText(/Today In: 700/)).toBeInTheDocument()
+        // The failed remote read must not erase the numbers already committed locally.
+        expect(within(menu).queryByText("Usage unavailable")).not.toBeInTheDocument()
+    })
+
+    it("does not claim a quiet day when the local record reported no usage", () => {
+        mockedContext.value = {
+            accountUsage: {
+                profileId: "profile-quiet",
+                providerId: "deepseek",
+                currency: "",
+                local: { inputTokens: 0, outputTokens: 0, usageReported: false },
+            },
+        }
+
+        const { container } = render(<UsageBar />)
+
+        // An unmeasured day is not a zero day, and it is not a bar worth showing.
+        expect(container).toBeEmptyDOMElement()
+    })
+
     it("applies the explicit refresh response without waiting for a state-stream update", async () => {
         mockedContext.value = {
             accountUsage: usage([{ ...codexFiveHour, used: 20, limit: 100 }]),
