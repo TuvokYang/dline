@@ -50,8 +50,10 @@ describe("refreshOpenAiModels", () => {
     })
 
     it("returns the listed model ids", async () => {
+        // Catalog discovery caches per connection identity, so a distinct key is
+        // required to exercise the listing parse instead of the first response.
         const { values } = await captureListingRequest(
-            OpenAiModelsRequest.create({ baseUrl: "https://gateway.example.test", apiKey: "secret" }),
+            OpenAiModelsRequest.create({ baseUrl: "https://gateway.example.test", apiKey: "secret-tenant-b" }),
             { data: [{ id: "gpt-e2e" }, { id: "gpt-other" }] },
         )
 

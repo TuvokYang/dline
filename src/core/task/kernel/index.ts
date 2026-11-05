@@ -1,4 +1,5 @@
-export { dueAwayInteraction } from "./away"
+export type { TimedDialogInteraction } from "./away"
+export { dueAwayInteraction, hasInteractionDeadline } from "./away"
 export { hydrate, requiredPayloadRefs } from "./hydrate"
 export { ALL_HALT_PARTICIPANTS } from "./machines/halt"
 export { openTransitionDraft, replyableDialog } from "./machines/transition-draft"

@@ -154,13 +154,14 @@ it("preserves model declarations through a Hicap refresh", async () => {
             supportsReasoning: false,
             thinking: { supported: false, mode: "both", effortLevels: [], defaultEnabled: false, minBudget: 0, maxBudget: 0 },
         },
+        // The retired `metered` envelope is consumed at the read boundary, so the
+        // published declaration keeps only the canonical currency and strategy.
         pricing: {
-            metered: {
-                currency: "USD",
-                strategy: { flat: { prices: { inputPrice: 0, outputPrice: 0, thinkingOutputPrice: 0 } } },
-            },
+            currency: "USD",
+            strategy: { flat: { prices: { inputPrice: 0, outputPrice: 0, thinkingOutputPrice: 0 } } },
         },
     })
+    expect(models.complete).not.toHaveProperty("pricing.metered")
     expect(models["legacy-unknown"].capabilities).not.toHaveProperty("supportsReasoning")
     expect(models["legacy-unknown"].capabilities).not.toHaveProperty("thinking")
     expect(models["legacy-thinking"].capabilities.thinking).toEqual({

@@ -1,5 +1,5 @@
 import type { TaskEvent, TaskState } from "../kernel"
-import { dueAwayInteraction, hasInteractionDeadline, type TimedDialogInteraction } from "../kernel/away"
+import { dueAwayInteraction, hasInteractionDeadline, type TimedDialogInteraction } from "../kernel"
 
 export interface TaskDeadlineClock {
     now(): number
