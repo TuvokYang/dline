@@ -5,11 +5,17 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 ## [Unreleased]
 
 ### Added
-- Added the OpenCode provider: one Profile covers its paid text models on a pay-as-you-go balance or a Go, Go Plus, or Go Teams subscription, and the same model is reachable through OpenAI Chat Completions, OpenAI Responses, or Anthropic Messages; the plan decides which models and prices apply
 - Added experimental Away Mode: enable it in Settings → Features → Experimental, then send `/away` to keep the current task working while you are away, and new questions enter the mode automatically after ten minutes without an answer; workspace commands then skip approval while commands outside the workspace still need it and are refused after one minute, with existing permissions, ignore rules and hooks unchanged
 
 ### Changed
 - Aggressive rendering offers three folding levels: standard rows, activity folded between messages, and activity folded across a whole user turn; bulk expand and collapse are available, live work, failures, pending approvals and checked-out checkpoints stay visible, and expanding everything restores the standard order
+
+## [0.13.0]
+
+### Added
+- Added the OpenCode provider: one Profile covers its paid text models on a pay-as-you-go balance or a Go, Go Plus, or Go Teams subscription, and the same model is reachable through OpenAI Chat Completions, OpenAI Responses, or Anthropic Messages; the plan decides which models and prices apply
+
+### Changed
 - Remote model lists are cached for 30 minutes in the current extension process per catalog and connection; the next access after expiry refreshes them, and failures do not trigger repeated requests within the window
 - Subscription usage shows the provider's own readings without filling unreported daily totals from local tokens
 

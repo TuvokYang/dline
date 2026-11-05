@@ -14,6 +14,12 @@ Dline 侧边栏的 What's New 对话框展示本目录下英文版 `WHATS_NEW_en
   保持相同的版本号和相同的条目数量，两项均由单元测试校验。
 -->
 
+## 0.13.0
+
+- **OpenCode 服务商**：一个 Profile 覆盖其付费文本模型，支持按量余额与 Go、Go Plus、Go Teams 订阅；同一模型可从 OpenAI Chat Completions、OpenAI Responses 或 Anthropic Messages 中选择接入方式。
+- **Thinking 阅读更顺手**：支持基础 Markdown 排版，生成时跟随最新一行，上翻暂停跟随、回到底部恢复；点击正文不再误触发图片加载或文件打开。
+- **设置与 Profile 保存更可靠**：Done 仅关闭页面，不再等待或重复保存；Profile 保存失败会显示错误并回读已保存值，编辑列表仍可继续使用。
+
 ## 0.12.2
 
 - **按钮交互优化**：发送、恢复、排队、取消共用一个按钮，任务运行时把草稿排入队列，悬停排队按钮 3 秒后切换为取消。

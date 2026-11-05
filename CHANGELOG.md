@@ -5,11 +5,17 @@
 ## [Unreleased]
 
 ### Added
-- 新增 OpenCode 服务商：一个 Profile 覆盖其付费文本模型，支持按量余额与 Go、Go Plus、Go Teams 订阅；同一模型可选 OpenAI Chat Completions、OpenAI Responses 或 Anthropic Messages 接入，套餐决定可用模型与价格
 - 新增实验性 Away Mode：在 Settings → Features → Experimental 开启后，用 `/away` 让当前任务在你离开时继续工作，新问题十分钟无人应答后自动进入；离开期间项目内命令免审批，项目外命令一分钟无人处理即拒绝，原有权限、禁用、ignore 与 hook 约束不变
 
 ### Changed
 - Aggressive rendering 提供三档折叠：标准展示、按消息间隔折叠活动、按整个用户回合折叠；支持批量展开与收起，进行中、失败、待审批与已检出的检查点始终可见，全部展开后恢复标准顺序
+
+## [0.13.0]
+
+### Added
+- 新增 OpenCode 服务商：一个 Profile 覆盖其付费文本模型，支持按量余额与 Go、Go Plus、Go Teams 订阅；同一模型可选 OpenAI Chat Completions、OpenAI Responses 或 Anthropic Messages 接入，套餐决定可用模型与价格
+
+### Changed
 - 远端模型列表在当前扩展进程内缓存 30 分钟，同一目录与连接不重复拉取；到期后下次访问再刷新，失败也不会在窗口内反复请求
 - 订阅用量按服务商实际读数展示，不再用本地 token 补充服务商未报告的每日用量
 

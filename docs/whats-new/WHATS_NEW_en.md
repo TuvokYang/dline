@@ -15,6 +15,12 @@ Format rules, enforced by webview-ui/vite-whats-new.ts at build time:
   Unit tests enforce both.
 -->
 
+## 0.13.0
+
+- **OpenCode provider**: one Profile covers its paid text models on a pay-as-you-go balance or a Go, Go Plus, or Go Teams subscription, and each model can be reached over OpenAI Chat Completions, OpenAI Responses, or Anthropic Messages.
+- **Easier Thinking reading**: basic Markdown layout, follow the newest line while content streams, pause following when you scroll up and resume at the bottom, and no more image loading or file opening from clicking the text.
+- **More reliable settings and Profile saves**: Done only closes the page without waiting or saving again, and a failed Profile save shows an error and reloads the saved values without removing the editor.
+
 ## 0.12.2
 
 - **Composer button interaction**: send, restore, queue, and cancel share a single button that queues the draft while a task runs and turns into cancel after a three-second hover on the queue state.
