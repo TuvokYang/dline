@@ -47,7 +47,10 @@ function placeBySeq(held: readonly TrajectoryTurnSummary[], update: TrajectoryUp
  */
 export function isTrajectoryShown(log: TrajectoryLog | undefined): log is TrajectoryLog {
     if (log?.state === TrajectoryState.TRAJECTORY_STATE_READY) return true
-    return log?.state === TrajectoryState.TRAJECTORY_STATE_BUILDING && log.turns.length > 0
+    return (
+        (log?.state === TrajectoryState.TRAJECTORY_STATE_BUILDING || log?.state === TrajectoryState.TRAJECTORY_STATE_ERROR) &&
+        log.turns.length > 0
+    )
 }
 
 /** Group turns into attempts: an attempt is the run of turns sharing an attemptSeq. */
@@ -60,6 +63,8 @@ export function toTrajectoryAttempts(turns: readonly TrajectoryTurnSummary[]): T
             attempts.push(attempt)
         }
         attempt.turns.push({
+            seq: turn.seq,
+            anchorIndex: turn.anchorIndex,
             anchorTs: turn.anchorTs,
             prompt: turn.prompt,
             rounds: turn.rounds,

@@ -5,6 +5,8 @@ const JUMP_LABEL_PREFIX = "Jump to message: "
 
 /** One bar of the rail: the user message it jumps to. */
 export interface TrajectoryRailTurn {
+    readonly seq: number
+    readonly anchorIndex?: number
     readonly anchorTs: number
     readonly prompt: string
 }
@@ -32,13 +34,19 @@ export function trajectoryRail(sidebar: Frame) {
         const groups = await rail.getByTestId("trajectory-attempt").evaluateAll((nodes) =>
             nodes.map((node) =>
                 Array.from(node.querySelectorAll('[data-testid="trajectory-turn"]')).map((button) => ({
+                    seq: Number(button.getAttribute("data-turn-seq")),
+                    anchorIndex: button.hasAttribute("data-turn-index")
+                        ? Number(button.getAttribute("data-turn-index"))
+                        : undefined,
                     anchorTs: Number(button.getAttribute("data-turn-ts")),
                     label: button.getAttribute("aria-label") ?? "",
                 })),
             ),
         )
         return groups.map((turns) =>
-            turns.map(({ anchorTs, label }) => ({
+            turns.map(({ seq, anchorIndex, anchorTs, label }) => ({
+                seq,
+                anchorIndex,
                 anchorTs,
                 prompt: label.startsWith(JUMP_LABEL_PREFIX) ? label.slice(JUMP_LABEL_PREFIX.length) : label,
             })),

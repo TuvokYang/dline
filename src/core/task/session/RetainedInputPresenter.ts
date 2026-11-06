@@ -41,8 +41,9 @@ export class RetainedInputPresenter implements RetainedInputPresentationPort {
         return {
             commit: async () => {
                 if (this.messages.clineMessages.some((message) => message.interactionId === input.deliveryId)) return
-                await this.messages.addToClineMessages(row)
-                await this.messages.flushUiMessages()
+                // Journal intake reserved this id. Later admission compaction or
+                // provider rows may already be visible when compose becomes durable.
+                await this.messages.addToClineMessagesOrdered(row)
             },
         }
     }

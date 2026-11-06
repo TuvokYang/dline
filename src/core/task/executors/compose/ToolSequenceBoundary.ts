@@ -1,5 +1,4 @@
 import type { ComposePort, ComposeRoundInput, ComposeRoundResult } from "./ComposeCommandExecutor"
-import type { RetainedInputPresentationCommit } from "./RetainedInputPresentationPort"
 
 /**
  * The tool state that decides whether a call follows directly on the previous one.
@@ -39,10 +38,6 @@ export class ToolSequenceBoundaryCompose implements ComposePort {
     compose(input: ComposeRoundInput): Promise<ComposeRoundResult> {
         if (roundInterruptsToolSequence(input)) this.sequence.interrupt()
         return this.inner.compose(input)
-    }
-
-    preparePresentation(input: ComposeRoundInput): Promise<RetainedInputPresentationCommit | undefined> {
-        return this.inner.preparePresentation(input)
     }
 
     rollbackRetainedQueue(input: ComposeRoundInput): Promise<"released" | "uncertain"> {

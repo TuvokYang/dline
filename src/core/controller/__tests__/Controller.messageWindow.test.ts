@@ -106,4 +106,47 @@ describe("Controller.materializeMessageWindow", () => {
 
         expect(window).toHaveLength(2)
     })
+
+    it("keeps a synchronous raw window whose source indexes need not equal its page coordinates", () => {
+        const title: UiMessage = { ts: 100, type: "say", say: "task", messageIndex: 0 }
+        const window: UiMessage[] = [
+            title,
+            { ts: 200, type: "say", say: "tool", messageIndex: 2 },
+            { ts: 250, type: "say", say: "checkpoint_created", partial: true },
+            { ts: 300, type: "say", say: "user_feedback", messageIndex: 1 },
+        ]
+        const subject: WindowSubject = {
+            getCurrentTaskMessages: () => window,
+            task: { owners: { messages: { clineMessages: window } } },
+        }
+        const result = materializeMessageWindow(subject)
+        expect(result).not.toHaveProperty("then")
+        expect(result.firstItemIndex).toBe(0)
+        expect(result.totalCount).toBe(4)
+        expect(result.messages.map((message) => message.messageIndex)).toEqual([0, 2, undefined, 1])
+        expect(result.messages[3]).toBe(window[3])
+        expect(result.titleMessage).toBe(title)
+    })
+
+    it("keeps canonical history title0 separate from a body window beginning at source60", () => {
+        const title: UiMessage = { ts: 1, type: "say", say: "task", messageIndex: 0 }
+        const window: UiMessage[] = [
+            { ts: 61, type: "say", say: "text", messageIndex: 60 },
+            { ts: 62, type: "say", say: "text", messageIndex: 61 },
+        ]
+        const subject: WindowSubject = {
+            getCurrentTaskMessages: () => window,
+            historyDisplaySession: {
+                getMessages: () => window,
+                getMessageCount: () => 62,
+                getTaskTitleMessage: () => title,
+                historyItem: {},
+            },
+        }
+        const result = materializeMessageWindow(subject)
+        expect(result.firstItemIndex).toBe(60)
+        expect(result.totalCount).toBe(62)
+        expect(result.titleMessage?.messageIndex).toBe(0)
+        expect(result.messages.map((message) => message.messageIndex)).toEqual([60, 61])
+    })
 })

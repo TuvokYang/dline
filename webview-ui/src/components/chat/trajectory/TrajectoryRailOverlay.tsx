@@ -1,5 +1,6 @@
 import { memo } from "react"
 import { ConversationTrajectoryRail } from "./ConversationTrajectoryRail"
+import type { TrajectoryTurn } from "./trajectory-model"
 import { useActiveTurn } from "./useActiveTurn"
 import { useTrajectory } from "./useTrajectory"
 import { useTrajectoryRailViewport } from "./useTrajectoryRailViewport"
@@ -9,7 +10,7 @@ interface TrajectoryRailOverlayProps {
     taskInstanceId?: string
     /** The chat list's scroll element; the rail follows its scrolling and its top message. */
     scroller: HTMLElement | null
-    onSelectTurn: (anchorTs: number) => void
+    onSelectTurn: (turn: TrajectoryTurn) => void
 }
 
 /**
@@ -25,11 +26,11 @@ export const TrajectoryRailOverlay = memo(function TrajectoryRailOverlay({
     onSelectTurn,
 }: TrajectoryRailOverlayProps) {
     const attempts = useTrajectory(taskId, taskInstanceId)
-    const { scrolling, topVisibleTs } = useTrajectoryRailViewport(scroller)
-    const activeTurnTs = useActiveTurn(attempts, topVisibleTs)
+    const { scrolling, topVisibleIndex } = useTrajectoryRailViewport(scroller)
+    const activeTurnSeq = useActiveTurn(attempts, topVisibleIndex)
     return (
         <ConversationTrajectoryRail
-            activeTurnTs={activeTurnTs}
+            activeTurnSeq={activeTurnSeq}
             attempts={attempts}
             onSelectTurn={onSelectTurn}
             visible={scrolling}

@@ -17,10 +17,10 @@ const PREVIEW_CLOSE_DELAY_MS = 80
 interface ConversationTrajectoryRailProps {
     attempts: readonly TrajectoryAttempt[]
     /** The turn whose user message is at the top of the viewport. */
-    activeTurnTs?: number
+    activeTurnSeq?: number
     /** Whether the list is being scrolled. A rail the pointer or focus is on stays shown either way. */
     visible: boolean
-    onSelectTurn: (anchorTs: number) => void
+    onSelectTurn: (turn: TrajectoryTurn) => void
 }
 
 /**
@@ -36,7 +36,7 @@ interface ConversationTrajectoryRailProps {
  * spacing does not fit, the bars scroll inside the rail, follow the current
  * turn, and fade out at each edge that hides more.
  */
-export function ConversationTrajectoryRail({ attempts, activeTurnTs, visible, onSelectTurn }: ConversationTrajectoryRailProps) {
+export function ConversationTrajectoryRail({ attempts, activeTurnSeq, visible, onSelectTurn }: ConversationTrajectoryRailProps) {
     // Keeps the rail up while the reader is using it, after the scroll that revealed it has stopped.
     const [engaged, setEngaged] = useState(false)
     // State rather than refs: the rail renders nothing until the first turn arrives, and the
@@ -45,7 +45,7 @@ export function ConversationTrajectoryRail({ attempts, activeTurnTs, visible, on
     const [scroller, setScroller] = useState<HTMLDivElement | null>(null)
     const barGap = useCompressedBarGap(rail, scroller, countBarGaps(attempts))
     const edges = useScrollEdges(scroller)
-    useFollowActiveTurn(scroller, activeTurnTs, engaged)
+    useFollowActiveTurn(scroller, activeTurnSeq, engaged)
 
     if (attempts.length === 0) return null
 
@@ -85,9 +85,9 @@ export function ConversationTrajectoryRail({ attempts, activeTurnTs, visible, on
                         style={{ rowGap: barGap }}>
                         {attempt.turns.map((turn, turnIndex) => (
                             <TrajectoryBar
-                                active={turn.anchorTs === activeTurnTs}
+                                active={turn.seq === activeTurnSeq}
                                 attemptNumber={attemptIndex + 1}
-                                key={turn.anchorTs}
+                                key={turn.seq}
                                 onSelect={onSelectTurn}
                                 turn={turn}
                                 turnNumber={turnIndex + 1}
@@ -110,7 +110,7 @@ interface TrajectoryBarProps {
     turnNumber: number
     attemptNumber: number
     active: boolean
-    onSelect: (anchorTs: number) => void
+    onSelect: (turn: TrajectoryTurn) => void
 }
 
 function TrajectoryBar({ turn, turnNumber, attemptNumber, active, onSelect }: TrajectoryBarProps) {
@@ -122,8 +122,10 @@ function TrajectoryBar({ turn, turnNumber, attemptNumber, active, onSelect }: Tr
                     aria-label={`Jump to message: ${turn.prompt}`}
                     className="group flex h-2 w-full cursor-pointer items-center justify-center border-0 bg-transparent p-0"
                     data-testid="trajectory-turn"
+                    data-turn-index={turn.anchorIndex}
+                    data-turn-seq={turn.seq}
                     data-turn-ts={turn.anchorTs}
-                    onClick={() => onSelect(turn.anchorTs)}
+                    onClick={() => onSelect(turn)}
                     type="button">
                     <span
                         className={cn(

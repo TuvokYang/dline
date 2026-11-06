@@ -2,12 +2,12 @@ import type { UiMessage } from "@shared/ExtensionMessage"
 import { render } from "@testing-library/react"
 import React from "react"
 import { describe, expect, it, vi } from "vitest"
-import { activeTurnAnchor } from "@/components/chat/trajectory/useActiveTurn"
+import { activeTurnSeq } from "@/components/chat/trajectory/useActiveTurn"
 import type { MessageHandlers } from "../../types/chatTypes"
 import { isActivityFold } from "../../utils/chatRowKinds"
 import { groupChatRows } from "../../utils/messageUtils"
 import { rowIdentity } from "../../utils/rowCoordinate"
-import { ROW_TS_ATTRIBUTE } from "../../utils/viewportRowAnchor"
+import { ROW_SOURCE_INDEX_ATTRIBUTE, ROW_TS_ATTRIBUTE } from "../../utils/viewportRowAnchor"
 import {
     checkOutFileTree,
     discardedRequests,
@@ -196,17 +196,23 @@ describe("activity folds across a checkpoint restore", () => {
 })
 
 describe("trajectory turns over activity folds", () => {
-    /** The turn each fold of the multi-turn transcript belongs to, listed by hand. */
+    // Fixture source ordinals are attached before the renderer filters/folds any rows.
+    const transcript = multiTurnTranscript.map((message, messageIndex) => ({ ...message, messageIndex }))
+    const USER_TURNS = [
+        { seq: 0, anchorIndex: 0 },
+        { seq: 1, anchorIndex: 29 },
+        { seq: 2, anchorIndex: 40 },
+    ]
+    /** The seq each fold belongs to, independent of its first timestamp and render offset. */
     const TURN_OF_FOLD: Record<string, number> = {
-        // Whole turns split only at failures, checked-out restore points and live rows.
-        "turn:10": 1,
-        "turn:60": 1,
-        "turn:71": 70,
-        "turn:82": 70,
+        "turn:10": 0,
+        "turn:60": 0,
+        "turn:71": 1,
+        "turn:82": 1,
     }
 
     it("draws every loaded user anchor as a row of its own", () => {
-        const { container } = renderRows(multiTurnTranscript, {})
+        const { container } = renderRows(transcript, {})
 
         for (const anchor of USER_ANCHORS) {
             const row = container.querySelector(`[${ROW_TS_ATTRIBUTE}="${anchor}"]`)
@@ -219,14 +225,15 @@ describe("trajectory turns over activity folds", () => {
     })
 
     it("marks the turn that holds a fold when the fold is the top visible row", () => {
-        const { container } = renderRows(multiTurnTranscript, {})
+        const { container } = renderRows(transcript, {})
 
         const folds = Array.from(container.querySelectorAll<HTMLElement>("[data-fold-id]"))
         expect(folds.map((fold) => fold.dataset.foldId)).toEqual(Object.keys(TURN_OF_FOLD))
         for (const fold of folds) {
-            // The rail reads the top visible row's ts from its row wrapper, as for every other row.
-            const topVisibleTs = Number(fold.closest<HTMLElement>(`[${ROW_TS_ATTRIBUTE}]`)?.getAttribute(ROW_TS_ATTRIBUTE))
-            expect(activeTurnAnchor(USER_ANCHORS, topVisibleTs)).toBe(TURN_OF_FOLD[fold.dataset.foldId ?? ""])
+            const wrapper = fold.closest<HTMLElement>(`[${ROW_SOURCE_INDEX_ATTRIBUTE}]`)
+            const sourceIndex = Number(wrapper?.getAttribute(ROW_SOURCE_INDEX_ATTRIBUTE))
+            expect(wrapper).not.toBeNull()
+            expect(activeTurnSeq(USER_TURNS, sourceIndex)).toBe(TURN_OF_FOLD[fold.dataset.foldId ?? ""])
         }
     })
 })

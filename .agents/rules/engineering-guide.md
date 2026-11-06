@@ -53,6 +53,19 @@ Before editing, inspect the owning implementation, tests, generated contracts, a
 
 Check `package.json` before choosing a verification command. Current primary scripts include `check-types`, `lint`, `format`, `test:smoke`, `test:run`, `test:e2e:work`, `protos`, `package`, and `vsix`.
 
+## Error-handling boundaries
+
+- Handle each failure at one owning boundary: the caller that can recover, translate it into the operation's public failure, or terminate that operation. When an outer call boundary already catches the failure, inner functions must propagate it rather than catch it again.
+- Do not scatter `try-catch` blocks through a call chain. Catching only to log and rethrow, wrap the same error again, return an unexplained default, or hide a broken invariant is prohibited. Report a failure once at its owning boundary.
+- Do not add speculative `try-catch` around deterministic computations, statically checked operations, or operations whose validated inputs and contract rule out the failure being caught. Type checking does not make filesystem, network, process, or persistence operations infallible; handle their actual failures at the appropriate boundary.
+- Use `finally` for required resource cleanup. A distinct rollback or recovery operation belongs to the boundary that owns it, not to repeated defensive catches in its callees. Cancellation must retain its existing meaning and must not be converted into success.
+
+## Spec design: do not evade defects with defensive programming
+
+Do not use defensive programming to evade root-cause fixes or required behavior. A spec must not invent unnecessary invariants, then prescribe filtering, disabling features, dropping data, or stale-data substitution to satisfy them. Limit failure to the operation that actually failed.
+
+**Example:** a navigator needs message-index jumps and per-interval tool counts, not strictly increasing timestamps. Declaring timestamp disorder a permanent error that hides the navigator is a contract defect; filtering points or showing an old snapshot only conceals it. Fix timestamp publication independently, aggregate every index interval, and let a missing target end only that click—not disable other points or stop updates.
+
 ## Test and verification contracts
 
 - Tests assert observable results against an independent oracle: inputs, parsed structure, ordering, state transitions or side effects. Each case must distinguish a plausible incorrect implementation.

@@ -2,7 +2,7 @@ import { EmptyRequest } from "@shared/proto/dline/common"
 import { ClineMessage as ProtoUiMessage } from "@shared/proto/dline/ui"
 import { Logger } from "@/shared/services/Logger"
 import { getRequestRegistry, StreamingResponseHandler } from "../grpc-handler"
-import { Controller } from "../index"
+import type { Controller } from "../index"
 import type { TaskOpening } from "../task/opened-task"
 
 // Per-controller subscriptions to isolate partial messages between independent webviews.
@@ -73,7 +73,13 @@ export async function sendPartialMessageEvent(
 ): Promise<void> {
     const current = controller.currentOpening()
     if (current && (current.taskId !== owner.taskId || current.taskInstanceId !== owner.taskInstanceId)) return
+    const sourceIndex = current ? await controller.projectCurrentTaskMessageSourceIndex(Number(partialMessage.ts)) : undefined
+    // Metadata IO must not let an old opening publish into a reopen/promotion,
+    // including a composing row that started while there was no current opening.
+    if (controller.currentOpening() !== current) return
     partialMessage = { ...partialMessage, taskId: owner.taskId, taskInstanceId: owner.taskInstanceId }
+    delete partialMessage.messageIndex
+    if (sourceIndex !== undefined) partialMessage.messageIndex = sourceIndex
     // Send to gRPC stream subscribers of this controller
     const set = subs.get(controller)
     const streamPromises: Promise<void>[] = []

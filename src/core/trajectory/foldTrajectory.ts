@@ -33,7 +33,7 @@ export interface FoldedTurn {
     readonly toolUsage: readonly ToolCount[]
     /** Whether the turn contains a successful completion, which ends its attempt. */
     readonly endsAttempt: boolean
-    /** ts of the last final row folded into the turn; seeds the boundary check of the next turn. */
+    /** ts of the last final row in the turn, copied only as a compatibility payload. */
     readonly tailTs: number
     /** Ask kind of the last meaningful row of the turn; seeds reply classification of the next row. */
     readonly tailAskKind: UiAsk | null
@@ -49,6 +49,8 @@ export interface OpenTurn {
     readonly rounds: number
     readonly toolUsage: readonly ToolCount[]
     readonly endsAttempt: boolean
+    /** Opaque identity of the last final row, never used to order or admit rows. */
+    readonly tailTs: number
 }
 
 /**
@@ -63,23 +65,13 @@ export interface FoldCarry {
     readonly openTurn: OpenTurn | null
     /** Whether the most recent closed turn ended its attempt, so the next turn starts a new one. */
     readonly prevCompleted: boolean
-    /** ts of the last final row, for the strictly-increasing check across slice boundaries. */
-    readonly lastTs: number | null
     readonly lastAskKind: UiAsk | null
-}
-
-/** A ts that does not increase along ordinals; provisional until the caller confirms a stable scan. */
-export interface TsViolation {
-    readonly ordinal: number
-    readonly ts: number
-    readonly previousTs: number
 }
 
 export interface FoldResult {
     /** Turns closed by a later turn start inside the folded rows, in seq order. */
     readonly turns: readonly FoldedTurn[]
     readonly carry: FoldCarry
-    readonly provisionalViolation: TsViolation | null
 }
 
 export const EMPTY_FOLD_CARRY: FoldCarry = {
@@ -87,7 +79,6 @@ export const EMPTY_FOLD_CARRY: FoldCarry = {
     attemptSeq: 0,
     openTurn: null,
     prevCompleted: false,
-    lastTs: null,
     lastAskKind: null,
 }
 
@@ -98,7 +89,6 @@ export function carryAfterTurn(previous: FoldedTurn): FoldCarry {
         attemptSeq: previous.attemptSeq,
         openTurn: null,
         prevCompleted: previous.endsAttempt,
-        lastTs: previous.tailTs,
         lastAskKind: previous.tailAskKind,
     }
 }
@@ -109,23 +99,17 @@ export function carryAfterTurn(previous: FoldedTurn): FoldCarry {
  * Pure and chunk-invariant: folding a history in any number of slices, passing
  * each result's carry to the next slice, yields exactly the turns of one fold
  * over the whole history once the final open turn is closed with
- * {@link closeOpenTurn}. Partial rows keep their ordinal but are skipped for
- * aggregation and for the ts order check.
+ * {@link closeOpenTurn}. Every final user anchor opens a turn at its physical
+ * ordinal, regardless of its ts. Partial rows occupy source positions without
+ * contributing counts or changing reply classification.
  */
 export function foldTrajectory(rows: readonly OrdinalRow[], carry: FoldCarry): FoldResult {
     const turns: FoldedTurn[] = []
     let state = carry
-    let violation: TsViolation | null = null
 
     for (const { ordinal, message } of rows) {
-        if (message.partial !== true) {
-            if (violation === null && state.lastTs !== null && message.ts <= state.lastTs) {
-                violation = { ordinal, ts: message.ts, previousTs: state.lastTs }
-            }
-        }
-
         if (isTurnStart(message, { lastAskKind: state.lastAskKind })) {
-            if (state.openTurn) turns.push(closeTurn(state.openTurn, state))
+            if (state.openTurn) turns.push(closeTurn(state.openTurn, state.lastAskKind))
             const closedEndedAttempt = state.openTurn ? state.openTurn.endsAttempt : state.prevCompleted
             const attemptSeq = state.seq === 0 ? 0 : closedEndedAttempt ? state.attemptSeq + 1 : state.attemptSeq
             state = {
@@ -142,6 +126,7 @@ export function foldTrajectory(rows: readonly OrdinalRow[], carry: FoldCarry): F
                     rounds: 0,
                     toolUsage: [],
                     endsAttempt: false,
+                    tailTs: message.ts,
                 },
             }
         } else if (state.openTurn && message.partial !== true) {
@@ -149,27 +134,22 @@ export function foldTrajectory(rows: readonly OrdinalRow[], carry: FoldCarry): F
         }
 
         if (!isContextIgnored(message)) state = { ...state, lastAskKind: askKindAfter(message) }
-        if (message.partial !== true) state = { ...state, lastTs: message.ts }
     }
 
-    return { turns, carry: state, provisionalViolation: violation }
+    return { turns, carry: state }
 }
 
 /** Close the turn still open after the last folded row; null when no turn has started. */
 export function closeOpenTurn(carry: FoldCarry): FoldedTurn | null {
-    return carry.openTurn ? closeTurn(carry.openTurn, carry) : null
+    return carry.openTurn ? closeTurn(carry.openTurn, carry.lastAskKind) : null
 }
 
-function closeTurn(turn: OpenTurn, carry: FoldCarry): FoldedTurn {
-    return {
-        ...turn,
-        tailTs: carry.lastTs ?? turn.anchorTs,
-        tailAskKind: carry.lastAskKind,
-    }
+function closeTurn(turn: OpenTurn, lastAskKind: UiAsk | null): FoldedTurn {
+    return { ...turn, tailAskKind: lastAskKind }
 }
 
 function accumulate(turn: OpenTurn, message: UiMessage): OpenTurn {
-    let next = turn
+    let next = { ...turn, tailTs: message.ts }
     if (isCountedRound(message)) next = { ...next, rounds: next.rounds + 1 }
     const tool = trajectoryToolKey(message)
     if (tool !== undefined) next = { ...next, toolUsage: incrementTool(next.toolUsage, tool) }

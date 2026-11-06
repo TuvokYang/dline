@@ -3,8 +3,8 @@ import { render, screen } from "@testing-library/react"
 import React from "react"
 import { describe, expect, it, vi } from "vitest"
 import type { MessageHandlers } from "../../types/chatTypes"
-import { ROW_TS_ATTRIBUTE } from "../../utils/viewportRowAnchor"
-import { createMessageRenderer, MessageRenderer } from "./MessageRenderer"
+import { ROW_SOURCE_INDEX_ATTRIBUTE, ROW_TRAJECTORY_INDEX_ATTRIBUTE, ROW_TS_ATTRIBUTE } from "../../utils/viewportRowAnchor"
+import { createMessageRenderer, MessageRenderer, rowSourceIndex } from "./MessageRenderer"
 
 void React
 
@@ -128,5 +128,55 @@ describe("MessageRenderer tool-group height boundary", () => {
         expect([...rows].map((row) => row.getAttribute(ROW_TS_ATTRIBUTE))).toEqual(["41"])
         expect(rows[0]).toContainElement(screen.getByTestId("tool-group-renderer"))
         expect(container.querySelector("[data-message-ts]")).toBeNull()
+    })
+
+    it("keeps real group indices separate from transient reading context and retains timestamp attributes", () => {
+        const task: UiMessage = { ts: 900, messageIndex: 0, type: "say", say: "text" }
+        const transient: UiMessage = { ts: 100, type: "say", say: "text", partial: true }
+        const member: UiMessage = { ts: 80, messageIndex: 37, type: "say", say: "tool" }
+        const group: UiMessage[] = [
+            { ts: 90, type: "say", say: "tool", partial: true },
+            member,
+            { ts: 70, messageIndex: 43, type: "say", say: "tool" },
+        ]
+        const tail: UiMessage = { ts: 60, type: "say", say: "text", partial: true }
+        const rows = [task, transient, group, tail]
+        const renderRow = createMessageRenderer(
+            rows,
+            [task, transient, ...group, tail],
+            {},
+            vi.fn(),
+            vi.fn(),
+            vi.fn(),
+            vi.fn(),
+            vi.fn(async () => undefined),
+            messageHandlers,
+            false,
+        )
+        const { container } = render(
+            <>
+                {rows.map((row, index) => (
+                    <React.Fragment key={index}>{renderRow(index, row)}</React.Fragment>
+                ))}
+            </>,
+        )
+        const metadata = [...container.querySelectorAll(`[${ROW_TS_ATTRIBUTE}]`)].map((row) => [
+            row.getAttribute(ROW_TS_ATTRIBUTE),
+            row.getAttribute(ROW_SOURCE_INDEX_ATTRIBUTE),
+            row.getAttribute(ROW_TRAJECTORY_INDEX_ATTRIBUTE),
+        ])
+        expect(metadata).toEqual([
+            ["900", "0", "0"],
+            ["100", null, "0"],
+            ["90", "37", "37"],
+            ["60", null, "43"],
+        ])
+        expect(rowSourceIndex(group)).toBe(37)
+        expect(rowSourceIndex(transient)).toBeUndefined()
+        expect([transient, group[0], tail].map((message) => message.messageIndex)).toEqual([undefined, undefined, undefined])
+        // Virtuoso's coordinate can lag the item for one frame: metadata must still describe that actual item.
+        const staleCoordinate = render(renderRow(0, group)).container.querySelector(`[${ROW_SOURCE_INDEX_ATTRIBUTE}]`)
+        expect(staleCoordinate?.getAttribute(ROW_SOURCE_INDEX_ATTRIBUTE)).toBe("37")
+        expect(staleCoordinate?.getAttribute(ROW_TRAJECTORY_INDEX_ATTRIBUTE)).toBe("37")
     })
 })

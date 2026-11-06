@@ -1,6 +1,6 @@
 import type { UiMessage } from "@shared/ExtensionMessage"
 import { TrajectoryState, TrajectoryTurnSummary, TrajectoryUpdate } from "@shared/proto/dline/task"
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import React from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { getTaskViewKey } from "@/services/task-messages"
@@ -138,6 +138,8 @@ vi.mock("react-virtuoso", async () => {
                       ReactModule.createElement("div", {
                           "data-message-ts": mocks.firstRenderedTs + index,
                           "data-row-ts": mocks.firstRenderedTs + index,
+                          // Synthetic rows use createMessages' explicit fixture source coordinate.
+                          "data-row-source-index": mocks.firstRenderedTs + index - 1,
                       }),
                   ),
               )
@@ -160,9 +162,13 @@ vi.mock("@/components/chat/task-header/StickyUserMessage", () => ({
         ) : null,
 }))
 
-vi.mock("../messages/MessageRenderer", () => ({
-    createMessageRenderer: (...args: unknown[]) => mocks.createMessageRenderer(...args),
-}))
+vi.mock("../messages/MessageRenderer", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../messages/MessageRenderer")>()
+    return {
+        rowSourceIndex: actual.rowSourceIndex,
+        createMessageRenderer: (...args: unknown[]) => mocks.createMessageRenderer(...args),
+    }
+})
 
 // Leaves of the real renderer, which the folded-list harness draws.
 vi.mock("@/components/chat/ChatRow", () => ({
@@ -185,6 +191,7 @@ function createMessages(startIndex: number, count: number): UiMessage[] {
         const absoluteIndex = startIndex + offset
         return {
             ts: absoluteIndex + 1,
+            messageIndex: absoluteIndex,
             type: "say",
             say: "text",
             text: `message-${absoluteIndex}`,
@@ -219,8 +226,12 @@ function createScrollBehavior(): ScrollBehavior {
     }
 }
 
-function messagesAreaElement(scrollBehavior: ScrollBehavior, messages: UiMessage[]) {
-    const task = messages[0] ?? createMessages(0, 1)[0]
+function messagesAreaElement(
+    scrollBehavior: ScrollBehavior,
+    messages: UiMessage[],
+    groupedMessages: (UiMessage | UiMessage[])[] = messages,
+    task = messages[0] ?? createMessages(0, 1)[0],
+) {
     return (
         <MessagesArea
             chatState={
@@ -231,7 +242,7 @@ function messagesAreaElement(scrollBehavior: ScrollBehavior, messages: UiMessage
                     setInputValue: vi.fn(),
                 } as unknown as ChatState
             }
-            groupedMessages={messages}
+            groupedMessages={groupedMessages}
             messageHandlers={{ handleSendMessage: vi.fn() } as unknown as MessageHandlers}
             modifiedMessages={messages}
             onFollowupOptionSelect={vi.fn()}
@@ -581,18 +592,23 @@ describe("MessagesArea sliding-window integration", () => {
         type ScrollRequest = { run: () => void; priority?: string; retryDelaysMs?: readonly number[] }
 
         /** Render like ChatView: `regroup` hands the list the rows of its current window, as regrouping does. */
-        const renderJumpArea = (overrides: Partial<ScrollBehavior> = {}) => {
+        const renderJumpArea = (
+            overrides: Partial<ScrollBehavior> = {},
+            options?: { group?: (messages: UiMessage[]) => (UiMessage | UiMessage[])[]; task?: UiMessage },
+        ) => {
             const scrollBehavior = { ...createScrollBehavior(), ...overrides }
-            const { rerender } = render(messagesAreaElement(scrollBehavior, mocks.initialMessages))
-            const regroup = () => rerender(messagesAreaElement(scrollBehavior, mocks.currentMessages))
+            const element = (messages: UiMessage[]) =>
+                messagesAreaElement(scrollBehavior, messages, options?.group?.(messages) ?? messages, options?.task)
+            const { rerender } = render(element(mocks.initialMessages))
+            const regroup = () => rerender(element(mocks.currentMessages))
             const scrollRequests = () =>
                 vi.mocked(scrollBehavior.requestProgrammaticScroll).mock.calls.map(([request]) => request as ScrollRequest)
             return { scrollBehavior, regroup, scrollRequests }
         }
 
-        const page = (messages: UiMessage[], anchorFound = true) => ({
+        const page = (messages: UiMessage[], anchorFound = true, startIndex = messages.length > 0 ? messages[0].ts - 1 : 0) => ({
             messages,
-            startIndex: messages.length > 0 ? messages[0].ts - 1 : 0,
+            startIndex,
             anchorFound,
             taskId: "task-1",
             taskInstanceId: "task-instance-1",
@@ -609,7 +625,7 @@ describe("MessagesArea sliding-window integration", () => {
             return (value: ReturnType<typeof page>) => act(async () => resolve(value))
         }
 
-        const showTrajectory = (anchors: number[]) =>
+        const showTrajectory = (anchors: (number | { anchorTs: number; anchorIndex?: number })[]) =>
             act(() => {
                 for (const stream of mocks.trajectoryStreams) {
                     stream.onResponse(
@@ -620,9 +636,17 @@ describe("MessagesArea sliding-window integration", () => {
                             reset: true,
                             revision: 1,
                             turnCount: anchors.length,
-                            turns: anchors.map((anchorTs, seq) =>
-                                TrajectoryTurnSummary.create({ seq, anchorTs, prompt: `prompt ${anchorTs}`, rounds: 1 }),
-                            ),
+                            // Numeric fixtures mirror createMessages only; object fixtures supply independent coordinates.
+                            turns: anchors.map((anchor, seq) => {
+                                const target = typeof anchor === "number" ? { anchorTs: anchor, anchorIndex: anchor - 1 } : anchor
+                                return TrajectoryTurnSummary.create({
+                                    seq,
+                                    ...target,
+                                    prompt: `prompt ${target.anchorTs}`,
+                                    rounds: seq + 2,
+                                    toolUsage: [{ tool: "read_file", count: seq + 3 }],
+                                })
+                            }),
                         }),
                     )
                 }
@@ -634,6 +658,26 @@ describe("MessagesArea sliding-window integration", () => {
                 if (!bar) throw new Error(`no trajectory bar for ${anchorTs}`)
                 fireEvent.click(bar)
             })
+
+        const clickSeq = (seq: number) =>
+            act(async () => {
+                const bar = document.querySelector(`[data-turn-seq="${seq}"]`)
+                if (!bar) throw new Error(`no trajectory bar for seq ${seq}`)
+                fireEvent.click(bar)
+            })
+
+        async function expectTurnStatistics(seq: number, rounds: number, tool: string, count: number) {
+            const bar = document.querySelector<HTMLButtonElement>(`[data-turn-seq="${seq}"]`)
+            if (!bar) throw new Error(`no trajectory bar for seq ${seq}`)
+            act(() => bar.focus())
+            await waitFor(() => {
+                const preview = screen
+                    .getAllByTestId("trajectory-turn-preview")
+                    .find((node) => within(node).queryByText(`${rounds} rounds`))
+                expect(preview).toBeDefined()
+                if (preview) expect(within(preview).getByText(tool).closest("li")?.textContent).toBe(`${tool}${count}`)
+            })
+        }
 
         it("scrolls smoothly to a loaded turn whose row is laid out and leaves bottom-following", async () => {
             mocks.renderedRowCount = 10
@@ -816,6 +860,360 @@ describe("MessagesArea sliding-window integration", () => {
             expect(scrollRequests()).toHaveLength(before)
         })
 
+        it("keeps streamed content when the page confirms a previously transient target's committed source metadata", async () => {
+            mocks.initialMessages = [
+                { ts: 100, messageIndex: 12, type: "say", say: "text" },
+                { ts: 500, type: "say", say: "text", text: "stream finished", partial: false },
+            ]
+            const fetched: UiMessage[] = [
+                { ts: 100, messageIndex: 12, type: "say", say: "text" },
+                { ts: 500, messageIndex: 40, type: "say", say: "text", text: "stream", partial: true },
+            ]
+            mocks.fetchMessage.mockResolvedValueOnce(page(fetched, true, 210))
+            const { regroup, scrollRequests } = renderJumpArea()
+            showTrajectory([{ anchorIndex: 40, anchorTs: 500 }])
+            await clickSeq(0)
+            expect(mocks.currentMessages[1]).toMatchObject({ messageIndex: 40, text: "stream finished", partial: false })
+            regroup()
+            scrollRequests().at(-1)?.run()
+            expect(mocks.scrollToIndex).toHaveBeenLastCalledWith(expect.objectContaining({ index: 1 }))
+            expect(mocks.currentFirstItemIndex).toBe(210)
+        })
+
+        it("does not substitute a different committed source row sharing the fetched target's timestamp", async () => {
+            mocks.initialMessages = [{ ts: 500, messageIndex: 90, type: "say", say: "text", text: "another source row" }]
+            mocks.fetchMessage.mockResolvedValueOnce(
+                page([{ ts: 500, messageIndex: 40, type: "say", say: "text", text: "target", partial: true }], true, 210),
+            )
+            const { regroup, scrollRequests } = renderJumpArea()
+            showTrajectory([{ anchorIndex: 40, anchorTs: 500 }])
+            await clickSeq(0)
+            expect(mocks.currentMessages.map(({ messageIndex, text }) => [messageIndex, text])).toEqual([[40, "target"]])
+            regroup()
+            scrollRequests().at(-1)?.run()
+            expect(mocks.scrollToIndex).toHaveBeenLastCalledWith(expect.objectContaining({ index: 0 }))
+        })
+
+        it("uses exact committed identity with equal/reversed timestamps, independent page coordinates and render offsets", async () => {
+            mocks.initialMessages = [
+                { ts: 500, messageIndex: 12, type: "say", say: "user_feedback", text: "first" },
+                { ts: 500, messageIndex: 40, type: "say", say: "user_feedback", text: "same timestamp" },
+                { ts: 100, messageIndex: 90, type: "say", say: "user_feedback", text: "earlier timestamp" },
+            ]
+            mocks.initialFirstItemIndex = 700
+            const { scrollRequests } = renderJumpArea()
+            showTrajectory([
+                { anchorIndex: 12, anchorTs: 500 },
+                { anchorIndex: 40, anchorTs: 500 },
+                { anchorIndex: 90, anchorTs: 100 },
+            ])
+
+            await clickSeq(1)
+            scrollRequests().at(-1)?.run()
+            expect(mocks.scrollToIndex).toHaveBeenLastCalledWith(expect.objectContaining({ index: 1, align: "start" }))
+            await clickSeq(2)
+            scrollRequests().at(-1)?.run()
+            expect(mocks.scrollToIndex).toHaveBeenLastCalledWith(expect.objectContaining({ index: 2, align: "start" }))
+            expect(mocks.fetchMessage).not.toHaveBeenCalled()
+            expect(mocks.currentFirstItemIndex).toBe(700)
+            expect(document.querySelectorAll("[data-turn-seq]")).toHaveLength(3)
+        })
+
+        it("searches every real group member and never guesses a missing member from a range or a transient timestamp", async () => {
+            mocks.initialMessages = [
+                { ts: 900, messageIndex: 14, type: "say", say: "tool" },
+                { ts: 200, type: "say", say: "text", partial: true },
+                { ts: 100, messageIndex: 35, type: "say", say: "tool" },
+                { ts: 50, messageIndex: 80, type: "say", say: "text" },
+            ]
+            mocks.initialFirstItemIndex = 600
+            const { scrollRequests } = renderJumpArea({}, { group: (messages) => [messages.slice(0, 3), messages[3]] })
+            showTrajectory([
+                { anchorIndex: 25, anchorTs: 200 },
+                { anchorIndex: 35, anchorTs: 100 },
+            ])
+            await clickSeq(1)
+            scrollRequests().at(-1)?.run()
+            expect(mocks.scrollToIndex).toHaveBeenLastCalledWith(expect.objectContaining({ index: 0 }))
+            expect(mocks.fetchMessage).not.toHaveBeenCalled()
+
+            const scrolls = scrollRequests().length
+            mocks.fetchMessage.mockResolvedValueOnce(page([], false))
+            await clickSeq(0)
+            expect(mocks.fetchMessage).toHaveBeenCalledExactlyOnceWith(
+                expect.objectContaining({ anchorIndex: 25, anchorTs: 200 }),
+            )
+            expect(scrollRequests()).toHaveLength(scrolls)
+            expect(mocks.currentMessages[1].messageIndex).toBeUndefined()
+            expect(mocks.currentFirstItemIndex).toBe(600)
+        })
+
+        it("keeps a point without optional index clickable but ends that click before browsing or fetching", async () => {
+            const { scrollBehavior, scrollRequests } = renderJumpArea()
+            showTrajectory([{ anchorTs: 350 }, { anchorIndex: 349, anchorTs: 350 }])
+            const unlocated = document.querySelector<HTMLButtonElement>('[data-turn-seq="0"]')
+            expect(unlocated?.disabled).toBe(false)
+            await clickSeq(0)
+            expect(scrollBehavior.disableAutoScrollRef.current).toBe(false)
+            expect(mocks.fetchMessage).not.toHaveBeenCalled()
+            expect(scrollRequests()).toEqual([])
+            await clickSeq(1)
+            scrollRequests().at(-1)?.run()
+            expect(mocks.scrollToIndex).toHaveBeenLastCalledWith(expect.objectContaining({ index: 49 }))
+            expect(document.querySelectorAll("[data-turn-seq]")).toHaveLength(2)
+        })
+
+        it("does not fall back to a matching timestamp when the loaded source index has a different identity", async () => {
+            mocks.initialMessages = [
+                { ts: 500, messageIndex: 12, type: "say", say: "text" },
+                { ts: 100, messageIndex: 40, type: "say", say: "text" },
+            ]
+            mocks.fetchMessage.mockResolvedValueOnce(page([], false))
+            const { scrollRequests } = renderJumpArea()
+            showTrajectory([{ anchorIndex: 40, anchorTs: 500 }])
+            await clickSeq(0)
+            expect(mocks.fetchMessage).toHaveBeenCalledExactlyOnceWith(
+                expect.objectContaining({ anchorIndex: 40, anchorTs: 500 }),
+            )
+            expect(scrollRequests()).toEqual([])
+            expect(mocks.currentMessages.map(({ messageIndex, ts }) => [messageIndex, ts])).toEqual([
+                [12, 500],
+                [40, 100],
+            ])
+        })
+
+        it("installs an unloaded page at its actual service coordinate and waits for committed render rows", async () => {
+            mocks.initialMessages = [{ ts: 100, messageIndex: 90, type: "say", say: "text" }]
+            mocks.initialFirstItemIndex = 700
+            const fetched: UiMessage[] = [
+                { ts: 800, messageIndex: 18, type: "say", say: "text" },
+                { ts: 500, messageIndex: 40, type: "say", say: "user_feedback" },
+                { ts: 200, messageIndex: 51, type: "say", say: "text" },
+            ]
+            mocks.fetchMessage.mockResolvedValueOnce(page(fetched, true, 220))
+            const { regroup, scrollRequests } = renderJumpArea()
+            showTrajectory([{ anchorIndex: 40, anchorTs: 500 }])
+            await clickSeq(0)
+            expect(mocks.fetchMessage).toHaveBeenCalledExactlyOnceWith(
+                expect.objectContaining({ anchorIndex: 40, anchorTs: 500 }),
+            )
+            expect(mocks.currentFirstItemIndex).toBe(220)
+            expect(mocks.currentMessages.map(({ messageIndex }) => messageIndex)).toEqual([18, 40, 51])
+            expect(scrollRequests()).toEqual([])
+            regroup()
+            scrollRequests().at(-1)?.run()
+            expect(mocks.scrollToIndex).toHaveBeenLastCalledWith(expect.objectContaining({ index: 1, align: "start" }))
+        })
+
+        it.each([
+            "missing",
+            "rejected",
+            "wrong-page",
+        ] as const)("ends a %s first click without changing the window or points, then lets the same target succeed and keeps updates live", async (failure) => {
+            const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
+            const held = mocks.initialMessages
+            const validPage = page(createMessages(0, 200))
+            if (failure === "rejected") mocks.fetchMessage.mockRejectedValueOnce(new Error("read failed"))
+            else if (failure === "missing") mocks.fetchMessage.mockResolvedValueOnce(page([], false))
+            else mocks.fetchMessage.mockResolvedValueOnce(page([{ ts: 50, messageIndex: 800, type: "say", say: "text" }]))
+            mocks.fetchMessage.mockResolvedValueOnce(validPage)
+            mocks.fetchMessage.mockResolvedValueOnce(
+                page(
+                    [
+                        { ts: 400, messageIndex: 399, type: "say", say: "text" },
+                        { ts: 20, messageIndex: 400, type: "say", say: "user_feedback" },
+                    ],
+                    true,
+                    780,
+                ),
+            )
+            const { regroup, scrollRequests } = renderJumpArea()
+            showTrajectory([50, 350])
+            await clickSeq(0)
+            expect(mocks.currentMessages).toBe(held)
+            expect(mocks.currentFirstItemIndex).toBe(300)
+            expect(scrollRequests()).toEqual([])
+            expect(
+                [...document.querySelectorAll<HTMLElement>("[data-turn-seq]")].map((bar) => [
+                    bar.dataset.turnSeq,
+                    bar.dataset.turnIndex,
+                ]),
+            ).toEqual([
+                ["0", "49"],
+                ["1", "349"],
+            ])
+            expect(mocks.trajectoryStreams).toHaveLength(1)
+            await expectTurnStatistics(1, 3, "read_file", 4)
+            // A different point remains independently navigable after the first failure.
+            await clickSeq(1)
+            scrollRequests().at(-1)?.run()
+            expect(mocks.scrollToIndex).toHaveBeenLastCalledWith(expect.objectContaining({ index: 49 }))
+            expect(mocks.currentFirstItemIndex).toBe(300)
+            expect(mocks.fetchMessage).toHaveBeenCalledTimes(1)
+            await clickSeq(0)
+            regroup()
+            scrollRequests().at(-1)?.run()
+            expect(mocks.currentFirstItemIndex).toBe(0)
+            expect(mocks.currentMessages.map(({ ts, messageIndex }) => [ts, messageIndex])).toEqual(
+                createMessages(0, 200).map(({ ts, messageIndex }) => [ts, messageIndex]),
+            )
+            expect(mocks.scrollToIndex).toHaveBeenLastCalledWith(expect.objectContaining({ index: 49 }))
+            expect(document.querySelectorAll("[data-turn-seq]")).toHaveLength(2)
+            await expectTurnStatistics(1, 3, "read_file", 4)
+            act(() =>
+                mocks.trajectoryStreams[0].onResponse(
+                    TrajectoryUpdate.create({
+                        taskId: "task-1",
+                        taskInstanceId: mocks.taskInstanceId,
+                        state: TrajectoryState.TRAJECTORY_STATE_READY,
+                        baseRevision: 1,
+                        revision: 2,
+                        turnCount: 3,
+                        turns: [
+                            TrajectoryTurnSummary.create({
+                                seq: 2,
+                                anchorIndex: 400,
+                                anchorTs: 20,
+                                prompt: "new reversed point",
+                                rounds: 7,
+                                toolUsage: [{ tool: "search_files", count: 4 }],
+                            }),
+                        ],
+                    }),
+                ),
+            )
+            expect(document.querySelectorAll("[data-turn-seq]")).toHaveLength(3)
+            await clickSeq(2)
+            regroup()
+            scrollRequests().at(-1)?.run()
+            // A later based update is still navigable by its real source member.
+            expect(mocks.currentFirstItemIndex).toBe(780)
+            expect(mocks.currentMessages.map(({ messageIndex }) => messageIndex)).toEqual([399, 400])
+            expect(mocks.scrollToIndex).toHaveBeenLastCalledWith(expect.objectContaining({ index: 1 }))
+            await expectTurnStatistics(2, 7, "search_files", 4)
+            expect(mocks.trajectoryStreams).toHaveLength(1)
+            expect(consoleError).toHaveBeenCalledTimes(failure === "rejected" ? 1 : 0)
+        })
+
+        it("resolves task source zero outside page zero before navigating the separate task header", async () => {
+            const task: UiMessage = { ts: 10_000, messageIndex: 0, type: "say", say: "task" }
+            const top = createMessages(1, 200)
+            mocks.fetchMessage.mockImplementation(async (request: { anchorIndex?: number; anchorTs?: number }) =>
+                request.anchorIndex === 0 ? page([task], true, 200) : page(top, false, 0),
+            )
+            const { regroup, scrollRequests } = renderJumpArea({}, { task })
+            showTrajectory([{ anchorIndex: 0, anchorTs: 10_000 }])
+            await clickSeq(0)
+            expect(mocks.fetchMessage).toHaveBeenNthCalledWith(1, expect.objectContaining({ anchorIndex: 0, anchorTs: 10_000 }))
+            expect(mocks.fetchMessage).toHaveBeenNthCalledWith(2, expect.objectContaining({ referenceIndex: 0 }))
+            regroup()
+            scrollRequests().at(-1)?.run()
+            expect(mocks.currentFirstItemIndex).toBe(0)
+            expect(mocks.currentMessages.map(({ messageIndex }) => messageIndex)).toEqual(
+                Array.from({ length: 200 }, (_, index) => index + 1),
+            )
+            expect(mocks.scrollToIndex).toHaveBeenLastCalledWith(expect.objectContaining({ index: 0, align: "start" }))
+        })
+
+        it.each([
+            0,
+            undefined,
+        ])("routes explicit source zero through the top edge with header metadata %s", async (headerIndex) => {
+            const task: UiMessage = { ts: 900, messageIndex: headerIndex, type: "say", say: "task", text: "task header" }
+            mocks.initialMessages = createMessages(300, 4)
+            const fetched = [{ ...task, messageIndex: 0 }, ...createMessages(1, 3)]
+            mocks.fetchMessage.mockResolvedValueOnce(page([fetched[0]], true, 200))
+            mocks.fetchMessage.mockResolvedValueOnce(page(fetched, true, 0))
+            const { regroup, scrollRequests } = renderJumpArea(
+                {},
+                {
+                    task,
+                    group: (messages) => messages.filter((message) => message.messageIndex !== 0),
+                },
+            )
+            showTrajectory([
+                { anchorIndex: 0, anchorTs: 900 },
+                { anchorIndex: 2, anchorTs: 3 },
+            ])
+            await clickSeq(0)
+            expect(mocks.fetchMessage).toHaveBeenNthCalledWith(1, expect.objectContaining({ anchorIndex: 0, anchorTs: 900 }))
+            expect(mocks.fetchMessage).toHaveBeenNthCalledWith(2, expect.objectContaining({ referenceIndex: 0 }))
+            expect(mocks.fetchMessage.mock.calls[1][0].anchorIndex).toBeUndefined()
+            regroup()
+            scrollRequests().at(-1)?.run()
+            expect(mocks.currentFirstItemIndex).toBe(0)
+            expect(mocks.scrollToIndex).toHaveBeenLastCalledWith(expect.objectContaining({ index: 0, align: "start" }))
+            await clickSeq(1)
+            scrollRequests().at(-1)?.run()
+            expect(mocks.scrollToIndex).toHaveBeenLastCalledWith(expect.objectContaining({ index: 1 }))
+            expect(mocks.fetchMessage).toHaveBeenCalledTimes(2)
+        })
+
+        it("leaves a missing task-zero top page alone and allows the next top click to finish", async () => {
+            const task: UiMessage = { ts: 900, messageIndex: 0, type: "say", say: "task" }
+            mocks.fetchMessage.mockResolvedValueOnce(page([], false, 0))
+            mocks.fetchMessage.mockResolvedValueOnce(page([task], true, 200))
+            mocks.fetchMessage.mockResolvedValueOnce(page([task, ...createMessages(1, 3)], true, 0))
+            const held = mocks.initialMessages
+            const { regroup, scrollRequests } = renderJumpArea({}, { task })
+            showTrajectory([{ anchorIndex: 0, anchorTs: 900 }])
+            await clickSeq(0)
+            expect(mocks.currentMessages).toBe(held)
+            expect(mocks.currentFirstItemIndex).toBe(300)
+            expect(scrollRequests()).toEqual([])
+            await clickSeq(0)
+            regroup()
+            scrollRequests().at(-1)?.run()
+            expect(mocks.currentFirstItemIndex).toBe(0)
+            expect(mocks.scrollToIndex).toHaveBeenLastCalledWith(expect.objectContaining({ index: 0, align: "start" }))
+            expect(document.querySelectorAll("[data-turn-seq]")).toHaveLength(1)
+        })
+
+        it("uses the same generation for a task-zero top page and a newer loaded source jump", async () => {
+            const task: UiMessage = { ts: 900, messageIndex: 0, type: "say", say: "task" }
+            const resolveTop = deferredPage()
+            const { scrollRequests } = renderJumpArea({}, { task })
+            showTrajectory([
+                { anchorIndex: 0, anchorTs: 900 },
+                { anchorIndex: 349, anchorTs: 350 },
+            ])
+            await clickSeq(0)
+            await clickSeq(1)
+            await resolveTop(page([task, ...createMessages(1, 3)], true, 0))
+            expect(mocks.currentFirstItemIndex).toBe(300)
+            expect(mocks.currentMessages[0].messageIndex).toBe(300)
+            scrollRequests().at(-1)?.run()
+            expect(mocks.scrollToIndex).toHaveBeenLastCalledWith(expect.objectContaining({ index: 49 }))
+        })
+
+        it("keeps the newer unloaded source jump when the older source page arrives last", async () => {
+            const resolveFirst = deferredPage()
+            const resolveSecond = deferredPage()
+            const { regroup, scrollRequests } = renderJumpArea()
+            showTrajectory([50, 250, 350])
+            await clickSeq(0)
+            await clickSeq(1)
+            await resolveSecond(page(createMessages(200, 100)))
+            regroup()
+            scrollRequests().at(-1)?.run()
+            expect(mocks.currentFirstItemIndex).toBe(200)
+            expect(mocks.scrollToIndex).toHaveBeenLastCalledWith(expect.objectContaining({ index: 49 }))
+            await resolveFirst(page(createMessages(0, 200)))
+            expect(mocks.currentFirstItemIndex).toBe(200)
+            expect(mocks.currentMessages[0].messageIndex).toBe(200)
+        })
+
+        it("does not fabricate a source index for an unloaded sticky timestamp jump", async () => {
+            mocks.fetchMessage.mockResolvedValueOnce(page(createMessages(0, 200)))
+            const { regroup, scrollRequests } = renderJumpArea({ scrolledPastUserMessage: createMessages(49, 1)[0] })
+            await act(async () => fireEvent.click(screen.getByRole("button", { name: "Sticky user message" })))
+            expect(mocks.fetchMessage).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ anchorTs: 50 }))
+            expect(mocks.fetchMessage.mock.calls[0][0].anchorIndex).toBeUndefined()
+            regroup()
+            scrollRequests().at(-1)?.run()
+            expect(mocks.scrollToIndex).toHaveBeenLastCalledWith(expect.objectContaining({ index: 49, align: "center" }))
+        })
+
         it("lets the leading and trailing pages launched for one window both land", async () => {
             mocks.initialMessages = createMessages(300, 50)
             mocks.initialFirstItemIndex = 300
@@ -929,8 +1327,14 @@ describe("MessagesArea with real folding", () => {
 
     /** 1, turn:10, 53, turn:60, 64, 70: failure, not prose, cuts the first turn. */
     const TURN_TWO_FOLDED_ROW = 5
-    const TURN_ANCHORS = [1, 70, 90]
+    const TURN_ANCHORS = [
+        { anchorIndex: 0, anchorTs: 1 },
+        { anchorIndex: 29, anchorTs: 70 },
+        { anchorIndex: 40, anchorTs: 90 },
+    ]
     const TURN_THREE_START = multiTurnTranscript.findIndex((message) => message.ts === 90)
+    // Only trajectory cases consume this committed source fixture; checkpoint restore cases stay unchanged.
+    const TRAJECTORY_TRANSCRIPT = multiTurnTranscript.map((message, messageIndex) => ({ ...message, messageIndex }))
     const messageHandlers = { handleSendMessage: vi.fn() } as unknown as MessageHandlers
     const onFollowupOptionSelect = vi.fn()
     const harness = {
@@ -1121,7 +1525,7 @@ describe("MessagesArea with real folding", () => {
         expect(screen.queryByTestId("folding-controls")).toBeNull()
     })
 
-    function showTrajectory() {
+    function showTrajectory(targets = TURN_ANCHORS) {
         act(() => {
             for (const stream of mocks.trajectoryStreams) {
                 stream.onResponse(
@@ -1131,9 +1535,9 @@ describe("MessagesArea with real folding", () => {
                         state: TrajectoryState.TRAJECTORY_STATE_READY,
                         reset: true,
                         revision: 1,
-                        turnCount: TURN_ANCHORS.length,
-                        turns: TURN_ANCHORS.map((anchorTs, seq) =>
-                            TrajectoryTurnSummary.create({ seq, anchorTs, prompt: `prompt ${anchorTs}`, rounds: 1 }),
+                        turnCount: targets.length,
+                        turns: targets.map(({ anchorIndex, anchorTs }, seq) =>
+                            TrajectoryTurnSummary.create({ seq, anchorIndex, anchorTs, prompt: `prompt ${anchorTs}`, rounds: 1 }),
                         ),
                     }),
                 )
@@ -1162,7 +1566,7 @@ describe("MessagesArea with real folding", () => {
     }
 
     it("scrolls to the drawn user row of a loaded turn among folds", async () => {
-        renderChat(multiTurnTranscript)
+        renderChat(TRAJECTORY_TRANSCRIPT)
         showTrajectory()
 
         await clickTurn(70)
@@ -1183,9 +1587,9 @@ describe("MessagesArea with real folding", () => {
     })
 
     it("lands on the drawn user row of a turn fetched into a new window", async () => {
-        renderChat(multiTurnTranscript.slice(TURN_THREE_START), TURN_THREE_START, multiTurnTranscript.length)
+        renderChat(TRAJECTORY_TRANSCRIPT.slice(TURN_THREE_START), TURN_THREE_START, TRAJECTORY_TRANSCRIPT.length)
         mocks.fetchMessage.mockResolvedValueOnce({
-            messages: multiTurnTranscript,
+            messages: TRAJECTORY_TRANSCRIPT,
             startIndex: 0,
             anchorFound: true,
             taskId: "task-1",
@@ -1195,7 +1599,7 @@ describe("MessagesArea with real folding", () => {
 
         await clickTurn(70)
 
-        expect(mocks.fetchMessage).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ anchorTs: 70 }))
+        expect(mocks.fetchMessage).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ anchorIndex: 29, anchorTs: 70 }))
         await waitFor(() => expect(mocks.currentMessages).toHaveLength(multiTurnTranscript.length))
         // ChatView regroups the window it now holds.
         act(() => harness.setMessages?.(mocks.currentMessages))
@@ -1210,5 +1614,52 @@ describe("MessagesArea with real folding", () => {
             "turn:71",
             "turn:82",
         ])
+    })
+
+    it("marks the source interval of a geometrically visible fold rather than an overscan row or page coordinate", async () => {
+        const rect = (top: number, height: number): DOMRect => ({
+            top,
+            bottom: top + height,
+            height,
+            left: 0,
+            right: 400,
+            width: 400,
+            x: 0,
+            y: top,
+            toJSON: () => ({}),
+        })
+        const geometry = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+            this: HTMLElement,
+        ) {
+            if (this.dataset.virtuosoScroller === "true") return rect(100, 500)
+            if (this.dataset.index === "4") return rect(40, 64)
+            if (this.dataset.index === "6") return rect(104, 120)
+            return rect(0, 0)
+        })
+        try {
+            renderChat(TRAJECTORY_TRANSCRIPT, 210, 500)
+            showTrajectory()
+            const scroller = screen.getByTestId("virtuoso")
+            fireEvent.scroll(scroller)
+            await waitFor(() => expect(document.querySelector('[data-turn-seq="1"]')).toHaveAttribute("aria-current", "location"))
+            expect(itemAt(6)?.querySelector('[data-row-source-index="30"] [data-fold-id="turn:71"]')).not.toBeNull()
+            expect(document.querySelector('[data-turn-seq="0"]')).not.toHaveAttribute("aria-current")
+            expect(document.querySelector('[data-turn-seq="2"]')).not.toHaveAttribute("aria-current")
+        } finally {
+            geometry.mockRestore()
+        }
+    })
+
+    it("finds a non-first committed member in the real flattened activity-fold row", async () => {
+        renderChat(TRAJECTORY_TRANSCRIPT, 210, 500)
+        showTrajectory([{ anchorIndex: 26, anchorTs: 62 }])
+        await clickTurn(62)
+        expect(mocks.fetchMessage).not.toHaveBeenCalled()
+        harness.scrollRequests.at(-1)?.run()
+        // Fold turn:60 is render row 3, contains source 24 and 26, and sits in page 210.
+        expect(mocks.scrollToIndex).toHaveBeenLastCalledWith(expect.objectContaining({ index: 3, align: "start" }))
+        expect(itemAt(3)?.querySelector('[data-fold-id="turn:60"]')).not.toBeNull()
+        expect(itemAt(3)?.querySelector('[data-row-source-index="24"]')).not.toBeNull()
+        expect(document.querySelectorAll("[data-turn-seq]")).toHaveLength(1)
     })
 })

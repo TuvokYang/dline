@@ -369,6 +369,7 @@ export function convertClineMessageToProto(message: AppClineMessage): ProtoCline
         imageGeneration: convertImageGenerationToProto(imageGeneration),
         submittedInputs: convertSubmittedInputsToProto(message.submittedInputs, message.text),
         checkpointSource: convertCheckpointSource(message.checkpointSource),
+        messageIndex: message.messageIndex,
     }
 
     return protoMessage
@@ -381,6 +382,10 @@ export function convertProtoToClineMessage(protoMessage: ProtoClineMessage): App
     const message: AppClineMessage = {
         ts: protoMessage.ts,
         type: protoMessage.type === ClineMessageType.ASK ? "ask" : "say",
+    }
+
+    if (protoMessage.messageIndex !== undefined) {
+        message.messageIndex = protoMessage.messageIndex
     }
 
     // Convert ask enum to string

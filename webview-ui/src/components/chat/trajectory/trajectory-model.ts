@@ -14,7 +14,11 @@ export interface TrajectoryToolUsage {
 }
 
 export interface TrajectoryTurn {
-    /** Timestamp of the user message that opens the turn; the jump target. */
+    /** Stream identity of this turn, independent of the message timestamp. */
+    readonly seq: number
+    /** Committed messages.db ordinal; neither a page coordinate nor a render-row offset. */
+    readonly anchorIndex?: number
+    /** Existing message identity, used only for equality when locating the source index. */
     readonly anchorTs: number
     readonly prompt: string
     /** Model request rounds the agent ran before the next user message. */

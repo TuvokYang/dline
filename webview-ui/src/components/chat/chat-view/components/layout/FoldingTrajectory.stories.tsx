@@ -59,14 +59,29 @@ function useFixtureTransport(taskId: string, messages: UiMessage[]): boolean {
         const originalSubscribe = TaskServiceClient.subscribeToTrajectory
         const fetch: typeof originalFetch = async (request) => {
             if (request.taskId !== taskId) return originalFetch(request)
-            const startIndex = request.referenceIndex < 0 ? Math.max(0, messages.length - request.count) : request.referenceIndex
+            const anchored = request.anchorIndex !== undefined || request.anchorTs !== undefined
+            const position = anchored
+                ? messages.findIndex((message) =>
+                      request.anchorIndex !== undefined
+                          ? message.messageIndex === request.anchorIndex &&
+                            (request.anchorTs === undefined || message.ts === request.anchorTs)
+                          : message.ts === request.anchorTs,
+                  )
+                : -1
+            const startIndex = anchored
+                ? Math.max(0, position - Math.floor(request.count / 2))
+                : request.referenceIndex < 0
+                  ? Math.max(0, messages.length - request.count)
+                  : request.referenceIndex
             return {
-                messages: messages.slice(startIndex, startIndex + request.count).map(convertClineMessageToProto),
+                messages: (anchored && position < 0 ? [] : messages.slice(startIndex, startIndex + request.count)).map(
+                    convertClineMessageToProto,
+                ),
                 startIndex,
                 totalCount: messages.length,
                 taskId,
                 taskInstanceId: request.taskInstanceId,
-                anchorFound: false,
+                anchorFound: anchored && position >= 0,
             }
         }
         const turns = messages.filter((message) => message.say === "task" || message.say === "user_feedback")
@@ -87,6 +102,7 @@ function useFixtureTransport(taskId: string, messages: UiMessage[]): boolean {
                                     seq,
                                     attemptSeq: Math.floor(seq / 4),
                                     endsAttempt: seq % 4 === 3,
+                                    anchorIndex: message.messageIndex,
                                     anchorTs: message.ts,
                                     prompt: message.text,
                                     rounds: 8,
@@ -119,7 +135,11 @@ function FoldingTrajectoryFixture({ initialExpansion, turnCount, initialLevel, w
     const base = useExtensionState()
     const id = useId()
     const taskId = `folding-trajectory-${id}`
-    const initialMessages = useMemo(() => createFoldingTranscript(turnCount, withFailures), [turnCount, withFailures])
+    // The fixture owns a committed transcript; attach source metadata before any grouping or paging.
+    const initialMessages = useMemo<UiMessage[]>(
+        () => createFoldingTranscript(turnCount, withFailures).map((message, messageIndex) => ({ ...message, messageIndex })),
+        [turnCount, withFailures],
+    )
     const [messages, setMessages] = useState(initialMessages)
     const [firstItemIndex, setFirstItemIndex] = useState(0)
     const level = initialLevel

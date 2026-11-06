@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { findFirstVisibleRow } from "@/components/chat/chat-view/utils/viewportRowAnchor"
+import { findFirstVisibleSourceRow } from "@/components/chat/chat-view/utils/viewportRowAnchor"
 
 /** How long the rail stays up after the last scroll event of a gesture. */
 export const RAIL_SCROLL_IDLE_MS = 1_200
@@ -14,15 +14,15 @@ export const RAIL_READING_MIN_VISIBLE_PX = 8
 
 /**
  * What the trajectory rail reads from the chat list: whether it is being
- * scrolled, and the ts of the topmost row in view. Grouped rows count, so a
+ * scrolled, and the source index of the topmost row in view. Grouped rows count, so a
  * tool group at the top still places the reader in its turn.
  *
  * The top message is read at most once per frame; scroll events fire far more
  * often than the rail can change.
  */
-export function useTrajectoryRailViewport(scroller: HTMLElement | null): { scrolling: boolean; topVisibleTs?: number } {
+export function useTrajectoryRailViewport(scroller: HTMLElement | null): { scrolling: boolean; topVisibleIndex?: number } {
     const [scrolling, setScrolling] = useState(false)
-    const [topVisibleTs, setTopVisibleTs] = useState<number>()
+    const [topVisibleIndex, setTopVisibleIndex] = useState<number>()
 
     useEffect(() => {
         if (!scroller) return
@@ -30,7 +30,7 @@ export function useTrajectoryRailViewport(scroller: HTMLElement | null): { scrol
         let idleTimer: ReturnType<typeof setTimeout> | undefined
         const readTop = () => {
             frame = undefined
-            setTopVisibleTs(findFirstVisibleRow(scroller, { minVisiblePx: RAIL_READING_MIN_VISIBLE_PX })?.ts)
+            setTopVisibleIndex(findFirstVisibleSourceRow(scroller, { minVisiblePx: RAIL_READING_MIN_VISIBLE_PX })?.sourceIndex)
         }
         const onScroll = () => {
             setScrolling(true)
@@ -47,5 +47,5 @@ export function useTrajectoryRailViewport(scroller: HTMLElement | null): { scrol
         }
     }, [scroller])
 
-    return { scrolling, topVisibleTs }
+    return { scrolling, topVisibleIndex }
 }

@@ -3,9 +3,11 @@ import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { UiMessage } from "@/shared/ExtensionMessage"
+import { Logger } from "@/shared/services/Logger"
 import { closeInstanceStoragesUnder, ensureInstanceLayout } from "../../storage/instance"
 import { openUiMessageRows, UI_MESSAGE_WRITER } from "../../storage/messages/openUiMessageRows"
 import { openTrajectoryRows } from "../../storage/trajectory/openTrajectoryRows"
+import { stampOf } from "../../storage/trajectory/TrajectoryRowStore"
 import { UIMessage } from "../../storage/UIMessage"
 import type { CommittedUiMessages } from "../CommittedUiMessages"
 import {
@@ -155,6 +157,37 @@ describe("TrajectoryMaintainerRegistry", () => {
         expect(asked.writable()).toBe(false)
     })
 
+    it("shares the in-flight task opening and only retires it after both pending acquisitions release", async () => {
+        const fake = fakeTask()
+        let finishCreate: (task: MaintainedTask) => void = () => undefined
+        const opening = new Promise<MaintainedTask>((resolve) => {
+            finishCreate = resolve
+        })
+        const create = vi.fn(() => opening)
+        const first = registry.acquire(KEY, switchableAccess(true).access, create)
+        const second = registry.acquire(KEY, switchableAccess(true).access, create)
+        expect(create).toHaveBeenCalledTimes(1)
+        finishCreate(fake.task)
+        const [firstLease, secondLease] = await Promise.all([first, second])
+        expect(firstLease.maintainer).toBe(secondLease.maintainer)
+        await firstLease.release()
+        expect(fake.closeMaintainer).not.toHaveBeenCalled()
+        await secondLease.release()
+        expect(fake.closeMaintainer).toHaveBeenCalledTimes(1)
+        expect(fake.closeMessages).toHaveBeenCalledTimes(1)
+        expect(fake.unsubscribe).toHaveBeenCalledTimes(1)
+    })
+
+    it("clears a failed shared opening so a later acquisition can open once again", async () => {
+        const fake = fakeTask()
+        const create = vi.fn(async () => fake.task).mockRejectedValueOnce(new Error("open failed"))
+        await expect(registry.acquire(KEY, switchableAccess(true).access, create)).rejects.toThrow("open failed")
+        const lease = await registry.acquire(KEY, switchableAccess(true).access, create)
+        expect(create).toHaveBeenCalledTimes(2)
+        await lease.release()
+        expect(fake.closeMessages).toHaveBeenCalledTimes(1)
+    })
+
     it("catches up again when write access changes", async () => {
         const fake = fakeTask()
         const access = switchableAccess(false)
@@ -234,6 +267,7 @@ describe("TrajectoryMaintainerRegistry with a running maintainer", () => {
     })
 
     afterEach(async () => {
+        vi.restoreAllMocks()
         await closeInstanceStoragesUnder(documentsRoot)
         vi.unstubAllEnvs()
         await rm(documentsRoot, { recursive: true, force: true })
@@ -259,7 +293,69 @@ describe("TrajectoryMaintainerRegistry with a running maintainer", () => {
         await messages.close()
     })
 
-    it("publishes an error another maintainer wrote even when no local commit follows", async () => {
+    it("opens no trajectory writer until a real lease becomes writable", async () => {
+        const { root } = await ensureInstanceLayout({ taskId })
+        const writer = await openUiMessageRows(root, UI_MESSAGE_WRITER)
+        const prompt = { ts: 40, type: "say", say: "task", text: "prompt" } as UiMessage
+        await writer.replaceAll([{ ordinal: 0, ts: prompt.ts, message: prompt }])
+        await writer.close()
+        const messages = await UIMessage.openCommittedUiMessages(taskId)
+        const openStore = vi.fn(() => openTrajectoryRows(root))
+        const maintainer = new TrajectoryMaintainer({ instanceId: taskId, messages, openStore })
+        const catchUp = vi.spyOn(maintainer, "catchUp")
+        let ready = false
+        maintainer.onDidWrite((meta) => {
+            ready = meta.state === "ready"
+        })
+        const access = switchableAccess(false)
+        const lease = await new TrajectoryMaintainerRegistry().acquire(root, access.access, async () => ({
+            maintainer,
+            messages,
+        }))
+        try {
+            await vi.waitFor(() => expect(catchUp).toHaveBeenCalledTimes(1))
+            expect(await catchUp.mock.results[0].value).toBe("not_writable")
+            expect(openStore).not.toHaveBeenCalled()
+            access.set(true)
+            await vi.waitFor(() => expect(ready).toBe(true), { timeout: 5_000 })
+            expect(openStore).toHaveBeenCalledTimes(1)
+        } finally {
+            await lease.release()
+        }
+    })
+
+    it("retries a real opening failure under the existing lease without another message commit", async () => {
+        const warn = vi.spyOn(Logger, "warn").mockImplementation(() => undefined)
+        const { root } = await ensureInstanceLayout({ taskId })
+        const writer = await openUiMessageRows(root, UI_MESSAGE_WRITER)
+        const prompt = { ts: 40, type: "say", say: "task", text: "prompt" } as UiMessage
+        await writer.replaceAll([{ ordinal: 0, ts: prompt.ts, message: prompt }])
+        await writer.close()
+        const messages = await UIMessage.openCommittedUiMessages(taskId)
+        const head = await messages.log.head()
+        const openStore = vi.fn(() => openTrajectoryRows(root)).mockRejectedValueOnce(new Error("disk unavailable"))
+        const maintainer = new TrajectoryMaintainer({ instanceId: taskId, messages, openStore })
+        let ready = false
+        maintainer.onDidWrite((meta) => {
+            ready = meta.state === "ready"
+        })
+        const access = switchableAccess(true).access
+        const lease = await new TrajectoryMaintainerRegistry().acquire(root, access, async () => ({ maintainer, messages }))
+        try {
+            await vi.waitFor(() => expect(ready).toBe(true), { timeout: 5_000 })
+            expect(openStore).toHaveBeenCalledTimes(2)
+            expect(await messages.log.head()).toEqual(head)
+            expect(warn).toHaveBeenCalledTimes(1)
+            expect((await maintainer.readSnapshot(-1)).turns.map((turn) => [turn.anchorOrdinal, turn.prompt])).toEqual([
+                [0, "prompt"],
+            ])
+        } finally {
+            await lease.release()
+        }
+        await expect(messages.rows.readRange(0, 1)).rejects.toThrow()
+    })
+
+    it("rebuilds a persisted error without waiting for another message commit", async () => {
         const { root } = await ensureInstanceLayout({ taskId })
         const writer = await openUiMessageRows(root, UI_MESSAGE_WRITER)
         const prompt = { ts: 1_000, type: "say", say: "task", text: "prompt" } as UiMessage
@@ -272,17 +368,22 @@ describe("TrajectoryMaintainerRegistry with a running maintainer", () => {
         viewer.onDidWrite((meta) => published.push(meta.state))
         expect(await viewer.catchUp({ writable: () => true })).toBe("ready")
 
-        // A second maintainer sees a ts violation and persists the error through the shared store.
-        const violating: CommittedUiMessages = {
-            ...messages,
-            log: { ...messages.log, head: async () => ({ ...(await messages.log.head()), violationTs: prompt.ts }) },
-        }
-        const other = new TrajectoryMaintainer({ instanceId: taskId, messages: violating, openStore: async () => store })
-        expect(await other.catchUp({ writable: () => true })).toBe("error")
-
-        expect(await viewer.catchUp({ writable: () => true })).toBe("error")
-        expect(published.slice(-2)).toEqual(["ready", "error"])
-        await store.close()
+        // A legacy terminal projection may remain after its writer exits.
+        // Reopening must recover from the existing committed rows alone.
+        const ready = (await store.readMeta())!
+        await store.updateMeta(
+            { state: "error", appliedCommitSeq: ready.appliedCommitSeq, job: null, errorTs: prompt.ts },
+            stampOf(ready),
+        )
+        const headBefore = await messages.log.head()
+        expect(await viewer.catchUp({ writable: () => true })).toBe("ready")
+        expect(await messages.log.head()).toEqual(headBefore)
+        const recovered = await store.readSnapshot(-1)
+        expect(recovered.meta).toMatchObject({ state: "ready", errorTs: null, turnCount: 1 })
+        expect(recovered.meta?.buildId).not.toBe(ready.buildId)
+        expect(recovered.turns.map(({ anchorTs, prompt: text }) => [anchorTs, text])).toEqual([[prompt.ts, "prompt"]])
+        expect(published.slice(-2)).toEqual(["building", "ready"])
+        await viewer.close()
         await messages.close()
     })
 

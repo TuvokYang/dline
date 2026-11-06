@@ -55,14 +55,14 @@ export type ComposeRoundResult =
           readonly draftRef: string
           readonly queueJournalReceipt?: QueueJournalReceipt
           readonly materialReceipt?: RoundMaterialReceipt
+          /** Reserved at journal intake; publish only after accepted compose feedback is durable. */
+          readonly presentation?: RetainedInputPresentationCommit
       }
     | { readonly withdrawn: { readonly reason: string; readonly carriedOut?: boolean } }
     | { readonly failed: { readonly reason: string; readonly presentation?: string } }
 
 export interface ComposePort {
     compose(input: ComposeRoundInput): Promise<ComposeRoundResult>
-    /** Reserves row order before composing; publishing waits for accepted feedback. */
-    preparePresentation?(input: ComposeRoundInput): Promise<RetainedInputPresentationCommit | undefined>
     /** Retracts any staged retained batch without deciding its kernel lifecycle. */
     rollbackRetainedQueue?(input: ComposeRoundInput): Promise<"released" | "uncertain">
 }
@@ -144,7 +144,6 @@ export class ComposeCommandExecutor implements CommandExecutor, HaltParticipant 
             },
         }
         let result: ComposeRoundResult
-        let presentation: RetainedInputPresentationCommit | undefined
         try {
             if (command.queueDelivery) {
                 const accepted = await this.events.submit({
@@ -158,7 +157,6 @@ export class ComposeCommandExecutor implements CommandExecutor, HaltParticipant 
                 await accepted.durable
                 if (controller.signal.aborted) return
             }
-            presentation = await this.port.preparePresentation?.(input)
             result = await this.port.compose(input)
         } catch (error) {
             if (isExecutionAbort(error, controller.signal)) return
@@ -223,7 +221,7 @@ export class ComposeCommandExecutor implements CommandExecutor, HaltParticipant 
         }
         await completed.durable
         try {
-            await presentation?.commit()
+            await result.presentation?.commit()
         } catch (error) {
             // A durable draft must not be resent because its chat mirror failed.
             Logger.error("[inputQueue] Could not present a composed retained-input batch", error)

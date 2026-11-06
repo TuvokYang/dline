@@ -6,16 +6,16 @@ import { DlineDefaultTool } from "@shared/tools"
  * attempts for the trajectory rail.
  *
  * Every rule reads only fields producers already persist, plus the kind of the
- * nearest preceding row that carries meaning. Producers are never asked to tag
- * rows for the rail (WS-117 D6), so a producer change surfaces here as a fixture
- * failure rather than as a silently miscounted rail.
+ * nearest preceding row that carries meaning. Position and timestamps do not
+ * participate in classification; the fold owns ordinal interval boundaries.
+ * Producer-shaped fixtures exercise these rules without adding rail-specific tags.
  */
 
 /** `interactionId` prefixes of feedback that answers an interaction instead of opening a turn. */
 export const NON_TURN_INTERACTION_PREFIXES: readonly string[] = ["reply:", "command:", "tool-feedback:"]
 
 /**
- * How untagged `user_feedback` that directly follows each ask is read.
+ * How untagged `user_feedback` after each meaningful ask is read.
  *
  * Follow-up, plan, report and Q&A handlers, and every approval dialog, persist
  * the user's answer through `sayFeedbackOnce` without an `interactionId` or

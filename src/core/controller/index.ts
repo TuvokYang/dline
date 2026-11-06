@@ -115,7 +115,7 @@ import { clearRemoteConfig } from "../storage/remote-config/utils"
 import { type PersistenceErrorEvent, StateManager } from "../storage/StateManager"
 import { pruneTaskCommandLogs } from "../storage/task-temp"
 import { UIMessage } from "../storage/UIMessage"
-import { anchoredPage } from "../storage/UIMessageWindowReader"
+import { anchoredPage, centredPageStart, lastIndexOfTimestamp } from "../storage/UIMessageWindowReader"
 import type { ActiveTaskDescriptor } from "../task/active-tasks/ActiveTaskContextProvider"
 import type { TaskActivityStore } from "../task/activity/TaskActivityStore"
 import { TaskSessionCompositionService } from "../task/composition/TaskSessionCompositionService"
@@ -978,6 +978,29 @@ export class Controller {
         return this.task?.owners.messages.clineMessages ?? this.historyDisplaySession?.getMessages() ?? []
     }
 
+    /** Project only rows actually being sent, without changing the raw window or its coordinate space. */
+    async readCurrentTaskMessageProjection(messages: readonly UiMessage[]): Promise<UiMessage[]> {
+        const owner = this.task?.owners.messages
+        if (owner?.uiMessage) return await owner.readClineMessageProjection(messages)
+        const history = owner ? undefined : this.historyDisplaySession
+        return await Promise.all(
+            messages.map(async (message) => {
+                const projected = { ...message }
+                delete projected.messageIndex
+                const sourceIndex = await history?.projectMessageSourceIndex(message.ts)
+                if (sourceIndex !== undefined) projected.messageIndex = sourceIndex
+                return projected
+            }),
+        )
+    }
+
+    /** Resolve metadata through the current message owner, never by a window/buffer offset. */
+    async projectCurrentTaskMessageSourceIndex(ts: number): Promise<number | undefined> {
+        const owner = this.task?.owners.messages
+        if (owner) return owner.uiMessage ? await owner.projectMessageSourceIndex(ts) : undefined
+        return await this.historyDisplaySession?.projectMessageSourceIndex(ts)
+    }
+
     /** Durable message count, which exceeds the loaded window for a history display. */
     getCurrentTaskMessageCount(): number {
         return this.task?.owners.messages.clineMessages.length ?? this.historyDisplaySession?.getMessageCount() ?? 0
@@ -1009,31 +1032,54 @@ export class Controller {
     }
 
     /**
-     * A page of the message sequence the current surface serves. With `anchorTs`,
-     * `referenceIndex` is ignored and the page is centred on the message with that
-     * ts, located in the same sequence; an absent anchor yields an empty page.
+     * A page of the sequence this opening serves. A source index is resolved in the
+     * committed owner first, then located in that presentation sequence. Without an
+     * index, the existing reference/ts entry points keep their coordinate semantics.
      */
     async fetchCurrentTaskMessages(
         referenceIndex: number,
         count: number,
         anchorTs?: number,
+        anchorIndex?: number,
     ): Promise<{ messages: UiMessage[]; totalCount: number; startIndex: number; anchorFound: boolean }> {
         const pageSize = Math.max(0, Math.trunc(count))
         const historyDisplay = this.historyDisplaySession
         if (historyDisplay) {
+            if (anchorIndex !== undefined) return historyDisplay.fetchSourceIndexedPage(anchorIndex, count, anchorTs)
             if (anchorTs !== undefined) return historyDisplay.fetchAnchoredPage(anchorTs, count)
             return { ...(await historyDisplay.fetchMessages(referenceIndex, count)), anchorFound: false }
         }
 
-        const messages = [...(this.task?.owners.messages.clineMessages ?? [])]
+        const owner = this.task?.owners.messages
+        // An index request must resolve this physical row before consulting the live
+        // view. A ts mismatch must never fall through to the old timestamp jump.
+        const target = anchorIndex === undefined ? undefined : await owner?.readClineMessageAtSourceIndex(anchorIndex)
+        const messages = [...(owner?.clineMessages ?? [])]
         const totalCount = messages.length
-        if (anchorTs !== undefined) return anchoredPage(messages, anchorTs, count)
+        if (anchorIndex !== undefined) {
+            const missing = { messages: [], totalCount, startIndex: 0, anchorFound: false }
+            if (!target || (anchorTs !== undefined && target.ts !== anchorTs)) return missing
+            const anchor = lastIndexOfTimestamp(messages, target.ts)
+            if (anchor === undefined || !owner) return missing
+            const startIndex = centredPageStart(anchor, pageSize, totalCount)
+            const projected = await owner.readClineMessageProjection(messages.slice(startIndex, startIndex + pageSize))
+            if (!projected.some((message) => message.messageIndex === anchorIndex && message.ts === target.ts)) return missing
+            const current = await owner.readClineMessageAtSourceIndex(anchorIndex)
+            if (current?.ts !== target.ts) return missing
+            return { messages: projected, totalCount, startIndex, anchorFound: true }
+        }
+
+        if (anchorTs !== undefined) {
+            const page = anchoredPage(messages, anchorTs, count)
+            return { ...page, messages: owner ? await owner.readClineMessageProjection(page.messages) : [] }
+        }
         const startIndex =
             referenceIndex === -1
                 ? Math.max(0, totalCount - pageSize)
                 : Math.max(0, Math.min(Math.trunc(referenceIndex), totalCount))
+        const pageMessages = messages.slice(startIndex, Math.min(startIndex + pageSize, totalCount))
         return {
-            messages: messages.slice(startIndex, Math.min(startIndex + pageSize, totalCount)),
+            messages: owner ? await owner.readClineMessageProjection(pageMessages) : [],
             totalCount,
             startIndex,
             anchorFound: false,
@@ -3188,8 +3234,10 @@ export class Controller {
             messages: rawMessages,
             totalCount: totalMessageCount,
             firstItemIndex,
-            titleMessage: taskTitleMessage,
+            titleMessage: rawTitleMessage,
         } = this.materializeMessageWindow()
+        // Only the title travels in full state; do not map the whole raw history.
+        const [taskTitleMessage] = rawTitleMessage ? await this.readCurrentTaskMessageProjection([rawTitleMessage]) : []
         // Separate task header message from body messages. Read the header from the
         // in-memory message list instead of re-reading ui_messages.jsonl on every
         // state push: getTaskHeaderText() bypasses the jsonl cache and performs a

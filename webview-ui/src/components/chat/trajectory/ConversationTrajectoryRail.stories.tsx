@@ -2,14 +2,16 @@ import type { Meta, StoryObj } from "@storybook/react-vite"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { ConversationTrajectoryRail } from "./ConversationTrajectoryRail"
 import type { TrajectoryAttempt, TrajectoryTurn } from "./trajectory-model"
+import { RAIL_SCROLL_IDLE_MS } from "./useTrajectoryRailViewport"
 
-/** How long the rail stays after the last scroll event before fading out. */
-const RAIL_IDLE_HIDE_MS = 1_500
 /** A user message counts as the current turn once its top is this close to the viewport top. */
 const ACTIVE_TURN_TOP_SLACK_PX = 12
 
-const turn = (anchorTs: number, prompt: string, rounds: number, usage: Record<string, number>): TrajectoryTurn => ({
-    anchorTs,
+// Fixture coordinates only: twelve committed records per illustrated user interval.
+const turn = (ordinal: number, prompt: string, rounds: number, usage: Record<string, number>): TrajectoryTurn => ({
+    seq: ordinal - 1,
+    anchorIndex: (ordinal - 1) * 12,
+    anchorTs: ordinal,
     prompt,
     rounds,
     toolUsage: Object.entries(usage)
@@ -121,7 +123,7 @@ interface ChatFixtureProps {
 function ChatFixture({ attempts, alwaysVisible = false }: ChatFixtureProps) {
     const scrollerRef = useRef<HTMLDivElement>(null)
     const [scrolling, setScrolling] = useState(false)
-    const [activeTurnTs, setActiveTurnTs] = useState<number | undefined>(attempts[0]?.turns[0]?.anchorTs)
+    const [activeTurnSeq, setActiveTurnSeq] = useState<number | undefined>(attempts[0]?.turns[0]?.seq)
 
     useEffect(() => {
         const scroller = scrollerRef.current
@@ -130,10 +132,10 @@ function ChatFixture({ attempts, alwaysVisible = false }: ChatFixtureProps) {
         const onScroll = () => {
             setScrolling(true)
             clearTimeout(hideTimer)
-            hideTimer = setTimeout(() => setScrolling(false), RAIL_IDLE_HIDE_MS)
-            const anchors = Array.from(scroller.querySelectorAll<HTMLElement>("[data-anchor-ts]"))
+            hideTimer = setTimeout(() => setScrolling(false), RAIL_SCROLL_IDLE_MS)
+            const anchors = Array.from(scroller.querySelectorAll<HTMLElement>("[data-anchor-seq]"))
             const passed = anchors.filter((anchor) => anchor.offsetTop <= scroller.scrollTop + ACTIVE_TURN_TOP_SLACK_PX)
-            setActiveTurnTs(Number((passed.at(-1) ?? anchors[0])?.dataset.anchorTs))
+            setActiveTurnSeq(Number((passed.at(-1) ?? anchors[0])?.dataset.anchorSeq))
         }
         scroller.addEventListener("scroll", onScroll, { passive: true })
         return () => {
@@ -142,9 +144,9 @@ function ChatFixture({ attempts, alwaysVisible = false }: ChatFixtureProps) {
         }
     }, [])
 
-    const jumpToTurn = useCallback((anchorTs: number) => {
+    const jumpToTurn = useCallback((turn: TrajectoryTurn) => {
         scrollerRef.current
-            ?.querySelector(`[data-anchor-ts="${anchorTs}"]`)
+            ?.querySelector(`[data-anchor-seq="${turn.seq}"]`)
             ?.scrollIntoView({ behavior: "smooth", block: "start" })
     }, [])
 
@@ -154,7 +156,7 @@ function ChatFixture({ attempts, alwaysVisible = false }: ChatFixtureProps) {
                 {attempts.map((attempt) => (
                     <div key={attempt.id}>
                         {attempt.turns.map((chatTurn) => (
-                            <MockTurn key={chatTurn.anchorTs} turn={chatTurn} />
+                            <MockTurn key={chatTurn.seq} turn={chatTurn} />
                         ))}
                         {attempt.completed && (
                             <div className="mb-6 rounded-xs border border-success/40 px-2 py-1.5 text-xs text-success">
@@ -165,7 +167,7 @@ function ChatFixture({ attempts, alwaysVisible = false }: ChatFixtureProps) {
                 ))}
             </div>
             <ConversationTrajectoryRail
-                activeTurnTs={activeTurnTs}
+                activeTurnSeq={activeTurnSeq}
                 attempts={attempts}
                 onSelectTurn={jumpToTurn}
                 visible={alwaysVisible || scrolling}
@@ -177,7 +179,10 @@ function ChatFixture({ attempts, alwaysVisible = false }: ChatFixtureProps) {
 function MockTurn({ turn: chatTurn }: { turn: TrajectoryTurn }) {
     return (
         <section className="pt-3 pb-4">
-            <div className="rounded-xs bg-badge-background p-2 text-sm text-badge-foreground" data-anchor-ts={chatTurn.anchorTs}>
+            <div
+                className="rounded-xs bg-badge-background p-2 text-sm text-badge-foreground"
+                data-anchor-seq={chatTurn.seq}
+                data-anchor-ts={chatTurn.anchorTs}>
                 {chatTurn.prompt}
             </div>
             <ul className="m-0 mt-2 flex list-none flex-col gap-1 p-0">

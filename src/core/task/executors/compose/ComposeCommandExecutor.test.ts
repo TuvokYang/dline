@@ -66,6 +66,47 @@ describe("ComposeCommandExecutor", () => {
         ])
     })
 
+    it.each(["accepted", "rejected"] as const)("publishes retained input only after %s durable completion", async (outcome) => {
+        const visibleInputs: string[] = []
+        const events: TaskEvent[] = []
+        let acknowledge!: () => void
+        let persist!: () => void
+        const acknowledged = new Promise<void>((resolve) => {
+            acknowledge = resolve
+        })
+        const durable = new Promise<void>((resolve) => {
+            persist = resolve
+        })
+        const executor = new ComposeCommandExecutor(
+            {
+                compose: async () => ({
+                    draftRef: "draft:retained",
+                    presentation: {
+                        commit: async () => {
+                            visibleInputs.push("steer")
+                        },
+                    },
+                }),
+                rollbackRetainedQueue: async () => "released",
+            },
+            {
+                submit: async (event) => {
+                    events.push(event)
+                    if (event.type !== "compose.completed") return { kind: "accepted" }
+                    acknowledge()
+                    return outcome === "accepted" ? { kind: "accepted", durable } : { kind: "rejected" }
+                },
+            },
+        )
+        const execution = executor.execute(queuedCommand)
+        await acknowledged
+        expect(visibleInputs).toEqual([])
+        persist()
+        await execution
+        expect(visibleInputs).toEqual(outcome === "accepted" ? ["steer"] : [])
+        expect(events.find((event) => event.type === "compose.completed")).not.toHaveProperty("presentation")
+    })
+
     // The message enters the conversation and keeps only the failure kind; the
     // chat's error box names the actual error, with credentials redacted.
     it("emits a sanitized failure event that the chat can still explain", async () => {

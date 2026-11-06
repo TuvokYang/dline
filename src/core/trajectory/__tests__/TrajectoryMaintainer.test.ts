@@ -9,7 +9,7 @@ import { openUiMessageRows, UI_MESSAGE_WRITER } from "../../storage/messages/ope
 import type { UiMessageRowStore } from "../../storage/messages/UiMessageRowStore"
 import type { UiMessageRecord } from "../../storage/messages/UiMessageRows"
 import { openTrajectoryRows } from "../../storage/trajectory/openTrajectoryRows"
-import type { TrajectoryRowStore } from "../../storage/trajectory/TrajectoryRowStore"
+import type { TrajectoryRowStore, TrajectoryTurnInput } from "../../storage/trajectory/TrajectoryRowStore"
 import { UIMessage } from "../../storage/UIMessage"
 import type { CommittedUiMessages } from "../CommittedUiMessages"
 import { closeOpenTurn, EMPTY_FOLD_CARRY, foldTrajectory } from "../foldTrajectory"
@@ -25,6 +25,8 @@ function message(fields: Partial<UiMessage>): UiMessage {
 const task = (text: string) => message({ say: "task", text })
 const user = (text: string) => message({ say: "user_feedback", text })
 const tool = () => message({ say: "tool", text: JSON.stringify({ tool: "readFile", path: "a.ts" }) })
+const round = () => message({ say: "api_req_started", text: "{}" })
+const completed = () => message({ type: "ask", ask: "completion_result", text: "done" })
 const checkpoint = () => message({ say: "checkpoint_created", text: "", lastCheckpointHash: [] })
 const compactionCard = () =>
     message({ say: "tool", text: JSON.stringify({ tool: "summarizeTask", content: "summary", compactionStatus: "completed" }) })
@@ -53,6 +55,18 @@ function fullFold(messages: readonly UiMessage[]) {
     return closing ? [...fold.turns, closing] : fold.turns
 }
 
+/** Independent interval view: a full fold is only a second consistency check. */
+function intervals(turns: readonly TrajectoryTurnInput[]) {
+    return turns.map(({ seq, anchorOrdinal, attemptSeq, rounds, toolUsage, endsAttempt }) => ({
+        seq,
+        anchorOrdinal,
+        attemptSeq,
+        rounds,
+        tools: toolUsage.reduce((sum, usage) => sum + usage.count, 0),
+        endsAttempt,
+    }))
+}
+
 async function storedTurns(store: TrajectoryRowStore) {
     return (await store.readSnapshot(-1)).turns.map(({ revision: _revision, ...turn }) => turn)
 }
@@ -64,6 +78,7 @@ describe("TrajectoryMaintainer", () => {
     let store: TrajectoryRowStore
     let maintainer: TrajectoryMaintainer
     let rowReads: number[]
+    let rowRanges: [number, number][]
 
     beforeEach(async () => {
         nextTs = 1_000
@@ -73,10 +88,12 @@ describe("TrajectoryMaintainer", () => {
         writer = await openUiMessageRows(root, UI_MESSAGE_WRITER)
         const reader = await UIMessage.openCommittedUiMessages("task-maintained")
         rowReads = []
+        rowRanges = []
         committed = {
             ...reader,
             rows: {
                 readRange: async (start, end) => {
+                    rowRanges.push([start, end])
                     const rows = await reader.rows.readRange(start, end)
                     rowReads.push(rows.length)
                     return rows
@@ -92,6 +109,7 @@ describe("TrajectoryMaintainer", () => {
     })
 
     afterEach(async () => {
+        vi.useRealTimers()
         vi.restoreAllMocks()
         await maintainer.close()
         await committed.close()
@@ -113,6 +131,11 @@ describe("TrajectoryMaintainer", () => {
             [3, "second"],
             [5, "third"],
         ])
+        expect(intervals(turns)).toEqual([
+            { seq: 0, anchorOrdinal: 0, attemptSeq: 0, rounds: 0, tools: 2, endsAttempt: false },
+            { seq: 1, anchorOrdinal: 3, attemptSeq: 0, rounds: 0, tools: 1, endsAttempt: false },
+            { seq: 2, anchorOrdinal: 5, attemptSeq: 0, rounds: 0, tools: 0, endsAttempt: false },
+        ])
         expect(turns).toEqual(fullFold(history))
     })
 
@@ -131,6 +154,12 @@ describe("TrajectoryMaintainer", () => {
         expect(rowReads).toEqual([4])
         const after = (await store.readSnapshot(-1)).turns
         expect(after[0]).toEqual(before[0])
+        expect(rowRanges.at(-1)).toEqual([2, 2 + TRAJECTORY_SLICE_ROWS])
+        expect(intervals(after)).toEqual([
+            { seq: 0, anchorOrdinal: 0, attemptSeq: 0, rounds: 0, tools: 1, endsAttempt: false },
+            { seq: 1, anchorOrdinal: 2, attemptSeq: 0, rounds: 0, tools: 2, endsAttempt: false },
+            { seq: 2, anchorOrdinal: 5, attemptSeq: 0, rounds: 0, tools: 0, endsAttempt: false },
+        ])
         expect(await storedTurns(store)).toEqual(fullFold([...history, ...appended]))
     })
 
@@ -142,6 +171,10 @@ describe("TrajectoryMaintainer", () => {
 
         expect(Math.max(...rowReads)).toBeLessThanOrEqual(TRAJECTORY_SLICE_ROWS)
         expect(rowReads.reduce((sum, count) => sum + count, 0)).toBe(history.length)
+        expect(rowRanges.every(([start, end]) => end - start === TRAJECTORY_SLICE_ROWS)).toBe(true)
+        expect(intervals(await storedTurns(store))).toEqual([
+            { seq: 0, anchorOrdinal: 0, attemptSeq: 0, rounds: 0, tools: TRAJECTORY_SLICE_ROWS + 20, endsAttempt: false },
+        ])
         expect(await storedTurns(store)).toEqual(fullFold(history))
     })
 
@@ -159,6 +192,10 @@ describe("TrajectoryMaintainer", () => {
             [0, "first"],
             [4, "third"],
         ])
+        expect(intervals(turns)).toEqual([
+            { seq: 0, anchorOrdinal: 0, attemptSeq: 0, rounds: 0, tools: 3, endsAttempt: false },
+            { seq: 1, anchorOrdinal: 4, attemptSeq: 0, rounds: 0, tools: 1, endsAttempt: false },
+        ])
         expect(turns).toEqual(fullFold(withoutSecond))
     })
 
@@ -174,18 +211,70 @@ describe("TrajectoryMaintainer", () => {
         expect(await storedTurns(store)).toEqual(fullFold(history.slice(0, 3)))
     })
 
-    it("persists an error for a logged ts violation and stops projecting", async () => {
-        vi.spyOn(Logger, "warn").mockImplementation(() => undefined)
-        const history = [task("first"), user("second")]
+    it.each(["equal", "decreasing"])("retains every user interval and count with %s ts", async (order) => {
+        const warn = vi.spyOn(Logger, "warn").mockImplementation(() => undefined)
+        const history = [task("first"), round(), tool(), completed(), user("second"), tool(), round(), user("third"), tool()].map(
+            (entry, ordinal) => ({ ...entry, ts: order === "equal" ? 40 : 100 - ordinal }),
+        )
+        await writer.replaceAll(records(history))
+        expect(await maintainer.catchUp(WRITABLE)).toBe("ready")
+        const appended = [
+            { ...user("fourth"), ts: 40 },
+            { ...round(), ts: 39 },
+            { ...tool(), ts: 38 },
+        ]
+        await writer.insert(records([...history, ...appended]).slice(history.length))
+        expect(await maintainer.catchUp(WRITABLE)).toBe("ready")
+
+        const turns = await storedTurns(store)
+        expect(intervals(turns)).toEqual([
+            { seq: 0, anchorOrdinal: 0, attemptSeq: 0, rounds: 1, tools: 1, endsAttempt: true },
+            { seq: 1, anchorOrdinal: 4, attemptSeq: 1, rounds: 1, tools: 1, endsAttempt: false },
+            { seq: 2, anchorOrdinal: 7, attemptSeq: 1, rounds: 0, tools: 1, endsAttempt: false },
+            { seq: 3, anchorOrdinal: 9, attemptSeq: 1, rounds: 1, tools: 1, endsAttempt: false },
+        ])
+        expect(turns.map(({ prompt }) => prompt)).toEqual(["first", "second", "third", "fourth"])
+        expect(turns).toEqual(fullFold([...history, ...appended]))
+        expect(warn.mock.calls.filter(([message]) => String(message).startsWith("[trajectory]"))).toEqual([])
+    })
+
+    it("reclassifies an anchor from the interval containing x-1, preserving the earlier prefix", async () => {
+        const history = [task("first"), tool(), user("second"), round(), user("removed"), tool(), user("last"), tool()]
         await writer.replaceAll(records(history))
         await maintainer.catchUp(WRITABLE)
+        const before = (await store.readSnapshot(-1)).turns
+        const changed = history.map((entry, ordinal) => (ordinal === 4 ? { ...tool(), ts: entry.ts } : entry))
+        await writer.replaceAll(records(changed), { firstChangedIndex: 4 })
+        rowRanges = []
 
-        const stale = { ...user("late"), ts: history[1].ts }
-        await writer.insert([{ ordinal: 2, ts: stale.ts, message: stale }])
+        expect(await maintainer.catchUp(WRITABLE)).toBe("ready")
 
-        expect(await maintainer.catchUp(WRITABLE)).toBe("error")
-        expect((await store.readSnapshot(-1)).meta).toMatchObject({ state: "error", errorTs: stale.ts })
-        expect(await maintainer.catchUp(WRITABLE)).toBe("error")
+        const after = (await store.readSnapshot(-1)).turns
+        expect(rowRanges).toEqual([[2, 2 + TRAJECTORY_SLICE_ROWS]])
+        expect(after[0]).toEqual(before[0])
+        expect(intervals(after)).toEqual([
+            { seq: 0, anchorOrdinal: 0, attemptSeq: 0, rounds: 0, tools: 1, endsAttempt: false },
+            { seq: 1, anchorOrdinal: 2, attemptSeq: 0, rounds: 1, tools: 2, endsAttempt: false },
+            { seq: 2, anchorOrdinal: 6, attemptSeq: 0, rounds: 0, tools: 1, endsAttempt: false },
+        ])
+        expect(await storedTurns(store)).toEqual(fullFold(changed))
+    })
+
+    it("preserves classification before the first anchor when a leading ask is replaced", async () => {
+        const history = [message({ type: "ask", ask: "followup" }), user("reply"), checkpoint(), user("instruction")]
+        await writer.replaceAll(records(history))
+        await maintainer.catchUp(WRITABLE)
+        expect((await storedTurns(store)).map((turn) => turn.anchorOrdinal)).toEqual([3])
+        const changed = [{ ...history[0], ask: "completion_result" } as UiMessage, ...history.slice(1)]
+        await writer.replaceAll(records(changed), { firstChangedIndex: 0 })
+        rowRanges = []
+        expect(await maintainer.catchUp(WRITABLE)).toBe("ready")
+        expect(rowRanges[0][0]).toBe(0)
+        expect((await storedTurns(store)).map((turn) => [turn.anchorOrdinal, turn.prompt])).toEqual([
+            [1, "reply"],
+            [3, "instruction"],
+        ])
+        expect(await storedTurns(store)).toEqual(fullFold(changed))
     })
 
     it("writes nothing and opens no store without write access", async () => {
@@ -248,6 +337,16 @@ describe("TrajectoryMaintainer", () => {
             const turns = await storedTurns(store)
             expect(turns.map((turn) => turn.anchorOrdinal)).toEqual(anchors)
             expect(turns.map((turn) => turn.anchorTs)).toEqual(anchors.map((ordinal) => final[ordinal].ts))
+            expect(turns.map((turn) => [turn.attemptSeq, turn.rounds, turn.toolUsage, turn.endsAttempt])).toEqual([
+                [0, 0, [{ tool: "readFile", count: 1 }], false],
+                [0, 0, [{ tool: "readFile", count: 1 }], false],
+                [
+                    0,
+                    0,
+                    _name === "a same-ts takeover of the last row" ? [] : [{ tool: "readFile", count: 1 }],
+                    _name === "a same-ts takeover of the last row",
+                ],
+            ])
             expect(turns).toEqual(fullFold(final))
         })
 
@@ -263,69 +362,110 @@ describe("TrajectoryMaintainer", () => {
         })
     })
 
-    describe("ts uniqueness", () => {
-        it("persists an error from the sticky violation ts after its log entry was trimmed", async () => {
-            vi.spyOn(Logger, "warn").mockImplementation(() => undefined)
-            const history = [task("first"), user("second")]
-            await writer.replaceAll(records(history))
-            const stale = { ...user("late"), ts: history[1].ts }
-            await writer.insert([{ ordinal: 2, ts: stale.ts, message: stale }])
-            expect((await committed.log.head()).violationTs).toBe(stale.ts)
-            // Retention trimmed the entry that recorded the violation; only the sticky head field remains.
-            const trimmed: CommittedUiMessages = {
-                ...committed,
-                log: { ...committed.log, since: async (seq) => ({ ...(await committed.log.since(seq)), tsViolation: null }) },
-            }
-            const projecting = new TrajectoryMaintainer({
-                instanceId: "task-maintained",
-                messages: trimmed,
-                openStore: async () => store,
+    describe("committed-only C3 port", () => {
+        it.each(["absent", "null", "value", "trapped"])("ignores %s storage-only diagnostic fields", async (diagnostics) => {
+            const warn = vi.spyOn(Logger, "warn").mockImplementation(() => undefined)
+            const accessed = vi.fn(() => {
+                throw new Error("Storage diagnostics are not trajectory inputs")
             })
-
-            expect(await projecting.catchUp(WRITABLE)).toBe("error")
-            expect(await store.readMeta()).toMatchObject({ state: "error", errorTs: stale.ts })
-        })
-
-        it("persists an error for a non-increasing ts the log never saw, found against the carry of the previous slice", async () => {
-            vi.spyOn(Logger, "warn").mockImplementation(() => undefined)
-            const history = [task("long"), ...Array.from({ length: TRAJECTORY_SLICE_ROWS + 9 }, () => tool())]
-            const duplicate = { ...history[TRAJECTORY_SLICE_ROWS], ts: history[TRAJECTORY_SLICE_ROWS - 1].ts }
-            history[TRAJECTORY_SLICE_ROWS] = duplicate
-            await writer.replaceAll(records(history))
-            // Rows written before the commit log existed carry no log evidence.
-            const unlogged: CommittedUiMessages = {
+            const decorate = <T extends object>(value: T): T => {
+                if (diagnostics === "absent") return value
+                for (const key of ["violationTs", "tsViolation"]) {
+                    Object.defineProperty(value, key, {
+                        enumerable: true,
+                        ...(diagnostics === "trapped" ? { get: accessed } : { value: diagnostics === "null" ? null : 40 }),
+                    })
+                }
+                return value
+            }
+            const messages: CommittedUiMessages = {
                 ...committed,
                 log: {
-                    head: async () => ({ ...(await committed.log.head()), violationTs: null }),
-                    since: async (seq) => ({ ...(await committed.log.since(seq)), violationTs: null, tsViolation: null }),
+                    head: async () => {
+                        const { logId, headSeq } = await committed.log.head()
+                        return decorate({ logId, headSeq })
+                    },
+                    since: async (seq) => {
+                        const { logId, headSeq, minFirstChangedOrdinal } = await committed.log.since(seq)
+                        return decorate({ logId, headSeq, minFirstChangedOrdinal })
+                    },
                 },
             }
-            const scanning = new TrajectoryMaintainer({
-                instanceId: "task-maintained",
-                messages: unlogged,
-                openStore: async () => store,
-            })
-
-            expect(await scanning.catchUp(WRITABLE)).toBe("error")
-            expect(rowReads).toEqual([TRAJECTORY_SLICE_ROWS, 10])
-            expect(await store.readMeta()).toMatchObject({ state: "error", errorTs: duplicate.ts })
+            const clear = vi.spyOn(store, "clear")
+            const replace = vi.spyOn(store, "replaceFrom")
+            const update = vi.spyOn(store, "updateMeta")
+            const projecting = new TrajectoryMaintainer({ instanceId: "task-maintained", messages, openStore: async () => store })
+            const history = [task("first"), round(), tool(), user("second"), tool()].map((entry) => ({ ...entry, ts: 40 }))
+            await writer.replaceAll(records(history))
+            try {
+                expect(await projecting.catchUp(WRITABLE)).toBe("ready")
+                const appended = [user("third"), round(), tool()].map((entry) => ({ ...entry, ts: 39 }))
+                await writer.insert(records([...history, ...appended]).slice(history.length))
+                expect(await projecting.catchUp(WRITABLE)).toBe("ready")
+                expect(intervals(await storedTurns(store))).toEqual([
+                    { seq: 0, anchorOrdinal: 0, attemptSeq: 0, rounds: 1, tools: 1, endsAttempt: false },
+                    { seq: 1, anchorOrdinal: 3, attemptSeq: 0, rounds: 0, tools: 1, endsAttempt: false },
+                    { seq: 2, anchorOrdinal: 5, attemptSeq: 0, rounds: 1, tools: 1, endsAttempt: false },
+                ])
+                expect(rowReads).toEqual([5, 5])
+                expect(clear).toHaveBeenCalledTimes(1)
+                expect(replace.mock.calls.map(([fromSeq]) => fromSeq)).toEqual([0, 1])
+                expect(update).not.toHaveBeenCalled()
+                expect(accessed).not.toHaveBeenCalled()
+                expect(warn.mock.calls.filter(([message]) => String(message).startsWith("[trajectory]"))).toEqual([])
+            } finally {
+                await projecting.close()
+            }
         })
 
-        it("diagnoses a persisted duplicate ts in UIMessage.open before the dedupe repair hides it", async () => {
-            const warn = vi.spyOn(Logger, "warn").mockImplementation(() => undefined)
-            const first = task("first")
-            await writer.replaceAll(records([first, { ...user("second"), ts: first.ts }, tool()]))
-            await writer.close()
+        it("keeps every anchor and count across a slice boundary with equal ts", async () => {
+            const history = [task("long"), ...Array.from({ length: TRAJECTORY_SLICE_ROWS + 9 }, () => tool())].map(
+                (entry, ordinal) => ({
+                    ...entry,
+                    ts: 40,
+                    ...(ordinal === TRAJECTORY_SLICE_ROWS ? { say: "user_feedback" as const, text: "next" } : {}),
+                }),
+            )
+            await writer.replaceAll(records(history))
+            expect(await maintainer.catchUp(WRITABLE)).toBe("ready")
+            expect(rowReads).toEqual([TRAJECTORY_SLICE_ROWS, 10])
+            expect(intervals(await storedTurns(store))).toEqual([
+                { seq: 0, anchorOrdinal: 0, attemptSeq: 0, rounds: 0, tools: 499, endsAttempt: false },
+                { seq: 1, anchorOrdinal: 500, attemptSeq: 0, rounds: 0, tools: 9, endsAttempt: false },
+            ])
+            expect(await storedTurns(store)).toEqual(fullFold(history))
+        })
 
-            const opened = await UIMessage.open("task-maintained")
+        it("reads durable rows rather than a writer's staged rewrite, and signals carry no data", async () => {
+            const history = [task("first"), tool()]
+            await writer.replaceAll(records(history))
+            await writer.close()
+            // Keep the periodic flush from racing this committed/staged comparison.
+            vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] })
+            const live = await UIMessage.open("task-maintained")
+            const signal = vi.fn()
+            const unsubscribe = committed.signals.subscribe(signal)
             try {
-                expect(warn).toHaveBeenCalledWith(
-                    "[messages.db] UiMessagePersistedDuplicateTs: task=task-maintained duplicates=1",
-                )
-                const timestamps = opened.getAll().map((entry) => entry.ts)
-                expect(new Set(timestamps).size).toBe(timestamps.length)
+                await maintainer.catchUp(WRITABLE)
+                const head = await committed.log.head()
+                await live.updateMessage(1, { say: "user_feedback", text: "staged" })
+                expect(live.getAt(1)?.say).toBe("user_feedback")
+                expect((await committed.rows.readRange(1, 2))[0].message.say).toBe("tool")
+                expect(await committed.log.head()).toEqual(head)
+                expect(signal).not.toHaveBeenCalled()
+                await maintainer.catchUp(WRITABLE)
+                expect((await storedTurns(store)).map((turn) => turn.anchorOrdinal)).toEqual([0])
+                await live.flush()
+                expect(signal).toHaveBeenCalledWith()
+                expect(await maintainer.catchUp(WRITABLE)).toBe("ready")
+                expect((await storedTurns(store)).map((turn) => [turn.anchorOrdinal, turn.prompt])).toEqual([
+                    [0, "first"],
+                    [1, "staged"],
+                ])
             } finally {
-                await opened.close()
+                unsubscribe()
+                await live.close()
+                vi.useRealTimers()
             }
         })
     })

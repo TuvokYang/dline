@@ -392,6 +392,8 @@ message ClineMessage {
   optional string command_output = 45;
   // Absent on a row written before the split, which stated approval as a suffix.
   optional bool command_asks_approval = 46;
+  // Projection-only committed source ordinal; absent on transient or unindexed rows.
+  optional int64 message_index = 47;
 }
 
 message ShowWebviewEvent {

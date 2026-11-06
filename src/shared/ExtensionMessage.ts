@@ -357,6 +357,8 @@ export type CheckpointSource =
 
 export interface UiMessage {
     ts: number
+    /** Projection-only committed source ordinal, never persisted in the message body. */
+    messageIndex?: number
     type: "ask" | "say"
     ask?: UiAsk
     say?: UiSay

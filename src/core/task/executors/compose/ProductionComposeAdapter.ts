@@ -177,7 +177,7 @@ export class ProductionComposeAdapter implements ComposePort {
         this.materials = new RoundMaterialComposer(options.payloads, options.journal)
     }
 
-    async preparePresentation(input: ComposeRoundInput): Promise<RetainedInputPresentationCommit | undefined> {
+    private async preparePresentation(input: ComposeRoundInput): Promise<RetainedInputPresentationCommit | undefined> {
         if (!input.queueDelivery || !this.options.retainedInputPresentation) return undefined
         const entries = this.admittedEntries(input).filter((entry) => entry.queue !== undefined)
         if (entries.length === 0) return undefined
@@ -204,7 +204,10 @@ export class ProductionComposeAdapter implements ComposePort {
         if (input.signal.aborted) throw input.signal.reason
         if (input.composeCommandId) {
             const prepared = await this.materials.prepared(input.composeCommandId)
-            if (prepared) return prepared
+            if (prepared) {
+                const presentation = await this.preparePresentation(input)
+                return { ...prepared, ...(presentation ? { presentation } : {}) }
+            }
         }
         const admitted = [...this.admittedEntries(input), ...(input.respondedQueue?.entries ?? [])]
         const inputs = await this.userInputsOf(admitted)
@@ -247,9 +250,13 @@ export class ProductionComposeAdapter implements ComposePort {
         // Read again: the compaction advanced the revision this round is keyed by.
         const state = this.options.readState()
         const entries = this.admittedEntries(input)
+        // The pre-round summary excludes this input; later admission compaction
+        // includes it. Reserve the row between those same journal boundaries.
+        const presentation = await this.preparePresentation(input)
         if (input.freezeMaterial) {
             const plan = await input.freezeMaterial()
-            return this.composeMaterialPlan(input, plan, entries)
+            const result = await this.composeMaterialPlan(input, plan, entries)
+            return "draftRef" in result && presentation ? { ...result, presentation } : result
         }
 
         await this.appendContinuation(input, state)
@@ -309,6 +316,7 @@ export class ProductionComposeAdapter implements ComposePort {
         this.draftedThrough = envelope.journalThrough
         return {
             draftRef,
+            ...(presentation ? { presentation } : {}),
             ...(queueReceipt === undefined
                 ? {}
                 : {

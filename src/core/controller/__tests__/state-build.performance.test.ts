@@ -61,7 +61,8 @@ function controllerAccessor(
         | "getCurrentTaskId"
         | "getCurrentTaskMessages"
         | "getCurrentTaskMessageCount"
-        | "materializeMessageWindow",
+        | "materializeMessageWindow"
+        | "readCurrentTaskMessageProjection",
 ): unknown {
     return (Controller.prototype as unknown as Record<string, unknown>)[name]
 }
@@ -128,6 +129,7 @@ function createFakeController(messages: UiMessage[]): Record<string, unknown> {
         getCurrentTaskMessages: controllerAccessor("getCurrentTaskMessages"),
         getCurrentTaskMessageCount: controllerAccessor("getCurrentTaskMessageCount"),
         materializeMessageWindow: controllerAccessor("materializeMessageWindow"),
+        readCurrentTaskMessageProjection: controllerAccessor("readCurrentTaskMessageProjection"),
         modeSwitchCoordinator: { getSnapshot: () => ({}) },
         getTaskLockStatus: () => undefined,
         backgroundCommandRunning: undefined,

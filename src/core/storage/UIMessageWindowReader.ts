@@ -4,6 +4,7 @@ import type { InstanceLayout } from "./instance"
 import { readLegacyUiMessages } from "./messages/importLegacyUiMessages"
 import { openStoredUiMessageRows } from "./messages/openUiMessageRows"
 import type { UiMessageRowStore } from "./messages/UiMessageRowStore"
+import type { UiMessageRecord } from "./messages/UiMessageRows"
 
 export interface UIMessageWindowPage {
     messages: UiMessage[]
@@ -47,6 +48,7 @@ interface WindowSource {
     /** Whether row positions are the ones the task's `messages.db` gives them. */
     readonly canonicalIndexes: boolean
     read(start: number, end: number): Promise<UiMessage[]>
+    getBySourceIndex(sourceIndex: number): Promise<UiMessage | undefined>
     findByTimestamp(timestamp: number): Promise<UiMessage | undefined>
     /** Position of the last row stored with `timestamp`, the one the chat shows for it. */
     ordinalOfTimestamp(timestamp: number): Promise<number | undefined>
@@ -64,7 +66,15 @@ class RowSource implements WindowSource {
     ) {}
 
     async read(start: number, end: number): Promise<UiMessage[]> {
-        return (await this.rows.readRange(start, end)).map((record) => normalizeStoredCheckpointMessage(record.message))
+        return (await this.rows.readRange(start, end)).map((record) => ({
+            ...normalizeStoredCheckpointMessage(record.message),
+            messageIndex: record.ordinal,
+        }))
+    }
+
+    async getBySourceIndex(sourceIndex: number): Promise<UiMessage | undefined> {
+        const records = await this.rows.readRange(sourceIndex, sourceIndex + 1)
+        return normalizeRow(records.find((record) => record.ordinal === sourceIndex))
     }
 
     async ordinalOfTimestamp(timestamp: number): Promise<number | undefined> {
@@ -72,11 +82,11 @@ class RowSource implements WindowSource {
     }
 
     async findByTimestamp(timestamp: number): Promise<UiMessage | undefined> {
-        return normalizeRow((await this.rows.findLastByTimestamp(timestamp))?.message)
+        return normalizeRow(await this.rows.findLastByTimestamp(timestamp))
     }
 
     async findLastAsk(interactionId: string): Promise<UiMessage | undefined> {
-        return normalizeRow((await this.rows.findLastAskByInteractionId(interactionId))?.message)
+        return normalizeRow(await this.rows.findLastAskByInteractionId(interactionId))
     }
 
     close(): Promise<void> {
@@ -94,7 +104,16 @@ class LegacySource implements WindowSource {
     /** The writer's import commits the rows anew and can keep the file when it disagrees with `messages.db`. */
     readonly canonicalIndexes = false
 
-    constructor(private readonly messages: readonly UiMessage[]) {}
+    private readonly messages: readonly UiMessage[]
+
+    constructor(messages: readonly UiMessage[]) {
+        // A legacy file has no committed ordinal, even if an old projection was saved in it.
+        this.messages = messages.map((message) => {
+            const projected = { ...message }
+            delete projected.messageIndex
+            return projected
+        })
+    }
 
     get count(): number {
         return this.messages.length
@@ -102,6 +121,10 @@ class LegacySource implements WindowSource {
 
     async read(start: number, end: number): Promise<UiMessage[]> {
         return this.messages.slice(start, end)
+    }
+
+    async getBySourceIndex(_sourceIndex: number): Promise<UiMessage | undefined> {
+        return undefined
     }
 
     async ordinalOfTimestamp(timestamp: number): Promise<number | undefined> {
@@ -188,6 +211,13 @@ export class UIMessageWindowReader {
         return { messages, totalCount, startIndex }
     }
 
+    /** One committed source row; legacy file/page positions are deliberately not accepted. */
+    async getBySourceIndex(sourceIndex: number): Promise<UiMessage | undefined> {
+        this.assertOpen()
+        if (!Number.isSafeInteger(sourceIndex) || sourceIndex < 0 || sourceIndex >= this.count) return undefined
+        return await this.source.getBySourceIndex(sourceIndex)
+    }
+
     async getByTimestamp(timestamp: number): Promise<UiMessage | undefined> {
         this.assertOpen()
         return await this.source.findByTimestamp(timestamp)
@@ -221,6 +251,6 @@ export class UIMessageWindowReader {
     }
 }
 
-function normalizeRow(message: UiMessage | undefined): UiMessage | undefined {
-    return message ? normalizeStoredCheckpointMessage(message) : undefined
+function normalizeRow(record: UiMessageRecord | undefined): UiMessage | undefined {
+    return record ? { ...normalizeStoredCheckpointMessage(record.message), messageIndex: record.ordinal } : undefined
 }

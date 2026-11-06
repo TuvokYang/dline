@@ -21,7 +21,7 @@ export interface TrajectoryMaintainerLease {
 const DEBOUNCE_TRAILING_MS = 100
 const DEBOUNCE_MAX_MS = 1_000
 
-/** First wait after a fold that failed for a reason no commit will retry. */
+/** First wait after an actual I/O failure that no commit will retry. */
 const RETRY_MIN_MS = 1_000
 /** Cap of that wait, so a persistent fault stops costing a full scan every second. */
 const RETRY_MAX_MS = 30_000
@@ -127,7 +127,7 @@ export class TrajectoryMaintainerRegistry {
     }
 
     /**
-     * Fold once, and keep folding after a failure that no commit will announce.
+     * Fold once, retrying actual I/O failures under this lease-scoped owner.
      *
      * A `failed` outcome means the cache is behind or empty and nothing else is
      * going to ask again: a quiet task has no commit left to publish and no

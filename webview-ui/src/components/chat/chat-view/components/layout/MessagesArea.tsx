@@ -6,6 +6,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Virtuoso } from "react-virtuoso"
 import { StickyUserMessage } from "@/components/chat/task-header/StickyUserMessage"
 import { TrajectoryRailOverlay } from "@/components/chat/trajectory/TrajectoryRailOverlay"
+import type { TrajectoryTurn } from "@/components/chat/trajectory/trajectory-model"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { preferHeldCopies } from "@/context/messageWindowSync"
 import { cn } from "@/lib/utils"
@@ -30,10 +31,17 @@ import { buildMessageRowKey, getBottomFollowIntent, mergeMessageWindow } from ".
 import { advanceRowCoordinate, ROW_INDEX_BASE, type RowCoordinate } from "../../utils/rowCoordinate"
 import { LAYOUT_SETTLE_RETRY_MS } from "../../utils/scrollArbiter"
 import { nestedScrollerConsumesWheel } from "../../utils/scrollUtils"
-import { findFirstVisibleMessage } from "../../utils/viewportRowAnchor"
+import { findFirstVisibleMessage, ROW_SOURCE_INDEX_ATTRIBUTE } from "../../utils/viewportRowAnchor"
 import { decideWindowGrowth, SCROLL_SETTLE_MS } from "../../utils/windowGrowthTiming"
-import { createMessageRenderer } from "../messages/MessageRenderer"
-import { type AnchoredPage, type JumpAlign, type JumpToMessagePort, useJumpToMessage } from "./useJumpToMessage"
+import { createMessageRenderer, rowSourceIndex } from "../messages/MessageRenderer"
+import {
+    type AnchoredPage,
+    type JumpAlign,
+    type JumpToMessagePort,
+    type MessageJumpTarget,
+    matchesMessageTarget,
+    useJumpToMessage,
+} from "./useJumpToMessage"
 
 const LOAD_COUNT = DEFAULT_MESSAGE_WINDOW_LIMITS.loadCount
 /**
@@ -360,6 +368,18 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
             })
         },
         [renderRows],
+    )
+
+    // Source ordinals are not the page coordinates used by window growth above.
+    // Groups, including activity folds, expose all real members for exact identity lookup.
+    const findRowOffsetByTarget = useCallback(
+        (target: MessageJumpTarget) =>
+            typeof target === "number"
+                ? findRowOffsetByMessageTs(target)
+                : renderRows.findIndex(({ row }) =>
+                      (Array.isArray(row) ? row : [row]).some((message) => matchesMessageTarget(message, target)),
+                  ),
+        [findRowOffsetByMessageTs, renderRows],
     )
 
     const scrollToRowOffset = useCallback(
@@ -826,20 +846,34 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 
     /** Replace the loaded window with a page that is not adjacent to it. */
     const replaceMessageWindow = useCallback(
-        (messages: UiMessage[], startIndex: number) => {
+        (messages: UiMessage[], startIndex: number, sourceIndexed = false) => {
             const nextFirstItemIndex = Math.max(0, startIndex)
             firstItemIndexRef.current = nextFirstItemIndex
             clineMessagesLengthRef.current = messages.length
             // The page is a snapshot older than its arrival: a row the stream
-            // already moved past keeps that copy.
-            setClineMessages((prev) => preferHeldCopies(prev, messages))
+            // already moved past keeps its content. Preserve the page's actual source
+            // metadata for source navigation when that held copy was transient, but never
+            // reuse a different committed row just because it shares the timestamp.
+            // Ordinary edges and timestamp-only jumps keep their original copy semantics.
+            setClineMessages((prev) => {
+                const copies = preferHeldCopies(prev, messages)
+                if (!sourceIndexed) return copies
+                return copies.map((message, offset) => {
+                    const fetched = messages[offset]
+                    if (message === fetched || fetched.messageIndex === undefined) return message
+                    if (message.messageIndex !== undefined && message.messageIndex !== fetched.messageIndex) return fetched
+                    return message.messageIndex === fetched.messageIndex
+                        ? message
+                        : { ...message, messageIndex: fetched.messageIndex }
+                })
+            })
             setFirstItemIndex(nextFirstItemIndex)
         },
         [setClineMessages, setFirstItemIndex],
     )
 
     const jumpToEdge = useCallback(
-        async (edge: ScrollEdge) => {
+        async (edge: ScrollEdge, target?: Exclude<MessageJumpTarget, number>) => {
             if (edgeJumpInFlightRef.current === edge) return
 
             edgeJumpInFlightRef.current = edge
@@ -851,11 +885,24 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
             pendingEdgeScrollRef.current = edge
 
             try {
+                if (target !== undefined) {
+                    // The task header is outside the list. Resolve its source identity
+                    // before taking the original top path: source zero need not be on page zero.
+                    const located = await fetchAnchoredTaskMessages(taskViewState, target.anchorTs, 1, target.anchorIndex)
+                    if (taskKeyRef.current !== taskKey || !windowGeneration.isCurrent(requestVersion)) return
+                    if (
+                        !located.anchorFound ||
+                        !located.messages.some((message) => matchesMessageTarget(convertProtoToClineMessage(message), target))
+                    ) {
+                        pendingEdgeScrollRef.current = null
+                        return
+                    }
+                }
                 const resp = await fetchTaskMessages(taskViewState, edge === "top" ? 0 : -1, LOAD_COUNT)
                 if (taskKeyRef.current !== taskKey || !windowGeneration.isCurrent(requestVersion)) return
 
                 const converted = resp.messages.map((message) => convertProtoToClineMessage(message))
-                replaceMessageWindow(converted, resp.startIndex)
+                replaceMessageWindow(converted, resp.startIndex, target !== undefined)
 
                 if (converted.length === 0) {
                     pendingEdgeScrollRef.current = null
@@ -894,18 +941,25 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
     }, [cancelProgrammaticScroll, disableAutoScrollRef, releaseBrowsingViewportAnchor])
 
     // Read when a scroll retry runs, which can be after the rows have changed again.
-    const findRowOffsetByMessageTsRef = useRef(findRowOffsetByMessageTs)
-    findRowOffsetByMessageTsRef.current = findRowOffsetByMessageTs
+    const findRowOffsetByTargetRef = useRef(findRowOffsetByTarget)
+    findRowOffsetByTargetRef.current = findRowOffsetByTarget
 
     const scrollToMessage = useCallback(
-        (ts: number, behavior: "auto" | "smooth", align: JumpAlign, isStillWanted: () => boolean) => {
+        (target: MessageJumpTarget, behavior: "auto" | "smooth", align: JumpAlign, isStillWanted: () => boolean) => {
             // Only a row the list has laid out has a measured position. A smooth scroll towards
             // any other row travels through estimated heights and can stop short, so it jumps
             // and keeps re-targeting while the rows it passes are measured, as a replaced window does.
-            const smooth = behavior === "smooth" && scroller?.querySelector(`[data-message-ts="${ts}"]`) != null
+            const row = renderRows[findRowOffsetByTarget(target)]?.row
+            const selector =
+                typeof target === "number"
+                    ? `[data-message-ts="${target}"]`
+                    : row === undefined
+                      ? undefined
+                      : `[${ROW_SOURCE_INDEX_ATTRIBUTE}="${rowSourceIndex(row)}"]`
+            const smooth = behavior === "smooth" && selector !== undefined && scroller?.querySelector(selector) != null
             requestProgrammaticScroll({
                 run: () => {
-                    const rowOffset = findRowOffsetByMessageTsRef.current(ts)
+                    const rowOffset = findRowOffsetByTargetRef.current(target)
                     if (rowOffset >= 0) scrollToRowOffset(rowOffset, align, smooth ? "smooth" : "auto")
                 },
                 priority: smooth ? "user" : "layout",
@@ -913,14 +967,22 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                 isStillWanted,
             })
         },
-        [requestProgrammaticScroll, scrollToRowOffset, scroller],
+        [findRowOffsetByTarget, renderRows, requestProgrammaticScroll, scrollToRowOffset, scroller],
     )
 
-    const isMessageLoaded = useCallback((ts: number) => findRowOffsetByMessageTs(ts) >= 0, [findRowOffsetByMessageTs])
+    const isMessageLoaded = useCallback(
+        (target: MessageJumpTarget) => findRowOffsetByTarget(target) >= 0,
+        [findRowOffsetByTarget],
+    )
 
     const fetchAnchoredPage = useCallback(
-        async (anchorTs: number): Promise<AnchoredPage> => {
-            const resp = await fetchAnchoredTaskMessages(taskViewState, anchorTs, LOAD_COUNT)
+        async (target: MessageJumpTarget): Promise<AnchoredPage> => {
+            const resp = await fetchAnchoredTaskMessages(
+                taskViewState,
+                typeof target === "number" ? target : target.anchorTs,
+                LOAD_COUNT,
+                typeof target === "number" ? undefined : target.anchorIndex,
+            )
             return {
                 messages: resp.messages.map((message) => convertProtoToClineMessage(message)),
                 startIndex: resp.startIndex,
@@ -937,7 +999,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
             isLoaded: isMessageLoaded,
             scrollToMessage,
             fetchAnchoredPage,
-            replaceWindow: (page) => replaceMessageWindow(page.messages, page.startIndex),
+            replaceWindow: (page, target) => replaceMessageWindow(page.messages, page.startIndex, typeof target === "object"),
             enterBrowsing: enterBrowsingForJump,
         }),
         [
@@ -952,7 +1014,21 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
     )
     const jumpToMessage = useJumpToMessage(jumpPort)
 
-    const selectTrajectoryTurn = useCallback((anchorTs: number) => void jumpToMessage(anchorTs), [jumpToMessage])
+    const selectTrajectoryTurn = useCallback(
+        (turn: TrajectoryTurn) => {
+            if (turn.anchorIndex === undefined) return
+            const target = { anchorIndex: turn.anchorIndex, anchorTs: turn.anchorTs }
+            // The fixed task title can be outside the indexed message window. The
+            // explicit source-zero target supplies the position; the header only checks identity.
+            if (turn.anchorIndex === 0 && task.ts === turn.anchorTs) {
+                enterBrowsingForJump()
+                void jumpToEdge("top", target)
+                return
+            }
+            void jumpToMessage(target)
+        },
+        [enterBrowsingForJump, jumpToEdge, jumpToMessage, task],
+    )
 
     // A jump like the rail's, so a rail jump still fetching is superseded instead of replacing the window afterwards.
     const handleScrollToUserMessage = useCallback(() => {

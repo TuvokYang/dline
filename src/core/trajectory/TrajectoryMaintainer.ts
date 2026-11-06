@@ -12,7 +12,7 @@ import {
     type TrajectoryTurnInput,
     type TrajectoryWriteResult,
 } from "../storage/trajectory/TrajectoryRowStore"
-import type { CommittedUiMessages } from "./CommittedUiMessages"
+import type { CommitHead, CommittedUiMessages } from "./CommittedUiMessages"
 import {
     carryAfterTurn,
     closeOpenTurn,
@@ -26,14 +26,14 @@ import {
  * Version of the fold rules; stored turns built by another version are discarded and rebuilt.
  *
  * 2: renamed tools are counted under their current name instead of their former row key.
+ * 3: obsolete filtered-anchor payloads.
+ * 4: every committed user interval is retained, independently of timestamp identity.
  */
-export const TRAJECTORY_BUILDER_VERSION = 2
+export const TRAJECTORY_BUILDER_VERSION = 4
 
 /** Rows read per slice, so a catch-up never holds a long history in memory. */
 export const TRAJECTORY_SLICE_ROWS = 500
 
-/** How often a fold violation may be dropped because the head moved before it is believed. */
-const MAX_UNSTABLE_VIOLATION_RETRIES = 3
 const INITIAL_BACKOFF_MS = 250
 const MAX_BACKOFF_MS = 4_000
 const FOREIGN_JOB_POLL_MS = 1_000
@@ -81,13 +81,13 @@ export interface TrajectoryMaintainerOptions {
 /**
  * How a catch-up ended.
  *
- * `ready` and `error` are durable results the cache now holds. `not_writable`
- * and `stopped` are ordinary ends that leave the cache for another window or a
+ * `ready` is the durable result the cache now holds. `not_writable` and
+ * `stopped` are ordinary ends that leave the cache for another window or a
  * later run. `failed` is different from all of them: the fold could not finish
  * for a reason nothing will retry on its own, so a caller that owns the
  * maintainer has to schedule the retry instead of treating the cache as settled.
  */
-export type CatchUpOutcome = "ready" | "error" | "not_writable" | "stopped" | "failed"
+export type CatchUpOutcome = "ready" | "not_writable" | "stopped" | "failed"
 
 type PassOutcome =
     | { readonly kind: "done"; readonly outcome: CatchUpOutcome }
@@ -127,10 +127,10 @@ function isClosedStorage(error: unknown): boolean {
  * Keeps one task's `trajectory.db` equal to the fold of its committed chat rows.
  *
  * Correctness does not depend on who runs: every write is a compare-and-set on
- * the meta stamp, the log head is read before the rows it covers, and a ts
- * violation found by the fold is believed only when the head did not move
- * around the scan. A loser of a compare-and-set retries with backoff, and a job
- * another maintainer stopped advancing is taken over from its persisted cursor.
+ * the meta stamp, and commits behind a slice cursor rebase its affected suffix.
+ * A completed scan checks the head again before settling. A loser of a
+ * compare-and-set retries with backoff, and an interrupted foreign job is taken
+ * over from its persisted cursor.
  */
 export class TrajectoryMaintainer {
     private readonly clock: MaintainerClock
@@ -254,8 +254,10 @@ export class TrajectoryMaintainer {
     private async pass(access: TrajectoryWriteAccess): Promise<PassOutcome> {
         if (!access.writable()) return done("not_writable")
         const store = await this.openStore()
-        const head = await this.options.messages.log.head()
+        // Observe the source after the cache: a newer foreign job must not look
+        // like a source regression against a head read before that job existed.
         const meta = await store.readMeta()
+        const head = await this.options.messages.log.head()
 
         if (this.needsRebuild(meta, head.logId, head.headSeq)) {
             if (!access.writable()) return done("not_writable")
@@ -265,19 +267,13 @@ export class TrajectoryMaintainer {
             return cleared ? AGAIN : REJECTED
         }
         const current = meta as TrajectoryMeta
-        if (current.state === "error") {
-            // Another process may have written the error; a connected stream
-            // still shows the last ready revision until it is told.
-            this.publish(current)
-            return done("error")
-        }
-        if (head.violationTs !== null) return this.persistError(access, store, current, head.violationTs)
 
         if (current.job) {
             const foreign = this.ownedRevision !== current.revision && this.takeOverRevision !== current.revision
             if (foreign) return { kind: "foreign_job", revision: current.revision }
-            return this.runJob(access, store, current, current.job, head.headSeq)
+            return this.runJob(access, store, current, current.job, head)
         }
+        // Only commit identity and position determine whether the cache needs work.
         if (current.state === "ready" && current.appliedCommitSeq === head.headSeq) {
             this.publish(current)
             return done("ready")
@@ -289,14 +285,12 @@ export class TrajectoryMaintainer {
                 store,
                 current,
                 jobWith({ fromSeq: 0, nextOrdinal: 0, targetSeq: head.headSeq }, EMPTY_FOLD_CARRY),
-                head.headSeq,
+                head,
             )
         }
 
         const since = await this.options.messages.log.since(current.appliedCommitSeq)
-        if (since.logId !== current.logId) return AGAIN
-        const violation = since.tsViolation ?? since.violationTs
-        if (violation !== null) return this.persistError(access, store, current, violation)
+        if (since.logId !== current.logId || since.headSeq < current.appliedCommitSeq) return AGAIN
         if (since.minFirstChangedOrdinal === null) {
             if (!access.writable()) return done("not_writable")
             const applied = await this.write(
@@ -305,14 +299,14 @@ export class TrajectoryMaintainer {
             return applied ? done("ready") : REJECTED
         }
         const job = await this.jobFrom(store, since.minFirstChangedOrdinal, since.headSeq)
-        return this.runJob(access, store, current, job, since.headSeq)
+        return this.runJob(access, store, current, job, since)
     }
 
     private needsRebuild(meta: TrajectoryMeta | null, logId: string | null, headSeq: number): boolean {
-        if (!meta || !isCurrentTrajectory(meta, TRAJECTORY_BUILDER_VERSION)) return true
+        if (!meta || !isCurrentTrajectory(meta, TRAJECTORY_BUILDER_VERSION) || meta.state === "error") return true
         if (meta.logId !== logId) return true
-        // A head behind what was applied means the history was replaced under the same log.
-        return meta.appliedCommitSeq > headSeq
+        // Neither applied rows nor an unfinished carry may belong to a future head.
+        return meta.appliedCommitSeq > headSeq || (meta.job !== null && meta.job.targetSeq > headSeq)
     }
 
     /**
@@ -331,12 +325,19 @@ export class TrajectoryMaintainer {
     }
 
     /** Rebase a resumed job when commits after its target changed rows it already folded. */
-    private async rebaseIfNeeded(store: TrajectoryStore, job: TrajectoryJob, headSeq: number): Promise<TrajectoryJob> {
-        if (headSeq <= job.targetSeq) return job
+    private async rebaseIfNeeded(
+        store: TrajectoryStore,
+        job: TrajectoryJob,
+        head: CommitHead,
+    ): Promise<TrajectoryJob | undefined> {
+        if (head.headSeq === job.targetSeq) return job
         const since = await this.options.messages.log.since(job.targetSeq)
+        if (since.logId !== head.logId || since.headSeq < job.targetSeq) return undefined
         const changed = since.minFirstChangedOrdinal
-        if (changed !== null && changed < job.nextOrdinal) return this.jobFrom(store, Math.min(changed, job.nextOrdinal), headSeq)
-        return { ...job, targetSeq: headSeq }
+        if (changed !== null && changed < job.nextOrdinal) {
+            return this.jobFrom(store, changed, since.headSeq)
+        }
+        return { ...job, targetSeq: since.headSeq }
     }
 
     private async runJob(
@@ -344,25 +345,20 @@ export class TrajectoryMaintainer {
         store: TrajectoryStore,
         initial: TrajectoryMeta,
         startJob: TrajectoryJob,
-        headSeq: number,
+        initialHead: CommitHead,
     ): Promise<PassOutcome> {
         let meta = initial
-        let job = await this.rebaseIfNeeded(store, startJob, headSeq)
-        let unstableViolations = 0
+        let job = startJob
+        let head = initialHead
         while (!this.stopped) {
+            if (head.logId !== meta.logId || head.headSeq < job.targetSeq) return AGAIN
+            const rebased = await this.rebaseIfNeeded(store, job, head)
+            if (!rebased) return AGAIN
+            job = rebased
             const rows = await this.options.messages.rows.readRange(job.nextOrdinal, job.nextOrdinal + TRAJECTORY_SLICE_ROWS)
             const fold = foldTrajectory(rows, carryOf(job))
-            if (fold.provisionalViolation && unstableViolations < MAX_UNSTABLE_VIOLATION_RETRIES) {
-                const after = await this.options.messages.log.head()
-                if (after.headSeq === job.targetSeq) return this.persistError(access, store, meta, fold.provisionalViolation.ts)
-                // The rows moved under the scan; the violation may be an artifact of reading two versions.
-                unstableViolations++
-                const since = await this.options.messages.log.since(job.targetSeq)
-                const changed = Math.min(since.minFirstChangedOrdinal ?? job.nextOrdinal, job.nextOrdinal)
-                job = await this.jobFrom(store, changed, after.headSeq)
-                continue
-            }
 
+            if (this.stopped) return done("stopped")
             if (!access.writable()) return done("not_writable")
             const last = rows.length < TRAJECTORY_SLICE_ROWS
             let result: TrajectoryWriteResult
@@ -395,25 +391,13 @@ export class TrajectoryMaintainer {
             }
             if (!this.accept(result)) return REJECTED
             meta = result.meta as TrajectoryMeta
-            if (last) return done("ready")
+            // A commit may have landed during readRange or the write. Check it in
+            // the next pass, even when no in-process signal was delivered.
+            if (last) return AGAIN
             await new Promise<void>((resolve) => setImmediate(resolve))
+            head = await this.options.messages.log.head()
         }
         return done("stopped")
-    }
-
-    private async persistError(
-        access: TrajectoryWriteAccess,
-        store: TrajectoryStore,
-        meta: TrajectoryMeta,
-        ts: number,
-    ): Promise<PassOutcome> {
-        if (!access.writable()) return done("not_writable")
-        const applied = await this.write(
-            store.updateMeta({ state: "error", appliedCommitSeq: meta.appliedCommitSeq, job: null, errorTs: ts }, stampOf(meta)),
-        )
-        if (!applied) return REJECTED
-        Logger.warn(`[trajectory] TrajectoryTsOrderError: instance=${this.options.instanceId} ts=${ts}`)
-        return done("error")
     }
 
     private async write(pending: Promise<TrajectoryWriteResult>): Promise<boolean> {
