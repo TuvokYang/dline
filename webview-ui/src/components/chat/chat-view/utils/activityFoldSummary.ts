@@ -8,10 +8,12 @@ import type { ActivityFold, FoldFailureKind } from "./chatRowKinds"
  * A single "tool calls" total hides the only distinction that matters in a
  * transcript: whether the model looked at something, changed something, ran
  * something, or delegated to an agent. Each kind is counted on its own so a
- * header can never report a subagent as a tool call. Reaching outside the
- * workspace is not a kind of its own: it qualifies a read, a write or a command.
+ * header can never report a subagent as a tool call. A hosted web lookup and a
+ * browser step are kinds of their own rather than reads: neither one touches a
+ * workspace file. Reaching outside the workspace is not a kind either; it
+ * qualifies only the file and command kinds.
  */
-export type FoldWorkKind = "read" | "write" | "command" | "subagent" | "other"
+export type FoldWorkKind = "read" | "write" | "command" | "subagent" | "web" | "browser" | "other"
 
 /**
  * Facts a fold header states about its members.
@@ -45,9 +47,9 @@ export interface ActivityFoldSummary {
     readonly thoughts: number
     readonly assistantMessages: number
     /**
-     * Members that ended in failure, by work category. Only edits, commands and
-     * subagents are counted; a failure that keeps its row visible is not part of
-     * the block and so is never counted here.
+     * Members that ended in failure, by work category. Only countable work is
+     * reported; a failure that keeps its row visible is not part of the block and
+     * so is never counted here.
      */
     readonly failures: ReadonlyMap<FoldFailureKind, number>
 }
@@ -70,11 +72,16 @@ const READ_TOOLS = new Set([
  */
 const WRITE_TOOLS = new Set(["editedExistingFile", "newFileCreated", "fileDeleted", "renameSymbol", "replaceText", "applyPatch"])
 
-/** Provider-hosted work that reaches outside the workspace. */
-const EXTERNAL_TOOLS = new Set(["webFetch", "webSearch", "codeExecution"])
+/**
+ * Hosted web lookups.
+ *
+ * A fetch or a search leaves the machine, but it reads no workspace file, so it
+ * is counted apart from `file read` instead of being folded into it.
+ */
+const WEB_TOOLS = new Set(["webFetch", "webSearch"])
 /** Reads that leave the workspace: a definition or reference lookup in another tree. */
 const EXTERNAL_READ_TOOLS = new Set(["findReferences"])
-/** External work whose verb is running something rather than looking at it. */
+/** Hosted execution: the verb is running something, and it runs outside the workspace. */
 const EXTERNAL_COMMAND_TOOLS = new Set(["codeExecution"])
 
 /** Tools that render as an assistant update rather than as work. */
@@ -140,27 +147,27 @@ export function summarizeActivityFold(
                 count(work, "read")
                 if (EXTERNAL_READ_TOOLS.has(name)) count(external, "read")
             } else if (WRITE_TOOLS.has(name)) count(work, "write")
-            else if (EXTERNAL_TOOLS.has(name)) {
-                // Reaching outside the workspace qualifies the nearest verb: a
-                // fetch reads elsewhere, code execution runs elsewhere.
-                count(work, EXTERNAL_COMMAND_TOOLS.has(name) ? "command" : "read")
-                count(external, EXTERNAL_COMMAND_TOOLS.has(name) ? "command" : "read")
+            else if (WEB_TOOLS.has(name)) count(work, "web")
+            else if (EXTERNAL_COMMAND_TOOLS.has(name)) {
+                // Hosted execution runs elsewhere, so it is a command that reached
+                // outside the workspace rather than a category of its own.
+                count(work, "command")
+                count(external, "command")
             } else count(work, "other")
         } else {
             const mcp = mcpCallName(member)
             if (mcp) {
-                // An MCP call reaches a server, so it is a read that left the
-                // workspace rather than a category of its own.
+                // A server call is neither a workspace file operation nor a shell
+                // command, so it is neither a `file read` nor external.
                 count(tools, mcp)
-                count(work, "read")
-                count(external, "read")
+                count(work, "other")
                 continue
             }
             const browser = browserStepName(member)
             if (browser) {
+                // A browser step is driven through the browser, not through a file.
                 count(tools, browser)
-                count(work, "read")
-                count(external, "read")
+                count(work, "browser")
             }
         }
     }
@@ -236,7 +243,7 @@ function browserStepName(message: UiMessage): string | undefined {
 
 /**
  * One-line header text, such as
- * `2 rounds · 8 read (3 external) · 2 write · 4 cmd · 1 subagent`.
+ * `2 rounds · 8 file read (3 external) · 2 file edit · 4 cmd · 1 subagent`.
  */
 export function describeActivityFold(summary: ActivityFoldSummary): string {
     return describeActivityFoldParts(summary)
@@ -250,14 +257,35 @@ export interface ActivityFoldPart {
     readonly isFailure: boolean
 }
 
-/** The verb each kind states, in the order a reader scans for it. */
-const WORK_LABELS: ReadonlyArray<readonly [FoldWorkKind, string]> = [
-    ["read", "read"],
-    ["write", "write"],
-    ["command", "cmd"],
-    ["subagent", "subagent"],
-    ["other", "other"],
+/**
+ * The verb each kind states, in the order a reader scans for it, with the form a
+ * count of more than one uses.
+ *
+ * A label names what happened to what: `file read` and `file edit` say a file was
+ * touched, `cmd` says a shell ran, `subagent` says work was delegated, and
+ * `web tools` and `browser` say the request left the machine through a remote
+ * tool rather than through a local one. Reaching outside the workspace is not a
+ * kind: it qualifies only the local file and command kinds, which is why
+ * `OUTSIDE_KINDS` below is narrower than this list.
+ */
+const WORK_LABELS: ReadonlyArray<readonly [FoldWorkKind, string, string]> = [
+    ["read", "file read", "file reads"],
+    ["write", "file edit", "file edits"],
+    ["command", "cmd", "cmds"],
+    ["subagent", "subagent", "subagents"],
+    ["web", "web tools", "web tools"],
+    ["browser", "browser", "browsers"],
+    ["other", "other", "others"],
 ]
+
+/**
+ * The kinds a workspace boundary can qualify.
+ *
+ * Only a file operation or a command carries a directory, so only those can be outside the
+ * workspace. A web tool or a subagent is not a local operation, and calling one "external" would
+ * describe the tool rather than where it ran.
+ */
+const OUTSIDE_KINDS: ReadonlySet<FoldWorkKind> = new Set<FoldWorkKind>(["read", "write", "command"])
 
 /**
  * The header facts in reading order, keeping error counts apart from the rest.
@@ -268,33 +296,37 @@ const WORK_LABELS: ReadonlyArray<readonly [FoldWorkKind, string]> = [
 export function describeActivityFoldParts(summary: ActivityFoldSummary): ActivityFoldPart[] {
     // A fact states a count and a noun; work facts also name their kind so their
     // external share can qualify them.
-    const facts: Array<readonly [number, string, FoldWorkKind?]> = [
-        [summary.rounds ?? 0, "round"],
-        ...WORK_LABELS.map(([kind, label]) => [summary.work.get(kind) ?? 0, label, kind] as const),
-        [summary.thoughts, "thought"],
-        [summary.checkpoints, "checkpoint"],
-        [summary.assistantMessages, "message"],
+    const facts: Array<readonly [number, string, string, FoldWorkKind?]> = [
+        [summary.rounds ?? 0, "round", "rounds"],
+        ...WORK_LABELS.map(([kind, singular, plural]) => [summary.work.get(kind) ?? 0, singular, plural, kind] as const),
+        [summary.thoughts, "thought", "thoughts"],
+        [summary.checkpoints, "checkpoint", "checkpoints"],
+        [summary.assistantMessages, "message", "messages"],
     ]
-    const parts: ActivityFoldPart[] = facts.flatMap(([total, noun, kind]) => {
-        const text = countOf(total, noun)
+    const parts: ActivityFoldPart[] = facts.flatMap(([total, singular, plural, kind]) => {
+        const text = countOf(total, singular, plural)
         if (text === undefined) return []
         // Reaching outside the workspace qualifies the verb rather than adding a
-        // tally a reader would sum: "12 reads (3 external)".
-        const outside = kind === undefined ? undefined : outsideCount(summary.external.get(kind) ?? 0)
+        // tally a reader would sum: "12 file reads (3 external)".
+        const outside = kind === undefined || !OUTSIDE_KINDS.has(kind) ? undefined : outsideCount(summary.external.get(kind) ?? 0)
         return [{ text: outside === undefined ? text : `${text} (${outside})`, isFailure: false }]
     })
     for (const [kind, label] of FAILURE_LABELS) {
-        const text = countOf(summary.failures?.get(kind) ?? 0, label)
-        if (text !== undefined) parts.push({ text, isFailure: true })
+        // A failure label already ends in "failed", so it never takes a plural.
+        const total = summary.failures?.get(kind) ?? 0
+        if (total !== 0) parts.push({ text: `${total} ${label}`, isFailure: true })
     }
     return parts.length > 0 ? parts : [{ text: "Finished steps", isFailure: false }]
 }
 
 /** Singular nouns for counted failures, in the order a reader wants them. */
 const FAILURE_LABELS: ReadonlyArray<readonly [FoldFailureKind, string]> = [
-    ["edit", "edit error"],
-    ["subagent", "subagent error"],
-    ["command", "command error"],
+    ["edit", "file edit failed"],
+    ["read", "file read failed"],
+    ["subagent", "subagent failed"],
+    ["command", "cmd failed"],
+    ["web", "web tools failed"],
+    ["browser", "browser failed"],
 ]
 
 /** Tool names with their counts, for the header's tooltip. */
@@ -317,9 +349,9 @@ export function describeFoldDetail(summary: ActivityFoldSummary): string | undef
     return lines.length > 0 ? lines.join("\n") : undefined
 }
 
-function countOf(count: number, noun: string): string | undefined {
+function countOf(count: number, singular: string, plural: string): string | undefined {
     if (count === 0) return undefined
-    return `${count} ${noun}${count === 1 ? "" : "s"}`
+    return `${count} ${count === 1 ? singular : plural}`
 }
 
 /** `external` is uncountable, so its parenthetical never takes a plural. */

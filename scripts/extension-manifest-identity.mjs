@@ -8,6 +8,21 @@ const IDENTITY_PATH = path.join(__dirname, "..", "src", "shared", "extension-dis
 
 export const STABLE_PACKAGE_NAME = "dline"
 export const INSIDERS_PACKAGE_NAME = "dline-insiders"
+/**
+ * Package name published to the VS Code Marketplace.
+ *
+ * The Marketplace requires `name` to be unique across the whole registry,
+ * ignoring publisher, so the publisher-specific build cannot reuse `dline`.
+ * Open VSX keeps the stable `dline` identity because it keys extensions by
+ * publisher and name.
+ */
+export const VSCODE_MARKETPLACE_PACKAGE_NAME = "dline-main"
+
+/** Registry key that selects the VS Code Marketplace package identity. */
+export const VSCODE_MARKETPLACE_REGISTRY = "vscode-marketplace"
+
+/** Publisher account that owns the VS Code Marketplace package. */
+export const VSCODE_MARKETPLACE_PUBLISHER = "tuvokyangdline"
 
 const identities = JSON.parse(fs.readFileSync(IDENTITY_PATH, "utf-8"))
 
@@ -22,6 +37,34 @@ export function getDistributionIdentity(packageName) {
 
 function cloneJson(value) {
     return JSON.parse(JSON.stringify(value))
+}
+
+/**
+ * Resolve the package identity one target publishes.
+ *
+ * Insiders is its own extension on every registry. Otherwise the VS Code
+ * Marketplace takes a registry-wide unique name because it rejects a name
+ * another publisher already owns, while Open VSX keys extensions by publisher
+ * and name and keeps the stable identity. An explicit publisher wins so a
+ * one-off package keeps its own target.
+ *
+ * @param {string} channel Target channel.
+ * @param {string|null} registry Target registry.
+ * @param {string} sourceName Stable package name from package.json.
+ * @param {string} sourcePublisher Stable publisher from package.json.
+ * @param {string|null} publisherOverride Explicit publisher override.
+ * @returns {{packageName: string, publisher: string}} Identity to publish.
+ */
+export function resolveTargetIdentity(channel, registry, sourceName, sourcePublisher, publisherOverride = null) {
+    const packageName =
+        channel === "insiders"
+            ? INSIDERS_PACKAGE_NAME
+            : registry === VSCODE_MARKETPLACE_REGISTRY
+              ? VSCODE_MARKETPLACE_PACKAGE_NAME
+              : sourceName
+    const publisher =
+        publisherOverride ?? (registry === VSCODE_MARKETPLACE_REGISTRY ? VSCODE_MARKETPLACE_PUBLISHER : sourcePublisher)
+    return { packageName, publisher }
 }
 
 function escapeRegExp(value) {
@@ -79,7 +122,11 @@ export function createDistributionManifest(sourceManifest, packageName, version,
     if (target.preview) manifest.preview = true
     else delete manifest.preview
 
-    if (packageName === STABLE_PACKAGE_NAME) {
+    // A distribution that keeps the stable contribution namespace shares every
+    // VS Code-global registration with the stable build. Only the VSIX package
+    // identity differs, so the contributions must stay untouched; rewriting them
+    // here would drop the stable keybindings.
+    if (target.contributionNamespace === source.contributionNamespace) {
         return manifest
     }
 

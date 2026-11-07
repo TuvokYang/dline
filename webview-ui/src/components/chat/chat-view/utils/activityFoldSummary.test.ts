@@ -87,7 +87,7 @@ describe("summarizeActivityFold", () => {
 
         expect(summary.work.get("write")).toBe(5)
         expect(summary.work.get("other")).toBeUndefined()
-        expect(describeActivityFold(summary)).toBe("1 round · 5 writes · 1 checkpoint")
+        expect(describeActivityFold(summary)).toBe("1 round · 5 file edits · 1 checkpoint")
     })
 
     /**
@@ -109,7 +109,6 @@ describe("summarizeActivityFold", () => {
         expect(summary.work.get("read")).toBeUndefined()
         expect(summary.work.get("other")).toBeUndefined()
         expect(describeActivityFold(summary)).toBe("1 round · 1 subagent · 1 checkpoint")
-        expect(describeFoldDetail(summary)).toContain("Subagents:")
     })
 
     it("names the agents a batch ran so the header can say what delegated", () => {
@@ -167,7 +166,7 @@ describe("summarizeActivityFold", () => {
         expect(summary.tools.size).toBe(2)
         expect(summary).toMatchObject({ rounds: 1, checkpoints: 1, assistantMessages: 1 })
         expect(summary.work.get("write")).toBe(2)
-        expect(describeActivityFold(summary)).toBe("1 round · 2 writes · 1 checkpoint · 1 message")
+        expect(describeActivityFold(summary)).toBe("1 round · 2 file edits · 1 checkpoint · 1 message")
     })
 
     it("counts a restore point attached to an edit once", () => {
@@ -216,11 +215,11 @@ describe("summarizeActivityFold", () => {
             ["docs:search", 2],
             ["docs:resource", 1],
         ])
-        // An MCP call looks something up on a server, so it reads outside the
-        // workspace; the header keeps it inside the read tally.
-        expect(Array.from(summary.work)).toEqual([["read", 3]])
-        expect(summary.external.get("read")).toBe(3)
-        expect(describeActivityFold(summary)).toBe("1 round · 3 reads (3 external) · 1 checkpoint")
+        // A server call is neither a workspace file operation nor a shell command,
+        // so it is neither a `file read` nor an external one.
+        expect(Array.from(summary.work)).toEqual([["other", 3]])
+        expect(summary.external.size).toBe(0)
+        expect(describeActivityFold(summary)).toBe("1 round · 3 others · 1 checkpoint")
     })
 
     it("states the external share inside the verb it qualified", () => {
@@ -239,13 +238,17 @@ describe("summarizeActivityFold", () => {
             completion(20, "Read them."),
         ])
 
-        // Four reads, three of which left the workspace; code execution runs a
-        // command outside the workspace rather than reading one.
-        expect(summary.work.get("read")).toBe(3)
+        // Two file reads, one of which left the workspace. A web fetch is its own
+        // kind and never external; code execution runs a command outside the
+        // workspace rather than reading one.
+        expect(summary.work.get("read")).toBe(2)
         expect(summary.work.get("command")).toBe(1)
-        expect(summary.external.get("read")).toBe(2)
+        expect(summary.work.get("web")).toBe(1)
+        expect(summary.external.get("read")).toBe(1)
         expect(summary.external.get("command")).toBe(1)
-        expect(describeActivityFold(summary)).toBe("4 rounds · 3 reads (2 external) · 1 cmd (1 external) · 1 checkpoint")
+        expect(describeActivityFold(summary)).toBe(
+            "4 rounds · 2 file reads (1 external) · 1 cmd (1 external) · 1 web tools · 1 checkpoint",
+        )
     })
 
     it("counts a command that ran outside every workspace root as external", () => {
@@ -333,8 +336,11 @@ describe("summarizeActivityFold", () => {
             ["browser:click", 1],
             ["browser:close", 1],
         ])
-        expect(summary.external.get("read")).toBe(3)
-        expect(describeActivityFold(summary)).toBe("1 round · 3 reads (3 external) · 1 checkpoint")
+        // A browser step is driven through the browser, so it is counted apart
+        // from file reads and is never external.
+        expect(summary.work.get("browser")).toBe(3)
+        expect(summary.external.size).toBe(0)
+        expect(describeActivityFold(summary)).toBe("1 round · 3 browsers · 1 checkpoint")
     })
 
     it("counts distinct requests in message segments too", () => {

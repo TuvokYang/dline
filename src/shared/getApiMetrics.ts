@@ -1,13 +1,36 @@
 import { UiMessage } from "./ExtensionMessage"
 
+/**
+ * One run of consecutive amounts that share a billing currency.
+ *
+ * A task can outlive the model it started on, so its cost is not one number in one unit. Amounts
+ * are only ever summed inside a segment; two currencies are never added together, because that sum
+ * would have no unit at all.
+ */
+export interface ApiCostSegment {
+    /** Billing currency of this segment. Empty when the source reported an amount without one. */
+    currency: string
+    /** Sum of this segment's amounts, in `currency`. */
+    totalCost: number
+}
+
 export interface ApiMetrics {
     totalTokensIn: number
     totalTokensOut: number
     totalCacheWrites?: number
     totalCacheReads?: number
+    /** Sum of every recorded amount, regardless of currency. Use `costSegments` to display a unit. */
     totalCost: number
     cacheHitRate?: number
     currency?: string
+    /**
+     * Per-currency runs in the order they were recorded; the last one is the newest.
+     *
+     * Optional because a projection built from persisted task metadata has no segment history;
+     * `getApiMetrics` always populates it. A consumer that needs a labelled amount must treat an
+     * absent list as "no segmented history" and fall back to `totalCost` / `currency`.
+     */
+    costSegments?: ApiCostSegment[]
     activeSeconds?: number
     requestsPerMinute?: number
     tokensPerMinute?: number
@@ -41,6 +64,8 @@ export function getApiMetrics(messages: UiMessage[]): ApiMetrics {
         totalCacheReads: undefined,
         totalCost: 0,
     }
+    // Kept local so the running segments are never read through an optional field.
+    const costSegments: ApiCostSegment[] = []
 
     messages.forEach((message) => {
         if (
@@ -66,7 +91,16 @@ export function getApiMetrics(messages: UiMessage[]): ApiMetrics {
                 }
                 if (typeof cost === "number") {
                     result.totalCost += cost
-                    result.currency = typeof parsedData.currency === "string" ? parsedData.currency : undefined
+                    const reportedCurrency = typeof parsedData.currency === "string" ? parsedData.currency.trim() : ""
+                    const newestSegment = costSegments.at(-1)
+                    // Consecutive amounts in the same currency stay one segment; a different
+                    // currency starts a new one instead of being added to the previous total.
+                    if (newestSegment && newestSegment.currency === reportedCurrency) {
+                        newestSegment.totalCost += cost
+                    } else {
+                        costSegments.push({ currency: reportedCurrency, totalCost: cost })
+                    }
+                    result.currency = reportedCurrency || undefined
                 }
             } catch {
                 // Ignore JSON parse errors
@@ -80,6 +114,7 @@ export function getApiMetrics(messages: UiMessage[]): ApiMetrics {
         result.cacheHitRate = (result.totalCacheReads / totalInput) * 100
     }
 
+    result.costSegments = costSegments
     return result
 }
 

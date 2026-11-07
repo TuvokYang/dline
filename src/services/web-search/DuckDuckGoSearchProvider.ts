@@ -1,5 +1,14 @@
 import { BrowserHtmlSearchProvider } from "./BrowserHtmlSearchProvider"
-import { type BrowserSearchPageLoader, PuppeteerBrowserSearchPageLoader } from "./BrowserSearchPageLoader"
+import { type BrowserSearchPage, type BrowserSearchPageLoader, PuppeteerBrowserSearchPageLoader } from "./BrowserSearchPageLoader"
+
+/**
+ * Markers DuckDuckGo serves instead of a result list when it refuses the client.
+ *
+ * The refused response is not an HTTP error: DuckDuckGo answers HTTP 202 with an
+ * anomaly document whose form posts to `anomaly.js` and whose id is
+ * `challenge-form`. Neither marker can appear on a real result page.
+ */
+const REFUSAL_MARKERS = ["anomaly.js", 'id="challenge-form"'] as const
 
 function resolveDuckDuckGoUrl(value: string): string {
     try {
@@ -42,5 +51,15 @@ export class DuckDuckGoSearchProvider extends BrowserHtmlSearchProvider {
 
     protected override transformResultUrl(url: string): string | undefined {
         return super.transformResultUrl(resolveDuckDuckGoUrl(url))
+    }
+
+    protected override detectRefusal(page: BrowserSearchPage): string | undefined {
+        const statusRefusal = super.detectRefusal(page)
+        if (statusRefusal) return statusRefusal
+        if (REFUSAL_MARKERS.some((marker) => page.html.includes(marker))) {
+            const status = page.status > 0 ? `HTTP ${page.status}` : "no HTTP status"
+            return `DuckDuckGo answered with its bot challenge instead of results (${status}); its HTML endpoint refused this client. Select another local search engine in settings.`
+        }
+        return undefined
     }
 }

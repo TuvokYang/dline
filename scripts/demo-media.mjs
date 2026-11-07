@@ -15,21 +15,40 @@ const MANIFEST_DIR = path.join(PROJECT_ROOT, "tmp", "demo-media")
 const DEFAULT_OUTPUT_DIR = path.join(PROJECT_ROOT, "assets", "docs", "marketplace")
 const FRAME_ROOT = path.join(MANIFEST_DIR, "frames")
 const PLAYWRIGHT_BROWSERS = path.join(PROJECT_ROOT, "node_modules", "playwright-core", "browsers.json")
-const MAX_GIF_BYTES = 3_000_000
+/**
+ * Upper bound on a published GIF. Sized for the capture width these assets use: at 1200 px the
+ * three-column walkthrough encodes near 3.4 MB, and the limit exists to catch a runaway asset, not
+ * to force a sharper capture down to a blurrier one.
+ */
+const MAX_GIF_BYTES = 3_600_000
 const MAX_GIF_DURATION_SECONDS = 20
+/**
+ * Encoder settings, tried in order until the GIF fits the byte budget.
+ *
+ * `interFrameMaxError` lets libvips fold a near-identical frame into its predecessor, which is
+ * what keeps these captures near a megabyte instead of eight. It does not shorten playback:
+ * the folded frame's delay is carried by its predecessor, so the total still covers the shot.
+ */
 const GIF_ENCODING_PROFILES = [
     { name: "quality", dither: 0.75, interFrameMaxError: 4, interPaletteMaxError: 3 },
     { name: "balanced", dither: 0.5, interFrameMaxError: 6, interPaletteMaxError: 4 },
     { name: "compact", dither: 0.25, interFrameMaxError: 8, interPaletteMaxError: 6 },
 ]
-const SPOTLIGHT_DIM_OPACITY = 0.45
+/**
+ * How much the area outside the focus ring is darkened.
+ *
+ * 0.45 left the dimmed region and the focus close enough that a 256-colour GIF quantised them into
+ * the same bands: the ring sat on the composer while the surrounding editor and panel still read as
+ * lit, so the shot looked like the box pointed at the wrong component. 0.72 separates the two.
+ */
+const SPOTLIGHT_DIM_OPACITY = 0.72
 const SPOTLIGHT_PADDING = 6
 const SPOTLIGHT_RADIUS = 6
 const SPOTLIGHT_RING_COLOR = "#3794ff"
 
 function printUsage() {
     console.log(
-        `Usage: node scripts/demo-media.mjs [options]\n\nOptions:\n  --id <asset-id>       Convert one manifest; may be repeated\n  --out-dir <path>      Override the output directory\n  --crop <x:y:w:h>      Override the manifest crop for all selected assets\n  --fps <number>        Override the manifest frame rate\n  --help                Show this help text`,
+        `Usage: node scripts/demo-media.mjs [options]\n\nOptions:\n  --id <asset-id>        Convert one manifest; may be repeated\n  --out-dir <path>       Override the output directory\n  --crop <x:y:w:h>       Override the manifest crop for all selected assets\n  --fps <number>         Override the manifest frame rate\n  --keep-frames          Keep the composited PNG frames for inspection\n  --max-duration <sec>   Override the duration budget for this run\n  --max-bytes <bytes>    Override the byte budget for this run\n  --help                 Show this help text`,
     )
 }
 
@@ -54,7 +73,15 @@ function parseCrop(value) {
 }
 
 function parseArguments(argv) {
-    const result = { ids: [], outDir: DEFAULT_OUTPUT_DIR, crop: undefined, fps: undefined }
+    const result = {
+        ids: [],
+        outDir: DEFAULT_OUTPUT_DIR,
+        crop: undefined,
+        fps: undefined,
+        keepFrames: false,
+        maxDurationSeconds: undefined,
+        maxBytes: undefined,
+    }
     for (let index = 0; index < argv.length; index += 1) {
         const argument = argv[index]
         if (argument === "--help") {
@@ -83,6 +110,22 @@ function parseArguments(argv) {
             const fps = argv[++index]
             if (!fps) fail("--fps requires a number")
             result.fps = parsePositiveNumber(fps, "--fps")
+            continue
+        }
+        if (argument === "--keep-frames") {
+            result.keepFrames = true
+            continue
+        }
+        if (argument === "--max-duration") {
+            const seconds = argv[++index]
+            if (!seconds) fail("--max-duration requires a number of seconds")
+            result.maxDurationSeconds = parsePositiveNumber(seconds, "--max-duration")
+            continue
+        }
+        if (argument === "--max-bytes") {
+            const bytes = argv[++index]
+            if (!bytes) fail("--max-bytes requires a byte count")
+            result.maxBytes = parsePositiveNumber(bytes, "--max-bytes")
             continue
         }
         fail(`unknown option ${argument}`)
@@ -305,12 +348,31 @@ async function encodeGif(framePaths, fps, outputPath, profile) {
         .toFile(outputPath)
 
     const metadata = await sharp(outputPath, { animated: true }).metadata()
-    const encodedFrameCount = metadata.pages ?? framePaths.length
+    const encodedFrameCount = metadata.pages ?? 0
     const encodedDelays = metadata.delay ?? []
     if (encodedDelays.length !== encodedFrameCount || encodedDelays.some((delay) => delay <= 0)) {
-        fail(`Sharp produced invalid frame delays for ${outputPath}`)
+        fail(`invalid frame delays for ${outputPath}`)
     }
     const durationSeconds = encodedDelays.reduce((total, delay) => total + delay, 0) / 1_000
+    // The published asset must cover the whole shot. A short encode used to pass silently and ship
+    // a clip whose tail never moved, so the encoded length is now a hard requirement.
+    //
+    // The invariant is playback time, not page count. libvips quantises every delay to 10 ms and
+    // merges near-identical consecutive frames while accumulating their delay, so a 317-frame
+    // recording legitimately encodes as 243 pages whose delays sum to the same wall-clock span.
+    // Comparing pages against inputs reported that deduplication as truncation.
+    // libvips floors each delay to whole centiseconds; it does not round. A 125 ms delay is
+    // written as 12 cs, so rounding here would over-state the expected length and report a
+    // complete GIF as truncated.
+    const quantizedDelayMs = Math.max(10, Math.floor(delayMs / 10) * 10)
+    const expectedSeconds = (framePaths.length * quantizedDelayMs) / 1_000
+    const toleranceSeconds = Math.max(0.3, quantizedDelayMs / 1_000)
+    if (Math.abs(durationSeconds - expectedSeconds) > toleranceSeconds) {
+        fail(
+            `${outputPath} plays ${durationSeconds.toFixed(2)}s of ${expectedSeconds.toFixed(2)}s; ` +
+                "the GIF would end before the recording does",
+        )
+    }
     const height =
         metadata.pageHeight ??
         (metadata.height && encodedFrameCount > 0 ? Math.round(metadata.height / encodedFrameCount) : undefined)
@@ -325,6 +387,10 @@ async function convertManifest(ffmpegPath, manifest, options) {
     const outputPath = path.join(options.outDir, manifest.outputFile || `${manifest.id}.gif`)
     fs.mkdirSync(path.dirname(outputPath), { recursive: true })
 
+    // The budgets are defaults for a short marketing loop. A long multi-turn walkthrough passes
+    // its own ceiling instead of raising the limit every other asset is held to.
+    const maxBytes = options.maxBytes ?? MAX_GIF_BYTES
+    const maxDurationSeconds = options.maxDurationSeconds ?? MAX_GIF_DURATION_SECONDS
     let encoded
     let bytes = Number.POSITIVE_INFINITY
     let encodingProfile = GIF_ENCODING_PROFILES[0]
@@ -333,7 +399,7 @@ async function convertManifest(ffmpegPath, manifest, options) {
             encodingProfile = profile
             encoded = await encodeGif(extracted.framePaths, extracted.fps, outputPath, profile)
             bytes = fs.statSync(outputPath).size
-            if (bytes <= MAX_GIF_BYTES) break
+            if (bytes <= maxBytes) break
 
             const nextProfile = GIF_ENCODING_PROFILES[index + 1]
             if (nextProfile) {
@@ -343,7 +409,9 @@ async function convertManifest(ffmpegPath, manifest, options) {
             }
         }
     } finally {
-        fs.rmSync(extracted.frameDir, { recursive: true, force: true })
+        // The camera-composited frames are the only way to inspect where the focus ring
+        // actually landed, so a review run keeps them.
+        if (!options.keepFrames) fs.rmSync(extracted.frameDir, { recursive: true, force: true })
     }
     if (!encoded) fail(`${manifest.id} was not encoded`)
 
@@ -353,8 +421,10 @@ async function convertManifest(ffmpegPath, manifest, options) {
             `${(bytes / 1_000_000).toFixed(2)} MB, ${encoded.encodedFrameCount} encoded frames, ` +
             `256 colors, ${encodingProfile.name} profile)`,
     )
-    if (bytes > MAX_GIF_BYTES) fail(`${manifest.id} exceeds ${MAX_GIF_BYTES} bytes`)
-    if (encoded.durationSeconds > MAX_GIF_DURATION_SECONDS) fail(`${manifest.id} exceeds ${MAX_GIF_DURATION_SECONDS} seconds`)
+    if (bytes > maxBytes) fail(`${manifest.id} exceeds ${maxBytes} bytes`)
+    if (encoded.durationSeconds > maxDurationSeconds) {
+        fail(`${manifest.id} exceeds ${maxDurationSeconds} seconds`)
+    }
     if (encoded.width !== extracted.outputWidth) {
         fail(`${manifest.id} width is ${encoded.width}, expected ${extracted.outputWidth}`)
     }

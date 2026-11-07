@@ -26,7 +26,12 @@ export type ChecklistUpdateDecision =
           readonly archive?: string
           readonly warnSkip?: true
       }
-    | { readonly kind: "rejected"; readonly message: string; readonly diagnostic?: string; readonly blockTools?: true }
+    /**
+     * `message` is the correction the model receives; `diagnostic` is the one-line reason shown to
+     * the user. It is required rather than optional: the presenter falls back to `message`, so a
+     * rejection without one prints the model's instructions into the conversation.
+     */
+    | { readonly kind: "rejected"; readonly message: string; readonly diagnostic: string; readonly blockTools?: true }
 
 /** Evaluate against the last committed list; no state, file, or presentation is changed here. */
 export function evaluateChecklistUpdate(state: ChecklistUpdateState, report: string): ChecklistUpdateDecision {
@@ -49,12 +54,28 @@ export function evaluateChecklistUpdate(state: ChecklistUpdateState, report: str
     const previous = state.checklist
     if (newChecklist) {
         if (previous && !isAllItemsCompleted(previous)) {
-            return { kind: "rejected", message: FocusChainPrompts.tamperingRejected }
+            return {
+                kind: "rejected",
+                message: FocusChainPrompts.tamperingRejected,
+                diagnostic: "Focus Chain: the checklist still has unfinished items. Update rejected.",
+            }
         }
         return { kind: "accepted", checklist: report, currentItem: null, ...(previous ? { archive: previous } : {}) }
     }
-    if (!previous) return { kind: "rejected", message: FocusChainPrompts.recommended }
-    if (isAllItemsCompleted(previous)) return { kind: "rejected", message: FocusChainPrompts.allCompletedAlready }
+    if (!previous) {
+        return {
+            kind: "rejected",
+            message: FocusChainPrompts.recommended,
+            diagnostic: "Focus Chain: no checklist exists yet. Update rejected.",
+        }
+    }
+    if (isAllItemsCompleted(previous)) {
+        return {
+            kind: "rejected",
+            message: FocusChainPrompts.allCompletedAlready,
+            diagnostic: "Focus Chain: every item is already complete. Update rejected.",
+        }
+    }
 
     const examples = () => extractExampleItems(previous, 3).join("\n")
     const reportedItems = extractFocusChainItemsFromText(report)
@@ -63,7 +84,11 @@ export function evaluateChecklistUpdate(state: ChecklistUpdateState, report: str
     if (!hasCompleted && hasCurrent) {
         const result = mergeInProgressItem(previous, report)
         if (!result.updatedText) {
-            return { kind: "rejected", message: FocusChainPrompts.inProgressMismatchRejected(examples()) }
+            return {
+                kind: "rejected",
+                message: FocusChainPrompts.inProgressMismatchRejected(examples()),
+                diagnostic: "Focus Chain: the current item does not match the checklist. Update rejected.",
+            }
         }
         return { kind: "accepted", checklist: result.updatedText, currentItem: result.matchedItemIndex }
     }
@@ -76,6 +101,7 @@ export function evaluateChecklistUpdate(state: ChecklistUpdateState, report: str
                 merged.unmatchedItems.map((item) => `- ${item}`).join("\n"),
                 examples(),
             ),
+            diagnostic: "Focus Chain: some items do not match the checklist. Update rejected.",
             blockTools: true,
         }
     }
@@ -90,7 +116,11 @@ export function evaluateChecklistUpdate(state: ChecklistUpdateState, report: str
     }
     const skipped = skipsNewlyCompletedItem(previous, checklist)
     if (skipped && state.warnedSkip) {
-        return { kind: "rejected", message: FocusChainPrompts.skipOrderRejected(examples()) }
+        return {
+            kind: "rejected",
+            message: FocusChainPrompts.skipOrderRejected(examples()),
+            diagnostic: "Focus Chain: items must be completed in order. Update rejected.",
+        }
     }
     return { kind: "accepted", checklist, currentItem, ...(skipped ? { warnSkip: true as const } : {}) }
 }

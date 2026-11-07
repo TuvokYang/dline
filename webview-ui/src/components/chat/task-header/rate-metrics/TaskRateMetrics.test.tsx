@@ -53,4 +53,42 @@ describe("TaskRateMetrics", () => {
         expect(screen.getByRole("dialog", { name: "API Rate History" })).toBeInTheDocument()
         expect(parentClick).not.toHaveBeenCalled()
     })
+
+    it("states the newest segment rather than a sum across currencies", () => {
+        render(
+            <TaskRateMetrics
+                {...defaultProps}
+                costSegments={[
+                    { currency: "CNY", totalCost: 12.5 },
+                    { currency: "USD", totalCost: 3 },
+                ]}
+                currency="USD"
+                isCostAvailable={true}
+                totalCost={15.5}
+            />,
+        )
+
+        // 12.5 CNY and 3 USD share no unit, so the capsule states the newest segment
+        // instead of a total that would have no currency at all.
+        expect(screen.getByRole("button", { name: /Cost: \$3\.000/ })).toBeInTheDocument()
+    })
+
+    it("falls back to the newest labelled segment when the newest one has no currency", () => {
+        render(
+            <TaskRateMetrics
+                {...defaultProps}
+                costSegments={[
+                    { currency: "CNY", totalCost: 12.5 },
+                    { currency: "", totalCost: 0.4 },
+                ]}
+                currency={undefined}
+                isCostAvailable={true}
+                totalCost={12.9}
+            />,
+        )
+
+        // An amount reported without a currency cannot be labelled, so the capsule
+        // states the last amount that could be.
+        expect(screen.getByRole("button", { name: /Cost: ¥12\.500/ })).toBeInTheDocument()
+    })
 })

@@ -4,6 +4,7 @@ import { expect, type Locator, type Page } from "@playwright/test"
 import { E2ETestHelper, e2e } from "../../utils/helpers"
 import { resizePrimarySidebar } from "../../utils/resize-primary-sidebar"
 import { DEMO_THEMES, type DemoTheme, type DemoThemeOptions, themedAssetId } from "./demo-theme"
+import { dismissDemoNotifications } from "./png-asset"
 
 export const DEMO_VIEWPORT = { width: 1_920, height: 1_080 } as const
 export const DEMO_VIDEO_SIZE = DEMO_VIEWPORT
@@ -12,6 +13,10 @@ export const DEMO_ASSET_DIR = path.join(E2ETestHelper.CODEBASE_ROOT_DIR, "assets
 const DEMO_MANIFEST_DIR = path.join(E2ETestHelper.CODEBASE_ROOT_DIR, "tmp", "demo-media")
 const DEFAULT_PACE_MS = 2_000
 const SCREENCAST_QUALITY = 95
+/** Time allowed for the workbench to repaint after the screencast viewport is pinned, before the timeline starts. */
+const SCREENCAST_WARMUP_MS = 350
+/** Time a cleared toast stack needs to leave the DOM before the corner is asserted empty. */
+const NOTIFICATION_SETTLE_MS = 250
 const CAMERA_TRANSITION_SECONDS = 0.4
 // Transition time plus a short hold, so the camera settles before the next action.
 const CAMERA_SETTLE_MS = 750
@@ -36,6 +41,8 @@ interface DemoCameraOptions {
     padding?: number
     /** Dim everything except the focused control and outline it during GIF conversion. */
     spotlight?: boolean
+    /** Time one camera move takes. Omitted, the recording default is used. */
+    transitionSeconds?: number
 }
 
 interface DemoCameraKeyframe {
@@ -129,11 +136,13 @@ async function resolveCrop(page: Page, crop: DemoCrop): Promise<DemoCropRect | u
     const box = await primarySidebar.boundingBox()
     if (!box) throw new Error("Cannot resolve the primary sidebar crop without a bounding box")
 
+    // Start at the sidebar's own left edge so the activity bar and the title bar never enter
+    // the frame, and keep only the sidebar's column instead of the whole window height.
     return {
-        x: 0,
-        y: 0,
-        width: Math.ceil(box.x + box.width),
-        height: DEMO_VIEWPORT.height,
+        x: Math.floor(box.x),
+        y: Math.floor(box.y),
+        width: Math.ceil(box.width),
+        height: Math.ceil(box.height),
     }
 }
 
@@ -253,7 +262,10 @@ export const demo = e2e.extend<DemoFixtures & DemoThemeOptions>({
                     outputWidth: registration.outputWidth,
                     crop: registration.crop,
                     camera: registration.camera
-                        ? { ...registration.camera, transitionSeconds: CAMERA_TRANSITION_SECONDS }
+                        ? {
+                              ...registration.camera,
+                              transitionSeconds: registration.camera.transitionSeconds ?? CAMERA_TRANSITION_SECONDS,
+                          }
                         : undefined,
                     trim: {
                         durationSeconds: sceneDurationSeconds,
@@ -281,7 +293,7 @@ export const demo = e2e.extend<DemoFixtures & DemoThemeOptions>({
             const bottomPanel = page.locator('[id="workbench.parts.panel"]')
             if (await bottomPanel.isVisible()) await page.keyboard.press("ControlOrMeta+j")
             await expect(bottomPanel).toBeHidden()
-            await resizePrimarySidebar(page, DEMO_SIDEBAR_WIDTH)
+            await resizePrimarySidebar(page, DEMO_SIDEBAR_WIDTH, DEMO_VIEWPORT)
             await use()
         },
         { auto: true },
@@ -295,6 +307,17 @@ export const demo = e2e.extend<DemoFixtures & DemoThemeOptions>({
             const id = themedAssetId(baseId, demoTheme)
             await dismissVSCodeNotifications(page)
             await configureScreencastSurface(page)
+            // Every camera keyframe is authored in `DEMO_VIDEO_SIZE` coordinates. When the window is
+            // smaller than that, the workbench renders at the smaller size inside a larger recorded
+            // surface: the rest is black, `minWidth` then spans the whole workbench, and every
+            // "camera move" becomes the same whole-window shot. Fail here instead of recording it.
+            const surface = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }))
+            if (surface.width !== DEMO_VIDEO_SIZE.width || surface.height !== DEMO_VIDEO_SIZE.height) {
+                throw new Error(
+                    `Demo surface is ${surface.width}x${surface.height}, expected ` +
+                        `${DEMO_VIDEO_SIZE.width}x${DEMO_VIDEO_SIZE.height}: camera rectangles use the recorded viewport`,
+                )
+            }
             if (_demoRecordingState.registration) {
                 throw new Error(`Demo recording already registered as ${_demoRecordingState.registration.id}`)
             }
@@ -313,6 +336,20 @@ export const demo = e2e.extend<DemoFixtures & DemoThemeOptions>({
                 await page.screencast.stop().catch(() => undefined)
                 throw error
             }
+            // The device-metrics override above resizes the viewport, and VS Code repaints the whole
+            // workbench afterwards. Let that paint land before the timeline starts, otherwise the
+            // opening frames of every recording are a blank workbench.
+            await page.evaluate(
+                () =>
+                    new Promise<void>((resolve) => {
+                        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+                    }),
+            )
+            await page.waitForTimeout(SCREENCAST_WARMUP_MS)
+            // Extension toasts raised while the capture was being prepared would otherwise sit in the
+            // corner of every recorded frame. Clear them once more while the warm-up still absorbs
+            // the cost, and keep clearing on each camera move for anything raised later.
+            await dismissDemoNotifications(page)
             const startedAtMs = Date.now()
             const resolvedCrop = await resolveCrop(page, crop)
             _demoRecordingState.registration = {
@@ -337,6 +374,12 @@ export const demo = e2e.extend<DemoFixtures & DemoThemeOptions>({
             const registration = _demoRecordingState.registration
             if (!registration) throw new Error("Cannot finish a demo recording before registering it")
             if (registration.endedAtMs) return
+            // A toast raised after the last camera move would otherwise be the final thing on screen,
+            // and nothing cleared it: the stop below used to run without checking the corner at all.
+            // The clip only ends after the corner is provably empty.
+            await dismissVSCodeNotifications(page)
+            await page.waitForTimeout(NOTIFICATION_SETTLE_MS)
+            await dismissDemoNotifications(page)
             const endedAtMs = Date.now()
             await page.screencast.stop()
             registration.endedAtMs = endedAtMs
@@ -346,6 +389,9 @@ export const demo = e2e.extend<DemoFixtures & DemoThemeOptions>({
         await use(async (target, settleMs = CAMERA_SETTLE_MS) => {
             const camera = _demoRecordingState.registration?.camera
             if (!camera) throw new Error("focusCamera requires a recording registered with a camera")
+            // Notifications arrive while the capture runs, not only before it: an extension toast
+            // raised mid-recording stays in every later frame, so each camera move clears them first.
+            await dismissDemoNotifications(page)
             // Start the pan when the step begins, not after the box settles, so the spotlight
             // follows a menu or status line while it moves instead of lagging behind it.
             const requestedAtMs = Date.now()

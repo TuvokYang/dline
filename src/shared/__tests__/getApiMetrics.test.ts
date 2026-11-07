@@ -67,6 +67,59 @@ describe("getApiMetrics", () => {
         assert.equal(metrics.totalTokensIn, 10)
     })
 
+    it("keeps each currency in its own segment instead of adding them together", () => {
+        const metrics = getApiMetrics([
+            { ts: 1, type: "say", say: "api_req_started", text: JSON.stringify({ cost: 0.12, currency: "CNY" }) },
+            { ts: 2, type: "say", say: "api_req_started", text: JSON.stringify({ cost: 0.05, currency: "USD" }) },
+        ])
+
+        // Switching provider mid-task changes the unit; a sum of 0.12 CNY and 0.05 USD
+        // has no unit at all, so each amount stays in the segment it was reported in.
+        assert.deepEqual(metrics.costSegments, [
+            { currency: "CNY", totalCost: 0.12 },
+            { currency: "USD", totalCost: 0.05 },
+        ])
+        assert.equal(metrics.currency, "USD")
+    })
+
+    it("merges consecutive amounts that share a currency", () => {
+        const metrics = getApiMetrics([
+            { ts: 1, type: "say", say: "api_req_started", text: JSON.stringify({ cost: 0.25, currency: "CNY" }) },
+            { ts: 2, type: "say", say: "subagent_usage", text: JSON.stringify({ cost: 0.25, currency: "CNY" }) },
+        ])
+
+        assert.deepEqual(metrics.costSegments, [{ currency: "CNY", totalCost: 0.5 }])
+    })
+
+    it("starts a new segment when a currency returns after another one", () => {
+        const metrics = getApiMetrics([
+            { ts: 1, type: "say", say: "api_req_started", text: JSON.stringify({ cost: 1, currency: "CNY" }) },
+            { ts: 2, type: "say", say: "api_req_started", text: JSON.stringify({ cost: 2, currency: "USD" }) },
+            { ts: 3, type: "say", say: "api_req_started", text: JSON.stringify({ cost: 4, currency: "CNY" }) },
+        ])
+
+        // The newest segment is the one a header states, so a returning currency is
+        // its own run rather than a continuation of the first one.
+        assert.deepEqual(metrics.costSegments, [
+            { currency: "CNY", totalCost: 1 },
+            { currency: "USD", totalCost: 2 },
+            { currency: "CNY", totalCost: 4 },
+        ])
+    })
+
+    it("records an amount reported without a currency as its own unlabelled segment", () => {
+        const metrics = getApiMetrics([
+            { ts: 1, type: "say", say: "api_req_started", text: JSON.stringify({ cost: 0.5, currency: "CNY" }) },
+            { ts: 2, type: "say", say: "api_req_started", text: JSON.stringify({ cost: 0.25 }) },
+        ])
+
+        assert.deepEqual(metrics.costSegments, [
+            { currency: "CNY", totalCost: 0.5 },
+            { currency: "", totalCost: 0.25 },
+        ])
+        assert.equal(metrics.currency, undefined)
+    })
+
     it("preserves an explicitly reported zero-percent cache hit rate", () => {
         const metrics = getApiMetrics([
             {

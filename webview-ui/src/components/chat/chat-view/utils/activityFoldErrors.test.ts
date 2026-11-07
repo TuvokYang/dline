@@ -41,7 +41,7 @@ describe("a failed work item stays inside its block", () => {
         expect(blocks[0].map((message) => message.ts)).toEqual([3, 4, 5])
     })
 
-    it("counts a failed command as one command error and not as a command", () => {
+    it("counts a failed command as one failed cmd and not as a cmd", () => {
         const transcript = [
             userTask(1, "Run the checks"),
             finishedRequest(2),
@@ -54,10 +54,10 @@ describe("a failed work item stays inside its block", () => {
         const summary = summarizeActivityFold(block, new Map())
         expect(summary.failures.get("command")).toBe(1)
         expect(summary.work.get("command")).toBe(1)
-        expect(describeActivityFold(summary)).toContain("1 command error")
+        expect(describeActivityFold(summary)).toContain("1 cmd failed")
     })
 
-    it("counts a failed edit as an edit error without counting it as a file edit", () => {
+    it("counts a failed edit as a failed file edit without counting it as one", () => {
         const transcript = [
             userTask(1, "Fix the parser"),
             finishedRequest(2),
@@ -70,7 +70,7 @@ describe("a failed work item stays inside its block", () => {
         expect(summary.failures.get("edit")).toBe(1)
         // A failed edit is one error, not also a completed write.
         expect(summary.work.get("write")).toBeUndefined()
-        expect(describeActivityFold(summary)).toContain("1 edit error")
+        expect(describeActivityFold(summary)).toContain("1 file edit failed")
     })
 
     it("states each category separately in the header", () => {
@@ -85,9 +85,9 @@ describe("a failed work item stays inside its block", () => {
 
         const summary = summarizeActivityFold(folds(transcript)[0], new Map())
         const text = describeActivityFold(summary)
-        expect(text).toContain("2 edit errors")
-        expect(text).toContain("1 command error")
-        expect(text).not.toContain("subagents error")
+        expect(text).toContain("2 file edit failed")
+        expect(text).toContain("1 cmd failed")
+        expect(text).not.toContain("subagent failed")
     })
 })
 
@@ -123,7 +123,7 @@ describe("the block keeps a failure it cannot account for out of it", () => {
         expect(block.map((message) => message.ts)).toEqual([3, 4])
         const summary = summarizeActivityFold(block, new Map())
         expect(summary.failures.get("subagent")).toBe(2)
-        expect(describeActivityFold(summary)).toContain("2 subagent errors")
+        expect(describeActivityFold(summary)).toContain("2 subagent failed")
     })
 
     it("does not count a cancelled subagent batch as an error", () => {
@@ -137,7 +137,7 @@ describe("the block keeps a failure it cannot account for out of it", () => {
 
         const summary = summarizeActivityFold(folds(transcript)[0], new Map())
         expect(summary.failures.size).toBe(0)
-        expect(describeActivityFold(summary)).not.toContain("error")
+        expect(describeActivityFold(summary)).not.toContain("failed")
     })
 
     it("marks the failure counts as errors and leaves the other counts plain", () => {
@@ -152,8 +152,8 @@ describe("the block keeps a failure it cannot account for out of it", () => {
         const parts = describeActivityFoldParts(summarizeActivityFold(folds(transcript)[0], new Map()))
         // The renderer paints `isFailure` parts in the error tone, so this is what
         // makes an error count read as an error rather than as another tally.
-        expect(parts.filter((part) => part.isFailure).map((part) => part.text)).toEqual(["1 command error"])
-        expect(parts.filter((part) => !part.isFailure).map((part) => part.text)).toContain("1 write")
+        expect(parts.filter((part) => part.isFailure).map((part) => part.text)).toEqual(["1 cmd failed"])
+        expect(parts.filter((part) => !part.isFailure).map((part) => part.text)).toContain("1 file edit")
     })
 
     it("does not count a settled edit as an error", () => {
@@ -172,6 +172,6 @@ describe("the block keeps a failure it cannot account for out of it", () => {
         const summary = summarizeActivityFold(folds(transcript)[0], new Map())
         expect(summary.failures.size).toBe(0)
         expect(summary.work.get("write")).toBe(1)
-        expect(describeActivityFold(summary)).not.toContain("error")
+        expect(describeActivityFold(summary)).not.toContain("failed")
     })
 })

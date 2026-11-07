@@ -36,5 +36,24 @@
             "isDevMode": "dlineInsiders.isDevMode",
             "isTestMode": "dlineInsiders.isTestMode"
         }
+    },
+    "dline-main": {
+        "packageName": "dline-main",
+        "displayName": "Dline (Stable)",
+        "preview": false,
+        "contributionNamespace": "dline",
+        "activityBarId": "dline-ActivityBar",
+        "sidebarViewId": "dline.SidebarProvider",
+        "panelViewType": "dlineTask",
+        "diffUriScheme": "cline-diff",
+        "commentControllerId": "dline-ai-review",
+        "productIconId": "dline-icon",
+        "walkthroughId": "DlineWalkthrough",
+        "contextKeys": {
+            "accountEnabled": "dline.accountEnabled",
+            "isGeneratingCommit": "dline.isGeneratingCommit",
+            "isDevMode": "dline.isDevMode",
+            "isTestMode": "dline.isTestMode"
+        }
     }
 }

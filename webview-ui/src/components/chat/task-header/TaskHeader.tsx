@@ -1,5 +1,6 @@
 import type { ModelPricing } from "@shared/api"
 import { UiMessage } from "@shared/ExtensionMessage"
+import type { ApiCostSegment } from "@shared/getApiMetrics"
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import React, { useCallback, useLayoutEffect, useState } from "react"
 import Thumbnails from "@/components/common/Thumbnails"
@@ -32,6 +33,8 @@ interface TaskHeaderProps {
     totalCost: number
     cacheHitRate?: number
     currency?: string
+    /** Per-currency cost runs, newest last. The capsule shows the newest labelled one. */
+    costSegments?: ApiCostSegment[]
     taskId?: string
     lastApiReqTotalTokens?: number
     lastProgressMessageText?: string
@@ -60,6 +63,7 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
     totalCost,
     cacheHitRate,
     currency,
+    costSegments,
     taskId,
     lastApiReqTotalTokens,
     lastProgressMessageText,
@@ -214,6 +218,7 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
                                 cacheHitRate={cacheHitRate}
                                 cacheReads={cacheReads}
                                 cacheWrites={cacheWrites}
+                                costSegments={costSegments}
                                 currency={currency}
                                 isCostAvailable={isCostAvailable}
                                 requestsPerMinute={requestsPerMinute ?? 0}

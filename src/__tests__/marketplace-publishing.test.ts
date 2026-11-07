@@ -71,17 +71,43 @@ function resolveBash(): string {
     throw new Error("Git Bash is required to exercise the packaging workflow on Windows")
 }
 
+/**
+ * Which CLI surface the checked-out packaging script exposes.
+ *
+ * A release tag checked out by the manual override carries its own script, so
+ * the workflow must cope with every historical shape. Each value below mirrors
+ * the real arg parser of that ref, not a simulated `--help` string.
+ */
+type PackagerCli = "current" | "publisher-only" | "legacy"
+
+const PACKAGER_SUPPORTED_FLAGS: Record<PackagerCli, string[]> = {
+    current: ["--channel", "--out", "--publisher", "--registry", "--help"],
+    "publisher-only": ["--channel", "--out", "--publisher", "--help"],
+    legacy: ["--channel", "--out", "--help"],
+}
+
+const PACKAGER_USAGE: Record<PackagerCli, string> = {
+    current: "Usage: npm run vsix -- [--channel <channel>] [--out <path>] [--publisher <id>] [--registry <registry>]",
+    "publisher-only": "Usage: npm run vsix -- [--channel <channel>] [--out <path>] [--publisher <id>]",
+    legacy: "Usage: npm run vsix -- [--channel <channel>] [--out <path>]",
+}
+
 describe("Marketplace publisher delivery", () => {
     it.each([
-        ["package-ci", "ci", "vscode-marketplace", 0],
-        ["package-ci", "ci", "vscode-marketplace", 19],
-        ["package-release", "production", "vscode-marketplace", 0],
-        ["package-release", "production", "vscode-marketplace", 19],
-        ["package-ci", "ci", "open-vsx", 0],
-        ["package-ci", "ci", "open-vsx", 19],
-        ["package-release", "production", "open-vsx", 0],
-        ["package-release", "production", "open-vsx", 19],
-    ] as const)("builds historical %s for %s/%s and restores its manifest on exit %s", async (jobId, channel, registry, exitCode) => {
+        ["package-ci", "ci", "vscode-marketplace", "current"],
+        ["package-ci", "ci", "open-vsx", "current"],
+        ["package-release", "production", "vscode-marketplace", "current"],
+        ["package-release", "production", "open-vsx", "current"],
+        // Historical refs: the manual override checks out a release tag and
+        // therefore runs that tag's own packaging script.
+        ["package-release", "production", "open-vsx", "publisher-only"],
+        ["package-release", "production", "open-vsx", "legacy"],
+    ] as [
+        string,
+        string,
+        string,
+        PackagerCli,
+    ][])("builds %s for %s/%s with a %s packaging CLI", async (jobId, channel, registry, packagerCli) => {
         const workflow = await readWorkflow("package.yml")
         const step = workflow.jobs[jobId].steps?.find((candidate) => candidate.env?.DLINE_ENVIRONMENT === "production")
         if (!step?.run) throw new Error(`Missing build step for ${jobId}`)
@@ -101,7 +127,24 @@ describe("Marketplace publisher delivery", () => {
                     'import fs from "node:fs";',
                     'const manifest = JSON.parse(fs.readFileSync("package.json", "utf8"));',
                     'fs.writeFileSync("observed.json", JSON.stringify({publisher: manifest.publisher, args: process.argv.slice(2)}));',
-                    "process.exit(Number(process.env.FIXTURE_EXIT_CODE));",
+                    "process.exit(0);",
+                ].join("\n"),
+            )
+            // Mirror the checked-out script's real arg parser, so a flag the
+            // historical ref never accepted fails here exactly as it does in CI.
+            await fs.mkdir(path.join(directory, "scripts"), { recursive: true })
+            await fs.writeFile(
+                path.join(directory, "scripts", "package-vsix.mjs"),
+                [
+                    "const supported = new Set(JSON.parse(process.env.FIXTURE_PACKAGER_FLAGS));",
+                    "const argv = process.argv.slice(2);",
+                    "for (let index = 0; index < argv.length; index += 1) {",
+                    "    const argument = argv[index];",
+                    '    if (!supported.has(argument)) { console.log("Unknown argument \'" + argument + "\'."); process.exit(1); }',
+                    '    if (argument === "--help") { console.log(process.env.FIXTURE_PACKAGER_USAGE); process.exit(0); }',
+                    "    index += 1;",
+                    "}",
+                    "process.exit(0);",
                 ].join("\n"),
             )
             const result = spawnSync(
@@ -116,18 +159,99 @@ describe("Marketplace publisher delivery", () => {
                         CHANNEL: channel,
                         VSIX_REGISTRY: registry,
                         RUNNER_TEMP: directory.replaceAll("\\", "/"),
-                        FIXTURE_EXIT_CODE: String(exitCode),
+                        FIXTURE_PACKAGER_FLAGS: JSON.stringify(PACKAGER_SUPPORTED_FLAGS[packagerCli]),
+                        // The fixture packager accepts every forwarded argument,
+                        // so it always votes success; workflow-level exit codes
+                        // are covered by the rejection cases below.
+                        FIXTURE_PACKAGER_USAGE: PACKAGER_USAGE[packagerCli],
                     },
                 },
             )
             expect(result.error, `${result.stdout}\n${result.stderr}`).toBeUndefined()
-            expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(exitCode)
+            expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0)
             const observed = JSON.parse(await fs.readFile(path.join(directory, "observed.json"), "utf8"))
+            // The workflow never rewrites package.json itself; registry-specific
+            // identity is resolved inside the packaging script.
             expect(observed).toEqual({
-                publisher: registry === "vscode-marketplace" ? "tuvokyangdline" : "tuvokyang",
-                args: ["--channel", channel, "--out", "dist/test.vsix"],
+                publisher: "tuvokyang",
+                args: [
+                    "--channel",
+                    channel,
+                    ...(packagerCli === "current" ? ["--registry", registry] : []),
+                    "--out",
+                    "dist/test.vsix",
+                ],
             })
             expect(await fs.readFile(path.join(directory, "package.json"), "utf8")).toBe(original)
+        } finally {
+            await fs.rm(directory, { recursive: true, force: true })
+        }
+    })
+
+    // A ref without --registry can only emit the globally taken name 'dline',
+    // so the workflow must refuse instead of publishing a colliding identity
+    // or silently reverting the publisher-specific package.
+    it.each([
+        "publisher-only",
+        "legacy",
+    ] as PackagerCli[])("refuses a %s packaging CLI for the VS Code Marketplace", async (packagerCli) => {
+        const workflow = await readWorkflow("package.yml")
+        const step = workflow.jobs["package-release"].steps?.find(
+            (candidate) => candidate.env?.DLINE_ENVIRONMENT === "production",
+        )
+        if (!step?.run) throw new Error("Missing package-release build step")
+        const directory = await fs.mkdtemp(path.join(os.tmpdir(), "dline-publisher-workflow-"))
+        try {
+            await fs.writeFile(
+                path.join(directory, "package.json"),
+                JSON.stringify({
+                    name: "historical-package-fixture",
+                    version: "0.12.2",
+                    publisher: "tuvokyang",
+                    private: true,
+                    scripts: { vsix: "node capture.mjs" },
+                }),
+            )
+            await fs.writeFile(
+                path.join(directory, "capture.mjs"),
+                'import fs from "node:fs";\nfs.writeFileSync("observed.json", "[]");\nprocess.exit(0);',
+            )
+            await fs.mkdir(path.join(directory, "scripts"), { recursive: true })
+            await fs.writeFile(
+                path.join(directory, "scripts", "package-vsix.mjs"),
+                [
+                    "const supported = new Set(JSON.parse(process.env.FIXTURE_PACKAGER_FLAGS));",
+                    "const argv = process.argv.slice(2);",
+                    "for (let index = 0; index < argv.length; index += 1) {",
+                    "    const argument = argv[index];",
+                    '    if (!supported.has(argument)) { console.log("Unknown argument \'" + argument + "\'."); process.exit(1); }',
+                    '    if (argument === "--help") { console.log(process.env.FIXTURE_PACKAGER_USAGE); process.exit(0); }',
+                    "    index += 1;",
+                    "}",
+                    "process.exit(0);",
+                ].join("\n"),
+            )
+            const result = spawnSync(
+                resolveBash(),
+                ["--noprofile", "--norc", "-c", step.run.replaceAll("${{ steps.package.outputs.filename }}", "test.vsix")],
+                {
+                    cwd: directory,
+                    encoding: "utf8",
+                    timeout: 30_000,
+                    env: {
+                        ...process.env,
+                        CHANNEL: "production",
+                        VSIX_REGISTRY: "vscode-marketplace",
+                        RUNNER_TEMP: directory.replaceAll("\\", "/"),
+                        FIXTURE_PACKAGER_FLAGS: JSON.stringify(PACKAGER_SUPPORTED_FLAGS[packagerCli]),
+                        FIXTURE_PACKAGER_USAGE: PACKAGER_USAGE[packagerCli],
+                    },
+                },
+            )
+            expect(result.status, `${result.stdout}\n${result.stderr}`).not.toBe(0)
+            expect(result.stdout).toContain("predates --registry")
+            // The rejected run must not have packaged anything.
+            expect(existsSync(path.join(directory, "observed.json"))).toBe(false)
         } finally {
             await fs.rm(directory, { recursive: true, force: true })
         }
@@ -143,6 +267,8 @@ describe("Marketplace publisher delivery", () => {
         expect(parseCommand(pkg.scripts["vsix:vscode-marketplace"])).toEqual([
             "node",
             "scripts/package-vsix.mjs",
+            "--registry",
+            "vscode-marketplace",
             "--publisher",
             "tuvokyangdline",
         ])

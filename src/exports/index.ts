@@ -3,10 +3,10 @@ import { askResponse } from "@core/controller/task/askResponse"
 import { sendChatButtonClickedEvent } from "@core/controller/ui/subscribeToChatButtonClicked"
 import { AskResponseRequest } from "@shared/proto/dline/task"
 import { Logger } from "@/shared/services/Logger"
-import { ClineAPI } from "./cline"
+import { DlineAPI } from "./dline"
 
-export function createClineAPI(sidebarController: Controller): ClineAPI {
-    const api: ClineAPI = {
+export function createDlineAPI(sidebarController: Controller): DlineAPI {
+    const api: DlineAPI = {
         startNewTask: async (task?: string, images?: string[]) => {
             await sidebarController.clearTask({ clearPanelState: true, closeReason: "task_switch" })
             await sidebarController.postStateToWebview()

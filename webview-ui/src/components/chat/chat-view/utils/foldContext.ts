@@ -81,10 +81,20 @@ function checkedOutAttachmentOwners(messages: readonly UiMessage[]): ReadonlySet
 export type RowState = "live" | "failed" | "settled"
 
 /** The work categories whose failures fold into the block and are counted. */
-export type FailedWorkKind = "edit" | "command" | "subagent"
+export type FailedWorkKind = "edit" | "read" | "command" | "subagent" | "web" | "browser"
 
 /** File edits whose per-block errors are drawn by DiffEditRow. */
 const FILE_EDIT_TOOLS = new Set<UiSayTool["tool"]>(["editedExistingFile", "newFileCreated"])
+
+/** Local file reads: looking at the workspace without changing it. */
+const FILE_READ_TOOLS = new Set<UiSayTool["tool"]>([
+    "readFile",
+    "listFilesTopLevel",
+    "listFilesRecursive",
+    "listCodeDefinitionNames",
+    "searchFiles",
+    "findReferences",
+])
 
 /**
  * The countable work category a row belongs to, regardless of how it ended.
@@ -96,9 +106,17 @@ const FILE_EDIT_TOOLS = new Set<UiSayTool["tool"]>(["editedExistingFile", "newFi
 function workKindOf(message: UiMessage): FailedWorkKind | undefined {
     if (message.say === "command" || message.ask === "command") return "command"
     if (message.say === "subagent" || message.say === "use_subagents" || message.ask === "use_subagents") return "subagent"
+    // A browser step is driven through the browser, so it is neither a read nor a command.
+    if (message.say === "browser_action" || message.say === "browser_action_launch" || message.ask === "browser_action_launch")
+        return "browser"
     if (message.say === "tool" || message.ask === "tool") {
-        const name = parseJsonObject<UiSayTool>(message.text)?.tool
-        if (name && FILE_EDIT_TOOLS.has(name)) return "edit"
+        const tool = parseJsonObject<UiSayTool>(message.text)
+        if (!tool) return undefined
+        // A hosted web lookup reads no workspace file, so it is counted apart from
+        // `file read` and its failure is reported as its own error.
+        if (tool.webFetch || tool.webSearch) return "web"
+        if (FILE_EDIT_TOOLS.has(tool.tool)) return "edit"
+        if (FILE_READ_TOOLS.has(tool.tool)) return "read"
     }
     return undefined
 }

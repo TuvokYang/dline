@@ -32,13 +32,23 @@ function parseClock(text: string): number | undefined {
     return hours <= 24 && minutes < 60 && (hours < 24 || minutes === 0) ? hours * 60 + minutes : undefined
 }
 
-function ClockField({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => boolean }) {
+function ClockField({
+    label,
+    accessibleLabel = label,
+    value,
+    onChange,
+}: {
+    label: string
+    accessibleLabel?: string
+    value: number
+    onChange: (value: number) => boolean
+}) {
     const id = useId()
     const [invalid, setInvalid] = useState(false)
     return (
         <ProfileField htmlFor={id} label={label}>
             <DebouncedTextField
-                ariaLabel={label}
+                ariaLabel={accessibleLabel}
                 id={id}
                 initialValue={formatClock(value)}
                 onChange={(text) => {
@@ -170,17 +180,19 @@ export const TimeWindowEditor = ({
             {windows.map((window, index) => (
                 <div className="flex flex-col gap-2 rounded-xs border border-editor-widget-border p-2" key={`${id}-${index}`}>
                     <strong className="text-xs">
-                        {formatClock(window.startMinute)} – {formatClock(window.endMinute)}
+                        Window {index + 1} · {formatClock(window.startMinute)} – {formatClock(window.endMinute)}
                     </strong>
                     {editable && (
                         <ProfileInlineGrid>
                             <ClockField
-                                label={`Window ${index + 1} Start (HH:MM, UTC${offset})`}
+                                accessibleLabel={`Window ${index + 1} Start (HH:MM, UTC${offset})`}
+                                label={`Start (HH:MM, UTC${offset})`}
                                 onChange={(startMinute) => replace(index, { startMinute })}
                                 value={window.startMinute}
                             />
                             <ClockField
-                                label={`Window ${index + 1} End (HH:MM, UTC${offset})`}
+                                accessibleLabel={`Window ${index + 1} End (HH:MM, UTC${offset})`}
+                                label={`End (HH:MM, UTC${offset})`}
                                 onChange={(endMinute) => replace(index, { endMinute })}
                                 value={window.endMinute}
                             />
@@ -214,9 +226,9 @@ export const TimeWindowEditor = ({
                         />
                     ) : (
                         <PriceSetFields
+                            accessiblePrefix={`Window ${index + 1}`}
                             currencySymbol={currencySymbol}
                             onChange={(prices) => replace(index, { prices, bands: undefined })}
-                            prefix={`Window ${index + 1}`}
                             prices={window.prices}
                             readOnly={!ratesEditable}
                             showCachePrices={showCachePrices}

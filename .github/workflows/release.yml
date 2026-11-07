@@ -127,8 +127,18 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           manifest_path="$RUNNER_TEMP/vsix-package.json"
           unzip -p "${assets[0]}" extension/package.json > "$manifest_path"
-          if ! jq -e --arg version "$version" --arg publisher "$EXPECTED_PUBLISHER" '
-            .name == "dline" and
+          # The VS Code Marketplace requires a globally unique extension name;
+          # Open VSX keeps the stable identity and keys by publisher and name.
+          if [[ "${{ matrix.registry }}" == 'vscode-marketplace' ]]; then
+            expected_name=dline-main
+            expected_display_name='Dline (Stable)'
+          else
+            expected_name=dline
+            expected_display_name=Dline
+          fi
+          if ! jq -e --arg version "$version" --arg publisher "$EXPECTED_PUBLISHER" --arg name "$expected_name" --arg display_name "$expected_display_name" '
+            .name == $name and
+            .displayName == $display_name and
             .publisher == $publisher and
             .version == $version and
             (.preview != true)

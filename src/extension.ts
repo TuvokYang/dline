@@ -14,7 +14,7 @@ import { sendSettingsButtonClickedEvent } from "./core/controller/ui/subscribeTo
 import { sendWorktreesButtonClickedEvent } from "./core/controller/ui/subscribeToWorktreesButtonClicked"
 import { WebviewProvider } from "./core/webview"
 import { registerExtensionReloadWatcher } from "./dev/ExtensionReloadWatcher"
-import { createClineAPI } from "./exports"
+import { createDlineAPI } from "./exports"
 import { accountFeatureGate, isAccountFeatureActive } from "./services/account/accountFeatureGate"
 import { initializeTestMode } from "./services/test/TestMode"
 // Necessary to have access to String.prototype.toPosix.
@@ -750,7 +750,7 @@ ${ctx.cellJson || "{}"}
 
     Logger.log(`[Dline] extension activated in ${performance.now() - activationStartTime} ms`)
 
-    return createClineAPI(webview.controller)
+    return createDlineAPI(webview.controller)
 }
 
 async function showReloadWindowPromptIfNeeded(context: vscode.ExtensionContext) {

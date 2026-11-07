@@ -2,7 +2,11 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import { describe, expect, it } from "vitest"
 import packageJson from "../../package.json"
-import { createDistributionManifest } from "../../scripts/extension-manifest-identity.mjs"
+import {
+    createDistributionManifest,
+    resolveTargetIdentity,
+    VSCODE_MARKETPLACE_PACKAGE_NAME,
+} from "../../scripts/extension-manifest-identity.mjs"
 
 /**
  * The packaging script is a standalone ESM entry that resolves its channel at
@@ -42,6 +46,56 @@ describe("package-vsix release channels", () => {
         expect(manifest.activationEvents).toEqual(packageJson.activationEvents)
     })
 
+    it("gives the VS Code Marketplace its own registry-wide unique identity", async () => {
+        const marketplace = createDistributionManifest(packageJson, VSCODE_MARKETPLACE_PACKAGE_NAME, "0.13.0", "tuvokyangdline")
+        const openVsx = createDistributionManifest(packageJson, "dline", "0.13.0", "tuvokyang")
+
+        // The Marketplace rejects a name another publisher already owns, so the
+        // Marketplace build must not reuse the Open VSX identity.
+        expect(marketplace.name).toBe("dline-main")
+        expect(marketplace.displayName).toBe("Dline (Stable)")
+        expect(marketplace.publisher).toBe("tuvokyangdline")
+        expect(openVsx.name).toBe("dline")
+        expect(openVsx.displayName).toBe("Dline")
+        expect(openVsx.publisher).toBe("tuvokyang")
+
+        // Sharing the stable contribution namespace means the Marketplace build
+        // keeps every command, keybinding and view registration unchanged.
+        expect(marketplace.contributes).toEqual(openVsx.contributes)
+        expect(marketplace.contributes.keybindings).toEqual(packageJson.contributes.keybindings)
+        expect(marketplace.activationEvents).toEqual(openVsx.activationEvents)
+    })
+
+    it.each([
+        ["ci", "open-vsx", "dline", "tuvokyang"],
+        ["pre-release", "open-vsx", "dline", "tuvokyang"],
+        ["production", "open-vsx", "dline", "tuvokyang"],
+        ["ci", "vscode-marketplace", "dline-main", "tuvokyangdline"],
+        ["pre-release", "vscode-marketplace", "dline-main", "tuvokyangdline"],
+        ["production", "vscode-marketplace", "dline-main", "tuvokyangdline"],
+        ["insiders", "open-vsx", "dline-insiders", "tuvokyang"],
+        ["insiders", "vscode-marketplace", "dline-insiders", "tuvokyangdline"],
+    ] as [
+        string,
+        string,
+        string,
+        string,
+    ][])("resolves the %s channel on %s to %s under %s", (channel, registry, expectedName, expectedPublisher) => {
+        expect(resolveTargetIdentity(channel, registry, packageJson.name, packageJson.publisher)).toEqual({
+            packageName: expectedName,
+            publisher: expectedPublisher,
+        })
+    })
+
+    it("keeps an explicit publisher override while still applying the registry package name", () => {
+        expect(
+            resolveTargetIdentity("production", "vscode-marketplace", packageJson.name, packageJson.publisher, "other"),
+        ).toEqual({
+            packageName: "dline-main",
+            publisher: "other",
+        })
+    })
+
     it("publishes dev-vX.Y.Z to the pre-release track of the production extension", async () => {
         const draft = await fs.readFile(path.join(PROJECT_ROOT, ".github/workflows/release-draft.yml"), "utf8")
         const registries = await fs.readFile(path.join(PROJECT_ROOT, ".github/workflows/publish-vsix-registries.yml"), "utf8")
@@ -52,7 +106,7 @@ describe("package-vsix release channels", () => {
         expect(draft).toContain("Microsoft.VisualStudio.Code.PreRelease")
         expect(draft).toContain('node scripts/extract-changelog-section.mjs CHANGELOG.md "$VERSION"')
         expect(draft).not.toContain("dline-preview")
-        expect(registries).toContain('($channel == "pre-release" and .name == "dline" and .preview != true')
+        expect(registries).toContain('($channel == "pre-release" and .preview != true and .version == $version)')
         expect(registries).toContain("track_args=(--pre-release)")
         expect(registries).toContain("Error: production VSIX is marked as a pre-release.")
         expect(packager).toContain("preRelease: options.preRelease")

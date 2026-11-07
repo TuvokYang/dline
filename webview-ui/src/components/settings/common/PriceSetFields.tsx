@@ -7,7 +7,17 @@ interface PriceSetFieldsProps {
     prices: PriceSet | undefined
     currencySymbol: string
     showCachePrices: boolean
+    /** Shown in front of every visible slot label, for a set that has no heading of its own. */
     prefix?: string
+    /**
+     * Scopes the accessible name without repeating the scope in every visible label.
+     *
+     * A card that already states its own title names the fields short, so a reader
+     * sees "Input Price" under "Window 1" instead of "Window 1 Input Price" on every
+     * row. The accessible name still carries the scope, so a control is never
+     * announced — or queried — as an ambiguous "Input Price".
+     */
+    accessiblePrefix?: string
     readOnly?: boolean
     onChange?: (prices: PriceSet) => void
 }
@@ -18,6 +28,7 @@ export function PriceSetFields({
     currencySymbol,
     showCachePrices,
     prefix = "",
+    accessiblePrefix = "",
     readOnly = false,
     onChange,
 }: PriceSetFieldsProps) {
@@ -58,6 +69,7 @@ export function PriceSetFields({
         <ProfileInlineGrid>
             {slots.map(({ key, label, optional }) => {
                 const title = `${prefix ? `${prefix} ` : ""}${label} (${currencySymbol}/1M tokens)`
+                const accessibleName = `${accessiblePrefix ? `${accessiblePrefix} ` : ""}${title}`
                 return (
                     <ProfileField htmlFor={readOnly ? undefined : `${id}-${key}`} key={key} label={title}>
                         {readOnly ? (
@@ -68,7 +80,7 @@ export function PriceSetFields({
                             </span>
                         ) : (
                             <DebouncedTextField
-                                ariaLabel={title}
+                                ariaLabel={accessibleName}
                                 className="min-h-7 w-full"
                                 id={`${id}-${key}`}
                                 initialValue={prices?.[key] === undefined ? "" : String(prices[key])}

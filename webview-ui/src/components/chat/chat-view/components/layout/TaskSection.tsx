@@ -1,5 +1,6 @@
 import type { ModelPricing } from "@shared/api"
 import { UiMessage } from "@shared/ExtensionMessage"
+import type { ApiCostSegment } from "@shared/getApiMetrics"
 import React from "react"
 import TaskHeader from "@/components/chat/task-header/TaskHeader"
 import { MessageHandlers } from "../../types/chatTypes"
@@ -14,6 +15,7 @@ interface TaskSectionProps {
         totalCost: number
         cacheHitRate?: number
         currency?: string
+        costSegments?: ApiCostSegment[]
         requestsPerMinute?: number
         tokensPerMinute?: number
     }
@@ -63,6 +65,7 @@ export const TaskSection: React.FC<TaskSectionProps> = ({
             cacheWrites={apiMetrics.totalCacheWrites}
             compactTaskDisabled={compactTaskDisabled}
             contextWindow={selectedModelInfo.contextWindow}
+            costSegments={apiMetrics.costSegments}
             currency={apiMetrics.currency}
             doesModelSupportPromptCache={selectedModelInfo.supportsPromptCache}
             forceTruncateAvailable={forceTruncateAvailable}

@@ -52,6 +52,22 @@ import { encodeOpenAIChatReasoning, encodeOpenAIResponsesReasoning } from "./ope
 const OPENCODE_BASE_URL = "https://opencode.ai/inference"
 
 /**
+ * Label a reported cost with the currency its model declares.
+ *
+ * The model's own pricing is the authority for the unit, not the subscription plan: a plan may
+ * carry a currency and a price just as a metered model does, so an absent label cannot be read as
+ * "subscription". Leaving the amount unlabelled made a task's total lose its symbol as soon as one
+ * OpenCode request joined a task that had run on a model declaring a different currency.
+ */
+function reportedCostUsage(
+    totalCost: number,
+    pricing: { currency?: string } | undefined,
+): { totalCost: number; currency?: string } {
+    const currency = pricing?.currency?.trim()
+    return currency ? { totalCost, currency } : { totalCost }
+}
+
+/**
  * Where the Go plan reports its usage windows.
  *
  * Derived from the published Go surface rather than guessed: the Go docs list
@@ -422,7 +438,7 @@ export class OpenCodeHandler extends ApiHandler {
                     outputTokens: chunk.usage.completion_tokens || 0,
                     ...(thoughtsTokenCount === undefined ? {} : { thoughtsTokenCount }),
                     ...(reportedCost !== undefined
-                        ? { totalCost: reportedCost }
+                        ? reportedCostUsage(reportedCost, model.info.pricing)
                         : cost?.kind === "calculated"
                           ? { totalCost: cost.amount, currency: cost.currency }
                           : {}),
@@ -490,7 +506,7 @@ export class OpenCodeHandler extends ApiHandler {
         // place this protocol reports token counts.
         yield* handleResponsesApiStreamResponse(stream, model.info, sentAtMs, (usage) => {
             const totalCost = readOpenCodeCost(usage)
-            return totalCost === undefined ? undefined : { totalCost }
+            return totalCost === undefined ? undefined : reportedCostUsage(totalCost, model.info.pricing)
         })
     }
 
@@ -531,7 +547,7 @@ export class OpenCodeHandler extends ApiHandler {
             pricing: model.info.pricing,
             readReportedCost: (usage) => {
                 const totalCost = readOpenCodeCost(usage)
-                return totalCost === undefined ? undefined : { totalCost }
+                return totalCost === undefined ? undefined : reportedCostUsage(totalCost, model.info.pricing)
             },
             // Every continuation belongs to the same Task conversation, so it must
             // carry the same session identity as the first request.

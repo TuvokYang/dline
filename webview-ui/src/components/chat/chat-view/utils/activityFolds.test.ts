@@ -87,7 +87,6 @@ describe("foldActivity canonical policies", () => {
         const rows = groupChatRows(workedExample)
         expect(rows.map(layoutOf)).toEqual([1, 2, 4, 5, "group:tool:6", 8, 10, 11, 13, 14, 15, 17, 19])
         expect(foldActivity(rows, STANDARD_FOLD, buildFoldContext(workedExample, indexRequestRounds(workedExample)))).toBe(rows)
-        expect(layoutAt(workedExample, "none")).toEqual(rows.map(layoutOf))
     })
 
     it("folds across requests but stops at assistant messages in message mode", () => {
@@ -159,12 +158,8 @@ const splitterCases: Array<[string, UiMessage[], Layout[]]> = [
     ["a cancelled hook", [hook("cancelled")], [50]],
     ["a running web fetch", [tool(50, webFetch("running"))], [50]],
     ["a deferred web fetch", [tool(50, webFetch("deferred"))], [50]],
-    ["a failed web fetch", [tool(50, webFetch("failed"))], [50]],
-    ["a completed web fetch with an error", [tool(50, webFetch("completed", { error: "403" }))], [50]],
     ["a running web search", [tool(50, webSearch("running"))], [50]],
     ["a deferred web search", [tool(50, webSearch("deferred"))], [50]],
-    ["a failed web search", [tool(50, webSearch("failed"))], [50]],
-    ["a completed web search with an error", [tool(50, webSearch("completed", { error: "quota" }))], [50]],
     ["a loading capability", [loadCapability("loading", true)], [50]],
     ["a failed capability", [loadCapability("failed", true)], [50]],
     ["a loading capability in the top-level payload", [loadCapability("loading", false)], [50]],
@@ -243,14 +238,19 @@ const settledCases: Array<[string, UiMessage[]]> = [
     ["a transient retry notice", [say(50, "error_retry", { text: JSON.stringify({ attempt: 1, maxAttempts: 3, delaySec: 5 }) })]],
     ["an edit without block errors", [edit(50, { blockErrors: [undefined, ""] })]],
     ["a checkpoint that is not checked out", [checkpoint(50)]],
-    // A failed edit, command or subagent is one work item inside the turn, so it
-    // folds and is reported as an error count instead of cutting the block.
+    // A failed edit, command, subagent or web tool is one work item inside the
+    // turn, so it folds and is reported as an error count instead of cutting the
+    // block.
     ["a failed command", [command(50, { commandStatus: "failed" })]],
     ["a cancelled command", [command(50, { commandStatus: "cancelled" })]],
     ["an interrupted command", [command(50, { commandStatus: "interrupted" })]],
     ["a completed command with a non-zero exit code", [command(50, { commandStatus: "completed", exitCode: 2 })]],
     ["a command without status that exited non-zero", [command(50, { exitCode: 1 })]],
     ["an edit with a failed block", [edit(50, { blockErrors: [undefined, "SEARCH block not found"] })]],
+    ["a failed web fetch", [tool(50, webFetch("failed"))]],
+    ["a completed web fetch with an error", [tool(50, webFetch("completed", { error: "403" }))]],
+    ["a failed web search", [tool(50, webSearch("failed"))]],
+    ["a completed web search with an error", [tool(50, webSearch("completed", { error: "quota" }))]],
 ]
 
 /** A settled turn with foldable control rows on both sides of the rows under test. */

@@ -2,9 +2,9 @@
 import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import * as should from "should"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { createClineAPI } from "@/exports"
+import { createDlineAPI } from "@/exports"
 import { Logger } from "@/shared/services/Logger"
-import type { ClineAPI } from "../exports/cline"
+import type { DlineAPI } from "../exports/dline"
 import { setVscodeHostProviderMock } from "./host-provider-test-utils"
 
 vi.mock("@core/controller/task/dispatchInteraction", () => ({
@@ -43,8 +43,8 @@ function activeSession(options: { awaitingApproval?: boolean } = {}) {
     })
 }
 
-describe("ClineAPI Core Functionality", () => {
-    let api: ClineAPI
+describe("DlineAPI Core Functionality", () => {
+    let api: DlineAPI
     let mockController: any
     let mockLoggerError: any /* sinon.SinonStub → vitest */
     let sandbox: any /* sinon.SinonSandbox → vitest */
@@ -57,7 +57,7 @@ describe("ClineAPI Core Functionality", () => {
         mockLoggerError = vi.spyOn(Logger, "error")
         setVscodeHostProviderMock({})
 
-        // Create a mock controller that matches what the real createClineAPI expects
+        // Create a mock controller that matches what the real createDlineAPI expects
         // We don't import the real Controller to avoid the webview dependencies
         mockController = {
             id: "test-controller-id",
@@ -84,7 +84,7 @@ describe("ClineAPI Core Functionality", () => {
         }
 
         // Create API instance
-        api = createClineAPI(mockController)
+        api = createDlineAPI(mockController)
     })
 
     afterEach(() => {

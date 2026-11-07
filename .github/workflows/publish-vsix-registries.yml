@@ -216,13 +216,28 @@ jobs:
           fi
           manifest_path="$RUNNER_TEMP/vsix-package.json"
           unzip -p "$vsix_path" extension/package.json > "$manifest_path"
-          if ! jq -e --arg channel "$CHANNEL" --arg asset "$ASSET_NAME" --arg version "$TAG_VERSION" --arg publisher "$EXPECTED_PUBLISHER" '
+          # The VS Code Marketplace requires a globally unique extension name, so
+          # its publisher-specific package carries a dedicated name and display
+          # name. Open VSX keys by publisher and name and keeps the stable identity.
+          if [[ "$CHANNEL" == 'insiders' ]]; then
+            expected_name=dline-insiders
+            expected_display_name='Dline (Insiders)'
+          elif [[ "$REGISTRY" == 'vscode-marketplace' ]]; then
+            expected_name=dline-main
+            expected_display_name='Dline (Stable)'
+          else
+            expected_name=dline
+            expected_display_name=Dline
+          fi
+          if ! jq -e --arg channel "$CHANNEL" --arg asset "$ASSET_NAME" --arg version "$TAG_VERSION" --arg publisher "$EXPECTED_PUBLISHER" --arg name "$expected_name" --arg display_name "$expected_display_name" '
             .publisher == $publisher and
+            .name == $name and
+            .displayName == $display_name and
             (.version | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) and
             (
-              ($channel == "insiders" and .name == "dline-insiders" and .preview == true and $asset == ("dline-insiders-" + .version + ".vsix")) or
-              ($channel == "pre-release" and .name == "dline" and .preview != true and .version == $version) or
-              ($channel == "production" and .name == "dline" and .preview != true and .version == $version)
+              ($channel == "insiders" and .preview == true and $asset == ("dline-insiders-" + .version + ".vsix")) or
+              ($channel == "pre-release" and .preview != true and .version == $version) or
+              ($channel == "production" and .preview != true and .version == $version)
             )
           ' "$manifest_path" >/dev/null; then
             echo "Error: VSIX manifest does not match the release channel."

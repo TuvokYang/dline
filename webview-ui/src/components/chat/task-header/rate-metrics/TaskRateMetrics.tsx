@@ -1,7 +1,30 @@
+import type { ApiCostSegment } from "@shared/getApiMetrics"
 import { useState } from "react"
 import { formatCurrencyAmount } from "@/utils/currency"
 import { formatTokenMetric } from "../util"
 import { TaskRateMetricsDialog } from "./TaskRateMetricsDialog"
+
+/**
+ * Pick the amount the capsule shows.
+ *
+ * A task's cost is recorded per billing currency, and the newest segment is the one worth showing.
+ * A subscription reports its amount without a currency, so that segment cannot be labelled; the
+ * newest segment that does carry a currency is shown instead, which keeps the last priced run on
+ * screen rather than replacing it with a bare number.
+ */
+function resolveDisplayedCost(
+    segments: ApiCostSegment[] | undefined,
+    totalCost: number,
+    currency: string | undefined,
+): { totalCost: number; currency: string | undefined } {
+    if (segments) {
+        for (let index = segments.length - 1; index >= 0; index -= 1) {
+            const segment = segments[index]
+            if (segment.currency) return { totalCost: segment.totalCost, currency: segment.currency }
+        }
+    }
+    return { totalCost, currency }
+}
 
 interface TaskRateMetricsProps {
     taskId?: string
@@ -15,6 +38,8 @@ interface TaskRateMetricsProps {
     cacheHitRate?: number
     totalCost: number
     currency?: string
+    /** Per-currency cost runs, newest last. The capsule shows the newest labelled one. */
+    costSegments?: ApiCostSegment[]
     isCostAvailable: boolean
 }
 
@@ -30,6 +55,7 @@ export function TaskRateMetrics({
     tokensOut,
     totalCost,
     totalInputTokens,
+    costSegments,
     requestsPerMinute,
     tokensPerMinute,
 }: TaskRateMetricsProps) {
@@ -37,7 +63,8 @@ export function TaskRateMetrics({
     const hasTokenUsage = totalInputTokens > 0 || tokensOut > 0
     const hasRateUsage = requestsPerMinute > 0 || tokensPerMinute > 0
     const usageTitle = `In: ${totalInputTokens} / Out: ${tokensOut} / Cache read: ${cacheReads ?? 0} / Cache write: ${cacheWrites ?? 0}`
-    const costLabel = formatCurrencyAmount(totalCost, currency, 3)
+    const displayedCost = resolveDisplayedCost(costSegments, totalCost, currency)
+    const costLabel = formatCurrencyAmount(displayedCost.totalCost, displayedCost.currency, 3)
     const accessibleLabel = [
         "View API rate history",
         `In: ${totalInputTokens}`,

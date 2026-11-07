@@ -95,7 +95,7 @@ export type ActivityFoldKind = "segment" | "turn"
  * returns those same rows to the top-level list when the block is opened.
  */
 /** The work categories whose failures a block can account for. */
-export type FoldFailureKind = "edit" | "command" | "subagent"
+export type FoldFailureKind = "edit" | "read" | "command" | "subagent" | "web" | "browser"
 
 export type ActivityFold = UiMessage[] & {
     _isActivityFold: true

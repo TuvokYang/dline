@@ -78,32 +78,93 @@ describe("marketplace README repository links", () => {
         expect(() => pinRepositoryLinks("[x](LICENSE)", REPOSITORY_URL, "")).toThrow(/No ref/)
     })
 
-    it("pins every repository link in the real marketplace README to existing files", async () => {
+    it("keeps the body English while offering a native-language link to the Chinese edition", async () => {
         const readme = await fs.readFile(path.join(PROJECT_ROOT, "README.marketplace.md"), "utf8")
+        const languageLink = readme.match(/\[([^\]]+)\]\(marketplace\.zh-cn\.md\)/)
+
+        expect(languageLink?.[1]).toBe("中文")
+        const englishContent = readme.replace(languageLink?.[0] ?? "", "")
+        expect(/\p{Script=Han}/u.test(englishContent), "the listing body must remain English").toBe(false)
+        expect(collectRepositoryTargets(readme)).toContain("marketplace.zh-cn.md")
+        expect(collectRepositoryTargets(readme)).not.toContain("README_zh.md")
+    })
+
+    it("lets the Chinese edition return to the English listing at the same GitHub revision", async () => {
+        const readme = await fs.readFile(path.join(PROJECT_ROOT, "marketplace.zh-cn.md"), "utf8")
+
+        expect(/\p{Script=Han}/u.test(readme)).toBe(true)
+        const base = `${REPOSITORY_URL}/blob/0123456789abcdef0123456789abcdef01234567/marketplace.zh-cn.md`
+        const resolvedPaths = collectRepositoryTargets(readme).map((target) => new URL(target, base).pathname)
+        expect(resolvedPaths).toContain("/TuvokYang/Dline/blob/0123456789abcdef0123456789abcdef01234567/README.marketplace.md")
+    })
+
+    it.each([
+        "README.marketplace.md",
+        "marketplace.zh-cn.md",
+    ])("keeps %s within 500 text lines, excluding standalone media", async (edition) => {
+        const readme = await fs.readFile(path.join(PROJECT_ROOT, edition), "utf8")
+        const standaloneMedia = /^\s*(?:<(?:img|video)\b[^>]*>.*|<p\b[^>]*>\s*<(?:img|video)\b.*<\/p>|!\[[^\]]*\]\([^)]+\))\s*$/i
+        const textLines = readme
+            .trimEnd()
+            .split(/\r?\n/)
+            .filter((line) => !standaloneMedia.test(line))
+
+        expect(textLines.length, `${edition} must fit the Marketplace text budget`).toBeLessThanOrEqual(500)
+    })
+
+    it("links both editions to the same user documentation in their respective languages", async () => {
+        const documentationPaths: string[][] = []
+        for (const [edition, locale] of [
+            ["README.marketplace.md", ""],
+            ["marketplace.zh-cn.md", "zh-cn/"],
+        ]) {
+            const readme = await fs.readFile(path.join(PROJECT_ROOT, edition), "utf8")
+            const targets = [...readme.matchAll(/\]\(https:\/\/docs\.dline\.cc\/([^\s)]*)\)/g)].map((match) => match[1])
+            expect(targets.length).toBeGreaterThan(0)
+            const paths: string[] = []
+            for (const target of targets) {
+                const page = target.split(/[?#]/)[0]
+                expect(page.startsWith("zh-cn/")).toBe(locale !== "")
+                const relativePage = page.slice(locale.length)
+                const slug = relativePage.replace(/\/$/, "") || "index"
+                await expect(
+                    fs.access(path.join(PROJECT_ROOT, "docs/src/content/docs", locale, `${slug}.mdx`)),
+                ).resolves.toBeUndefined()
+                paths.push(relativePage)
+            }
+            documentationPaths.push(paths)
+        }
+        expect(documentationPaths[1]).toEqual(documentationPaths[0])
+    })
+
+    it.each([
+        "v0.14.0",
+        "dev-v0.13.0",
+        "0123456789abcdef0123456789abcdef01234567",
+    ])("pins both marketplace editions to existing repository files at %s", async (ref) => {
         const manifest = JSON.parse(await fs.readFile(path.join(PROJECT_ROOT, "package.json"), "utf8"))
         const declaredUrl = typeof manifest.repository === "string" ? manifest.repository : manifest.repository?.url
         expect(declaredUrl, "package.json must declare a repository URL").toBeTruthy()
         const repositoryUrl = declaredUrl.replace(/^git\+/, "").replace(/\.git$/, "")
+        const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
-        // The marketplace edition is the English listing; no link may name a branch.
-        expect(readme).toContain("English · [中文](README_zh.md)")
-        expect(readme).not.toMatch(/\/(?:blob|raw|tree)\/main\//)
+        for (const edition of ["README.marketplace.md", "marketplace.zh-cn.md"]) {
+            const readme = await fs.readFile(path.join(PROJECT_ROOT, edition), "utf8")
+            expect(readme).not.toMatch(/\/(?:blob|raw|tree)\/(?:main|dev|HEAD)\//)
+            const repositoryTargets = collectRepositoryTargets(readme)
+            expect(repositoryTargets.length).toBeGreaterThan(0)
 
-        const repositoryTargets = collectRepositoryTargets(readme)
-        expect(repositoryTargets.length).toBeGreaterThan(0)
-
-        const pinned = pinRepositoryLinks(readme, repositoryUrl, "dev-v9.9.9")
-        const escaped = repositoryUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-        const targets = [...pinned.matchAll(new RegExp(`${escaped}/(?:blob|raw)/dev-v9\\.9\\.9/([^)"'#?\\s]+)`, "g"))].map(
-            (match) => match[1],
-        )
-
-        expect(targets).toHaveLength(repositoryTargets.length)
-        for (const target of targets) {
-            await expect(
-                fs.access(path.join(PROJECT_ROOT, target)),
-                `${target} must exist in the repository`,
-            ).resolves.toBeUndefined()
+            const pinned = pinRepositoryLinks(readme, repositoryUrl, ref)
+            expect(collectRepositoryTargets(pinned)).toEqual([])
+            const pattern = new RegExp(`${escapeRegex(repositoryUrl)}/(?:blob|raw)/${escapeRegex(ref)}/([^)"'#?\\s]+)`, "g")
+            const targets = [...pinned.matchAll(pattern)].map((match) => match[1])
+            expect(targets).toEqual(repositoryTargets)
+            for (const target of targets) {
+                await expect(
+                    fs.access(path.join(PROJECT_ROOT, target)),
+                    `${edition}: ${target} must exist in the repository`,
+                ).resolves.toBeUndefined()
+            }
         }
     })
 })
