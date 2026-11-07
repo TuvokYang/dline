@@ -24,6 +24,11 @@ export const Selection: Story = {
     args: { initialTab: "skills", initialTools: PREVIEW_TOOLS },
 }
 
+export const Rules: Story = {
+    name: "6 · Rules injected into system prompt",
+    args: { initialTab: "rules", initialTools: [] },
+}
+
 export const MissingLoaders: Story = {
     name: "2 · Missing loader tools",
     args: { initialTab: "skills", initialTools: [Tool.FILE_READ, Tool.SEARCH] },

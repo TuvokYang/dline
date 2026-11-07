@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { nativeSelectOptionStyle, nativeSelectStyle } from "@/components/ui/native-select-theme"
 
 // Story-only example inventory. This module has no RPC or configuration writes.
-type ResourceTab = "skills" | "workflows" | "mcp"
+type ResourceTab = "rules" | "skills" | "workflows" | "mcp"
 type Tab = "tools" | ResourceTab
 interface Resource {
     id: string
@@ -13,6 +13,7 @@ interface Resource {
     description: string
     scope: "Workspace" | "Global"
     requires: Tool[]
+    content?: string
     server?: string
     resource?: boolean
     unavailable?: boolean
@@ -22,6 +23,24 @@ const SKILL_TOOLS = [Tool.LOAD_SKILL]
 const WORKFLOW_TOOLS = [Tool.LOAD_WORKFLOW]
 const MCP_TOOLS = [Tool.LOAD_MCP, Tool.MCP_USE]
 const RESOURCES: Record<ResourceTab, Resource[]> = {
+    rules: [
+        {
+            id: "rule-review",
+            name: "review-guidelines.md",
+            description: "Keep reviews focused on observable behavior and concrete evidence.",
+            scope: "Workspace",
+            requires: [],
+            content: "Explain each finding with a concrete input, observable effect and relevant file path.",
+        },
+        {
+            id: "rule-tests",
+            name: "test-evidence.md",
+            description: "Report the checks performed and any unverified behavior.",
+            scope: "Global",
+            requires: [],
+            content: "Run focused checks for every changed behavior. State which checks were not run.",
+        },
+    ],
     skills: [
         {
             id: "skill-vitest",
@@ -113,9 +132,15 @@ const TOOL_GROUPS = [
     { title: "Modify & execute", tools: [Tool.FILE_EDIT, Tool.FILE_NEW, Tool.BASH] },
 ]
 export const PREVIEW_TOOLS = [Tool.FILE_READ, Tool.SEARCH, ...SKILL_TOOLS, ...WORKFLOW_TOOLS, ...MCP_TOOLS, Tool.MCP_ACCESS]
-const INITIAL_SELECTION = ["skill-vitest", "workflow-e2e", "github-search"]
-const TABS: Tab[] = ["tools", "skills", "workflows", "mcp"]
-const LABELS: Record<Tab, string> = { tools: "Tools", skills: "Skills", workflows: "Workflows", mcp: "MCP" }
+const INITIAL_SELECTION = ["rule-review", "skill-vitest", "workflow-e2e", "github-search"]
+const TABS: Tab[] = ["tools", "rules", "skills", "workflows", "mcp"]
+const LABELS: Record<Tab, string> = { tools: "Tools", rules: "Rules", skills: "Skills", workflows: "Workflows", mcp: "MCP" }
+const PREREQUISITES: Record<ResourceTab, Tool[]> = {
+    rules: [],
+    skills: SKILL_TOOLS,
+    workflows: WORKFLOW_TOOLS,
+    mcp: [...MCP_TOOLS, Tool.MCP_ACCESS],
+}
 
 export interface SubagentCapabilitiesPreviewProps {
     initialTab?: Tab
@@ -174,7 +199,7 @@ export function SubagentCapabilitiesPreview({
     const [selection, setSelection] = useState(new Set(INITIAL_SELECTION))
     const [query, setQuery] = useState("")
     const [profile, setProfile] = useState("review-profile")
-    const inventory = emptyCatalog ? { skills: [], workflows: [], mcp: [] } : RESOURCES
+    const inventory = emptyCatalog ? { rules: [], skills: [], workflows: [], mcp: [] } : RESOURCES
     const missingTools = (item: Resource) => item.requires.filter((tool) => !tools.has(tool))
     const isActive = (item: Resource) => selection.has(item.id) && !item.unavailable && missingTools(item).length === 0
     const activeCount = (kind: ResourceTab) => inventory[kind].filter(isActive).length
@@ -199,8 +224,12 @@ export function SubagentCapabilitiesPreview({
     const matches = (name: string, description = "") => `${name} ${description}`.toLowerCase().includes(query.toLowerCase())
     const visible =
         tab === "tools" ? [] : inventory[tab].filter((item) => matches(item.name, `${item.description} ${item.server ?? ""}`))
-    const prerequisites = tab === "skills" ? SKILL_TOOLS : tab === "workflows" ? WORKFLOW_TOOLS : [...MCP_TOOLS, Tool.MCP_ACCESS]
+    const prerequisites = tab === "tools" ? [] : PREREQUISITES[tab]
     const missing = prerequisites.filter((tool) => !tools.has(tool))
+    const systemPreview = [
+        "You are reviewer, a code review subagent.",
+        ...inventory.rules.filter(isActive).map((rule) => `# Rule: ${rule.name}\n${rule.content}`),
+    ].join("\n\n")
     const changeTab = (next: Tab) => {
         setTab(next)
         setQuery("")
@@ -306,9 +335,11 @@ export function SubagentCapabilitiesPreview({
                             {tab !== "tools" && (
                                 <>
                                     <p className="mb-2 text-xs text-description">
-                                        {tab === "mcp"
-                                            ? "Choose individual MCP tools and resources. Selection does not bypass approval."
-                                            : `Choose which ${LABELS[tab].toLowerCase()} this subagent may load on demand, not up front.`}
+                                        {tab === "rules"
+                                            ? "Selected rules are injected directly into this subagent's system prompt. No loader tool is required."
+                                            : tab === "mcp"
+                                              ? "Choose individual MCP tools and resources. Selection does not bypass approval."
+                                              : `Choose which ${LABELS[tab].toLowerCase()} this subagent may load on demand, not up front.`}
                                     </p>
                                     {missing.length > 0 && (
                                         <div
@@ -335,7 +366,9 @@ export function SubagentCapabilitiesPreview({
                                     )}
                                 </>
                             )}
-                            <div className="h-[280px] overflow-y-auto pr-1" data-testid="capability-catalog">
+                            <div
+                                className={`${tab === "rules" ? "h-[160px]" : "h-[280px]"} overflow-y-auto pr-1`}
+                                data-testid="capability-catalog">
                                 {tab === "tools" ? (
                                     <>
                                         {TOOL_GROUPS.map((group) => (
@@ -401,8 +434,23 @@ export function SubagentCapabilitiesPreview({
                                     ))
                                 )}
                             </div>
+                            {tab === "rules" && (
+                                <section
+                                    aria-label="Subagent system prompt preview"
+                                    className="mt-2 rounded border border-editor-group-border p-2">
+                                    <div className="mb-1 text-[11px] font-medium text-description">
+                                        Example system prompt · Preview only
+                                    </div>
+                                    <pre className="m-0 max-h-[120px] overflow-y-auto whitespace-pre-wrap break-words text-[11px] text-foreground">
+                                        {systemPreview}
+                                    </pre>
+                                </section>
+                            )}
                         </div>
                         <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-editor-group-border pt-3 text-[11px] text-description">
+                            <span>
+                                <output aria-label="Injected rules">{activeCount("rules")}</output> rules injected
+                            </span>
                             <span>
                                 <output aria-label="Active skills">{activeCount("skills")}</output> skills active
                             </span>
