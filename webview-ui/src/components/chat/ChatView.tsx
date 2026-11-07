@@ -70,6 +70,7 @@ import { composeComposerSubmission } from "./input/semantic-composer/projection"
 import { composerSendBlock } from "./input/semantic-composer/send-draft"
 import { useInputQueue } from "./input/useInputQueue"
 import { isReportBugSemanticDocument, reportBugDetails, shouldUseLocalReportBugFallback } from "./report-bug-fallback"
+import NewTaskButton from "./task-header/buttons/NewTaskButton"
 import { resolveProfileDisplayState } from "./task-header/profileDisplayState"
 
 interface ChatViewProps {
@@ -133,6 +134,10 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
     const [locallyClosedTaskKey, setLocallyClosedTaskKey] = useState<string>()
     const currentTaskClosedForDeletion =
         locallyClosedTaskKey !== undefined && (taskKey === locallyClosedTaskKey || taskKey === undefined)
+    // The canonical opening owns the surface; its title is only a display
+    // projection and can arrive later. Keep the title-only legacy fallback and
+    // the local deletion fence without treating a stale history item as open.
+    const hasTaskSurface = !currentTaskClosedForDeletion && Boolean(taskViewState?.taskId || task)
     const visibleTask = currentTaskClosedForDeletion ? undefined : task
     const contextCompactionActive = taskViewState?.contextCompaction?.active === true
     const { activeCount } = useTaskActivities(taskId, taskInstanceId)
@@ -645,7 +650,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         ? taskViewState.input.queueable === true || taskPhaseStillDelivers(taskViewState.phase)
         : false
     // The composer's action button cancels through the same task action the footer offers.
-    const cancelAction = visibleTask ? enabledCancelAction(taskViewState) : undefined
+    const cancelAction = hasTaskSurface ? enabledCancelAction(taskViewState) : undefined
     const cancelTask = useMemo(
         () =>
             cancelAction && taskViewState
@@ -657,11 +662,11 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         [cancelAction, taskViewState],
     )
     // Resume lives on the composer's action button instead of the footer.
-    const composerSubmitKind = visibleTask && composerResumesTask(taskViewState) ? "resume" : "send"
+    const composerSubmitKind = hasTaskSurface && composerResumesTask(taskViewState) ? "resume" : "send"
     // While the task runs, the action button tints by the same generation rate
     // the task header reports as TPM.
     const outputTokensPerSecond =
-        visibleTask && queueCanDeliver ? tokensPerSecondFromPerMinute(apiMetrics?.tokensPerMinute) : undefined
+        hasTaskSurface && queueCanDeliver ? tokensPerSecondFromPerMinute(apiMetrics?.tokensPerMinute) : undefined
     const canRenderCompactTask = Boolean(taskViewState?.taskId)
     const canRenderForceTruncate = taskViewState?.forceTruncateAvailable === true
     useEffect(() => {
@@ -783,10 +788,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         ],
     )
 
-    const placeholderText = useMemo(() => {
-        const text = visibleTask ? "Type a message..." : "Type your task here..."
-        return text
-    }, [visibleTask])
+    const placeholderText = hasTaskSurface ? "Type a message..." : "Type your task here..."
 
     return (
         <ChatLayout isHidden={isHidden}>
@@ -814,6 +816,13 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                         task={visibleTask}
                         taskId={taskViewState?.taskId}
                     />
+                ) : hasTaskSurface ? (
+                    <div className="flex items-center justify-between gap-2 px-4 py-2">
+                        <span className="text-description text-sm" role="status">
+                            Loading task...
+                        </span>
+                        <NewTaskButton onClick={handleTaskClose} />
+                    </div>
                 ) : (
                     <WelcomeSection
                         hideAnnouncement={hideAnnouncement}
@@ -824,23 +833,25 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                         version={version}
                     />
                 )}
-                {visibleTask && (
+                {hasTaskSurface && (
                     <>
                         <TaskActivityTabs activeCount={activeCount} onChange={handleContentTabChange} value={contentTab} />
                         {contentTab === "chat" ? (
-                            <TaskActivityNavigationProvider onNavigate={navigateToActivity}>
-                                <InteractionSelectionProvider value={interactionSelection}>
-                                    <MessagesArea
-                                        chatState={chatState}
-                                        groupedMessages={groupedMessages}
-                                        messageHandlers={messageHandlers}
-                                        modifiedMessages={modifiedMessages}
-                                        onFollowupOptionSelect={submitFollowupOption}
-                                        scrollBehavior={scrollBehavior}
-                                        task={visibleTask}
-                                    />
-                                </InteractionSelectionProvider>
-                            </TaskActivityNavigationProvider>
+                            visibleTask ? (
+                                <TaskActivityNavigationProvider onNavigate={navigateToActivity}>
+                                    <InteractionSelectionProvider value={interactionSelection}>
+                                        <MessagesArea
+                                            chatState={chatState}
+                                            groupedMessages={groupedMessages}
+                                            messageHandlers={messageHandlers}
+                                            modifiedMessages={modifiedMessages}
+                                            onFollowupOptionSelect={submitFollowupOption}
+                                            scrollBehavior={scrollBehavior}
+                                            task={visibleTask}
+                                        />
+                                    </InteractionSelectionProvider>
+                                </TaskActivityNavigationProvider>
+                            ) : null
                         ) : taskId ? (
                             <TaskActivityPanel
                                 filters={activityFilters}
@@ -854,7 +865,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                 )}
             </div>
             <footer className="bg-(--vscode-sidebar-background) flex flex-col gap-[0.375rem] mt-3" style={{ gridRow: "2" }}>
-                {visibleTask && taskViewState ? (
+                {hasTaskSurface && taskViewState ? (
                     <InteractionHost
                         dispatch={dispatchInteraction}
                         draft={interactionDraft}
@@ -867,15 +878,15 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                         showTimeline={false}
                         view={taskViewState}
                     />
-                ) : visibleTask && !taskViewState ? (
+                ) : hasTaskSurface && !taskViewState ? (
                     <div role="alert">Task interaction state is unavailable</div>
                 ) : null}
                 <AutoApproveBar />
                 <InputSection
-                    canQueueInput={visibleTask ? queueCanDeliver : false}
+                    canQueueInput={hasTaskSurface ? queueCanDeliver : false}
                     chatState={chatState}
                     draft={interactionDraft}
-                    enabled={visibleTask ? taskInputEnabled : undefined}
+                    enabled={hasTaskSurface ? taskInputEnabled : undefined}
                     imagesAllowed={imagesAllowed}
                     inputQueue={inputQueue.entries}
                     messageHandlers={messageHandlers}
@@ -889,7 +900,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                     onReorderQueuedInput={inputQueue.reorder}
                     onReportBugFallback={submitLocalReportBug}
                     onSubmit={
-                        visibleTask
+                        hasTaskSurface
                             ? taskViewState?.activeInteraction
                                 ? submitInteractionDraft
                                 : submitOrdinaryTaskDraft
@@ -901,7 +912,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                     scrollBehavior={scrollBehavior}
                     semanticCatalog={semanticCatalog}
                     shouldDisableFilesAndImages={Boolean(
-                        visibleTask &&
+                        hasTaskSurface &&
                             (!taskViewState ||
                                 !interactionSynchronized ||
                                 Boolean(
@@ -911,12 +922,12 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                                 )),
                     )}
                     submissionIdentity={
-                        visibleTask
+                        hasTaskSurface
                             ? (taskViewState?.activeInteraction?.interactionId ??
                               `draft-${interactionDraft.ownerRevision ?? "unowned"}`)
                             : `draft-${interactionDraft.ownerRevision ?? "unowned"}`
                     }
-                    submissionScope={visibleTask ? taskId : undefined}
+                    submissionScope={hasTaskSurface ? taskId : undefined}
                     submitKind={composerSubmitKind}
                 />
             </footer>

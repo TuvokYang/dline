@@ -15,6 +15,15 @@ import { formatStateSizeBreakdown, measureStateFieldSizes } from "./stateSizePro
 // only pushes state to its own subscribers.
 const controllerSubscriptions = new Map<Controller, Set<StreamingResponseHandler<State>>>()
 
+// Track only dispatched revisions, not builds or equality-skipped snapshots.
+// A full identity is reusable only until a newer patch changes the client view.
+// The metadata object also identifies one subscription lifetime for queued sends.
+type StateDeliveryMetadata = {
+    revision: number
+    fullIdentity?: string
+}
+const controllerDeliveries = new WeakMap<Controller, StateDeliveryMetadata>()
+
 // Debounce state is now per-controller so rapid-fire updates from one
 // task don't flood a different task's webview.
 type PendingUpdate = {
@@ -67,6 +76,7 @@ export async function subscribeToState(
     if (!subs) {
         subs = new Set()
         controllerSubscriptions.set(controller, subs)
+        controllerDeliveries.set(controller, { revision: 0 })
     }
     subs.add(responseStream)
 
@@ -77,6 +87,7 @@ export async function subscribeToState(
             set.delete(responseStream)
             if (set.size === 0) {
                 controllerSubscriptions.delete(controller)
+                controllerDeliveries.delete(controller)
                 pendingUpdates.delete(controller)
                 const timer = debounceTimers.get(controller)
                 if (timer) {
@@ -129,6 +140,14 @@ export async function subscribeToState(
     recordStateSizeTelemetry(Buffer.byteLength(initialStateJson, "utf8"))
 
     try {
+        // Initial hydration bypasses the full queue too. Do not let an older
+        // queued full become the equality baseline after this snapshot, and
+        // force the next broadcast to cover every subscriber's current view.
+        const delivery = controllerDeliveries.get(controller)
+        if (delivery) {
+            delivery.revision = Math.max(delivery.revision, initialState.stateRevision)
+            delivery.fullIdentity = undefined
+        }
         await responseStream(
             {
                 stateJson: initialStateJson,
@@ -172,7 +191,7 @@ export function cleanupStateSubscriptions(controller: Controller): StateSubscrip
     controllerSendChains.delete(controller)
     // A later subscriber needs a full payload, so the equality guard must not
     // remember what a detached one already received.
-    lastDeliveredPayloads.delete(controller)
+    controllerDeliveries.delete(controller)
     return result
 }
 
@@ -249,11 +268,19 @@ export async function sendStatePatch(
     const stateJson = JSON.stringify(payload)
     const stateSizeBytes = Buffer.byteLength(stateJson, "utf8")
     recordStateSizeTelemetry(stateSizeBytes)
+    const delivery = controllerDeliveries.get(controller)
+    if (delivery && patch.stateRevision > delivery.revision) {
+        // Record before awaiting the stream: a full send may still be queued or
+        // in flight, and its completion must not restore the pre-patch baseline.
+        delivery.revision = patch.stateRevision
+        delivery.fullIdentity = undefined
+    }
     await sendPayloadToSubscribers(controller, stateJson, accountUsage, stateSizeBytes)
 }
 
 /**
- * Serialized form of the last payload delivered to a controller's subscribers.
+ * Semantic identity of a full snapshot, reusable only while it still describes
+ * the subscribers' view rather than a snapshot superseded by a patch.
  *
  * The top-level `stateRevision` advances on every build, so it is replaced by a
  * constant before comparison: it only lets the Webview reject an out-of-order
@@ -261,9 +288,6 @@ export async function sendStatePatch(
  * including `taskViewState.stateRevision`, which the interaction host does use
  * to decide what it is allowed to act on.
  */
-const lastDeliveredPayloads = new WeakMap<Controller, string>()
-
-/** Neutralize the revision that changes on every build, leaving the rest intact. */
 function stateIdentity(state: ExtensionState): string {
     return JSON.stringify({ ...state, stateRevision: 0 })
 }
@@ -274,10 +298,14 @@ async function sendStateToSubscribers(
     finalAccountUsage?: AccountUsage,
 ): Promise<void> {
     try {
+        const delivery = controllerDeliveries.get(controller)
+        if (!delivery) return
         const serializationStartedAtMs = performance.now()
         const stateJson = JSON.stringify(state)
         const serializationMs = Math.round(performance.now() - serializationStartedAtMs)
         const stateSizeBytes = Buffer.byteLength(stateJson, "utf8")
+        const revision = state.stateRevision
+        const identity = stateIdentity(state)
         if (serializationMs >= SLOW_STATE_OPERATION_MS) {
             let activeTasks = 1
             try {
@@ -293,13 +321,8 @@ async function sendStateToSubscribers(
         // A durable message boundary republishes the whole state even when it
         // carries no change, and an idle task produces a steady stream of them.
         // Delivering an identical payload costs every subscriber a full parse
-        // and re-render for nothing.
-        const identity = stateIdentity(state)
-        if (lastDeliveredPayloads.get(controller) === identity) return
-        lastDeliveredPayloads.set(controller, identity)
-
-        recordStateSizeTelemetry(stateSizeBytes)
-        reportOversizedState(controller, state, stateSizeBytes)
+        // and re-render for nothing. Equality is checked at the dispatch boundary
+        // below, since an intervening fast patch can make this full necessary.
 
         // Bounding the field that was found does not prevent the next unbounded
         // one, and a payload this size occupies the host main thread for as long
@@ -312,13 +335,27 @@ async function sendStateToSubscribers(
             // Re-serialize, or the oversized JSON would still be the one sent.
             payloadJson = JSON.stringify(payload)
             payloadBytes = Buffer.byteLength(payloadJson, "utf8")
-            Logger.warn(
-                `[StateUpdate] degraded oversized state: taskId=${controller.task?.taskId ?? "none"}, ` +
-                    `originalBytes=${stateSizeBytes}, sentBytes=${payloadBytes}, dropped=${droppedFields.join(",")}`,
-            )
         }
 
         await enqueueControllerSend(controller, async () => {
+            // A detached subscription lifetime cannot publish to a later one.
+            if (controllerDeliveries.get(controller) !== delivery || !controllerSubscriptions.get(controller)?.size) return
+            // Decide at dispatch, not enqueue: fast patches bypass this chain.
+            if (delivery.fullIdentity === identity) return
+            recordStateSizeTelemetry(stateSizeBytes)
+            reportOversizedState(controller, state, stateSizeBytes)
+            if (droppedFields.length > 0) {
+                Logger.warn(
+                    `[StateUpdate] degraded oversized state: taskId=${controller.task?.taskId ?? "none"}, ` +
+                        `originalBytes=${stateSizeBytes}, sentBytes=${payloadBytes}, dropped=${droppedFields.join(",")}`,
+                )
+            }
+            if (revision > delivery.revision) {
+                delivery.revision = revision
+                delivery.fullIdentity = identity
+            }
+            // An older full can still be delivered, but the client's revision
+            // fence rejects it, so it must never establish a deduplication baseline.
             await sendPayloadToSubscribers(controller, payloadJson, finalAccountUsage, payloadBytes)
         })
     } catch (error) {

@@ -10,6 +10,9 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 ### Changed
 - Aggressive rendering offers three folding levels: standard rows, activity folded between messages, and activity folded across a whole user turn; bulk expand and collapse are available, live work, failures, pending approvals and checked-out checkpoints stay visible, and expanding everything restores the standard order
 
+### Fixed
+- Fixed cases where closing a task left task Thinking controls on the home screen and blocked new tasks; a task whose title is still loading keeps its task view and Close action instead of showing the home screen
+
 ## [0.13.0]
 
 ### Added

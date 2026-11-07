@@ -4,6 +4,8 @@ import v8 from "node:v8"
 import vm from "node:vm"
 import chokidar, { type FSWatcher } from "chokidar"
 import type { Controller } from "@/core/controller"
+import { sendStatePatch, sendStateUpdate } from "@/core/controller/state/subscribeToState"
+import type { ExtensionState } from "@/shared/ExtensionMessage"
 import type { HistoryItem } from "@/shared/HistoryItem"
 import { Logger } from "@/shared/services/Logger"
 
@@ -21,19 +23,24 @@ export interface RuntimeHealthSample {
     uptimeSeconds: number
 }
 
+type SurfaceReplayAction = "capture-task-surface" | "replay-task-patch-on-home" | "restore-home-surface"
+
 export type TaskHistoryControlRequest =
     | { id: string; action: "update-and-flush"; item: HistoryItem }
     | { id: string; action: "runtime-health"; collectGarbage?: boolean }
+    | { id: string; action: SurfaceReplayAction }
 
 export type TaskHistoryControlRequestInput =
     | { action: "update-and-flush"; item: HistoryItem }
     | { action: "runtime-health"; collectGarbage?: boolean }
+    | { action: SurfaceReplayAction }
 
 export interface TaskHistoryControlResponse {
     id: string
     success: boolean
     updateDurationMs?: number
     runtimeHealth?: RuntimeHealthSample
+    surfaceRevision?: number
     error?: string
 }
 
@@ -102,6 +109,8 @@ export async function startTaskHistoryControl(
     let watcher: FSWatcher | undefined
     let disposed = false
     const processed = new Set<string>()
+    let capturedTaskView: ExtensionState["taskViewState"]
+    let replayHome: ExtensionState | undefined
 
     const processRequest = async (requestPath: string): Promise<void> => {
         // The watcher reports every file in the directory, including the
@@ -122,6 +131,39 @@ export async function startTaskHistoryControl(
                     const updateDurationMs = performance.now() - startedAt
                     await controller.stateManager.taskHistory.flush()
                     response = { id: request.id, success: true, updateDurationMs }
+                    break
+                }
+                case "capture-task-surface": {
+                    capturedTaskView = (await controller.getStateToPostToWebview()).taskViewState
+                    if (!capturedTaskView) throw new Error("Surface replay requires an open test Task")
+                    response = { id: request.id, success: true }
+                    break
+                }
+                case "replay-task-patch-on-home": {
+                    const home = await controller.getStateToPostToWebview()
+                    if (!capturedTaskView || home.taskViewState || home.taskTitleMessage) {
+                        throw new Error("Surface replay requires a captured test Task and a detached home")
+                    }
+                    // Freeze the exact serialized full snapshot; later builds may update shared projections.
+                    replayHome = JSON.parse(JSON.stringify(home)) as ExtensionState
+                    await sendStateUpdate(controller, replayHome, controller.getAccountUsage(), { immediate: true })
+                    const { stateRevision } = await controller.getStateToPostToWebview()
+                    await sendStatePatch(
+                        controller,
+                        { stateRevision, taskViewState: capturedTaskView },
+                        controller.getAccountUsage(),
+                    )
+                    response = { id: request.id, success: true, surfaceRevision: stateRevision }
+                    break
+                }
+                case "restore-home-surface": {
+                    if (!replayHome) throw new Error("Surface replay has not started")
+                    // Allocate a real revision so subsequent production publications remain newer.
+                    const { stateRevision } = await controller.getStateToPostToWebview()
+                    await sendStateUpdate(controller, { ...replayHome, stateRevision }, controller.getAccountUsage(), {
+                        immediate: true,
+                    })
+                    response = { id: request.id, success: true, surfaceRevision: stateRevision }
                     break
                 }
                 case "runtime-health":
