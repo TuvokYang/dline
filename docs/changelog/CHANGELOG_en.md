@@ -6,9 +6,12 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 ### Added
 - Subagents support automatic compaction: with Auto Compact enabled, they summarize context using the existing compaction settings and keep working instead of being forced to finish at 80% usage; summaries stay in memory for the current run only
+- Named subagents can select Rules, Skills, Workflows, and MCP independently: each subagent uses only its own checked entries, unbounded by the parent task's selections and tool allowlist; selected rule bodies enter the subagent's system prompt directly, skills and workflows load on demand, MCP is chosen per exact tool and resource URI, and real permissions and approval are unchanged
 - Added experimental Away Mode: enable it in Settings → Features → Experimental, then send `/away` to keep the current task working while you are away, and new questions enter the mode automatically after ten minutes without an answer; workspace commands then skip approval while commands outside the workspace still need it and are refused after one minute, with existing permissions, ignore rules and hooks unchanged
 
 ### Changed
+- Provider pricing tier numbers now appear in group headings instead of being repeated in price field labels, while accessible names still distinguish each tier
+- Subagent capability defaults such as `skills` changed: omitting `skills` used to mean all skills were visible, while now omitting a capability field or a legacy empty array `[]` selects nothing; clearing a category removes that field when saved instead of writing an empty array, and omitted or empty `tools` still means the default tool set
 - Aggressive rendering offers three folding levels: standard rows, activity folded between messages, and activity folded across a whole user turn; bulk expand and collapse are available, live work, failures, pending approvals and checked-out checkpoints stay visible, and expanding everything restores the standard order
 
 ### Fixed

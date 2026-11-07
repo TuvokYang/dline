@@ -11,6 +11,7 @@ import { DEFAULT_SUBAGENT_ALLOWED_TOOLS, isDefaultSubagentName } from "./Default
 import { sanitizeSubagentTools } from "./subagent-tool-policy"
 
 export type AgentConfig = Partial<AgentBaseConfig>
+export type SubagentCapabilityConfig = Pick<AgentConfig, "rules" | "skills" | "workflows" | "mcp">
 
 type SubagentProfileSource = "configured" | "parent_fallback"
 
@@ -95,6 +96,12 @@ export class SubagentBuilder {
 
     getConfiguredSkills(): string[] | undefined {
         return this.agentConfig.skills
+    }
+
+    /** Capability intent is separate from the Profile and Tools bound to this runner. */
+    getCapabilityConfig(): SubagentCapabilityConfig {
+        const { rules, skills, workflows, mcp } = this.agentConfig
+        return { rules, skills, workflows, mcp }
     }
 
     getConfiguredMaxOutputTokens(): number | undefined {

@@ -748,6 +748,7 @@ export class TaskSessionCompositionService {
             readState,
             readAwayActive: () => awayConfiguration.isActive(),
             readCapabilityToggles: options.prompt.readCapabilityToggles,
+            getMcpServersForOwner: options.prompt.ports.promptContext.getTaskMcpServers,
             readTurnAuthority: (turnId) => turnAuthority.read(turnId),
             workspaceManager: options.prompt.workspaceManager,
             peerTaskSpawner: tool.peerTaskSpawner,

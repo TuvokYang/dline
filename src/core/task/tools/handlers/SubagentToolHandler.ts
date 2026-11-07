@@ -1,3 +1,4 @@
+import fs from "node:fs/promises"
 import { resolveProvider } from "@core/api"
 import type { ToolUse } from "@core/assistant-message"
 import { readApiProfiles } from "@core/controller/file/getApiProfiles"
@@ -14,6 +15,7 @@ import { formatBackgroundSubagentDelivery, formatBackgroundSubagentResult } from
 import {
     type AgentBaseConfig,
     listEnabledAgentConfigs,
+    parseAgentConfigFromYaml,
     type ResolveAgentConfigOptions,
     resolveAgentConfig,
 } from "../subagent/AgentConfigLoader"
@@ -25,6 +27,7 @@ import {
     type RejectedSubagentItem,
     type SubagentBatchResolvers,
 } from "../subagent/SubagentBatchPlanner"
+import type { SubagentCapabilityConfig } from "../subagent/SubagentBuilder"
 import {
     runSubagent,
     type SubagentExecResult,
@@ -170,9 +173,13 @@ export function getSubagentJobManager(config: TaskConfig): SubagentJobManager {
  * @param config Current task config.
  * @returns Agent and Profile lookups bound to this task.
  */
-function getBatchResolvers(config: TaskConfig): SubagentBatchResolvers {
+function getBatchResolvers(config: TaskConfig, resolvedPaths?: Map<string, string>): SubagentBatchResolvers {
     return {
-        resolveAgent: async (agentName) => (await resolveAgentConfig(config.cwd, agentName, getResolveOptions(config)))?.config,
+        resolveAgent: async (agentName) => {
+            const resolved = await resolveAgentConfig(config.cwd, agentName, getResolveOptions(config))
+            if (resolved) resolvedPaths?.set(resolved.config.name, resolved.path)
+            return resolved?.config
+        },
         isProfileUsable: (profileName) => {
             const resolution = resolveProfileReference(readApiProfiles(), profileName)
             if (resolution.status !== "resolved") return false
@@ -191,6 +198,15 @@ function getResolveOptions(config: TaskConfig): ResolveAgentConfigOptions {
     return {
         subagentToggles: config.capabilityToggles.localSubagentsToggles,
         globalSubagentToggles: config.capabilityToggles.globalSubagentsToggles,
+    }
+}
+
+/** Keep a run bound to its resolved document; reread only capability intent on Retry. */
+function createCapabilityConfigReloader(filePath: string | undefined): () => Promise<SubagentCapabilityConfig> {
+    return async () => {
+        if (!filePath) return {}
+        const { rules, skills, workflows, mcp } = parseAgentConfigFromYaml(await fs.readFile(filePath, "utf8"))
+        return { rules, skills, workflows, mcp }
     }
 }
 
@@ -478,6 +494,8 @@ export async function restoreSubagentActivityRetry(config: TaskConfig, activityI
     const retryAgentConfig = applyRecipeProfile(resolvedSubagent?.config, effectiveSubagentName, recipe.profileName)
     const runner = new SubagentRunner(config, effectiveSubagentName, retryAgentConfig, {
         inheritTaskAbort: false,
+        taskText: recipe.task,
+        reloadCapabilityConfig: createCapabilityConfigReloader(resolvedSubagent?.path),
     })
     const entry: SubagentStatusItem = {
         index: 1,
@@ -845,6 +863,7 @@ interface PreparedSingleSubagentExecution {
 interface PreparedBatchSubagentExecution {
     request: ReturnType<typeof parseUseSubagentsRequest>
     batchId: string
+    capabilityConfigPaths: Map<string, string>
     planned: PlannedSubagentItem[]
     rejected: RejectedSubagentItem[]
     approvalBody: string
@@ -966,6 +985,8 @@ export class UseSubagentToolHandler implements IFullyManagedTool, IPreparableToo
             // cancellation, not the parent turn's abort, ends it.
             const runner = new SubagentRunner(config, effectiveSubagentName, resolvedSubagent?.config, {
                 inheritTaskAbort: false,
+                taskText: request.task,
+                reloadCapabilityConfig: createCapabilityConfigReloader(resolvedSubagent?.path),
             })
             const job = getSubagentJobManager(config).startJob({
                 subagentName: effectiveSubagentName,
@@ -1044,7 +1065,10 @@ export class UseSubagentToolHandler implements IFullyManagedTool, IPreparableToo
 
         config.taskState.consecutiveMistakeCount = 0
         config.taskState.isExecutingSubagent = true
-        const foregroundRunner = new SubagentRunner(config, effectiveSubagentName, resolvedSubagent?.config)
+        const foregroundRunner = new SubagentRunner(config, effectiveSubagentName, resolvedSubagent?.config, {
+            taskText: request.task,
+            reloadCapabilityConfig: createCapabilityConfigReloader(resolvedSubagent?.path),
+        })
         let isContinuedInBackground = false
         let resolveHandoff: (() => void) | undefined
         const handoffPromise = new Promise<void>((resolve) => {
@@ -1259,11 +1283,12 @@ export class UseSubagentsToolHandler implements IFullyManagedTool, IPreparableTo
             return { outcome: "rejected", message: error instanceof Error ? error.message : String(error) }
         }
         const batchId = `subagent_batch_${block.function_id || block.ts}`
+        const capabilityConfigPaths = new Map<string, string>()
         const { planned, rejected } = await planSubagentBatch({
             items: request.items,
             batchTimeoutSeconds: request.options.timeoutSeconds,
             batchId,
-            resolvers: getBatchResolvers(config),
+            resolvers: getBatchResolvers(config, capabilityConfigPaths),
         })
         telemetryService.captureSubagentFanout(
             request.items.length,
@@ -1288,7 +1313,14 @@ export class UseSubagentsToolHandler implements IFullyManagedTool, IPreparableTo
             background: request.options.background,
             timeoutSeconds: request.options.timeoutSeconds,
         } satisfies UiAskUseSubagents)
-        this.preparedExecutions.set(preparedExecutionKey(block), { request, batchId, planned, rejected, approvalBody })
+        this.preparedExecutions.set(preparedExecutionKey(block), {
+            request,
+            batchId,
+            capabilityConfigPaths,
+            planned,
+            rejected,
+            approvalBody,
+        })
         return { outcome: "prepared", presentation: { ask: "tool", body: approvalBody, notify: false } }
     }
 
@@ -1311,7 +1343,7 @@ export class UseSubagentsToolHandler implements IFullyManagedTool, IPreparableTo
         }
         if (!prepared) return formatResponse.toolError("Prepared subagent batch execution is unavailable.")
         this.preparedExecutions.delete(preparedExecutionKey(block))
-        const { request, batchId, planned, rejected, approvalBody } = prepared
+        const { request, batchId, capabilityConfigPaths, planned, rejected, approvalBody } = prepared
         await presentSubagentUse(config, block, this.name, approvalBody)
         config.taskState.consecutiveMistakeCount = 0
         const entries: SubagentStatusItem[] = planned.map((item) => ({
@@ -1333,9 +1365,15 @@ export class UseSubagentsToolHandler implements IFullyManagedTool, IPreparableTo
         }))
         // Runners are addressed by job id: rejected items make the executing set
         // sparse, so array position is not a usable identity.
-        const runnerOptions = { inheritTaskAbort: !request.options.background }
         const runnersByJobId = new Map<string, SubagentRunner>(
-            planned.map((item) => [item.jobId, new SubagentRunner(config, item.subagentName, item.agentConfig, runnerOptions)]),
+            planned.map((item) => [
+                item.jobId,
+                new SubagentRunner(config, item.subagentName, item.agentConfig, {
+                    inheritTaskAbort: !request.options.background,
+                    taskText: item.task,
+                    reloadCapabilityConfig: createCapabilityConfigReloader(capabilityConfigPaths.get(item.subagentName)),
+                }),
+            ]),
         )
         const entriesByJobId = new Map<string, SubagentStatusItem>(entries.map((entry) => [entry.jobId as string, entry]))
         const budget = getSubagentFanoutBudget(config)

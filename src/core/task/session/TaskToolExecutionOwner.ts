@@ -58,6 +58,7 @@ export interface TaskToolExecutionOwnerOptions {
     readonly readState: () => Readonly<TaskState>
     readonly readAwayActive?: () => boolean
     readonly readCapabilityToggles: () => TaskCapabilityToggles
+    readonly getMcpServersForOwner?: TaskConfig["getMcpServersForOwner"]
     /** One-shot authority granted by the turn a block belongs to, if any. */
     readonly readTurnAuthority: (turnId: string | undefined) => ExplicitInstructionConsumePort | undefined
     readonly workspaceManager?: WorkspaceRootManager
@@ -223,6 +224,7 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
             browserSettings: this.options.stateManager.getGlobalSettingsKey("browserSettings"),
             focusChainSettings: this.options.stateManager.getGlobalSettingsKey("focusChainSettings"),
             capabilityToggles: this.options.readCapabilityToggles(),
+            getMcpServersForOwner: this.options.getMcpServersForOwner,
             // An explicit-only tool may run only with the authority of the turn that
             // admitted the command; a restored retry carries no command and no turn,
             // so it is denied instead of inheriting someone else's authorization.

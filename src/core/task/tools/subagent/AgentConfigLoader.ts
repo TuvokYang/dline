@@ -19,6 +19,42 @@ const SubagentOutputTokensSchema = z
         "maxOutputTokens must be a positive ratio below 1 or a positive integer token count.",
     )
 
+const AgentRuleSelectionSchema = z
+    .object({
+        scope: z.enum(["global", "workspace", "remote"]),
+        path: z
+            .string()
+            .trim()
+            .min(1)
+            .refine((value) => !value.includes("\0"), "Rule path cannot contain a null character."),
+    })
+    .superRefine((selection, context) => {
+        // Remote paths are stable rule names, not filesystem paths.
+        if (selection.scope === "remote") return
+        const relativePath = selection.path.replace(/\\/g, "/")
+        const normalizedPath = path.posix.normalize(relativePath)
+        if (
+            path.posix.isAbsolute(relativePath) ||
+            /^[a-z][a-z0-9+.-]*:/i.test(normalizedPath) ||
+            normalizedPath === ".." ||
+            normalizedPath.startsWith("../") ||
+            normalizedPath === "." ||
+            normalizedPath === "./"
+        ) {
+            context.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["path"],
+                message: "Rule path must be relative and stay within its rule root.",
+            })
+        }
+    })
+
+const AgentMcpSelectionSchema = z.object({
+    server: z.string().trim().min(1),
+    tools: z.array(z.string().trim().min(1)).default([]),
+    resources: z.array(z.string().trim().min(1)).default([]),
+})
+
 const AgentBaseConfigSchema = z.object({
     name: z.string().trim().min(1),
     description: z.string().trim().min(1),
@@ -28,7 +64,11 @@ const AgentBaseConfigSchema = z.object({
     // tools field", and a request to narrow would be read as a request to
     // inherit — granting more than was asked for.
     toolsExplicitlyNarrowed: z.boolean().optional(),
+    // Keep programmatic configs compatible; YAML parsing always supplies empty selections when omitted.
+    rules: z.array(AgentRuleSelectionSchema).optional(),
     skills: z.array(z.string().trim().min(1)).optional(),
+    workflows: z.array(z.string().trim().min(1)).optional(),
+    mcp: z.array(AgentMcpSelectionSchema).optional(),
     profile: z.string().trim().min(1).nullable().optional(),
     maxOutputTokens: SubagentOutputTokensSchema.optional(),
     systemPrompt: z.string().trim().min(1),
@@ -45,9 +85,14 @@ const AgentConfigFrontmatterSchema = z.object({
         )
         .optional(),
     tools: z.union([z.string(), z.array(z.string())]).optional(),
+    rules: z.array(AgentRuleSelectionSchema).optional(),
     skills: z.union([z.string(), z.array(z.string())]).optional(),
+    workflows: z.union([z.string(), z.array(z.string())]).optional(),
+    mcp: z.array(AgentMcpSelectionSchema).optional(),
 })
 
+export type AgentRuleSelection = z.infer<typeof AgentRuleSelectionSchema>
+export type AgentMcpSelection = z.infer<typeof AgentMcpSelectionSchema>
 export type AgentBaseConfig = z.infer<typeof AgentBaseConfigSchema>
 
 export interface ResolvedAgentConfig {
@@ -100,16 +145,57 @@ function parseTools(tools: string | string[] | undefined): {
     return { tools: permitted, explicitlyNarrowed: permitted.length === 0 }
 }
 
-function normalizeSkillName(skillName: string): string {
-    const trimmed = skillName.trim()
-    if (!trimmed) throw new Error("Skill name cannot be empty.")
-    return trimmed
+function parseCapabilityNames(names: string | string[] | undefined, capability: "Skill" | "Workflow"): string[] {
+    if (names === undefined) return []
+    const rawNames = Array.isArray(names) ? names : names.split(",")
+    return Array.from(
+        new Set(
+            rawNames.map((name) => {
+                const trimmed = name.trim()
+                if (!trimmed) throw new Error(`${capability} name cannot be empty.`)
+                return trimmed
+            }),
+        ),
+    )
 }
 
-function parseSkills(skills: string | string[] | undefined): string[] | undefined {
-    if (skills === undefined) return undefined
-    const rawSkills = Array.isArray(skills) ? skills : skills.split(",")
-    return Array.from(new Set(rawSkills.map(normalizeSkillName)))
+function parseRuleSelections(rules: AgentRuleSelection[] | undefined): AgentRuleSelection[] {
+    const selections = new Map<string, AgentRuleSelection>()
+    for (const rule of rules ?? []) {
+        const rulePath = rule.scope === "remote" ? rule.path : path.posix.normalize(rule.path.replace(/\\/g, "/"))
+        const selection = { scope: rule.scope, path: rulePath }
+        selections.set(JSON.stringify([rule.scope, rulePath]), selection)
+    }
+    return Array.from(selections.values())
+}
+
+/**
+ * Validate and normalize rule selections with the exact rules the config
+ * loader applies on read, so a writer can only persist what the next parse
+ * accepts.
+ *
+ * This is the single write-side entry point for rule selections: the shared
+ * schema rejects scopes and paths a parse would refuse, and the parse-time
+ * normalization collapses root-relative duplicates while leaving remote names
+ * untouched. Do not re-derive these path rules in RPC writers.
+ */
+export function normalizeAgentRuleSelections(rules: readonly { scope: string; path: string }[]): AgentRuleSelection[] {
+    const parsed = z.array(AgentRuleSelectionSchema).parse(rules)
+    return parseRuleSelections(parsed)
+}
+
+function parseMcpSelections(mcp: AgentMcpSelection[] | undefined): AgentMcpSelection[] {
+    const selections = new Map<string, AgentMcpSelection>()
+    for (const selection of mcp ?? []) {
+        const previous = selections.get(selection.server)
+        selections.set(selection.server, {
+            server: selection.server,
+            // Missing or empty child lists never select every tool or resource.
+            tools: Array.from(new Set([...(previous?.tools ?? []), ...selection.tools])),
+            resources: Array.from(new Set([...(previous?.resources ?? []), ...selection.resources])),
+        })
+    }
+    return Array.from(selections.values())
 }
 
 export function parseAgentConfigFromYaml(content: string): AgentBaseConfig {
@@ -127,7 +213,10 @@ export function parseAgentConfigFromYaml(content: string): AgentBaseConfig {
         maxOutputTokens: parsedFrontmatter.maxOutputTokens,
         tools: parsedTools.tools,
         ...(parsedTools.explicitlyNarrowed ? { toolsExplicitlyNarrowed: true } : {}),
-        skills: parseSkills(parsedFrontmatter.skills),
+        rules: parseRuleSelections(parsedFrontmatter.rules),
+        skills: parseCapabilityNames(parsedFrontmatter.skills, "Skill"),
+        workflows: parseCapabilityNames(parsedFrontmatter.workflows, "Workflow"),
+        mcp: parseMcpSelections(parsedFrontmatter.mcp),
         systemPrompt,
     }) as AgentBaseConfig
 }
@@ -449,10 +538,26 @@ profile: (optional) ApiProfile name override
 tools:           # optional — defaults to readonly set below
   - read_file
   - search_files
-skills: (optional)
+# rules:
+#   - scope: workspace
+#     path: your-rule.md
+# skills:
+#   - your-skill
+# workflows:
+#   - your-workflow
+# mcp:
+#   - server: your-server
+#     tools:
+#       - your-tool
+#     resources:
+#       - scheme://your-resource
 ---
 System prompt body for the subagent.
 \`\`\`
+
+Rules, skills, workflows and MCP are independent selections. Omitted fields and legacy empty arrays select nothing, including skills; parent selections are not inherited.
+Uncomment only entries that exist in your capability directories. Non-empty selections use block lists; omit empty capability fields, empty MCP child lists and servers with no selections when saving.
+Rules use a global/workspace scope with a rule-root-relative path, or a remote scope with the stable rule name as path. MCP uses the exact internal server name, tool name and resource URI; missing tools/resources lists select nothing.
 
 ## Available Tools
 

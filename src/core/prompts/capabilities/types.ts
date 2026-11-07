@@ -23,11 +23,21 @@ export interface CapabilityEntry {
     readonly tools?: readonly string[]
 }
 
+/** Prompt-safe identity of one selected MCP resource, separate from loadable tools. */
+export interface McpResourceCapabilityEntry {
+    readonly server: string
+    readonly uri: string
+    readonly name: string
+    readonly description: string
+}
+
 /**
  * Stores all prompt-safe capability groups for a task prompt snapshot.
  */
 export interface CapabilitiesSnapshot {
     readonly mcp: readonly CapabilityEntry[]
+    /** Optional prefiltered resources; omitted by consumers that only advertise MCP tools. */
+    readonly mcpResources?: readonly McpResourceCapabilityEntry[]
     readonly skills: readonly CapabilityEntry[]
     readonly workflows: readonly CapabilityEntry[]
     readonly subagents: readonly CapabilityEntry[]

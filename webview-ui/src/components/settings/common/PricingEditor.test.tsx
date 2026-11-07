@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { ModelPricing, PricingDayRule } from "@shared/proto/dline/models/metadata"
 import { flatMeteredPricing } from "@shared/providers/pricing-shape"
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { flushPendingDebouncedInputs } from "../utils/useDebouncedInput"
 import { PricingEditor } from "./PricingEditor"
@@ -32,6 +32,19 @@ function input(label: string, value: string) {
     fireEvent.input(screen.getByLabelText(label), { target: { value } })
 }
 const flush = () => act(flushPendingDebouncedInputs)
+function cardWithTitle(title: string) {
+    const heading = screen.getByText(title, { selector: "strong" })
+    expect(heading).toBeVisible()
+    return heading.parentElement!
+}
+function expectScopedField(card: HTMLElement, scope: string, label: string, value: string) {
+    const field = within(card).getByRole("textbox", { name: `${scope} ${label}` })
+    const visibleLabel = within(card).getByText(label, { selector: "label" })
+    expect(visibleLabel).toBeVisible()
+    expect(visibleLabel).toHaveAttribute("for", field.id)
+    expect(within(card).getByLabelText(label)).toBe(field)
+    expect(field).toHaveValue(value)
+}
 const props = { defaults, tiersEditable: true, showCachePrices: true }
 const timePricing = (): ModelPricing => ({
     currency: "CNY",
@@ -101,7 +114,7 @@ describe("pricing declaration drafts", () => {
         expect(screen.getByRole("alert")).toBeTruthy()
     })
 
-    it("keeps edits to different windows, bounds and slots in one complete declaration", async () => {
+    it("numbers window card titles, keeps linked labels short and saves edits to the matching window", async () => {
         let saved = timePricing()
         render(
             <PricingEditor
@@ -112,14 +125,35 @@ describe("pricing declaration drafts", () => {
                 pricing={saved}
             />,
         )
+        const cards = [cardWithTitle("Window 1 · 09:00 – 12:00"), cardWithTitle("Window 2 · 14:00 – 18:00")]
+        const fields = [
+            ["Start (HH:MM, UTC+08:00)", ["09:00", "14:00"]],
+            ["End (HH:MM, UTC+08:00)", ["12:00", "18:00"]],
+            ["Input Price (¥/1M tokens)", ["5", "7"]],
+            ["Output Price (¥/1M tokens)", ["6", "8"]],
+            ["Cache Writes (¥/1M tokens)", ["", ""]],
+            ["Cache Reads (¥/1M tokens)", ["0", ""]],
+        ] as const
+        cards.forEach((card, index) => {
+            expect(Array.from(card.querySelectorAll("label"), (label) => label.textContent)).toEqual([
+                fields[0][0],
+                fields[1][0],
+                "Rate",
+                ...fields.slice(2).map(([label]) => label),
+            ])
+            fields.forEach(([label, values]) => expectScopedField(card, `Window ${index + 1}`, label, values[index]))
+        })
         input("Window 1 Start (HH:MM, UTC+08:00)", "08:45")
         input("Window 1 Input Price (¥/1M tokens)", "11")
+        input("Window 2 Input Price (¥/1M tokens)", "13")
         input("Window 2 Output Price (¥/1M tokens)", "12")
         await flush()
         expect(saved.strategy?.timeOfDay?.timeWindows).toEqual([
             { startMinute: 525, endMinute: 720, prices: { inputPrice: 11, outputPrice: 6, cacheReadPrice: 0 } },
-            { startMinute: 840, endMinute: 1080, prices: { inputPrice: 7, outputPrice: 12 } },
+            { startMinute: 840, endMinute: 1080, prices: { inputPrice: 13, outputPrice: 12 } },
         ])
+        expectScopedField(cardWithTitle("Window 1 · 08:45 – 12:00"), "Window 1", "Input Price (¥/1M tokens)", "11")
+        expectScopedField(cards[1], "Window 2", "Input Price (¥/1M tokens)", "13")
         const valid = saved
         input("Window 1 End (HH:MM, UTC+08:00)", "15:00")
         input("Window 2 End (HH:MM, UTC+08:00)", "24:30")
@@ -149,7 +183,7 @@ describe("pricing declaration drafts", () => {
         })
     })
 
-    it("merges different bands and rejects out-of-order inclusive bounds", async () => {
+    it("numbers tier card titles, keeps linked labels short and saves edits to the matching tier", async () => {
         let saved: ModelPricing = {
             currency: "USD",
             strategy: {
@@ -170,13 +204,30 @@ describe("pricing declaration drafts", () => {
                 pricing={saved}
             />,
         )
+        const cards = [cardWithTitle("Tier 1 · 0 ≤ input tokens ≤ 100"), cardWithTitle("Tier 2 · Above 100 input tokens")]
+        const fields = [
+            ["Input Price ($/1M tokens)", ["1", "3"]],
+            ["Output Price ($/1M tokens)", ["2", "4"]],
+            ["Cache Writes ($/1M tokens)", ["", ""]],
+            ["Cache Reads ($/1M tokens)", ["", ""]],
+        ] as const
+        cards.forEach((card, index) => {
+            expect(Array.from(card.querySelectorAll("label"), (label) => label.textContent)).toEqual([
+                ...(index === 0 ? ["Up To Input Tokens"] : []),
+                ...fields.map(([label]) => label),
+            ])
+            fields.forEach(([label, values]) => expectScopedField(card, `Tier ${index + 1}`, label, values[index]))
+        })
         input("Tier 1 Input Price ($/1M tokens)", "5")
+        input("Tier 2 Input Price ($/1M tokens)", "7")
         input("Tier 2 Output Price ($/1M tokens)", "6")
         await flush()
         expect(saved.strategy?.contextWindow?.bands).toEqual([
             { maxInputTokens: 100, prices: { inputPrice: 5, outputPrice: 2 } },
-            { prices: { inputPrice: 3, outputPrice: 6 } },
+            { prices: { inputPrice: 7, outputPrice: 6 } },
         ])
+        expectScopedField(cards[0], "Tier 1", "Input Price ($/1M tokens)", "5")
+        expectScopedField(cards[1], "Tier 2", "Input Price ($/1M tokens)", "7")
         input("Up To Input Tokens", "0")
         await flush()
         expect(saved.strategy?.contextWindow?.bands[0].maxInputTokens).toBe(100)
@@ -224,6 +275,27 @@ describe("pricing declaration drafts", () => {
         expect(screen.queryAllByRole("textbox")).toHaveLength(0)
         expect(screen.queryAllByRole("combobox")).toHaveLength(0)
         expect(screen.queryAllByRole("button")).toHaveLength(0)
+        const cardTitles = [
+            "Tier 1 · 0 ≤ input tokens ≤ 100",
+            "Tier 2 · Above 100 input tokens",
+            "Window 1 · 09:00 – 12:00",
+            "Window 2 · 14:00 – 18:00",
+        ]
+        const slotLabels = [
+            ["inputPrice", "Input Price (¥/1M tokens)"],
+            ["outputPrice", "Output Price (¥/1M tokens)"],
+            ["cacheWritePrice", "Cache Writes (¥/1M tokens)"],
+            ["cacheReadPrice", "Cache Reads (¥/1M tokens)"],
+        ] as const
+        cardTitles.forEach((title) => {
+            const card = cardWithTitle(title)
+            expect(card.querySelectorAll("[data-price-slot]")).toHaveLength(slotLabels.length)
+            slotLabels.forEach(([slot, label]) => {
+                const value = card.querySelector(`[data-price-slot="${slot}"]`)
+                expect(value).toBeVisible()
+                expect(value?.closest(".profile-field")?.firstElementChild?.textContent).toBe(label)
+            })
+        })
         const values = Array.from(view.container.querySelectorAll('[data-price-slot="inputPrice"]')).map((cell) =>
             Number.parseFloat(cell.textContent!.replace(/[^0-9.-]/g, "")),
         )

@@ -66,8 +66,21 @@ tools:
   - list_files
   - search_files
   - list_code_definition_names
-skills: []
 maxOutputTokens: 0.05
+# Optional capability selections; omitted fields are unselected:
+# rules:
+#   - scope: workspace
+#     path: engineering-guide.md
+# skills:
+#   - use-vitest
+# workflows:
+#   - e2e-validation
+# mcp:
+#   - server: github
+#     tools:
+#       - search_issues
+#     resources:
+#       - repository://instructions
 ---
 Trace the requested code paths without changing files. Return findings with file paths, evidence, and open questions.
 ```
@@ -79,7 +92,6 @@ Trace the requested code paths without changing files. Return findings with file
 | Body | Yes | The content after the frontmatter is the subagent's prompt and must not be empty |
 | `profile` | No | Which API Profile to use; see below |
 | `tools` | No | Allowed tools, as an array or a comma-separated string. Omitted or empty means the default tool set |
-| `skills` | No | Visible skills. Omitted means all available skills; `[]` means none |
 | `maxOutputTokens` | No | Token budget for the final result; see below |
 
 A file is skipped and logged when a required field is missing, the frontmatter is malformed, the body is empty, a tool name is unknown or blank, or the output budget is invalid. Use `profile` to choose a model; other keys such as `modelId` have no effect.
@@ -88,9 +100,35 @@ Question, plan, and task-ending tools (except `attempt_completion`) and `use_sub
 
 Named subagents can request tools such as writing files, running commands, web access, MCP, or image generation through `tools`; those tools are still subject to their feature switches and permissions.
 
+## Choosing Rules, Skills, Workflows, and MCP
+
+Named subagents select Rules, Skills, Workflows, and MCP entries independently. Each subagent picks from its own global and workspace capability directories; the main task's selections, visible catalogs, and tool allowlist do not bound or seed them. A capability the parent did not select but the subagent did is available to the subagent, and one the parent selected but the subagent did not is not granted.
+
+Omitted capability fields select nothing: a subagent neither inherits the parent's choices nor falls back to everything. Previously, omitting `skills` meant every available skill; now omitted `skills` means none are selected. Legacy empty arrays (`skills: []`) are read as unselected too. Saving a non-empty selection writes a block list, and clearing a category removes that field from the YAML file instead of writing an empty array. Legacy empty arrays are normalized to the removed form only when that category is next saved; existing files are not migrated in bulk. The `tools` field keeps its own meaning: omitted or empty `tools` still grants the default tool set.
+
+One run freezes its system prompt and effective selection at launch. Edits take effect on the next subagent run or an explicit **Retry**; there is no hot reload. Automatic context compaction continues the run with the same frozen system prompt and selection.
+
+### Rules
+
+Selected rules inject their full instruction bodies directly into the subagent's system prompt. Rules need no loader tool and work with both Standard and Lite prompt profiles. A rule's existing `paths` conditions are evaluated against paths mentioned in the subagent's task text and its working directory only, not the parent's messages or tabs. A selected rule that is missing, unreadable, or outside its root fails that child's start with a diagnosable error before any Provider request; the parent task and sibling subagents are unaffected. A condition that does not match simply skips the rule.
+
+### Skills and Workflows
+
+Skills and Workflows load on demand and require the Standard prompt profile and their loader tool: `load_skill` for skills and `load_workflow` for workflows. The advertised catalog comes from the same selection the loader enforces, so guessing a name that was not selected is rejected. When a selected skill or workflow disappears or becomes unreadable, the selection stays in the UI as unavailable and can be removed explicitly; Dline does not fall back to another resource with the same name.
+
+### MCP
+
+MCP is selected per server: choose individual tools and exact resource URIs. With the Standard prompt profile, tools require `load_mcp` and `use_mcp_tool`; resources require only `access_mcp_resource`. Selection matches the exact internal server name, tool name, and resource URI. A server entry without tools or resources selects nothing, and empty child lists are omitted when saved.
+
+Real permission still applies everywhere: system permissions, workspace ownership, the resources' own availability and connection state, and the existing approval and hook mechanisms remain in force. Selecting a capability does not replace approval.
+
+### Enterprise-required entries
+
+Entries marked **Required by policy** (`alwaysEnabled`) are listed separately in the UI and cannot be switched off with the ordinary checkboxes. A required Rule, Skill, or Workflow is selected on every run even when the subagent's configuration does not name it. Being required does not bypass the conditions above: a required Rule still honors its `paths` conditions, and required Skills and Workflows still need the Standard prompt profile and their `load_skill` or `load_workflow` tool, so a run whose loader gate is closed does not load them.
+
 ### Managing them in the UI
 
-The **Subagents** tab of the **Manage Dline Rules & Workflows** panel shows **Global Subagents** and **Workspace Subagents**, each with a **New subagent...** button. Each row can be enabled or disabled, edited or deleted, assigned a **Profile**, and given per-tool checkboxes (required tools always stay checked).
+The **Subagents** tab of the **Manage Dline Rules & Workflows** panel shows **Global Subagents** and **Workspace Subagents**, each with a **New subagent...** button. Each row can be enabled or disabled, edited or deleted, and assigned a **Profile**. Expanding a row opens **Tools**, **Rules**, **Skills**, **Workflows**, and **MCP** tabs. Each tab shows active and selected counts; selections whose loader tools are missing stay saved but inactive until those tools are enabled, and capability edits apply to the next subagent run.
 
 ![The Subagents tab of the capabilities panel: the built-in default under Global Subagents and code-researcher under Workspace Subagents, each group with a New subagent... button](@docs-assets/ui/capabilities-subagents.png)
 
@@ -107,7 +145,7 @@ To create Profiles and set their usages, see [Model configuration](/getting-star
 
 ## Automatic context compaction
 
-With [Auto Compact](/features/auto-compact/) enabled, subagents use the same trigger, reserve, and Maximum context settings as the main task, applied to their own model's context window. A subagent summarizes older context with its own Profile and continues working. Compaction makes additional model requests and can incur usage charges.
+With [Auto Compact](/features/auto-compact/) enabled, subagents use the same trigger, reserve, and Maximum context settings as the main task, applied to their own model's context window. A subagent summarizes older context with its own Profile and continues working. Compaction continues with the system prompt and capability selection frozen at the start of the run. Compaction makes additional model requests and can incur usage charges.
 
 The summary and compaction state stay in memory only; restarting the extension does not restore the compacted subagent conversation. Cancellation stops an in-flight compaction, while a timeout or **Finish** request still asks the subagent to return its findings. If compaction fails, the run reports a failure.
 

@@ -1,6 +1,7 @@
 import { DlineDefaultTool as Tool } from "@shared/tools"
 import type { Meta, StoryObj } from "@storybook/react-vite"
 import { PREVIEW_TOOLS, SubagentCapabilitiesPreview } from "./storybook/SubagentCapabilitiesPreview"
+import { SubagentRowStoryFixture } from "./storybook/SubagentRowStoryFixture"
 
 const meta = {
     title: "Capabilities/Subagent Selection Preview",
@@ -54,4 +55,10 @@ export const Narrow: Story = {
             </div>
         ),
     ],
+}
+
+// Real production SubagentRow against an in-memory RPC mock. The other six
+// stories are design previews only; this one exercises the shipped editor.
+export const ProductionEditor: Story = {
+    render: () => <SubagentRowStoryFixture />,
 }

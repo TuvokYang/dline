@@ -82,6 +82,7 @@ function setup(createMessage: ReturnType<typeof vi.fn>, autoCompact = true, nati
                 getRemoteConfigSettings: () => ({}),
             },
             imageGenerationService: { withProfileResolver: () => ({ hasAvailableProfile: () => false }) },
+            mcpHub: { getAllServersForOwner: () => [] },
         },
         callbacks: {},
     } as unknown as TaskConfig
@@ -102,6 +103,9 @@ vi.mock("../SubagentBuilder", async (importOriginal) => {
             }
             getConfiguredSkills() {
                 return undefined
+            }
+            getCapabilityConfig() {
+                return {}
             }
             getConfiguredMaxOutputTokens() {
                 return undefined

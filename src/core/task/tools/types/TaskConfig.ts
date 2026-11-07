@@ -19,6 +19,7 @@ import type { BrowserSettings } from "@shared/BrowserSettings"
 import type { CommandStatus, UiAsk, UiSay } from "@shared/ExtensionMessage"
 import type { FocusChainSettings } from "@shared/FocusChainSettings"
 import type { SubmittedInputRow } from "@shared/input-semantics/submitted-input"
+import type { McpServer } from "@shared/mcp"
 import type { ClineContent, ClineToolResponseContent } from "@shared/messages/content"
 import type { Mode } from "@shared/storage/types"
 import type { TaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
@@ -41,6 +42,7 @@ import type {
 import type { MessageStateHandler } from "../../message-state"
 import type { HookExecution } from "../../types/HookExecution"
 import type { ToolHandlerState } from "../state/ToolHandlerState"
+import type { SubagentCapabilitySelection } from "../subagent/SubagentCapabilitySelection"
 import type { SubagentFanoutBudget } from "../subagent/SubagentFanoutBudget"
 import type { SubagentJobManager } from "../subagent/SubagentJobManager"
 import type { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
@@ -117,6 +119,10 @@ export interface TaskConfig {
     browserSettings: BrowserSettings
     focusChainSettings: FocusChainSettings
     capabilityToggles: TaskCapabilityToggles
+    /** One child run's frozen capability authority; absent on the main task. */
+    readonly subagentCapabilitySelection?: SubagentCapabilitySelection
+    /** Host-bound MCP visibility; the captured owner is not a task or workspace ID. */
+    getMcpServersForOwner?: () => readonly McpServer[]
 
     // Typed interaction boundary
     interactions: TaskInteractionPorts

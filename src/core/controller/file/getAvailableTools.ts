@@ -16,6 +16,8 @@ const TOOL_DESCRIPTIONS: Record<string, { description: string; isReadOnly: boole
     [DlineDefaultTool.WEB_FETCH]: { description: "Fetch web content", isReadOnly: true },
     [DlineDefaultTool.WEB_SEARCH]: { description: "Search the web", isReadOnly: true },
     [DlineDefaultTool.LOAD_SKILL]: { description: "Load Skill instructions", isReadOnly: true },
+    [DlineDefaultTool.LOAD_WORKFLOW]: { description: "Load Workflow instructions", isReadOnly: true },
+    [DlineDefaultTool.LOAD_MCP]: { description: "Load MCP tool metadata", isReadOnly: true },
     [DlineDefaultTool.MCP_USE]: { description: "Use an MCP tool", isReadOnly: true },
     [DlineDefaultTool.MCP_ACCESS]: { description: "Access an MCP resource", isReadOnly: true },
     [DlineDefaultTool.MCP_DOCS]: { description: "Load MCP documentation", isReadOnly: true },

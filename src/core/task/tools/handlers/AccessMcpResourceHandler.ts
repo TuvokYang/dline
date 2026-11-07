@@ -6,6 +6,7 @@ import { telemetryService } from "@/services/telemetry"
 import { boundToolText } from "@/shared/content-limits"
 import { DlineDefaultTool } from "@/shared/tools"
 import type { ToolApprovalPresentation } from "../../executors/tool/ToolPreflight"
+import { isSubagentMcpTargetAvailable } from "../load-capabilities/LoadCapabilityService"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
 import type { TaskConfig } from "../types/TaskConfig"
@@ -76,10 +77,15 @@ export class AccessMcpResourceHandler implements IFullyManagedTool {
             return await config.callbacks.sayAndCreateMissingParamError(DlineDefaultTool.MCP_ACCESS, "uri", undefined, block.ts)
         }
 
-        if (config.capabilityToggles.mcpServers[server_name] !== true) {
+        const isAvailable = () =>
+            config.capabilityToggles.mcpServers[server_name] === true &&
+            ((!config.isSubagentExecution && !config.subagentCapabilitySelection) ||
+                isSubagentMcpTargetAvailable(config, server_name, { uri }))
+        const unavailable = () => {
             config.taskState.consecutiveMistakeCount++
             return formatResponse.toolError(`MCP server '${server_name}' is not enabled for this task.`)
         }
+        if (!isAvailable()) return unavailable()
 
         config.taskState.consecutiveMistakeCount = 0
 
@@ -113,6 +119,8 @@ export class AccessMcpResourceHandler implements IFullyManagedTool {
 
         await config.callbacks.say("mcp_server_request_started")
 
+        // Hooks may yield while the owner's live connection changes.
+        if ((config.isSubagentExecution || config.subagentCapabilitySelection) && !isAvailable()) return unavailable()
         // Execute the MCP resource access
         const resourceResult = await config.services.mcpHub.readResource(server_name, uri)
 

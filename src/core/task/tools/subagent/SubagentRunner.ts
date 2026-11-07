@@ -13,10 +13,11 @@ import { createStreamNormalizer, normalizeApiStream } from "@core/api/transform/
 import { ApiUsageAccumulator } from "@core/api/transform/usage-accumulator"
 import { declaredAnthropicHostedToolNames } from "@core/api/utils/messages_api_support"
 import { parseAssistantMessage, ToolUse } from "@core/assistant-message"
-import { discoverAvailableSkills } from "@core/context/instructions/user-instructions/skills"
 import { createImageProfileResolverForProfile } from "@core/image-generation/runtime"
+import { PromptProfile } from "@core/prompts/profiles/types"
 import { formatResponse } from "@core/prompts/responses"
 import { getSystemPrompt, type SystemPromptContext } from "@core/prompts/system-prompt"
+import { LITE_TOOL_IDS, STANDARD_TOOL_IDS } from "@core/prompts/tools/tool-ids"
 import {
     buildTurnFailureFeedback,
     ConsecutiveTurnFailures,
@@ -69,7 +70,8 @@ import type { TaskConfig } from "../types/TaskConfig"
 import { resolveToolResultBudget } from "../utils/tool-result-budget"
 import type { AgentBaseConfig } from "./AgentConfigLoader"
 import { forwardProviderAttempt, producesUnreplayableOutput } from "./SubagentAttemptForwarding"
-import { SUBAGENT_COMPLETION_CONTRACT, SubagentBuilder } from "./SubagentBuilder"
+import { SUBAGENT_COMPLETION_CONTRACT, SubagentBuilder, type SubagentCapabilityConfig } from "./SubagentBuilder"
+import { resolveSubagentCapabilitySelection, type SubagentCapabilitySelection } from "./SubagentCapabilitySelection"
 import { buildContextBudgetSection, resolveFinalResultTokens } from "./SubagentContextBudget"
 import {
     compactSubagentConversation,
@@ -125,6 +127,10 @@ const MAX_INITIAL_STREAM_ATTEMPTS = INITIAL_STREAM_RETRY_DELAYS_MS.length + 1
 export interface SubagentRunnerOptions {
     /** Keep ordinary subagents coupled to parent Task cancellation unless an explicit Activity owns their lifecycle. */
     inheritTaskAbort?: boolean
+    /** Original child task only; omission supplies no rule-condition path evidence. */
+    taskText?: string
+    /** Read current YAML capability intent once per new run, including explicit Retry. */
+    reloadCapabilityConfig?: () => Promise<SubagentCapabilityConfig>
 }
 
 function formatApiFormat(apiFormat: ApiFormat | undefined): string | undefined {
@@ -850,6 +856,13 @@ export class SubagentRunner {
                 mode,
                 customPrompt: this.baseConfig.services.stateManager.getGlobalSettingsKey("customPrompt"),
             }
+            const promptProfile = resolvePromptProfile({
+                modelId: providerInfo.model.id,
+                contextWindow: providerInfo.model.info.capabilities?.contextWindow,
+            })
+            const profileTools: readonly DlineDefaultTool[] =
+                promptProfile === PromptProfile.Lite ? LITE_TOOL_IDS : STANDARD_TOOL_IDS
+            const allowedTools = new Set(this.allowedTools.filter((tool) => profileTools.includes(tool)))
             const webToolsEnabled =
                 this.baseConfig.webToolsEnabled ??
                 this.baseConfig.services.stateManager.getGlobalSettingsKey("clineWebToolsEnabled") === true
@@ -864,7 +877,7 @@ export class SubagentRunner {
             const turnFailureFeedback = (failure: TurnFailure): string => {
                 const feedback = buildTurnFailureFeedback(failure, {
                     usesNativeToolCalls: useNativeToolCalls,
-                    availableTools: this.completionOnly ? [DlineDefaultTool.ATTEMPT] : this.allowedTools,
+                    availableTools: this.completionOnly ? [DlineDefaultTool.ATTEMPT] : [...allowedTools],
                     finishing: this.completionOnly,
                 })
                 // A subagent that answered in prose believes it is done; restate how a run ends.
@@ -896,37 +909,36 @@ export class SubagentRunner {
             })
 
             const host = HostRegistryInfo.get()
-            const remoteSkillEntries = this.baseConfig.services.stateManager.getRemoteConfigSettings().remoteGlobalSkills || []
-            const availableSkills = await discoverAvailableSkills(this.baseConfig.cwd, {
-                remoteSkillEntries,
-                globalSkillsToggles: this.baseConfig.capabilityToggles.globalSkillsToggles,
-                localSkillsToggles: this.baseConfig.capabilityToggles.localSkillsToggles,
-                remoteSkillsToggles: this.baseConfig.capabilityToggles.remoteSkillsToggles,
-            })
-            const configuredSkillNames = this.agent.getConfiguredSkills()
-            const skills =
-                configuredSkillNames !== undefined
-                    ? configuredSkillNames
-                          .map((skillName) => {
-                              const skill = availableSkills.find((candidate) => candidate.name === skillName)
-                              if (!skill) {
-                                  Logger.warn(`[SubagentRunner] Configured skill '${skillName}' not found for subagent run.`)
-                              }
-                              return skill
-                          })
-                          .filter((skill): skill is (typeof availableSkills)[number] => Boolean(skill))
-                    : availableSkills
-
-            const allowedTools = new Set(this.allowedTools)
+            const selection = await resolveSubagentCapabilitySelection(
+                this.baseConfig,
+                (await this.options.reloadCapabilityConfig?.()) ?? this.agent.getCapabilityConfig(),
+                this.options.taskText ?? "",
+                [...allowedTools],
+                promptProfile,
+            )
             const context: SystemPromptContext = {
                 providerInfo,
-                promptProfile: resolvePromptProfile({
-                    modelId: providerInfo.model.id,
-                    contextWindow: providerInfo.model.info.capabilities?.contextWindow,
-                }),
+                promptProfile,
                 cwd: this.baseConfig.cwd,
                 ide: host?.platform || "Unknown",
-                skills,
+                skills: selection.skills,
+                capabilities: {
+                    ...selection.capabilities,
+                    mcpResources: selection.mcpServers
+                        .filter((server) => server.disabled !== true && server.status === "connected")
+                        .flatMap((server) =>
+                            (server.resources ?? []).map((resource) => ({
+                                server: server.name,
+                                uri: resource.uri,
+                                name: resource.name,
+                                description: resource.description ?? "",
+                            })),
+                        ),
+                },
+                ...selection.ruleInstructions,
+                taskCapabilityToggles: selection.capabilityToggles,
+                mcpHub: { getServers: () => selection.mcpServers },
+                mcpToolsOnDemand: true,
                 // A subagent keeps no TODO list, so its tools must not offer task_progress.
                 focusChainSettings: { ...this.baseConfig.focusChainSettings, enabled: false },
                 browserSettings: this.baseConfig.browserSettings,
@@ -1464,7 +1476,7 @@ export class SubagentRunner {
                             outputTokens: requestUsage.outputTokens,
                             stopReason: roundStopReason,
                         },
-                        this.allowedTools,
+                        [...allowedTools],
                     )
                     turnFailures.record(failure)
                     // This send asked for no tool, so its deferred settlement is over.
@@ -1571,7 +1583,7 @@ export class SubagentRunner {
                         return { status: "completed", result: boundedCompletionResult, stats }
                     }
 
-                    if (!this.allowedTools.includes(toolName)) {
+                    if (!allowedTools.has(toolName)) {
                         const deniedResult = formatResponse.toolError(`Tool '${toolName}' is not available inside subagent runs.`)
                         pushSubagentToolResultBlock(toolResultBlocks, call, toolName, deniedResult)
                         continue
@@ -1597,6 +1609,8 @@ export class SubagentRunner {
                         webSearchRoutingPlan,
                         imageGenerationService,
                         toolLease,
+                        selection,
+                        allowedTools,
                     )
                     const handler = subagentConfig.coordinator.getHandler(toolName)
                     let toolResult: unknown
@@ -1779,17 +1793,21 @@ export class SubagentRunner {
         webSearchRoutingPlan: WebSearchRoutingPlan,
         imageGenerationService: TaskConfig["services"]["imageGenerationService"],
         contextBudget: TaskConfig["contextBudget"],
+        selection: SubagentCapabilitySelection,
+        allowedTools: ReadonlySet<DlineDefaultTool>,
     ): TaskConfig {
         const baseCallbacks = this.baseConfig.callbacks
         const coordinator = new ToolExecutorCoordinator()
         const validator = new ToolValidator(this.baseConfig.services.ignoreController)
 
-        for (const tool of this.allowedTools) {
+        for (const tool of allowedTools) {
             coordinator.registerByName(tool, validator)
         }
 
         return {
             ...this.baseConfig,
+            subagentCapabilitySelection: selection,
+            capabilityToggles: structuredClone(selection.capabilityToggles),
             api: this.apiHandler,
             coordinator,
             services: { ...this.baseConfig.services, imageGenerationService },

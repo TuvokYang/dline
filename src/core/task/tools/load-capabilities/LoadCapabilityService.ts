@@ -1,6 +1,10 @@
 import { resolveProvider } from "@core/api"
 import { parseYamlFrontmatter } from "@core/context/instructions/user-instructions/frontmatter"
-import { discoverAvailableSkills, getSkillContent } from "@core/context/instructions/user-instructions/skills"
+import {
+    discoverAvailableSkills,
+    getSkillContent,
+    getSkillContentForMetadata,
+} from "@core/context/instructions/user-instructions/skills"
 import { getWorkflowsScanDirectories } from "@core/storage/disk"
 import {
     createFailedPayload,
@@ -23,6 +27,24 @@ interface WorkflowEntry {
     enabled: boolean
 }
 
+/** Exact child selection intersected with the live host-bound owner, never the global Hub view. */
+export function isSubagentMcpTargetAvailable(
+    config: TaskConfig,
+    serverName: string,
+    target: { tool: string } | { uri: string },
+): boolean {
+    const selected = config.subagentCapabilitySelection?.mcpServers.find((server) => server.name === serverName)
+    if (!selected || selected.disabled || selected.status !== "connected") return false
+    const live = config.getMcpServersForOwner?.().find((server) => server.name === serverName)
+    if (!live || live.disabled || live.status !== "connected") return false
+    if (selected.uid !== undefined && selected.uid !== live.uid) return false
+    return "tool" in target
+        ? selected.tools?.some((tool) => tool.name === target.tool) === true &&
+              live.tools?.some((tool) => tool.name === target.tool) === true
+        : selected.resources?.some((resource) => resource.uri === target.uri) === true &&
+              live.resources?.some((resource) => resource.uri === target.uri) === true
+}
+
 /**
  * Read-only service that loads detailed metadata for stable load_xxx tools.
  */
@@ -41,9 +63,9 @@ export class LoadCapabilityService {
                 case "mcp":
                     return this.loadMcp(name, config)
                 case "skill":
-                    return this.loadSkill(name, config)
+                    return await this.loadSkill(name, config)
                 case "workflow":
-                    return this.loadWorkflow(name, config)
+                    return await this.loadWorkflow(name, config)
             }
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error)
@@ -52,21 +74,23 @@ export class LoadCapabilityService {
     }
 
     /**
-     * Load MCP server tool metadata from the current hub snapshot.
+     * Load frozen child metadata or the main task's current Hub metadata.
      *
-     * @param name Exact MCP capability name, preferably server.tool.
+     * @param name Exact server.tool for children; main tasks also accept a bare tool name.
      * @param config Runtime task configuration.
      * @returns MCP load payload.
      */
     private loadMcp(name: string, config: TaskConfig): LoadCapabilityPayload {
-        const servers = config.services.mcpHub
-            .getServers()
-            .filter((server) => server.disabled !== true && config.capabilityToggles.mcpServers[server.name] === true)
+        const selection = config.subagentCapabilitySelection
+        const child = config.isSubagentExecution || selection !== undefined
+        const servers = (selection?.mcpServers ?? (child ? [] : config.services.mcpHub.getServers())).filter(
+            (server) => server.disabled !== true && config.capabilityToggles.mcpServers[server.name] === true,
+        )
         const match = servers
             .flatMap((server) => (server.tools ?? []).map((tool) => ({ server, tool })))
-            .find(({ server, tool }) => `${server.name}.${tool.name}` === name || tool.name === name)
+            .find(({ server, tool }) => `${server.name}.${tool.name}` === name || (!child && tool.name === name))
 
-        if (!match) {
+        if (!match || (child && !isSubagentMcpTargetAvailable(config, match.server.name, { tool: match.tool.name }))) {
             return createFailedPayload("mcp", name, `Unknown or unavailable MCP tool '${name}'.`)
         }
 
@@ -103,14 +127,26 @@ export class LoadCapabilityService {
     private async loadSkill(name: string, config: TaskConfig): Promise<LoadCapabilityPayload> {
         const stateManager = config.services.stateManager
         const toggles = config.capabilityToggles
-        const remoteSkillEntries = stateManager.getRemoteConfigSettings().remoteGlobalSkills || []
-        const skills = await discoverAvailableSkills(config.cwd, {
-            remoteSkillEntries,
-            globalSkillsToggles: toggles.globalSkillsToggles,
-            localSkillsToggles: toggles.localSkillsToggles,
-            remoteSkillsToggles: toggles.remoteSkillsToggles,
-        })
-        const content = await getSkillContent(name, skills, remoteSkillEntries)
+        const selection = config.subagentCapabilitySelection
+        const child = config.isSubagentExecution || selection !== undefined
+        const remoteSkillEntries =
+            selection?.remoteSkillEntries ?? (child ? [] : stateManager.getRemoteConfigSettings().remoteGlobalSkills || [])
+        const skills =
+            selection?.skills ??
+            (child
+                ? []
+                : await discoverAvailableSkills(config.cwd, {
+                      remoteSkillEntries,
+                      globalSkillsToggles: toggles.globalSkillsToggles,
+                      localSkillsToggles: toggles.localSkillsToggles,
+                      remoteSkillsToggles: toggles.remoteSkillsToggles,
+                  }))
+        const selected = skills.find((skill) => skill.name === name)
+        const content = child
+            ? selected
+                ? await getSkillContentForMetadata(selected, remoteSkillEntries)
+                : null
+            : await getSkillContent(name, skills, remoteSkillEntries)
         if (!content) {
             return createFailedPayload("skill", name, `Unknown or disabled skill '${name}'.`)
         }
@@ -162,8 +198,12 @@ export class LoadCapabilityService {
      * @returns Workflow load payload.
      */
     private async loadWorkflow(name: string, config: TaskConfig): Promise<LoadCapabilityPayload> {
-        const workflows = await this.collectWorkflows(config)
-        const workflow = workflows.find((entry) => entry.name === name && entry.enabled)
+        const selection = config.subagentCapabilitySelection
+        const workflow = selection
+            ? selection.workflows.find((entry) => entry.name === name)
+            : config.isSubagentExecution
+              ? undefined
+              : (await this.collectWorkflows(config)).find((entry) => entry.name === name && entry.enabled)
         if (!workflow) {
             return createFailedPayload("workflow", name, `Unknown or disabled workflow '${name}'.`)
         }
@@ -174,14 +214,14 @@ export class LoadCapabilityService {
             status: "completed",
             name,
             source: workflow.source,
-            enabled: workflow.enabled,
+            enabled: true,
             summary: `${workflow.name}: ${workflow.description}`,
             details: [
                 { label: "Name", value: workflow.name },
                 { label: "Description", value: workflow.description },
                 { label: "Source", value: workflow.source },
                 { label: "Path", value: workflow.path },
-                { label: "Enabled", value: workflow.enabled ? "yes" : "no" },
+                { label: "Enabled", value: "yes" },
             ],
             body: workflow.body,
         }

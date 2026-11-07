@@ -237,7 +237,9 @@ export function PricingTierEditor({
                         : `${lower?.toLocaleString()} ${index === 0 ? "≤" : "<"} input tokens ≤ ${tier.maxInputTokens.toLocaleString()}`
                 return (
                     <div className={getTierClassName(index)} key={`band-${index}`}>
-                        <strong className="text-xs">{range}</strong>
+                        <strong className="text-xs">
+                            Tier {index + 1} · {range}
+                        </strong>
                         {editable ? (
                             <>
                                 {index < tiers.length - 1 ? (
@@ -277,9 +279,9 @@ export function PricingTierEditor({
                             </>
                         ) : null}
                         <PriceSetFields
+                            accessiblePrefix={`Tier ${index + 1}`}
                             currencySymbol={currencySymbol}
                             onChange={(prices) => updateTier(index, { prices })}
-                            prefix={`Tier ${index + 1}`}
                             prices={tier.prices}
                             readOnly={!ratesEditable}
                             showCachePrices={showCachePrices}

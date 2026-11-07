@@ -30,7 +30,20 @@ tools:
   - list_code_definition_names
   - load_skill
   - attempt_completion
-skills: []
+# Optional capabilities are unselected when omitted. Use block lists to select them:
+# rules:
+#   - scope: workspace
+#     path: engineering-guide.md
+# skills:
+#   - use-vitest
+# workflows:
+#   - e2e-validation
+# mcp:
+#   - server: github
+#     tools:
+#       - search_issues
+#     resources:
+#       - repository://instructions
 # maxOutputTokens is measured in tokens. Omit it for the dynamic 5% default,
 # use 0.05 for a ratio, or use a positive integer such as 10240 for an absolute budget.
 ---

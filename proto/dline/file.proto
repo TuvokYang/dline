@@ -130,7 +130,10 @@ service FileService {
   // Returns available tools grouped by category for subagent configuration
   rpc getAvailableTools(EmptyRequest) returns (AvailableToolsResponse);
 
-  // Updates a subagent YAML configuration (profile, tools, skills, description)
+  // Returns the independent capability catalog for one subagent configuration
+  rpc getSubagentCapabilities(GetSubagentCapabilitiesRequest) returns (SubagentCapabilitiesResponse);
+
+  // Incrementally updates a subagent YAML configuration
   rpc updateSubagentConfig(UpdateSubagentConfigRequest) returns (Empty);
 
   // Reads all ApiProfile configurations from api_profiles.json
@@ -574,6 +577,64 @@ message SubagentInfo {
   repeated string tools = 5; // Tool names assigned to this subagent
   repeated string skills = 6; // Skill names assigned to this subagent
   optional string profile = 7; // Optional ApiProfile name override
+  repeated SubagentRuleSelection rules = 9;
+  repeated string workflows = 10;
+  repeated SubagentMcpSelection mcp = 11;
+}
+
+// A rule's stable source identity; scope is global, workspace, or remote.
+message SubagentRuleSelection {
+  string scope = 1;
+  string path = 2; // Root-relative rule path, or stable remote rule name
+}
+
+// Exact selections within an owner-scoped MCP server, never display-name matches.
+message SubagentMcpSelection {
+  string server = 1;
+  repeated string tools = 2;
+  repeated string resources = 3; // Exact resource URIs
+}
+
+message GetSubagentCapabilitiesRequest {
+  string subagent_path = 1;
+}
+
+// Shared metadata for rules, skills, and workflows, including unavailable selections.
+message SubagentCapabilityInfo {
+  string name = 1;
+  string description = 2;
+  string scope = 3;
+  string path = 4;
+  bool required = 5;
+  bool available = 6;
+  optional string unavailable_reason = 7;
+}
+
+message SubagentMcpToolInfo {
+  string name = 1;
+  string description = 2;
+}
+
+message SubagentMcpResourceInfo {
+  string uri = 1;
+  string name = 2;
+  string description = 3;
+}
+
+message SubagentMcpServerInfo {
+  string name = 1; // Owner-scoped internal server name
+  string display_name = 2;
+  bool available = 3;
+  repeated SubagentMcpToolInfo tools = 4;
+  repeated SubagentMcpResourceInfo resources = 5;
+  optional string unavailable_reason = 6;
+}
+
+message SubagentCapabilitiesResponse {
+  repeated SubagentCapabilityInfo rules = 1;
+  repeated SubagentCapabilityInfo skills = 2;
+  repeated SubagentCapabilityInfo workflows = 3;
+  repeated SubagentMcpServerInfo mcp = 4;
 }
 
 // Response for refreshSubagents operation
@@ -641,4 +702,10 @@ message UpdateSubagentConfigRequest {
   optional string profile = 6;
   bool replace_tools = 7;
   bool replace_skills = 8;
+  repeated SubagentRuleSelection rules = 10;
+  repeated string workflows = 11;
+  repeated SubagentMcpSelection mcp = 12;
+  bool replace_rules = 13;
+  bool replace_workflows = 14;
+  bool replace_mcp = 15;
 }

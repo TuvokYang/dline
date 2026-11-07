@@ -16,6 +16,9 @@ const PARENT_DONE = "E2E_SUBAGENT_COMPACTION_PARENT_DONE"
 const COMPACT_INSTRUCTION = "The current conversation is rapidly running out of context"
 const SUBAGENT_CALL = "call_compaction_subagent"
 const READ_CALL = "call_compaction_read"
+const SELECTED_RULE = "E2E_SUBAGENT_COMPACTION_SELECTED_RULE_BODY"
+const UNSELECTED_RULE = "E2E_SUBAGENT_COMPACTION_UNSELECTED_RULE_BODY"
+const RULE_FILE = "compaction-selected.md"
 
 const e2e = base.extend({
     dlineDir: async ({ dlineDir, workspaceDir }, use) => {
@@ -42,7 +45,12 @@ const e2e = base.extend({
         child.webToolsMode = "WEB_TOOLS_MODE_FORCE_OFF"
         await writeFile(profilesPath, JSON.stringify(profiles))
         const directory = path.join(workspaceDir, ".agents", "subagents")
-        await mkdir(directory, { recursive: true })
+        const rulesDirectory = path.join(workspaceDir, ".agents", "rules")
+        await Promise.all([mkdir(directory, { recursive: true }), mkdir(rulesDirectory, { recursive: true })])
+        await Promise.all([
+            writeFile(path.join(rulesDirectory, RULE_FILE), SELECTED_RULE),
+            writeFile(path.join(rulesDirectory, "compaction-unselected.md"), UNSELECTED_RULE),
+        ])
         await writeFile(
             path.join(directory, `${AGENT}.yml`),
             `---
@@ -53,6 +61,9 @@ tools:
   - read_file
   - list_files
   - attempt_completion
+rules:
+  - scope: workspace
+    path: ${RULE_FILE}
 ---
 
 Inspect the evidence and directory before completing the delegated task.`,
@@ -121,12 +132,31 @@ async function startSubagent(sidebar: Frame): Promise<void> {
     if (await approve.isVisible()) await approve.click()
 }
 
-function expectValidRequests(requests: MockApiConsumption[], count: number): void {
+function expectValidRequests(requests: readonly MockApiConsumption[], count: number): void {
     expect(requests).toHaveLength(count)
     for (const request of requests) {
         expect(request.contractError).toBeUndefined()
         expect(request.requestToolPairing.complete).toBe(true)
     }
+}
+
+/** The hidden summary and continuation must reuse the original child system, not re-inject Rules. */
+function expectRulesPreserved(requests: readonly MockApiConsumption[]): void {
+    const systems = requests.map(({ requestBody }) => {
+        const body = requestBody as { instructions?: string; input: { role?: string; content?: unknown }[] }
+        expect(Array.isArray(body.input)).toBe(true)
+        const system = JSON.stringify({
+            instructions: body.instructions,
+            input: body.input.filter((item) => item.role === "system" || item.role === "developer"),
+        })
+        expect(system.split(SELECTED_RULE)).toHaveLength(2)
+        expect(system).not.toContain(UNSELECTED_RULE)
+        // Inspect the complete request too: the marker must not be copied into ordinary input.
+        expect(JSON.stringify(requestBody).split(SELECTED_RULE)).toHaveLength(2)
+        expect(JSON.stringify(requestBody)).not.toContain(UNSELECTED_RULE)
+        return system
+    })
+    expect(new Set(systems).size).toBe(1)
 }
 
 e2e(
@@ -170,6 +200,7 @@ e2e(
         await expect(sidebar.getByText(SUMMARY, { exact: false })).toHaveCount(0)
         const child = server.getMockConsumptions("openai-compatible-responses")
         expectValidRequests(child, 4)
+        expectRulesPreserved(child)
         expectValidRequests(server.getMockConsumptions("openai-compatible-chat"), 2)
         expect(child.map(({ responseType, toolName }) => toolName ?? responseType)).toEqual([
             "read_file",
@@ -203,6 +234,7 @@ e2e(
         await expect(card.getByRole("button", { name: "Finish", exact: true })).toHaveCount(0)
         const child = server.getMockConsumptions("openai-compatible-responses")
         expectValidRequests(child, 2)
+        expectRulesPreserved(child)
         expectValidRequests(server.getMockConsumptions("openai-compatible-chat"), 2)
         expect(child[1]).toMatchObject({ responseType: "error", status: 400 })
         expect(JSON.stringify(child[1].requestBody)).toContain(COMPACT_INSTRUCTION)
@@ -238,6 +270,7 @@ e2e(
         await expect(card.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0)
         await expect(sidebar.getByText(SUMMARY, { exact: false })).toHaveCount(0)
         expectValidRequests(server.getMockConsumptions("openai-compatible-responses"), 2)
+        expectRulesPreserved(server.getMockConsumptions("openai-compatible-responses"))
         expectValidRequests(server.getMockConsumptions("openai-compatible-chat"), 2)
         await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
     },
