@@ -41,15 +41,16 @@ Dline 通过**模型服务商**（provider）连接 AI 模型。你可以：
 
 ### 云端服务商
 
-| 服务商 | 适用场景 | 配置指南 |
+下面的顺序就是推荐顺序：排在前面的更值得先用起来。
+
+| 服务商 | 适合谁 | 配置指南 |
 | --- | --- | --- |
-| **OpenRouter** | 一个 Key 访问多家模型 | [配置](/zh-cn/provider-config/openrouter/) |
-| **Anthropic** | 直接使用 Claude | [配置](/zh-cn/provider-config/anthropic/) |
-| **Claude Code** | 使用 Claude Max/Pro 订阅 | [配置](/zh-cn/provider-config/anthropic/) |
-| **OpenAI** | GPT 系列模型 | [配置](/zh-cn/provider-config/openai/) |
-| **Google Gemini** | Gemini 系列模型 | [配置](/zh-cn/provider-config/google-gemini/) |
-| **AWS Bedrock** | 通过自己的 AWS 账号调用模型 | [配置](/zh-cn/provider-config/aws-bedrock/api-key/) |
-| **DeepSeek** | 性价比高 | [配置](/zh-cn/provider-config/deepseek/) |
+| **[DeepSeek](https://www.deepseek.com/)** | 响应快、单位成本低，适合作为日常编码的任务执行模型 | [配置](/zh-cn/provider-config/deepseek/) |
+| **[OpenAI](https://openai.com/)** | 响应较慢、防御性偏强，适合架构设计和代码审查；也可用 ChatGPT 订阅登录 | [配置](/zh-cn/provider-config/openai/) |
+| **[OpenRouter](https://openrouter.ai/)** | 一个 Key 就能横向比较多家模型，适合挑选模型或按任务分流 | [配置](/zh-cn/provider-config/openrouter/) |
+| **[OpenCode](https://opencode.ai/)** | 一个网关汇聚多家付费模型，按需付费或订阅，切换模型不用换 Key | [配置](/zh-cn/provider-config/opencode/) |
+
+其余服务商（Qwen、GLM、MiniMax、Moonshot、xAI、Mistral、Groq 等）见侧边栏 **Cloud Providers** 中的其余条目与[其他服务商](/zh-cn/provider-config/other-30-plus-providers/)。
 
 ### 本地模型
 
@@ -72,7 +73,7 @@ Dline 通过**模型服务商**（provider）连接 AI 模型。你可以：
 | **Plan** | PLAN | 可以在 Plan 模式中选用 |
 | **Subagents** | SUB | 可以被子代理显式选用 |
 
-新建的 Profile 默认三项全选。**全部取消**表示该 Profile 不可用于任何用途，而不是“可用于所有用途”。
+新建的 Profile 默认三项全选。**全部取消**表示该 Profile 不可用于任何用途。
 
 图片生成不是用途选项，而是 Profile 中单独的 **Image source** 设置，参见[图片生成](/zh-cn/features/image-generation/)。
 
@@ -111,7 +112,7 @@ Dline 通过**模型服务商**（provider）连接 AI 模型。你可以：
 | API Key | `<data-root>/secrets/api_keys.json`，按 Profile ID 保存，不写入 Profile 配置文件 |
 | 其他服务商凭据 | `<data-root>/secrets/provider_secrets.json` |
 
-`<data-root>` 默认是 `~/.dline/data`，设置 `DLINE_DIR` 后为 `<DLINE_DIR>/data`。多个 VS Code 窗口同时修改 Profile 时，Dline 会在文件锁下合并改动，并同步到其他窗口。
+`<data-root>` 默认是 `~/.dline/data`，设置 `DLINE_DIR` 后为 `<DLINE_DIR>/data`。Profile 的修改会在 VS Code 窗口之间同步。
 
 ## 常见问题
 

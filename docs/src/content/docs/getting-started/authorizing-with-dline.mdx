@@ -41,15 +41,16 @@ Connections are stored as **API Profiles**. A Profile is a complete model connec
 
 ### Cloud providers
 
+The order below is the recommended order: the providers listed first are the ones worth starting with.
+
 | Provider | Best for | Setup guide |
 | --- | --- | --- |
-| **OpenRouter** | Many vendors' models with one key | [Setup](/provider-config/openrouter/) |
-| **Anthropic** | Direct Claude access | [Setup](/provider-config/anthropic/) |
-| **Claude Code** | Claude Max/Pro subscription | [Setup](/provider-config/anthropic/) |
-| **OpenAI** | GPT models | [Setup](/provider-config/openai/) |
-| **Google Gemini** | Gemini models | [Setup](/provider-config/google-gemini/) |
-| **AWS Bedrock** | Models billed through your AWS account | [Setup](/provider-config/aws-bedrock/api-key/) |
-| **DeepSeek** | Good value | [Setup](/provider-config/deepseek/) |
+| **[DeepSeek](https://www.deepseek.com/)** | Fast responses and low unit cost make it a good task-execution model for everyday coding | [Setup](/provider-config/deepseek/) |
+| **[OpenAI](https://openai.com/)** | Slower responses and a more defensive approach, suited to architecture design and code review; you can also sign in with a ChatGPT subscription | [Setup](/provider-config/openai/) |
+| **[OpenRouter](https://openrouter.ai/)** | Compare many vendors' models with one key, for model selection or per-task routing | [Setup](/provider-config/openrouter/) |
+| **[OpenCode](https://opencode.ai/)** | One gateway that resells paid models from several vendors, on pay-as-you-go or a subscription, so switching models needs no new key | [Setup](/provider-config/opencode/) |
+
+The remaining providers (Qwen, GLM, MiniMax, Moonshot, xAI, Mistral, Groq, and others) are listed under **Cloud Providers** in the sidebar and in [Other providers](/provider-config/other-30-plus-providers/).
 
 ### Local models
 
@@ -72,7 +73,7 @@ Each Profile has three **Profile usage** checkboxes, shown as badges on the card
 | **Plan** | PLAN | Can be selected in Plan mode |
 | **Subagents** | SUB | Can be selected explicitly by subagents |
 
-New Profiles have all three checked. **Unchecking all of them** means the Profile cannot be used for anything, not that it can be used everywhere.
+New Profiles have all three checked. **Unchecking all of them** means the Profile cannot be used for anything.
 
 Image generation is not a usage option; it is a separate **Image source** setting on the Profile. See [Image generation](/features/image-generation/).
 
@@ -111,7 +112,7 @@ A named subagent can name a Profile with `profile` in its YAML, or you can pick 
 | API keys | `<data-root>/secrets/api_keys.json`, keyed by Profile ID and never written to the Profile configuration file |
 | Other provider credentials | `<data-root>/secrets/provider_secrets.json` |
 
-`<data-root>` defaults to `~/.dline/data`, or `<DLINE_DIR>/data` when `DLINE_DIR` is set. When several VS Code windows change Profiles at the same time, Dline merges the changes under a file lock and syncs them to the other windows.
+`<data-root>` defaults to `~/.dline/data`, or `<DLINE_DIR>/data` when `DLINE_DIR` is set. Profile changes sync across VS Code windows.
 
 ## Troubleshooting
 

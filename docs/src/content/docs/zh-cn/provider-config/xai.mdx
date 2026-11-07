@@ -3,7 +3,7 @@ title: xAI
 description: 获取 xAI API Key，并在 Dline 中配置 Grok 模型。
 ---
 
-import { Aside, Steps } from "@astrojs/starlight/components"
+import { Steps } from "@astrojs/starlight/components"
 
 xAI 通过自有 API 平台提供 Grok 模型系列。在 Dline 的 **Provider** 中显示为 **xAI**。
 
@@ -57,13 +57,10 @@ Dline 把请求发往 `https://api.x.ai/v1`。
 
 xAI 卡片没有思考控件，因为推理等级由模型 ID 决定：名字带 `reasoning` 的模型总是推理，带 `non-reasoning` 的模型从不推理。在 **Model** 下按需要选择变体即可。
 
-<Aside>
-Dline 不显示 Grok 4 系列的推理内容。这些模型流式输出的思考片段只是把答案再说一遍，并不解释过程，显示出来只会让聊天区变吵。
-</Aside>
 
 ## 提示缓存
 
-声明了 `supportsPromptCache` 的模型会复用已缓存的前缀。Dline 在用量面板中单独统计缓存部分的输入，因此重复的系统提示词与工作区上下文按缓存价计费，而不是按完整输入价计费。
+支持提示缓存的模型会复用已缓存的前缀。Dline 在用量面板中单独统计缓存部分的输入，因此重复的系统提示词与工作区上下文按缓存价计费，而不是按完整输入价计费。
 
 ## 常见问题
 
@@ -73,4 +70,3 @@ Dline 不显示 Grok 4 系列的推理内容。这些模型流式输出的思考
 | 返回 `403`，提到模型或 team | 该 team 未获得这个模型的权限，或没有额度。到控制台检查模型权限与账单状态。 |
 | 选择某个模型后返回 `404` | 该账号下不存在这个模型 ID。请从列表中选择，不要手动输入 ID。 |
 | 返回 `429` | 账号触发速率限制。稍后重试，或减少任务发送的上下文量。 |
-| 聊天区从不出现推理内容 | Grok 4 系列的预期行为。推理内容是有意隐藏的，回答本身不受影响。 |

@@ -18,9 +18,7 @@ Dline never commits to your project repository. Instead it keeps a separate "sha
 | Item | Details |
 |---|---|
 | Location | `<documents-root>/checkpoints/<workspace-path-hash>/.git`. `<documents-root>` defaults to `dline` inside your system Documents folder and can be overridden with the `DLINE_DOCS_DIR` environment variable |
-| Working tree | The shadow repository's `core.worktree` points at your project folder, so it reads and restores your project files directly |
-| Commit identity | Commits use a dedicated identity, **Dline Checkpoint**, with commit signing disabled; your Git user configuration is neither read nor changed |
-| Sharing | All tasks in the same workspace share one shadow repository; every checkpoint commit is tagged with the task it belongs to |
+| Sharing | All tasks in the same workspace share one shadow repository |
 
 Checkpoints therefore do **not** create commits, branches, or staged changes in your project repository. Restoring a checkpoint does, however, rewrite workspace files by design — read the [restore rules](#restore-rules) below.
 
@@ -30,11 +28,11 @@ Checkpoints require Git on your machine. Without it the task header shows "Git m
 
 ## When checkpoints are saved
 
-- **When a task starts**: the first request records a baseline snapshot of the workspace. The first tool that may modify the workspace waits for the baseline; read-only tools can run alongside it.
-- **After each assistant turn that may modify the workspace**: whenever a turn contains a tool outside the read-only list (for example writing a file, replacing text, or running a command), Dline saves a checkpoint. Read-only tools include `read_file`, `list_files`, `search_files`, `list_code_definition_names`, `find_references`, `web_search`, `web_fetch`, `load_skill`, `load_workflow`, the browser, and question tools.
+- **When a task starts**: the first request records a baseline snapshot of the workspace.
+- **After each assistant turn that may modify the workspace**: this includes turns that write files, replace text, or run commands.
 - **When a task completes**: the completion result gets its own checkpoint, which **View Changes** uses.
 
-Checkpoints are saved per turn, not once per tool call. If staging finds no changes, the checkpoint reuses the current snapshot.
+Checkpoints are saved per turn, not once per tool call. If nothing has changed, the checkpoint reuses the current snapshot.
 
 ## Which files a snapshot contains
 

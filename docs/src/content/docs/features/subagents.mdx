@@ -107,11 +107,11 @@ To create Profiles and set their usages, see [Model configuration](/getting-star
 
 ## Automatic context compaction
 
-With [Auto Compact](/features/auto-compact/) enabled, subagents use the same trigger, reserve, and Maximum context settings as the main task, applied to their own model's context window. A subagent summarizes older context with its own Profile and continues working instead of being forced to finish at 80% usage. Compaction makes additional model requests and can incur usage charges.
+With [Auto Compact](/features/auto-compact/) enabled, subagents use the same trigger, reserve, and Maximum context settings as the main task, applied to their own model's context window. A subagent summarizes older context with its own Profile and continues working. Compaction makes additional model requests and can incur usage charges.
 
-The summary and compaction state stay in memory only; restarting the extension does not restore the compacted subagent conversation. Cancellation stops an in-flight compaction, while a timeout or **Finish** request still asks the subagent to return its findings. If compaction fails, the run reports a failure rather than treating a missing summary as success.
+The summary and compaction state stay in memory only; restarting the extension does not restore the compacted subagent conversation. Cancellation stops an in-flight compaction, while a timeout or **Finish** request still asks the subagent to return its findings. If compaction fails, the run reports a failure.
 
-With Auto Compact disabled, the existing 80% finish rule remains in effect. The final-result budget below is unchanged.
+With Auto Compact disabled, a subagent finishes at the 80% context-usage threshold. The final-result budget is configured separately, as described below.
 
 ## Output budget for the final result
 
@@ -122,7 +122,7 @@ With Auto Compact disabled, the existing 80% finish rule remains in effect. The 
 - a positive integer is a fixed token count, for example `10240`;
 - the effective budget is at least 512 tokens, even if less context remains in the main task.
 
-The budget is written into the subagent's prompt, and anything beyond it is truncated when the result is returned. It limits only the final result, not the individual requests the subagent makes along the way.
+Anything beyond the budget is truncated when the result is returned. This budget applies only to the final result.
 
 ## Approval
 
@@ -142,4 +142,4 @@ Run statistics include tool calls, elapsed time, tokens, and cost; subagent usag
 
 ## How this differs from `spawn_task`
 
-`spawn_task` is a separate tool that creates an independent new task; it is not part of the subagent feature. Subagents cannot delegate to further subagents.
+Ask Dline to use `spawn_task` when you need a new task with its own conversation and progress records. Use subagents when you want findings brought back into the current task. See the [Tools reference](/tools-reference/all-dline-tools/) for availability requirements.

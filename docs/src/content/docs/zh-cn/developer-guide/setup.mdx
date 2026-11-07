@@ -136,9 +136,9 @@ npm run vsix:vscode-marketplace
 该命令沿用上表的渠道规则。没有发布标签时，可以构建使用正式版扩展身份的本地测试包：
 
 ```bash
-npm run vsix:vscode-marketplace -- --channel ci --out dist/tuvokyangdline.dline.vsix
+npm run vsix:vscode-marketplace -- --channel ci --out dist/tuvokyangdline.dline-main.vsix
 ```
 
-发布者在编译扩展之前替换，完成后恢复源码清单和 README。Marketplace 正式版与预发布版使用 `tuvokyangdline.dline`，Insiders 使用 `tuvokyangdline.dline-insiders`。不同发布者对应不同扩展 ID，不会自动更新旧发布者的安装。
+发布者与包名在编译扩展之前替换，完成后恢复源码清单和 README。`tuvokyang.dline` 仍是源码清单与 Open VSX 使用的规范扩展 ID。由于 Marketplace 拒绝已被其他发布者占用的包名，其正式版与预发布版使用 `tuvokyangdline.dline-main`，Insiders 使用 `tuvokyangdline.dline-insiders`。不同发布者或包名对应不同扩展 ID，不会自动更新另一 ID 的既有安装。
 
 两个本地命令都只编译和打包。VS Code Marketplace 上传必须通过 GitHub Actions，不能在本地执行发布命令。发布工作流启用两个市场，分别构建对应发布者的 VSIX，并在自动发布前测试各自的最终产物。两个市场分别接收自己的 artifact 和 SHA-256，不能在测试后重新打包或改写清单。需要分别核对各市场的结果：汇总发布阶段只要求至少一个市场成功。

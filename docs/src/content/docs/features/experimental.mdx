@@ -1,0 +1,62 @@
+---
+title: Experimental Features
+description: Find Dline's current rollout features, the requirement to enable all Dline and host telemetry, and each feature's settings and limits.
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+This section introduces experimental features released in stages.
+
+## Participation requirements
+
+In a regular release build, all of these conditions must hold:
+
+1. In **Dline Settings → About → Error and usage reporting**, enable both telemetry options:
+   - **Allow usage reporting**;
+   - **Allow error reporting**.
+2. Enable **telemetry in VS Code, VSCodium, or your other compatible host**. Search the host settings for **Telemetry: Telemetry Level** and set `telemetry.telemetryLevel` to **all**. `off`, `crash`, and `error` do not meet the participation requirements.
+3. The host must actually permit extension telemetry. Some distributions or organization policies disable it; setting the value to `all` does not override those restrictions.
+
+<Aside type="caution">
+Once the participation requirements are met, access is granted in stages based on your version, the service's rollout selection, and service availability. When you receive access, select or enable the features you want at their settings entries.
+</Aside>
+
+Participation is your choice. You do not need to enable all telemetry for ordinary features if you do not want to participate; rollout features will be unavailable. See [Telemetry and Issue Diagnostics](/troubleshooting/telemetry/) for reporting contents and how to turn reporting off.
+
+## Current rollout features
+
+| Feature | Actual settings entry | Current status |
+| --- | --- | --- |
+| Git worktrees | **Settings → Features → Editor → Worktrees** | Manage separate Git worktrees for parallel tasks |
+| Account | **Settings → Features → Experimental → Account** | Early rollout of sign-in, account views, and billing entries |
+| External File Checkpoints | **Settings → Features → Experimental → External File Checkpoints** | Reserved setting; not connected to file restoration outside the workspace |
+| [Chat folding](/features/chat-folding/) | **Settings → General → Chat folding** | Group chat activity rows at the selected level |
+| Away Mode | **Settings → Features → Experimental → Away Mode** | Let the current task continue within its existing scope while you cannot reply |
+
+
+## Git worktrees
+
+Once offered and enabled, **Worktrees** provides a current-branch or worktree entry on the start screen when no task is active. It supports creating, switching, deleting, and merging worktrees.
+
+The entry requires a single workspace opened directly at a Git repository root. It is not shown for multi-root workspaces or a workspace opened only at a repository subdirectory. Worktrees isolate project files; they do not resolve branch merge conflicts for you. Check uncommitted changes before switching, deleting, or merging.
+
+## Account
+
+Account navigation and sign-in entries appear after rollout access is granted and **Account** is enabled. Account features open progressively in rollout batches.
+
+## External File Checkpoints
+
+**External File Checkpoints** is currently a reserved setting. Backup and restoration of files outside the workspace are not connected. Do not rely on it to protect external files even when the setting is visible and enabled.
+
+This does not change the existing scope of ordinary [workspace checkpoints](/core-workflows/checkpoints/); the two are separate capabilities.
+
+## Chat folding
+
+Chat folding is a rollout feature under **Settings → General → Chat folding**, with no folding selected by default. See the [Chat Folding guide](/features/chat-folding/) for its four presentation levels, expansion controls, and limits.
+
+
+## Away Mode
+
+**Enable Away Mode** and **Automatic Away Mode** are both off by default. Once offered, enable the main option and send `/away` with your task message to enter. The automatic option applies only to new ordinary questions that remain unanswered for ten minutes after it is enabled.
+
+Away Mode is not unlimited auto-approval or a sandbox. See [Away Mode](/features/away-mode/) for entry, exit, and approval boundaries.

@@ -11,11 +11,11 @@ For providers that report account usage, Dline shows a usage chip in the input t
 
 | Provider | What is shown | How it is read |
 |---|---|---|
-| **OpenAI Codex** (ChatGPT sign-in) | Quota windows such as `5 hour` and `7 day`, plus reset cards when the account has them | Once per Profile, then on demand with **Refresh** |
+| **OpenAI Codex** (ChatGPT sign-in) | Quota windows such as `5 hour` and `7 day`, plus reset cards when the account has them | Automatically about every 60 seconds while the Dline view is visible, or on demand with **Refresh** |
 | **Claude Code** (Claude sign-in) | Quota windows such as `5 hour`, `This week`, and per-model weekly limits | Once per Profile, then on demand with **Refresh** |
 | **DeepSeek** | Remaining account balance | Every 60 seconds while the Dline view is visible |
 
-Subscription usage endpoints count against the same account that serves your conversations, so Codex and Claude Code are not polled on a timer. Balance polling pauses while the Dline view is hidden and resumes when it becomes visible again.
+Automatic refresh of OpenAI Codex usage and DeepSeek balance pauses while the Dline view is hidden and resumes when it becomes visible again. Claude Code usage queries consume subscription quota, so they are not polled on a timer; after the first reading, use **Refresh** to update them manually.
 
 OpenRouter shows its key balance in the Profile editor, next to the API key field, rather than in the toolbar.
 

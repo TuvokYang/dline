@@ -7,11 +7,19 @@ import { Aside } from "@astrojs/starlight/components"
 
 Every conversation in Dline is a **task**. A task keeps its full conversation record, so you can reopen it, continue it, or delete it at any time.
 
-## How tasks are stored
+<span id="task-records"></span>
 
-- Each task has its own folder that stores the UI messages and the conversation sent to the model separately.
-- The index of all tasks lives in `<documents-root>/tasks/taskHistory.db` (`<documents-root>` defaults to `dline` inside your system Documents folder and can be overridden with `DLINE_DOCS_DIR`).
-- After context compaction, what is sent to the model gets shorter, but the stored conversation record stays complete.
+## Persistent task records
+
+Dline saves task records automatically on your machine. Each task keeps its own:
+
+- **Conversation**: your requests, model replies, and tool results, so you can review the discussion and changes.
+- **Execution records**: saved command and subagent output, execution states, and retry records, so you can see what ran and what still needs attention.
+- **Progress and configuration**: task state, the to-do list, and model selection, so you can continue the same task when you return.
+
+Task records remain available after you close a panel or restart the editor. Open **History**, find the task, and select it to review its saved conversation and progress. See "Resuming a task" below for continuing execution.
+
+After context compaction, the summary is used for later model requests and the original conversation remains in task history.
 
 ## Starting a new task
 
@@ -26,7 +34,7 @@ While a task runs, the top of the panel shows usage information:
 
 - **In** / **Out**: input and output tokens;
 - **RPM**, **TPM**, **Hit**: request rate, token rate, and cache hit rate, shown when the data is available;
-- **Cost**: shown only when the current model has non-zero pricing. It comes from the value the provider reports or is estimated from model pricing, and is not your provider's final bill.
+- **Cost**: shown when the current model has non-zero pricing. It comes from the value the provider reports or is estimated from model pricing; final charges follow your provider's bill.
 
 Expand the task header to see a context usage bar with the tokens used and the model's context window size. Hover over the bar to open the **Context Window** panel with **Used**, **Remaining**, **Total**, and a percentage.
 
@@ -58,6 +66,8 @@ If tasks are missing from the list, or **Workspace Only** hides tasks of the cur
 | **Delete** | Delete the task. A favorited task cannot be deleted individually |
 | **Open in New Window** | Open the task in a new window |
 | **Export** | Export the task from the expanded row |
+
+Deleting a task removes its saved conversation and execution records. Use **Export** first if you want to keep a copy of the conversation.
 
 ### Bulk deletion
 

@@ -3,33 +3,55 @@ title: Installing Dline
 description: Install the Dline extension in VS Code or a compatible editor.
 ---
 
-import { Aside, Steps } from "@astrojs/starlight/components"
+import { Steps } from "@astrojs/starlight/components"
 
 Dline ships as an editor extension and requires VS Code 1.134.0 or newer.
 
 ## Install from the extension marketplace
 
+### Open VSX
+
+In an editor that uses Open VSX, such as Windsurf or VSCodium:
+
 <Steps>
 
 1. Press `Ctrl+Shift+X` (`Cmd+Shift+X` on macOS) to open the Extensions view.
 
-2. Search for `Dline`.
+2. Search for `Dline` and confirm that the publisher is `tuvokyang`.
 
-3. Click **Install** on the Dline extension.
-
-4. Click the Dline icon in the activity bar to open the Dline panel.
-
-5. Configure a model provider in Dline settings. See [Model configuration](/getting-started/authorizing-with-dline/).
+3. Click **Install** on **Dline**.
 
 </Steps>
 
-<Aside>
-Editors such as Windsurf and VSCodium use the Open VSX registry. The install flow is the same.
-</Aside>
+### VS Code Marketplace
+
+In VS Code:
+
+<Steps>
+
+1. Press `Ctrl+Shift+X` (`Cmd+Shift+X` on macOS) to open the Extensions view.
+
+2. Search for `Dline (Stable)` and confirm that the publisher is `tuvokyangdline`.
+
+3. Click **Install** on **Dline (Stable)**.
+
+</Steps>
+
+After installation, click the Dline icon in the activity bar to open the panel, then configure a model provider in Dline settings. See [Model configuration](/getting-started/authorizing-with-dline/).
 
 ## Install from a VSIX file
 
-After you obtain a `.vsix` file, run **Extensions: Install from VSIX...** from the Command Palette and select the file, or run the following in a terminal:
+<Steps>
+
+1. Open [GitHub Releases](https://github.com/TuvokYang/Dline/releases) and select the version you want to install.
+
+2. Under **Assets**, download the `.vsix` package, not a source-code archive.
+
+3. In your editor's Command Palette, run **Extensions: Install from VSIX...** and select the downloaded `.vsix` file.
+
+</Steps>
+
+You can also install it from a terminal:
 
 ```bash
 code --install-extension <vsix-file>

@@ -1,15 +1,28 @@
 ---
 title: 使用斜杠命令
-description: 在输入框中用 / 触发内置命令、工作流和技能，了解每个命令实际做什么。
+description: 在输入框中选择斜杠命令，了解自动补齐的调用前缀，以及内置命令、工作流、技能和 MCP 提示词的用法。
 ---
 
 import { Aside } from "@astrojs/starlight/components"
 
-在输入框中输入 `/` 会弹出命令建议菜单，列出内置命令、已启用的工作流和技能。从菜单中选择命令时，输入框中会插入 `/cmd:<名称>` 形式的文本；你也可以直接输入不带前缀的内置命令名，例如 `/newtask`。
+在输入框中输入 `/`，会弹出建议菜单，按类型列出内置命令、已启用的工作流和技能，以及可用的 MCP 提示词。继续输入名称可以筛选，例如 `/rev` 会筛选名称以 `rev` 开头的条目。
 
-<Aside>
-每条消息只处理**第一个**斜杠命令，后面的斜杠命令会被当作普通文本。
-</Aside>
+## 自动补齐调用前缀
+
+**从菜单中选择条目时，Dline 会按类型自动补齐前缀，不需要你手工输入。** 菜单显示的是名称，实际调用形式如下：
+
+| 菜单分组 | 名称示例 | 自动补齐后的调用形式 |
+| --- | --- | --- |
+| **Default Commands** | `newtask` | `/cmd:newtask` |
+| **Workflows** | `review` | `/workflow:review` |
+| **Skills** | `review` | `/skills:review` |
+| **MCP Prompts** | `server:prompt` | `/mcp:server:prompt` |
+
+例如，已经启用名为 `review` 的工作流时，输入 `/rev`，在 **Workflows** 中选择 `review`，Dline 就会使用 `/workflow:review`。你可以接着填写“检查这次修改中的错误路径”，再发送消息。选择菜单项不会立即执行。
+
+前缀用于区分命令类型：同名的工作流和技能分别使用 `/workflow:review` 与 `/skills:review`。
+
+也可以直接手工输入完整调用形式。内置命令还支持 `/newtask`、`/compact` 等不带类型前缀的写法；调用工作流、技能或 MCP 提示词时，使用对应前缀，或直接从菜单选择。
 
 ## 内置命令
 
@@ -24,7 +37,7 @@ import { Aside } from "@astrojs/starlight/components"
 
 ### `/newtask`
 
-Dline 会先生成一份交接摘要并展示给你预览。你可以据此创建新任务，也可以选择继续当前对话。输入该命令不会立即强制开启新任务。
+Dline 会先生成一份交接摘要并展示给你预览。你可以据此创建新任务，也可以选择继续当前对话。
 
 适合在当前任务上下文已经很长、但工作还要继续时使用。
 
@@ -40,7 +53,7 @@ Dline 会根据对话中实际表达过的偏好，在工作区的 `.agents/rule
 
 ### `/deep-planning`
 
-根据当前提示词配置，命令会使用四阶段或五阶段的指令：先调研（五阶段版本会把读取文件和终端调研分开），必要时提出澄清问题，再写出计划文档，最后创建实施任务。详见 [Plan 与 Act](/zh-cn/core-workflows/plan-and-act/#deep-planning)。
+在编码前用这个命令调研代码库，必要时提出澄清问题，再写出计划文档并创建用于实施的后续任务。详见 [Plan 与 Act](/zh-cn/core-workflows/plan-and-act/#deep-planning)。
 
 ### `/explain-changes`
 
@@ -61,8 +74,12 @@ Dline 会和你一起整理问题标题、现象、复现步骤等字段，并�
 - 工作区：`.agents/workflows/`；
 - 全局：`<documents-root>/workflows/`（`<documents-root>` 默认是系统“文档”目录下的 `dline`，可用 `DLINE_DOCS_DIR` 覆盖）。
 
-调用方式是 `/workflow:<文件名>`（文件名不含扩展名），为兼容旧用法也可以直接输入 `/<文件名>`。工作流文件不需要 YAML frontmatter。可以在 **Manage Dline Rules & Workflows** 中启用或停用某个工作流。
+从 **Workflows** 菜单选择时，Dline 自动补齐 `/workflow:`；手工调用时使用 `/workflow:<名称>`（文件名不含扩展名）。可以在 **Manage Dline Rules & Workflows** 中启用或停用某个工作流，编写方式参见[工作流](/zh-cn/customization/workflows/)。
 
 ## 技能
 
-已启用的技能会出现在建议菜单中，用 `/skills:<名称>` 调用时，技能的说明会直接注入当前任务。技能的编写与存放位置参见[技能](/zh-cn/customization/skills/)。
+已启用的技能会出现在 **Skills** 菜单中，选择时自动补齐 `/skills:`。也可以手工输入 `/skills:<名称>`，把该技能的说明加入当前任务。技能的编写与存放位置参见[技能](/zh-cn/customization/skills/)。
+
+## MCP 提示词
+
+已连接且启用的 MCP 服务器提供提示词时，可在 **MCP Prompts** 菜单中选择，Dline 会自动补齐 `/mcp:<服务器名>:<提示词名>`。这会取得该提示词并加入当前任务；MCP 的连接与启用方式参见 [MCP](/zh-cn/mcp/mcp-overview/)。

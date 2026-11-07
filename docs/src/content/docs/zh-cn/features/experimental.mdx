@@ -1,0 +1,62 @@
+---
+title: 实验性功能
+description: 查看 Dline 当前灰度功能、开启全部遥测与宿主遥测的参与条件，以及各项功能的实际入口和限制。
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+本节介绍按批次开放的实验性功能。
+
+## 参与条件
+
+普通发行版需要同时满足以下条件：
+
+1. 在 **Dline Settings → About → Error and usage reporting** 中，开启全部两项遥测：
+   - **Allow usage reporting**：允许用量上报；
+   - **Allow error reporting**：允许错误上报。
+2. 开启 **VS Code、VSCodium 或其他兼容宿主的遥测**。在宿主设置中搜索 **Telemetry: Telemetry Level**，将 `telemetry.telemetryLevel` 设为 **all**。`off`、`crash` 或 `error` 均不满足参与条件。
+3. 宿主必须实际允许扩展使用遥测。某些发行版或组织策略可能禁用它；只把设置值改成 `all`，不能绕过宿主或组织的限制。
+
+<Aside type="caution">
+满足参与条件后，功能按当前版本、服务端灰度范围和服务可用性分批开放。获得资格后，在相应入口选择或启用所需功能。
+</Aside>
+
+你可以自行决定是否参与。不愿开启全部遥测时，无需为了普通功能而开启；灰度功能将不可用。上报内容和关闭方式见[遥测与 Issue 诊断](/zh-cn/troubleshooting/telemetry/)。
+
+## 当前灰度功能
+
+| 功能 | 实际设置入口 | 当前状态 |
+| --- | --- | --- |
+| Git 工作树（Worktrees） | **Settings → Features → Editor → Worktrees** | 为并行任务管理独立的 Git 工作树 |
+| 账户（Account） | **Settings → Features → Experimental → Account** | 账户登录、账户视图与账单入口的早期灰度 |
+| 工作区外文件检查点（External File Checkpoints） | **Settings → Features → Experimental → External File Checkpoints** | 预留选项，尚未接入工作区外文件恢复 |
+| [聊天折叠（Chat folding）](/zh-cn/features/chat-folding/) | **Settings → General → Chat folding** | 按所选级别聚合聊天中的活动记录 |
+| 离开模式（Away Mode） | **Settings → Features → Experimental → Away Mode** | 暂时无法回复时，让当前任务按已有范围继续工作 |
+
+
+## Git 工作树
+
+灰度开放并启用 **Worktrees** 后，可以在没有活动任务的起始界面，从当前分支或工作树入口管理工作树，进行创建、切换、删除或合并。
+
+该入口要求直接打开单个 Git 仓库根目录；多根工作区或只打开仓库子目录时不会显示。工作树用于隔离项目文件，不会自动替你解决分支合并冲突。切换、删除或合并前，请先检查未提交的改动。
+
+## 账户
+
+获得灰度资格并启用 **Account** 后，会显示账户导航和登录入口。账户功能随灰度批次逐步开放。
+
+## 工作区外文件检查点
+
+**External File Checkpoints** 当前只有预留设置，尚未接入工作区外文件的备份和恢复。即使设置可见并已开启，也不能据此依赖它保护工作区外文件。
+
+这不影响普通[工作区检查点](/zh-cn/core-workflows/checkpoints/)的既有范围；请不要将两者混为一项功能。
+
+## 聊天折叠
+
+聊天折叠属于灰度功能，入口为 **Settings → General → Chat folding**，默认不折叠。四种展示级别、展开控制和限制见[聊天折叠专页](/zh-cn/features/chat-folding/)。
+
+
+## 离开模式
+
+**Enable Away Mode** 与 **Automatic Away Mode** 默认都关闭。获得开放资格后，先开启主选项，再用 `/away` 加任务正文进入；自动选项只针对开启后新出现、十分钟未回答的普通问题。
+
+离开模式不是无限自动批准或沙箱。具体进入、退出和审批边界见[离开模式](/zh-cn/features/away-mode/)。

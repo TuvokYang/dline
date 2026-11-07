@@ -12,7 +12,9 @@ import SectionTabs from "./SectionTabs.astro"
 
 <div class="dline-header">
 	<div class="dline-header-bar"><Default /></div>
-	<SectionTabs />
+	<div class="dline-header-tools">
+		<SectionTabs />
+	</div>
 </div>
 
 <style>
@@ -21,11 +23,21 @@ import SectionTabs from "./SectionTabs.astro"
 		flex-direction: column;
 		height: 100%;
 	}
+	.dline-header-tools {
+		display: flex;
+		flex: 1;
+		min-height: 0;
+	}
 	/* Keeps the default header's vertical centering: padding above and below the bar. */
 	.dline-header-bar {
 		flex: none;
 		height: calc(var(--dline-nav-bar-height) - 2 * var(--sl-nav-pad-y));
 		margin-block-end: var(--sl-nav-pad-y);
+	}
+	@media (max-width: 30rem) {
+		.dline-header-tools :global(.section-tabs ul) {
+			gap: 0.75rem;
+		}
 	}
 </style>
 

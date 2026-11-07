@@ -136,9 +136,9 @@ npm run vsix:vscode-marketplace
 This command uses the same channel rules above. For a local stable-identity test package without a release tag:
 
 ```bash
-npm run vsix:vscode-marketplace -- --channel ci --out dist/tuvokyangdline.dline.vsix
+npm run vsix:vscode-marketplace -- --channel ci --out dist/tuvokyangdline.dline-main.vsix
 ```
 
-The publisher is replaced before compiling the extension, then the source manifest and README are restored. Stable and pre-release Marketplace packages use `tuvokyangdline.dline`; Insiders uses `tuvokyangdline.dline-insiders`. A different publisher is a different extension ID, not an automatic update of an installation from the old publisher.
+The publisher and package name are replaced before compiling the extension, then the source manifest and README are restored. `tuvokyang.dline` remains the canonical extension ID used by the source manifest and Open VSX. Because the Marketplace rejects a package name another publisher already owns, its stable and pre-release packages use `tuvokyangdline.dline-main`, and Insiders uses `tuvokyangdline.dline-insiders`. A different publisher or package name is a different extension ID, not an automatic update of an installation with another ID.
 
 Both local commands only build and package. VS Code Marketplace uploads must run through GitHub Actions, not a local publish command. The release workflows enable both registries, build separate publisher-specific VSIX files, and test each final package before automatic publication. Each registry receives its own artifact and SHA-256; a package must not be rebuilt or have its manifest rewritten after testing. Check each registry's result separately: the aggregate publishing stage succeeds when at least one registry succeeds.

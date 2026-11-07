@@ -11,11 +11,11 @@ import { Aside } from "@astrojs/starlight/components"
 
 | 服务商 | 显示内容 | 读取方式 |
 |---|---|---|
-| **OpenAI Codex**（ChatGPT 登录） | `5 hour`、`7 day` 等额度窗口；账户有重置卡时一并显示 | 每个 Profile 读取一次，之后通过 **Refresh** 手动刷新 |
+| **OpenAI Codex**（ChatGPT 登录） | `5 hour`、`7 day` 等额度窗口；账户有重置卡时一并显示 | Dline 视图可见时约每 60 秒自动刷新，也可通过 **Refresh** 手动刷新 |
 | **Claude Code**（Claude 登录） | `5 hour`、`This week` 以及按模型区分的周额度 | 每个 Profile 读取一次，之后通过 **Refresh** 手动刷新 |
 | **DeepSeek** | 账户剩余余额 | Dline 视图可见时每 60 秒刷新一次 |
 
-订阅用量接口与对话共用同一个账户额度，因此 Codex 和 Claude Code 不做定时轮询。余额轮询在 Dline 视图隐藏时暂停，重新可见后恢复。
+OpenAI Codex 用量和 DeepSeek 余额的自动刷新在 Dline 视图隐藏时暂停，重新可见后恢复。Claude Code 的用量查询会占用订阅额度，因此不做定时轮询；首次读取后可通过 **Refresh** 手动更新。
 
 OpenRouter 的密钥余额显示在 Profile 编辑器的 API Key 输入框旁，而不在工具栏中。
 

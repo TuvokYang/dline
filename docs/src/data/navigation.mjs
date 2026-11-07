@@ -25,12 +25,7 @@ export const sidebar = [
             {
                 label: "Quick Start",
                 translations: { "zh-CN": "快速使用" },
-                items: [
-                    "dline-overview",
-                    "getting-started/installing-dline",
-                    "usage/ide",
-                    "getting-started/migration-cline-to-dline",
-                ],
+                items: ["dline-overview", "getting-started/installing-dline", "usage/ide"],
             },
             {
                 label: "Models",
@@ -44,9 +39,16 @@ export const sidebar = [
                         label: "Cloud Providers",
                         translations: { "zh-CN": "云服务商" },
                         collapsed: true,
+                        // Ordered by recommendation, not by vendor: DeepSeek first for value, then
+                        // OpenAI and Anthropic, then the aggregator gateways the guide suggests for
+                        // comparing or routing models. The remaining vendors follow alphabetically so
+                        // the tail stays predictable.
                         items: [
-                            "provider-config/qwen",
+                            "provider-config/deepseek",
+                            "provider-config/openai",
                             "provider-config/anthropic",
+                            "provider-config/openrouter",
+                            "provider-config/opencode",
                             {
                                 label: "Amazon Bedrock",
                                 collapsed: true,
@@ -56,13 +58,10 @@ export const sidebar = [
                                     "provider-config/aws-bedrock/cli-profile",
                                 ],
                             },
-                            "provider-config/deepseek",
                             "provider-config/google-gemini",
                             "provider-config/minimax",
                             "provider-config/moonshot",
-                            "provider-config/openai",
-                            "provider-config/opencode",
-                            "provider-config/openrouter",
+                            "provider-config/qwen",
                             "provider-config/xai",
                             "provider-config/zai",
                             "provider-config/other-30-plus-providers",
@@ -79,7 +78,7 @@ export const sidebar = [
                     "core-workflows/using-commands",
                     "core-workflows/vscode-commands",
                     "core-workflows/task-management",
-                    "features/away-mode",
+                    "core-workflows/conversation-trajectory",
                     "core-workflows/checkpoints",
                     "features/auto-compact",
                 ],
@@ -115,16 +114,23 @@ export const sidebar = [
                 ],
             },
             {
+                label: "Experimental Features",
+                translations: { "zh-CN": "实验性功能" },
+                items: ["features/experimental", "features/chat-folding", "features/away-mode"],
+            },
+            {
                 label: "Settings & Troubleshooting",
                 translations: { "zh-CN": "设置与排错" },
                 items: ["getting-started/config", "troubleshooting/networking-and-proxies", "troubleshooting/telemetry"],
             },
+            // Data handling and vulnerability reporting are part of the user-facing contract,
+            // so they sit at the end of the user guide rather than as a sibling section.
+            {
+                label: "Privacy & Security",
+                translations: { "zh-CN": "隐私与安全" },
+                items: ["privacy", "security"],
+            },
         ],
-    },
-    {
-        label: "Privacy & Security",
-        translations: { "zh-CN": "隐私与安全" },
-        items: ["privacy", "security"],
     },
     {
         label: "Developer Guide",

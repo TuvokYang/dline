@@ -1,17 +1,18 @@
 ---
 title: Dline 文档
-description: Dline 是在 VS Code 中自主完成编码任务的 AI 智能体。本站提供使用指南、隐私与安全说明以及开发指南。
+description: Dline 是功能完备的多任务自动化编程代理。本站提供使用指南、隐私与安全说明以及开发指南。
 template: splash
 hero:
-  tagline: 在 VS Code 中自主完成编码任务的 AI 智能体。读写文件、执行命令、操作浏览器、调用 MCP 工具，关键操作都由你审批。
+  tagline: 功能完备的多任务自动化编程代理。任务级多模型配置、任务状态与检查点持久化、分层能力配置、细粒度全局授权。
 ---
 
 import { CardGrid, LinkCard } from "@astrojs/starlight/components"
+
+![侧边栏运行一个任务，同时在旁边打开第二个任务；第二个任务执行工作区命令，并把其中一部分工作交给并行运行的子代理](@docs-assets/ui/docs-parallel-tasks.gif)
 
 ## 从这里开始
 
 <CardGrid>
 	<LinkCard title="使用指南" description="了解 Dline 能做什么，安装扩展并开始第一个任务。" href="/zh-cn/dline-overview/" />
-	<LinkCard title="隐私与安全" description="查看 Dline 隐私政策、报告控制和安全报告指引。" href="/zh-cn/privacy/" />
 	<LinkCard title="开发指南" description="从源码构建和调试扩展，了解架构、测试与贡献流程。" href="/zh-cn/developer-guide/setup/" />
 </CardGrid>

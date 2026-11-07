@@ -1,0 +1,31 @@
+---
+title: Chat Folding
+description: Fold activity by request round or user turn in long tasks, choose a folding level, and expand details.
+---
+
+Chat folding puts completed activity into expandable blocks so long conversations are easier to browse.
+
+## Requirements and settings
+
+Meet the telemetry participation requirements in [Experimental Features](/features/experimental/) and receive rollout access, then open **Settings → General → Chat folding**. The default level is **Standard (no folding)**.
+
+## Choose a folding level
+
+| Option | Presentation |
+| --- | --- |
+| **Standard (no folding)** | Use regular chat rows without an additional activity-folding layer |
+| **Fold activity within each request round** | Fold completed activity inside each model request round without combining requests |
+| **Fold activity between messages** | Fold completed activity between adjacent assistant messages, potentially across several request rounds |
+| **Fold the whole turn into one block** | Combine completed content across assistant messages within one user turn |
+
+Running work stays visible. Folded blocks summarize completed activity and show an error count when activity fails.
+
+## Read folded content
+
+- Click a folded block to expand its activity and inspect the original tool results.
+- To inspect details throughout the conversation, move the pointer over the chat and use **Expand all activity**. Once everything is expanded, the same button becomes **Collapse all activity**. The control appears only when foldable content exists.
+- To keep regular presentation, select **Standard (no folding)** in settings instead of merely expanding the current blocks.
+
+## Rollout access and settings
+
+If rollout access is withdrawn, chat returns to **Standard (no folding)** while keeping your chosen level.

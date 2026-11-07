@@ -5,9 +5,9 @@ description: Dline 目前的扩展方式，以及插件系统的现状。
 
 import { CardGrid, LinkCard } from "@astrojs/starlight/components"
 
-Dline 目前没有插件系统：不能安装插件，也没有公开的插件清单格式或插件 API。
+Dline 目前通过 Rules、Skills、Hooks 和 MCP 扩展行为，暂不支持安装插件包。
 
-如果需要扩展 Dline 的行为，可以使用以下已提供的机制：
+各项功能的用法见下面的指南：
 
 <CardGrid>
   <LinkCard title="Rules" description="为 Dline 提供持久的项目或个人指令。" href="/zh-cn/customization/rules/" />

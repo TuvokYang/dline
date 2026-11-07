@@ -71,7 +71,7 @@ Use this command when the task history list is missing tasks, or when **Workspac
 The rebuild changes the index as follows:
 
 - An entry whose task folder still exists is kept unchanged, including its workspace, favorite flag, and completion state.
-- A task folder without an entry is added. Its title, time, and token usage come from the task's messages, and its workspace comes from the working directory recorded in the task's first request, so the **Workspace Only** filter includes it again.
+- A task with a folder but no history entry is added back. If its workspace can be identified, it appears under **Workspace Only** again.
 - An entry whose task folder no longer exists is removed.
 - A task folder without any messages is skipped.
 
@@ -94,8 +94,6 @@ Use this command when a visible Dline view stops rendering. It reloads every vis
 ## Other commands
 
 **Dline: Open Walkthrough** opens the Dline getting-started walkthrough in VS Code.
-
-Commands that only exist in development builds are not covered here.
 
 ## Related pages
 

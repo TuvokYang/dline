@@ -1,17 +1,18 @@
 ---
 title: Dline Docs
-description: Dline is an AI agent that completes coding tasks autonomously in VS Code. This site covers the user guide, privacy and security, and developer guide.
+description: Dline is a comprehensive multi-task automated coding agent. This site covers the user guide, privacy and security, and developer guide.
 template: splash
 hero:
-  tagline: An AI agent that completes coding tasks autonomously in VS Code. It reads and writes files, runs commands, drives a browser, and calls MCP tools, with you approving the actions that matter.
+  tagline: Comprehensive multi-task automated coding agent. Task-scoped multi-model configuration, persistent task state and checkpoints, layered capability configuration, and fine-grained global approval controls.
 ---
 
 import { CardGrid, LinkCard } from "@astrojs/starlight/components"
+
+![A task runs in the sidebar while a second task is opened beside it; the second task runs a workspace command and hands part of the work to a subagent running in parallel](@docs-assets/ui/docs-parallel-tasks.gif)
 
 ## Start here
 
 <CardGrid>
 	<LinkCard title="User Guide" description="Learn what Dline can do, install the extension, and start your first task." href="/dline-overview/" />
-	<LinkCard title="Privacy & Security" description="Review Dline's privacy policy, reporting controls, and security-reporting guidance." href="/privacy/" />
 	<LinkCard title="Developer Guide" description="Build and debug the extension from source, and learn the architecture, testing, and contribution workflow." href="/developer-guide/setup/" />
 </CardGrid>

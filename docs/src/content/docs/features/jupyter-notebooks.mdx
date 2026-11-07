@@ -44,4 +44,4 @@ The commands read the saved file. Save the notebook before running them so Dline
 
 ## Reviewing changes
 
-Dline edits `.ipynb` files by replacing text in the JSON structure. In VS Code with the Jupyter extension installed, you can review changes in the notebook diff view. The model is told to match cell JSON strings exactly, but that cannot guarantee a cell's metadata, position, and outputs stay intact every time; check the diff before approving.
+Dline edits notebooks by changing the JSON text in `.ipynb` files, which may affect cell content, metadata, position, and outputs. In VS Code with the Jupyter extension installed, review these changes in the notebook diff view before approving them.

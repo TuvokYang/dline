@@ -24,13 +24,9 @@ Tools are functions the model can call during a task. Which tools are available 
 
 ### How `replace_in_file` matches
 
-- Each SEARCH line matches a whole file line or the beginning of one. Leading indentation may be omitted, and a SEARCH line never matches from the middle of a file line.
-- A SEARCH block must match exactly one location in the file. A block that matches several locations is rejected, and the result lists the candidate line numbers.
-- Every matched line is replaced in full. REPLACE is written verbatim, so replacement lines must include their indentation.
-- A SEARCH line of the form `....... SKIP` (as many dots as the delimiter length) marks a SKIP range. The block then covers every line from the head through the nearest matching tail, and all of those lines are replaced by REPLACE.
-- A successful edit reports the original line range each block replaced, including how many lines a SKIP range removed.
+A SEARCH block must identify exactly one place in the file, matched by whole lines rather than by partial text. If several places match, the edit is rejected and the result lists the candidate line numbers, so an ambiguous edit fails instead of changing the wrong location. Matched lines are replaced in full with the text you supply, including its indentation.
 
-`replace_text` is a separate tool and is not affected by these rules.
+`replace_text` is a separate tool and does not follow these rules.
 
 ## Commands, browser, and web
 
@@ -54,8 +50,8 @@ With **Web Tools** on, some providers use their own hosted web search or fetch. 
 | `ask_followup_question` | Ask the user one question that needs an answer | Standard, Lite |
 | `qna_respond` | Answer the user's question | Standard, Lite |
 | `make_plan` | Submit a complete implementation or design plan | Standard, Lite |
-| `working_respond` | Tell the user what the next tool call does and why, reply to a queued or mid-task message, or acknowledge a correction, then keep working. Never ends the turn and must be followed by a work tool. Same tool in Plan and Act mode; calls under the old name `act_mode_respond` still run it | Standard, Lite |
-| `phase_report` | Report a finished phase: what was completed, the verification result, and the next phase. Never ends the turn; with `requires_acknowledgment` it waits for the user to acknowledge or stop. Available in Plan and Act mode; calls under the old name `status_update` still run it | Standard, Lite |
+| `working_respond` | Explain what Dline will do next and why, reply to a queued or mid-task message, or acknowledge a correction. Dline continues working after the message. Same tool in Plan and Act mode; calls under the old name `act_mode_respond` still run it | Standard, Lite |
+| `phase_report` | Report a finished phase: what was completed, the verification result, and the next phase. Dline continues working without requiring a reply. Available in Plan and Act mode; calls under the old name `status_update` still run it | Standard, Lite |
 | `generate_report` | Submit a structured report for review | Standard, Lite |
 | `attempt_completion` | Submit the final result of the task | Standard, Lite |
 | `change_todo_list` | Ask the user to approve replacing the current to-do list | Standard only; **Focus Chain** is on |

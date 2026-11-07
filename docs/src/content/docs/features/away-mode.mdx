@@ -5,7 +5,11 @@ description: Let the current task continue while you are unavailable, with expli
 
 import { Aside } from "@astrojs/starlight/components"
 
-Away Mode tells the current task to keep working within its existing scope and instructions while you are temporarily unavailable. It is not a Plan/Act switch, a global permission preset, or a setting inherited by other tasks or subagents.
+Away Mode lets the current task keep working within its existing scope and instructions while you are temporarily unavailable. The mode applies only to that task.
+
+<Aside>
+This is an [experimental feature](/features/experimental/). Rollout participation in a regular release build requires both Dline usage and error reporting, full host telemetry in VS Code, VSCodium, or your compatible host, and access granted by the rollout service.
+</Aside>
 
 ## Enable and enter
 
@@ -22,13 +26,13 @@ With the main option enabled, type `/away` with your task message and send it, o
 /away Continue the implementation and run the focused tests.
 ```
 
-Dline consumes the command token and preserves the remaining message, mentions, and attachments. The normalized command is `/cmd:away`; simply pasting text that looks like a command does not activate it. Entering again is idempotent, not a toggle.
+Your task message, file mentions, and attachments are kept. Select Away from the command menu; simply pasting command text does not activate the mode. Entering again keeps Away Mode active.
 
 ## What changes while away
 
-Each subsequent normal provider request carries a task-local reminder to proceed using the available tools and best judgment. Questions, plan acknowledgments, reports, and other non-completion turn-ending tools receive an automatic continuation response instead of waiting for your answer. Completion still requires the requested outcome and applicable verification to be finished.
+While you are away, Dline continues within the task's existing scope and instructions. Ordinary questions, plan acknowledgments, and reports proceed without waiting for your reply.
 
-Command approval follows the canonical workspace and working-directory boundary:
+Command approval depends on the workspace and the command's working directory:
 
 - Commands classified inside the workspace may proceed under the task's Away permission.
 - Commands classified outside it still require manual approval, even with other automatic approval or YOLO settings. An unanswered approval expires after one minute as **not approved**, without running the command or treating the expiry as a user denial.
@@ -38,7 +42,7 @@ Command approval follows the canonical workspace and working-directory boundary:
 The command boundary does not analyze shell syntax to infer every file or service a command might affect. Away Mode is not a sandbox and does not turn an inside-workspace working directory into a guarantee that a command has no outside effects. Keep your task instructions and command permissions appropriate to the work.
 </Aside>
 
-A displayed countdown comes from the backend's absolute deadline. Reopening does not restart it; the display reaching zero does not itself submit an answer or approve a command.
+After you reopen the task, the countdown continues toward its original deadline. Reaching zero does not itself submit an answer or approve a command.
 
 ## Stop Away Mode without stopping the task
 
@@ -49,10 +53,10 @@ The action:
 - exits only Away Mode; it does not cancel a tool, stop the task, resume it, or answer the current question;
 - does not submit, read, or clear your unsent composer draft;
 - leaves global preferences unchanged and keeps the current question or approval waiting;
-- disappears only after the backend commits the exit; a failed write leaves it available to retry.
+- disappears after the exit is saved successfully; if saving fails, you can select it again to retry.
 
 Read-only task windows display the state but disable the action. Completed tasks do not offer it.
 
-Sending normal content also ends Away Mode. Editing a draft, browsing history, an empty Resume, and a plain approval without content do not count as returning. Turning off **Automatic Away Mode** only revokes unanswered-question eligibility; it does not exit a task already away. Turning off **Enable Away Mode**, or losing the rollout, exits active modes through the backend without cancelling current work.
+Sending normal content also ends Away Mode. Editing a draft, browsing history, an empty Resume, and a plain approval without content do not count as returning. Turning off **Automatic Away Mode** only revokes unanswered-question eligibility; it does not exit a task already away. Turning off **Enable Away Mode**, or losing the rollout, exits active modes while current work continues.
 
-On the next normal provider request, a separate exit notice withdraws the earlier Away directions. Stopping the mode does not create an extra API request, cancel an in-flight one, or rewrite conversation history.
+Subsequent model requests return to normal interaction. Stopping the mode does not create an extra API request, cancel an in-flight one, or rewrite conversation history.

@@ -3,7 +3,7 @@ title: OpenCode
 description: 在 Dline 中接入 OpenCode 推理网关，用量可走预付费余额或 Go 订阅。
 ---
 
-import { Aside, Steps } from "@astrojs/starlight/components"
+import { Steps } from "@astrojs/starlight/components"
 
 OpenCode 提供一个推理网关，转售多家厂商的付费文本模型。Dline 直接与该网关通信，因此一个 Profile 就能覆盖网关提供的全部模型。
 
@@ -14,7 +14,7 @@ OpenCode 提供一个推理网关，转售多家厂商的付费文本模型。Dl
 - **Plan** 决定由哪份订阅付费，以及 Dline 读取哪一份模型目录。
 - **API Format** 决定发送请求所用的线上协议。
 
-两者独立，是因为同一份模型可以通过多种协议由网关提供。改动其中一项，不会让另一项留在过期状态。
+两者独立，是因为同一份模型可以通过多种协议由网关提供。
 
 ## 获取 API Key
 
@@ -50,9 +50,7 @@ OpenCode 提供一个推理网关，转售多家厂商的付费文本模型。Dl
 
 ## 模型
 
-Dline 从网关的模型清单端点读取该 provider 的模型集合，因此新增模型不需要等新构建。清单只提供事实，Plan 只决定读取哪一份目录，所以遇到应有的模型缺失时，先切换 **Plan**。
-
-打开 **Model** 列表时会向网关请求当前清单，所以本构建之后发布的模型无需等待版本更新就会出现。上下文档位、最大输出、能力与价格都来自该清单；Plan 覆盖范围、默认模型、思考控件与网关托管工具则由 Dline 声明，因为清单无法表达这些。
+打开 **Model** 列表会获取网关当前提供的模型，新模型无需等待 Dline 版本更新就会出现在列表中。列表包含上下文档位、最大输出、能力与价格。
 
 ## Plan
 
@@ -63,13 +61,11 @@ Dline 从网关的模型清单端点读取该 provider 的模型集合，因此�
 | OpenCode Go Plus | Go Plus 订阅，它提高了每个模型的月度额度。 |
 | OpenCode Go Teams | 工作区的 Go Teams 订阅，每位成员各自拥有独立额度。 |
 
-Plan 是一个显式设置，而不是从响应里推导出来的值。网关把 Go Plus 与 Go Teams 都报告为 Go 计划，只有这个设置能区分它们，而用量展示需要这份差异才能按对应的额度算出百分比。
-
-只有 Plan 决定读取哪一份目录。因此选错 Plan 表现为模型列表和价格不对，而不是直接报错；发现预期模型不在列表里时，先检查 Plan。
+请按实际使用的订阅套餐或按量付费方式选择 **Plan**。所选 Plan 决定模型列表与价格；如果预期模型不在列表中，请先检查 **Plan**。
 
 ## 协议
 
-Dline 从网关清单里每个模型所属的 API 家族推导协议。OpenAI 家族落在 `openai/v1` 上，该基址同时接受 Chat Completions 与 Responses，所以这两个协议都可以选；Anthropic 家族只落在 `anthropic/v1` 上。推导结果是 **默认值**，不是限制：对非原生协议，网关会在服务端做转换，所以不需要按模型所属厂商来选，也可以手动改成别的协议。
+在 **API Format** 中可以选择 **OpenAI Chat Completions**、**OpenAI Responses** 或 **Anthropic Messages**。可以调整默认选择；使用非原生协议时，网关会转换请求。
 
 | API Format | 实际端点 |
 | --- | --- |
@@ -77,38 +73,34 @@ Dline 从网关清单里每个模型所属的 API 家族推导协议。OpenAI �
 | OpenAI Responses | `https://opencode.ai/inference/openai/v1` |
 | Anthropic Messages | `https://opencode.ai/inference/anthropic/v1` |
 
-Go 订阅的 Profile 以 `https://opencode.ai/inference/go` 为基址，端点相应变为 `.../go/openai/v1` 与 `.../go/anthropic/v1`。
+Go 订阅的 Profile 使用 `https://opencode.ai/inference/go/openai/v1` 连接 OpenAI 格式，使用 `https://opencode.ai/inference/go/anthropic/v1` 连接 Anthropic Messages。
 
-当目录声明了模型的原始协议，而你选了另一种协议时，卡片会在 **API Format** 下方说明：Console 会转换你所选的协议。
+选择模型原生协议之外的协议时，卡片会在 **API Format** 下方提示 Console 会转换所选协议。
 
-如果 Profile 里存着一个本服务商无法承载的协议，或所选模型未声明的协议，请求会在发送前直接失败，不会静默改用另一种协议。
-
-<Aside>
-Dline 会发送自己的 User-Agent 和一个按 Task 生成的会话标识，网关用它做路由和提示词缓存。两者都不开放配置，会话标识跟随同一个 Task 的对话，后续续写保持同一身份。
-</Aside>
+如果 Profile 中保存的是上述三种之外的协议，请求会在发送前报错。请在 **API Format** 中重新选择上述三种格式之一。
 
 ## 思考控制
 
-卡片渲染的是所选模型自己声明的推理控件，而不是固定控件：
+可用的思考控件取决于所选模型：
 
-- 声明了强度等级的模型会显示 **Enable Thinking** 与该模型自身等级范围内的 **Thinking Level** 选择器。
-- 声明了 token 预算的模型会显示 **Enable Thinking** 与 **Thinking Budget** 选择器，候选项由其声明的最小、最大值按 1024 token 步长生成。
-- 声明了 `canDisable: false` 的模型保持思考开启，复选框无法取消。
-- 完全没有声明推理能力的模型不显示任何控件，这样 Profile 就不会存下网关会忽略的偏好。
+- 对于支持强度等级的模型，可使用 **Enable Thinking**，并在模型支持的等级中选择 **Thinking Level**。
+- 对于支持思考 token 预算的模型，可使用 **Enable Thinking**，并在模型的最小值与最大值之间按 1024 token 步长选择 **Thinking Budget**。
+- 有些模型的思考始终开启，无法取消 **Enable Thinking**。
+- 不支持思考的模型没有思考控件。
 
 ## 用量与余额
 
-Go 计划的 Profile 从 `GET https://opencode.ai/inference/go/v1/usage` 读取用量，每 60 秒刷新一次。用量限额是按模型不同的月度美元额度，三个窗口都是这个额度的比例：5 小时窗口是 **20%**，每周窗口是 **50%**，每月窗口是 **100%**。
+Go 计划的 Profile 每 60 秒刷新一次用量。用量限额是按模型不同的月度美元额度，三个窗口都是这个额度的比例：5 小时窗口是 **20%**，每周窗口是 **50%**，每月窗口是 **100%**。
 
-该端点报告的是每个窗口**已用**多少，而不是还剩多少，因此这里展示的是百分比而不是美元余额。超过 100% 是真实状态：开启 **Extra Usage** 后，达到限额会继续从按量付费余额扣费。
+用量区域显示每个窗口的**已用**百分比，而不是剩余额度或美元余额。开启 **Extra Usage** 后，达到限额会继续从按量付费余额扣费，因此已用百分比可能超过 **100%**。
 
-按量付费的 Console Profile 没有对应端点。它的用量区域会直接说明该值不可用，而不是显示一个猜测的零；当前余额请到 OpenCode 控制台查看。
+按量付费的 Console Profile 请到 OpenCode 控制台查看当前余额。Dline 的用量区域会说明该值不可用，不会将其显示为零。
 
 ### 每次请求花了多少
 
-每个响应都会在 token 用量旁报告这次请求实际花了多少：OpenAI 与 Anthropic 协议在 `usage` 里，Responses 在 `response.completed` 上。Dline 直接用这个金额作为该次任务请求的成本，因为它是唯一已经计入高峰时段、长上下文与折扣定价的数字。
+Dline 显示的单次请求费用来自网关的实际计费，已计入高峰时段、长上下文与折扣定价。
 
-这是单次请求的成本，与上面那个账户用量面板无关：用量面板仍然只显示百分比，不读取这里的任何字段。`0` 表示这次请求本身没有花钱，涵盖免费模型与 Go 在限额内的请求。
+这是单次请求的费用，与上面的账户额度使用百分比不同。费用为 `0` 表示这次请求本身没有花钱，涵盖免费模型与 Go 在限额内的请求。
 
 ## 故障排查
 
