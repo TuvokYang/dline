@@ -105,6 +105,14 @@ Trace the requested code paths without changing files. Return findings with file
 
 Profile 的创建与用途设置参见[模型配置](/zh-cn/getting-started/authorizing-with-dline/)。
 
+## 自动压缩上下文
+
+开启[自动压缩](/zh-cn/features/auto-compact/)后，子代理使用与主任务相同的触发、预留和 Maximum context 设置，按自己的模型上下文窗口计算。子代理会用自己的 Profile 汇总较早的上下文后继续工作，不再因为用量达到 80% 就被强制收尾。压缩会产生额外的模型请求，并可能产生用量费用。
+
+摘要和压缩状态只保存在运行内存中，重启扩展不会恢复已压缩的子代理对话。取消会停止正在进行的压缩；超时或点击 **Finish** 仍会要求子代理交回已有结论。压缩失败时，运行会报告失败，不会把缺失摘要当作成功继续执行。
+
+关闭自动压缩后，仍按原有的 80% 规则收尾。下文的最终结果预算不受影响。
+
 ## 最终结果的输出预算
 
 `maxOutputTokens` 限制子代理交回主任务的最终结果大小，单位是 token：

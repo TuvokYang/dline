@@ -57,7 +57,7 @@ import { HostRegistryInfo } from "@/registry"
 import { resolveLocalWebToolCapabilities } from "@/services/web-tools/LocalWebToolCapabilities"
 import { boundToolText, MAX_TOOL_RESULT_TEXT_BYTES } from "@/shared/content-limits"
 import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
-import { isNativeToolCallingConfig, isNextGenModelFamily } from "@/utils/model-utils"
+import { isNativeToolCallingConfig } from "@/utils/model-utils"
 import type { UsageToolCall } from "../../telemetry/UsageToolCalls"
 import { canonicalizeAttemptCompletionParams } from "../attempt-completion-params"
 import { partitionDeferredHostedCalls } from "../deferred-hosted-rows"
@@ -71,6 +71,12 @@ import type { AgentBaseConfig } from "./AgentConfigLoader"
 import { forwardProviderAttempt, producesUnreplayableOutput } from "./SubagentAttemptForwarding"
 import { SUBAGENT_COMPLETION_CONTRACT, SubagentBuilder } from "./SubagentBuilder"
 import { buildContextBudgetSection, resolveFinalResultTokens } from "./SubagentContextBudget"
+import {
+    compactSubagentConversation,
+    estimateSubagentContext,
+    subagentCompactTriggerOptions,
+    truncateSubagentConversation,
+} from "./SubagentContextCompaction"
 import { buildContextUsageSection, buildFinishReminder, exceedsContextConvergenceThreshold } from "./SubagentConvergenceGate"
 import type { SubagentFinishReason, SubagentProgressUpdate, SubagentRunStats } from "./SubagentExecutor"
 import {
@@ -786,7 +792,7 @@ export class SubagentRunner {
         const contextState: SubagentContextState = {
             roundContexts: new SubagentRoundContextProjection(),
         }
-        const contextManager = new ContextManager()
+        let contextManager = new ContextManager()
         const usageState: SubagentUsageState = {
             currentRequest: createEmptyRequestUsageState(),
         }
@@ -1008,20 +1014,54 @@ export class SubagentRunner {
                     })
                 }
 
-                if (
+                const autoCompactEnabled = this.baseConfig.services.stateManager.getGlobalSettingsKey("useAutoCondense") === true
+                if (autoCompactEnabled && !this.finishRequested) {
+                    const compactionInput = {
+                        api,
+                        config: this.baseConfig,
+                        systemPrompt,
+                        tools: nativeTools,
+                        profile: generated.profile,
+                        environment: workspaceMetadataEnvironmentBlock ?? undefined,
+                        webSearchRoutingPlan,
+                        messages: contextState.roundContexts.project(
+                            contextManager.getTruncatedMessages(conversation, contextState.conversationHistoryDeletedRange),
+                            contextState.conversationHistoryDeletedRange,
+                        ),
+                        signal: this.activeRetryAbortController.signal,
+                    }
+                    const pressure = Math.max(usageState.lastRequest?.totalTokens ?? 0, estimateSubagentContext(compactionInput))
+                    if (this.shouldCompactBeforeNextRequest(pressure, api)) {
+                        let compacted: ClineStorageMessage[]
+                        try {
+                            compacted = await compactSubagentConversation(compactionInput)
+                        } catch (error) {
+                            // A finish request cancels hidden work but still needs its ordinary final turn.
+                            if (this.finishRequested && !this.shouldAbort()) continue
+                            throw error
+                        }
+                        conversation.splice(0, conversation.length, ...compacted)
+                        // Materialized overlays belong to the old message indexes, never to the new summary/tail.
+                        contextManager = new ContextManager()
+                        contextState.conversationHistoryDeletedRange = undefined
+                        contextState.roundContexts = new SubagentRoundContextProjection()
+                        usageState.lastRequest = undefined
+                        stats.contextTokens = estimateSubagentContext({ ...compactionInput, messages: compacted })
+                        stats.contextUsagePercentage =
+                            stats.contextWindow > 0 ? (stats.contextTokens / stats.contextWindow) * 100 : 0
+                        onProgress({ stats: { ...stats } })
+                    }
+                } else if (
+                    !autoCompactEnabled &&
                     usageState.lastRequest &&
-                    this.shouldCompactBeforeNextRequest(usageState.lastRequest.totalTokens, api, providerInfo.model.id)
+                    this.shouldCompactBeforeNextRequest(usageState.lastRequest.totalTokens, api)
                 ) {
-                    const compactResult = this.compactConversationForContextWindow(
+                    const compactResult = truncateSubagentConversation(
                         contextManager,
                         conversation,
                         contextState.conversationHistoryDeletedRange,
                     )
                     contextState.conversationHistoryDeletedRange = compactResult.conversationHistoryDeletedRange
-                    if (compactResult.didCompact) {
-                        Logger.warn("[SubagentRunner] Proactively compacted context before next subagent request.")
-                    }
-                    // Prevent repeated compaction attempts off the same token sample.
                     usageState.lastRequest = undefined
                 }
 
@@ -1121,10 +1161,13 @@ export class SubagentRunner {
                 const roundContext = contextState.roundContexts.freeze(
                     conversation,
                     [
-                        buildContextUsageSection({
-                            contextTokens: stats.contextTokens,
-                            contextWindow: stats.contextWindow,
-                        }),
+                        buildContextUsageSection(
+                            {
+                                contextTokens: stats.contextTokens,
+                                contextWindow: stats.contextWindow,
+                            },
+                            autoCompactEnabled,
+                        ),
                         buildContextBudgetSection(this.activeBudget, outputBudget.outputTokens),
                     ]
                         .filter((section): section is string => Boolean(section))
@@ -1201,7 +1244,7 @@ export class SubagentRunner {
 
                                 // Past this point the remaining window has to carry the
                                 // final result, so the run converges from the next turn on.
-                                if (exceedsContextConvergenceThreshold(stats)) {
+                                if (!autoCompactEnabled && exceedsContextConvergenceThreshold(stats)) {
                                     if (this.requestFinishAfterCurrentTurn("context_pressure")) {
                                         Logger.warn(
                                             "[SubagentRunner] Context usage crossed the convergence threshold; steering the next turn to attempt_completion.",
@@ -1785,86 +1828,15 @@ export class SubagentRunner {
         return isRetryableProviderError(error, { providerId, modelId })
     }
 
-    private compactConversationForContextWindow(
-        contextManager: ContextManager,
-        conversation: ClineStorageMessage[],
-        conversationHistoryDeletedRange: [number, number] | undefined,
-    ): {
-        didCompact: boolean
-        conversationHistoryDeletedRange: [number, number] | undefined
-    } {
-        const optimizationResult = this.optimizeConversationForContextWindow(contextManager, conversation)
-        let didCompact = optimizationResult.didOptimize
-        let updatedDeletedRange = conversationHistoryDeletedRange
-
-        if (optimizationResult.didOptimize && !optimizationResult.needToTruncate) {
-            return {
-                didCompact: true,
-                conversationHistoryDeletedRange: updatedDeletedRange,
-            }
-        }
-
-        const deletedRange = contextManager.getNextTruncationRange(conversation, conversationHistoryDeletedRange, "quarter")
-        if (deletedRange[1] < deletedRange[0]) {
-            return {
-                didCompact,
-                conversationHistoryDeletedRange: updatedDeletedRange,
-            }
-        }
-
-        if (
-            conversationHistoryDeletedRange &&
-            deletedRange[0] === conversationHistoryDeletedRange[0] &&
-            deletedRange[1] === conversationHistoryDeletedRange[1]
-        ) {
-            return {
-                didCompact,
-                conversationHistoryDeletedRange: updatedDeletedRange,
-            }
-        }
-
-        updatedDeletedRange = deletedRange
-        didCompact = true
-        return {
-            didCompact,
-            conversationHistoryDeletedRange: updatedDeletedRange,
-        }
-    }
-
-    private optimizeConversationForContextWindow(
-        contextManager: ContextManager,
-        conversation: ClineStorageMessage[],
-    ): {
-        didOptimize: boolean
-        needToTruncate: boolean
-    } {
-        const timestamp = Date.now()
-        const optimizationResult = contextManager.attemptFileReadOptimizationInMemory(conversation, undefined, timestamp)
-        if (!optimizationResult.anyContextUpdates) {
-            return { didOptimize: false, needToTruncate: true }
-        }
-
-        const optimizedConversation = optimizationResult.optimizedConversationHistory.map(
-            (message) => message as ClineStorageMessage,
-        )
-        conversation.splice(0, conversation.length, ...optimizedConversation)
-        return { didOptimize: true, needToTruncate: optimizationResult.needToTruncate }
-    }
-
-    private shouldCompactBeforeNextRequest(
-        requestTotalTokens: number,
-        api: ReturnType<typeof buildApiHandler>,
-        modelId: string,
-    ): boolean {
+    private shouldCompactBeforeNextRequest(requestTotalTokens: number, api: ApiHandler): boolean {
         const { contextWindow, maxAllowedSize } = getContextWindowInfo(api)
         const useAutoCondense = this.baseConfig.services.stateManager.getGlobalSettingsKey("useAutoCondense")
-        if (useAutoCondense && isNextGenModelFamily(modelId)) {
-            const thresholdTokens = computeCompactTrigger(contextWindow, computeSummarizeBudget(), {
-                triggerPercent: this.baseConfig.services.stateManager.getGlobalSettingsKey("autoCondenseTriggerPercent"),
-                minReserveTokens: this.baseConfig.services.stateManager.getGlobalSettingsKey("autoCondenseMinReserveTokens"),
-                maxReserveTokens: this.baseConfig.services.stateManager.getGlobalSettingsKey("autoCondenseMaxReserveTokens"),
-                maxContextTokens: this.baseConfig.services.stateManager.getGlobalSettingsKey("autoCondenseMaxContextTokens"),
-            })
+        if (useAutoCondense) {
+            const thresholdTokens = computeCompactTrigger(
+                contextWindow,
+                computeSummarizeBudget(),
+                subagentCompactTriggerOptions(this.baseConfig),
+            )
             return shouldCompactProjectedUsage(requestTotalTokens, thresholdTokens)
         }
 
@@ -1950,7 +1922,7 @@ export class SubagentRunner {
                 }
 
                 if (checkContextWindowExceededError(error)) {
-                    const compactResult = this.compactConversationForContextWindow(
+                    const compactResult = truncateSubagentConversation(
                         contextManager,
                         fullConversation,
                         contextState.conversationHistoryDeletedRange,

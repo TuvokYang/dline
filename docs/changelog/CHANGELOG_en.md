@@ -5,6 +5,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 ## [Unreleased]
 
 ### Added
+- Subagents support automatic compaction: with Auto Compact enabled, they summarize context using the existing compaction settings and keep working instead of being forced to finish at 80% usage; summaries stay in memory for the current run only
 - Added experimental Away Mode: enable it in Settings → Features → Experimental, then send `/away` to keep the current task working while you are away, and new questions enter the mode automatically after ten minutes without an answer; workspace commands then skip approval while commands outside the workspace still need it and are refused after one minute, with existing permissions, ignore rules and hooks unchanged
 
 ### Changed

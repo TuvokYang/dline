@@ -1,3 +1,4 @@
+import { getPrompt } from "@core/prompts/i18n"
 import { describeCallFormat } from "@core/prompts/turn-diagnosis"
 import type { SubagentFinishReason } from "./SubagentExecutor"
 
@@ -38,7 +39,7 @@ export function exceedsContextConvergenceThreshold(sample: ContextPressureSample
  * Omitted until a request has reported usage: before that the figure is an
  * unset zero, and "0% used" would tell the model it has the whole window.
  */
-export function buildContextUsageSection(sample: ContextPressureSample): string | undefined {
+export function buildContextUsageSection(sample: ContextPressureSample, autoCompactEnabled = false): string | undefined {
     if (!Number.isFinite(sample.contextWindow) || sample.contextWindow <= 0) return undefined
     if (!Number.isFinite(sample.contextTokens) || sample.contextTokens <= 0) return undefined
 
@@ -48,7 +49,9 @@ export function buildContextUsageSection(sample: ContextPressureSample): string 
         "# Context Window Usage",
         `${usedTokens.toLocaleString()} / ${(sample.contextWindow / 1000).toLocaleString()}K tokens used (${usagePercentage}%)`,
         "",
-        `Call attempt_completion before usage reaches ${CONTEXT_CONVERGENCE_THRESHOLD_PERCENT}%. At that point every tool except attempt_completion is rejected, so unfinished exploration is lost.`,
+        autoCompactEnabled
+            ? getPrompt("subagent", "autoCompactNotice")
+            : `Call attempt_completion before usage reaches ${CONTEXT_CONVERGENCE_THRESHOLD_PERCENT}%. At that point every tool except attempt_completion is rejected, so unfinished exploration is lost.`,
     ].join("\n")
 }
 

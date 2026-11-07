@@ -105,6 +105,14 @@ The **Subagents** tab of the **Manage Dline Rules & Workflows** panel shows **Gl
 
 To create Profiles and set their usages, see [Model configuration](/getting-started/authorizing-with-dline/).
 
+## Automatic context compaction
+
+With [Auto Compact](/features/auto-compact/) enabled, subagents use the same trigger, reserve, and Maximum context settings as the main task, applied to their own model's context window. A subagent summarizes older context with its own Profile and continues working instead of being forced to finish at 80% usage. Compaction makes additional model requests and can incur usage charges.
+
+The summary and compaction state stay in memory only; restarting the extension does not restore the compacted subagent conversation. Cancellation stops an in-flight compaction, while a timeout or **Finish** request still asks the subagent to return its findings. If compaction fails, the run reports a failure rather than treating a missing summary as success.
+
+With Auto Compact disabled, the existing 80% finish rule remains in effect. The final-result budget below is unchanged.
+
 ## Output budget for the final result
 
 `maxOutputTokens` limits the size of the final result the subagent returns to the main task, measured in tokens:

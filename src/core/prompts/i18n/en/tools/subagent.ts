@@ -28,6 +28,8 @@ const prompts: Record<string, string> = {
     // Injected into every subagent request. The figure limits only the final
     // attempt_completion result, so the wording must not read as a limit on the
     // subagent's own tool calls, which its own context window bounds.
+    autoCompactNotice:
+        "Auto-Compact is enabled. Context will be automatically compacted as needed; continue working until the delegated task is complete.",
     contextBudgetFinalResult:
         "# Final Result Budget\nKeep your final report within about @FINAL_RESULT_TOKENS@ tokens. Prioritize conclusions, evidence, and actionable findings. Follow the latest allowance; it applies to the final report, not your research inputs.",
 }

@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Added
+- 子代理支持自动压缩：开启 Auto Compact 后，按现有压缩设置汇总上下文并继续工作，不再因用量达到 80% 就强制收尾；摘要仅保存在本次运行内存中
 - 新增实验性 Away Mode：在 Settings → Features → Experimental 开启后，用 `/away` 让当前任务在你离开时继续工作，新问题十分钟无人应答后自动进入；离开期间项目内命令免审批，项目外命令一分钟无人处理即拒绝，原有权限、禁用、ignore 与 hook 约束不变
 
 ### Changed
