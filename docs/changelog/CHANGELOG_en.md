@@ -4,19 +4,25 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 ## [Unreleased]
 
+## [0.13.1]
+
 ### Added
 - Subagents support automatic compaction: with Auto Compact enabled, they summarize context using the existing compaction settings and keep working instead of being forced to finish at 80% usage; summaries stay in memory for the current run only
-- Named subagents can select Rules, Skills, Workflows, and MCP independently: each subagent uses only its own checked entries, unbounded by the parent task's selections and tool allowlist; selected rule bodies enter the subagent's system prompt directly, skills and workflows load on demand, MCP is chosen per exact tool and resource URI, and real permissions and approval are unchanged
-- Added experimental Away Mode: enable it in Settings → Features → Experimental, then send `/away` to keep the current task working while you are away, and new questions enter the mode automatically after ten minutes without an answer; workspace commands then skip approval while commands outside the workspace still need it and are refused after one minute, with existing permissions, ignore rules and hooks unchanged
+- Named subagents can select Rules, Skills, Workflows, and MCP independently of the parent task's selections and tool allowlist; rules apply directly, skills and workflows load on demand, and MCP selections use exact tool names and resource URIs; mandatory remote capabilities, the subagent's own tool gates, and approvals still apply
 
 ### Changed
 - DeepSeek pricing charts follow the current day in Beijing time: weekends and public holidays show off-peak rates all day, weekdays show their actual peak/off-peak intervals, and windows are named by rate and time instead of numbers
 - Provider pricing tier numbers now appear in group headings instead of being repeated in price field labels, while accessible names still distinguish each tier
-- Subagent capability defaults such as `skills` changed: omitting `skills` used to mean all skills were visible, while now omitting a capability field or a legacy empty array `[]` selects nothing; clearing a category removes that field when saved instead of writing an empty array, and omitted or empty `tools` still means the default tool set
-- Aggressive rendering offers three folding levels: standard rows, activity folded between messages, and activity folded across a whole user turn; bulk expand and collapse are available, live work, failures, pending approvals and checked-out checkpoints stay visible, and expanding everything restores the standard order
+- Defaults for optional subagent capability fields such as `skills` changed: omitting `skills` used to mean all skills were visible, while now omitting a field or using a legacy empty array `[]` selects no additional capabilities; clearing a category removes that field when saved instead of writing an empty array, and omitted or empty `tools` still means the default tool set
 
 ### Fixed
 - Fixed cases where closing a task left task Thinking controls on the home screen and blocked new tasks; a task whose title is still loading keeps its task view and Close action instead of showing the home screen
+- Fixed missing turns, incorrect counts, and misplaced trajectory jumps when message timestamps repeat or arrive out of order; a missing target leaves the current message window intact.
+- Fixed queued input appearing on the wrong side of compaction cards; reopening the task keeps the same message order.
+- Fixed task-header costs after billing-currency changes by showing the newest currency-labelled cost segment; OpenCode-reported costs retain the model's billing currency.
+- Local web search reports engine refusals, rate limits, and DuckDuckGo challenge pages instead of treating them as searches with no matches.
+- Fixed errors caused by missing editor options when opening images and other files handled by custom editors.
+- Rejected TODO progress updates show a concise reason instead of printing the model's corrective instructions into the conversation.
 
 ## [0.13.0]
 

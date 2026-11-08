@@ -15,6 +15,14 @@ Format rules, enforced by webview-ui/vite-whats-new.ts at build time:
   Unit tests enforce both.
 -->
 
+## 0.13.1
+
+- **Subagent Auto Compact**: with Auto Compact on, subagents summarize context in memory and keep working.
+- **Independent subagents**: choose each named agent's Rules, Skills, Workflows and MCP separately; approvals still apply.
+- **DeepSeek daily pricing**: Beijing-time weekends and holidays show all-day off-peak rates; weekdays show peak windows.
+- **OpenCode in 0.13**: use paid text models in one Profile with metered billing or Go plans.
+- **Reliable saves in 0.13**: Done only closes settings; failed Profile saves show an error and reload saved values.
+
 ## 0.13.0
 
 - **OpenCode provider**: one Profile covers its paid text models on a pay-as-you-go balance or a Go, Go Plus, or Go Teams subscription, and each model can be reached over OpenAI Chat Completions, OpenAI Responses, or Anthropic Messages.

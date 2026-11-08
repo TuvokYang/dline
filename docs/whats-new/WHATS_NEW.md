@@ -14,6 +14,14 @@ Dline 侧边栏的 What's New 对话框展示本目录下英文版 `WHATS_NEW_en
   保持相同的版本号和相同的条目数量，两项均由单元测试校验。
 -->
 
+## 0.13.1
+
+- **子代理自动压缩**：开启 Auto Compact 后，子代理在内存中汇总上下文并继续工作。
+- **子代理能力独立选择**：为具名代理分别选择 Rules、Skills、Workflows 与 MCP，审批限制仍然生效。
+- **DeepSeek 当日价格**：按北京时间显示当天窗口，周末和节假日为全天谷价，工作日显示峰价时段。
+- **0.13 系列 OpenCode**：一个 Profile 使用付费文本模型，支持按量计费与 Go 套餐。
+- **0.13 系列可靠保存**：Done 仅关闭设置；Profile 保存失败会报错并回读已保存值。
+
 ## 0.13.0
 
 - **OpenCode 服务商**：一个 Profile 覆盖其付费文本模型，支持按量余额与 Go、Go Plus、Go Teams 订阅；同一模型可从 OpenAI Chat Completions、OpenAI Responses 或 Anthropic Messages 中选择接入方式。
