@@ -26,6 +26,8 @@ const EXPECTED_TASK_VIEW_FILES = [
     "src/core/controller/task/history-task-readiness.ts",
     "src/core/controller/task/readOnlyTaskView.ts",
     "src/shared/ExtensionMessage.ts",
+    // The scanner includes this IS_E2E-gated extension-host surface capture/replay helper.
+    "src/test/e2e-control/task-history-control.ts",
     "webview-ui/src/components/chat/ChatRow.tsx",
     "webview-ui/src/components/chat/ChatView.tsx",
     "webview-ui/src/components/chat/SubagentStatusRow.tsx",

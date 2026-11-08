@@ -202,8 +202,11 @@ describe("TaskSessionCompositionService orphaned activities", () => {
                 close: vi.fn(async () => undefined),
                 getAll: () => rows,
                 findIndexByTs: (ts: number) => rows.findIndex((row) => row.ts === ts),
-                updateMessage: vi.fn(async (index: number, updates: Record<string, unknown>) => {
+                updateMessageByTs: vi.fn(async (ts: number, updates: Record<string, unknown>) => {
+                    const index = rows.findIndex((row) => row.ts === ts)
+                    if (index < 0) return undefined
                     rows[index] = { ...rows[index], ...updates }
+                    return rows[index]
                 }),
             },
             apiConversation: { close: vi.fn(async () => undefined), getAll: () => [] },
@@ -241,7 +244,7 @@ describe("TaskSessionCompositionService orphaned activities", () => {
         const written = upsert.mock.calls.flatMap(([activities]) => activities)
         if (deferRestoredCommands) {
             expect(written).toEqual([])
-            expect(stores.uiMessage.updateMessage).not.toHaveBeenCalled()
+            expect(stores.uiMessage.updateMessageByTs).not.toHaveBeenCalled()
         } else {
             expect(written).toEqual([expect.objectContaining({ activityId: "orphan", status: "interrupted" })])
         }
@@ -260,8 +263,11 @@ describe("TaskSessionCompositionService orphaned activities", () => {
                 close: vi.fn(async () => undefined),
                 getAll: () => rows,
                 findIndexByTs: (ts: number) => rows.findIndex((row) => row.ts === ts),
-                updateMessage: vi.fn(async (index: number, updates: Record<string, unknown>) => {
+                updateMessageByTs: vi.fn(async (ts: number, updates: Record<string, unknown>) => {
+                    const index = rows.findIndex((row) => row.ts === ts)
+                    if (index < 0) return undefined
                     rows[index] = { ...rows[index], ...updates }
+                    return rows[index]
                 }),
             },
             apiConversation: { close: vi.fn(async () => undefined), getAll: () => [] },
@@ -300,7 +306,7 @@ describe("TaskSessionCompositionService orphaned activities", () => {
 
         expect(rows[0].commandStatus).toBe("interrupted")
         expect(stores.uiMessage.close).toHaveBeenCalledOnce()
-        expect(stores.uiMessage.updateMessage.mock.invocationCallOrder[0]).toBeLessThan(
+        expect(stores.uiMessage.updateMessageByTs.mock.invocationCallOrder[0]).toBeLessThan(
             stores.uiMessage.close.mock.invocationCallOrder[0],
         )
     })

@@ -132,6 +132,10 @@ async function harness(kind: string, toolName: string, actionId: string, options
         addToClineMessages: vi.fn(async (row: UiMessage) => {
             rows.push(row)
         }),
+        addToClineMessagesOrdered: vi.fn(async (row: UiMessage) => {
+            rows.push(row)
+            rows.sort((left, right) => left.ts - right.ts)
+        }),
         flushUiMessages: vi.fn(async () => undefined),
         updateClineMessage: vi.fn(),
         flushMessageUpdate: vi.fn(),

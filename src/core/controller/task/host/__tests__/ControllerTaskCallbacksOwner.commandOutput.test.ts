@@ -1,3 +1,4 @@
+import type { Controller } from "@core/controller"
 import { registerPartialMessageCallback, subscribeToPartialMessage } from "@core/controller/ui/subscribeToPartialMessage"
 import type { MessageStateHandler } from "@core/task/message-state"
 import { createPresentationIdSequence } from "@core/task/session/PresentationIdSequence"
@@ -34,8 +35,14 @@ function messageStore(): { handler: MessageStateHandler; written: UiMessage[] } 
 const OPENING = { taskId: "task-1", taskInstanceId: "open-1" }
 
 /** A Controller that currently shows the opening these callbacks serve. */
-function showingOpening(opening: { taskId: string; taskInstanceId: string } = OPENING): object {
-    return { currentOpening: () => opening }
+function showingOpening(
+    opening: { taskId: string; taskInstanceId: string } = OPENING,
+): Pick<Controller, "currentOpening" | "projectCurrentTaskMessageSourceIndex"> {
+    return {
+        currentOpening: () => opening,
+        // This event-only fixture has no durable message owner to project an index from.
+        projectCurrentTaskMessageSourceIndex: async () => undefined,
+    }
 }
 
 function owner(

@@ -43,6 +43,10 @@ async function harness(kind: InteractionKind) {
         addToClineMessages: vi.fn(async (row: UiMessage) => {
             rows.push(row)
         }),
+        addToClineMessagesOrdered: vi.fn(async (row: UiMessage) => {
+            rows.push(row)
+            rows.sort((left, right) => left.ts - right.ts)
+        }),
         finalizeClineMessage: vi.fn(),
         flushUiMessages: vi.fn(async () => undefined),
     } as unknown as MessageStateHandler
