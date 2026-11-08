@@ -38,7 +38,6 @@ export const MistralProvider = ({ showModelOptions, isPopup: _isPopup, profile, 
             {showModelOptions && (
                 <>
                     <ModelSelector
-                        label="Model"
                         models={mistralModels}
                         onChange={(e: any) =>
                             onUpdate({ modelId: e.target.value, modelInfo: mistralModels[e.target.value] as any })

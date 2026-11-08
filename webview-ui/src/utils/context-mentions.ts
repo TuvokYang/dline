@@ -1,5 +1,6 @@
 import { Fzf } from "fzf"
 import { PLATFORM_CONFIG } from "@/config/platform.config"
+import { englishUiTranslator, type UiTranslator } from "@/i18n/messages"
 
 export interface SearchResult {
     path: string
@@ -49,12 +50,13 @@ export function getContextMenuOptions(
     selectedType: ContextMenuOptionType | null = null,
     queryItems: ContextMenuQueryItem[],
     dynamicSearchResults: SearchResult[] = [],
+    t: UiTranslator = englishUiTranslator,
 ): ContextMenuQueryItem[] {
     const workingChanges: ContextMenuQueryItem = {
         type: ContextMenuOptionType.Git,
         value: "git-changes",
-        label: "Working changes",
-        description: "Current uncommitted changes",
+        label: t("runtime.mentions.workingChanges"),
+        description: t("runtime.mentions.uncommitted"),
     }
 
     const searchResultItems: ContextMenuQueryItem[] = dynamicSearchResults.map((result) => {
@@ -111,8 +113,8 @@ export function getContextMenuOptions(
     if ("git".startsWith(lowerQuery)) {
         suggestions.push({
             type: ContextMenuOptionType.Git,
-            label: "Git Commits",
-            description: "Search repository history",
+            label: t("runtime.mentions.commits"),
+            description: t("runtime.mentions.history"),
         })
     } else if ("git-changes".startsWith(lowerQuery)) {
         suggestions.push(workingChanges)
@@ -136,8 +138,8 @@ export function getContextMenuOptions(
             suggestions.push({
                 type: ContextMenuOptionType.Git,
                 value: lowerQuery,
-                label: `Commit ${lowerQuery}`,
-                description: "Git commit hash",
+                label: t("runtime.mentions.commit", { hash: lowerQuery }),
+                description: t("runtime.mentions.commitHash"),
             })
         }
     }

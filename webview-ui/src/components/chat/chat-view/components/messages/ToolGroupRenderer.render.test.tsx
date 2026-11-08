@@ -1,6 +1,8 @@
 import type { UiMessage, UiSayTool } from "@shared/ExtensionMessage"
+import type { UiLanguage } from "@shared/UiLanguage"
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { UiLanguageProvider } from "@/i18n/UiLanguageProvider"
 import { FileServiceClient } from "@/services/grpc-client"
 import { ToolGroupRenderer } from "./ToolGroupRenderer"
 
@@ -144,6 +146,57 @@ describe("ToolGroupRenderer rows", () => {
         const rows = screen.getAllByRole("button")
         expect(rows).toHaveLength(1)
         expect(rows[0]).not.toHaveAttribute("aria-busy")
+    })
+
+    it("retranslates the memoized active row while preserving expanded raw results and file-open identity", () => {
+        const completed = toolMessage(1, {
+            tool: "searchFiles",
+            path: "src/raw",
+            regex: "needle",
+            count: 2,
+            files: 1,
+            content: "RAW tool result Receiving 原文",
+        })
+        const request: UiMessage = { ts: 2, type: "say", say: "api_req_started", text: "{}" }
+        const active: UiMessage = {
+            ts: 3,
+            type: "ask",
+            ask: "tool",
+            partial: true,
+            text: JSON.stringify({ tool: "readFile", path: "src/Receiving.ts", readLineStart: 5, readLineEnd: 9 }),
+        }
+        const messages = [completed, active]
+        const allMessages = [completed, request, active]
+        const original = JSON.stringify(allMessages)
+        const tree = (language: UiLanguage) => (
+            <UiLanguageProvider language={language}>
+                <ToolGroupRenderer allMessages={allMessages} isLastGroup messages={messages} />
+            </UiLanguageProvider>
+        )
+        const view = render(tree("en"))
+        const search = screen.getByRole("button", { name: '"needle" in src/raw/ (2 matches · 1 file)' })
+        const reading = screen.getByRole("button", { name: "Reading src/Receiving.ts (lines 5-9)" })
+        fireEvent.click(search)
+        const rawResult = screen.getByText("RAW tool result Receiving 原文")
+
+        view.rerender(tree("zh-CN"))
+        expect(screen.getByRole("button", { name: '"needle" 位于 src/raw/（2 处匹配 · 1 个文件）' })).toBe(search)
+        expect(screen.getByRole("button", { name: "正在读取 src/Receiving.ts（第 5-9 行）" })).toBe(reading)
+        expect(reading).toHaveAttribute("aria-busy", "true")
+        expect(reading).toHaveAttribute("aria-disabled", "true")
+        expect(search).toHaveAttribute("aria-expanded", "true")
+        expect(screen.getByText("RAW tool result Receiving 原文")).toBe(rawResult)
+        fireEvent.click(reading)
+        expect(FileServiceClient.openFileRelativePath).not.toHaveBeenCalled()
+
+        view.rerender(tree("en"))
+        expect(reading).toHaveAccessibleName("Reading src/Receiving.ts (lines 5-9)")
+        expect(search).toHaveAttribute("aria-expanded", "true")
+        expect(screen.getByText("RAW tool result Receiving 原文")).toBe(rawResult)
+        expect(JSON.stringify(allMessages)).toBe(original)
+        fireEvent.click(search)
+        expect(search).toHaveAttribute("aria-expanded", "false")
+        expect(FileServiceClient.openFileRelativePath).not.toHaveBeenCalled()
     })
 
     it("still expands search results rather than opening the abbreviated directory", () => {

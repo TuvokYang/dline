@@ -1,6 +1,10 @@
 import type { ModelCapabilities } from "@shared/proto/dline/models/metadata"
 import { describe, expect, it } from "vitest"
-import { getModelCompatibilityNotice } from "./modelCompatibilityNotice"
+import { translateUi, type UiTranslator } from "@/i18n/messages"
+import { getModelCompatibilityNotice as getNotice } from "./modelCompatibilityNotice"
+
+const t: UiTranslator = (key, ...args) => translateUi("en", key, ...args)
+const getModelCompatibilityNotice = (input: Parameters<typeof getNotice>[0]) => getNotice(input, t)
 
 function capabilities(values: Partial<ModelCapabilities>): ModelCapabilities {
     return values as ModelCapabilities

@@ -7,6 +7,7 @@ import { mergeCapabilities, mergePricing } from "@shared/providers/effective-mod
 import { resolveProfileModelId, resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ApiFormatSelector } from "../common/ApiFormatSelector"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { ModelAutocomplete } from "../common/ModelAutocomplete"
@@ -35,6 +36,7 @@ interface DeepSeekProviderProps {
  * Reasoning effort stored in deepseek.
  */
 export const DeepSeekProvider = ({ showModelOptions, isPopup, profile, onUpdate }: DeepSeekProviderProps) => {
+    const { t } = useUiTranslation()
     const propConfig = useMemo(() => profile.deepseek ?? BaseProviderConfig.create(), [profile.deepseek])
     const { config: pc, latest, publish } = usePendingProviderConfig(profile.id, propConfig)
     const updateProfile = useCallback(
@@ -123,7 +125,6 @@ export const DeepSeekProvider = ({ showModelOptions, isPopup, profile, onUpdate 
             {showModelOptions && (
                 <>
                     <ModelAutocomplete
-                        label="Model"
                         models={deepSeekModelOptions}
                         onChange={(newModelId) => {
                             // Only catalog entries carry metadata; a discovered id keeps
@@ -141,7 +142,7 @@ export const DeepSeekProvider = ({ showModelOptions, isPopup, profile, onUpdate 
                         }}
                         onOpen={refreshRemoteModels}
                         optionOrigins={optionOrigins}
-                        placeholder="Search, select, or enter a model ID..."
+                        placeholder={t("settings.ui.searchCustomModel")}
                         selectedModelId={modelId}
                     />
 
@@ -187,15 +188,15 @@ export const DeepSeekProvider = ({ showModelOptions, isPopup, profile, onUpdate 
                                             persistReasoning({ enableThinking: false })
                                         }
                                     }}>
-                                    Enable Thinking
+                                    {t("settings.ui.enableThinking")}
                                 </VSCodeCheckbox>
                             </div>
                             {enableThinking && (
                                 <ReasoningEffortSelector
                                     allowedEfforts={effortLevels}
                                     defaultEffort={defaultEffort}
-                                    description="Toggle above to enable thinking. Low uses less reasoning; High is the standard level; Max is for complex tasks."
-                                    label="Thinking Level"
+                                    description={t("settings.ui.deepseekThinkingHelp")}
+                                    label={t("settings.ui.thinkingLevel")}
                                     onReasoningEffortChange={persistEffort}
                                     reasoningEffort={profileEffort}
                                 />

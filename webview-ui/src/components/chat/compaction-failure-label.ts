@@ -1,25 +1,57 @@
 import type { CompactionFailureKind } from "@shared/context-compaction-failure"
+import type { UiTranslator } from "@/i18n/messages"
 
-const COMPACTION_FAILURE_LABELS: Record<CompactionFailureKind, string> = {
-    empty_response: "The model returned an empty reply.",
-    missing_block: "The reply did not contain a <summarize_task> block.",
-    foreign_tool_call: "The model called a tool instead of writing the summary.",
-    missing_context: "The <summarize_task> block had no <context> section.",
-    empty_context: "The <context> section was empty.",
-    unclosed_context: "The <context> section was not closed.",
-    unclosed_block: "The <summarize_task> block was not closed.",
-    output_limit: "The reply reached the output token limit before the summary was closed.",
-    provider_error: "The provider request failed.",
-    authorization_failed: "The summary could not be accepted for this compaction request.",
-    cancelled: "Compaction was cancelled.",
+/**
+ * Message keys for the content-free compaction failure classifications.
+ *
+ * The key is resolved here and translated by the caller, so a rendered row keeps
+ * the classification rather than a frozen sentence when the language changes.
+ */
+export type CompactionFailureMessageKey =
+    | "chatRows.errors.compaction.emptyResponse"
+    | "chatRows.errors.compaction.missingBlock"
+    | "chatRows.errors.compaction.foreignToolCall"
+    | "chatRows.errors.compaction.missingContext"
+    | "chatRows.errors.compaction.emptyContext"
+    | "chatRows.errors.compaction.unclosedContext"
+    | "chatRows.errors.compaction.unclosedBlock"
+    | "chatRows.errors.compaction.outputLimit"
+    | "chatRows.errors.compaction.providerError"
+    | "chatRows.errors.compaction.authorizationFailed"
+    | "chatRows.errors.compaction.cancelled"
+
+const COMPACTION_FAILURE_KEYS: Record<CompactionFailureKind, CompactionFailureMessageKey> = {
+    empty_response: "chatRows.errors.compaction.emptyResponse",
+    missing_block: "chatRows.errors.compaction.missingBlock",
+    foreign_tool_call: "chatRows.errors.compaction.foreignToolCall",
+    missing_context: "chatRows.errors.compaction.missingContext",
+    empty_context: "chatRows.errors.compaction.emptyContext",
+    unclosed_context: "chatRows.errors.compaction.unclosedContext",
+    unclosed_block: "chatRows.errors.compaction.unclosedBlock",
+    output_limit: "chatRows.errors.compaction.outputLimit",
+    provider_error: "chatRows.errors.compaction.providerError",
+    authorization_failed: "chatRows.errors.compaction.authorizationFailed",
+    cancelled: "chatRows.errors.compaction.cancelled",
+}
+
+/**
+ * Select the stable message key for a compaction failure classification.
+ *
+ * @param kind Content-free failure classification carried by the compaction card.
+ * @returns The message key to translate, or undefined when the card has no classified failure.
+ */
+export function compactionFailureKey(kind: CompactionFailureKind | undefined): CompactionFailureMessageKey | undefined {
+    return kind ? COMPACTION_FAILURE_KEYS[kind] : undefined
 }
 
 /**
  * Describe why the latest compaction attempt was rejected.
  *
  * @param kind Content-free failure classification carried by the compaction card.
- * @returns A short English reason, or undefined when the card has no classified failure.
+ * @param t Translator belonging to the rendering surface.
+ * @returns A short localized reason, or undefined when the card has no classified failure.
  */
-export function describeCompactionFailure(kind: CompactionFailureKind | undefined): string | undefined {
-    return kind ? COMPACTION_FAILURE_LABELS[kind] : undefined
+export function describeCompactionFailure(kind: CompactionFailureKind | undefined, t: UiTranslator): string | undefined {
+    const key = compactionFailureKey(kind)
+    return key ? t(key) : undefined
 }

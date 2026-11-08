@@ -3,7 +3,9 @@ import { QwenProviderConfig } from "@shared/proto/dline/provider/qwen"
 import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
 import { resolveProfileCatalogKey, resolveProfileModelId } from "@shared/providers/profile-model-info"
 import { QWEN_MAINLAND_CATALOG, resolvePrimaryCatalogKey } from "@shared/providers/provider-catalog-key"
-import { VSCodeDropdown, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
+import type { FormEvent } from "react"
+import { LocalizedDropdown, LocalizedOption } from "@/components/common/LocalizedDropdown"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { DROPDOWN_Z_INDEX } from "../ApiOptions"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { ModelAutocomplete } from "../common/ModelAutocomplete"
@@ -25,6 +27,7 @@ export const qwenApiOptions: QwenApiRegions[] = Object.values(QwenApiRegions)
 
 /** Alibaba Qwen provider all data from ApiProfile. qwenApiLine stored in qwen. */
 export const QwenProvider = ({ showModelOptions, isPopup: _isPopup, profile, onUpdate }: QwenProviderProps) => {
+    const { t } = useUiTranslation()
     const pc = profile.qwen ?? QwenProviderConfig.create()
     const qwenApiLine = (pc.qwenApiLine as QwenApiRegions) || qwenApiOptions[0]
 
@@ -73,22 +76,35 @@ export const QwenProvider = ({ showModelOptions, isPopup: _isPopup, profile, onU
         <div>
             <DropdownContainer className="dropdown-container" style={{ position: "inherit" }}>
                 <label htmlFor="qwen-line-provider">
-                    <span style={{ fontWeight: 500, marginTop: 5 }}>Alibaba API Line</span>
+                    <span style={{ fontWeight: 500, marginTop: 5 }}>{t("settings.ui.qwen.line")}</span>
                 </label>
-                <VSCodeDropdown
+                <LocalizedDropdown
                     id="qwen-line-provider"
-                    onChange={(e) => changeApiLine((e.target as HTMLSelectElement).value)}
+                    onChange={(e: Event | FormEvent<HTMLElement>) => changeApiLine((e.target as HTMLSelectElement).value)}
+                    selectedLabel={
+                        qwenApiOptions.includes(qwenApiLine)
+                            ? qwenApiLine === QwenApiRegions.CHINA
+                                ? t("settings.ui.qwen.chinaApi")
+                                : t("settings.ui.qwen.internationalApi")
+                            : undefined
+                    }
                     style={{ minWidth: 130, position: "relative" }}
                     value={qwenApiLine}>
                     {qwenApiOptions.map((line) => (
-                        <VSCodeOption key={line} value={line}>
-                            {line.charAt(0).toUpperCase() + line.slice(1)} API
-                        </VSCodeOption>
+                        <LocalizedOption
+                            key={line}
+                            label={
+                                line === QwenApiRegions.CHINA
+                                    ? t("settings.ui.qwen.chinaApi")
+                                    : t("settings.ui.qwen.internationalApi")
+                            }
+                            value={line}
+                        />
                     ))}
-                </VSCodeDropdown>
+                </LocalizedDropdown>
             </DropdownContainer>
             <p style={{ fontSize: "12px", marginTop: 3, color: "var(--vscode-descriptionForeground)" }}>
-                Please select the appropriate API interface based on your location.
+                {t("settings.ui.qwen.locationHelp")}
             </p>
             <ApiKeyField
                 initialValue={profile.apiKey}
@@ -99,7 +115,6 @@ export const QwenProvider = ({ showModelOptions, isPopup: _isPopup, profile, onU
             {showModelOptions && (
                 <>
                     <ModelAutocomplete
-                        label="Model"
                         models={qwenModelOptions}
                         onChange={(newModelId) => {
                             // Only catalog entries carry metadata; a discovered id
@@ -109,7 +124,7 @@ export const QwenProvider = ({ showModelOptions, isPopup: _isPopup, profile, onU
                         }}
                         onOpen={refreshRemoteModels}
                         optionOrigins={optionOrigins}
-                        placeholder="Search, select, or enter a model ID..."
+                        placeholder={t("settings.ui.searchCustomModel")}
                         selectedModelId={modelId}
                         zIndex={DROPDOWN_Z_INDEX - 2}
                     />

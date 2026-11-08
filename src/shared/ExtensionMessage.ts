@@ -31,6 +31,7 @@ import { Mode } from "./storage/types"
 import type { TaskCapabilityToggles } from "./TaskCapabilityToggles"
 import { TelemetrySetting } from "./TelemetrySetting"
 import type { TransitionDraftProjection } from "./TransitionDraft"
+import type { UiLanguagePreference } from "./UiLanguage"
 import { UserInfo } from "./UserInfo"
 import type { LocalSearchEngineId } from "./web-search"
 import type { WebFetchPresentationV1, WebSearchPresentationV1 } from "./web-tools"
@@ -82,6 +83,10 @@ export interface ExtensionState {
     browserSettings: BrowserSettings
     remoteBrowserHost?: string
     preferredLanguage?: string
+    /** Committed global preference, not the resolved display language. */
+    uiLanguage: UiLanguagePreference
+    /** Raw, optional metadata from the host; never a persisted preference. */
+    hostDisplayLanguage?: string
     chatInputSendShortcut: ChatInputSendShortcut
     mode: Mode
     checkpointManagerErrorMessage?: string

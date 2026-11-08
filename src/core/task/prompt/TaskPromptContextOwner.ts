@@ -12,13 +12,13 @@ import type { IgnoreController } from "@core/ignore/IgnoreController"
 import { resolveAvailableImageModelId } from "@core/image-generation/runtime"
 import { projectTaskCapabilityView } from "@core/prompts/capabilities/TaskCapabilityView"
 import { getWorkspaceCapabilityCatalogRegistry } from "@core/prompts/capabilities/WorkspaceCapabilityCatalog"
+import { buildPreferredLanguageInstructions } from "@core/prompts/generators/preferred-language"
 import { formatResponse } from "@core/prompts/responses"
 import type { SystemPromptContext } from "@core/prompts/system-prompt"
 import { ensureRulesDirectoryExists } from "@core/storage/disk"
 import type { StateManager } from "@core/storage/StateManager"
 import { isMultiRootEnabled } from "@core/workspace/multi-root-utils"
 import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
-import { DEFAULT_LANGUAGE_SETTINGS, getLanguageKey, type LanguageDisplay } from "@shared/Languages"
 import type { ApiFormat } from "@shared/proto/dline/models/metadata"
 import { resolvePromptProfile } from "@shared/resolve-prompt-profile"
 import type { Mode } from "@shared/storage/types"
@@ -88,11 +88,7 @@ export class TaskPromptContextOwner {
             false
         const supportsBrowserUse = modelSupportsBrowserUse && !disableBrowserTool
         const preferredLanguageRaw = this.options.stateManager.getGlobalSettingsKey("preferredLanguage")
-        const preferredLanguage = getLanguageKey(preferredLanguageRaw as LanguageDisplay)
-        const preferredLanguageInstructions =
-            preferredLanguage && preferredLanguage !== DEFAULT_LANGUAGE_SETTINGS
-                ? `# Preferred Language\n\nSpeak in ${preferredLanguage}.`
-                : ""
+        const preferredLanguageInstructions = buildPreferredLanguageInstructions(preferredLanguageRaw)
 
         stageStartedAt = performance.now()
         const { globalToggles, localToggles } = await this.options.host.refreshClineRules(this.options.identity.cwd)

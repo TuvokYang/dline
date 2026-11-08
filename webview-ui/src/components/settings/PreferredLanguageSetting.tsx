@@ -1,48 +1,49 @@
+import { AUTO_LANGUAGE_PREFERENCE, getLanguageKey, languageOptions } from "@shared/Languages"
 import { VSCodeDropdown, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
 import React from "react"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
+import { ProfileField } from "./profile-ui"
 import { updateSetting } from "./utils/settingsHandlers"
 
 const PreferredLanguageSetting: React.FC = () => {
     const { preferredLanguage } = useExtensionState()
+    const { t } = useUiTranslation()
+    const value = preferredLanguage || "English"
+    const selectedLabel =
+        value === AUTO_LANGUAGE_PREFERENCE
+            ? t("settings.general.preferredLanguage.auto")
+            : t(`settings.general.preferredLanguage.option.${getLanguageKey(value)}`)
 
     const handleLanguageChange = (newLanguage: string) => {
         updateSetting("preferredLanguage", newLanguage)
     }
 
     return (
-        <div style={{}}>
-            <label className="block mb-1 text-base font-medium" htmlFor="preferred-language-dropdown">
-                Preferred Language
-            </label>
+        <ProfileField
+            description={<span id="preferred-language-description">{t("settings.general.preferredLanguage.description")}</span>}
+            htmlFor="preferred-language-dropdown"
+            label={t("settings.general.preferredLanguage.label")}>
             <VSCodeDropdown
-                currentValue={preferredLanguage || "English"}
+                aria-describedby="preferred-language-description"
+                aria-label={t("settings.general.preferredLanguage.label")}
                 id="preferred-language-dropdown"
-                onChange={(e: any) => {
-                    handleLanguageChange(e.target.value)
+                onChange={(event) => {
+                    handleLanguageChange((event.target as HTMLSelectElement).value)
                 }}
-                style={{ width: "100%" }}>
-                <VSCodeOption value="English">English</VSCodeOption>
-                <VSCodeOption value="Arabic - العربية">Arabic - العربية</VSCodeOption>
-                <VSCodeOption value="Portuguese - Português (Brasil)">Portuguese - Português (Brasil)</VSCodeOption>
-                <VSCodeOption value="Czech - Čeština">Czech - Čeština</VSCodeOption>
-                <VSCodeOption value="French - Français">French - Français</VSCodeOption>
-                <VSCodeOption value="German - Deutsch">German - Deutsch</VSCodeOption>
-                <VSCodeOption value="Hindi - हिन्दी">Hindi - हिन्दी</VSCodeOption>
-                <VSCodeOption value="Hungarian - Magyar">Hungarian - Magyar</VSCodeOption>
-                <VSCodeOption value="Italian - Italiano">Italian - Italiano</VSCodeOption>
-                <VSCodeOption value="Japanese - 日本語">Japanese - 日本語</VSCodeOption>
-                <VSCodeOption value="Korean - 한국어">Korean - 한국어</VSCodeOption>
-                <VSCodeOption value="Polish - Polski">Polish - Polski</VSCodeOption>
-                <VSCodeOption value="Portuguese - Português (Portugal)">Portuguese - Português (Portugal)</VSCodeOption>
-                <VSCodeOption value="Russian - Русский">Russian - Русский</VSCodeOption>
-                <VSCodeOption value="Simplified Chinese - 简体中文">Simplified Chinese - 简体中文</VSCodeOption>
-                <VSCodeOption value="Spanish - Español">Spanish - Español</VSCodeOption>
-                <VSCodeOption value="Traditional Chinese - 繁體中文">Traditional Chinese - 繁體中文</VSCodeOption>
-                <VSCodeOption value="Turkish - Türkçe">Turkish - Türkçe</VSCodeOption>
+                style={{ width: "100%" }}
+                value={value}>
+                <span slot="selected-value">{selectedLabel}</span>
+                <VSCodeOption aria-label={t("settings.general.preferredLanguage.auto")} value={AUTO_LANGUAGE_PREFERENCE}>
+                    {t("settings.general.preferredLanguage.auto")}
+                </VSCodeOption>
+                {languageOptions.map(({ key, display }) => (
+                    <VSCodeOption aria-label={t(`settings.general.preferredLanguage.option.${key}`)} key={key} value={display}>
+                        {t(`settings.general.preferredLanguage.option.${key}`)}
+                    </VSCodeOption>
+                ))}
             </VSCodeDropdown>
-            <p className="text-sm text-description mt-1">The language that Dline should use for communication.</p>
-        </div>
+        </ProfileField>
     )
 }
 

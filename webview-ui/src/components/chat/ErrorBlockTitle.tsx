@@ -1,4 +1,5 @@
 import React from "react"
+import { englishUiTranslator, type UiTranslator } from "@/i18n/messages"
 import { ClineError, ClineErrorType } from "../../../../src/services/error/ClineError"
 import { ProgressIndicator } from "./ChatRow"
 
@@ -12,6 +13,8 @@ interface ErrorBlockTitleProps {
         delaySec?: number
         errorSnippet?: string
     }
+    /** Translator of the rendering surface; the English baseline keeps non-React callers unchanged. */
+    t?: UiTranslator
 }
 
 export const ErrorBlockTitle = ({
@@ -19,6 +22,7 @@ export const ErrorBlockTitle = ({
     apiReqCancelReason,
     apiRequestFailedMessage,
     retryStatus,
+    t = englishUiTranslator,
 }: ErrorBlockTitleProps): [React.ReactElement, React.ReactElement] => {
     const getIconSpan = (iconName: string, colorClass: string) => (
         <div className="w-4 h-4 flex items-center justify-center">
@@ -43,31 +47,31 @@ export const ErrorBlockTitle = ({
 
     const title = (() => {
         // Default loading state
-        const details = { title: "API Request...", classNames: ["font-bold"] }
+        const details = { title: t("chatRows.errors.apiRequestLoading"), classNames: ["font-bold"] }
         // Handle cancellation states first
         if (apiReqCancelReason === "user_cancelled") {
-            details.title = "API Request Cancelled"
+            details.title = t("chatRows.errors.apiRequestCancelled")
             details.classNames.push("text-(--vscode-foreground)")
         } else if (apiReqCancelReason != null) {
-            details.title = "API Request Failed"
+            details.title = t("chatRows.errors.apiRequestFailed")
             details.classNames.push("text-(--vscode-errorForeground)")
         } else if (cost != null) {
             // Handle completed request
-            details.title = "API Request"
+            details.title = t("chatRows.errors.apiRequest")
             details.classNames.push("text-(--vscode-foreground)")
         } else if (apiRequestFailedMessage) {
             // Handle failed request
             const clineError = ClineError.parse(apiRequestFailedMessage)
             const titleText = clineError?.isErrorType(ClineErrorType.Balance)
-                ? "Credit Limit Reached"
+                ? t("chatRows.errors.creditLimitReached")
                 : clineError?.isErrorType(ClineErrorType.SpendLimit)
-                  ? "Spend Limit Reached"
-                  : "API Request Failed"
+                  ? t("chatRows.errors.spendLimitReached")
+                  : t("chatRows.errors.apiRequestFailed")
             details.title = titleText
             details.classNames.push("font-bold text-(--vscode-errorForeground)")
         } else if (retryStatus) {
             // Handle retry state
-            details.title = "API Request"
+            details.title = t("chatRows.errors.apiRequest")
             details.classNames.push("text-(--vscode-foreground)")
         }
 

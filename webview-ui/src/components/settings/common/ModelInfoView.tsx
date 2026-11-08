@@ -1,8 +1,10 @@
 import { geminiModels, ModelInfo } from "@shared/api"
-import { VSCodeDropdown, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
 import { CheckIcon, MinusIcon } from "lucide-react"
 import { useId } from "react"
 import styled from "styled-components"
+import { LocalizedDropdown, LocalizedOption } from "@/components/common/LocalizedDropdown"
+import type { UiTranslator } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ModelDescriptionMarkdown } from "../ModelDescriptionMarkdown"
 import { ProfileField } from "../profile-ui"
 import { supportsBrowserUse, supportsImages, supportsPromptCache } from "../utils/pricingUtils"
@@ -71,13 +73,14 @@ const UnsupportedIcon = styled(MinusIcon)`
  * as "No" would turn an absent declaration into a claim the seller never made.
  */
 function CapabilityValue({ supported }: { supported: boolean | undefined }) {
+    const { t } = useUiTranslation()
     if (supported === undefined) {
-        return <AdvancedValue>Unknown</AdvancedValue>
+        return <AdvancedValue>{t("settings.ui.unknown")}</AdvancedValue>
     }
     return (
         <AdvancedValue>
             {supported ? <SupportedIcon aria-hidden="true" /> : <UnsupportedIcon aria-hidden="true" />}
-            {supported ? "Yes" : "No"}
+            {supported ? t("settings.ui.yes") : t("settings.ui.no")}
         </AdvancedValue>
     )
 }
@@ -85,9 +88,9 @@ function CapabilityValue({ supported }: { supported: boolean | undefined }) {
 // ========== Helper Functions ==========
 
 /** Format a declared context capacity, independently from pricing usage bands. */
-const formatCompactContext = (contextWindow: number | undefined): string => {
+const formatCompactContext = (contextWindow: number | undefined, t: UiTranslator): string => {
     if (!contextWindow) {
-        return "N/A"
+        return t("settings.ui.notAvailable")
     }
     if (contextWindow >= 1_000_000) {
         return `${(contextWindow / 1_000_000).toFixed(contextWindow % 1_000_000 === 0 ? 0 : 1)}M`
@@ -119,7 +122,14 @@ export const ModelInfoView = ({
     onProviderSortingChange,
     showProviderRouting,
 }: ModelInfoViewProps) => {
+    const { t } = useUiTranslation()
     const providerRoutingId = useId()
+    const routingOptions = [
+        { value: "", label: t("settings.ui.default") },
+        { value: "price", label: t("settings.ui.price") },
+        { value: "throughput", label: t("settings.ui.throughput") },
+        { value: "latency", label: t("settings.ui.latency") },
+    ]
     const isGemini = Object.keys(geminiModels).includes(selectedModelId)
     const contextTiers = modelInfo.capabilities?.contextWindowTiers ?? []
 
@@ -144,14 +154,14 @@ export const ModelInfoView = ({
             <InfoRow>
                 {modelInfo.capabilities?.contextWindow !== undefined && modelInfo.capabilities?.contextWindow > 0 && (
                     <InfoItem>
-                        <InfoLabel>Context: </InfoLabel>
-                        <InfoValue>{formatCompactContext(modelInfo.capabilities?.contextWindow)}</InfoValue>
+                        <InfoLabel>{t("settings.ui.contextLabel")}</InfoLabel>
+                        <InfoValue>{formatCompactContext(modelInfo.capabilities?.contextWindow, t)}</InfoValue>
                     </InfoItem>
                 )}
                 {modelInfo.capabilities?.maxTokens !== undefined && modelInfo.capabilities.maxTokens > 0 && (
                     <InfoItem>
-                        <InfoLabel>Max Output: </InfoLabel>
-                        <InfoValue>{formatCompactContext(modelInfo.capabilities.maxTokens)}</InfoValue>
+                        <InfoLabel>{t("settings.ui.maxOutputLabel")}</InfoLabel>
+                        <InfoValue>{formatCompactContext(modelInfo.capabilities.maxTokens, t)}</InfoValue>
                     </InfoItem>
                 )}
             </InfoRow>
@@ -160,35 +170,35 @@ export const ModelInfoView = ({
 			    disclosure made the model's actual limits easy to miss. */}
             <AdvancedSection>
                 <AdvancedRow>
-                    <AdvancedLabel>Images</AdvancedLabel>
+                    <AdvancedLabel>{t("settings.ui.images")}</AdvancedLabel>
                     <CapabilityValue supported={hasImages} />
                 </AdvancedRow>
                 <AdvancedRow>
-                    <AdvancedLabel>Browser</AdvancedLabel>
+                    <AdvancedLabel>{t("settings.ui.browser")}</AdvancedLabel>
                     <CapabilityValue supported={hasBrowser} />
                 </AdvancedRow>
                 <AdvancedRow>
-                    <AdvancedLabel>Native Tool Calls</AdvancedLabel>
+                    <AdvancedLabel>{t("settings.ui.nativeTools")}</AdvancedLabel>
                     <CapabilityValue supported={hasNativeTools} />
                 </AdvancedRow>
                 <AdvancedRow>
-                    <AdvancedLabel>Reasoning</AdvancedLabel>
+                    <AdvancedLabel>{t("settings.ui.reasoning")}</AdvancedLabel>
                     <CapabilityValue supported={hasReasoning} />
                 </AdvancedRow>
                 {!isGemini && (
                     <AdvancedRow>
-                        <AdvancedLabel>Prompt Caching</AdvancedLabel>
+                        <AdvancedLabel>{t("settings.ui.promptCache")}</AdvancedLabel>
                         <CapabilityValue supported={hasCaching} />
                     </AdvancedRow>
                 )}
 
                 {contextTiers.length > 0 && (
                     <div style={{ marginTop: 8 }}>
-                        <div style={{ fontWeight: 500, marginBottom: 4 }}>Context Window Tiers:</div>
+                        <div style={{ fontWeight: 500, marginBottom: 4 }}>{t("settings.ui.contextTiersLabel")}</div>
                         {contextTiers.map((tier) => (
                             <AdvancedRow key={tier.id}>
                                 <AdvancedLabel>{tier.label || tier.id}</AdvancedLabel>
-                                <AdvancedValue>{formatCompactContext(tier.contextWindow)}</AdvancedValue>
+                                <AdvancedValue>{formatCompactContext(tier.contextWindow, t)}</AdvancedValue>
                             </AdvancedRow>
                         ))}
                     </div>
@@ -199,27 +209,25 @@ export const ModelInfoView = ({
                     <ProfileField
                         description={
                             <>
-                                {!providerSorting &&
-                                    "Load balance across providers (AWS, Google Vertex, etc.), prioritizing price while considering uptime"}
-                                {providerSorting === "price" && "Sort by price, prioritizing the lowest cost provider"}
-                                {providerSorting === "throughput" &&
-                                    "Sort by throughput, prioritizing highest throughput (may increase cost)"}
-                                {providerSorting === "latency" && "Sort by response time, prioritizing lowest latency"}
+                                {!providerSorting && t("settings.ui.routingDefaultHelp")}
+                                {providerSorting === "price" && t("settings.ui.routingPriceHelp")}
+                                {providerSorting === "throughput" && t("settings.ui.routingThroughputHelp")}
+                                {providerSorting === "latency" && t("settings.ui.routingLatencyHelp")}
                             </>
                         }
                         htmlFor={providerRoutingId}
-                        label="Provider Routing">
-                        <VSCodeDropdown
-                            aria-label="Provider Routing"
+                        label={t("settings.ui.providerRouting")}>
+                        <LocalizedDropdown
+                            aria-label={t("settings.ui.providerRouting")}
                             className="min-h-7 w-full"
                             id={providerRoutingId}
                             onChange={(e: any) => onProviderSortingChange(e.target.value)}
+                            selectedLabel={routingOptions.find((option) => option.value === (providerSorting || ""))?.label}
                             value={providerSorting || ""}>
-                            <VSCodeOption value="">Default</VSCodeOption>
-                            <VSCodeOption value="price">Price</VSCodeOption>
-                            <VSCodeOption value="throughput">Throughput</VSCodeOption>
-                            <VSCodeOption value="latency">Latency</VSCodeOption>
-                        </VSCodeDropdown>
+                            {routingOptions.map((option) => (
+                                <LocalizedOption key={option.value} label={option.label} value={option.value} />
+                            ))}
+                        </LocalizedDropdown>
                     </ProfileField>
                 ) : null}
             </AdvancedSection>

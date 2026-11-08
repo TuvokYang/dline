@@ -2,6 +2,7 @@ import { ApiFormat } from "@shared/proto/dline/models/metadata"
 import { getApiFormatLabel, resolveApiFormat } from "@shared/providers/api-format"
 import { useId } from "react"
 import { nativeSelectOptionStyle, nativeSelectStyle } from "@/components/ui/native-select-theme"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ProfileField } from "../profile-ui"
 
 interface ApiFormatSelectorProps {
@@ -20,6 +21,7 @@ export function ApiFormatSelector({
     onChange,
     showSingleOption = false,
 }: ApiFormatSelectorProps) {
+    const { t } = useUiTranslation()
     const inputId = useId()
     if (!apiFormats?.length || (apiFormats.length === 1 && !showSingleOption)) {
         return null
@@ -27,9 +29,9 @@ export function ApiFormatSelector({
 
     const selected = resolveApiFormat(selectedApiFormat, { apiFormats }, fallbackApiFormat)
     return (
-        <ProfileField htmlFor={inputId} label="API Format">
+        <ProfileField htmlFor={inputId} label={t("settings.ui.apiFormat")}>
             <select
-                aria-label="API Format"
+                aria-label={t("settings.ui.apiFormat")}
                 className="min-h-7 w-full rounded-xs border px-2 text-sm"
                 disabled={apiFormats.length === 1}
                 id={inputId}

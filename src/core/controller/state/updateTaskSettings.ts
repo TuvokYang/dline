@@ -11,7 +11,7 @@ import { prepareTaskRuntimeOverrideUpdate } from "./taskRuntimeOverrides"
 // path, and `getGlobalSettingsKey` prefers the active task's document, so the
 // stale task value would shadow the global one and make a slider change appear
 // to snap back for as long as that task stays open.
-const GLOBAL_ONLY_SETTING_KEYS = new Set(["maxParallelToolCalls", "maxParallelSubagents"])
+const GLOBAL_ONLY_SETTING_KEYS = new Set(["maxParallelToolCalls", "maxParallelSubagents", "uiLanguage"])
 
 const TASK_RUNTIME_OVERRIDE_KEYS = new Set([
     "planModeReasoningOverrideKind",

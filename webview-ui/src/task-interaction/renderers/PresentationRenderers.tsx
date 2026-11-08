@@ -8,6 +8,8 @@ import ImageGenerationRow from "@/components/chat/ImageGenerationRow"
 import NewTaskPreview from "@/components/chat/NewTaskPreview"
 import ReportBugPreview from "@/components/chat/ReportBugPreview"
 import { CopyButton } from "@/components/common/CopyButton"
+import type { UiTranslator } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 
 /** Props shared by pure interaction presentation renderers. */
 export interface PresentationProps {
@@ -21,33 +23,31 @@ function shell(message: UiMessage) {
     return <div>{message.text}</div>
 }
 
-const GENERIC_APPROVAL_TITLE = "Dline wants your approval:"
-
-const TOOL_APPROVAL_TITLES: Record<UiSayTool["tool"], string> = {
-    editedExistingFile: "Dline wants to edit this file:",
-    newFileCreated: "Dline wants to create this file:",
-    fileDeleted: "Dline wants to delete this file:",
-    readFile: "Dline wants to read this file:",
-    listFilesTopLevel: "Dline wants to list this directory:",
-    listFilesRecursive: "Dline wants to recursively list this directory:",
-    listCodeDefinitionNames: "Dline wants to inspect definitions in this directory:",
-    searchFiles: "Dline wants to search project files:",
-    webFetch: "Dline wants to fetch this URL:",
-    webSearch: "Dline wants to search the web:",
-    codeExecution: "Dline wants to run code in the sandbox:",
-    summarizeTask: "Dline wants to summarize the task:",
-    useSkill: "Dline wants to load this skill:",
-    loadCapability: "Dline wants to load this capability:",
-    findReferences: "Dline wants to find references for:",
-    renameSymbol: "Dline wants to rename this symbol:",
-    replaceText: "Dline wants to replace text in project files:",
-    focusChainChanged: "Dline wants to update the focus chain:",
-    statusUpdate: "Dline wants to post this status update:",
-    actModeRespond: "Dline wants to continue execution with this update:",
-    killCommand: "Dline wants to stop this command:",
-    generateImage: "Dline wants to generate an image:",
-    genericTool: GENERIC_APPROVAL_TITLE,
-}
+const TOOL_APPROVAL_TITLES = {
+    editedExistingFile: "chatInput.approval.editedExistingFile",
+    newFileCreated: "chatInput.approval.newFileCreated",
+    fileDeleted: "chatInput.approval.fileDeleted",
+    readFile: "chatInput.approval.readFile",
+    listFilesTopLevel: "chatInput.approval.listFilesTopLevel",
+    listFilesRecursive: "chatInput.approval.listFilesRecursive",
+    listCodeDefinitionNames: "chatInput.approval.listCodeDefinitionNames",
+    searchFiles: "chatInput.approval.searchFiles",
+    webFetch: "chatInput.approval.webFetch",
+    webSearch: "chatInput.approval.webSearch",
+    codeExecution: "chatInput.approval.codeExecution",
+    summarizeTask: "chatInput.approval.summarizeTask",
+    useSkill: "chatInput.approval.useSkill",
+    loadCapability: "chatInput.approval.loadCapability",
+    findReferences: "chatInput.approval.findReferences",
+    renameSymbol: "chatInput.approval.renameSymbol",
+    replaceText: "chatInput.approval.replaceText",
+    focusChainChanged: "chatInput.approval.focusChainChanged",
+    statusUpdate: "chatInput.approval.statusUpdate",
+    actModeRespond: "chatInput.approval.actModeRespond",
+    killCommand: "chatInput.approval.killCommand",
+    generateImage: "chatInput.approval.generateImage",
+    genericTool: "chatInput.approval.genericTool",
+} as const satisfies Record<UiSayTool["tool"], string>
 
 function parseTool(text: string | undefined): UiSayTool | undefined {
     if (!text) return undefined
@@ -62,9 +62,10 @@ function parseTool(text: string | undefined): UiSayTool | undefined {
     }
 }
 
-function toolDetail(tool: UiSayTool): string | undefined {
+function toolDetail(tool: UiSayTool, t: UiTranslator): string | undefined {
     if (tool.tool === "searchFiles" && tool.regex) {
-        return `"${tool.regex}"${tool.path ? ` in ${tool.path}` : tool.filePattern ? ` in ${tool.filePattern}` : ""}`
+        const path = tool.path || tool.filePattern
+        return path ? t("chatInput.approval.searchIn", { regex: tool.regex, path }) : `"${tool.regex}"`
     }
     if (tool.symbolName) return tool.symbolName
     if (tool.path) return tool.path
@@ -95,13 +96,14 @@ interface ApprovalCardProps extends ApprovalSummary {
  * a bounded block so the approval buttons stay in view.
  */
 function ApprovalCard({ title, detail, monospace = false, copyText, copyLabel }: ApprovalCardProps) {
+    const { t } = useUiTranslation()
     return (
         <div
             className="relative mx-3.5 mb-2 min-w-0 max-w-full overflow-hidden rounded-sm border border-editor-group-border bg-code p-3"
             data-testid="tool-approval-summary">
             {copyText ? (
                 <div className="absolute right-1 top-1">
-                    <CopyButton ariaLabel={copyLabel ?? "Copy"} textToCopy={copyText} />
+                    <CopyButton ariaLabel={copyLabel ?? t("chatInput.common.copy")} textToCopy={copyText} />
                 </div>
             ) : null}
             <div className={copyText ? "pr-8 font-semibold text-foreground" : "font-semibold text-foreground"}>{title}</div>
@@ -136,51 +138,60 @@ function stringField(payload: Record<string, unknown> | undefined, key: string):
     return typeof value === "string" && value.trim() ? value : undefined
 }
 
-function mcpSummary(payload: Record<string, unknown> | undefined, fallback: string | undefined): ApprovalSummary {
+function mcpSummary(
+    payload: Record<string, unknown> | undefined,
+    fallback: string | undefined,
+    t: UiTranslator,
+): ApprovalSummary {
     const serverName = stringField(payload, "serverName")
-    if (!serverName) return { title: "Dline wants to use an MCP server:", detail: fallback }
+    if (!serverName) return { title: t("chatInput.approval.mcp"), detail: fallback }
     if (payload?.type === "access_mcp_resource") {
-        return { title: `Dline wants to access a resource on the ${serverName} MCP server:`, detail: stringField(payload, "uri") }
+        return { title: t("chatInput.approval.mcpResource", { server: serverName }), detail: stringField(payload, "uri") }
     }
     const toolName = stringField(payload, "toolName")
     const args = stringField(payload, "arguments")
     return {
-        title: `Dline wants to use a tool on the ${serverName} MCP server:`,
+        title: t("chatInput.approval.mcpTool", { server: serverName }),
         detail: [toolName, args].filter(Boolean).join("\n") || undefined,
     }
 }
 
-function subagentSummary(payload: Record<string, unknown> | undefined, fallback: string | undefined): ApprovalSummary {
+function subagentSummary(
+    payload: Record<string, unknown> | undefined,
+    fallback: string | undefined,
+    t: UiTranslator,
+): ApprovalSummary {
     const prompts = Array.isArray(payload?.prompts)
         ? payload.prompts.filter((prompt): prompt is string => typeof prompt === "string")
         : []
-    if (prompts.length === 0) return { title: "Dline wants to run subagents:", detail: fallback }
+    if (prompts.length === 0) return { title: t("chatInput.approval.subagents"), detail: fallback }
     return {
-        title: prompts.length === 1 ? "Dline wants to run a subagent:" : `Dline wants to run ${prompts.length} subagents:`,
+        title: t("chatInput.approval.subagentCount", { count: prompts.length }),
         detail: prompts.map((prompt, index) => `${index + 1}. ${prompt}`).join("\n"),
     }
 }
 
 /** Resolve the title and body for approvals whose payload is not a `UiSayTool`. */
-function askApprovalSummary(message: UiMessage): ApprovalSummary {
+function askApprovalSummary(message: UiMessage, t: UiTranslator): ApprovalSummary {
     const payload = parseObject(message.text)
     const fallback = message.text?.trim() ? message.text : undefined
     switch (message.ask) {
         case "use_mcp_server":
-            return mcpSummary(payload, fallback)
+            return mcpSummary(payload, fallback, t)
         case "use_subagents":
-            return subagentSummary(payload, fallback)
+            return subagentSummary(payload, fallback, t)
         case "spawn_task":
-            return { title: "Dline wants to start a new task:", detail: stringField(payload, "task") ?? fallback }
+            return { title: t("chatInput.approval.newTask"), detail: stringField(payload, "task") ?? fallback }
         case "browser_action_launch":
-            return { title: "Dline wants to use the browser:", detail: stringField(payload, "url") ?? fallback }
+            return { title: t("chatInput.approval.browser"), detail: stringField(payload, "url") ?? fallback }
         default:
-            return { title: GENERIC_APPROVAL_TITLE, detail: fallback }
+            return { title: t("chatInput.approval.genericTool"), detail: fallback }
     }
 }
 
 /** Render approval-oriented interaction content from the exact persisted ask anchor. */
 export function ApprovalRenderer(props: PresentationProps) {
+    const { t } = useUiTranslation()
     const [imageExpanded, setImageExpanded] = useState(true)
     const imageGeneration = props.message.imageGeneration ?? parseImageGenerationToolText(props.message.text)
     if (imageGeneration) {
@@ -196,25 +207,35 @@ export function ApprovalRenderer(props: PresentationProps) {
     }
     const tool = parseTool(props.message.text)
     if (tool) {
-        return <ApprovalCard detail={toolDetail(tool)} title={TOOL_APPROVAL_TITLES[tool.tool] ?? GENERIC_APPROVAL_TITLE} />
+        return (
+            <ApprovalCard
+                detail={toolDetail(tool, t)}
+                title={t(TOOL_APPROVAL_TITLES[tool.tool] ?? "chatInput.approval.genericTool")}
+            />
+        )
     }
-    const summary = askApprovalSummary(props.message)
+    const summary = askApprovalSummary(props.message, t)
     return <ApprovalCard {...summary} monospace={props.message.ask === "use_mcp_server"} />
 }
 
 /** Render command-oriented interaction content. */
 export function CommandRenderer(props: PresentationProps) {
+    const { t } = useUiTranslation()
     // The row's fields are the authority. Copying the command must not carry the
     // directory or an approval marker along with it, which is what reading `text`
     // alone would do for an older row.
     const row = readCommandRow(props.message)
     return (
         <ApprovalCard
-            copyLabel="Copy command"
+            copyLabel={t("chatInput.approval.copyCommand")}
             copyText={row.command}
-            detail={row.workingDirectory ? `${row.command}\n\nIn ${row.workingDirectory}` : row.command}
+            detail={
+                row.workingDirectory
+                    ? t("chatInput.approval.commandDirectory", { command: row.command, directory: row.workingDirectory })
+                    : row.command
+            }
             monospace
-            title="Dline wants to execute this command:"
+            title={t("chatInput.approval.command")}
         />
     )
 }

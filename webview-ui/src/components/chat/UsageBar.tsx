@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { AccountServiceClient } from "@/services/grpc-client"
 import { formatCurrencyAmount } from "@/utils/currency"
 import {
@@ -32,6 +33,13 @@ const CLICK_MENU_MARGIN = 8
 const CLICK_MENU_GAP = 4
 const CLICK_MENU_WIDTH = 300
 const CLICK_MENU_MAX_HEIGHT = 360
+
+const USAGE_FAILURE_KEYS = {
+    refreshFailed: "chatRows.usage.refreshFailed",
+    resetFailed: "chatRows.usage.resetFailed",
+} as const
+
+type UsageFailure = keyof typeof USAGE_FAILURE_KEYS
 
 function calculateUsageClickMenuPosition(
     anchor: Pick<DOMRect, "left" | "right" | "top" | "bottom">,
@@ -75,15 +83,16 @@ function selectChatInputUsageQuota(quotas: readonly AccountUsageQuotaData[]): Ac
 
 /** Existing account usage surface, enhanced by provider-owned capability data. */
 export const UsageBar = () => {
+    const { t } = useUiTranslation()
     const { accountUsage } = useExtensionState()
     const [open, setOpen] = useState(false)
     const [tooltipOpen, setTooltipOpen] = useState(false)
     const [menuPosition, setMenuPosition] = useState<UsageClickMenuPosition>()
     const [refreshing, setRefreshing] = useState(false)
-    const [refreshError, setRefreshError] = useState<string>()
+    const [refreshError, setRefreshError] = useState<UsageFailure>()
     const [refreshOverlay, setRefreshOverlay] = useState<RefreshOverlay>()
     const [resetting, setResetting] = useState(false)
-    const [resetError, setResetError] = useState<string>()
+    const [resetError, setResetError] = useState<UsageFailure>()
     const refreshSequence = useRef(0)
     const accountUsageRef = useRef(accountUsage)
     const containerRef = useRef<HTMLDivElement>(null)
@@ -175,7 +184,7 @@ export const UsageBar = () => {
             setRefreshOverlay({ source: sourceUsage, value: nextUsage })
         } catch {
             if (sequence === refreshSequence.current && accountUsageRef.current === sourceUsage) {
-                setRefreshError("Provider usage could not be refreshed.")
+                setRefreshError("refreshFailed")
             }
         } finally {
             if (sequence === refreshSequence.current) setRefreshing(false)
@@ -207,7 +216,7 @@ export const UsageBar = () => {
                 AccountUsageResetCreditRequest.create({ profileId: usage.profileId, creditId }),
             )
         } catch {
-            setResetError("The Provider rate-limit reset could not be completed.")
+            setResetError("resetFailed")
             return undefined
         } finally {
             setResetting(false)
@@ -251,7 +260,7 @@ export const UsageBar = () => {
                     <button
                         aria-expanded={open}
                         aria-haspopup="dialog"
-                        aria-label="Provider usage"
+                        aria-label={t("chatRows.usage.trigger")}
                         className="chat-input-control-outline inline-flex h-[18.5px] shrink-0 cursor-pointer items-center rounded-sm border-0 bg-toolbar-hover px-1 py-0 text-xs font-medium leading-[18px] text-foreground shadow-none max-[420px]:hidden"
                         data-chat-input-slot="provider-usage"
                         onClick={handleDetailsClick}
@@ -264,7 +273,7 @@ export const UsageBar = () => {
             {open && menuPosition
                 ? createPortal(
                       <div
-                          aria-label="Provider usage details"
+                          aria-label={t("chatRows.usage.details")}
                           className="fixed z-[2000] flex flex-col overflow-hidden rounded border border-editor-group-border bg-menu text-menu-foreground shadow-lg"
                           data-slot="click-menu-content"
                           data-usage-surface="details"
@@ -280,9 +289,9 @@ export const UsageBar = () => {
                           <div
                               className="flex shrink-0 items-center justify-between gap-2 border-b border-editor-group-border px-3 py-2"
                               data-usage-header>
-                              <span className="font-medium">Usage</span>
+                              <span className="font-medium">{t("chatRows.usage.heading")}</span>
                               <button
-                                  aria-label="Refresh Provider usage"
+                                  aria-label={t("chatRows.usage.refresh")}
                                   className="flex size-6 items-center justify-center rounded-xs border-0 bg-transparent text-description hover:bg-toolbar-hover hover:text-foreground disabled:opacity-50"
                                   disabled={!usage.profileId || refreshing}
                                   onClick={() => void refresh()}
@@ -297,12 +306,12 @@ export const UsageBar = () => {
                           <div className="min-h-0 overflow-y-auto p-3">
                               {refreshError ? (
                                   <div className="mb-2 text-error" role="alert">
-                                      {refreshError}
+                                      {t(USAGE_FAILURE_KEYS[refreshError])}
                                   </div>
                               ) : null}
                               <ProviderUsageDetails
                                   consumeResetCredit={consumeResetCredit}
-                                  resetError={resetError}
+                                  resetError={resetError ? t(USAGE_FAILURE_KEYS[resetError]) : undefined}
                                   resetting={resetting}
                                   usage={usage}
                               />

@@ -3,7 +3,15 @@ import type { ModelInfo } from "@shared/proto/dline/models"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import { flatMeteredPricing, readPriceSet } from "@shared/providers/pricing-shape"
 import { fireEvent, render, screen } from "@testing-library/react"
-import type { AnchorHTMLAttributes, ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react"
+import {
+    type AnchorHTMLAttributes,
+    type ButtonHTMLAttributes,
+    Children,
+    type InputHTMLAttributes,
+    isValidElement,
+    type ReactNode,
+    type SelectHTMLAttributes,
+} from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { AIhubmixProvider } from "./AihubmixProvider"
 import { AskSageProvider } from "./AskSageProvider"
@@ -124,7 +132,13 @@ vi.mock("@vscode/webview-ui-toolkit/react", () => ({
             {children}
         </label>
     ),
-    VSCodeDropdown: (props: SelectHTMLAttributes<HTMLSelectElement>) => <select {...props} />,
+    VSCodeDropdown: ({ children, ...props }: SelectHTMLAttributes<HTMLSelectElement>) => (
+        <select {...props}>
+            {Children.toArray(children).filter(
+                (child) => !isValidElement<{ slot?: string }>(child) || child.props.slot !== "selected-value",
+            )}
+        </select>
+    ),
     VSCodeOption: ({ children, value }: { children: ReactNode; value: string }) => <option value={value}>{children}</option>,
     VSCodeRadioGroup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
     VSCodeRadio: ({ children }: { children: ReactNode }) => <span>{children}</span>,

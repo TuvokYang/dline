@@ -1,5 +1,6 @@
 import type { ImageGenerationProfile } from "@shared/proto/dline/profile"
 import { PlusIcon, Trash2Icon } from "lucide-react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { BaseUrlField } from "../common/BaseUrlField"
 
@@ -11,27 +12,26 @@ interface Props {
 }
 
 export function ImageGenerationProfileList({ profiles, onAdd, onRemove, onUpdate }: Props) {
+    const { t } = useUiTranslation()
     return (
         <div className="flex flex-col gap-3" data-testid="image-generation-profile-list">
             <div className="flex items-center justify-between">
                 <div>
-                    <div className="text-sm font-medium">Image Generation Profiles</div>
-                    <div className="text-xs text-description">
-                        Independent image endpoints used by API Profile Image bindings.
-                    </div>
+                    <div className="text-sm font-medium">{t("settings.ui.imageProfiles.title")}</div>
+                    <div className="text-xs text-description">{t("settings.ui.imageProfiles.help")}</div>
                 </div>
                 <button
                     className="inline-flex min-h-7 items-center gap-1 rounded-xs border px-2 text-xs"
                     onClick={onAdd}
                     type="button">
-                    <PlusIcon size={14} /> Add image profile
+                    <PlusIcon size={14} /> {t("settings.ui.imageProfiles.add")}
                 </button>
             </div>
             {profiles.map((profile) => (
                 <div className="rounded-xs border border-editor-widget-border/50 p-3" key={profile.id}>
                     <div className="mb-2 flex items-center gap-2">
                         <input
-                            aria-label="Image profile name"
+                            aria-label={t("settings.ui.imageProfiles.name")}
                             className="min-h-7 flex-1 rounded-xs border border-input-border bg-input-background px-2 text-sm"
                             onChange={(event) => onUpdate(profile.id, { name: event.target.value })}
                             value={profile.name}
@@ -42,14 +42,17 @@ export function ImageGenerationProfileList({ profiles, onAdd, onRemove, onUpdate
                                 onChange={(event) => onUpdate(profile.id, { enabled: event.target.checked })}
                                 type="checkbox"
                             />
-                            Enabled
+                            {t("settings.ui.enabled")}
                         </label>
-                        <button aria-label={`Delete ${profile.name}`} onClick={() => onRemove(profile.id)} type="button">
+                        <button
+                            aria-label={t("settings.ui.imageProfiles.delete", { name: profile.name })}
+                            onClick={() => onRemove(profile.id)}
+                            type="button">
                             <Trash2Icon size={14} />
                         </button>
                     </div>
                     <label className="mb-2 flex flex-col gap-1 text-xs">
-                        Provider
+                        {t("settings.ui.provider")}
                         <select
                             className="min-h-7 rounded-xs border border-input-border bg-input-background px-2 text-sm"
                             onChange={(event) => onUpdate(profile.id, { provider: event.target.value })}
@@ -60,27 +63,29 @@ export function ImageGenerationProfileList({ profiles, onAdd, onRemove, onUpdate
                     </label>
                     <BaseUrlField
                         initialValue={profile.baseUrl}
-                        label="Custom image base URL"
+                        label={t("settings.ui.imageProfiles.baseUrl")}
                         onChange={(value) => onUpdate(profile.id, { baseUrl: value || undefined })}
-                        placeholder={profile.provider === "gemini" ? "Default Gemini endpoint" : "Default OpenAI endpoint"}
+                        placeholder={t("settings.ui.imageProfiles.defaultEndpoint", {
+                            provider: profile.provider === "gemini" ? "Gemini" : "OpenAI",
+                        })}
                     />
                     <ApiKeyField
-                        helpText="Stored keys are never returned to the UI. Enter a value to replace the stored key."
+                        helpText={t("settings.ui.imageProfiles.keyHelp")}
                         initialValue={profile.apiKey}
                         onChange={(value) => onUpdate(profile.id, { apiKey: value })}
-                        placeholder="Enter a new API key..."
-                        providerName={`${profile.name || "Image profile"} API`}
+                        placeholder={t("settings.ui.imageProfiles.enterKey")}
+                        providerName={`${profile.name || t("settings.ui.imageProfiles.fallbackName")} API`}
                     />
                     <button
                         className="mt-1 self-start text-xs text-description underline"
                         onClick={() => onUpdate(profile.id, { apiKey: "" })}
                         type="button">
-                        Clear stored API key
+                        {t("settings.ui.imageProfiles.clearKey")}
                     </button>
                 </div>
             ))}
             {profiles.length === 0 ? (
-                <div className="text-xs text-description">No independent image profiles configured.</div>
+                <div className="text-xs text-description">{t("settings.ui.imageProfiles.empty")}</div>
             ) : null}
         </div>
     )

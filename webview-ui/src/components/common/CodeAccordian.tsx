@@ -2,6 +2,7 @@ import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import { memo, useEffect, useMemo, useRef } from "react"
 import CodeBlock from "@/components/common/CodeBlock"
 import { useWorkspaceDisplayPath } from "@/hooks/useWorkspaceDisplayPath"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 import { getLanguageFromPath } from "@/utils/getLanguageFromPath"
 import { Button } from "../ui/button"
@@ -37,6 +38,7 @@ const CodeAccordian = ({
     onToggleExpand,
     isLoading,
 }: CodeAccordianProps) => {
+    const { t } = useUiTranslation()
     const codeContainerRef = useRef<HTMLDivElement>(null)
     const formatPath = useWorkspaceDisplayPath()
 
@@ -68,7 +70,7 @@ const CodeAccordian = ({
         <div className="bg-code overflow-hidden rounded-xs border border-editor-group-border">
             {(path || isFeedback || isConsoleLogs) && (
                 <Button
-                    aria-label={isExpanded ? "Collapse code block" : "Expand code block"}
+                    aria-label={t(isExpanded ? "shell.codeAccordian.collapse" : "shell.codeAccordian.expand")}
                     className={cn("text-description flex items-center cursor-pointer select-none w-full py-[9px] px-2.5", {
                         "cursor-wait opacity-70": isLoading,
                     })}
@@ -88,7 +90,7 @@ const CodeAccordian = ({
                         <div className="flex items-center">
                             <span className={`mr-1.5 codicon codicon-${isFeedback ? "feedback" : "output"}`} />
                             <span className="whitespace-nowrap overflow-hidden text-ellipsis mr-2">
-                                {isFeedback ? "User Edits" : "Console Logs"}
+                                {t(isFeedback ? "shell.codeAccordian.userEdits" : "shell.codeAccordian.consoleLogs")}
                             </span>
                         </div>
                     ) : (

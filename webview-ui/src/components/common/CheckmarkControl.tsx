@@ -9,6 +9,7 @@ import styled from "styled-components"
 import { CODE_BLOCK_BG_COLOR } from "@/components/common/CodeBlock"
 import { Button } from "@/components/ui/button"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 import { CheckpointsServiceClient } from "@/services/grpc-client"
 
@@ -39,6 +40,7 @@ export const CheckmarkControl = ({
     source,
     pending = false,
 }: CheckmarkControlProps) => {
+    const { t } = useUiTranslation()
     const [compareDisabled, setCompareDisabled] = useState(false)
     const [restoreTaskDisabled, setRestoreTaskDisabled] = useState(false)
     const [restoreWorkspaceDisabled, setRestoreWorkspaceDisabled] = useState(false)
@@ -64,14 +66,20 @@ export const CheckmarkControl = ({
         workspaceCheckpointCoverage !== undefined &&
         workspaceCheckpointCoverage.total > 1 &&
         workspaceCheckpointCoverage.available < workspaceCheckpointCoverage.total
-    const sourceLabel = source?.kind === "pre_edit" ? `Before ${source.toolName}` : undefined
+    const defaultLabel = t("shell.checkmark.label")
+    const sourceLabel = source?.kind === "pre_edit" ? t("shell.checkmark.before", { tool: source.toolName }) : undefined
     const checkpointLabel = compactionRestore
-        ? "Compaction checkpoint"
+        ? t("shell.checkmark.compaction")
         : partialCoverage
-          ? `${sourceLabel ?? "Checkpoint"} (${workspaceCheckpointCoverage.available}/${workspaceCheckpointCoverage.total} workspaces${isCheckpointCheckedOut ? ", restored" : ""})`
+          ? t("shell.checkmark.partialCoverage", {
+                label: sourceLabel ?? defaultLabel,
+                available: workspaceCheckpointCoverage.available,
+                total: workspaceCheckpointCoverage.total,
+                restored: isCheckpointCheckedOut === true,
+            })
           : isCheckpointCheckedOut
-            ? `${sourceLabel ?? "Checkpoint"} (restored)`
-            : (sourceLabel ?? "Checkpoint")
+            ? t("shell.checkmark.restored", { label: sourceLabel ?? defaultLabel })
+            : (sourceLabel ?? defaultLabel)
 
     // Clear "Restore Files" button when checkpoint is no longer checked out
     useEffect(() => {
@@ -248,7 +256,7 @@ export const CheckmarkControl = ({
                                         }
                                     }}
                                     style={{ cursor: compareDisabled ? "wait" : "pointer" }}>
-                                    Compare
+                                    {t("shell.checkpoint.compare")}
                                 </CustomButton>
                                 <DottedLine $isCheckedOut={isCheckpointCheckedOut} $small />
                             </>
@@ -258,7 +266,7 @@ export const CheckmarkControl = ({
                                 $isActive={showRestoreConfirm}
                                 $isCheckedOut={isCheckpointCheckedOut}
                                 onClick={() => setShowRestoreConfirm((visible) => !visible)}>
-                                Restore
+                                {t("shell.checkpoint.restore")}
                             </CustomButton>
                             {showRestoreConfirm &&
                                 createPortal(
@@ -272,12 +280,12 @@ export const CheckmarkControl = ({
                                                     disabled={restoreTaskDisabled}
                                                     onClick={handleRestoreTask}
                                                     style={{ cursor: restoreTaskDisabled ? "wait" : "pointer" }}>
-                                                    Restore Task Only
+                                                    {t("shell.checkmark.restoreTaskOnly")}
                                                 </Button>
                                                 <p>
                                                     {compactionRestore
-                                                        ? "Restore the conversation to the checkpoint before this Pass. Workspace files are unchanged."
-                                                        : "Restore the conversation to this checkpoint. Workspace files are unchanged."}
+                                                        ? t("shell.checkmark.compactionHelp")
+                                                        : t("shell.checkmark.taskHelp")}
                                                 </p>
                                             </RestoreOption>
                                         ) : (
@@ -287,13 +295,13 @@ export const CheckmarkControl = ({
                                                         disabled={restoreBothDisabled}
                                                         onClick={handleRestoreBoth}
                                                         style={{ cursor: restoreBothDisabled ? "wait" : "pointer" }}>
-                                                        Restore Files & Task
+                                                        {t("shell.checkmark.restoreFilesTask")}
                                                     </Button>
-                                                    <p>Revert files and clear messages after this point</p>
+                                                    <p>{t("shell.checkmark.restoreFilesTaskHelp")}</p>
                                                 </PrimaryRestoreOption>
 
                                                 <MoreOptionsToggle onClick={() => setShowMoreOptions(!showMoreOptions)}>
-                                                    More options
+                                                    {t("shell.checkmark.moreOptions")}
                                                     <i
                                                         aria-hidden="true"
                                                         className={`codicon codicon-chevron-${showMoreOptions ? "up" : "down"}`}
@@ -320,9 +328,9 @@ export const CheckmarkControl = ({
                                                                     className="codicon codicon-file-symlink-directory"
                                                                     style={{ marginRight: "6px" }}
                                                                 />
-                                                                Restore Files Only
+                                                                {t("shell.checkmark.restoreFilesOnly")}
                                                             </Button>
-                                                            <p>Revert files to this checkpoint</p>
+                                                            <p>{t("shell.checkmark.restoreFilesOnlyHelp")}</p>
                                                         </RestoreOption>
                                                         <RestoreOption>
                                                             <Button
@@ -337,9 +345,9 @@ export const CheckmarkControl = ({
                                                                     className="codicon codicon-comment-discussion"
                                                                     style={{ marginRight: "6px" }}
                                                                 />
-                                                                Restore Task Only
+                                                                {t("shell.checkmark.restoreTaskOnly")}
                                                             </Button>
-                                                            <p>Clear messages after this point</p>
+                                                            <p>{t("shell.checkmark.restoreTaskOnlyHelp")}</p>
                                                         </RestoreOption>
                                                     </AdditionalOptions>
                                                 )}

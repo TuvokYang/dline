@@ -1,5 +1,6 @@
 import type { ApiCostSegment } from "@shared/getApiMetrics"
 import { useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { formatCurrencyAmount } from "@/utils/currency"
 import { formatTokenMetric } from "../util"
 import { TaskRateMetricsDialog } from "./TaskRateMetricsDialog"
@@ -59,22 +60,28 @@ export function TaskRateMetrics({
     requestsPerMinute,
     tokensPerMinute,
 }: TaskRateMetricsProps) {
+    const { t } = useUiTranslation()
     const [open, setOpen] = useState(false)
     const hasTokenUsage = totalInputTokens > 0 || tokensOut > 0
     const hasRateUsage = requestsPerMinute > 0 || tokensPerMinute > 0
-    const usageTitle = `In: ${totalInputTokens} / Out: ${tokensOut} / Cache read: ${cacheReads ?? 0} / Cache write: ${cacheWrites ?? 0}`
+    const usageTitle = t("chatInput.metrics.usage", {
+        input: totalInputTokens,
+        output: tokensOut,
+        read: cacheReads ?? 0,
+        write: cacheWrites ?? 0,
+    })
     const displayedCost = resolveDisplayedCost(costSegments, totalCost, currency)
     const costLabel = formatCurrencyAmount(displayedCost.totalCost, displayedCost.currency, 3)
     const accessibleLabel = [
-        "View API rate history",
-        `In: ${totalInputTokens}`,
-        `Out: ${tokensOut}`,
+        t("chatInput.metrics.viewHistory"),
+        t("chatInput.metrics.input", { value: totalInputTokens }),
+        t("chatInput.metrics.output", { value: tokensOut }),
         `RPM: ${requestsPerMinute}`,
         `TPM: ${tokensPerMinute}`,
-        `Cache read: ${cacheReads ?? 0}`,
-        `Cache write: ${cacheWrites ?? 0}`,
-        cacheHitRate != null ? `Hit: ${cacheHitRate.toFixed(1)}%` : undefined,
-        isCostAvailable ? `Cost: ${costLabel}` : undefined,
+        t("chatInput.metrics.cacheRead", { value: cacheReads ?? 0 }),
+        t("chatInput.metrics.cacheWrite", { value: cacheWrites ?? 0 }),
+        cacheHitRate != null ? t("chatInput.metrics.hit", { value: cacheHitRate.toFixed(1) }) : undefined,
+        isCostAvailable ? t("chatInput.metrics.cost", { cost: costLabel }) : undefined,
     ]
         .filter((value): value is string => value !== undefined)
         .join("; ")
@@ -95,8 +102,16 @@ export function TaskRateMetrics({
                 title={usageTitle}
                 type="button">
                 <span className="inline-flex items-center gap-1.5 task-metrics-primary">
-                    {totalInputTokens > 0 && <span data-testid="task-metrics-in">In:{formatTokenMetric(totalInputTokens)}</span>}
-                    {tokensOut > 0 && <span data-testid="task-metrics-out">Out:{formatTokenMetric(tokensOut)}</span>}
+                    {totalInputTokens > 0 && (
+                        <span data-testid="task-metrics-in">
+                            {t("chatInput.metrics.compactInput", { value: formatTokenMetric(totalInputTokens) })}
+                        </span>
+                    )}
+                    {tokensOut > 0 && (
+                        <span data-testid="task-metrics-out">
+                            {t("chatInput.metrics.compactOutput", { value: formatTokenMetric(tokensOut) })}
+                        </span>
+                    )}
                 </span>
                 <span className={secondaryClassName} data-testid="task-metrics-secondary">
                     {hasRateUsage && (
@@ -105,7 +120,7 @@ export function TaskRateMetrics({
                             <span>TPM:{formatTokenMetric(tokensPerMinute)}</span>
                         </>
                     )}
-                    {cacheHitRate != null && <span>Hit:{cacheHitRate.toFixed(1)}%</span>}
+                    {cacheHitRate != null && <span>{t("chatInput.metrics.compactHit", { value: cacheHitRate.toFixed(1) })}</span>}
                     {isCostAvailable && <span>{costLabel}</span>}
                 </span>
             </button>

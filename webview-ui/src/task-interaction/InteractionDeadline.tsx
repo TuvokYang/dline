@@ -1,8 +1,10 @@
 import type { ActiveInteractionView } from "@shared/ExtensionMessage"
 import { useEffect, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 
 /** Display an absolute backend deadline; reaching zero never dispatches an intent. */
 export function InteractionDeadline({ deadline }: { deadline: NonNullable<ActiveInteractionView["deadline"]> }) {
+    const { t } = useUiTranslation()
     const [now, setNow] = useState(Date.now)
     useEffect(() => {
         setNow(Date.now())
@@ -17,8 +19,9 @@ export function InteractionDeadline({ deadline }: { deadline: NonNullable<Active
     const seconds = Math.max(0, Math.ceil((deadline.deadlineAt - now) / 1000))
     return (
         <div aria-live="off" className="mb-1 text-xs text-description" role="timer">
-            {deadline.kind === "ask" ? "Automatic Away Mode" : "External command approval timeout"}: {Math.floor(seconds / 60)}:
-            {String(seconds % 60).padStart(2, "0")}
+            {t(deadline.kind === "ask" ? "chatInput.interaction.askDeadline" : "chatInput.interaction.commandDeadline", {
+                time: `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`,
+            })}
         </div>
     )
 }

@@ -1,5 +1,6 @@
 import { StringRequest } from "@shared/proto/dline/common"
 import { memo, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 import { FileServiceClient } from "@/services/grpc-client"
 
@@ -24,21 +25,22 @@ const OLD_BG_CLASS = "bg-red-500/20"
 const NEW_BG_CLASS = "bg-green-500/20"
 
 export const EditResultRow = memo<EditResultRowProps>(({ content, isExpanded, onToggleExpand, toolType, matches }) => {
+    const { t } = useUiTranslation()
     const [internalExpanded, setInternalExpanded] = useState(false)
     const expanded = isExpanded || internalExpanded
     const safe = content || ""
     const lines = safe.split("\n").filter(Boolean)
     const headerLine = lines[0] || ""
     const errorLine = headerLine.startsWith("Error:") ? headerLine : ""
-    const cleanHeader = errorLine ? lines[1] || "Error" : headerLine
+    const cleanHeader = errorLine ? lines[1] || t("chatRows.errors.error") : headerLine
     const body = errorLine ? lines.slice(2) : lines.slice(1)
-    if (!lines.length) return <div className="text-description text-sm py-1">Processing...</div>
+    if (!lines.length) return <div className="text-description text-sm py-1">{t("chatRows.edit.processing")}</div>
 
     return (
         <>
             <div className="overflow-hidden rounded-[3px] border border-editor-group-border">
                 <button
-                    aria-label={expanded ? "Collapse" : "Expand"}
+                    aria-label={expanded ? t("chatRows.common.collapse") : t("chatRows.common.expand")}
                     className={cn("text-description flex items-center cursor-pointer select-none w-full py-[9px] px-2.5 bg-code")}
                     onClick={() => {
                         setInternalExpanded(!internalExpanded)

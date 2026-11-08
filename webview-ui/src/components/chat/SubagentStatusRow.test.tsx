@@ -3,6 +3,7 @@
 import type { UiMessage } from "@shared/ExtensionMessage"
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { UiLanguageProvider } from "@/i18n/UiLanguageProvider"
 import SubagentStatusRow from "./SubagentStatusRow"
 
 class TestResizeObserver implements ResizeObserver {
@@ -65,6 +66,71 @@ describe("SubagentStatusRow", () => {
         finishTaskActivities.mockClear()
         retryTaskActivities.mockClear()
         taskActivities.length = 0
+    })
+
+    it("updates disclosure names in place and preserves expanded sections across language changes", () => {
+        taskActivities.push({
+            activityId: "job-i18n",
+            taskId: "task-1",
+            kind: "subagent",
+            executionMode: "foreground",
+            status: "completed",
+            cancellable: false,
+            createdAt: 1,
+            updatedAt: 2,
+            title: "reviewer",
+            events: [
+                {
+                    sequence: 1,
+                    timestamp: 1,
+                    kind: "tool_call",
+                    toolCallId: "read",
+                    toolName: "read_file",
+                    toolStatus: "completed",
+                    summary: "README.md",
+                },
+            ],
+            result: "Original output",
+        })
+        const message = makeMsg({
+            say: "subagent",
+            text: JSON.stringify({
+                status: "completed",
+                items: [
+                    {
+                        index: 1,
+                        jobId: "job-i18n",
+                        prompt: "Original task",
+                        status: "completed",
+                        result: "Original output",
+                        toolCalls: 1,
+                    },
+                ],
+            }),
+        })
+        const row = <SubagentStatusRow isLast message={message} />
+        const { rerender } = render(<UiLanguageProvider language="en">{row}</UiLanguageProvider>)
+        openWorkCards()
+        const task = screen.getByRole("button", { name: "Collapse subagent task" })
+        const tools = screen.getByRole("button", { name: "Collapse subagent tools" })
+        const output = screen.getByRole("button", { name: "Show subagent output" })
+        fireEvent.click(output)
+        const outputBody = screen.getByTestId("subagent-output-scroll")
+        rerender(<UiLanguageProvider language="zh-CN">{row}</UiLanguageProvider>)
+        expect(screen.getByRole("button", { name: "收起子代理任务" })).toBe(task)
+        expect(screen.getByRole("button", { name: "收起子代理工具" })).toBe(tools)
+        expect(screen.getByRole("button", { name: "隐藏子代理输出" })).toBe(output)
+        expect(screen.getByTestId("subagent-output-scroll")).toBe(outputBody)
+        expect(screen.getByText("Original output")).toBeVisible()
+        fireEvent.click(task)
+        expect(screen.queryByTestId("subagent-task-scroll")).not.toBeInTheDocument()
+        rerender(<UiLanguageProvider language="en">{row}</UiLanguageProvider>)
+        expect(screen.getByRole("button", { name: "Expand subagent task" })).toBe(task)
+        expect(screen.getByRole("button", { name: "Hide subagent output" })).toBe(output)
+        expect(screen.getByTestId("subagent-output-scroll")).toBe(outputBody)
+        fireEvent.click(output)
+        expect(screen.queryByTestId("subagent-output-scroll")).not.toBeInTheDocument()
+        expect(cancelTaskActivities).not.toHaveBeenCalled()
     })
 
     it("renders disabled error as failed", () => {

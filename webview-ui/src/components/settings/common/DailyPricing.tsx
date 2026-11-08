@@ -1,6 +1,7 @@
 import type { TimeOfDayPricing } from "@shared/proto/dline/models/metadata"
 import { resolvePricingDay } from "@shared/providers/pricing-schedule"
 import { useEffect, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { dailyPricingWindows } from "./daily-pricing"
 import { PricingTierEditor } from "./ModelTierEditor"
 import { PriceSetFields } from "./PriceSetFields"
@@ -16,6 +17,7 @@ interface DailyPricingProps {
 
 /** Read-only seller-day rendering. Configuration edits never consume these projected intervals. */
 export function DailyPricing({ time, currencySymbol, showCachePrices, atMs }: DailyPricingProps) {
+    const { t } = useUiTranslation()
     const [now, setNow] = useState(Date.now)
     const day = time.schedule ? resolvePricingDay(time.schedule, atMs ?? now) : undefined
     const nextDayAtMs = day?.nextDayAtMs
@@ -36,7 +38,7 @@ export function DailyPricing({ time, currencySymbol, showCachePrices, atMs }: Da
     }, [atMs, nextDayAtMs])
 
     if (!day || day.windowsApply === undefined) {
-        return <p role="status">Pricing schedule unavailable for this date.</p>
+        return <p role="status">{t("settings.ui.dailyUnavailable")}</p>
     }
     const offset = formatPricingOffset(time.schedule!.timezoneOffsetMinutes)
     const windows = dailyPricingWindows(time, day.windowsApply)
@@ -45,9 +47,17 @@ export function DailyPricing({ time, currencySymbol, showCachePrices, atMs }: Da
             <p className="m-0 text-xs text-description">
                 <time dateTime={day.localDay}>{day.localDay}</time> · {offset}
             </p>
-            <PricingTimeline label={`Pricing windows for ${day.localDay} (${offset})`} peakOffPeakLabels windows={windows} />
+            <PricingTimeline
+                label={t("settings.ui.dailyChart", { day: day.localDay, offset })}
+                peakOffPeakLabels
+                windows={windows}
+            />
             {windows.map((window) => {
-                const title = `${window.kind === "peak" ? "Peak" : "Off-peak"} window · ${formatPricingClock(window.startMinute)} – ${formatPricingClock(window.endMinute)}`
+                const title = t("settings.ui.windowRange", {
+                    label: window.kind === "peak" ? t("settings.ui.peakWindow") : t("settings.ui.offPeakWindow"),
+                    start: formatPricingClock(window.startMinute),
+                    end: formatPricingClock(window.endMinute),
+                })
                 return (
                     <section
                         aria-label={title}

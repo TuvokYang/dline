@@ -1,6 +1,7 @@
 import { ApiFormat, type ModelPricing } from "@shared/proto/dline/models/metadata"
 import { VSCodeCheckbox, VSCodeDropdown, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
 import { useId, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { DropdownContainer } from "../common/ModelSelector"
 import { PricingEditor } from "../common/PricingEditor"
@@ -79,6 +80,7 @@ export function DeepSeekProviderCard({
     onEnableThinkingChange,
     onModelChange,
 }: DeepSeekProviderCardProps) {
+    const { t } = useUiTranslation()
     const modelSelectId = useId()
     const formatId = useId()
     // Mirrors the checkbox the way `DeepSeekProvider` does: the stored value is
@@ -95,10 +97,10 @@ export function DeepSeekProviderCard({
                 signupUrl="https://platform.deepseek.com/api_keys"
             />
 
-            <ProfileField htmlFor={modelSelectId} label="Model">
+            <ProfileField htmlFor={modelSelectId} label={t("settings.ui.model")}>
                 <DropdownContainer className="dropdown-container min-w-0">
                     <VSCodeDropdown
-                        aria-label="Model"
+                        aria-label={t("settings.ui.model")}
                         className="min-h-7 w-full"
                         id={modelSelectId}
                         onChange={dropdownChangeHandler(onModelChange)}
@@ -113,12 +115,12 @@ export function DeepSeekProviderCard({
             </ProfileField>
 
             <ProfileField
-                description="DeepSeek serves every model through each protocol; the choice changes the wire format, not the price."
+                description={t("settings.ui.deepseek.protocolHelp")}
                 htmlFor={formatId}
-                label="API Format">
+                label={t("settings.ui.apiFormat")}>
                 <DropdownContainer className="dropdown-container min-w-0">
                     <VSCodeDropdown
-                        aria-label="API Format"
+                        aria-label={t("settings.ui.apiFormat")}
                         className="min-h-7 w-full"
                         id={formatId}
                         onChange={dropdownChangeHandler((value) => onApiFormatChange(Number(value) as ApiFormat))}
@@ -147,14 +149,14 @@ export function DeepSeekProviderCard({
                         setThinkingChecked(checked)
                         onEnableThinkingChange(checked)
                     }}>
-                    Enable Thinking
+                    {t("settings.ui.enableThinking")}
                 </VSCodeCheckbox>
                 {thinkingChecked && (
                     <ReasoningEffortSelector
                         allowedEfforts={DEEP_SEEK_EFFORT_LEVELS}
                         defaultEffort={DEEP_SEEK_DEFAULT_EFFORT}
-                        description="Toggle above to enable thinking. Low uses less reasoning; High is the standard level; Max is for complex tasks."
-                        label="Thinking Level"
+                        description={t("settings.ui.deepseekThinkingHelp")}
+                        label={t("settings.ui.thinkingLevel")}
                         onReasoningEffortChange={(value) => onEffortChange(value as DeepSeekEffort)}
                         reasoningEffort={effort}
                     />

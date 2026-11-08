@@ -43,6 +43,7 @@ function controllerFor(messages: MessageStateHandler): Controller {
             getGlobalStateKey: (key: string) => (key === "taskHistory" ? [] : undefined),
             getGlobalSettingsKey: () => undefined,
             getCanonicalSettingsKey: () => undefined,
+            getUiLanguagePreference: () => "auto",
             getWorkspaceStateKey: () => undefined,
             getRemoteConfigSettings: () => ({}),
             subscribeAwaySettings: () => () => undefined,

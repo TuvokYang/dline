@@ -1,4 +1,6 @@
+import { DEFAULT_UI_LANGUAGE, normalizeUiLanguage, type UiLanguage } from "@shared/UiLanguage"
 import React from "react"
+import { translateUi, type UiTranslator } from "@/i18n/messages"
 import { reportWebviewError } from "@/services/webviewErrorReporter"
 
 interface RootErrorBoundaryProps {
@@ -7,6 +9,21 @@ interface RootErrorBoundaryProps {
 
 interface RootErrorBoundaryState {
     error: Error | null
+}
+
+/**
+ * Resolve the display language for the boundary's own fallback.
+ *
+ * The boundary wraps the whole tree, so it renders outside the controlled
+ * language Provider and cannot read the preference. It therefore reads only the
+ * language the root has already projected onto `document.documentElement.lang`
+ * and treats anything unrecognised - including a panel that never hydrated - as
+ * the safe English baseline. This introduces no new preference authority.
+ */
+function fallbackTranslator(): UiTranslator {
+    if (typeof document === "undefined") return (key, ...args) => translateUi(DEFAULT_UI_LANGUAGE, key, ...args)
+    const language: UiLanguage = normalizeUiLanguage(document.documentElement.lang)
+    return (key, ...args) => translateUi(language, key, ...args)
 }
 
 /**
@@ -31,11 +48,13 @@ export class RootErrorBoundary extends React.Component<RootErrorBoundaryProps, R
     render() {
         const { error } = this.state
         if (!error) return this.props.children
+
+        const t = fallbackTranslator()
         return (
             <div
                 className="flex h-screen w-full flex-col items-center justify-center gap-3 p-4 text-center"
                 data-testid="root-error-boundary">
-                <div className="text-[var(--vscode-errorForeground)]">Dline hit an error while rendering this panel.</div>
+                <div className="text-[var(--vscode-errorForeground)]">{t("shell.errorBoundary.title")}</div>
                 <div
                     className="max-w-full break-words text-sm text-[var(--vscode-descriptionForeground)]"
                     data-testid="root-error-message">
@@ -46,7 +65,7 @@ export class RootErrorBoundary extends React.Component<RootErrorBoundaryProps, R
                     data-testid="root-error-reload"
                     onClick={() => window.location.reload()}
                     type="button">
-                    Reload panel
+                    {t("shell.errorBoundary.reload")}
                 </button>
             </div>
         )

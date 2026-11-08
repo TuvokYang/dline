@@ -1,5 +1,6 @@
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import React, { useMemo } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import CodeAccordian from "../common/CodeAccordian"
 import { TOOL_RESPONSE_SCROLL_CLASS } from "./constants"
 
@@ -18,6 +19,7 @@ const SearchResultsDisplay: React.FC<SearchResultsDisplayProps> = ({
     path,
     filePattern,
 }) => {
+    const { t } = useUiTranslation()
     const parsedData = useMemo(() => {
         // Check if this is a multi-workspace result
         const multiWorkspaceMatch = content.match(/^Found \d+ results? across \d+ workspaces?\./m)
@@ -91,7 +93,7 @@ const SearchResultsDisplay: React.FC<SearchResultsDisplayProps> = ({
                 border: "1px solid var(--vscode-editorGroup-border)",
             }}>
             <div
-                aria-label={isExpanded ? "Collapse search results" : "Expand search results"}
+                aria-label={isExpanded ? t("chatRows.searchResults.collapse") : t("chatRows.searchResults.expand")}
                 onClick={onToggleExpand}
                 onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
@@ -145,7 +147,7 @@ const SearchResultsDisplay: React.FC<SearchResultsDisplayProps> = ({
                     </div>
 
                     {/* Workspace sections */}
-                    {sections?.map((section: any, index: number) => (
+                    {sections?.map((section: { workspace: string; content: string }, index: number) => (
                         <div
                             key={`workspace-${section.workspace}`}
                             style={{ marginBottom: index < sections.length - 1 ? "16px" : 0 }}>
@@ -172,7 +174,7 @@ const SearchResultsDisplay: React.FC<SearchResultsDisplayProps> = ({
                                         fontWeight: "500",
                                         color: "var(--vscode-foreground)",
                                     }}>
-                                    Workspace: {section.workspace}
+                                    {t("chatRows.searchResults.multiWorkspace", { workspace: section.workspace })}
                                 </span>
                             </div>
 

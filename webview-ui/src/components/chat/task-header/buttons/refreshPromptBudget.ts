@@ -1,3 +1,4 @@
+import { translateUi, type UiTranslator } from "@/i18n/messages"
 import { formatCurrencyAmount } from "@/utils/currency"
 
 export interface RefreshPromptBudgetInput {
@@ -20,8 +21,11 @@ const MILLION_UNIT = 1_000_000
  * @param input Estimated miss tokens and optional pricing metadata.
  * @returns Prominent token and optional price display lines.
  */
-export function buildRefreshPromptBudget(input: RefreshPromptBudgetInput): RefreshPromptBudgetView {
-    const tokenLine = `${formatTokenAmount(input.estimatedInputTokens)} input tokens`
+export function buildRefreshPromptBudget(
+    input: RefreshPromptBudgetInput,
+    t: UiTranslator = (key, ...args) => translateUi("en", key, ...args),
+): RefreshPromptBudgetView {
+    const tokenLine = t("chatInput.prompt.tokens", { tokens: formatTokenAmount(input.estimatedInputTokens) })
     if (!isUsablePrice(input.inputPrice)) {
         return { tokenLine }
     }
@@ -30,7 +34,7 @@ export function buildRefreshPromptBudget(input: RefreshPromptBudgetInput): Refre
     return {
         tokenLine,
         priceLine: `≈ ${formatCurrencyAmount(estimatedCost, input.currency, 4)}`,
-        inputPriceLine: `Input price: ${formatCurrencyAmount(input.inputPrice, input.currency, 2)} / 1M tokens`,
+        inputPriceLine: t("chatInput.prompt.inputPrice", { price: formatCurrencyAmount(input.inputPrice, input.currency, 2) }),
     }
 }
 

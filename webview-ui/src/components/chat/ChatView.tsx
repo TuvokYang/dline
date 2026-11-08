@@ -16,6 +16,7 @@ import { useApiProfiles } from "@/components/settings/providers/useApiProfiles"
 import { useProviderModels } from "@/components/settings/providers/useProviderModels"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { useShowNavbar } from "@/context/PlatformContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { FileServiceClient, SlashServiceClient, TaskServiceClient, UiServiceClient } from "@/services/grpc-client"
 import { useInputSemanticCatalog } from "@/services/input-semantics/useInputSemanticCatalog"
 import { getTaskViewKey } from "@/services/task-messages"
@@ -88,6 +89,7 @@ const MANUAL_COMPACT_COMMAND = "/cmd:compact"
 const INVALID_PAYLOAD_RESULT = "invalid_payload"
 
 const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryView }: ChatViewProps) => {
+    const { t } = useUiTranslation()
     const showNavbar = useShowNavbar()
     const {
         version,
@@ -788,7 +790,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         ],
     )
 
-    const placeholderText = hasTaskSurface ? "Type a message..." : "Type your task here..."
+    const placeholderText = t(hasTaskSurface ? "chatInput.view.messagePlaceholder" : "chatInput.view.taskPlaceholder")
 
     return (
         <ChatLayout isHidden={isHidden}>
@@ -819,7 +821,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                 ) : hasTaskSurface ? (
                     <div className="flex items-center justify-between gap-2 px-4 py-2">
                         <span className="text-description text-sm" role="status">
-                            Loading task...
+                            {t("chatInput.view.loadingTask")}
                         </span>
                         <NewTaskButton onClick={handleTaskClose} />
                     </div>
@@ -879,7 +881,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                         view={taskViewState}
                     />
                 ) : hasTaskSurface && !taskViewState ? (
-                    <div role="alert">Task interaction state is unavailable</div>
+                    <div role="alert">{t("chatInput.view.interactionUnavailable")}</div>
                 ) : null}
                 <AutoApproveBar />
                 <InputSection

@@ -2,6 +2,7 @@ import type { TaskViewAction, TaskViewState } from "@shared/ExtensionMessage"
 import { EmptyRequest } from "@shared/proto/dline/common"
 import { AskResponseRequest, MoveCommandToBackgroundRequest, StopAwayModeRequest } from "@shared/proto/dline/task"
 import { TaskServiceClient } from "@/services/grpc-client"
+import { TaskActionError } from "./task-action-errors"
 
 /**
  * Carry out a footer action that targets the task rather than its interaction.
@@ -18,11 +19,12 @@ export async function dispatchTaskAction(view: TaskViewState, action: TaskViewAc
             }),
         )
         if (!response.accepted) {
-            throw new Error(
-                response.result === "task_read_only"
-                    ? "This task is open in another window and cannot be changed here."
-                    : "Away Mode could not be stopped for this task opening. Reopen the task and try again.",
-            )
+            throw response.result === "task_read_only"
+                ? new TaskActionError("read_only", "This task is open in another window and cannot be changed here.")
+                : new TaskActionError(
+                      "stop_away_failed",
+                      "Away Mode could not be stopped for this task opening. Reopen the task and try again.",
+                  )
         }
         return
     }
@@ -32,7 +34,10 @@ export async function dispatchTaskAction(view: TaskViewState, action: TaskViewAc
     }
     if (action.type === "continue_in_background") {
         if (!action.activityId) {
-            throw new Error("The foreground activity is no longer available to continue in the background.")
+            throw new TaskActionError(
+                "foreground_unavailable",
+                "The foreground activity is no longer available to continue in the background.",
+            )
         }
         const response = await TaskServiceClient.moveCommandToBackground(
             MoveCommandToBackgroundRequest.create({
@@ -42,7 +47,10 @@ export async function dispatchTaskAction(view: TaskViewState, action: TaskViewAc
             }),
         )
         if (!response.moved) {
-            throw new Error("The foreground activity is no longer available to continue in the background.")
+            throw new TaskActionError(
+                "foreground_unavailable",
+                "The foreground activity is no longer available to continue in the background.",
+            )
         }
         return
     }
@@ -50,7 +58,7 @@ export async function dispatchTaskAction(view: TaskViewState, action: TaskViewAc
         await TaskServiceClient.cancelTask(EmptyRequest.create({}))
         return
     }
-    throw new Error(`Unsupported task action: ${action.type}`)
+    throw new TaskActionError("unsupported", `Unsupported task action: ${action.type}`, action.type)
 }
 
 /** The task's cancel action, when the backend currently offers it. */

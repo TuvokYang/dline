@@ -1,8 +1,10 @@
 import { VertexProviderConfig } from "@shared/proto/dline/provider/vertex"
 import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import VertexData from "@shared/providers/vertex.json"
-import { VSCodeDropdown, VSCodeLink, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
+import { VSCodeLink, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
+import { LocalizedDropdown, LocalizedOption } from "@/components/common/LocalizedDropdown"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { DROPDOWN_Z_INDEX, DropdownContainer } from "../ApiOptions"
 import { DebouncedTextField } from "../common/DebouncedTextField"
 import { ModelInfoView } from "../common/ModelInfoView"
@@ -23,6 +25,7 @@ interface VertexProviderProps {
 
 /** GCP Vertex AI provider �?all data from ApiProfile. vertexProjectId/vertexRegion stored in providerConfig. */
 export const VertexProvider = ({ showModelOptions, isPopup, profile, onUpdate }: VertexProviderProps) => {
+    const { t } = useUiTranslation()
     const { remoteConfigSettings } = useExtensionState()
     const remote = remoteConfigSettings as any
     const pc = profile.vertex ?? VertexProviderConfig.create()
@@ -45,10 +48,10 @@ export const VertexProvider = ({ showModelOptions, isPopup, profile, onUpdate }:
                     disabled={remote?.vertexProjectId !== undefined}
                     initialValue={vertexProjectId}
                     onChange={(value) => persistConfig("vertexProjectId", value)}
-                    placeholder="Enter Project ID..."
+                    placeholder={t("settings.ui.vertex.enterProjectId")}
                     style={{ width: "100%" }}>
                     <div className="flex items-center gap-2 mb-1">
-                        <span style={{ fontWeight: 500 }}>Google Cloud Project ID</span>
+                        <span style={{ fontWeight: 500 }}>{t("settings.ui.vertex.projectId")}</span>
                         {remote?.vertexProjectId !== undefined && <LockIcon />}
                     </div>
                 </DebouncedTextField>
@@ -59,42 +62,48 @@ export const VertexProvider = ({ showModelOptions, isPopup, profile, onUpdate }:
                         className="flex items-center gap-2 mb-1"
                         style={{ opacity: remote?.vertexRegion !== undefined ? 0.4 : 1 }}>
                         <label htmlFor="vertex-region-dropdown">
-                            <span className="font-medium">Google Cloud Region</span>
+                            <span className="font-medium">{t("settings.ui.vertex.region")}</span>
                         </label>
                         {remote?.vertexRegion !== undefined && <LockIcon />}
                     </div>
-                    <VSCodeDropdown
+                    <LocalizedDropdown
                         disabled={remote?.vertexRegion !== undefined}
                         id="vertex-region-dropdown"
                         onChange={(e: any) => persistConfig("vertexRegion", e.target.value)}
+                        selectedLabel={
+                            vertexRegion === ""
+                                ? t("settings.ui.selectRegion")
+                                : REGIONS.includes(vertexRegion)
+                                  ? vertexRegion
+                                  : undefined
+                        }
                         style={{ width: "100%" }}
                         value={vertexRegion}>
-                        <VSCodeOption value="">Select a region...</VSCodeOption>
+                        <LocalizedOption label={t("settings.ui.selectRegion")} value="" />
                         {REGIONS.map((r) => (
                             <VSCodeOption key={r} value={r}>
                                 {r}
                             </VSCodeOption>
                         ))}
-                    </VSCodeDropdown>
+                    </LocalizedDropdown>
                 </DropdownContainer>
             </RemotelyConfiguredInputWrapper>
             <p style={{ fontSize: "12px", marginTop: "5px", color: "var(--vscode-descriptionForeground)" }}>
-                To use Google Cloud Vertex AI, you need to{" "}
+                {t("settings.ui.vertex.setup")}{" "}
                 <VSCodeLink
                     href="https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/use-claude#before_you_begin"
                     style={{ display: "inline", fontSize: "inherit" }}>
-                    {"1) create a Google Cloud account �?enable the Vertex AI API �?enable the desired Claude models,"}
+                    {t("settings.ui.vertex.accountSetup")}
                 </VSCodeLink>{" "}
                 <VSCodeLink
                     href="https://cloud.google.com/docs/authentication/provide-credentials-adc#google-idp"
                     style={{ display: "inline", fontSize: "inherit" }}>
-                    {"2) install the Google Cloud CLI �?configure Application Default Credentials."}
+                    {t("settings.ui.vertex.cliSetup")}
                 </VSCodeLink>
             </p>
             {showModelOptions && (
                 <>
                     <ModelSelector
-                        label="Model"
                         models={models}
                         onChange={(e) =>
                             onUpdate({

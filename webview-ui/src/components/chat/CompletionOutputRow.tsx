@@ -2,6 +2,7 @@ import { Int64Request } from "@shared/proto/dline/common"
 import { CheckIcon } from "lucide-react"
 import { memo } from "react"
 import { PLATFORM_CONFIG, PlatformType } from "@/config/platform.config"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 import { TaskServiceClient } from "@/services/grpc-client"
 import { CopyButton } from "../common/CopyButton"
@@ -44,6 +45,7 @@ export const CompletionOutputRow = memo(
         elapsedLabel,
         handleQuoteClick,
     }: CompletionOutputRowProps) => {
+        const { t } = useUiTranslation()
         return (
             <div>
                 <div className="rounded-sm border border-success/20 overflow-visible bg-success/10 p-2 pt-3">
@@ -51,12 +53,12 @@ export const CompletionOutputRow = memo(
                     <div className={cn(headClassNames, "justify-between px-1")}>
                         <div className="flex gap-2 items-center">
                             <CheckIcon className="size-3 text-success" />
-                            <span className="text-success font-bold">Task Completed</span>
+                            <span className="text-success font-bold">{t("chatRows.header.taskCompleted")}</span>
                             {elapsedLabel && (
                                 <span
                                     className="text-success/70 text-xs tabular-nums"
                                     data-testid="completion-output-elapsed"
-                                    title="From your input to this attempt completing">
+                                    title={t("chatRows.completion.elapsedTitle")}>
                                     {elapsedLabel}
                                 </span>
                             )}
@@ -109,6 +111,7 @@ const CompletionOutputActionRow = memo(
         setExplainChangesDisabled: (value: boolean) => void
         messageTs: number
     }) => {
+        const { t } = useUiTranslation()
         return (
             <div style={{ paddingTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
                 <SuccessButton
@@ -126,7 +129,7 @@ const CompletionOutputActionRow = memo(
                         width: "100%",
                     }}>
                     <i className="codicon codicon-new-file" style={{ marginRight: 6 }} />
-                    View Changes
+                    {t("chatRows.completion.viewChanges")}
                 </SuccessButton>
 
                 {PLATFORM_CONFIG.type === PlatformType.VSCODE && (
@@ -147,7 +150,7 @@ const CompletionOutputActionRow = memo(
                             width: "100%",
                         }}>
                         <i className="codicon codicon-comment-discussion" style={{ marginRight: 6 }} />
-                        {explainChangesDisabled ? "Explaining..." : "Explain Changes"}
+                        {explainChangesDisabled ? t("chatRows.completion.explaining") : t("chatRows.completion.explainChanges")}
                     </SuccessButton>
                 )}
             </div>

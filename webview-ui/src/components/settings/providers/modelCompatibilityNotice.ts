@@ -1,5 +1,6 @@
 import { LITE_PROMPT_CONTEXT_WINDOW_LIMIT } from "@shared/prompt-profile-constants"
 import type { ModelCapabilities } from "@shared/proto/dline/models/metadata"
+import type { UiTranslator } from "@/i18n/messages"
 
 export interface ModelCompatibilityNotice {
     variant: "info"
@@ -14,10 +15,10 @@ export interface ModelCompatibilityNoticeInput {
 }
 
 /** Describes prompt-profile or metadata guidance without treating model choice as an error. */
-export function getModelCompatibilityNotice({
-    capabilities,
-    requireCompleteMetadata = true,
-}: ModelCompatibilityNoticeInput): ModelCompatibilityNotice | undefined {
+export function getModelCompatibilityNotice(
+    { capabilities, requireCompleteMetadata = true }: ModelCompatibilityNoticeInput,
+    t: UiTranslator,
+): ModelCompatibilityNotice | undefined {
     const contextWindow = capabilities?.contextWindow
     const hasKnownContextWindow = typeof contextWindow === "number" && Number.isFinite(contextWindow) && contextWindow > 0
 
@@ -25,8 +26,8 @@ export function getModelCompatibilityNotice({
         return {
             variant: "info",
             reason: "lite_prompt",
-            title: "Lite prompt profile",
-            message: "This model uses the Lite prompt profile because its context window is below 64K tokens.",
+            title: t("settings.ui.compatibility.lite"),
+            message: t("settings.ui.compatibility.liteHelp"),
         }
     }
 
@@ -35,9 +36,8 @@ export function getModelCompatibilityNotice({
         return {
             variant: "info",
             reason: "unknown_metadata",
-            title: "Model metadata incomplete",
-            message:
-                "Confirm the context window and native tool support for this model to improve prompt selection and feature availability.",
+            title: t("settings.ui.compatibility.incomplete"),
+            message: t("settings.ui.compatibility.incompleteHelp"),
         }
     }
 

@@ -1,3 +1,4 @@
+import { translateUi, type UiTranslator } from "@/i18n/messages"
 import { chipLabelClass, describeChip } from "./chip-presentation"
 import {
     type ComposerAtom,
@@ -9,6 +10,8 @@ import {
     segmentLength,
 } from "./model"
 import { loadResourceThumbnail } from "./resource-thumbnails"
+
+const englishUi: UiTranslator = (key, ...args) => translateUi("en", key, ...args)
 
 /**
  * The DOM projection of a composer draft and the mapping between DOM points
@@ -46,6 +49,7 @@ export interface ComposerDecoration {
 }
 
 export interface ComposerRenderOptions {
+    readonly t?: UiTranslator
     readonly decorations?: readonly ComposerDecoration[]
     /** Atoms the current selection covers whole; they are drawn as selected. */
     readonly selectedAtomIds?: ReadonlySet<string>
@@ -98,10 +102,38 @@ function thumbnailElement(src: string, onError: (thumbnail: HTMLElement) => void
     return thumbnail
 }
 
-function chipElement(atom: ComposerAtom): HTMLElement {
+function updateChipPresentation(node: HTMLElement, atom: ComposerAtom, t: UiTranslator): void {
+    const chip = describeChip(atom, t)
+    node.setAttribute("aria-label", chip.ariaLabel)
+    node.title = chip.tooltip
+    const retry = node.querySelector<HTMLElement>(`[${COMPOSER_DOM.chipAction}="retry"]`)
+    if (retry && atom.kind === "resource") {
+        retry.setAttribute("aria-label", t("chatInput.chip.retry", { name: atom.displayName }))
+        retry.title = t("chatInput.common.retry")
+    }
+    const remove = node.querySelector<HTMLElement>(`[${COMPOSER_DOM.chipAction}="remove"]`)
+    if (remove) {
+        remove.setAttribute("aria-label", t("chatInput.chip.remove", { name: chip.label }))
+        remove.title = t("chatInput.common.remove")
+    }
+}
+
+/** Refresh only product-owned chip attributes; text nodes, thumbnails and the browser selection stay intact. */
+export function updateComposerPresentation(root: HTMLElement, segments: readonly ComposerSegment[], t: UiTranslator): void {
+    for (const segment of segments) {
+        if (segment.kind !== "atom") continue
+        const node = chipCache.get(segment.atom)
+        if (node && root.contains(node)) updateChipPresentation(node, segment.atom, t)
+    }
+}
+
+function chipElement(atom: ComposerAtom, t: UiTranslator): HTMLElement {
     const cached = chipCache.get(atom)
-    if (cached) return cached
-    const chip = describeChip(atom)
+    if (cached) {
+        updateChipPresentation(cached, atom, t)
+        return cached
+    }
+    const chip = describeChip(atom, t)
     const icon = () =>
         element("span", {
             class: `codicon codicon-${chip.icon}${chip.busy ? " codicon-modifier-spin" : ""} composer-chip__icon`,
@@ -117,8 +149,8 @@ function chipElement(atom: ComposerAtom): HTMLElement {
                 class: "codicon codicon-refresh composer-chip__action",
                 role: "button",
                 [COMPOSER_DOM.chipAction]: "retry",
-                "aria-label": `Retry ${atom.displayName}`,
-                title: "Retry",
+                "aria-label": t("chatInput.chip.retry", { name: atom.displayName }),
+                title: t("chatInput.common.retry"),
             }),
         )
     }
@@ -127,8 +159,8 @@ function chipElement(atom: ComposerAtom): HTMLElement {
             class: "codicon codicon-close composer-chip__action",
             role: "button",
             [COMPOSER_DOM.chipAction]: "remove",
-            "aria-label": `Remove ${chip.label}`,
-            title: "Remove",
+            "aria-label": t("chatInput.chip.remove", { name: chip.label }),
+            title: t("chatInput.common.remove"),
         }),
     )
     const attributes: Record<string, string> = {
@@ -193,7 +225,7 @@ export function renderComposerDom(
         if (segment.kind === "text") {
             children.push(...decoratedPieces(segment.text, offset, decorations))
         } else {
-            const chip = chipElement(segment.atom)
+            const chip = chipElement(segment.atom, options.t ?? englishUi)
             chip.setAttribute(COMPOSER_DOM.start, String(offset))
             chip.classList.toggle("composer-chip--selected", options.selectedAtomIds?.has(segment.atom.entityId) ?? false)
             children.push(chip)

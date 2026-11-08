@@ -2,6 +2,8 @@ import { StringRequest } from "@shared/proto/dline/common"
 import { TriangleAlertIcon } from "lucide-react"
 import type { ReactNode } from "react"
 import { CopyButton } from "@/components/common/CopyButton"
+import { englishUiTranslator, type UiTranslator } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { FileServiceClient } from "@/services/grpc-client"
 import { ClineError } from "../../../../src/services/error/ClineError"
 
@@ -71,7 +73,6 @@ function detailTestId(key: string): string {
 
 const SENSITIVE_DETAIL_KEY = /(?:authorization|api.?key|token|secret|password|cookie)/i
 const MAX_ADDITIONAL_DETAILS = 16
-const API_REQUEST_FAILED_TITLE = "API Request Failed"
 
 function writeApiErrorToClipboard(text: string): Promise<unknown> {
     return FileServiceClient.copyToClipboard(StringRequest.create({ value: text }))
@@ -117,8 +118,13 @@ function collectAdditionalDetails(
     return result
 }
 
-/** Parse the serialized provider error into the fields users need to act on it. */
-export function parseApiErrorDetails(serializedError?: string): ApiErrorDetails {
+/**
+ * Parse the serialized provider error into the fields users need to act on it.
+ *
+ * The translator only reaches the fallback shown when a payload carries no
+ * message at all; provider messages and diagnostic values stay raw.
+ */
+export function parseApiErrorDetails(serializedError?: string, t: UiTranslator = englishUiTranslator): ApiErrorDetails {
     const directRecord = parseSerializedError(serializedError)
     const parsed = ClineError.parse(serializedError)
     const details: unknown =
@@ -141,7 +147,7 @@ export function parseApiErrorDetails(serializedError?: string): ApiErrorDetails 
         readString(parsed?.message) ??
         readableErrorValue(directRecord) ??
         serializedError ??
-        "Unknown API error"
+        t("chatRows.errors.unknownApiError")
     const knownValues = new Set(
         [status, code, providerId, modelId, requestId, message].filter((value) => value !== undefined).map(String),
     )
@@ -156,33 +162,43 @@ export function parseApiErrorDetails(serializedError?: string): ApiErrorDetails 
     }
 }
 
-/** Render one structured API error with an optional status section below it. */
+/**
+ * Render one structured API error with an optional status section below it.
+ *
+ * `copyable` is the semantic control for the copy action; it no longer depends on
+ * which title a caller chose, so translating the title cannot change behavior.
+ */
 export function ApiErrorBox({
     error,
     children,
     testId = "api-error-box",
-    title = API_REQUEST_FAILED_TITLE,
+    title,
+    copyable = title === undefined,
 }: {
     error?: string
     children?: ReactNode
     testId?: string
     title?: string
+    /** Show the copy action; defaults to the request-failed surface when no title is supplied. */
+    copyable?: boolean
 }) {
-    const details = parseApiErrorDetails(error)
+    const { t } = useUiTranslation()
+    const details = parseApiErrorDetails(error, t)
+    const displayTitle = title ?? t("chatRows.errors.apiRequestFailed")
     const metadata = [
-        { label: "Provider", value: details.providerId, testId: `${testId}-provider` },
-        { label: "Model", value: details.modelId, testId: `${testId}-model` },
-        { label: "HTTP status", value: details.status, testId: `${testId}-status` },
-        { label: "Error code", value: details.code, testId: `${testId}-code` },
-        { label: "Request ID", value: details.requestId, testId: `${testId}-request-id` },
+        { label: t("chatRows.errors.field.provider"), value: details.providerId, testId: `${testId}-provider` },
+        { label: t("chatRows.errors.field.model"), value: details.modelId, testId: `${testId}-model` },
+        { label: t("chatRows.errors.field.httpStatus"), value: details.status, testId: `${testId}-status` },
+        { label: t("chatRows.errors.field.errorCode"), value: details.code, testId: `${testId}-code` },
+        { label: t("chatRows.errors.field.requestId"), value: details.requestId, testId: `${testId}-request-id` },
     ].filter((field) => field.value !== undefined)
     const copyText = [
-        title,
+        displayTitle,
         "",
         details.message,
         ...(metadata.length > 0 ? ["", ...metadata.map((field) => `${field.label}: ${field.value}`)] : []),
         ...(details.additionalDetails.length > 0
-            ? ["", "Details", ...details.additionalDetails.map((field) => `${field.label}: ${field.value}`)]
+            ? ["", t("chatRows.common.details"), ...details.additionalDetails.map((field) => `${field.label}: ${field.value}`)]
             : []),
     ].join("\n")
     return (
@@ -191,11 +207,11 @@ export function ApiErrorBox({
                 <div className="flex items-center justify-between gap-2 text-error">
                     <div className="flex min-w-0 items-center gap-2">
                         <TriangleAlertIcon className="size-3 shrink-0" />
-                        <div className="font-medium text-xs">{title}</div>
+                        <div className="font-medium text-xs">{displayTitle}</div>
                     </div>
-                    {title === API_REQUEST_FAILED_TITLE && (
+                    {copyable && (
                         <CopyButton
-                            ariaLabel="Copy error"
+                            ariaLabel={t("chatRows.common.copyError")}
                             className="shrink-0 text-error"
                             textToCopy={copyText}
                             writeText={writeApiErrorToClipboard}
@@ -219,7 +235,7 @@ export function ApiErrorBox({
                 )}
                 {details.additionalDetails.length > 0 && (
                     <div className="mt-3 border-error/30 border-t pt-3 text-xs" data-testid={`${testId}-details`}>
-                        <div className="font-medium text-foreground">Details</div>
+                        <div className="font-medium text-foreground">{t("chatRows.common.details")}</div>
                         <dl className="mt-2 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-2">
                             {details.additionalDetails.map((field) => (
                                 <div className="contents" key={`${field.key}:${field.label}`}>

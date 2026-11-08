@@ -2,6 +2,7 @@ import { ZAiProviderConfig } from "@shared/proto/dline/provider/zai"
 import { resolveProfileCatalogKey, resolveProfileModelId, resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import { resolvePrimaryCatalogKey, ZAI_MAINLAND_CATALOG } from "@shared/providers/provider-catalog-key"
 import { VSCodeDropdown, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { ModelAutocomplete } from "../common/ModelAutocomplete"
 import { ModelInfoView } from "../common/ModelInfoView"
@@ -19,6 +20,7 @@ interface ZAiProviderProps {
 
 /** Z AI provider �?all data from ApiProfile. zaiApiLine stored in providerConfig. */
 export const ZAiProvider = ({ showModelOptions, isPopup, profile, onUpdate }: ZAiProviderProps) => {
+    const { t } = useUiTranslation()
     const pc = profile.zai ?? ZAiProviderConfig.create()
     const zaiApiLine = pc.zaiApiLine || "international"
 
@@ -64,7 +66,7 @@ export const ZAiProvider = ({ showModelOptions, isPopup, profile, onUpdate }: ZA
         <div>
             <DropdownContainer className="dropdown-container" style={{ position: "inherit" }}>
                 <label htmlFor="zai-entrypoint">
-                    <span style={{ fontWeight: 500, marginTop: 5 }}>Z AI Entrypoint</span>
+                    <span style={{ fontWeight: 500, marginTop: 5 }}>{t("settings.ui.zai.entrypoint")}</span>
                 </label>
                 <VSCodeDropdown
                     id="zai-entrypoint"
@@ -76,7 +78,7 @@ export const ZAiProvider = ({ showModelOptions, isPopup, profile, onUpdate }: ZA
                 </VSCodeDropdown>
             </DropdownContainer>
             <p style={{ fontSize: "12px", marginTop: 3, color: "var(--vscode-descriptionForeground)" }}>
-                Please select the appropriate API entrypoint based on your location.
+                {t("settings.ui.zai.locationHelp")}
             </p>
             <ApiKeyField
                 initialValue={profile.apiKey}
@@ -91,7 +93,6 @@ export const ZAiProvider = ({ showModelOptions, isPopup, profile, onUpdate }: ZA
             {showModelOptions && (
                 <>
                     <ModelAutocomplete
-                        label="Model"
                         models={zaiModelOptions}
                         onChange={(newModelId) => {
                             // Only catalog entries carry metadata; a discovered id
@@ -101,7 +102,7 @@ export const ZAiProvider = ({ showModelOptions, isPopup, profile, onUpdate }: ZA
                         }}
                         onOpen={refreshRemoteModels}
                         optionOrigins={optionOrigins}
-                        placeholder="Search, select, or enter a model ID..."
+                        placeholder={t("settings.ui.searchCustomModel")}
                         selectedModelId={modelId}
                     />
                     <ModelInfoView isPopup={isPopup} modelInfo={modelInfo} selectedModelId={modelId} />

@@ -2,6 +2,7 @@ import { StringRequest } from "@shared/proto/dline/common"
 import { FilePlus, FileText, FileX, SquareArrowOutUpRightIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import CodeAccordian from "@/components/common/CodeAccordian"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 import { FileServiceClient } from "@/services/grpc-client"
 import { TOOL_RESPONSE_SCROLL_CLASS } from "./constants"
@@ -74,6 +75,7 @@ const FileBlock = memo<{
     blockError?: string
 }>(
     ({ file, isStreaming, isPartial, startLineNumber, blockError }) => {
+        const { t } = useUiTranslation()
         const hasError = !!blockError
         const [isExpanded, setIsExpanded] = useState(!!isPartial)
         const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -148,6 +150,8 @@ const FileBlock = memo<{
             })
         }, [file.lines, startLineNumber])
 
+        const openFileTitle = t("chatRows.edit.openFile")
+
         return (
             <div className="bg-code rounded-sm border border-editor-group-border overflow-hidden">
                 <button
@@ -160,7 +164,7 @@ const FileBlock = memo<{
                             <span
                                 className="font-medium truncate hover:underline hover:text-link"
                                 onClick={handleOpenFile}
-                                title="Open file in editor">
+                                title={openFileTitle}>
                                 {file.path}
                             </span>
                         </div>
@@ -174,7 +178,7 @@ const FileBlock = memo<{
                         <span
                             className="p-1 hover:bg-description/20 rounded-xs transition-colors"
                             onClick={handleOpenFile}
-                            title="Open file in editor">
+                            title={openFileTitle}>
                             <SquareArrowOutUpRightIcon className="size-2 text-description hover:text-foreground" />
                         </span>
                     </div>

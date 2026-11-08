@@ -1,6 +1,7 @@
 import type { ContextWindowBand, ContextWindowTier } from "@shared/proto/dline/models/metadata"
 import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
 import { type ReactNode, useEffect, useId, useRef, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ProfileActionRow, ProfileField, ProfileInlineGrid, ProfileSectionTitle } from "../profile-ui"
 import { flushPendingDebouncedInputs } from "../utils/useDebouncedInput"
 import { DebouncedTextField } from "./DebouncedTextField"
@@ -81,6 +82,7 @@ interface ContextTierEditorProps {
  * @returns Context tier editor section.
  */
 export function ContextTierEditor({ tiers, editable, onChange }: ContextTierEditorProps) {
+    const { t } = useUiTranslation()
     const baseId = useId()
 
     /** Add a default editable context tier. */
@@ -101,8 +103,8 @@ export function ContextTierEditor({ tiers, editable, onChange }: ContextTierEdit
     return (
         <div className="flex min-w-0 flex-col gap-2">
             <TierHeader
-                action={editable ? <VSCodeButton onClick={addTier}>Add Context Tier</VSCodeButton> : undefined}
-                title="Context Tiers"
+                action={editable ? <VSCodeButton onClick={addTier}>{t("settings.ui.addContextTier")}</VSCodeButton> : undefined}
+                title={t("settings.ui.contextTiers")}
             />
             {tiers.map((tier, index) => (
                 <div className={getTierClassName(index)} key={`${tier.id}-${index}`}>
@@ -111,32 +113,32 @@ export function ContextTierEditor({ tiers, editable, onChange }: ContextTierEdit
                             <ProfileInlineGrid>
                                 <TierField
                                     id={`${baseId}-${index}-id`}
-                                    label="Context Tier ID"
+                                    label={t("settings.ui.contextTierId")}
                                     onChange={(value) => updateTier(index, { id: value })}
                                     value={tier.id}
                                 />
                                 <TierField
                                     id={`${baseId}-${index}-window`}
-                                    label="Context Tier Window"
+                                    label={t("settings.ui.contextTierWindow")}
                                     onChange={(value) => updateTier(index, { contextWindow: parseTierNumber(value) })}
                                     value={String(tier.contextWindow)}
                                 />
                                 <TierField
                                     id={`${baseId}-${index}-label`}
-                                    label="Context Tier Label"
+                                    label={t("settings.ui.contextTierLabel")}
                                     onChange={(value) => updateTier(index, { label: value })}
                                     value={tier.label ?? ""}
                                 />
                                 <TierField
                                     id={`${baseId}-${index}-suffix`}
-                                    label="API Model Suffix"
+                                    label={t("settings.ui.apiModelSuffix")}
                                     onChange={(value) => updateTier(index, { apiModelSuffix: value })}
                                     value={tier.apiModelSuffix ?? ""}
                                 />
                             </ProfileInlineGrid>
                             <ProfileActionRow>
                                 <VSCodeButton appearance="secondary" onClick={() => removeTier(index)}>
-                                    Remove Context Tier
+                                    {t("settings.ui.removeContextTier")}
                                 </VSCodeButton>
                             </ProfileActionRow>
                         </>
@@ -144,8 +146,10 @@ export function ContextTierEditor({ tiers, editable, onChange }: ContextTierEdit
                         <div className="flex flex-col gap-1 text-sm">
                             <strong>{tier.id}</strong>
                             <span>{tier.label ?? tier.contextWindow.toLocaleString()}</span>
-                            <span>{tier.contextWindow.toLocaleString()} tokens</span>
-                            {tier.apiModelSuffix ? <span>API suffix: {tier.apiModelSuffix}</span> : null}
+                            <span>{t("settings.ui.tokens", { count: tier.contextWindow.toLocaleString() })}</span>
+                            {tier.apiModelSuffix ? (
+                                <span>{t("settings.ui.apiSuffix", { suffix: tier.apiModelSuffix })}</span>
+                            ) : null}
                         </div>
                     )}
                 </div>
@@ -182,6 +186,7 @@ export function PricingTierEditor({
     showCachePrices,
     onChange,
 }: PricingTierEditorProps) {
+    const { t } = useUiTranslation()
     const baseId = useId()
     const latest = useRef(tiers)
     const [invalidBound, setInvalidBound] = useState<number>()
@@ -216,15 +221,15 @@ export function PricingTierEditor({
                 action={
                     editable ? (
                         <VSCodeButton onClick={() => afterInputFlush(() => publish(appendPricingTier(latest.current)))}>
-                            Add Pricing Tier
+                            {t("settings.ui.addPricingTier")}
                         </VSCodeButton>
                     ) : undefined
                 }
-                title="Pricing Tiers"
+                title={t("settings.ui.pricingTiers")}
             />
             {flushFailed && (
                 <span className="text-xs text-error" role="alert">
-                    Pending inputs could not be saved. Retry before changing tiers.
+                    {t("settings.ui.flushTiers")}
                 </span>
             )}
             {tiers.map((tier, index) => {
@@ -232,20 +237,22 @@ export function PricingTierEditor({
                 const range =
                     tier.maxInputTokens === undefined
                         ? index === 0
-                            ? "All input sizes (unbounded)"
-                            : `Above ${lower?.toLocaleString()} input tokens`
-                        : `${lower?.toLocaleString()} ${index === 0 ? "≤" : "<"} input tokens ≤ ${tier.maxInputTokens.toLocaleString()}`
+                            ? t("settings.ui.allInputSizes")
+                            : t("settings.ui.aboveTokens", { lower: lower?.toLocaleString() ?? "" })
+                        : t("settings.ui.tokenRange", {
+                              lower: lower?.toLocaleString() ?? "",
+                              comparison: index === 0 ? "≤" : "<",
+                              upper: tier.maxInputTokens.toLocaleString(),
+                          })
                 return (
                     <div className={getTierClassName(index)} key={`band-${index}`}>
-                        <strong className="text-xs">
-                            Tier {index + 1} · {range}
-                        </strong>
+                        <strong className="text-xs">{t("settings.ui.tierRange", { index: index + 1, range })}</strong>
                         {editable ? (
                             <>
                                 {index < tiers.length - 1 ? (
                                     <TierField
                                         id={`${baseId}-${index}-threshold`}
-                                        label="Up To Input Tokens"
+                                        label={t("settings.ui.upToTokens")}
                                         onChange={(text) => {
                                             const value = Number(text)
                                             const lower = latest.current[index - 1]?.maxInputTokens ?? 0
@@ -261,11 +268,11 @@ export function PricingTierEditor({
                                         value={tier.maxInputTokens === undefined ? "" : String(tier.maxInputTokens)}
                                     />
                                 ) : (
-                                    <span className="text-xs text-description">No upper limit</span>
+                                    <span className="text-xs text-description">{t("settings.ui.noUpperLimit")}</span>
                                 )}
                                 {invalidBound === index && (
                                     <span className="text-xs text-error" role="alert">
-                                        Enter a positive integer between the adjacent tier limits.
+                                        {t("settings.ui.invalidTier")}
                                     </span>
                                 )}
                                 <ProfileActionRow>
@@ -273,13 +280,13 @@ export function PricingTierEditor({
                                         appearance="secondary"
                                         disabled={tiers.length <= 1}
                                         onClick={() => removeTier(index)}>
-                                        Remove Pricing Tier
+                                        {t("settings.ui.removePricingTier")}
                                     </VSCodeButton>
                                 </ProfileActionRow>
                             </>
                         ) : null}
                         <PriceSetFields
-                            accessiblePrefix={`Tier ${index + 1}`}
+                            accessiblePrefix={t("settings.ui.tier", { index: index + 1 })}
                             currencySymbol={currencySymbol}
                             onChange={(prices) => updateTier(index, { prices })}
                             prices={tier.prices}

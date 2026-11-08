@@ -1,3 +1,5 @@
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
+
 export interface PricingInterval {
     readonly startMinute: number
     readonly endMinute: number
@@ -22,6 +24,7 @@ export function PricingTimeline({
     label: string
     peakOffPeakLabels?: boolean
 }) {
+    const { t } = useUiTranslation()
     return (
         <div>
             <svg
@@ -61,11 +64,11 @@ export function PricingTimeline({
             </div>
             <div className="mt-1 flex gap-3 text-[11px]">
                 <span style={{ color: "var(--vscode-charts-green, #22c55e)" }}>
-                    {peakOffPeakLabels ? "Off-peak rates" : "Default rates"}
+                    {peakOffPeakLabels ? t("settings.ui.offPeakRates") : t("settings.ui.defaultRates")}
                 </span>
                 {(!peakOffPeakLabels || windows.some((window) => window.kind !== "offPeak")) && (
                     <span style={{ color: "var(--vscode-charts-orange, #f59e0b)" }}>
-                        {peakOffPeakLabels ? "Peak rates" : "Window rates"}
+                        {peakOffPeakLabels ? t("settings.ui.peakRates") : t("settings.ui.windowRates")}
                     </span>
                 )}
             </div>

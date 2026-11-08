@@ -13,6 +13,7 @@ import {
 } from "@/components/common/AlertDialog"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { TaskServiceClient } from "@/services/grpc-client"
 
 interface TaskLockBannerProps {
@@ -26,6 +27,7 @@ interface TaskLockBannerProps {
  * Automatically polls for lock release every 30 seconds.
  */
 export const TaskLockBanner: React.FC<TaskLockBannerProps> = ({ taskLockStatus, currentTaskId }) => {
+    const { t } = useUiTranslation()
     const [dismissed, setDismissed] = useState(false)
     const [showUnlockConfirm, setShowUnlockConfirm] = useState(false)
     const [isUnlocking, setIsUnlocking] = useState(false)
@@ -95,10 +97,8 @@ export const TaskLockBanner: React.FC<TaskLockBannerProps> = ({ taskLockStatus, 
     }
 
     const isStale = currentLockStatus.isStale
-    const lockedBy = currentLockStatus.lockedBy || "unknown"
-    const warningMessage = isStale
-        ? "Task lock is stale and will be released automatically."
-        : `Task is locked by another instance (${lockedBy}). You are in read-only mode.`
+    const lockedBy = currentLockStatus.lockedBy || t("chatInput.lock.unknown")
+    const warningMessage = isStale ? t("chatInput.lock.stale") : t("chatInput.lock.readOnly", { owner: lockedBy })
 
     return (
         <>
@@ -111,7 +111,7 @@ export const TaskLockBanner: React.FC<TaskLockBannerProps> = ({ taskLockStatus, 
                             onClick={() => setShowUnlockConfirm(true)}
                             size="xs"
                             variant="default">
-                            {isUnlocking ? "Unlocking..." : "Unlock"}
+                            {t(isUnlocking ? "chatInput.lock.unlocking" : "chatInput.lock.unlock")}
                         </Button>
                     </AlertDescription>
                 </Alert>
@@ -120,15 +120,15 @@ export const TaskLockBanner: React.FC<TaskLockBannerProps> = ({ taskLockStatus, 
             <AlertDialog onOpenChange={setShowUnlockConfirm} open={showUnlockConfirm}>
                 <AlertDialogContent>
                     <AlertDialogHeader>
-                        <AlertDialogTitle>Unlock Task</AlertDialogTitle>
-                        <AlertDialogDescription>
-                            Unlocking will interfere with other processes currently running this task. Confirm unlock?
-                        </AlertDialogDescription>
+                        <AlertDialogTitle>{t("chatInput.lock.title")}</AlertDialogTitle>
+                        <AlertDialogDescription>{t("chatInput.lock.warning")}</AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                        <AlertDialogCancel onClick={() => setShowUnlockConfirm(false)}>Cancel</AlertDialogCancel>
+                        <AlertDialogCancel onClick={() => setShowUnlockConfirm(false)}>
+                            {t("chatInput.common.cancel")}
+                        </AlertDialogCancel>
                         <AlertDialogAction disabled={isUnlocking} onClick={handleUnlock}>
-                            {isUnlocking ? "Unlocking..." : "Confirm"}
+                            {t(isUnlocking ? "chatInput.lock.unlocking" : "chatInput.common.confirm")}
                         </AlertDialogAction>
                     </AlertDialogFooter>
                 </AlertDialogContent>

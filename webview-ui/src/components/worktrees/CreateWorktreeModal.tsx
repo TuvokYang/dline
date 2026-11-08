@@ -3,6 +3,7 @@ import { CreateWorktreeRequest, SwitchWorktreeRequest } from "@shared/proto/dlin
 import { VSCodeButton, VSCodeTextField } from "@vscode/webview-ui-toolkit/react"
 import { AlertCircle, AlertTriangle, Loader2, X } from "lucide-react"
 import { memo, useCallback, useEffect, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { WorktreeServiceClient } from "@/services/grpc-client"
 
 interface CreateWorktreeModalProps {
@@ -15,6 +16,7 @@ interface CreateWorktreeModalProps {
 }
 
 const CreateWorktreeModal = ({ open, onClose, openAfterCreate = false, onSuccess }: CreateWorktreeModalProps) => {
+    const { t } = useUiTranslation()
     const [newWorktreePath, setNewWorktreePath] = useState("")
     const [newBranchName, setNewBranchName] = useState("")
     const [isCreating, setIsCreating] = useState(false)
@@ -88,22 +90,22 @@ const CreateWorktreeModal = ({ open, onClose, openAfterCreate = false, onSuccess
                 onClose()
             }
         } catch (err) {
-            setCreateError(err instanceof Error ? err.message : "Failed to create worktree")
+            setCreateError(err instanceof Error ? err.message : t("shell.worktrees.create.failed"))
         } finally {
             setIsCreating(false)
         }
-    }, [newWorktreePath, newBranchName, openAfterCreate, onSuccess, onClose])
+    }, [newWorktreePath, newBranchName, openAfterCreate, onSuccess, onClose, t])
 
     if (!open) {
         return null
     }
 
-    const title = openAfterCreate ? "New Worktree" : "Create New Worktree"
-    const buttonText = openAfterCreate ? "Create & Open" : "Create Worktree"
-    const creatingText = openAfterCreate ? "Creating & Opening..." : "Creating..."
+    const title = openAfterCreate ? t("shell.worktrees.create.titleOpenAfter") : t("shell.worktrees.create.title")
+    const buttonText = openAfterCreate ? t("shell.worktrees.create.submitAndOpen") : t("shell.worktrees.create.submit")
+    const creatingText = openAfterCreate ? t("shell.worktrees.create.creatingAndOpening") : t("shell.worktrees.create.creating")
     const description = openAfterCreate
-        ? "This will create a copy of your project on a new branch and open in a separate window."
-        : "This will create a copy of your project on a new branch."
+        ? t("shell.worktrees.create.descriptionOpenAfter")
+        : t("shell.worktrees.create.description")
 
     return (
         <div
@@ -116,6 +118,7 @@ const CreateWorktreeModal = ({ open, onClose, openAfterCreate = false, onSuccess
             <div className="bg-[var(--vscode-editor-background)] border border-[var(--vscode-panel-border)] rounded-lg p-5 w-[450px] max-w-[90vw] relative">
                 {/* Close button */}
                 <button
+                    aria-label={t("shell.chrome.close")}
                     className="absolute top-3 right-3 p-1 rounded hover:bg-[var(--vscode-toolbar-hoverBackground)] text-[var(--vscode-descriptionForeground)] hover:text-[var(--vscode-foreground)] cursor-pointer"
                     onClick={onClose}
                     type="button">
@@ -129,29 +132,30 @@ const CreateWorktreeModal = ({ open, onClose, openAfterCreate = false, onSuccess
                         style={{ backgroundColor: "var(--vscode-inputValidation-warningBackground)" }}>
                         <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-[var(--vscode-editorWarning-foreground)]" />
                         <p className="text-xs text-[var(--vscode-foreground)] m-0">
-                            No .worktreeinclude detected.{" "}
+                            {t("shell.worktrees.create.includeMissing")}{" "}
                             <a
                                 className="text-[var(--vscode-textLink-foreground)] hover:text-[var(--vscode-textLink-activeForeground)]"
                                 href="https://docs.dline.cc/features/worktrees/#worktreeinclude"
                                 rel="noopener noreferrer"
                                 style={{ fontSize: "inherit" }}
                                 target="_blank">
-                                Learn more
+                                {t("shell.worktrees.learnMore")}
                             </a>
                         </p>
                     </div>
                 )}
                 <div className="flex flex-col">
                     <div>
-                        <label className="block text-sm font-medium mb-1">Branch Name *</label>
+                        <label className="block text-sm font-medium mb-1">{t("shell.worktrees.create.branchLabel")}</label>
                         <VSCodeTextField
+                            aria-label={t("shell.worktrees.create.branchLabel")}
                             className="w-full"
                             onInput={(e) => setNewBranchName((e.target as HTMLInputElement).value)}
-                            placeholder="feature/my-feature"
+                            placeholder={t("shell.worktrees.create.branchPlaceholder")}
                             value={newBranchName}>
                             {newBranchName && (
                                 <div
-                                    aria-label="Clear"
+                                    aria-label={t("shell.worktrees.create.clear")}
                                     className="input-icon-button codicon codicon-close"
                                     onClick={() => setNewBranchName("")}
                                     slot="end"
@@ -165,19 +169,20 @@ const CreateWorktreeModal = ({ open, onClose, openAfterCreate = false, onSuccess
                             )}
                         </VSCodeTextField>
                         <p className="text-xs text-[var(--vscode-descriptionForeground)] mt-1">
-                            Your new copy will be checked out to this branch.
+                            {t("shell.worktrees.create.branchHelp")}
                         </p>
                     </div>
                     <div>
-                        <label className="block text-sm font-medium mb-1">Folder Path *</label>
+                        <label className="block text-sm font-medium mb-1">{t("shell.worktrees.create.pathLabel")}</label>
                         <VSCodeTextField
+                            aria-label={t("shell.worktrees.create.pathLabel")}
                             className="w-full"
                             onInput={(e) => setNewWorktreePath((e.target as HTMLInputElement).value)}
-                            placeholder="../my-feature-worktree"
+                            placeholder={t("shell.worktrees.create.pathPlaceholder")}
                             value={newWorktreePath}>
                             {newWorktreePath && (
                                 <div
-                                    aria-label="Clear"
+                                    aria-label={t("shell.worktrees.create.clear")}
                                     className="input-icon-button codicon codicon-close"
                                     onClick={() => setNewWorktreePath("")}
                                     slot="end"
@@ -191,7 +196,7 @@ const CreateWorktreeModal = ({ open, onClose, openAfterCreate = false, onSuccess
                             )}
                         </VSCodeTextField>
                         <p className="text-xs text-[var(--vscode-descriptionForeground)] mt-1">
-                            Where the project will be copied for the worktree.
+                            {t("shell.worktrees.create.pathHelp")}
                         </p>
                     </div>
                     {createError && (
@@ -207,7 +212,7 @@ const CreateWorktreeModal = ({ open, onClose, openAfterCreate = false, onSuccess
                             {isLoadingDefaults ? (
                                 <>
                                     <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                                    Loading...
+                                    {t("shell.worktrees.create.loadingDefaults")}
                                 </>
                             ) : isCreating ? (
                                 <>

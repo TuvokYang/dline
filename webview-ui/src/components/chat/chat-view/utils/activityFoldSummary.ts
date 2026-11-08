@@ -1,6 +1,9 @@
 import { readCommandRow } from "@shared/commandRow"
 import type { UiAskUseMcpServer, UiMessage, UiSayBrowserAction, UiSaySubagentStatus } from "@shared/ExtensionMessage"
+import { translateUi, type UiTranslator } from "@/i18n/messages"
 import type { ActivityFold, FoldFailureKind } from "./chatRowKinds"
+
+const englishUi: UiTranslator = (key, ...args) => translateUi("en", key, ...args)
 
 /**
  * What a block did, by the verb a reader cares about.
@@ -245,14 +248,23 @@ function browserStepName(message: UiMessage): string | undefined {
  * One-line header text, such as
  * `2 rounds · 8 file read (3 external) · 2 file edit · 4 cmd · 1 subagent`.
  */
-export function describeActivityFold(summary: ActivityFoldSummary): string {
-    return describeActivityFoldParts(summary)
+export function describeActivityFold(summary: ActivityFoldSummary, t: UiTranslator = englishUi): string {
+    return describeActivityFoldParts(summary, t)
         .map((part) => part.text)
         .join(" · ")
 }
 
 /** One stated fact about a block, and whether it is an error count. */
 export interface ActivityFoldPart {
+    /** Stable presentation identity, independent of translated text and changing counts. */
+    readonly kind:
+        | "rounds"
+        | `work.${FoldWorkKind}`
+        | "thoughts"
+        | "checkpoints"
+        | "messages"
+        | `failure.${FoldFailureKind}`
+        | "finished"
     readonly text: string
     readonly isFailure: boolean
 }
@@ -268,15 +280,7 @@ export interface ActivityFoldPart {
  * kind: it qualifies only the local file and command kinds, which is why
  * `OUTSIDE_KINDS` below is narrower than this list.
  */
-const WORK_LABELS: ReadonlyArray<readonly [FoldWorkKind, string, string]> = [
-    ["read", "file read", "file reads"],
-    ["write", "file edit", "file edits"],
-    ["command", "cmd", "cmds"],
-    ["subagent", "subagent", "subagents"],
-    ["web", "web tools", "web tools"],
-    ["browser", "browser", "browsers"],
-    ["other", "other", "others"],
-]
+const WORK_KINDS: readonly FoldWorkKind[] = ["read", "write", "command", "subagent", "web", "browser", "other"]
 
 /**
  * The kinds a workspace boundary can qualify.
@@ -293,41 +297,39 @@ const OUTSIDE_KINDS: ReadonlySet<FoldWorkKind> = new Set<FoldWorkKind>(["read", 
  * A reader scans the line for what went wrong, so the renderer needs to know
  * which parts are failure counts without re-parsing the sentence.
  */
-export function describeActivityFoldParts(summary: ActivityFoldSummary): ActivityFoldPart[] {
-    // A fact states a count and a noun; work facts also name their kind so their
-    // external share can qualify them.
-    const facts: Array<readonly [number, string, string, FoldWorkKind?]> = [
-        [summary.rounds ?? 0, "round", "rounds"],
-        ...WORK_LABELS.map(([kind, singular, plural]) => [summary.work.get(kind) ?? 0, singular, plural, kind] as const),
-        [summary.thoughts, "thought", "thoughts"],
-        [summary.checkpoints, "checkpoint", "checkpoints"],
-        [summary.assistantMessages, "message", "messages"],
-    ]
-    const parts: ActivityFoldPart[] = facts.flatMap(([total, singular, plural, kind]) => {
-        const text = countOf(total, singular, plural)
-        if (text === undefined) return []
-        // Reaching outside the workspace qualifies the verb rather than adding a
-        // tally a reader would sum: "12 file reads (3 external)".
-        const outside = kind === undefined || !OUTSIDE_KINDS.has(kind) ? undefined : outsideCount(summary.external.get(kind) ?? 0)
-        return [{ text: outside === undefined ? text : `${text} (${outside})`, isFailure: false }]
-    })
-    for (const [kind, label] of FAILURE_LABELS) {
-        // A failure label already ends in "failed", so it never takes a plural.
-        const total = summary.failures?.get(kind) ?? 0
-        if (total !== 0) parts.push({ text: `${total} ${label}`, isFailure: true })
+export function describeActivityFoldParts(summary: ActivityFoldSummary, t: UiTranslator = englishUi): ActivityFoldPart[] {
+    const parts: ActivityFoldPart[] = []
+    if (summary.rounds)
+        parts.push({ kind: "rounds", text: t("chatInput.fold.rounds", { count: summary.rounds }), isFailure: false })
+    for (const kind of WORK_KINDS) {
+        const count = summary.work.get(kind) ?? 0
+        if (count === 0) continue
+        const work = t(`chatInput.fold.work.${kind}`, { count })
+        const external = OUTSIDE_KINDS.has(kind) ? (summary.external.get(kind) ?? 0) : 0
+        parts.push({
+            kind: `work.${kind}`,
+            text: external > 0 ? t("chatInput.fold.withExternal", { work, external }) : work,
+            isFailure: false,
+        })
     }
-    return parts.length > 0 ? parts : [{ text: "Finished steps", isFailure: false }]
+    const otherFacts = [
+        [summary.thoughts, "thoughts"],
+        [summary.checkpoints, "checkpoints"],
+        [summary.assistantMessages, "messages"],
+    ] as const
+    for (const [count, kind] of otherFacts) {
+        if (count !== 0) parts.push({ kind, text: t(`chatInput.fold.${kind}`, { count }), isFailure: false })
+    }
+    for (const kind of FAILURE_KINDS) {
+        const count = summary.failures?.get(kind) ?? 0
+        if (count !== 0)
+            parts.push({ kind: `failure.${kind}`, text: t(`chatInput.fold.failure.${kind}`, { count }), isFailure: true })
+    }
+    return parts.length > 0 ? parts : [{ kind: "finished", text: t("chatInput.fold.finished"), isFailure: false }]
 }
 
 /** Singular nouns for counted failures, in the order a reader wants them. */
-const FAILURE_LABELS: ReadonlyArray<readonly [FoldFailureKind, string]> = [
-    ["edit", "file edit failed"],
-    ["read", "file read failed"],
-    ["subagent", "subagent failed"],
-    ["command", "cmd failed"],
-    ["web", "web tools failed"],
-    ["browser", "browser failed"],
-]
+const FAILURE_KINDS: readonly FoldFailureKind[] = ["edit", "read", "subagent", "command", "web", "browser"]
 
 /** Tool names with their counts, for the header's tooltip. */
 export function describeToolCalls(summary: ActivityFoldSummary): string {
@@ -338,25 +340,15 @@ export function describeToolCalls(summary: ActivityFoldSummary): string {
  * What the block did, spelled out for the tooltip: which tools, which agents,
  * and which outside destination the external count came from.
  */
-export function describeFoldDetail(summary: ActivityFoldSummary): string | undefined {
+export function describeFoldDetail(summary: ActivityFoldSummary, t: UiTranslator = englishUi): string | undefined {
     const lines: string[] = []
     const tools = describeToolCalls(summary)
     if (tools) lines.push(tools)
     const agents = Array.from(summary.subagents, ([name, count]) => `${name} ×${count}`).join(", ")
-    if (agents) lines.push(`Subagents: ${agents}`)
-    const outside = Array.from(summary.external, ([kind, count]) => `${kind} ×${count}`).join(", ")
-    if (outside) lines.push(`External by verb: ${outside}`)
+    if (agents) lines.push(t("chatInput.fold.subagents", { agents }))
+    const outside = Array.from(summary.external, ([kind, count]) => `${t(`chatInput.fold.kind.${kind}`)} ×${count}`).join(", ")
+    if (outside) lines.push(t("chatInput.fold.external", { work: outside }))
     return lines.length > 0 ? lines.join("\n") : undefined
-}
-
-function countOf(count: number, singular: string, plural: string): string | undefined {
-    if (count === 0) return undefined
-    return `${count} ${count === 1 ? singular : plural}`
-}
-
-/** `external` is uncountable, so its parenthetical never takes a plural. */
-function outsideCount(count: number): string | undefined {
-    return count === 0 ? undefined : `${count} external`
 }
 
 function numberOr(value: unknown, fallback: number): number {

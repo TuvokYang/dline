@@ -4,6 +4,9 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 ## [Unreleased]
 
+### Added
+- Added English/Chinese interface switching (following VS Code by default) and automatic model response language
+
 ### Fixed
 - Marketplace listing icons and demo GIFs load directly from GitHub's raw files, reducing loading failures caused by web-page redirects.
 

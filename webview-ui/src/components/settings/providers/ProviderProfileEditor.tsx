@@ -4,6 +4,7 @@ import {
     pickModelInfoOverride,
 } from "@shared/providers/model-info-overrides"
 import { resolvePrimaryCatalogKey } from "@shared/providers/provider-catalog-key"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { AIhubmixProvider } from "./AihubmixProvider"
 import { AnthropicProvider } from "./AnthropicProvider"
 import { AskSageProvider } from "./AskSageProvider"
@@ -61,6 +62,7 @@ interface ApiProfileEditorProps {
  * Does NOT know about profile list structure.
  */
 const ApiProfileEditor: React.FC<ApiProfileEditorProps> = ({ profile, isPopup, onUpdateProfile }) => {
+    const { t } = useUiTranslation()
     const showModelOptions = true
     const { models } = useProviderModels(profile.provider ? resolvePrimaryCatalogKey(profile.provider) : "")
 
@@ -233,7 +235,7 @@ const ApiProfileEditor: React.FC<ApiProfileEditorProps> = ({ profile, isPopup, o
                 <OpenCodeProvider isPopup={isPopup} onUpdate={onUpdate} profile={profile} showModelOptions={showModelOptions} />
             )
         default:
-            return <div className="text-xs text-description">Select a provider to configure.</div>
+            return <div className="text-xs text-description">{t("settings.ui.configureProvider")}</div>
     }
 }
 

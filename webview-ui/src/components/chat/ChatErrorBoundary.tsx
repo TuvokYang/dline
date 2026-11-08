@@ -1,4 +1,5 @@
 import React from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 
 interface ChatErrorBoundaryProps {
     children: React.ReactNode
@@ -12,12 +13,18 @@ interface ChatErrorBoundaryState {
     error: Error | null
 }
 
+interface ChatErrorBoundaryViewProps extends ChatErrorBoundaryProps {
+    /** Resolved copy for a failure the caller did not describe itself. */
+    fallbackTitle: string
+    fallbackBody: (message: string) => string
+}
+
 /**
  * A reusable error boundary component specifically designed for chat widgets.
  * It provides a consistent error UI with customizable title and body text.
  */
-export class ChatErrorBoundary extends React.Component<ChatErrorBoundaryProps, ChatErrorBoundaryState> {
-    constructor(props: ChatErrorBoundaryProps) {
+class ChatErrorBoundaryView extends React.Component<ChatErrorBoundaryViewProps, ChatErrorBoundaryState> {
+    constructor(props: ChatErrorBoundaryViewProps) {
         super(props)
         this.state = { hasError: false, error: null }
     }
@@ -32,7 +39,7 @@ export class ChatErrorBoundary extends React.Component<ChatErrorBoundaryProps, C
     }
 
     render() {
-        const { errorTitle, errorBody, height } = this.props
+        const { errorTitle, errorBody, height, fallbackTitle, fallbackBody } = this.props
 
         if (this.state.hasError) {
             return (
@@ -47,14 +54,37 @@ export class ChatErrorBoundary extends React.Component<ChatErrorBoundaryProps, C
                         borderRadius: "4px",
                         backgroundColor: "var(--vscode-inputValidation-errorBackground, rgba(255, 0, 0, 0.1))",
                     }}>
-                    <h3 style={{ margin: "0 0 8px 0" }}>{errorTitle || "Something went wrong displaying this content"}</h3>
-                    <p style={{ margin: "0" }}>{errorBody || `Error: ${this.state.error?.message || "Unknown error"}`}</p>
+                    <h3 style={{ margin: "0 0 8px 0" }}>{errorTitle ?? fallbackTitle}</h3>
+                    <p style={{ margin: "0" }}>{errorBody ?? fallbackBody(this.state.error?.message ?? "")}</p>
                 </div>
             )
         }
 
         return this.props.children
     }
+}
+
+/**
+ * Error boundary that resolves its own fallback copy from the active language.
+ *
+ * A class cannot read the language hook, so this function wrapper supplies the
+ * translated fallback while the class keeps the error state. A caller that names
+ * its own title or body still gets exactly that text.
+ */
+export function ChatErrorBoundary({ children, errorTitle, errorBody, height }: ChatErrorBoundaryProps) {
+    const { t } = useUiTranslation()
+    return (
+        <ChatErrorBoundaryView
+            errorBody={errorBody}
+            errorTitle={errorTitle}
+            fallbackBody={(message) =>
+                t("chatRows.errors.boundaryBody", { message: message || t("chatRows.errors.unknownError") })
+            }
+            fallbackTitle={t("chatRows.errors.boundaryTitle")}
+            height={height}>
+            {children}
+        </ChatErrorBoundaryView>
+    )
 }
 
 /**

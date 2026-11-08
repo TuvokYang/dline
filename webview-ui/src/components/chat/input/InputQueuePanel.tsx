@@ -10,6 +10,8 @@ import { openTaskResource } from "@/components/chat/input/semantic-composer/reso
 import { UserInputMarkdownBody } from "@/components/chat/UserInputMarkdownBody"
 import { type ResourceChipResolver, ResourceChipResolverContext } from "@/components/common/ResourceChip"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import type { UiTranslator } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { markDocumentResources } from "@/services/input-semantics/highlight"
 import { QueueModeIcon, SteeringModeIcon } from "./InputQueueModeIcons"
 
@@ -95,16 +97,10 @@ export function queuedAttachmentsOf(entry: Pick<InputQueuePanelEntry, "images" |
     return { images: entry.images.map(() => LEGACY_IMAGE_LABEL), files: entry.files.map(baseNameOf) }
 }
 
-function countLabel(count: number, noun: string): string | undefined {
-    if (count === 0) return undefined
-    return `${count} ${noun}${count > 1 ? "s" : ""}`
-}
-
-function attachmentSummary(attachments: QueuedAttachments): string | undefined {
-    const parts = [countLabel(attachments.images.length, "image"), countLabel(attachments.files.length, "file")].filter(
-        (part): part is string => part !== undefined,
-    )
-    return parts.length > 0 ? parts.join(", ") : undefined
+function attachmentSummary(attachments: QueuedAttachments, t: UiTranslator): string | undefined {
+    return attachments.images.length + attachments.files.length > 0
+        ? t("chatInput.queue.attachments", { images: attachments.images.length, files: attachments.files.length })
+        : undefined
 }
 
 /** Resolve a queued entry's resource links to the resources its document still holds. */
@@ -150,6 +146,7 @@ function QueuedEntryBody({ entry }: { entry: InputQueuePanelEntry }) {
  * it, covering the auto-approve bar and the bottom of the chat.
  */
 export function InputQueuePanel({ entries, onToggleMode, onEdit, onCancelEdit, onRemove, onReorder }: InputQueuePanelProps) {
+    const { t } = useUiTranslation()
     const [expanded, setExpanded] = useState(false)
     const [draggingId, setDraggingId] = useState<string>()
 
@@ -169,7 +166,7 @@ export function InputQueuePanel({ entries, onToggleMode, onEdit, onCancelEdit, o
                         data-testid="input-queue-toggle"
                         type="button">
                         {expanded ? <ChevronDownIcon className="size-3" /> : <ChevronRightIcon className="size-3" />}
-                        <span>Queue {entries.length}</span>
+                        <span>{t("chatInput.queue.count", { count: entries.length })}</span>
                         {steeringCount > 0 ? (
                             <span
                                 className="rounded-[3px] px-1 leading-[14px]"
@@ -178,7 +175,7 @@ export function InputQueuePanel({ entries, onToggleMode, onEdit, onCancelEdit, o
                                     boxShadow: "inset 0 1px 2px rgba(0, 0, 0, 0.35)",
                                     color: STEERING_ACCENT,
                                 }}>
-                                {steeringCount} steering
+                                {t("chatInput.queue.steeringCount", { count: steeringCount })}
                             </span>
                         ) : null}
                     </button>
@@ -186,7 +183,7 @@ export function InputQueuePanel({ entries, onToggleMode, onEdit, onCancelEdit, o
 
                 <PopoverContent
                     align="start"
-                    aria-label="Queued input"
+                    aria-label={t("chatInput.queue.queued")}
                     // Entries are separate cards: the gap keeps one entry's border from
                     // running into the next one's header.
                     className="flex max-h-[min(60vh,480px)] w-(--radix-popover-trigger-width) flex-col gap-1.5 overflow-y-auto overscroll-contain rounded p-1 text-xs shadow-lg"
@@ -209,7 +206,7 @@ export function InputQueuePanel({ entries, onToggleMode, onEdit, onCancelEdit, o
                     }}>
                     {entries.map((entry, index) => {
                         const attachments = queuedAttachmentsOf(entry)
-                        const summary = attachmentSummary(attachments)
+                        const summary = attachmentSummary(attachments, t)
                         return (
                             <div
                                 aria-selected={entry.mode === "steering"}
@@ -251,8 +248,10 @@ export function InputQueuePanel({ entries, onToggleMode, onEdit, onCancelEdit, o
                                             : "text-(--vscode-descriptionForeground)",
                                     )}>
                                     <GripVerticalIcon className="size-3 shrink-0 cursor-grab" />
-                                    <span>{entry.mode === "steering" ? "Steering input" : "Queued input"}</span>
-                                    {entry.editing ? <span className="normal-case">· Editing</span> : null}
+                                    <span>
+                                        {t(entry.mode === "steering" ? "chatInput.queue.steering" : "chatInput.queue.queued")}
+                                    </span>
+                                    {entry.editing ? <span className="normal-case">{t("chatInput.queue.editing")}</span> : null}
                                     {summary ? (
                                         <span
                                             className="ml-auto shrink-0 normal-case"
@@ -266,7 +265,9 @@ export function InputQueuePanel({ entries, onToggleMode, onEdit, onCancelEdit, o
                                 <footer className="mt-1 flex items-center justify-end gap-1">
                                     {/* The icon shows the entry's current delivery mode; clicking switches it. */}
                                     <button
-                                        aria-label={entry.mode === "steering" ? "Return to queue" : "Send with next round"}
+                                        aria-label={t(
+                                            entry.mode === "steering" ? "chatInput.queue.return" : "chatInput.queue.nextRound",
+                                        )}
                                         className={classes(
                                             "input-icon-button relative grid size-[18px] shrink-0 place-items-center rounded-[3px] appearance-none border-0 p-0 transition-[background-color,color,box-shadow] duration-200 ease-out",
                                             entry.mode === "steering"
@@ -283,7 +284,9 @@ export function InputQueuePanel({ entries, onToggleMode, onEdit, onCancelEdit, o
                                                   }
                                                 : undefined
                                         }
-                                        title={entry.mode === "steering" ? "Return to queue" : "Send with next round"}
+                                        title={t(
+                                            entry.mode === "steering" ? "chatInput.queue.return" : "chatInput.queue.nextRound",
+                                        )}
                                         type="button">
                                         <QueueModeIcon
                                             className={classes(
@@ -308,7 +311,7 @@ export function InputQueuePanel({ entries, onToggleMode, onEdit, onCancelEdit, o
 								    way out that does not require sending or deleting it. */}
                                     {entry.editing ? (
                                         <button
-                                            aria-label="Cancel editing"
+                                            aria-label={t("chatInput.queue.cancelEdit")}
                                             className="input-icon-button shrink-0 appearance-none border-0 bg-transparent p-0"
                                             data-testid={`input-queue-cancel-edit-${entry.id}`}
                                             onClick={() => onCancelEdit(entry.id)}
@@ -317,7 +320,7 @@ export function InputQueuePanel({ entries, onToggleMode, onEdit, onCancelEdit, o
                                         </button>
                                     ) : (
                                         <button
-                                            aria-label="Edit queued input"
+                                            aria-label={t("chatInput.queue.edit")}
                                             className="input-icon-button shrink-0 appearance-none border-0 bg-transparent p-0"
                                             data-testid={`input-queue-edit-${entry.id}`}
                                             onClick={() => onEdit(entry.id)}
@@ -326,7 +329,7 @@ export function InputQueuePanel({ entries, onToggleMode, onEdit, onCancelEdit, o
                                         </button>
                                     )}
                                     <button
-                                        aria-label="Remove queued input"
+                                        aria-label={t("chatInput.queue.remove")}
                                         className="input-icon-button shrink-0 appearance-none border-0 bg-transparent p-0"
                                         data-testid={`input-queue-remove-${entry.id}`}
                                         onClick={() => onRemove(entry.id)}

@@ -9,6 +9,7 @@ import {
 import { VSCodeButton, VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import { useEffect, useId, useMemo, useRef, useState } from "react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { getCurrencySymbol, SUPPORTED_CURRENCY_CODES } from "@/utils/currency"
 import { ProfileField, ProfileSection, ProfileSectionTitle } from "../profile-ui"
 import { flushPendingDebouncedInputs } from "../utils/useDebouncedInput"
@@ -46,6 +47,7 @@ export function PricingEditor({
     onChange,
     onReset,
 }: PricingEditorProps) {
+    const { t } = useUiTranslation()
     const id = useId()
     const incoming = useMemo(() => pricing ?? defaults ?? flatMeteredPricing(undefined, undefined), [pricing, defaults])
     const incomingKey = fingerprint(incoming)
@@ -117,23 +119,20 @@ export function PricingEditor({
         })
     const time = declaration?.strategy?.timeOfDay
     const weekdayWindows = time?.schedule?.dayRule === PricingDayRule.PRICING_DAY_RULE_WEEKDAYS
-    const defaultRateLabel = peakOffPeakLabels ? "Off-peak" : "Default"
+    const defaultRateLabel = peakOffPeakLabels ? t("settings.ui.offPeak") : t("settings.ui.default")
     const resetButton = !readOnly && onReset && (
         <VSCodeButton appearance="secondary" onClick={reset}>
-            Reset Pricing
+            {t("settings.ui.resetPricing")}
         </VSCodeButton>
     )
 
     if (!declaration?.strategy) {
-        return <p className="text-xs text-description">Pricing not published</p>
+        return <p className="text-xs text-description">{t("settings.ui.pricingUnpublished")}</p>
     }
     if (!readOnly && fixedShape && shape !== fixedShape) {
         return (
             <ProfileSection>
-                <p role="alert">
-                    This legacy pricing cannot be converted into published time windows automatically. Reset pricing to inherit
-                    the catalog declaration.
-                </p>
+                <p role="alert">{t("settings.ui.legacyPricing")}</p>
                 {resetButton}
             </ProfileSection>
         )
@@ -142,32 +141,32 @@ export function PricingEditor({
         <ProfileSection>
             <div className="flex items-center justify-between gap-2">
                 <ProfileSectionTitle className="text-xs uppercase tracking-wide text-description">
-                    {peakOffPeakLabels ? "Peak / Off-peak Pricing" : "Pricing"}
+                    {peakOffPeakLabels ? t("settings.ui.peakPricing") : t("settings.ui.pricing")}
                 </ProfileSectionTitle>
                 {resetButton}
             </div>
             {flushFailed && (
                 <span className="text-xs text-error" role="alert">
-                    Pending inputs could not be saved. Retry before changing pricing structure.
+                    {t("settings.ui.flushPricing")}
                 </span>
             )}
             {!readOnly && !fixedShape && (
-                <ProfileField htmlFor={`${id}-shape`} label="Pricing Mode">
+                <ProfileField htmlFor={`${id}-shape`} label={t("settings.ui.pricingMode")}>
                     <Select onValueChange={(value) => switchShape(value as PricingShapeKind)} value={shape}>
                         <SelectTrigger className="min-h-7 w-full" id={`${id}-shape`}>
                             <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                            <SelectItem value="flat">Flat rate</SelectItem>
-                            <SelectItem value="contextWindow">By context size</SelectItem>
-                            <SelectItem value="timeOfDay">By time of day</SelectItem>
+                            <SelectItem value="flat">{t("settings.ui.flatRate")}</SelectItem>
+                            <SelectItem value="contextWindow">{t("settings.ui.byContext")}</SelectItem>
+                            <SelectItem value="timeOfDay">{t("settings.ui.byTime")}</SelectItem>
                         </SelectContent>
                     </Select>
                 </ProfileField>
             )}
-            <ProfileField htmlFor={readOnly ? undefined : `${id}-currency`} label="Currency">
+            <ProfileField htmlFor={readOnly ? undefined : `${id}-currency`} label={t("settings.ui.currency")}>
                 {readOnly ? (
-                    <span className="text-xs">{currency} per 1M tokens</span>
+                    <span className="text-xs">{t("settings.ui.currencyPerMillion", { currency })}</span>
                 ) : (
                     <Select onValueChange={(value) => publish({ ...current.current, currency: value })} value={currency}>
                         <SelectTrigger className="min-h-7 w-full" id={`${id}-currency`}>
@@ -208,7 +207,7 @@ export function PricingEditor({
                                     })
                                 })
                             }>
-                            Add Pricing Tier
+                            {t("settings.ui.addPricingTier")}
                         </VSCodeButton>
                     )}
                 </>
@@ -230,29 +229,31 @@ export function PricingEditor({
                 <>
                     {peakOffPeakLabels && (
                         <p className="m-0 text-xs text-description">
-                            {weekdayWindows ? "Weekday peak windows." : "Daily peak windows."}
-                            {time.schedule?.defaultOnPublicHolidays ? " Public holidays use off-peak rates." : ""}
+                            {t("settings.ui.peakSchedule", {
+                                weekdays: weekdayWindows,
+                                holidays: time.schedule?.defaultOnPublicHolidays === true,
+                            })}
                         </p>
                     )}
                     {!peakOffPeakLabels && (
                         <p className="m-0 text-[11px] text-description">
-                            {weekdayWindows
-                                ? "Weekdays"
-                                : time.schedule?.dayRule === PricingDayRule.PRICING_DAY_RULE_ALL_DAYS
-                                  ? "All days"
-                                  : "Applicable days not declared"}
-                            .
-                            {time.schedule?.defaultOnPublicHolidays
-                                ? ` Public holidays (${time.schedule.holidayCalendar || "calendar not declared"}) use ${defaultRateLabel.toLowerCase()} rates.`
-                                : ""}
-                            {" Configuration, not today's effective schedule. Default rates cover gaps and non-applicable days."}
+                            {t("settings.ui.scheduleHelp", {
+                                days: weekdayWindows
+                                    ? t("settings.ui.weekdays")
+                                    : time.schedule?.dayRule === PricingDayRule.PRICING_DAY_RULE_ALL_DAYS
+                                      ? t("settings.ui.allDays")
+                                      : t("settings.ui.daysUndeclared"),
+                                holidays: time.schedule?.defaultOnPublicHolidays === true,
+                                calendar: time.schedule?.holidayCalendar || t("settings.ui.calendarUndeclared"),
+                                rate: defaultRateLabel,
+                            })}
                         </p>
                     )}
                     {!readOnly && !fixedShape && (
                         <>
-                            <ProfileField htmlFor={`${id}-offset`} label="Seller UTC offset (minutes)">
+                            <ProfileField htmlFor={`${id}-offset`} label={t("settings.ui.sellerOffset")}>
                                 <DebouncedTextField
-                                    ariaLabel="Seller UTC offset (minutes)"
+                                    ariaLabel={t("settings.ui.sellerOffset")}
                                     id={`${id}-offset`}
                                     initialValue={String(time.schedule?.timezoneOffsetMinutes ?? 0)}
                                     onChange={(text) => {
@@ -262,7 +263,7 @@ export function PricingEditor({
                                     }}
                                 />
                             </ProfileField>
-                            <ProfileField htmlFor={`${id}-days`} label="Apply windows on">
+                            <ProfileField htmlFor={`${id}-days`} label={t("settings.ui.applyWindows")}>
                                 <Select
                                     onValueChange={(value) => updateSchedule({ dayRule: Number(value) as PricingDayRule })}
                                     value={String(time.schedule?.dayRule ?? PricingDayRule.PRICING_DAY_RULE_ALL_DAYS)}>
@@ -270,8 +271,12 @@ export function PricingEditor({
                                         <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value={String(PricingDayRule.PRICING_DAY_RULE_ALL_DAYS)}>All days</SelectItem>
-                                        <SelectItem value={String(PricingDayRule.PRICING_DAY_RULE_WEEKDAYS)}>Weekdays</SelectItem>
+                                        <SelectItem value={String(PricingDayRule.PRICING_DAY_RULE_ALL_DAYS)}>
+                                            {t("settings.ui.allDays")}
+                                        </SelectItem>
+                                        <SelectItem value={String(PricingDayRule.PRICING_DAY_RULE_WEEKDAYS)}>
+                                            {t("settings.ui.weekdays")}
+                                        </SelectItem>
                                     </SelectContent>
                                 </Select>
                             </ProfileField>
@@ -283,12 +288,12 @@ export function PricingEditor({
                                         holidayCalendar: current.current.strategy!.timeOfDay!.schedule?.holidayCalendar || "CN",
                                     })
                                 }>
-                                Use default rates on Chinese public holidays
+                                {t("settings.ui.holidayDefault")}
                             </VSCodeCheckbox>
                         </>
                     )}
                     {!readOnly && !fixedShape && (
-                        <ProfileField htmlFor={`${id}-default-kind`} label="Default Rate">
+                        <ProfileField htmlFor={`${id}-default-kind`} label={t("settings.ui.defaultRate")}>
                             <Select
                                 onValueChange={(value) => afterInputFlush(() => replaceDefault(value as "prices" | "bands"))}
                                 value={time.defaultBands ? "bands" : "prices"}>
@@ -296,8 +301,8 @@ export function PricingEditor({
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="prices">Single rate</SelectItem>
-                                    <SelectItem value="bands">By context size</SelectItem>
+                                    <SelectItem value="prices">{t("settings.ui.singleRate")}</SelectItem>
+                                    <SelectItem value="bands">{t("settings.ui.byContext")}</SelectItem>
                                 </SelectContent>
                             </Select>
                         </ProfileField>
@@ -329,7 +334,7 @@ export function PricingEditor({
                         currencySymbol={symbol}
                         defaultRate={{ prices: time.defaultPrices, bands: time.defaultBands }}
                         editable={!readOnly && tiersEditable}
-                        heading={peakOffPeakLabels ? "Peak windows (configuration)" : undefined}
+                        heading={peakOffPeakLabels ? t("settings.ui.peakConfiguration") : undefined}
                         onChange={(windows) => replaceTime((latest) => ({ ...latest, timeWindows: windows }))}
                         peakOffPeakLabels={peakOffPeakLabels}
                         ratesEditable={!readOnly}

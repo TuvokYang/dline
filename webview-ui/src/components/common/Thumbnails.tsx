@@ -2,6 +2,7 @@ import { cn } from "@heroui/react"
 import { StringRequest } from "@shared/proto/dline/common"
 import React, { memo, useLayoutEffect, useRef, useState } from "react"
 import { useWindowSize } from "react-use"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { FileServiceClient } from "@/services/grpc-client"
 
 interface ThumbnailsProps {
@@ -15,6 +16,7 @@ interface ThumbnailsProps {
 }
 
 const Thumbnails = ({ images, files, style, setImages, setFiles, onHeightChange, className }: ThumbnailsProps) => {
+    const { t } = useUiTranslation()
     const [hoveredIndex, setHoveredIndex] = useState<string | null>(null)
     const containerRef = useRef<HTMLDivElement>(null)
     const { width } = useWindowSize()
@@ -70,7 +72,7 @@ const Thumbnails = ({ images, files, style, setImages, setFiles, onHeightChange,
                     onMouseLeave={() => setHoveredIndex(null)}
                     style={{ position: "relative" }}>
                     <img
-                        alt={`Thumbnail image-${index + 1}`}
+                        alt={t("shell.thumbnails.imageAlt", { index: index + 1 })}
                         onClick={() => handleImageClick(image)}
                         src={image}
                         style={{

@@ -1,5 +1,7 @@
 import type { ThinkingConfig } from "@shared/proto/dline/models/metadata"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
+import type { UiTranslator } from "@/i18n/messages"
+import { formatReasoningEffort } from "../utils/uiLabels"
 
 export interface DeepSeekThinkingPreference {
     supported: boolean
@@ -49,11 +51,12 @@ export function resolveDeepSeekThinkingPreference(
 export function formatDeepSeekThinkingSummary(
     reasoning: ReasoningConfig | undefined,
     thinking: ThinkingConfig | undefined,
+    t: UiTranslator,
 ): string | undefined {
     const preference = resolveDeepSeekThinkingPreference(reasoning, thinking)
     if (!preference.supported) return undefined
-    if (!preference.enabled) return "Thinking: Off"
+    if (!preference.enabled) return t("settings.ui.thinkingOff")
     return preference.selectedEffort
-        ? `Thinking: ${preference.selectedEffort.replace(/^./, (character) => character.toUpperCase())}`
-        : "Thinking: On"
+        ? t("settings.ui.thinkingEffort", { effort: formatReasoningEffort(t, preference.selectedEffort) })
+        : t("settings.ui.thinkingOn")
 }

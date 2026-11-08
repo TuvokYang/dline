@@ -13,6 +13,7 @@ import {
 } from "@/components/common/AlertDialog"
 import { buttonVariants } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 import { TaskServiceClient } from "@/services/grpc-client"
 import { formatSize } from "@/utils/format"
@@ -30,6 +31,7 @@ interface DeleteTaskButtonProps {
  * @returns Task delete button and optional confirmation dialog.
  */
 const DeleteTaskButton: React.FC<DeleteTaskButtonProps> = ({ taskId, className, taskSize, onDeleteConfirmed }) => {
+    const { t } = useUiTranslation()
     const [confirmOpen, setConfirmOpen] = useState(false)
     const [deleting, setDeleting] = useState(false)
 
@@ -71,8 +73,11 @@ const DeleteTaskButton: React.FC<DeleteTaskButtonProps> = ({ taskId, className, 
     return (
         <>
             <Tooltip>
-                <TooltipContent>{`Delete Task (size: ${taskSize ? formatSize(taskSize) : "--"})`}</TooltipContent>
+                <TooltipContent>
+                    {t("chatInput.button.deleteTooltip", { size: taskSize ? formatSize(taskSize) : "--" })}
+                </TooltipContent>
                 <TooltipTrigger
+                    aria-label={t("chatInput.button.deleteTitle")}
                     className={cn(buttonVariants({ variant: "icon", size: "xs" }), "!overflow-visible !min-h-6", className)}
                     disabled={!taskId || deleting}
                     onClick={handleOpen}>
@@ -84,19 +89,18 @@ const DeleteTaskButton: React.FC<DeleteTaskButtonProps> = ({ taskId, className, 
                     <AlertDialogHeader>
                         <AlertDialogTitle>
                             <AlertTriangle className="h-4 w-4 text-(--vscode-errorForeground)" />
-                            Delete Task
+                            {t("chatInput.button.deleteTitle")}
                         </AlertDialogTitle>
                         <AlertDialogDescription>
-                            This permanently removes the task history{taskSize ? ` (${formatSize(taskSize)})` : ""}. This action
-                            cannot be undone.
+                            {t("chatInput.button.deleteWarning", { size: taskSize ? formatSize(taskSize) : undefined })}
                         </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
                         <AlertDialogCancel disabled={deleting} onClick={handleCancel}>
-                            Cancel
+                            {t("chatInput.common.cancel")}
                         </AlertDialogCancel>
                         <AlertDialogAction appearance="primary" disabled={deleting} onClick={handleConfirm}>
-                            {deleting ? "Deleting..." : "Delete"}
+                            {t(deleting ? "chatInput.button.deleting" : "chatInput.button.delete")}
                         </AlertDialogAction>
                     </AlertDialogFooter>
                 </AlertDialogContent>

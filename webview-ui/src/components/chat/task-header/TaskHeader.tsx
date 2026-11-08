@@ -5,6 +5,7 @@ import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import React, { useCallback, useLayoutEffect, useState } from "react"
 import Thumbnails from "@/components/common/Thumbnails"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 import { getEnvironmentColor } from "@/utils/environmentColors"
 import CopyTaskButton from "./buttons/CopyTaskButton"
@@ -79,6 +80,7 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
     onCompactTask,
     onForceTruncateTask,
 }) => {
+    const { t } = useUiTranslation()
     const {
         currentTaskItem,
         taskViewState,
@@ -167,7 +169,7 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
                 }}>
                 {/* Task Title */}
                 <div
-                    aria-label={isTaskExpanded ? "Collapse task header" : "Expand task header"}
+                    aria-label={t(isTaskExpanded ? "chatInput.header.collapse" : "chatInput.header.expand")}
                     className="flex justify-between items-center cursor-pointer"
                     onClick={(event) => {
                         if (!event.currentTarget.contains(event.target as Node)) return

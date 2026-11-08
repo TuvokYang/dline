@@ -253,6 +253,7 @@ message Settings {
   optional string aggressive_rendering = 258;
   optional bool away_mode_enabled = 259;
   optional bool auto_away_mode_enabled = 260;
+  optional string ui_language = 261;
 }
 
 // Account usage quota for rate-limited providers (e.g., Codex, Copilot)
@@ -560,6 +561,7 @@ message UpdateSettingsRequest {
   optional string aggressive_rendering = 68;
   optional bool away_mode_enabled = 69;
   optional bool auto_away_mode_enabled = 70;
+  optional string ui_language = 71;
 }
 
 message UpdateTerminalConnectionTimeoutRequest {

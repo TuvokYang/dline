@@ -6,6 +6,8 @@ import {
     splitDurableContext,
 } from "@shared/context-window-indicator"
 
+import { translateUi, type UiTranslator } from "@/i18n/messages"
+
 export type ContextWindowSegmentKind = "durable" | "active" | "staged" | "environment"
 
 /** One source of the durable context, sized in whole tokens of the durable figure it splits. */
@@ -19,15 +21,15 @@ export interface ContextWindowDurablePartViewModel {
 
 const DURABLE_GREEN = "var(--vscode-charts-green, #3fb950)"
 
-export const DURABLE_PART_LABELS: Record<DurableContextPart, string> = {
-    basePrompt: "System prompt",
-    userRules: "User rules",
-    skills: "Skills",
-    workflows: "Workflows",
-    toolDefinitions: "Tool definitions",
-    mcpToolDefinitions: "MCP",
-    conversation: "Conversation",
-}
+const DURABLE_PART_KEYS = {
+    basePrompt: "chatInput.context.part.basePrompt",
+    userRules: "chatInput.context.part.userRules",
+    skills: "chatInput.context.part.skills",
+    workflows: "chatInput.context.part.workflows",
+    toolDefinitions: "chatInput.context.part.toolDefinitions",
+    mcpToolDefinitions: "chatInput.context.part.mcpToolDefinitions",
+    conversation: "chatInput.context.part.conversation",
+} as const satisfies Record<DurableContextPart, string>
 
 /** Shades of the durable green, so the parts read as one segment rather than new top-level ones. */
 export const DURABLE_PART_COLORS: Record<DurableContextPart, string> = {
@@ -42,6 +44,8 @@ export const DURABLE_PART_COLORS: Record<DurableContextPart, string> = {
 
 export interface ContextWindowSegmentViewModel {
     kind: ContextWindowSegmentKind
+    /** Semantic activity controls styling, independently of the displayed language. */
+    activity?: "sending" | "receiving"
     label: string
     authoritativeTokens: number
     displayTokens: number
@@ -71,14 +75,11 @@ export function getContextWindowActiveTokens(snapshot: ContextWindowIndicatorSna
     return 0
 }
 
-function getActiveLabel(snapshot: ContextWindowIndicatorSnapshot): string {
-    return snapshot.phase === "receiving" ? "Receiving" : "Sending"
-}
-
 /** Build the single presentation model shared by the bar, totals, accessibility, and hover details. */
 export function createContextWindowIndicatorViewModel(
     snapshot: ContextWindowIndicatorSnapshot,
     displayTokens: ContextWindowIndicatorDisplayTokens = {},
+    t: UiTranslator = (key, ...args) => translateUi("en", key, ...args),
 ): ContextWindowIndicatorViewModel {
     const contextWindow = normalizeTokens(snapshot.contextWindow)
     const authoritativeTokens = {
@@ -104,35 +105,36 @@ export function createContextWindowIndicatorViewModel(
     const segments: ContextWindowSegmentViewModel[] = [
         {
             kind: "durable",
-            label: "Durable",
+            label: t("chatInput.context.durable"),
             authoritativeTokens: authoritativeTokens.durable,
             displayTokens: displayedTokens.durable,
             widthPercent: displayDenominator > 0 ? Math.min(100, (displayedTokens.durable / displayDenominator) * 100) : 0,
         },
         {
             kind: "active",
-            label: getActiveLabel(snapshot),
+            activity: snapshot.phase === "receiving" ? "receiving" : "sending",
+            label: t(snapshot.phase === "receiving" ? "chatInput.context.receiving" : "chatInput.context.sending"),
             authoritativeTokens: authoritativeTokens.active,
             displayTokens: displayedTokens.active,
             widthPercent: displayDenominator > 0 ? Math.min(100, (displayedTokens.active / displayDenominator) * 100) : 0,
         },
         {
             kind: "staged",
-            label: "Staged",
+            label: t("chatInput.context.staged"),
             authoritativeTokens: authoritativeTokens.staged,
             displayTokens: displayedTokens.staged,
             widthPercent: displayDenominator > 0 ? Math.min(100, (displayedTokens.staged / displayDenominator) * 100) : 0,
         },
         {
             kind: "environment",
-            label: "ENV",
+            label: t("chatInput.context.environment"),
             authoritativeTokens: authoritativeTokens.environment,
             displayTokens: displayedTokens.environment,
             widthPercent: displayDenominator > 0 ? Math.min(100, (displayedTokens.environment / displayDenominator) * 100) : 0,
         },
     ]
 
-    const durableBreakdown = createDurableBreakdown(snapshot, authoritativeTokens.durable)
+    const durableBreakdown = createDurableBreakdown(snapshot, authoritativeTokens.durable, t)
     return {
         contextWindow,
         totalTokens,
@@ -148,13 +150,14 @@ export function createContextWindowIndicatorViewModel(
 function createDurableBreakdown(
     snapshot: ContextWindowIndicatorSnapshot,
     durableTokens: number,
+    t: UiTranslator,
 ): ContextWindowDurablePartViewModel[] | undefined {
     const composition = readDurableContextComposition(snapshot.durableComposition)
     if (!composition || durableTokens <= 0) return undefined
     const split = splitDurableContext(durableTokens, composition)
     return DURABLE_CONTEXT_PARTS.map((part) => ({
         part,
-        label: DURABLE_PART_LABELS[part],
+        label: t(DURABLE_PART_KEYS[part]),
         tokens: split[part],
         percentOfDurable: (split[part] / durableTokens) * 100,
     }))

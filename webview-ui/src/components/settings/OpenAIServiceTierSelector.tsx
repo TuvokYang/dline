@@ -3,18 +3,18 @@ import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import { type FormEvent, memo } from "react"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 
 const PROVIDER_DEFAULT_VALUE = "provider-default"
 
-const SERVICE_TIER_DESCRIPTIONS: Record<string, string> = {
-    [PROVIDER_DEFAULT_VALUE]: "Do not send service_tier; let the provider choose.",
-    auto: 'Send service_tier: "auto".',
-    default: 'Send service_tier: "default".',
-    flex: 'Send service_tier: "flex".',
-    scale: 'Send service_tier: "scale".',
-    priority: 'Send service_tier: "priority", the API tier used by Codex Fast.',
-    ultrafast: 'Send service_tier: "ultrafast".',
-}
+const tierLabelKeys = {
+    auto: "settings.ui.serviceTier.autoLabel",
+    default: "settings.ui.serviceTier.defaultLabel",
+    flex: "settings.ui.serviceTier.flexLabel",
+    scale: "settings.ui.serviceTier.scaleLabel",
+    priority: "settings.ui.serviceTier.priorityLabel",
+    ultrafast: "settings.ui.serviceTier.ultrafastLabel",
+} as const satisfies Record<OpenAiServiceTier, string>
 
 interface OpenAIServiceTierSelectorProps {
     serviceTier?: string
@@ -29,6 +29,13 @@ const OpenAIServiceTierSelector = ({
     onServiceTierChange,
     onServiceTierEnabledChange,
 }: OpenAIServiceTierSelectorProps) => {
+    const { t } = useUiTranslation()
+    const tierDescription = (tier: string) =>
+        tier === PROVIDER_DEFAULT_VALUE
+            ? t("settings.ui.serviceTier.defaultHelp")
+            : tier === "priority"
+              ? t("settings.ui.serviceTier.priority")
+              : t("settings.ui.serviceTier.send", { tier })
     const enabled = serviceTierEnabled === true
     const selectedValue = isOpenAiServiceTier(serviceTier) ? serviceTier : PROVIDER_DEFAULT_VALUE
 
@@ -39,26 +46,26 @@ const OpenAIServiceTierSelector = ({
                 onChange={(event: Event | FormEvent<HTMLElement>) =>
                     onServiceTierEnabledChange((event.target as HTMLInputElement | null)?.checked === true)
                 }>
-                Enable Service Tier
+                {t("settings.ui.serviceTier.enable")}
             </VSCodeCheckbox>
             {enabled && (
                 <div className="mt-2">
-                    <Label className="text-xs font-medium">Service Tier</Label>
+                    <Label className="text-xs font-medium">{t("settings.ui.serviceTier.label")}</Label>
                     <Select
                         onValueChange={(value) =>
                             onServiceTierChange(value === PROVIDER_DEFAULT_VALUE ? undefined : (value as OpenAiServiceTier))
                         }
                         value={selectedValue}>
-                        <SelectTrigger className="w-full mt-1" title={SERVICE_TIER_DESCRIPTIONS[selectedValue]}>
+                        <SelectTrigger className="w-full mt-1" title={tierDescription(selectedValue)}>
                             <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                            <SelectItem title={SERVICE_TIER_DESCRIPTIONS[PROVIDER_DEFAULT_VALUE]} value={PROVIDER_DEFAULT_VALUE}>
-                                Provider default
+                            <SelectItem title={tierDescription(PROVIDER_DEFAULT_VALUE)} value={PROVIDER_DEFAULT_VALUE}>
+                                {t("settings.ui.providerDefault")}
                             </SelectItem>
                             {OPENAI_SERVICE_TIER_OPTIONS.map((tier) => (
-                                <SelectItem key={tier} title={SERVICE_TIER_DESCRIPTIONS[tier]} value={tier}>
-                                    {tier.charAt(0).toUpperCase() + tier.slice(1)}
+                                <SelectItem key={tier} title={tierDescription(tier)} value={tier}>
+                                    {t(tierLabelKeys[tier])}
                                 </SelectItem>
                             ))}
                         </SelectContent>

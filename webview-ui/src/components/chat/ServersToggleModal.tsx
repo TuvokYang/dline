@@ -9,9 +9,11 @@ import ServersToggleList from "@/components/mcp/configuration/tabs/installed/Ser
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { useTaskCapabilityToggles } from "@/hooks/useTaskCapabilityToggles"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { McpServiceClient } from "@/services/grpc-client"
 
 const ServersToggleModal: React.FC = () => {
+    const { t } = useUiTranslation()
     const { mcpEnabled, mcpServers, navigateToMcp, setMcpServers } = useExtensionState()
     const capabilityScope = useTaskCapabilityToggles()
     const [isVisible, setIsVisible] = useState(false)
@@ -74,10 +76,10 @@ const ServersToggleModal: React.FC = () => {
         <div className="inline-flex min-w-0 max-w-full shrink-0 items-center" ref={modalRef}>
             <div className="inline-flex w-full items-center" ref={buttonRef}>
                 <Tooltip>
-                    {!isVisible && <TooltipContent>Manage MCP Servers</TooltipContent>}
+                    {!isVisible && <TooltipContent>{t("chatRows.menu.servers.manage")}</TooltipContent>}
                     <TooltipTrigger asChild>
                         <button
-                            aria-label={isVisible ? "Hide MCP Servers" : "Show MCP Servers"}
+                            aria-label={isVisible ? t("chatRows.menu.servers.hide") : t("chatRows.menu.servers.show")}
                             className="chat-input-control-outline inline-flex size-[18.5px] shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 text-foreground shadow-none transition-colors duration-150 hover:bg-toolbar-hover focus-visible:bg-toolbar-hover"
                             onClick={() => setIsVisible(!isVisible)}
                             type="button">
@@ -91,10 +93,10 @@ const ServersToggleModal: React.FC = () => {
                 <PopupModalContainer $arrowPosition={arrowPosition} $menuPosition={menuPosition}>
                     <div className="flex-shrink-0 px-3 pt-2">
                         <div className="flex justify-between items-center mb-2.5">
-                            <div className="m-0 text-sm font-medium">MCP Servers</div>
+                            <div className="m-0 text-sm font-medium">{t("chatRows.menu.servers.title")}</div>
                             <VSCodeButton
                                 appearance="icon"
-                                aria-label="Go to MCP server settings"
+                                aria-label={t("chatRows.menu.servers.settings")}
                                 onClick={() => {
                                     setIsVisible(false)
                                     navigateToMcp("configure")

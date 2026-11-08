@@ -4,6 +4,7 @@ import { resolveApiFormat } from "@shared/providers/api-format"
 import { buildEffectiveModelInfo, mergeCapabilities, mergePricing } from "@shared/providers/effective-model-info"
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ApiFormatSelector } from "../common/ApiFormatSelector"
 import { ModelAutocomplete } from "../common/ModelAutocomplete"
 import { ModelConfiguration } from "../common/ModelConfiguration"
@@ -32,6 +33,7 @@ function getCodexConfig(profile: ApiProfile): OpenAiCodexProviderConfig {
 }
 
 export const OpenAiCodexProvider = ({ showModelOptions, isPopup, profile, onUpdate }: OpenAiCodexProviderProps) => {
+    const { t } = useUiTranslation()
     const pc = getCodexConfig(profile)
     const {
         models,
@@ -81,12 +83,11 @@ export const OpenAiCodexProvider = ({ showModelOptions, isPopup, profile, onUpda
             {showModelOptions && (
                 <>
                     <ModelAutocomplete
-                        label="Model"
                         models={modelOptions}
                         onChange={(value) => onUpdate({ modelId: value, modelInfo: models[value] })}
                         onOpen={refreshRemoteModels}
                         optionOrigins={optionOrigins}
-                        placeholder="Search, select, or enter a model ID..."
+                        placeholder={t("settings.ui.searchCustomModel")}
                         selectedModelId={modelId}
                     />
                     <ApiFormatSelector
@@ -116,7 +117,7 @@ export const OpenAiCodexProvider = ({ showModelOptions, isPopup, profile, onUpda
                                     },
                                 })
                             }>
-                            Use WebSocket transport
+                            {t("settings.ui.codex.websocket")}
                         </VSCodeCheckbox>
                     ) : null}
                     {(effortSupported || budgetSupported) && (

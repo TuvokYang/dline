@@ -15,6 +15,8 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react"
 import { CopyButton } from "@/components/common/CopyButton"
 import { Button } from "@/components/ui/button"
+import { type UiMessageKey } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 import { CommandOutputContent } from "../CommandOutputRow"
 import { getCommandEnvironmentLabel, getCommandOutputSummary } from "../command-output"
@@ -40,6 +42,30 @@ export const DEFAULT_TASK_ACTIVITY_FILTERS: TaskActivityFilters = {
 }
 
 const ACTIVE_STATUSES = new Set(["awaiting_approval", "running", "cancelling"])
+
+/**
+ * Product-owned statuses; anything else stays as the protocol named it.
+ *
+ * `as const` keeps each value a literal, so resolving one keeps the no-argument
+ * message type and `t` stays fully checked.
+ */
+const STATUS_LABEL_KEYS = {
+    awaiting_approval: "chatRows.common.status.awaiting_approval",
+    running: "chatRows.common.status.running",
+    cancelling: "chatRows.common.status.cancelling",
+    completed: "chatRows.common.status.completed",
+    failed: "chatRows.common.status.failed",
+    cancelled: "chatRows.common.status.cancelled",
+    interrupted: "chatRows.common.status.interrupted",
+    skipped: "chatRows.common.status.skipped",
+    timeout: "chatRows.common.status.timeout",
+} as const satisfies Record<string, UiMessageKey>
+
+type ActivityStatusKey = (typeof STATUS_LABEL_KEYS)[keyof typeof STATUS_LABEL_KEYS]
+
+function statusLabelKey(status: string): ActivityStatusKey | undefined {
+    return status in STATUS_LABEL_KEYS ? STATUS_LABEL_KEYS[status as keyof typeof STATUS_LABEL_KEYS] : undefined
+}
 
 export function formatCommandTimeout(timeoutSeconds: number): string {
     return timeoutSeconds >= 3600 ? `${(timeoutSeconds / 3600).toFixed(1)} h` : `${timeoutSeconds} s`
@@ -78,12 +104,22 @@ function statusChipClass(status: string): string {
     return "bg-description/10 text-description"
 }
 
+/** Resolve a status label without treating the English spelling as identity. */
+function useActivityStatusLabel(): (status: string) => string {
+    const { t } = useUiTranslation()
+    return (status: string) => {
+        const key = statusLabelKey(status)
+        return key ? t(key) : status.replaceAll("_", " ")
+    }
+}
+
 function ActivityStatusChip({ status }: { status: string }) {
+    const statusLabel = useActivityStatusLabel()
     return (
         <span
             className={cn("rounded-xs px-1.5 py-0.5 text-[10px] capitalize", statusChipClass(status))}
             data-testid="activity-status-chip">
-            {status.replaceAll("_", " ")}
+            {statusLabel(status)}
         </span>
     )
 }
@@ -105,8 +141,9 @@ function ActivityTitle({ activity, isSubagent }: { activity: TaskActivity; isSub
 }
 
 function ActivityStatusText({ isSubagent, status }: { isSubagent: boolean; status: string }) {
+    const statusLabel = useActivityStatusLabel()
     if (isSubagent) return null
-    return <span className="capitalize">{status.replaceAll("_", " ")}</span>
+    return <span className="capitalize">{statusLabel(status)}</span>
 }
 
 function CommandActivityOutput({ activity }: { activity: TaskActivity }) {
@@ -138,6 +175,7 @@ export function TaskActivityPanel({
     filters?: TaskActivityFilters
     onFiltersChange?: (filters: TaskActivityFilters) => void
 }) {
+    const { t } = useUiTranslation()
     const { activities } = useTaskActivities(taskId, taskInstanceId)
     const [internalFilters, setInternalFilters] = useState<TaskActivityFilters>(DEFAULT_TASK_ACTIVITY_FILTERS)
     const selectedFilters = filters ?? internalFilters
@@ -189,7 +227,7 @@ export function TaskActivityPanel({
                             key={filter}
                             onClick={() => updateFilters({ ...selectedFilters, status: filter })}
                             type="button">
-                            {filter === "active" ? "Active" : "All"}
+                            {filter === "active" ? t("chatRows.activity.filters.active") : t("chatRows.activity.filters.all")}
                         </button>
                     ))}
                 </div>
@@ -204,7 +242,11 @@ export function TaskActivityPanel({
                             key={filter}
                             onClick={() => updateFilters({ ...selectedFilters, kind: filter })}
                             type="button">
-                            {filter === "all" ? "All" : filter === "subagent" ? "Subagents" : "Commands"}
+                            {filter === "all"
+                                ? t("chatRows.activity.filters.all")
+                                : filter === "subagent"
+                                  ? t("chatRows.activity.filters.subagents")
+                                  : t("chatRows.activity.filters.commands")}
                         </button>
                     ))}
                 </div>
@@ -212,7 +254,7 @@ export function TaskActivityPanel({
 
             <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-4 py-3" data-testid="activity-list">
                 {filtered.length === 0 && (
-                    <div className="py-8 text-center text-xs text-description">No matching activities.</div>
+                    <div className="py-8 text-center text-xs text-description">{t("chatRows.activity.empty")}</div>
                 )}
                 {filtered.map((activity) => {
                     const isExpanded = expanded[activity.activityId] === true
@@ -223,7 +265,10 @@ export function TaskActivityPanel({
                         : undefined
                     const subagentDetail = isSubagent ? parseSubagentActivityDetail(activity.detail) : undefined
                     const ExecutionModeIcon = activity.executionMode === "background" ? SendToBackIcon : BringToFrontIcon
-                    const executionModeLabel = activity.executionMode === "background" ? "Background" : "Foreground"
+                    const executionModeLabel =
+                        activity.executionMode === "background"
+                            ? t("chatRows.common.background")
+                            : t("chatRows.common.foreground")
                     const environmentLabel = activity.kind === "command" ? getCommandEnvironmentLabel(activity.output) : undefined
                     const activitySummary =
                         activity.kind === "command"
@@ -278,7 +323,9 @@ export function TaskActivityPanel({
                                                         <span
                                                             className="inline-block min-w-0 max-w-[60%] flex-1 truncate rounded-xs bg-code/70 px-1.5 py-0.5 font-mono text-[10px] text-foreground"
                                                             data-testid="activity-environment-label"
-                                                            title={`Environment: ${environmentLabel}`}>
+                                                            title={t("chatRows.activity.environmentTitle", {
+                                                                environment: environmentLabel,
+                                                            })}>
                                                             ({environmentLabel})
                                                         </span>
                                                     )}
@@ -310,7 +357,7 @@ export function TaskActivityPanel({
                                                     )}
                                                     data-testid="activity-execution-mode">
                                                     <ExecutionModeIcon aria-hidden="true" className="size-2.5 shrink-0" />
-                                                    {activity.executionMode === "background" ? "Background" : "Foreground"}
+                                                    {executionModeLabel}
                                                 </span>
                                             )}
                                             <ActivityStatusText isSubagent={isSubagent} status={activity.status} />
@@ -336,10 +383,12 @@ export function TaskActivityPanel({
                                                 activity.timeoutSeconds !== undefined &&
                                                 activity.timeoutSeconds > 0 && (
                                                     <span
-                                                        aria-label={`Command timeout: ${formatCommandTimeout(activity.timeoutSeconds)}`}
+                                                        aria-label={t("chatRows.activity.commandTimeoutAria", {
+                                                            timeout: formatCommandTimeout(activity.timeoutSeconds),
+                                                        })}
                                                         className="inline-flex items-center gap-0.5 leading-none"
                                                         role="img"
-                                                        title="Command timeout">
+                                                        title={t("chatRows.activity.commandTimeoutTitle")}>
                                                         <AlarmClockIcon aria-hidden="true" className="size-[11px] shrink-0" />
                                                         <span className="leading-none">
                                                             {formatCommandTimeout(activity.timeoutSeconds)}
@@ -364,7 +413,7 @@ export function TaskActivityPanel({
                                 </button>
                                 {activity.kind === "command" && (
                                     <CopyButton
-                                        ariaLabel="Copy command"
+                                        ariaLabel={t("chatRows.common.copyCommand")}
                                         className="h-5"
                                         textToCopy={activity.detail ?? activity.title}
                                     />
@@ -379,7 +428,7 @@ export function TaskActivityPanel({
                                             )
                                         }
                                         size="xs">
-                                        Finish
+                                        {t("chatRows.common.finish")}
                                     </Button>
                                 )}
                                 {activity.kind === "subagent" &&
@@ -394,7 +443,7 @@ export function TaskActivityPanel({
                                                 )
                                             }
                                             size="xs">
-                                            Retry
+                                            {t("chatRows.common.retry")}
                                         </Button>
                                     )}
                                 {activity.cancellable && isActive && activity.status !== "awaiting_approval" && (
@@ -406,7 +455,7 @@ export function TaskActivityPanel({
                                         }
                                         size="xs"
                                         variant="danger">
-                                        Cancel
+                                        {t("chatRows.common.cancel")}
                                     </Button>
                                 )}
                             </div>
@@ -448,7 +497,7 @@ export function TaskActivityPanel({
                                                     {subagentDetail.task && (
                                                         <div data-testid="subagent-activity-task">
                                                             <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-description">
-                                                                Task
+                                                                {t("chatRows.common.task")}
                                                             </div>
                                                             <div className="whitespace-pre-wrap break-words text-foreground">
                                                                 {subagentDetail.task}
@@ -458,7 +507,7 @@ export function TaskActivityPanel({
                                                     {subagentDetail.context && (
                                                         <div data-testid="subagent-activity-context">
                                                             <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-description">
-                                                                Context
+                                                                {t("chatRows.common.context")}
                                                             </div>
                                                             <div className="whitespace-pre-wrap break-words text-foreground/80">
                                                                 {subagentDetail.context}

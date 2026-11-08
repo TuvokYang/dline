@@ -9,10 +9,21 @@ import { Plus, Trash2 } from "lucide-react"
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { FileServiceClient } from "@/services/grpc-client"
 
 type EditorTab = "environment" | "startup" | "commands"
 type EnvironmentManager = "none" | "conda" | "venv"
+
+// Request callbacks retain semantic state; only rendering depends on the current language.
+const EDITOR_STATUS_KEYS = {
+    saving: "chatRows.env.saving",
+    saved: "chatRows.env.saved",
+    synced: "chatRows.env.synced",
+} as const
+
+type EditorStatus = keyof typeof EDITOR_STATUS_KEYS
+type CondaNotice = { kind: "empty" } | { kind: "diagnostic"; message: string }
 
 interface EditorState {
     configPath: string
@@ -130,6 +141,7 @@ function detectEnvironmentManager(preCommands: readonly string[]): {
 }
 
 const ShellEnvironmentModal: React.FC<{ isActive: boolean }> = ({ isActive }) => {
+    const { t } = useUiTranslation()
     const { availableTerminalProfiles, defaultTerminalProfile, platform, primaryRootIndex, workspaceRoots } = useExtensionState()
     const initialWorkspace = workspaceRoots[primaryRootIndex]?.path ?? workspaceRoots[0]?.path ?? ""
     const initialProfile =
@@ -146,10 +158,10 @@ const ShellEnvironmentModal: React.FC<{ isActive: boolean }> = ({ isActive }) =>
     const [condaEnvironment, setCondaEnvironment] = useState("")
     const [venvPath, setVenvPath] = useState("")
     const [isCondaLoading, setIsCondaLoading] = useState(false)
-    const [condaNotice, setCondaNotice] = useState<string | null>(null)
+    const [condaNotice, setCondaNotice] = useState<CondaNotice | null>(null)
     const [isLoading, setIsLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
-    const [status, setStatus] = useState<string | null>(null)
+    const [status, setStatus] = useState<EditorStatus | null>(null)
     const loadSequence = useRef(0)
     const loadedSelection = useRef("")
     const savedDrafts = useRef(new Map<string, string>())
@@ -233,7 +245,7 @@ const ShellEnvironmentModal: React.FC<{ isActive: boolean }> = ({ isActive }) =>
 
         savingProfiles.current.add(profileKey)
         setError(null)
-        setStatus("Saving...")
+        setStatus("saving")
         try {
             const response = await FileServiceClient.updateShellEnvironmentProfile(createUpdateRequest(draft))
             savedDrafts.current.set(profileKey, draftKey)
@@ -248,7 +260,7 @@ const ShellEnvironmentModal: React.FC<{ isActive: boolean }> = ({ isActive }) =>
                     workspacePath: response.workspacePath,
                 }
             })
-            setStatus("Saved")
+            setStatus("saved")
         } catch (requestError) {
             setStatus(null)
             setError(requestError instanceof Error ? requestError.message : String(requestError))
@@ -304,7 +316,7 @@ const ShellEnvironmentModal: React.FC<{ isActive: boolean }> = ({ isActive }) =>
                     setVenvPath("")
                 }
                 setError(null)
-                setStatus("Synced")
+                setStatus("synced")
             } catch {
                 // Background synchronization must not replace the current editor with an error state.
             } finally {
@@ -327,10 +339,13 @@ const ShellEnvironmentModal: React.FC<{ isActive: boolean }> = ({ isActive }) =>
                 updateCondaEnvironment(nextEnvironment)
                 replaceManagedActivation(`conda activate ${nextEnvironment}`)
             }
-            setCondaNotice(response.values.length === 0 ? "No Conda environments found" : null)
+            setCondaNotice(response.values.length === 0 ? { kind: "empty" } : null)
         } catch (requestError) {
             setCondaEnvironments([])
-            setCondaNotice(requestError instanceof Error ? requestError.message : String(requestError))
+            setCondaNotice({
+                kind: "diagnostic",
+                message: requestError instanceof Error ? requestError.message : String(requestError),
+            })
         } finally {
             setIsCondaLoading(false)
         }
@@ -390,13 +405,15 @@ const ShellEnvironmentModal: React.FC<{ isActive: boolean }> = ({ isActive }) =>
         replaceManagedActivation(buildVenvActivationCommand(nextVenvPath, selectedProfile, platform))
     }
 
+    const condaNoticeText = condaNotice?.kind === "empty" ? t("chatRows.env.noCondaEnvironments") : condaNotice?.message
+
     return (
         <div className="flex h-full min-h-0 flex-1 flex-col" data-testid="shell-environment-panel">
             <div className="grid grid-cols-2 gap-2 px-3 py-2">
                 <label className="min-w-0 text-xs">
-                    <span className="mb-1 block text-description">Workspace</span>
+                    <span className="mb-1 block text-description">{t("chatRows.env.workspace")}</span>
                     <select
-                        aria-label="Workspace"
+                        aria-label={t("chatRows.env.workspace")}
                         className={fieldClassName}
                         onChange={(event) => {
                             setSelectedWorkspace(event.target.value)
@@ -410,9 +427,9 @@ const ShellEnvironmentModal: React.FC<{ isActive: boolean }> = ({ isActive }) =>
                     </select>
                 </label>
                 <label className="min-w-0 text-xs">
-                    <span className="mb-1 block text-description">Terminal Profile</span>
+                    <span className="mb-1 block text-description">{t("chatRows.env.terminalProfile")}</span>
                     <select
-                        aria-label="Terminal Profile"
+                        aria-label={t("chatRows.env.terminalProfile")}
                         className={fieldClassName}
                         onChange={(event) => {
                             setSelectedProfile(event.target.value)
@@ -432,18 +449,18 @@ const ShellEnvironmentModal: React.FC<{ isActive: boolean }> = ({ isActive }) =>
                     aria-live="polite"
                     className={`border-b border-editor-group-border px-3 pb-2 text-xs ${error ? "text-error" : "text-description"}`}
                     role={error ? "alert" : "status"}>
-                    {error ?? status}
+                    {error ?? (status ? t(EDITOR_STATUS_KEYS[status]) : null)}
                 </div>
             )}
 
             <div className="flex border-b border-editor-group-border px-3" role="tablist">
                 {(
                     [
-                        ["environment", "Environment"],
-                        ["startup", "Startup Scripts"],
-                        ["commands", "Commands"],
+                        ["environment", "chatRows.env.tab.environment"],
+                        ["startup", "chatRows.env.tab.startup"],
+                        ["commands", "chatRows.env.tab.commands"],
                     ] as const
-                ).map(([id, label]) => (
+                ).map(([id, labelKey]) => (
                     <button
                         aria-selected={activeTab === id}
                         className={`border-0 border-b-2 bg-transparent px-3 py-2 text-xs ${activeTab === id ? "border-foreground text-foreground" : "border-transparent text-description"}`}
@@ -451,14 +468,14 @@ const ShellEnvironmentModal: React.FC<{ isActive: boolean }> = ({ isActive }) =>
                         onClick={() => setActiveTab(id)}
                         role="tab"
                         type="button">
-                        {label}
+                        {t(labelKey)}
                     </button>
                 ))}
             </div>
 
             <div className="min-h-40 flex-1 overflow-y-auto px-3 py-3">
                 {isLoading && editor.workspacePath === "" ? (
-                    <div className="text-xs text-description">Loading...</div>
+                    <div className="text-xs text-description">{t("chatRows.env.loading")}</div>
                 ) : activeTab === "environment" ? (
                     <div className="flex flex-col gap-2">
                         {editor.environment.map((variable, index) => (
@@ -466,7 +483,7 @@ const ShellEnvironmentModal: React.FC<{ isActive: boolean }> = ({ isActive }) =>
                                 className="grid grid-cols-[minmax(90px,0.8fr)_minmax(100px,1fr)_auto_auto] items-center gap-2"
                                 key={index}>
                                 <input
-                                    aria-label={`Environment name ${index + 1}`}
+                                    aria-label={t("chatRows.env.environmentName", { index: index + 1 })}
                                     className={fieldClassName}
                                     onChange={(event) =>
                                         setEditor((current) => ({
@@ -476,11 +493,11 @@ const ShellEnvironmentModal: React.FC<{ isActive: boolean }> = ({ isActive }) =>
                                             ),
                                         }))
                                     }
-                                    placeholder="NAME"
+                                    placeholder={t("chatRows.env.namePlaceholder")}
                                     value={variable.name}
                                 />
                                 <input
-                                    aria-label={`Environment value ${index + 1}`}
+                                    aria-label={t("chatRows.env.environmentValue", { index: index + 1 })}
                                     className={fieldClassName}
                                     disabled={variable.value === undefined}
                                     onChange={(event) =>
@@ -491,12 +508,12 @@ const ShellEnvironmentModal: React.FC<{ isActive: boolean }> = ({ isActive }) =>
                                             ),
                                         }))
                                     }
-                                    placeholder="Value"
+                                    placeholder={t("chatRows.env.valuePlaceholder")}
                                     value={variable.value ?? ""}
                                 />
                                 <label className="flex items-center gap-1 whitespace-nowrap text-xs text-description">
                                     <input
-                                        aria-label={`Unset environment ${index + 1}`}
+                                        aria-label={t("chatRows.env.environmentUnset", { index: index + 1 })}
                                         checked={variable.value === undefined}
                                         onChange={(event) =>
                                             setEditor((current) => ({
@@ -510,10 +527,10 @@ const ShellEnvironmentModal: React.FC<{ isActive: boolean }> = ({ isActive }) =>
                                         }
                                         type="checkbox"
                                     />
-                                    Unset
+                                    {t("chatRows.env.unset")}
                                 </label>
                                 <Button
-                                    aria-label={`Remove environment ${index + 1}`}
+                                    aria-label={t("chatRows.env.environmentRemove", { index: index + 1 })}
                                     onClick={() =>
                                         setEditor((current) => ({
                                             ...current,
@@ -539,30 +556,31 @@ const ShellEnvironmentModal: React.FC<{ isActive: boolean }> = ({ isActive }) =>
                             }
                             size="xs"
                             variant="secondary">
-                            <Plus size={12} /> Add variable
+                            <Plus size={12} /> {t("chatRows.env.addVariable")}
                         </Button>
                     </div>
                 ) : activeTab === "startup" ? (
                     <ListEditor
-                        addLabel="Add startup script"
-                        ariaPrefix="Startup script"
+                        addLabel={t("chatRows.env.addStartupScript")}
                         entries={editor.startupScripts}
+                        entryLabel={(index) => t("chatRows.env.startupScript", { index })}
                         onAdd={() => setEditor((current) => ({ ...current, startupScripts: [...current.startupScripts, ""] }))}
                         onChange={(index, value) => updateList("startupScripts", index, value)}
                         onRemove={(index) => removeListEntry("startupScripts", index)}
-                        placeholder="Path to .bat, .cmd, .ps1, .bashrc, .bash, or .sh"
+                        placeholder={t("chatRows.env.startupPlaceholder")}
+                        removeLabel={(index) => t("chatRows.env.removeEntry", { entry: t("chatRows.env.noun.startup"), index })}
                     />
                 ) : (
                     <div className="flex flex-col gap-3">
                         <div className="flex flex-col gap-2 border-b border-editor-group-border pb-3">
                             <label className="text-xs">
-                                <span className="mb-1 block text-description">Python Env Manager</span>
+                                <span className="mb-1 block text-description">{t("chatRows.env.pythonManager")}</span>
                                 <select
-                                    aria-label="Python Env Manager"
+                                    aria-label={t("chatRows.env.pythonManager")}
                                     className={fieldClassName}
                                     onChange={(event) => selectEnvironmentManager(event.target.value as EnvironmentManager)}
                                     value={environmentManager}>
-                                    <option value="none">None</option>
+                                    <option value="none">{t("chatRows.env.manager.none")}</option>
                                     <option value="conda">Conda</option>
                                     <option value="venv">venv</option>
                                 </select>
@@ -570,9 +588,9 @@ const ShellEnvironmentModal: React.FC<{ isActive: boolean }> = ({ isActive }) =>
                             {environmentManager === "conda" ? (
                                 <div className="flex items-end gap-2">
                                     <label className="min-w-0 flex-1 text-xs">
-                                        <span className="mb-1 block text-description">Conda environment</span>
+                                        <span className="mb-1 block text-description">{t("chatRows.env.condaEnvironment")}</span>
                                         <select
-                                            aria-label="Conda environment"
+                                            aria-label={t("chatRows.env.condaEnvironment")}
                                             className={fieldClassName}
                                             disabled={isCondaLoading}
                                             onChange={(event) => {
@@ -582,7 +600,7 @@ const ShellEnvironmentModal: React.FC<{ isActive: boolean }> = ({ isActive }) =>
                                                 )
                                             }}
                                             value={condaEnvironment}>
-                                            <option value="">Select environment</option>
+                                            <option value="">{t("chatRows.env.selectEnvironment")}</option>
                                             {condaEnvironment && !condaEnvironments.includes(condaEnvironment) && (
                                                 <option value={condaEnvironment}>{condaEnvironment}</option>
                                             )}
@@ -596,9 +614,9 @@ const ShellEnvironmentModal: React.FC<{ isActive: boolean }> = ({ isActive }) =>
                                 </div>
                             ) : environmentManager === "venv" ? (
                                 <label className="text-xs">
-                                    <span className="mb-1 block text-description">venv path</span>
+                                    <span className="mb-1 block text-description">{t("chatRows.env.venvPath")}</span>
                                     <input
-                                        aria-label="venv path"
+                                        aria-label={t("chatRows.env.venvPath")}
                                         className={fieldClassName}
                                         onChange={(event) => {
                                             setVenvPath(event.target.value)
@@ -617,33 +635,39 @@ const ShellEnvironmentModal: React.FC<{ isActive: boolean }> = ({ isActive }) =>
                                     />
                                 </label>
                             ) : null}
-                            {condaNotice && environmentManager === "conda" && (
-                                <span className="text-xs text-description">{condaNotice}</span>
+                            {condaNoticeText && environmentManager === "conda" && (
+                                <span className="text-xs text-description">{condaNoticeText}</span>
                             )}
                         </div>
                         <div>
-                            <div className="mb-2 text-xs font-medium">Pre Commands</div>
+                            <div className="mb-2 text-xs font-medium">{t("chatRows.env.preCommands")}</div>
                             <ListEditor
-                                addLabel="Add pre command"
-                                ariaPrefix="Pre command"
+                                addLabel={t("chatRows.env.addPreCommand")}
                                 entries={editor.preCommands}
+                                entryLabel={(index) => t("chatRows.env.preCommand", { index })}
                                 onAdd={() => setEditor((current) => ({ ...current, preCommands: [...current.preCommands, ""] }))}
                                 onChange={(index, value) => updateList("preCommands", index, value)}
                                 onRemove={(index) => removeListEntry("preCommands", index)}
-                                placeholder="Command"
+                                placeholder={t("chatRows.env.commandPlaceholder")}
+                                removeLabel={(index) =>
+                                    t("chatRows.env.removeEntry", { entry: t("chatRows.env.noun.pre"), index })
+                                }
                             />
                         </div>
                         <div>
-                            <div className="mb-2 text-xs font-medium">Post Command</div>
+                            <div className="mb-2 text-xs font-medium">{t("chatRows.env.postCommand")}</div>
                             <ListEditor
-                                addLabel="Add post command"
-                                ariaPrefix="Post command"
+                                addLabel={t("chatRows.env.addPostCommand")}
                                 entries={editor.postCommand === undefined ? [] : [editor.postCommand]}
+                                entryLabel={(index) => t("chatRows.env.postCommandEntry", { index })}
                                 maxEntries={1}
                                 onAdd={() => setEditor((current) => ({ ...current, postCommand: "" }))}
                                 onChange={(_index, value) => setEditor((current) => ({ ...current, postCommand: value }))}
                                 onRemove={() => setEditor((current) => ({ ...current, postCommand: undefined }))}
-                                placeholder="Command"
+                                placeholder={t("chatRows.env.commandPlaceholder")}
+                                removeLabel={(index) =>
+                                    t("chatRows.env.removeEntry", { entry: t("chatRows.env.noun.post"), index })
+                                }
                             />
                         </div>
                     </div>
@@ -655,38 +679,38 @@ const ShellEnvironmentModal: React.FC<{ isActive: boolean }> = ({ isActive }) =>
 
 const ListEditor = ({
     addLabel,
-    ariaPrefix,
+    entryLabel,
     entries,
     onAdd,
     onChange,
     onRemove,
     placeholder,
+    removeLabel,
     maxEntries,
 }: {
     addLabel: string
-    ariaPrefix: string
+    /** Accessible name of one entry, indexed the way the reader counts them. */
+    entryLabel: (index: number) => string
     entries: string[]
     onAdd: () => void
     onChange: (index: number, value: string) => void
     onRemove: (index: number) => void
     placeholder: string
+    /** Accessible name of the remove control, naming the entry it removes. */
+    removeLabel: (index: number, entry: string) => string
     maxEntries?: number
 }) => (
     <div className="flex flex-col gap-2">
         {entries.map((entry, index) => (
-            <div className="flex items-center gap-2" key={`${ariaPrefix}-${index}`}>
+            <div className="flex items-center gap-2" key={index}>
                 <input
-                    aria-label={`${ariaPrefix} ${index + 1}`}
+                    aria-label={entryLabel(index + 1)}
                     className={fieldClassName}
                     onChange={(event) => onChange(index, event.target.value)}
                     placeholder={placeholder}
                     value={entry}
                 />
-                <Button
-                    aria-label={`Remove ${ariaPrefix.toLowerCase()} ${index + 1}`}
-                    onClick={() => onRemove(index)}
-                    size="icon"
-                    variant="icon">
+                <Button aria-label={removeLabel(index + 1, addLabel)} onClick={() => onRemove(index)} size="icon" variant="icon">
                     <Trash2 size={12} />
                 </Button>
             </div>

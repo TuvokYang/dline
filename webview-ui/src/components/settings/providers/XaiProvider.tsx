@@ -28,7 +28,6 @@ export const XaiProvider = ({ showModelOptions, isPopup, profile, onUpdate }: Xa
             {showModelOptions && (
                 <>
                     <ModelSelector
-                        label="Model"
                         models={models}
                         onChange={(e) =>
                             onUpdate({

@@ -1,5 +1,6 @@
 import { BaseProviderConfig } from "@shared/proto/dline/provider/common"
 import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { BaseUrlField } from "../common/BaseUrlField"
 import { ModelInfoView } from "../common/ModelInfoView"
@@ -23,6 +24,7 @@ interface GeminiProviderProps {
  * All data sourced from ApiProfile.
  */
 export const GeminiProvider = ({ showModelOptions, isPopup, profile, onUpdate }: GeminiProviderProps) => {
+    const { t } = useUiTranslation()
     const { models: geminiModels, defaultModelId: geminiDefaultModelId } = useProviderModels("gemini")
     const pc = profile.gemini ?? BaseProviderConfig.create()
     const modelInfo = resolveProfileModelInfo(profile, { models: geminiModels, defaultModelId: geminiDefaultModelId })
@@ -43,15 +45,13 @@ export const GeminiProvider = ({ showModelOptions, isPopup, profile, onUpdate }:
 
             <BaseUrlField
                 initialValue={profile.baseUrl}
-                label="Use custom base URL"
                 onChange={(value) => onUpdate({ baseUrl: value || undefined })}
-                placeholder="Default: https://generativelanguage.googleapis.com"
+                placeholder={t("settings.ui.defaultValue", { value: "https://generativelanguage.googleapis.com" })}
             />
 
             {showModelOptions && (
                 <>
                     <ModelSelector
-                        label="Model"
                         models={geminiModels}
                         onChange={(e) =>
                             onUpdate({

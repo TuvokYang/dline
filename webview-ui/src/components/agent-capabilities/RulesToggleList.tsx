@@ -1,3 +1,4 @@
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import NewRuleRow from "./NewRuleRow"
 import RuleRow from "./RuleRow"
 
@@ -22,6 +23,7 @@ const RulesToggleList = ({
     isRemote?: boolean
     alwaysEnabledMap?: Record<string, boolean>
 }) => {
+    const { t } = useUiTranslation()
     const gapClasses = {
         small: "gap-0",
         medium: "gap-2.5",
@@ -52,7 +54,7 @@ const RulesToggleList = ({
                 <>
                     {showNoRules && (
                         <div className="flex flex-col items-center gap-3 my-3 text-(--vscode-descriptionForeground)">
-                            {ruleType === "workflow" ? "No workflows found" : "No rules found"}
+                            {t(ruleType === "workflow" ? "capabilities.noWorkflows" : "capabilities.noRules")}
                         </div>
                     )}
                     {showNewRule && <NewRuleRow isGlobal={isGlobal} ruleType={ruleType} />}

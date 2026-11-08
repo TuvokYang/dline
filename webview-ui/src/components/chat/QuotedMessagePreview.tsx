@@ -1,6 +1,7 @@
 import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
 import React from "react"
 import styled from "styled-components"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 
 const PreviewContainer = styled.div`
 	background-color: var(--vscode-input-background); /* Outer box matches text area */
@@ -70,6 +71,7 @@ interface QuotedMessagePreviewProps {
 }
 
 const QuotedMessagePreview: React.FC<QuotedMessagePreviewProps> = ({ text, onDismiss, isFocused }) => {
+    const { t } = useUiTranslation()
     const _cardClassName = `reply-card ${isFocused ? "reply-card--focused" : ""}`
 
     return (
@@ -78,7 +80,7 @@ const QuotedMessagePreview: React.FC<QuotedMessagePreviewProps> = ({ text, onDis
             <ContentRow>
                 <ReplyIcon className="codicon codicon-reply" />
                 <TextContainer title={text}>{text}</TextContainer>
-                <DismissButton appearance="icon" aria-label="Dismiss quote" onClick={onDismiss}>
+                <DismissButton appearance="icon" aria-label={t("chatRows.quote.dismiss")} onClick={onDismiss}>
                     <span className="codicon codicon-close" />
                 </DismissButton>
             </ContentRow>

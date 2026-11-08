@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import { LOCAL_WEB_SEARCH_ROUTING_PLAN } from "../../__tests__/web-search-routing-fixtures"
+import { buildPreferredLanguageInstructions } from "../../generators/preferred-language"
 import { PromptProfile } from "../../profiles/types"
 import { PromptScanner } from "../../template/PromptScanner"
 import { assemblePromptFragments } from "../assembly/prompt-fragment-assembler"
@@ -106,6 +107,30 @@ describe("canonical system prompt pipeline", () => {
         expect(sectionIds.indexOf("feedback")).toBe(sectionIds.indexOf("user-instructions") - 1)
         expect(sectionIds).not.toContain("rules")
         expect(sectionIds).not.toContain("todo")
+    })
+
+    it.each([
+        PromptProfile.Standard,
+        PromptProfile.Lite,
+    ])("carries fixed and automatic model language into %s without using the interface locale", (promptProfile) => {
+        for (const preference of ["English", "Simplified Chinese - 简体中文", "auto"]) {
+            const context = {
+                ...BASE_CONTEXT,
+                promptProfile,
+                preferredLanguageInstructions: buildPreferredLanguageInstructions(preference),
+            }
+            const env = prepareSystemRuntimeEnv(context, createSystemPromptConfig(context))
+            const instructions = String(env.CUSTOM_INSTRUCTIONS)
+            expect(instructions.split("# Preferred Language")).toHaveLength(2)
+            expect(instructions).toContain("Global project rules.")
+            if (preference === "auto") {
+                expect(instructions).toMatch(/user's most recent message/)
+                expect(instructions).not.toMatch(/Speak in (en|zh-CN)\./)
+            } else {
+                const language = preference === "English" ? "en" : "zh-CN"
+                expect(instructions).toContain(`Speak in ${language}.`)
+            }
+        }
     })
 
     it("reports PowerShell as the Windows default terminal shell", () => {

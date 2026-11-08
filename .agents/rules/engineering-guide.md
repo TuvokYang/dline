@@ -101,6 +101,12 @@ Model metadata authority remains in ModelRegistry, not a deleted static provider
 
 Responses API support is driven by API format and provider capabilities. Do not add an `isNextGenModelProvider()` branch or model-family prompt variant.
 
+## UI internationalization
+
+Load `implement-i18n` when adding UI translations, typed messages or language-reactive rendering. Model-visible text remains under `prompt-engineering.md`.
+
+Webview Chinese resource filenames use `zh_CN.ts` or `.zh_CN.ts`; runtime language tags and preference values remain `zh-CN`. Settings fields reuse `ProfileForm`/`ProfileField`: one form-owned field gap, consistent label/value typography, and margin-free, unclamped help text. Check actual Toolkit typography and narrow/wide geometry in the browser rather than relying on class assertions; do not change global chat paragraph styles to fix a settings field.
+
 ## Prompt and tool changes
 
 Follow `prompt-engineering` for model-visible contracts and canonical/i18n ownership. Load `reviewing-prompt-contracts` for review techniques, `add-new-tool` for implementation skills, and `integrate-new-tool` for the complete long integration workflow.

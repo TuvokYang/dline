@@ -23,6 +23,7 @@ import {
 import type { StorageContext } from "@shared/storage/storage-context"
 import { taskServiceTierOverrideFromFields } from "@shared/task-provider-overrides"
 import { taskReasoningOverrideFromFields } from "@shared/task-reasoning"
+import { DEFAULT_UI_LANGUAGE_PREFERENCE, normalizeUiLanguagePreference, type UiLanguagePreference } from "@shared/UiLanguage"
 import deepEqual from "fast-deep-equal"
 import { initializeDistinctId } from "@/services/logging/distinctId"
 import { recordPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
@@ -124,6 +125,8 @@ export class StateManager {
     private globalStateCache: GlobalStateAndSettings = {} as GlobalStateAndSettings
     /** Settings cache — non-deprecated SETTINGS_FIELDS, persisted to settings/settings.json */
     private settingsCache: Settings = {} as Settings
+    /** Derived only from adopted repository snapshots, never from optimistic or scoped overlays. */
+    private committedUiLanguagePreference: UiLanguagePreference = DEFAULT_UI_LANGUAGE_PREFERENCE
     /** Legacy/global defaults used only while the first canonical Settings snapshot is applied. */
     private settingsFallbackCache: Partial<Settings> = {}
     private settingsFallbackActive = true
@@ -386,6 +389,7 @@ export class StateManager {
         }
 
         this.settingsCache = { ...(snapshot.values as Settings) }
+        this.committedUiLanguagePreference = normalizeUiLanguagePreference(snapshot.values.uiLanguage)
         this.appliedSettingsRevision = snapshot.revision
         const settingsRecord = this.settingsCache as Record<string, unknown>
 
@@ -1147,6 +1151,12 @@ export class StateManager {
             return this.settingsCache[key]
         }
         return this.resolveSettingsFallback(key)
+    }
+
+    /** Last committed UI preference; safe to project even while the repository is temporarily unavailable. */
+    getUiLanguagePreference(): UiLanguagePreference {
+        if (!this.isInitialized) throw new Error(STATE_MANAGER_NOT_INITIALIZED)
+        return this.committedUiLanguagePreference
     }
 
     /** Canonical committed values only: no task, remote-config, session, or optimistic overlays. */

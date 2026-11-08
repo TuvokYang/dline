@@ -8,6 +8,8 @@ import { GroupedVirtuoso } from "react-virtuoso"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useTextFieldHost } from "@/hooks/useTextFieldHost"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { TaskServiceClient } from "@/services/grpc-client"
 import { formatSize } from "@/utils/format"
 import ViewHeader from "../common/ViewHeader"
@@ -18,6 +20,7 @@ type HistoryViewProps = {
 }
 
 type SortOption = "newest" | "oldest" | "mostExpensive" | "mostTokens" | "mostRelevant"
+type HistoryFilterOption = SortOption | "workspaceOnly" | "favoritesOnly"
 
 const isToday = (timestamp: number): boolean => {
     const date = new Date(timestamp)
@@ -25,20 +28,41 @@ const isToday = (timestamp: number): boolean => {
     return today.toDateString() === date.toDateString()
 }
 
-const HISTORY_FILTERS = {
-    newest: "Newest",
-    oldest: "Oldest",
-    mostExpensive: "Most Expensive",
-    mostTokens: "Most Tokens",
-    mostRelevant: "Most Relevant",
-    workspaceOnly: "Workspace Only",
-    favoritesOnly: "Favorites Only",
-}
+/**
+ * Filter and sort options keep their stable value and message key; the label is
+ * resolved while rendering so the ordering of this list and the selected value
+ * never depend on the display language.
+ */
+/** Static labels only: a dynamic key would need arguments this list never carries. */
+type HistoryFilterLabelKey =
+    | "shell.history.sort.newest"
+    | "shell.history.sort.oldest"
+    | "shell.history.sort.mostExpensive"
+    | "shell.history.sort.mostTokens"
+    | "shell.history.sort.mostRelevant"
+    | "shell.history.filter.workspaceOnly"
+    | "shell.history.filter.favoritesOnly"
+
+const HISTORY_FILTER_OPTIONS: ReadonlyArray<{
+    value: HistoryFilterOption
+    labelKey: HistoryFilterLabelKey
+    kind: "sort" | "filter"
+}> = [
+    { value: "newest", labelKey: "shell.history.sort.newest", kind: "sort" },
+    { value: "oldest", labelKey: "shell.history.sort.oldest", kind: "sort" },
+    { value: "mostExpensive", labelKey: "shell.history.sort.mostExpensive", kind: "sort" },
+    { value: "mostTokens", labelKey: "shell.history.sort.mostTokens", kind: "sort" },
+    { value: "mostRelevant", labelKey: "shell.history.sort.mostRelevant", kind: "sort" },
+    { value: "workspaceOnly", labelKey: "shell.history.filter.workspaceOnly", kind: "filter" },
+    { value: "favoritesOnly", labelKey: "shell.history.filter.favoritesOnly", kind: "filter" },
+]
 
 const HistoryView = ({ onDone }: HistoryViewProps) => {
     const extensionStateContext = useExtensionState()
+    const { t } = useUiTranslation()
     const { taskHistory, onRelinquishControl, environment } = extensionStateContext
     const [searchQuery, setSearchQuery] = useState("")
+    const searchFieldHostProps = useTextFieldHost(t("shell.history.searchPlaceholder"), searchQuery, false)
     const [sortOption, setSortOption] = useState<SortOption>("newest")
     const [lastNonRelevantSort, setLastNonRelevantSort] = useState<SortOption | null>("newest")
     const [deleteAllDisabled, setDeleteAllDisabled] = useState(false)
@@ -172,12 +196,12 @@ const HistoryView = ({ onDone }: HistoryViewProps) => {
                     fetchTotalTasksSize()
                     loadTaskHistory()
                     if (result.skippedLocked > 0) {
-                        alert("This task is currently in use by another instance and cannot be deleted.")
+                        alert(t("shell.history.lockedSingle"))
                     }
                 })
                 .catch((error) => console.error("Error deleting task:", error))
         },
-        [fetchTotalTasksSize, loadTaskHistory],
+        [fetchTotalTasksSize, loadTaskHistory, t],
     )
 
     const handleDeleteSelectedHistoryItems = useCallback(
@@ -189,15 +213,13 @@ const HistoryView = ({ onDone }: HistoryViewProps) => {
                         loadTaskHistory()
                         setSelectedItems([])
                         if (result.skippedLocked > 0) {
-                            alert(
-                                `${result.skippedLocked} task(s) are currently in use by another instance and were not deleted.`,
-                            )
+                            alert(t("shell.history.lockedMany", { count: result.skippedLocked }))
                         }
                     })
                     .catch((error) => console.error("Error deleting tasks:", error))
             }
         },
-        [fetchTotalTasksSize, loadTaskHistory],
+        [fetchTotalTasksSize, loadTaskHistory, t],
     )
 
     const fuse = useMemo(() => {
@@ -253,7 +275,7 @@ const HistoryView = ({ onDone }: HistoryViewProps) => {
             // No grouping for non-date sorts
             return {
                 groupedTasks: taskHistorySearchResults,
-                groupCounts: [taskHistorySearchResults.length],
+                groupCounts: taskHistorySearchResults.length > 0 ? [taskHistorySearchResults.length] : [],
                 groupLabels: [] as string[],
             }
         }
@@ -271,10 +293,10 @@ const HistoryView = ({ onDone }: HistoryViewProps) => {
 
         const groups: { tasks: any[]; label: string }[] = []
         if (todayTasks.length > 0) {
-            groups.push({ tasks: todayTasks, label: "Today" })
+            groups.push({ tasks: todayTasks, label: t("shell.history.group.today") })
         }
         if (olderTasks.length > 0) {
-            groups.push({ tasks: olderTasks, label: "Older" })
+            groups.push({ tasks: olderTasks, label: t("shell.history.group.older") })
         }
 
         return {
@@ -282,7 +304,7 @@ const HistoryView = ({ onDone }: HistoryViewProps) => {
             groupCounts: groups.map((g) => g.tasks.length),
             groupLabels: groups.map((g) => g.label),
         }
-    }, [taskHistorySearchResults, sortOption])
+    }, [taskHistorySearchResults, sortOption, t])
 
     // Calculate total size of selected items
     const selectedItemsSize = useMemo(() => {
@@ -307,7 +329,7 @@ const HistoryView = ({ onDone }: HistoryViewProps) => {
     return (
         <div className="fixed overflow-hidden inset-0 flex flex-col w-full">
             {/* HEADER */}
-            <ViewHeader environment={environment} onDone={onDone} title="History" />
+            <ViewHeader environment={environment} onDone={onDone} title={t("shell.history.title")} />
 
             {/* FILTERS */}
             <div className="flex flex-col gap-3 px-3">
@@ -315,6 +337,8 @@ const HistoryView = ({ onDone }: HistoryViewProps) => {
                 <div className="flex justify-between items-center">
                     {/* SEARCH BOX */}
                     <VSCodeTextField
+                        {...searchFieldHostProps}
+                        aria-label={t("shell.history.searchPlaceholder")}
                         className="w-full"
                         onInput={(e) => {
                             const newValue = (e.target as HTMLInputElement)?.value
@@ -324,12 +348,12 @@ const HistoryView = ({ onDone }: HistoryViewProps) => {
                                 setSortOption("mostRelevant")
                             }
                         }}
-                        placeholder="Fuzzy search history..."
+                        placeholder={t("shell.history.searchPlaceholder")}
                         value={searchQuery}>
                         <div className="codicon codicon-search opacity-80 mt-0.5 !text-sm" slot="start" />
                         {searchQuery && (
                             <div
-                                aria-label="Clear search"
+                                aria-label={t("shell.history.clearSearch")}
                                 className="input-icon-button codicon codicon-close flex justify-center items-center h-full"
                                 onClick={() => setSearchQuery("")}
                                 slot="end"
@@ -367,35 +391,33 @@ const HistoryView = ({ onDone }: HistoryViewProps) => {
                             <FunnelIcon className="!size-2 text-foreground" />
                         </SelectTrigger>
                         <SelectContent position="popper">
-                            {Object.entries(HISTORY_FILTERS).map(([key, value]) => {
-                                const isSortOption = ["newest", "oldest", "mostExpensive", "mostTokens", "mostRelevant"].includes(
-                                    key,
-                                )
-                                const isFilterOption = ["workspaceOnly", "favoritesOnly"].includes(key)
+                            {HISTORY_FILTER_OPTIONS.map(({ value, labelKey, kind }) => {
+                                const isSortOption = kind === "sort"
+                                const isFilterOption = kind === "filter"
                                 const isSelected = isSortOption
-                                    ? sortOption === key
-                                    : key === "workspaceOnly"
+                                    ? sortOption === value
+                                    : value === "workspaceOnly"
                                       ? showCurrentWorkspaceOnly
-                                      : key === "favoritesOnly"
+                                      : value === "favoritesOnly"
                                         ? showFavoritesOnly
                                         : false
-                                const isDisabled = key === "mostRelevant" && !searchQuery
+                                const isDisabled = value === "mostRelevant" && !searchQuery
 
                                 return (
                                     <SelectItem
                                         className={isSelected ? "bg-button-background/30" : ""}
                                         disabled={isDisabled}
-                                        key={key}
-                                        value={key}>
+                                        key={value}
+                                        value={value}>
                                         <span className="flex items-center gap-2">
                                             {isFilterOption && (
                                                 <span
                                                     className={`codicon ${
-                                                        key === "workspaceOnly" ? "codicon-folder" : "codicon-star-full"
+                                                        value === "workspaceOnly" ? "codicon-folder" : "codicon-star-full"
                                                     } ${isSelected ? "text-button-background" : ""}`}
                                                 />
                                             )}
-                                            {value}
+                                            {t(labelKey)}
                                         </span>
                                     </SelectItem>
                                 )
@@ -436,26 +458,28 @@ const HistoryView = ({ onDone }: HistoryViewProps) => {
             <div className="p-2.5 border-t border-t-border-panel">
                 <div className="flex gap-2.5 mb-2.5">
                     <Button className="flex-1" onClick={() => handleBatchHistorySelect(true)} variant="secondary">
-                        Select All
+                        {t("shell.history.selectAll")}
                     </Button>
                     <Button className="flex-1" onClick={() => handleBatchHistorySelect(false)} variant="secondary">
-                        Select None
+                        {t("shell.history.selectNone")}
                     </Button>
                 </div>
                 {selectedItems.length > 0 ? (
                     <Button
-                        aria-label="Delete selected items"
+                        aria-label={t("shell.history.deleteSelected")}
                         className="w-full"
                         onClick={() => {
                             handleDeleteSelectedHistoryItems(selectedItems)
                         }}
                         variant="danger">
-                        Delete {selectedItems.length > 1 ? selectedItems.length : ""} Selected
-                        {selectedItemsSize > 0 ? ` (${formatSize(selectedItemsSize)})` : ""}
+                        {t("shell.history.deleteSelectedCount", {
+                            count: selectedItems.length,
+                            size: selectedItemsSize > 0 ? formatSize(selectedItemsSize) : "",
+                        })}
                     </Button>
                 ) : (
                     <Button
-                        aria-label="Delete all history"
+                        aria-label={t("shell.history.deleteAll")}
                         className="w-full"
                         disabled={deleteAllDisabled || taskHistory.length === 0}
                         onClick={() => {
@@ -466,7 +490,9 @@ const HistoryView = ({ onDone }: HistoryViewProps) => {
                                 .finally(() => setDeleteAllDisabled(false))
                         }}
                         variant="danger">
-                        Delete All History{totalTasksSize !== null ? ` (${formatSize(totalTasksSize)})` : ""}
+                        {t("shell.history.deleteAllCount", {
+                            size: totalTasksSize !== null ? formatSize(totalTasksSize) : "",
+                        })}
                     </Button>
                 )}
             </div>

@@ -46,7 +46,7 @@ import {
 import { workspaceResolver } from "./core/workspace"
 import { findMatchingNotebookCell, getContextForCommand, showWebview } from "./hosts/vscode/commandUtils"
 import { abortCommitGeneration, generateCommitMsg } from "./hosts/vscode/commit-message-generator"
-import { registerClineOutputChannel } from "./hosts/vscode/hostbridge/env/debugLog"
+import { registerClineOutputChannel } from "./hosts/vscode/hostbridge/environment/debugLog"
 import {
     disposeVscodeCommentReviewController,
     getVscodeCommentReviewController,

@@ -3,6 +3,7 @@ import { ToggleToolAutoApproveRequest } from "@shared/proto/dline/mcp"
 import { convertProtoMcpServersToMcpServers } from "@shared/proto-conversions/mcp/mcp-server-conversion"
 import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { McpServiceClient } from "@/services/grpc-client"
 
 type McpToolRowProps = {
@@ -11,6 +12,7 @@ type McpToolRowProps = {
 }
 
 const McpToolRow = ({ tool, serverName }: McpToolRowProps) => {
+    const { t } = useUiTranslation()
     const { setMcpServers } = useExtensionState()
     const schemaProperties =
         tool.inputSchema &&
@@ -64,7 +66,7 @@ const McpToolRow = ({ tool, serverName }: McpToolRowProps) => {
                         data-tool={tool.name}
                         onChange={handleAutoApproveChange}
                         style={{ fontSize: "11px" }}>
-                        Auto-approve
+                        {t("capabilities.mcp.autoApprove")}
                     </VSCodeCheckbox>
                 )}
             </div>
@@ -95,7 +97,7 @@ const McpToolRow = ({ tool, serverName }: McpToolRowProps) => {
                             fontSize: "11px",
                             textTransform: "uppercase",
                         }}>
-                        Parameters
+                        {t("capabilities.mcp.parameters")}
                     </div>
                     {Object.entries(schemaProperties).map(([paramName, schema]) => {
                         const isRequired = requiredProperties.includes(paramName)
@@ -105,7 +107,7 @@ const McpToolRow = ({ tool, serverName }: McpToolRowProps) => {
                             "description" in schema &&
                             typeof schema.description === "string"
                                 ? schema.description
-                                : "No description"
+                                : t("capabilities.mcp.noDescription")
 
                         return (
                             <div

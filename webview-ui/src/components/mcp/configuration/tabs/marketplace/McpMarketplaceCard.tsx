@@ -3,15 +3,18 @@ import { StringRequest } from "@shared/proto/dline/common"
 import { useEffect, useMemo, useRef, useState } from "react"
 import styled from "styled-components"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { McpServiceClient } from "@/services/grpc-client"
+import type { McpMarketplaceError } from "./marketplace-errors"
 
 interface McpMarketplaceCardProps {
     item: McpMarketplaceItem
     installedServers: McpServer[]
-    setError: (error: string | null) => void
+    setError: (error: McpMarketplaceError | null) => void
 }
 
 const McpMarketplaceCard = ({ item, installedServers, setError }: McpMarketplaceCardProps) => {
+    const { t } = useUiTranslation()
     const isInstalled = installedServers.some((server) => server.name === item.mcpId)
     const [isDownloading, setIsDownloading] = useState(false)
     const [isLoading, setIsLoading] = useState(false)
@@ -66,7 +69,7 @@ const McpMarketplaceCard = ({ item, installedServers, setError }: McpMarketplace
                     {/* Logo */}
                     {item.logoUrl && (
                         <img
-                            alt={`${item.name} logo`}
+                            alt={t("capabilities.mcp.marketplace.logo", { name: item.name })}
                             src={item.logoUrl}
                             style={{
                                 width: 42,
@@ -105,30 +108,42 @@ const McpMarketplaceCard = ({ item, installedServers, setError }: McpMarketplace
                                 onClick={async (e) => {
                                     e.preventDefault() // Prevent card click when clicking install
                                     e.stopPropagation() // Stop event from bubbling up to parent link
-                                    if (!isInstalled && !isDownloading) {
-                                        setIsDownloading(true)
-                                        try {
-                                            const response = await McpServiceClient.downloadMcp(
-                                                StringRequest.create({ value: item.mcpId }),
-                                            )
-                                            if (response.error) {
-                                                console.error("MCP download failed:", response.error)
-                                                setError(response.error)
-                                            } else {
-                                                console.log("MCP download successful:", response)
-                                                // Clear any previous errors on success
-                                                setError(null)
-                                            }
-                                        } catch (error) {
-                                            console.error("Failed to download MCP:", error)
-                                        } finally {
-                                            setIsDownloading(false)
+                                    if (isInstalled || isDownloading) return
+                                    setIsDownloading(true)
+                                    // A new attempt supersedes the previous failure state.
+                                    setError(null)
+                                    try {
+                                        const response = await McpServiceClient.downloadMcp(
+                                            StringRequest.create({ value: item.mcpId }),
+                                        )
+                                        if (response.error) {
+                                            console.error("MCP download failed:", response.error)
+                                            setError({ kind: "install", diagnostics: response.error })
+                                        } else {
+                                            console.log("MCP download successful:", response)
+                                            // Clear any previous errors on success
+                                            setError(null)
                                         }
+                                    } catch (error) {
+                                        console.error("Failed to download MCP:", error)
+                                        // Keep the cause verbatim: transport/Error text is diagnostics, not product text.
+                                        setError({
+                                            kind: "install",
+                                            diagnostics: error instanceof Error ? error.message : String(error),
+                                        })
+                                    } finally {
+                                        setIsDownloading(false)
                                     }
                                 }}
                                 style={{}}>
                                 <StyledInstallButton $isInstalled={isInstalled} disabled={isInstalled || isDownloading}>
-                                    {isInstalled ? "Installed" : isDownloading ? "Installing..." : "Install"}
+                                    {t(
+                                        isInstalled
+                                            ? "capabilities.mcp.marketplace.installed"
+                                            : isDownloading
+                                              ? "capabilities.mcp.marketplace.installing"
+                                              : "capabilities.mcp.marketplace.install",
+                                    )}
                                 </StyledInstallButton>
                             </div>
                         </div>
@@ -201,7 +216,11 @@ const McpMarketplaceCard = ({ item, installedServers, setError }: McpMarketplace
                                 <span style={{ wordBreak: "break-all" }}>{item.downloadCount?.toLocaleString() ?? 0}</span>
                             </div>
                             {item.requiresApiKey && (
-                                <span className="codicon codicon-key" style={{ flexShrink: 0 }} title="Requires API key" />
+                                <span
+                                    className="codicon codicon-key"
+                                    style={{ flexShrink: 0 }}
+                                    title={t("capabilities.mcp.marketplace.apiKey")}
+                                />
                             )}
                         </div>
                     </div>

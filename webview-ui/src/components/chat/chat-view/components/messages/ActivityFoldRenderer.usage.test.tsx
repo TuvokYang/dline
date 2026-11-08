@@ -1,9 +1,11 @@
 import { summarizeRoundsUsage } from "@shared/chat/foldUsage"
 import type { UiMessage } from "@shared/ExtensionMessage"
+import type { UiLanguage } from "@shared/UiLanguage"
 import { fireEvent, render, screen } from "@testing-library/react"
 import { useState } from "react"
 import { describe, expect, it, vi } from "vitest"
-import { isActivityFold } from "../../utils/chatRowKinds"
+import { UiLanguageProvider } from "@/i18n/UiLanguageProvider"
+import { type ActivityFold, isActivityFold } from "../../utils/chatRowKinds"
 import { groupChatRows, indexRequestRounds } from "../../utils/messageUtils"
 import { createFoldRoundUsage } from "../layout/foldingTrajectoryUsageFixture"
 import { ActivityFoldRenderer } from "./ActivityFoldRenderer"
@@ -35,10 +37,11 @@ vi.mock("@/components/chat/CheckpointMarker", () => ({
 vi.mock("@/services/grpc-client", () => ({ FileServiceClient: { openFileRelativePath: vi.fn(() => Promise.resolve()) } }))
 
 /** The first fold of the finished-turn transcript, drawn with chat-owned expansion. */
-function Harness() {
+function Harness({ source }: { source?: ActivityFold } = {}) {
     const [expanded, setExpanded] = useState(false)
     const roundUsage = createFoldRoundUsage(finishedTurnTranscript)
-    const fold = groupChatRows(finishedTurnTranscript, undefined, { level: "user_turn", roundUsage }).find(isActivityFold)
+    const fold =
+        source ?? groupChatRows(finishedTurnTranscript, undefined, { level: "user_turn", roundUsage }).find(isActivityFold)
     if (!fold) throw new Error("the fixture produces a block")
 
     return (
@@ -71,7 +74,10 @@ function failedHarness() {
         failedCommand(4, "npm run test", 2),
         completion(5, "Checks finished."),
     ]
-    const fold = groupChatRows(transcript, undefined, { level: "user_turn" }).find(isActivityFold)
+    const fold = groupChatRows(transcript, undefined, {
+        level: "user_turn",
+        roundUsage: createFoldRoundUsage(transcript),
+    }).find(isActivityFold)
     if (!fold) throw new Error("the fixture produces a block")
     return fold
 }
@@ -91,6 +97,51 @@ describe("a folded block states what it cost", () => {
         fireEvent.click(header())
         expect(screen.getByTestId("activity-fold-children")).toBeInTheDocument()
         expect(usageLine()?.textContent).toContain("tok/s")
+    })
+
+    it("retranslates memoized facts and usage without resetting expansion, numeric usage or failure semantics", () => {
+        const fold = failedHarness()
+        const usage = fold._usage
+        const members = JSON.stringify(fold)
+        const tree = (language: UiLanguage) => (
+            <UiLanguageProvider language={language}>
+                <Harness source={fold} />
+            </UiLanguageProvider>
+        )
+        const view = render(tree("en"))
+        const button = header()
+        const english = usageLine()?.textContent ?? ""
+        expect(english).toContain(" in / ")
+        const roundPart = screen.getByText("1 round")
+        const commandPart = screen.getByText("1 cmd")
+        const failurePart = screen.getByText("1 cmd failed")
+        expect(failurePart).toHaveClass("text-error")
+        fireEvent.click(button)
+        const children = screen.getByTestId("activity-fold-children")
+
+        view.rerender(tree("zh-CN"))
+        expect(header()).toBe(button)
+        expect(button).toHaveAttribute("aria-expanded", "true")
+        expect(screen.getByTestId("activity-fold-children")).toBe(children)
+        expect(screen.getByText("1 轮请求")).toBe(roundPart)
+        expect(screen.getByText("1 条命令")).toBe(commandPart)
+        expect(screen.getByText("1 条命令失败")).toBe(failurePart)
+        expect(failurePart).toHaveClass("text-error")
+        expect(usageLine()).toHaveTextContent("输入")
+        expect(usageLine()?.textContent?.match(/[\d.,]+/g)).toEqual(english.match(/[\d.,]+/g))
+        expect(fold._usage).toBe(usage)
+        expect(JSON.stringify(fold)).toBe(members)
+
+        view.rerender(tree("en"))
+        expect(button).toHaveAttribute("aria-expanded", "true")
+        expect(screen.getByTestId("activity-fold-children")).toBe(children)
+        expect(usageLine()?.textContent).toBe(english)
+        expect(screen.getByText("1 round")).toBe(roundPart)
+        expect(screen.getByText("1 cmd")).toBe(commandPart)
+        expect(screen.getByText("1 cmd failed")).toBe(failurePart)
+        expect(failurePart).toHaveClass("text-error")
+        fireEvent.click(button)
+        expect(screen.queryByTestId("activity-fold-children")).not.toBeInTheDocument()
     })
 
     it("keeps the cost line when the same header closes it again", () => {

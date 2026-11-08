@@ -1,6 +1,7 @@
 import { isFocusChainItem } from "@shared/focus-chain-utils"
 import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 
 interface ParsedItem {
     text: string
@@ -112,6 +113,7 @@ export const FocusChainChangeRow: React.FC<FocusChainChangeRowProps> = ({
     onToggleExpand,
     onSelectionChange,
 }) => {
+    const { t } = useUiTranslation()
     const { title, items } = useMemo(() => parsePlan(plan), [plan])
 
     // Auto-approved plans are not interactive — all items pre-selected, checkboxes disabled
@@ -162,7 +164,7 @@ export const FocusChainChangeRow: React.FC<FocusChainChangeRowProps> = ({
     const isRejected = hasMarkers && !hasApproved
     const bgClass = isRejected ? "bg-red-500/10" : hasApproved ? "bg-green-500/10" : "bg-toolbar-hover/30"
 
-    const toggleLabel = isExpanded ? "Collapse focus-chain change" : "Expand focus-chain change"
+    const toggleLabel = isExpanded ? t("chatRows.focusChain.collapse") : t("chatRows.focusChain.expand")
 
     return (
         <div className={`flex flex-col gap-2 p-3 rounded border border-description/50 ${bgClass}`}>
@@ -184,15 +186,17 @@ export const FocusChainChangeRow: React.FC<FocusChainChangeRowProps> = ({
                     <div className="flex items-center gap-1 shrink-0 whitespace-nowrap">
                         {autoApproved && (
                             <span className="text-xs font-semibold text-green-600 bg-green-100 rounded px-2 py-0.5">
-                                Auto Approved
+                                {t("chatRows.focusChain.autoApproved")}
                             </span>
                         )}
                         {isRejected && (
-                            <span className="text-xs font-semibold text-red-600 bg-red-100 rounded px-2 py-0.5">Rejected</span>
+                            <span className="text-xs font-semibold text-red-600 bg-red-100 rounded px-2 py-0.5">
+                                {t("chatRows.focusChain.rejected")}
+                            </span>
                         )}
                         {hasApproved && (
                             <span className="text-xs font-semibold text-green-600 bg-green-100 rounded px-2 py-0.5">
-                                Approved
+                                {t("chatRows.focusChain.approved")}
                             </span>
                         )}
                     </div>

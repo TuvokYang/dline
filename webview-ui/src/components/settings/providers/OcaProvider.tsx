@@ -1,6 +1,7 @@
 import { OcaProviderConfig } from "@shared/proto/dline/provider/oca"
 import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
 import { VSCodeTextField } from "@vscode/webview-ui-toolkit/react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { BaseUrlField } from "../common/BaseUrlField"
 import ThinkingControl from "../ThinkingControl"
 import type { ApiProfile } from "./ProviderProfile"
@@ -14,6 +15,7 @@ interface OcaProviderProps {
 
 /** OCA credentials and reasoning preferences read from the selected Profile declaration. */
 export const OcaProvider = ({ showModelOptions, profile, onUpdate }: OcaProviderProps) => {
+    const { t } = useUiTranslation()
     const pc = profile.oca ?? OcaProviderConfig.create()
     const modelId = profile.modelId || profile.modelInfo?.id || ""
     const baseModel = profile.modelInfo?.id === modelId ? profile.modelInfo : undefined
@@ -26,17 +28,17 @@ export const OcaProvider = ({ showModelOptions, profile, onUpdate }: OcaProvider
         <div>
             <BaseUrlField
                 initialValue={profile.baseUrl}
-                label="OCA Base URL"
+                label={t("settings.ui.oca.baseUrl")}
                 onChange={(v) => onUpdate({ baseUrl: v || undefined })}
                 placeholder="https://oca.example.com"
             />
             <VSCodeTextField
                 onInput={(e: any) => onUpdate({ apiKey: e.target.value })}
-                placeholder="Enter API Key"
+                placeholder={t("settings.ui.enterApiKey")}
                 style={{ width: "100%" }}
                 type="password"
                 value={profile.apiKey}>
-                <span style={{ fontWeight: 500 }}>OCA API Key</span>
+                <span style={{ fontWeight: 500 }}>{t("settings.ui.apiKey", { provider: "OCA" })}</span>
             </VSCodeTextField>
             {showModelOptions && (effortSupported || budgetSupported) && (
                 <ThinkingControl

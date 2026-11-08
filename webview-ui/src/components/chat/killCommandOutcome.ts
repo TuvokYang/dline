@@ -1,21 +1,32 @@
+import type { UiTranslator } from "@/i18n/messages"
+
 /** What a kill_command row reports about the command it targeted. */
 export type KillCommandPhase = "requested" | "terminating" | "terminated" | "already_finished" | "interrupted" | "not_running"
 
 export interface KillCommandOutcome {
     phase: KillCommandPhase
-    label: string
     /** The row is still waiting for the command to stop. */
     pending: boolean
 }
 
 const OUTCOMES: Record<KillCommandPhase, Omit<KillCommandOutcome, "phase">> = {
-    requested: { label: "Dline requested command termination", pending: false },
-    terminating: { label: "Terminating command…", pending: true },
-    terminated: { label: "Command terminated", pending: false },
-    already_finished: { label: "Command had already finished", pending: false },
-    interrupted: { label: "Command was interrupted", pending: false },
-    not_running: { label: "No running command matched", pending: false },
+    requested: { pending: false },
+    terminating: { pending: true },
+    terminated: { pending: false },
+    already_finished: { pending: false },
+    interrupted: { pending: false },
+    not_running: { pending: false },
 }
+
+/** Message keys for each phase, resolved where the label is rendered. */
+const PHASE_LABELS = {
+    requested: "chatRows.kill.requested",
+    terminating: "chatRows.kill.terminating",
+    terminated: "chatRows.kill.terminated",
+    already_finished: "chatRows.kill.alreadyFinished",
+    interrupted: "chatRows.kill.interrupted",
+    not_running: "chatRows.kill.notRunning",
+} as const
 
 function phaseOf(activityId: string | undefined, status: string | undefined): KillCommandPhase {
     // The backend names the activity only when the function id matched a command.
@@ -47,4 +58,9 @@ function phaseOf(activityId: string | undefined, status: string | undefined): Ki
 export function projectKillCommandOutcome(activityId: string | undefined, status: string | undefined): KillCommandOutcome {
     const phase = phaseOf(activityId, status)
     return { phase, ...OUTCOMES[phase] }
+}
+
+/** Render the row label for an outcome in the surface's own language. */
+export function killCommandLabel(outcome: KillCommandOutcome, t: UiTranslator): string {
+    return t(PHASE_LABELS[outcome.phase])
 }

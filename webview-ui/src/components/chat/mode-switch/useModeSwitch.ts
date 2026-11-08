@@ -10,6 +10,7 @@ import {
 import type { Mode } from "@shared/storage/types"
 import { hasTransitionDraftContent } from "@shared/TransitionDraft"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { StateServiceClient } from "@/services/grpc-client"
 import { type TransitionDraftComposer, transitionChatContentOf } from "./transitionDraft"
 
@@ -108,6 +109,7 @@ function cloneDraft<TDraft extends ModeSwitchDraft>(draft: TDraft): TDraft {
 
 /** Coordinate Webview mode-switch RPCs from accepted backend transaction state. */
 export function useModeSwitch<TDraft extends ModeSwitchDraft>(options: UseModeSwitchOptions<TDraft>): UseModeSwitchResult {
+    const { t } = useUiTranslation()
     const { mode, stateRevision, modeSwitch, draft, submitDraftAfterSwitch = true, onSend, composer } = options
     const [pending, setPending] = useState<PendingSwitch<TDraft>>()
     const nextRequestId = useRef(0)
@@ -242,19 +244,19 @@ export function useModeSwitch<TDraft extends ModeSwitchDraft>(options: UseModeSw
     const statusText = useMemo(() => {
         switch (modeSwitch?.phase) {
             case "preflighting":
-                return "Checking..."
+                return t("chatInput.switch.checking")
             case "awaiting_confirmation":
-                return "Confirm"
+                return t("chatInput.switch.confirm")
             case "compacting":
-                return "Compacting..."
+                return t("chatInput.switch.compacting")
             case "committing":
-                return "Switching..."
+                return t("chatInput.switch.switching")
             case "failed":
-                return "Switch failed"
+                return t("chatInput.switch.failed")
             default:
                 return undefined
         }
-    }, [modeSwitch?.phase])
+    }, [modeSwitch?.phase, t])
 
     return {
         requestSwitch,

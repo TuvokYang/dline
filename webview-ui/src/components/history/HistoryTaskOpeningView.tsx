@@ -1,8 +1,10 @@
 import { LoaderCircle } from "lucide-react"
 import type { HistoryTaskOpening } from "@/hooks/useHistoryTaskOpening"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 
 /** Never render the previous Task's actions under a pending history selection. */
 export function HistoryTaskOpeningView({ opening: _opening }: { opening: HistoryTaskOpening }) {
+    const { t } = useUiTranslation()
     return (
         <section
             aria-busy="true"
@@ -11,7 +13,7 @@ export function HistoryTaskOpeningView({ opening: _opening }: { opening: History
             data-testid="history-task-opening">
             <div className="flex items-center gap-2 text-description" role="status">
                 <LoaderCircle aria-hidden="true" className="animate-spin" size={16} />
-                Opening task…
+                {t("shell.historyOpening.message")}
             </div>
         </section>
     )

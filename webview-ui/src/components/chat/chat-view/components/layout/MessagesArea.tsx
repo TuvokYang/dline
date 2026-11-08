@@ -9,6 +9,7 @@ import { TrajectoryRailOverlay } from "@/components/chat/trajectory/TrajectoryRa
 import type { TrajectoryTurn } from "@/components/chat/trajectory/trajectory-model"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { preferHeldCopies } from "@/context/messageWindowSync"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 import { fetchAnchoredTaskMessages, fetchTaskMessages, getTaskViewKey } from "@/services/task-messages"
 import { isApiReqActive } from "@/utils/streaming"
@@ -129,6 +130,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
     messageHandlers,
     onFollowupOptionSelect,
 }) => {
+    const { t } = useUiTranslation()
     const {
         clineMessages,
         setClineMessages,
@@ -1304,7 +1306,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                         )}
                         data-testid="folding-controls">
                         <button
-                            aria-label={allFoldsOpen ? "Collapse all activity" : "Expand all activity"}
+                            aria-label={t(allFoldsOpen ? "chatInput.timeline.collapseAll" : "chatInput.timeline.expandAll")}
                             className={cn(
                                 FLOATING_CONTROL,
                                 "hover:bg-background/90 hover:shadow-xl hover:scale-105",
@@ -1320,7 +1322,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                                           },
                                 )
                             }
-                            title={allFoldsOpen ? "Collapse all activity" : "Expand all activity"}
+                            title={t(allFoldsOpen ? "chatInput.timeline.collapseAll" : "chatInput.timeline.expandAll")}
                             type="button">
                             <span
                                 className={cn("codicon text-base", allFoldsOpen ? "codicon-list-flat" : "codicon-list-tree")}
@@ -1346,7 +1348,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                             floatingBtnVisible ? "opacity-100" : "opacity-40 hover:opacity-100",
                         )}>
                         <button
-                            aria-label={floatingBtnDir === "bottom" ? "Scroll to bottom" : "Scroll to top"}
+                            aria-label={t(floatingBtnDir === "bottom" ? "chatInput.timeline.bottom" : "chatInput.timeline.top")}
                             className={cn(
                                 FLOATING_CONTROL,
                                 "hover:bg-background/90 hover:shadow-xl hover:scale-105",

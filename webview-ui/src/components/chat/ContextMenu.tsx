@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { cleanPathPrefix } from "@/components/common/CodeAccordian"
 import ScreenReaderAnnounce from "@/components/common/ScreenReaderAnnounce"
 import { useMenuAnnouncement } from "@/hooks/useMenuAnnouncement"
+import { type UiMessageKey } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ContextMenuOptionType, ContextMenuQueryItem, getContextMenuOptions, SearchResult } from "@/utils/context-mentions"
 
 interface ContextMenuProps {
@@ -16,6 +18,14 @@ interface ContextMenuProps {
     isLoading?: boolean
 }
 
+const SIMPLE_OPTION_LABEL_KEYS: Partial<Record<ContextMenuOptionType, Extract<UiMessageKey, `chatRows.menu.mention.${string}`>>> =
+    {
+        [ContextMenuOptionType.Problems]: "chatRows.menu.mention.problems",
+        [ContextMenuOptionType.Terminal]: "chatRows.menu.mention.terminal",
+        [ContextMenuOptionType.URL]: "chatRows.menu.mention.url",
+        [ContextMenuOptionType.NoResults]: "chatRows.menu.mention.noResults",
+    }
+
 const ContextMenu: React.FC<ContextMenuProps> = ({
     onSelect,
     searchQuery,
@@ -27,6 +37,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
     dynamicSearchResults = [],
     isLoading = false,
 }) => {
+    const { t } = useUiTranslation()
     const menuRef = useRef<HTMLDivElement>(null)
 
     // State to show delayed loading indicator
@@ -34,7 +45,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
     const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
     const filteredOptions = useMemo(() => {
-        const options = getContextMenuOptions(searchQuery, selectedType, queryItems, dynamicSearchResults)
+        const options = getContextMenuOptions(searchQuery, selectedType, queryItems, dynamicSearchResults, t)
         // While a search is in flight, don't tell the user "No results found" —
         // the answer is "still searching", not "nothing matched". Suppress
         // eagerly on `isLoading` (not just after the 500 ms spinner delay) so
@@ -43,7 +54,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
             return []
         }
         return options
-    }, [searchQuery, selectedType, queryItems, dynamicSearchResults, isLoading])
+    }, [searchQuery, selectedType, queryItems, dynamicSearchResults, isLoading, t])
 
     // Effect to handle delayed loading indicator (show "Searching..." after 500ms of searching)
     useEffect(() => {
@@ -93,21 +104,13 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
         }
     }, [selectedIndex])
 
-    // Shared label definitions for simple option types
-    const SIMPLE_OPTION_LABELS: Partial<Record<ContextMenuOptionType, string>> = {
-        [ContextMenuOptionType.Problems]: "Problems",
-        [ContextMenuOptionType.Terminal]: "Terminal",
-        [ContextMenuOptionType.URL]: "Paste URL to fetch contents",
-        [ContextMenuOptionType.NoResults]: "No results found",
-    }
-
     // Get accessible label for an option (used for screen readers and aria-label)
     const getOptionLabel = useCallback(
         (option: ContextMenuQueryItem): string => {
             // Check simple labels first
-            const simpleLabel = SIMPLE_OPTION_LABELS[option.type]
-            if (simpleLabel) {
-                return simpleLabel
+            const simpleLabelKey = SIMPLE_OPTION_LABEL_KEYS[option.type]
+            if (simpleLabelKey) {
+                return t(simpleLabelKey)
             }
 
             switch (option.type) {
@@ -115,25 +118,28 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
                     if (option.value) {
                         return `${option.label}${option.description ? `, ${option.description}` : ""}`
                     }
-                    return "Git Commits"
+                    return t("chatRows.menu.mention.gitCommits")
                 case ContextMenuOptionType.File:
                 case ContextMenuOptionType.Folder:
                     if (option.value) {
                         return option.label || option.value
                     }
-                    return `Add ${option.type === ContextMenuOptionType.File ? "File" : "Folder"}`
+                    return option.type === ContextMenuOptionType.File
+                        ? t("chatRows.menu.mention.addFile")
+                        : t("chatRows.menu.mention.addFolder")
                 default:
                     return option.label || option.value || ""
             }
         },
-        [SIMPLE_OPTION_LABELS],
+        // The labels are resolved per render, so a language switch re-announces them.
+        [t],
     )
 
     const renderOptionContent = (option: ContextMenuQueryItem) => {
         // Handle simple label types
-        const simpleLabel = SIMPLE_OPTION_LABELS[option.type]
-        if (simpleLabel) {
-            return <span>{simpleLabel}</span>
+        const simpleLabelKey = SIMPLE_OPTION_LABEL_KEYS[option.type]
+        if (simpleLabelKey) {
+            return <span>{t(simpleLabelKey)}</span>
         }
 
         switch (option.type) {
@@ -159,7 +165,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
                         </div>
                     )
                 }
-                return <span>Git Commits</span>
+                return <span>{t("chatRows.menu.mention.gitCommits")}</span>
             case ContextMenuOptionType.File:
             case ContextMenuOptionType.Folder:
                 if (option.value) {
@@ -185,7 +191,13 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
                         </>
                     )
                 }
-                return <span>Add {option.type === ContextMenuOptionType.File ? "File" : "Folder"}</span>
+                return (
+                    <span>
+                        {option.type === ContextMenuOptionType.File
+                            ? t("chatRows.menu.mention.addFile")
+                            : t("chatRows.menu.mention.addFolder")}
+                    </span>
+                )
             default:
                 return null
         }
@@ -254,7 +266,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
                         ? `context-menu-item-${selectedIndex}`
                         : undefined
                 }
-                aria-label="Context mentions"
+                aria-label={t("chatRows.menu.mention.label")}
                 ref={menuRef}
                 role="listbox"
                 style={{
@@ -280,7 +292,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
                             opacity: 0.7,
                         }}>
                         <i className="codicon codicon-loading codicon-modifier-spin" style={{ fontSize: "14px" }} />
-                        <span>Searching...</span>
+                        <span>{t("chatRows.menu.mention.searching")}</span>
                     </div>
                 )}
                 {filteredOptions.map((option, index) => {

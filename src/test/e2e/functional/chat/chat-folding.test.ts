@@ -9,10 +9,10 @@ import type { UiMessage } from "@shared/ExtensionMessage"
 import type { ElectronApplication } from "playwright"
 
 const LABELS = {
-    none: "Standard (no folding)",
-    round: "Fold activity within each request round",
-    message_segment: "Fold activity between messages",
-    user_turn: "Fold the whole turn into one block",
+    none: "No folding",
+    round: "Per request",
+    message_segment: "Per message segment",
+    user_turn: "Per user turn",
 } as const
 type Level = keyof typeof LABELS
 

@@ -14,6 +14,7 @@ import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import { useCallback, useId, useMemo, useState } from "react"
 import styled from "styled-components"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { BaseUrlField } from "../common/BaseUrlField"
 import { DebouncedTextField } from "../common/DebouncedTextField"
@@ -23,7 +24,7 @@ import { ModelInfoView } from "../common/ModelInfoView"
 import { RemotelyConfiguredInputWrapper } from "../common/RemotelyConfiguredInputWrapper"
 import { ProfileField } from "../profile-ui"
 import ThinkingControl from "../ThinkingControl"
-import { ANTHROPIC_THINKING_DISPLAY_DESCRIPTION, ANTHROPIC_THINKING_DISPLAY_SELECTOR_OPTIONS } from "./anthropicThinkingDisplay"
+import { anthropicThinkingDisplayOptions } from "./anthropicThinkingDisplay"
 import { ClaudeCodeIdentitySection } from "./shared/ClaudeCodeIdentitySection"
 import { usePendingProviderConfig } from "./usePendingProviderConfig"
 import { useProviderModelOptions } from "./useProviderModelOptions"
@@ -82,6 +83,7 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
     // it on for any id that only the provider's listing returned, and the
     // resulting custom-model metadata would then mask the catalog's own
     // capabilities, including its hosted server tools.
+    const { t } = useUiTranslation()
     const customModelEnabled = pc.customModelEnabled === true
     const registryModel = anthropicModels[modelId] ?? (profile.modelInfo?.id === modelId ? profile.modelInfo : { id: modelId })
     const contextWindowTiersEnabled = customModelEnabled || Boolean(registryModel.capabilities?.contextWindowTiers?.length)
@@ -174,10 +176,9 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
                     disabled={!!rc.anthropicBaseUrl}
                     enabled={customUrlEnabled}
                     initialValue={profile.baseUrl || ""}
-                    label="Use custom base URL"
                     onChange={(value) => onUpdate({ baseUrl: value || undefined })}
                     onEnabledChange={(enabled) => setCustomUrlToggle({ profileId: profile.id, enabled })}
-                    placeholder="Default: https://api.anthropic.com"
+                    placeholder={t("settings.ui.defaultValue", { value: "https://api.anthropic.com" })}
                     showLockIcon={!!rc.anthropicBaseUrl}
                 />
             </RemotelyConfiguredInputWrapper>
@@ -189,27 +190,26 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
                         onChange={(event: Event | React.FormEvent<HTMLElement>) =>
                             handleToggleCustomModel((event.target as HTMLInputElement | null)?.checked === true)
                         }>
-                        Use custom model ID
+                        {t("settings.ui.customModelId")}
                     </StyledCheckbox>
 
                     {customModelEnabled ? (
-                        <ProfileField htmlFor={customModelFieldId} label="Model ID">
+                        <ProfileField htmlFor={customModelFieldId} label={t("settings.ui.modelId")}>
                             <DebouncedTextField
                                 className="w-full"
                                 id={customModelFieldId}
                                 initialValue={profile.modelId ?? ""}
                                 onChange={handleModelChange}
-                                placeholder="Enter Model ID..."
+                                placeholder={t("settings.ui.enterModelId")}
                             />
                         </ProfileField>
                     ) : (
                         <ModelAutocomplete
-                            label="Model"
                             models={anthropicModelOptions}
                             onChange={handleModelChange}
                             onOpen={refreshRemoteModels}
                             optionOrigins={optionOrigins}
-                            placeholder="Search or select a model..."
+                            placeholder={t("settings.ui.searchModel")}
                             selectedModelId={modelId}
                         />
                     )}
@@ -225,7 +225,7 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
                                     },
                                 })
                             }>
-                            Enable Long Context
+                            {t("settings.ui.anthropic.longContext")}
                         </StyledCheckbox>
                     ) : null}
 
@@ -234,15 +234,15 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
                             defaultEffort={thinking?.defaultEffort}
                             defaultEnabled={thinking?.defaultEnabled}
                             disableSupported={thinkingDisableSupported}
-                            displayDescription={ANTHROPIC_THINKING_DISPLAY_DESCRIPTION}
-                            displayLabel="Thinking Display"
-                            displayOptions={ANTHROPIC_THINKING_DISPLAY_SELECTOR_OPTIONS}
+                            displayDescription={t("settings.ui.anthropic.displayHelp")}
+                            displayLabel={t("settings.ui.thinkingDisplay")}
+                            displayOptions={anthropicThinkingDisplayOptions(t)}
                             effortDescription={
                                 thinkingDisableSupported
-                                    ? "Use None to disable adaptive thinking. Higher effort increases response detail and token usage."
-                                    : "Adaptive thinking is always enabled for this model. Higher effort increases response detail and token usage."
+                                    ? t("settings.ui.anthropic.effortHelp")
+                                    : t("settings.ui.anthropic.requiredHelp")
                             }
-                            effortLabel="Adaptive Thinking"
+                            effortLabel={t("settings.ui.adaptiveThinking")}
                             effortOptions={thinking?.effortLevels ?? []}
                             maxBudget={thinking?.maxBudget}
                             minBudget={thinking?.minBudget}

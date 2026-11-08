@@ -1,13 +1,18 @@
 import type { AccountUsageData, AccountUsageLocalData, AccountUsageQuotaData } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
+import { translateUi, type UiTranslator } from "@/i18n/messages"
 import {
-    formatUsageRetrievedAt,
+    formatUsageRetrievedAt as formatRetrievedAt,
     isReadableUsageQuota,
     localCacheHitRate,
     localTodayInput,
-    localUsageNotes,
+    localUsageNotes as usageNotes,
     usageRemainingPercent,
 } from "./ProviderUsageDetails"
+
+const t: UiTranslator = (key, ...args) => translateUi("en", key, ...args)
+const formatUsageRetrievedAt = (retrievedAt: string | undefined, now: number) => formatRetrievedAt(retrievedAt, t, now)
+const localUsageNotes = (usage: AccountUsageData) => usageNotes(usage, t)
 
 /**
  * Both provider subscriptions are read once and then held until the user
@@ -116,13 +121,17 @@ describe("localCacheHitRate", () => {
 describe("localUsageNotes", () => {
     it("says when a legacy total is inclusive and whether it can be split", () => {
         expect(localUsageNotes(localUsage({ legacyInputTokens: 10, legacyPartial: true }))).toEqual([
-            "Includes an earlier day total that cannot be split by model",
+            { kind: "legacy", message: "Includes an earlier day total that cannot be split by model" },
         ])
-        expect(localUsageNotes(localUsage({ legacyInputTokens: 10 }))).toEqual(["Includes an earlier day total"])
+        expect(localUsageNotes(localUsage({ legacyInputTokens: 10 }))).toEqual([
+            { kind: "legacy", message: "Includes an earlier day total" },
+        ])
     })
 
     it("says when the numbers are incomplete", () => {
-        expect(localUsageNotes(localUsage({ degraded: true }))).toEqual(["Local usage is incomplete"])
+        expect(localUsageNotes(localUsage({ degraded: true }))).toEqual([
+            { kind: "degraded", message: "Local usage is incomplete" },
+        ])
     })
 
     it("says nothing about a complete, fresh record", () => {

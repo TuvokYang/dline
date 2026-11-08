@@ -9,6 +9,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import SettingsSlider from "./SettingsSlider"
 import { updateSetting, updateSettings } from "./utils/settingsHandlers"
 import { useDebouncedInput } from "./utils/useDebouncedInput"
@@ -29,6 +30,7 @@ function splitReservePair(value: string): [string, string] {
 }
 
 const AutoCondenseSettings = () => {
+    const { t } = useUiTranslation()
     const {
         autoCondenseMaxContextTokens,
         autoCondenseMaxReserveTokens,
@@ -78,8 +80,8 @@ const AutoCondenseSettings = () => {
     return (
         <div className="ml-3 mb-3 pl-3 border-l border-editor-widget-border/60 space-y-4">
             <SettingsSlider
-                description="When the model window exceeds Maximum context, that absolute cap is the trigger center. Otherwise, the percentage-derived reserve is clamped between the minimum and maximum reserve. A 2K estimation tolerance is applied automatically."
-                label="Compression point (%)"
+                description={t("settings.ui.compact.description")}
+                label={t("settings.ui.compact.point")}
                 max={MAX_AUTO_CONDENSE_TRIGGER_PERCENT}
                 min={MIN_AUTO_CONDENSE_TRIGGER_PERCENT}
                 onChange={setTriggerPercent}
@@ -90,12 +92,12 @@ const AutoCondenseSettings = () => {
             <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                     <Label className="text-xs text-description" htmlFor="auto-condense-min-reserve-k">
-                        Minimum reserve
+                        {t("settings.ui.compact.min")}
                     </Label>
                     <div className="flex items-center gap-2">
                         <Input
                             aria-invalid={minReserveError || reserveOrderError}
-                            aria-label="Minimum reserve (K tokens)"
+                            aria-label={t("settings.ui.compact.minAccessible")}
                             className="h-8"
                             id="auto-condense-min-reserve-k"
                             max={MAX_CONTEXT_K}
@@ -113,12 +115,12 @@ const AutoCondenseSettings = () => {
                 </div>
                 <div className="space-y-1.5">
                     <Label className="text-xs text-description" htmlFor="auto-condense-max-reserve-k">
-                        Maximum reserve
+                        {t("settings.ui.compact.max")}
                     </Label>
                     <div className="flex items-center gap-2">
                         <Input
                             aria-invalid={maxReserveError || reserveOrderError}
-                            aria-label="Maximum reserve (K tokens)"
+                            aria-label={t("settings.ui.compact.maxAccessible")}
                             className="h-8"
                             id="auto-condense-max-reserve-k"
                             max={MAX_CONTEXT_K}
@@ -137,21 +139,21 @@ const AutoCondenseSettings = () => {
             </div>
             {minReserveError || maxReserveError ? (
                 <p className="text-xs text-(--vscode-errorForeground)">
-                    Reserve values must be whole numbers from 0 to {MAX_CONTEXT_K}.
+                    {t("settings.ui.compact.reserveInvalid", { max: MAX_CONTEXT_K })}
                 </p>
             ) : reserveOrderError ? (
-                <p className="text-xs text-(--vscode-errorForeground)">Minimum reserve cannot exceed maximum reserve.</p>
+                <p className="text-xs text-(--vscode-errorForeground)">{t("settings.ui.compact.orderInvalid")}</p>
             ) : (
-                <p className="text-xs text-description">The percentage-derived reserve is clamped to this range.</p>
+                <p className="text-xs text-description">{t("settings.ui.compact.rangeHelp")}</p>
             )}
             <div className="space-y-1.5">
                 <Label className="text-xs text-description" htmlFor="auto-condense-max-context-k">
-                    Maximum context
+                    {t("settings.ui.compact.context")}
                 </Label>
                 <div className="flex items-center gap-2">
                     <Input
                         aria-invalid={maxContextError}
-                        aria-label="Maximum context (K tokens)"
+                        aria-label={t("settings.ui.compact.contextAccessible")}
                         className="h-8"
                         id="auto-condense-max-context-k"
                         max={MAX_CONTEXT_K}
@@ -165,12 +167,14 @@ const AutoCondenseSettings = () => {
                         type="number"
                         value={maxContextK}
                     />
-                    <span className="shrink-0 text-xs text-description">K tokens</span>
+                    <span className="shrink-0 text-xs text-description">{t("settings.ui.compact.kTokens")}</span>
                 </div>
                 {maxContextError ? (
-                    <p className="text-xs text-(--vscode-errorForeground)">Enter a whole number from 0 to {MAX_CONTEXT_K}.</p>
+                    <p className="text-xs text-(--vscode-errorForeground)">
+                        {t("settings.ui.compact.contextInvalid", { max: MAX_CONTEXT_K })}
+                    </p>
                 ) : (
-                    <p className="text-xs text-description">0 means no absolute limit.</p>
+                    <p className="text-xs text-description">{t("settings.ui.compact.unlimited")}</p>
                 )}
             </div>
         </div>

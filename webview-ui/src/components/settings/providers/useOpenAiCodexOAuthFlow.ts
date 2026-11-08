@@ -6,6 +6,8 @@ import {
     OpenAiCodexFlowStatus,
 } from "@shared/proto/dline/account"
 import { useCallback, useEffect, useRef, useState } from "react"
+import type { en } from "@/i18n/locales/settings/auth.en"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { AccountServiceClient } from "@/services/grpc-client"
 
 export type OpenAiCodexOAuthDialogPhase = "closed" | "starting" | "active" | "completing" | "timed-out" | "failed"
@@ -32,11 +34,24 @@ export function isOpenAiCodexAuthenticated(status: OpenAiCodexAuthStatus): boole
 }
 
 export function useOpenAiCodexOAuthFlow(profileId: string) {
+    const { t } = useUiTranslation()
     const [status, setStatus] = useState(OpenAiCodexAuthStatus.OPEN_AI_CODEX_AUTH_STATUS_UNSPECIFIED)
     const [account, setAccount] = useState<OpenAiCodexAccount>()
     const [dialog, setDialog] = useState<OpenAiCodexOAuthDialogState>({ phase: "closed" })
-    const [statusError, setStatusError] = useState<string>()
-    const [actionError, setActionError] = useState<string>()
+    const [statusError, setStatusError] = useState<"settings.ui.auth.statusError">()
+    const [actionError, setActionError] =
+        useState<
+            keyof Pick<
+                typeof en,
+                | "settings.ui.auth.timeoutError"
+                | "settings.ui.auth.failedError"
+                | "settings.ui.auth.startError"
+                | "settings.ui.auth.finishError"
+                | "settings.ui.auth.importError"
+                | "settings.ui.auth.cancelError"
+                | "settings.ui.auth.signOutError"
+            >
+        >()
     const [busy, setBusy] = useState(false)
     const statusFailureCountRef = useRef(0)
     const flowRef = useRef<OpenAiCodexAuthFlow>()
@@ -91,13 +106,13 @@ export function useOpenAiCodexOAuthFlow(profileId: string) {
             const outcome = response.lastFlowOutcome
             if (currentFlow && outcome?.flowId === currentFlow.flowId) {
                 if (outcome.status === OpenAiCodexFlowStatus.OPEN_AI_CODEX_FLOW_STATUS_TIMED_OUT) {
-                    setActionError("Sign-in timed out. Try again.")
+                    setActionError("settings.ui.auth.timeoutError")
                     setDialog({ phase: "timed-out", flow: currentFlow })
                     return
                 }
                 if (outcome.status === OpenAiCodexFlowStatus.OPEN_AI_CODEX_FLOW_STATUS_FAILED) {
                     flowRef.current = undefined
-                    setActionError("Sign-in failed. Try again.")
+                    setActionError("settings.ui.auth.failedError")
                     setDialog({ phase: "failed" })
                     return
                 }
@@ -132,7 +147,7 @@ export function useOpenAiCodexOAuthFlow(profileId: string) {
             if (!isCurrent(targetProfileId, epoch) || statusSequenceRef.current !== sequence) return
             statusFailureCountRef.current += 1
             if (statusFailureCountRef.current >= STATUS_FAILURE_TOLERANCE) {
-                setStatusError("Cannot read the sign-in status.")
+                setStatusError("settings.ui.auth.statusError")
             }
         }
     }, [applyStatus, isCurrent, profileId])
@@ -180,7 +195,7 @@ export function useOpenAiCodexOAuthFlow(profileId: string) {
         } catch {
             if (!isCurrent(targetProfileId, epoch)) return
             flowRef.current = undefined
-            setActionError("Cannot start the ChatGPT sign-in. Try again.")
+            setActionError("settings.ui.auth.startError")
             setDialog({ phase: "failed" })
         } finally {
             if (isCurrent(targetProfileId, epoch)) setBusy(false)
@@ -192,7 +207,7 @@ export function useOpenAiCodexOAuthFlow(profileId: string) {
             const flow = flowRef.current
             if (!flow || Date.now() >= flow.expiresAtMs) {
                 setDialog({ phase: "timed-out", flow })
-                setActionError("Sign-in timed out. Try again.")
+                setActionError("settings.ui.auth.timeoutError")
                 return
             }
             const targetProfileId = flow.profileId
@@ -211,10 +226,10 @@ export function useOpenAiCodexOAuthFlow(profileId: string) {
                 if (!isCurrent(targetProfileId, epoch)) return
                 if (Date.now() >= flow.expiresAtMs) {
                     setDialog({ phase: "timed-out", flow })
-                    setActionError("Sign-in timed out. Try again.")
+                    setActionError("settings.ui.auth.timeoutError")
                 } else {
                     setDialog({ phase: "active", flow })
-                    setActionError("Cannot finish the sign-in. Check the full callback URL and try again.")
+                    setActionError("settings.ui.auth.finishError")
                 }
             } finally {
                 if (isCurrent(targetProfileId, epoch)) setBusy(false)
@@ -237,7 +252,7 @@ export function useOpenAiCodexOAuthFlow(profileId: string) {
                 if (isCurrent(targetProfileId, epoch)) applyStatus(response)
             } catch {
                 if (isCurrent(targetProfileId, epoch)) {
-                    setActionError("Cannot import the credential. Check the JSON and try again.")
+                    setActionError("settings.ui.auth.importError")
                 }
             } finally {
                 if (isCurrent(targetProfileId, epoch)) setBusy(false)
@@ -259,7 +274,7 @@ export function useOpenAiCodexOAuthFlow(profileId: string) {
         } catch {
             if (!isCurrent(targetProfileId, epoch)) return
             ignoredFlowIdsRef.current.delete(flow.flowId)
-            setActionError("Cannot cancel the sign-in. Try again.")
+            setActionError("settings.ui.auth.cancelError")
             await refreshStatus()
         }
     }, [invalidatePendingResponses, isCurrent, profileId, refreshStatus, setClosed])
@@ -276,7 +291,7 @@ export function useOpenAiCodexOAuthFlow(profileId: string) {
             setStatus(OpenAiCodexAuthStatus.OPEN_AI_CODEX_AUTH_STATUS_MISSING)
             setAccount(undefined)
         } catch {
-            if (isCurrent(targetProfileId, epoch)) setActionError("Cannot sign out of this profile. Try again.")
+            if (isCurrent(targetProfileId, epoch)) setActionError("settings.ui.auth.signOutError")
         } finally {
             if (isCurrent(targetProfileId, epoch)) setBusy(false)
         }
@@ -286,7 +301,7 @@ export function useOpenAiCodexOAuthFlow(profileId: string) {
         const flow = flowRef.current
         if (!flow) return
         invalidatePendingResponses()
-        setActionError("Sign-in timed out. Try again.")
+        setActionError("settings.ui.auth.timeoutError")
         setDialog({ phase: "timed-out", flow })
     }, [invalidatePendingResponses])
 
@@ -294,8 +309,8 @@ export function useOpenAiCodexOAuthFlow(profileId: string) {
         status,
         account,
         dialog,
-        statusError,
-        actionError,
+        statusError: statusError ? t(statusError) : undefined,
+        actionError: actionError ? t(actionError) : undefined,
         busy,
         start,
         complete,

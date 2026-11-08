@@ -1,6 +1,7 @@
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import { memo, useId } from "react"
 import { Button } from "@/components/ui/button"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 import { ThinkingContent } from "./ThinkingContent"
 import { useThinkingScroll } from "./useThinkingScroll"
@@ -23,10 +24,11 @@ export const ThinkingRow = memo(
         isVisible,
         isExpanded,
         onToggle,
-        title = "Thinking",
+        title,
         isStreaming = false,
         showChevron = true,
     }: ThinkingRowProps) => {
+        const { t } = useUiTranslation()
         const contentId = useId()
         const { scrollRef, contentRef, onScroll, canScrollUp, canScrollDown } = useThinkingScroll(
             isVisible && isExpanded,
@@ -64,7 +66,7 @@ export const ThinkingRow = memo(
                                     isStreaming,
                                 "select-none": isStreaming,
                             })}>
-                            {title}
+                            {title ?? t("chatRows.thinking.title")}
                         </span>
                         {showChevron &&
                             (isExpanded ? (
@@ -78,7 +80,7 @@ export const ThinkingRow = memo(
                 {isExpanded && (
                     <div className="relative w-full min-w-0 text-left">
                         <div
-                            aria-label="Thinking content"
+                            aria-label={t("chatRows.thinking.content")}
                             className="max-h-[150px] overflow-y-auto text-description leading-normal break-words pl-0 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden [direction:ltr]"
                             id={contentId}
                             onScroll={onScroll}

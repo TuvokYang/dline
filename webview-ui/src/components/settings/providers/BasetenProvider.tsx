@@ -28,7 +28,6 @@ export const BasetenProvider = ({ showModelOptions, isPopup, profile, onUpdate }
             {showModelOptions && (
                 <>
                     <ModelSelector
-                        label="Model"
                         models={models}
                         onChange={(e) =>
                             onUpdate({

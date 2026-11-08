@@ -1,5 +1,7 @@
+import type { UiLanguage } from "@shared/UiLanguage"
 import { fireEvent, render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { UiLanguageProvider } from "@/i18n/UiLanguageProvider"
 import ModelSwitcher from "./ModelSwitcher"
 
 const mocks = vi.hoisted(() => ({
@@ -198,6 +200,44 @@ describe("ModelSwitcher Profile transitions", () => {
 
         expect(mocks.selectProfiles).toHaveBeenCalledWith("small-id", ["plan", "act"], undefined, false)
         expect(mocks.requestSwitch).not.toHaveBeenCalled()
+    })
+
+    it("keeps the open portal, selected mode and Profile identity across both language directions", () => {
+        mocks.state.planActSeparateModelsSetting = true
+        const profile = mocks.profileStore.profiles[1]
+        if (!profile) throw new Error("Expected the second Profile fixture")
+        profile.usedFor = ["plan", "subagents", "image", "RAW custom usage"]
+        const profiles = mocks.profileStore.profiles
+        const usedFor = profile.usedFor
+        const tree = (language: UiLanguage) => (
+            <UiLanguageProvider language={language}>
+                <ModelSwitcher onOpenSettings={vi.fn()} />
+            </UiLanguageProvider>
+        )
+        const view = render(tree("en"))
+        const trigger = screen.getByRole("button", { name: "Select model" })
+        fireEvent.click(trigger)
+        fireEvent.click(screen.getByRole("button", { name: "Plan", exact: true }))
+        const menu = screen.getByTestId("profile-menu")
+        const option = screen.getByRole("option", { name: /small-profile/ })
+        expect(option).toHaveTextContent("Plan, subagents, image, RAW custom usage")
+
+        view.rerender(tree("zh-CN"))
+        expect(screen.getByRole("button", { name: "选择模型" })).toBe(trigger)
+        expect(screen.getByTestId("profile-menu")).toBe(menu)
+        expect(screen.getByRole("option", { name: /small-profile/ })).toBe(option)
+        expect(option).toHaveTextContent("规划, 子代理, 图片, RAW custom usage")
+        expect(mocks.requestSwitch).not.toHaveBeenCalled()
+
+        view.rerender(tree("en"))
+        expect(screen.getByTestId("profile-menu")).toBe(menu)
+        expect(option).toHaveTextContent("Plan, subagents, image, RAW custom usage")
+        expect(mocks.profileStore.profiles).toBe(profiles)
+        expect(profile.usedFor).toBe(usedFor)
+        fireEvent.click(option)
+        expect(mocks.requestSwitch).toHaveBeenCalledExactlyOnceWith("small-id", ["plan"])
+        expect(mocks.selectProfiles).not.toHaveBeenCalled()
+        expect(mocks.selectProfile).not.toHaveBeenCalled()
     })
 
     it("hides Profiles that no conversational mode uses, even without Split Model", () => {

@@ -1,3 +1,5 @@
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
+
 /**
  * The storage layer a capability toggle is written to.
  *
@@ -11,11 +13,11 @@ interface CapabilityScopeNoticeProps {
     scope: CapabilityStorageScope
 }
 
-const SCOPE_TEXT: Readonly<Record<CapabilityStorageScope, string>> = {
-    global: "Toggles saved globally",
-    workspace: "Toggles saved for this workspace",
-    task: "Toggles saved for this task only",
-}
+const SCOPE_KEYS = {
+    global: "capabilities.scope.global",
+    workspace: "capabilities.scope.workspace",
+    task: "capabilities.scope.task",
+} as const
 
 /**
  * Tell the user which layer a toggle in this panel is stored in.
@@ -24,11 +26,14 @@ const SCOPE_TEXT: Readonly<Record<CapabilityStorageScope, string>> = {
  * it answers a question the user only asks once, and must not compete with the
  * toggles themselves.
  */
-export const CapabilityScopeNotice = ({ scope }: CapabilityScopeNoticeProps) => (
-    <div
-        className="-mt-0.5 mb-3 text-[11px] italic text-vscode-descriptionForeground"
-        data-scope={scope}
-        data-testid="capability-scope-notice">
-        {SCOPE_TEXT[scope]}
-    </div>
-)
+export const CapabilityScopeNotice = ({ scope }: CapabilityScopeNoticeProps) => {
+    const { t } = useUiTranslation()
+    return (
+        <div
+            className="-mt-0.5 mb-3 text-[11px] italic text-vscode-descriptionForeground"
+            data-scope={scope}
+            data-testid="capability-scope-notice">
+            {t(SCOPE_KEYS[scope])}
+        </div>
+    )
+}

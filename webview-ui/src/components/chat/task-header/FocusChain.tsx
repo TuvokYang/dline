@@ -6,6 +6,7 @@ import React, { memo, useCallback, useMemo, useState } from "react"
 import ChecklistRenderer from "@/components/common/ChecklistRenderer"
 import LightMarkdown from "@/components/common/LightMarkdown"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { FileServiceClient } from "@/services/grpc-client"
 
 // Optimized interface with readonly properties to prevent accidental mutations
@@ -22,12 +23,6 @@ interface FocusChainProps {
     readonly currentTaskItemId?: string
     readonly showPlaceholderWhenEmpty?: boolean
 }
-
-// Static strings to avoid recreating them
-const COMPLETED_MESSAGE = "All tasks have been completed!"
-const TODO_LIST_LABEL = "To-Do list"
-const NEW_STEPS_MESSAGE = "New steps will be generated if you continue the task"
-const _CLICK_TO_EDIT_TITLE = "Click to edit to-do list in file"
 
 // Extract # Title from focus chain text (skip "Focus Chain List for Task" file header)
 const extractMainTitle = (text: string): string | null => {
@@ -50,11 +45,12 @@ const ToDoListHeader = memo<{
     isExpanded: boolean
     mainTitle: string | null
 }>(({ todoInfo, isExpanded, mainTitle }) => {
+    const { t } = useUiTranslation()
     const { currentTodo, currentIndex, totalCount, completedCount, progressPercentage } = todoInfo
     const isCompleted = completedCount === totalCount
 
     // Pre-compute display text
-    const displayText = isCompleted ? COMPLETED_MESSAGE : currentTodo?.text || TODO_LIST_LABEL
+    const displayText = isCompleted ? t("chatInput.focus.completed") : currentTodo?.text || t("chatInput.focus.todoList")
 
     return (
         <div
@@ -181,7 +177,7 @@ interface HistorySection {
 }
 
 interface HistoryEntry {
-    timestamp: string
+    completedAt: string
     mainTitle: string | null
     sections: HistorySection[]
 }
@@ -212,10 +208,11 @@ const parseHistoryContent = (historyText: string): { entries: HistoryEntry[] } =
 
     for (const line of lines) {
         const trimmed = line.trim()
-        // ## Completed — date: start new entry
-        if (trimmed.startsWith("## Completed")) {
+        // Only the canonical archive marker starts an entry; model section titles stay content.
+        const completion = /^## Completed — (.+)$/.exec(trimmed)
+        if (completion) {
             flushEntry()
-            currentEntry = { timestamp: trimmed.replace(/^##\s+/, ""), mainTitle: null, sections: [] }
+            currentEntry = { completedAt: completion[1], mainTitle: null, sections: [] }
             continue
         }
         if (!currentEntry) continue // skip lines before first entry
@@ -246,6 +243,7 @@ const parseHistoryContent = (historyText: string): { entries: HistoryEntry[] } =
 // Main component with aggressive optimization
 export const FocusChain: React.FC<FocusChainProps> = memo(
     ({ currentTaskItemId, lastProgressMessageText, showPlaceholderWhenEmpty }) => {
+        const { t } = useUiTranslation()
         const [isExpanded, setIsExpanded] = useState(false)
         const { focusChainHistory } = useExtensionState()
 
@@ -294,7 +292,7 @@ export const FocusChain: React.FC<FocusChainProps> = memo(
                     <span className="rounded-lg px-2 py-0.25 inline-block shrink-0 bg-badge-foreground/20 text-foreground text-sm">
                         0/0
                     </span>
-                    <span className="text-sm text-foreground/80 truncate">TODOs</span>
+                    <span className="text-sm text-foreground/80 truncate">{t("chatInput.focus.placeholder")}</span>
                 </div>
             )
         }
@@ -308,7 +306,7 @@ export const FocusChain: React.FC<FocusChainProps> = memo(
 
         return (
             <div
-                aria-label={isExpanded ? "Collapse focus chain" : "Expand focus chain"}
+                aria-label={t(isExpanded ? "chatInput.focus.collapse" : "chatInput.focus.expand")}
                 className="relative rounded-sm bg-toolbar-hover/65 flex flex-col gap-1.5 select-none hover:bg-toolbar-hover overflow-hidden opacity-80 hover:opacity-100 transition-[transform,box-shadow] duration-200 cursor-pointer"
                 onClick={handleToggle}
                 onKeyDown={(e) => {
@@ -330,7 +328,9 @@ export const FocusChain: React.FC<FocusChainProps> = memo(
                         <div className="mb-2">
                             <ChecklistRenderer text={lastProgressMessageText!} />
                             {isCompleted && (
-                                <div className="mt-2 text-xs font-semibold text-muted-foreground">{NEW_STEPS_MESSAGE}</div>
+                                <div className="mt-2 text-xs font-semibold text-muted-foreground">
+                                    {t("chatInput.focus.newSteps")}
+                                </div>
                             )}
                         </div>
 
@@ -341,7 +341,7 @@ export const FocusChain: React.FC<FocusChainProps> = memo(
                                     {historyEntries.map((entry, entryIdx) => (
                                         <div className={entryIdx > 0 ? "border-t border-border/20 pt-2" : ""} key={entryIdx}>
                                             <div className="text-[10px] font-semibold text-muted-foreground/50 mb-1">
-                                                {entry.timestamp}
+                                                {t("chatInput.focus.historyCompleted", { date: entry.completedAt })}
                                             </div>
                                             {entry.mainTitle && (
                                                 <div className="text-xs font-semibold text-foreground/60 mb-1">

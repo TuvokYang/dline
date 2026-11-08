@@ -2,6 +2,7 @@ import { MessageSquareIcon } from "lucide-react"
 import { memo } from "react"
 import { CopyButton } from "@/components/common/CopyButton"
 import MarkdownBlock from "@/components/common/MarkdownBlock"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 
 interface QnaOutputProps {
@@ -23,6 +24,7 @@ function createPlainTextPreview(text: string): string {
  * but with MessageSquare icon and "Q&A" title.
  */
 const QnaOutputRow = memo(({ text, headClassNames }: QnaOutputProps) => {
+    const { t } = useUiTranslation()
     const usesPlainTextPreview = text.length > MAX_MARKDOWN_QNA_LENGTH
     const displayedText = usesPlainTextPreview ? createPlainTextPreview(text) : text
 
@@ -32,7 +34,7 @@ const QnaOutputRow = memo(({ text, headClassNames }: QnaOutputProps) => {
             <div className={cn(headClassNames, "justify-between px-1")}>
                 <div className="flex gap-2 items-center">
                     <MessageSquareIcon className="size-2 text-amber-500 dark:text-amber-400" />
-                    <span className="text-amber-600 dark:text-amber-400 font-semibold">Q&A</span>
+                    <span className="text-amber-600 dark:text-amber-400 font-semibold">{t("chatRows.qna.title")}</span>
                 </div>
                 <CopyButton textToCopy={text || ""} />
             </div>
@@ -47,7 +49,7 @@ const QnaOutputRow = memo(({ text, headClassNames }: QnaOutputProps) => {
                                     {displayedText}
                                 </div>
                                 <div className="mt-3 text-xs text-description" data-testid="qna-output-preview-notice">
-                                    Showing the first 32,768 characters. Use Copy to access the complete response.
+                                    {t("chatRows.qna.previewNotice")}
                                 </div>
                             </>
                         ) : (

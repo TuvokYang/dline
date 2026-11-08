@@ -1,4 +1,5 @@
 import { ActivityIcon, MessagesSquareIcon } from "lucide-react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 
 export type TaskContentTab = "chat" | "activity"
@@ -12,14 +13,15 @@ export function TaskActivityTabs({
     onChange: (value: TaskContentTab) => void
     activeCount: number
 }) {
+    const { t } = useUiTranslation()
     return (
         <div className="flex items-center gap-1 border-b border-editor-group-border px-4" role="tablist">
             {(
                 [
-                    ["chat", "Work", MessagesSquareIcon],
-                    ["activity", "Activities", ActivityIcon],
+                    ["chat", "chatRows.activity.tabs.work", MessagesSquareIcon],
+                    ["activity", "chatRows.activity.tabs.activities", ActivityIcon],
                 ] as const
-            ).map(([id, label, Icon]) => (
+            ).map(([id, labelKey, Icon]) => (
                 <button
                     aria-selected={value === id}
                     className={cn(
@@ -33,7 +35,7 @@ export function TaskActivityTabs({
                     role="tab"
                     type="button">
                     <Icon className="size-3.5" />
-                    {label}
+                    {t(labelKey)}
                     {id === "activity" && activeCount > 0 && (
                         <span className="min-w-4 rounded-full bg-badge-background px-1 text-[10px] text-badge-foreground">
                             {activeCount}

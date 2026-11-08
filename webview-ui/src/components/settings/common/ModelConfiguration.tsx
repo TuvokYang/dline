@@ -4,6 +4,7 @@ import type { PricingShapeKind } from "@shared/providers/pricing-shape"
 import { declaredServerTools, isServerToolEnabled, withServerToolSwitch } from "@shared/providers/server-tool-switches"
 import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import { useEffect, useId, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ProfileDisclosure, ProfileField, ProfileInlineGrid, ProfileSection, ProfileSectionTitle } from "../profile-ui"
 import { DebouncedTextField } from "./DebouncedTextField"
 import { ContextTierEditor } from "./ModelTierEditor"
@@ -110,6 +111,7 @@ export const ModelConfiguration = ({
     contextWindowValue: selectedContextWindowValue,
     onContextWindowUpdate,
 }: ModelConfigurationProps) => {
+    const { t } = useUiTranslation()
     const fieldId = useId()
     const temperatureId = `${fieldId}-temperature`
     const contextWindowId = `${fieldId}-context-window`
@@ -273,11 +275,11 @@ export const ModelConfiguration = ({
     const contextTiers = draftContextTiers
 
     return (
-        <ProfileDisclosure title="Model Configuration">
+        <ProfileDisclosure title={t("settings.ui.modelConfiguration")}>
             {hasOptionsFields ? (
                 <ProfileSection>
                     <ProfileSectionTitle className="text-xs uppercase tracking-wide text-description">
-                        Options
+                        {t("settings.ui.options")}
                     </ProfileSectionTitle>
                     <div className="flex flex-col gap-1.5 text-sm">
                         {capabilityFields.includes("supportsImages") ? (
@@ -286,7 +288,7 @@ export const ModelConfiguration = ({
                                 onChange={(e: Event | React.FormEvent<HTMLElement>) =>
                                     updateCheck("supportsImages", (e.target as HTMLInputElement | null)?.checked === true)
                                 }>
-                                Supports Images
+                                {t("settings.ui.supportsImages")}
                             </VSCodeCheckbox>
                         ) : null}
                         {capabilityFields.includes("hostedWebSearch") ? (
@@ -299,9 +301,7 @@ export const ModelConfiguration = ({
                                         (e.target as HTMLInputElement | null)?.checked === true,
                                     )
                                 }>
-                                {modelDeclaresHostedWebSearch
-                                    ? "Use hosted Web Search"
-                                    : "Use hosted Web Search (not offered by this model)"}
+                                {modelDeclaresHostedWebSearch ? t("settings.ui.hostedSearch") : t("settings.ui.noHostedSearch")}
                             </VSCodeCheckbox>
                         ) : null}
                         {capabilityFields.includes("hostedWebFetch") ? (
@@ -314,9 +314,7 @@ export const ModelConfiguration = ({
                                         (e.target as HTMLInputElement | null)?.checked === true,
                                     )
                                 }>
-                                {modelDeclaresHostedWebFetch
-                                    ? "Use hosted Web Fetch"
-                                    : "Use hosted Web Fetch (not offered by this model)"}
+                                {modelDeclaresHostedWebFetch ? t("settings.ui.hostedFetch") : t("settings.ui.noHostedFetch")}
                             </VSCodeCheckbox>
                         ) : null}
                         {capabilityFields.includes("supportsBrowserAction") ? (
@@ -325,7 +323,7 @@ export const ModelConfiguration = ({
                                 onChange={(e: Event | React.FormEvent<HTMLElement>) =>
                                     updateCheck("supportsBrowserAction", (e.target as HTMLInputElement | null)?.checked === true)
                                 }>
-                                Supports Browser Actions
+                                {t("settings.ui.supportsBrowser")}
                             </VSCodeCheckbox>
                         ) : null}
                         {capabilityFields.includes("supportsPromptCache") ? (
@@ -334,7 +332,7 @@ export const ModelConfiguration = ({
                                 onChange={(e: Event | React.FormEvent<HTMLElement>) =>
                                     updateCheck("supportsPromptCache", (e.target as HTMLInputElement | null)?.checked === true)
                                 }>
-                                Supports Prompt Cache
+                                {t("settings.ui.supportsCache")}
                             </VSCodeCheckbox>
                         ) : null}
                         {capabilityFields.includes("supportsTools") ? (
@@ -343,14 +341,14 @@ export const ModelConfiguration = ({
                                 onChange={(e: Event | React.FormEvent<HTMLElement>) =>
                                     updateCheck("supportsTools", (e.target as HTMLInputElement | null)?.checked === true)
                                 }>
-                                Supports Native Tool Calls
+                                {t("settings.ui.supportsTools")}
                             </VSCodeCheckbox>
                         ) : null}
                     </div>
                     {capabilityFields.includes("temperature") ? (
-                        <ProfileField htmlFor={temperatureId} label="Temperature">
+                        <ProfileField htmlFor={temperatureId} label={t("settings.ui.temperature")}>
                             <DebouncedTextField
-                                ariaLabel="Temperature"
+                                ariaLabel={t("settings.ui.temperature")}
                                 className={fieldControlClass}
                                 id={temperatureId}
                                 initialValue={temperature != null ? String(temperature) : ""}
@@ -371,13 +369,13 @@ export const ModelConfiguration = ({
             {hasCapabilityFields ? (
                 <ProfileSection>
                     <ProfileSectionTitle className="text-xs uppercase tracking-wide text-description">
-                        Capabilities
+                        {t("settings.ui.capabilities")}
                     </ProfileSectionTitle>
                     <ProfileInlineGrid>
                         {capabilityFields.includes("contextWindow") ? (
-                            <ProfileField htmlFor={contextWindowId} label="Context Window Size">
+                            <ProfileField htmlFor={contextWindowId} label={t("settings.ui.contextWindow")}>
                                 <DebouncedTextField
-                                    ariaLabel="Context Window Size"
+                                    ariaLabel={t("settings.ui.contextWindow")}
                                     className={fieldControlClass}
                                     id={contextWindowId}
                                     initialValue={contextWindowValue}
@@ -386,19 +384,21 @@ export const ModelConfiguration = ({
                                             ? onContextWindowUpdate(Number(value) || 0)
                                             : updateCapability("contextWindow", Number(value) || 0)
                                     }
-                                    placeholder={`Unknown (for example ${defaultContextWindow.toLocaleString()})`}
+                                    placeholder={t("settings.ui.unknownExample", {
+                                        value: defaultContextWindow.toLocaleString(),
+                                    })}
                                 />
                             </ProfileField>
                         ) : null}
                         {capabilityFields.includes("maxTokens") ? (
-                            <ProfileField htmlFor={maxTokensId} label="Max Output Tokens">
+                            <ProfileField htmlFor={maxTokensId} label={t("settings.ui.maxTokens")}>
                                 <DebouncedTextField
-                                    ariaLabel="Max Output Tokens"
+                                    ariaLabel={t("settings.ui.maxTokens")}
                                     className={fieldControlClass}
                                     id={maxTokensId}
                                     initialValue={maxTokensValue}
                                     onChange={(value) => updateCapability("maxTokens", Number(value) || 0)}
-                                    placeholder={`Unknown (for example ${defaultMaxTokens.toLocaleString()})`}
+                                    placeholder={t("settings.ui.unknownExample", { value: defaultMaxTokens.toLocaleString() })}
                                 />
                             </ProfileField>
                         ) : null}

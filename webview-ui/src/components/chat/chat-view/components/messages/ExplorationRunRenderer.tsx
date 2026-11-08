@@ -3,6 +3,8 @@ import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import { memo, useMemo } from "react"
 import { TOOL_RESPONSE_SCROLL_CLASS } from "@/components/chat/constants"
 import { ThinkingRow } from "@/components/chat/ThinkingRow"
+import type { UiTranslator } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 import { isApiReqActive } from "@/utils/streaming"
 import type { RowExpansionOrigin } from "../../types/chatTypes"
@@ -33,11 +35,12 @@ interface ExplorationRunRendererProps {
  */
 export const ExplorationRunRenderer = memo(
     ({ run, allMessages, isLastRow, isLastActivity, expandedRows, onToggleExpand }: ExplorationRunRendererProps) => {
+        const { t } = useUiTranslation()
         const [firstRound] = run._rounds
         const anchor = expansionAnchor(run)
         const isExpanded = resolveMessageRowExpanded(anchor, expandedRows)
         const isRunning = isLastRow && isApiReqActive(findLastRequest(allMessages))
-        const summary = useMemo(() => summarizeRun(run), [run])
+        const summary = useMemo(() => summarizeRun(run, t), [run, t])
         const lastGroup = useMemo(() => findLastToolGroup(run._rounds), [run])
         const calls = useMemo(() => collectCalls(run._rounds), [run])
         const bodyId = `${run._explorationRunId}-rounds`
@@ -107,7 +110,7 @@ export const ExplorationRunRenderer = memo(
                                                 reasoningContent={entry.text}
                                                 showChevron={Boolean(entry.text?.trim())}
                                                 showTitle={true}
-                                                title="Thinking"
+                                                title={t("chatInput.timeline.thinking")}
                                             />
                                         </div>
                                     ),
@@ -133,14 +136,14 @@ function expansionAnchor(run: ExplorationRun): UiMessage {
 }
 
 /** "Dline read 3 files, performed 1 search · 2 thoughts · 3 rounds" */
-function summarizeRun(run: ExplorationRun): string {
-    const tools = getToolGroupSummaryFromParsedTools(buildToolsWithReasoning(run).map((item) => item.parsedTool))
+function summarizeRun(run: ExplorationRun, t: UiTranslator): string {
+    const tools = getToolGroupSummaryFromParsedTools(
+        buildToolsWithReasoning(run).map((item) => item.parsedTool),
+        t,
+    )
     const thoughts = run.filter((message) => message.say === "reasoning").length
     const rounds = run._rounds.length
-    const parts = [tools]
-    if (thoughts > 0) parts.push(`${thoughts} thought${thoughts === 1 ? "" : "s"}`)
-    if (rounds > 1) parts.push(`${rounds} rounds`)
-    return parts.join(" · ")
+    return t("chatInput.tool.exploration", { tools, thoughts, rounds })
 }
 
 /** Every round's tool calls in order, without the thinking between them. */

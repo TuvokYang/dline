@@ -2,6 +2,7 @@ import { CLINE_PROVIDER_APP_URL } from "@shared/providers/cline-runtime"
 import React, { useEffect, useState } from "react"
 import VSCodeButtonLink from "@/components/common/VSCodeButtonLink"
 import { useClineAuth } from "@/context/ClineAuthContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { AccountServiceClient } from "@/services/grpc-client"
 
 interface CreditLimitErrorProps {
@@ -35,34 +36,45 @@ interface CreditLimitCardProps extends CreditLimitErrorProps {
 
 /** Retry and Start New Task belong to the task footer, so this card only links out. */
 const CreditLimitCard: React.FC<CreditLimitCardProps> = ({
-    message = "You have run out of credits.",
+    message,
     currentBalance,
     resolvedBuyCreditsUrl,
     totalPromotions,
     totalSpent,
-}) => (
-    <div className="p-2 border-none rounded-md mb-2 bg-(--vscode-textBlockQuote-background)">
-        <div className="mb-3 font-azeret-mono">
-            <div className="text-error mb-2">{message}</div>
-            <div className="mb-3">
-                {currentBalance ? (
-                    <div className="text-foreground">
-                        Current Balance: <span className="font-bold">{currentBalance.toFixed(2)}</span>
-                    </div>
-                ) : null}
-                {totalSpent ? <div className="text-foreground">Total Spent: {totalSpent.toFixed(2)}</div> : null}
-                {totalPromotions ? <div className="text-foreground">Total Promotions: {totalPromotions.toFixed(2)}</div> : null}
+}) => {
+    const { t } = useUiTranslation()
+    return (
+        <div className="p-2 border-none rounded-md mb-2 bg-(--vscode-textBlockQuote-background)">
+            <div className="mb-3 font-azeret-mono">
+                <div className="text-error mb-2">{message ?? t("chatRows.errors.outOfCredits")}</div>
+                <div className="mb-3">
+                    {currentBalance ? (
+                        <div className="text-foreground">
+                            {t("chatRows.errors.currentBalance")} <span className="font-bold">{currentBalance.toFixed(2)}</span>
+                        </div>
+                    ) : null}
+                    {totalSpent ? (
+                        <div className="text-foreground">
+                            {t("chatRows.errors.totalSpent")} {totalSpent.toFixed(2)}
+                        </div>
+                    ) : null}
+                    {totalPromotions ? (
+                        <div className="text-foreground">
+                            {t("chatRows.errors.totalPromotions")} {totalPromotions.toFixed(2)}
+                        </div>
+                    ) : null}
+                </div>
             </div>
-        </div>
 
-        {resolvedBuyCreditsUrl ? (
-            <VSCodeButtonLink className="w-full mb-2" href={resolvedBuyCreditsUrl}>
-                <span className="codicon codicon-credit-card mr-[6px] text-[14px]" />
-                Buy Credits
-            </VSCodeButtonLink>
-        ) : null}
-    </div>
-)
+            {resolvedBuyCreditsUrl ? (
+                <VSCodeButtonLink className="w-full mb-2" href={resolvedBuyCreditsUrl}>
+                    <span className="codicon codicon-credit-card mr-[6px] text-[14px]" />
+                    {t("chatRows.errors.buyCredits")}
+                </VSCodeButtonLink>
+            ) : null}
+        </div>
+    )
+}
 
 /** Dline Account owns its organization-aware callback flow; providers never enter this path. */
 const DlineAccountCreditLimitError: React.FC<CreditLimitErrorProps> = (props) => {

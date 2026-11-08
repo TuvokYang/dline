@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from "react"
 import { useClickAway } from "react-use"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { useAutoApproveActions } from "@/hooks/useAutoApproveActions"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { getAsVar, VSC_DESCRIPTION_FOREGROUND, VSC_TITLEBAR_INACTIVE_FOREGROUND } from "@/utils/vscStyles"
 import AutoApproveMenuItem from "./AutoApproveMenuItem"
 import { updateAutoApproveSettings } from "./AutoApproveSettingsAPI"
@@ -18,6 +19,7 @@ interface AutoApproveModalProps {
 }
 
 const AutoApproveModal: React.FC<AutoApproveModalProps> = ({ isVisible, setIsVisible, buttonRef, ACTION_METADATA }) => {
+    const { t } = useUiTranslation()
     const { autoApprovalSettings } = useExtensionState()
     const { isChecked, updateAction } = useAutoApproveActions()
     const modalRef = useRef<HTMLDivElement>(null)
@@ -73,14 +75,14 @@ const AutoApproveModal: React.FC<AutoApproveModalProps> = ({ isVisible, setIsVis
                     maxHeight: "60vh",
                 }}>
                 <div className="mb-2.5 text-muted-foreground text-xs cursor-pointer" onClick={() => setIsVisible(false)}>
-                    Let Dline take these actions without asking for approval.{" "}
+                    {t("chatInput.auto.description")}{" "}
                     <a
                         className="text-link hover:text-link-hover"
                         href="https://docs.dline.cc/features/auto-approve/"
                         rel="noopener"
                         style={{ fontSize: "inherit" }}
                         target="_blank">
-                        Docs
+                        {t("chatInput.auto.docs")}
                     </a>
                 </div>
 
@@ -129,12 +131,10 @@ const AutoApproveModal: React.FC<AutoApproveModalProps> = ({ isVisible, setIsVis
                                 enableNotifications: checked,
                             })
                         }}>
-                        <span className="text-sm">Enable notifications</span>
+                        <span className="text-sm">{t("chatInput.auto.notifications")}</span>
                     </VSCodeCheckbox>
                 </div>
-                <div className="mt-1 text-xs text-muted-foreground">
-                    Notifications may show abbreviated tool details for safety and privacy.
-                </div>
+                <div className="mt-1 text-xs text-muted-foreground">{t("chatInput.auto.notificationsPrivacy")}</div>
             </div>
         </div>
     )

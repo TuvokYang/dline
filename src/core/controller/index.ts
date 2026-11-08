@@ -81,7 +81,7 @@ import { readHistoryContextWindowIndicator } from "@/core/task/HistoryContextWin
 import { resolveTaskPanelTitle } from "@/core/task/TaskPanelTitle"
 import { TaskStateManager } from "@/core/task/TaskStateManager"
 import { HostProvider } from "@/hosts/host-provider"
-import { ExtensionRegistryInfo } from "@/registry"
+import { ExtensionRegistryInfo, HostRegistryInfo } from "@/registry"
 import { readAccountFeatureSetting } from "@/services/account/accountFeatureGate"
 import { AuthService } from "@/services/auth/AuthService"
 import { OcaAuthService } from "@/services/auth/oca/OcaAuthService"
@@ -231,6 +231,7 @@ type InitTaskOptions = {
 
 type PostStateOptions = {
     immediate?: boolean
+    projection?: "full" | "ui-language"
 }
 
 export type ControllerCloseReason =
@@ -723,6 +724,9 @@ export class Controller {
                 // once, in one place, instead of being re-derived inline.
                 const plan = planExternalStateChange(event.source, changedKeys)
                 if (!plan.reconfigureComponents && !plan.publishState) return
+                if (changedKeys.includes("uiLanguage")) {
+                    await this.postStateToWebview({ projection: "ui-language" })
+                }
                 if (plan.reconfigureComponents) {
                     await this.configureGlobalComponents()
                 }
@@ -2890,6 +2894,22 @@ export class Controller {
             this.deferredStatePostWhileHidden = true
             return
         }
+        // A committed presentation preference must not wait behind full builds
+        // that an active Task's newer patches can repeatedly make stale.
+        if (options?.projection === "ui-language") {
+            const stateRevision = ++this.nextStateRevision
+            this.latestStateRevision = Math.max(this.latestStateRevision, stateRevision)
+            await sendStatePatch(
+                this,
+                {
+                    stateRevision,
+                    uiLanguage: this.stateManager.getUiLanguagePreference(),
+                    hostDisplayLanguage: HostRegistryInfo.get()?.displayLanguage,
+                },
+                this._accountUsage,
+            )
+            return
+        }
         // Coalescing downstream of the build only saved delivery: every caller in
         // a burst still paid for a full state build whose result was then
         // discarded. Merging first makes the build itself happen once per window.
@@ -3167,6 +3187,8 @@ export class Controller {
         const browserSettings = this.stateManager.getGlobalSettingsKey("browserSettings")
         const focusChainSettings = this.stateManager.getGlobalSettingsKey("focusChainSettings")
         const preferredLanguage = this.stateManager.getGlobalSettingsKey("preferredLanguage")
+        const uiLanguage = this.stateManager.getUiLanguagePreference()
+        const hostDisplayLanguage = HostRegistryInfo.get()?.displayLanguage
         const chatInputSendShortcut = this.stateManager.getGlobalSettingsKey("chatInputSendShortcut")
         const mode =
             this.task?.owners.settings.mode ??
@@ -3348,6 +3370,8 @@ export class Controller {
             browserSettings,
             focusChainSettings,
             preferredLanguage,
+            uiLanguage,
+            hostDisplayLanguage,
             chatInputSendShortcut,
             mode,
             strictPlanModeEnabled,

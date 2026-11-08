@@ -1,6 +1,7 @@
 import { createInitialTaskState } from "@core/task/kernel"
 import { projectCanonicalTaskView } from "@core/task/view/canonical/projectCanonicalTaskView"
 import type { TaskViewState } from "@shared/ExtensionMessage"
+import type { UiLanguagePreference } from "@shared/UiLanguage"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { Controller } from "../index"
 import { OpeningHandoff } from "../task/OpeningHandoff"
@@ -319,6 +320,60 @@ describe("Controller state publication coalescing", () => {
             expect(build.builds()).toBe(3)
             expect(vi.mocked(sendStateUpdate).mock.calls[0]?.[1]).toMatchObject({ stateRevision: 3 })
         } finally {
+            vi.useRealTimers()
+        }
+    })
+
+    it.each([
+        "zh-CN",
+        "auto",
+    ] as const)("delivers committed %s while streaming Task patches keep full snapshots stale", async (preference) => {
+        vi.useFakeTimers()
+        const releases: (() => void)[] = []
+        let publication: Promise<void> | undefined
+        let languagePublication: Promise<void> | undefined
+        const { controller } = createController("task-a")
+        try {
+            stubTaskView(controller)
+            let committed: UiLanguagePreference = "en"
+            Object.assign(controller.stateManager, { getUiLanguagePreference: () => committed })
+            vi.spyOn(controller as Controller & { buildState(r: number): Promise<never> }, "buildState").mockImplementation(
+                async (stateRevision: number) => {
+                    const snapshot = { stateRevision, uiLanguage: committed }
+                    await new Promise<void>((release) => releases.push(release))
+                    return snapshot as never
+                },
+            )
+            publication = controller.postStateToWebview({ immediate: true })
+            await settle()
+
+            committed = preference
+            const languageOnly = { immediate: true, projection: "ui-language" as const }
+            languagePublication = controller.postStateToWebview(languageOnly)
+            await settle()
+            for (let round = 0; round < 3; round++) {
+                await controller.postTaskViewPatchToWebview()
+                releases.shift()?.()
+                await settle()
+                await vi.advanceTimersByTimeAsync(50)
+            }
+
+            // A real publication must carry the committed preference before
+            // any full build becomes deliverable. Merely retrying a full
+            // snapshot can be starved forever by a streaming Task.
+            const languagePatches = vi.mocked(sendStatePatch).mock.calls.map((call) => call[1])
+            expect(languagePatches.find((patch) => patch.uiLanguage === preference)).toMatchObject({
+                uiLanguage: preference,
+            })
+            expect(sendStateUpdate).not.toHaveBeenCalled()
+            expect(languagePatches.at(-1)?.stateRevision).toBeGreaterThan(languagePatches[0].stateRevision)
+            await languagePublication
+        } finally {
+            Object.assign(controller, { disposed: true })
+            for (const release of releases) release()
+            await Promise.all([publication, languagePublication])
+            await settle()
+            vi.clearAllTimers()
             vi.useRealTimers()
         }
     })

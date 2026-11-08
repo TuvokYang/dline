@@ -2,6 +2,9 @@ import { ApiFormat, type ModelCapabilities } from "@shared/proto/dline/models/me
 import { openCodeThinkingBudgetOptions, resolveOpenCodeThinkingBudget } from "@shared/providers/opencode-reasoning"
 import { VSCodeCheckbox, VSCodeDropdown, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
 import { useEffect, useId, useState } from "react"
+import { LocalizedDropdown, LocalizedOption } from "@/components/common/LocalizedDropdown"
+import type { UiTranslator } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { DropdownContainer } from "../common/ModelSelector"
 import { ProfileField } from "../profile-ui"
@@ -27,26 +30,26 @@ export interface OpenCodePlanOption {
     readonly description: string
 }
 
-export const OPEN_CODE_PLAN_OPTIONS: readonly OpenCodePlanOption[] = [
+export const openCodePlanOptions = (t: UiTranslator): readonly OpenCodePlanOption[] => [
     {
         value: "balance",
-        label: "Pay-as-you-go",
-        description: "Uses the credit balance on your OpenCode Console workspace.",
+        label: t("settings.ui.opencode.balance"),
+        description: t("settings.ui.opencode.balanceHelp"),
     },
     {
         value: "go",
         label: "OpenCode Go",
-        description: "Uses your Go subscription. Requests beyond its limit need Extra Usage turned on.",
+        description: t("settings.ui.opencode.goHelp"),
     },
     {
         value: "go-plus",
         label: "OpenCode Go Plus",
-        description: "Uses your Go Plus subscription, which raises the monthly limit on every model.",
+        description: t("settings.ui.opencode.plusHelp"),
     },
     {
         value: "go-teams",
         label: "OpenCode Go Teams",
-        description: "Uses your workspace's Go Teams subscription. Each member carries their own limits.",
+        description: t("settings.ui.opencode.teamsHelp"),
     },
 ]
 
@@ -149,6 +152,8 @@ export function OpenCodeProviderCard({
     onThinkingBudgetChange,
     onRefreshModels,
 }: OpenCodeProviderCardProps) {
+    const { t } = useUiTranslation()
+    const planOptions = openCodePlanOptions(t)
     const planId = useId()
     const modelSelectId = useId()
     const formatId = useId()
@@ -162,42 +167,37 @@ export function OpenCodeProviderCard({
     useEffect(() => {
         setThinkingChecked(enableThinking)
     }, [enableThinking])
-    const selectedPlan = OPEN_CODE_PLAN_OPTIONS.find((option) => option.value === plan) ?? OPEN_CODE_PLAN_OPTIONS[0]
+    const selectedPlan = planOptions.find((option) => option.value === plan) ?? planOptions[0]
     const selectedFormat = formatForSelection(apiFormat)
     const thinking = resolveThinking(capabilities)
 
     return (
         <div className="flex w-full min-w-0 flex-col gap-3">
-            <ProfileField description={selectedPlan.description} htmlFor={planId} label="Plan">
+            <ProfileField description={selectedPlan.description} htmlFor={planId} label={t("settings.ui.opencode.plan")}>
                 <DropdownContainer className="dropdown-container min-w-0">
-                    <VSCodeDropdown
-                        aria-label="Plan"
+                    <LocalizedDropdown
+                        aria-label={t("settings.ui.opencode.plan")}
                         className="min-h-7 w-full"
                         id={planId}
                         onChange={dropdownChangeHandler((value) => onPlanChange(value as OpenCodePlan))}
+                        selectedLabel={planOptions.find((option) => option.value === plan)?.label}
                         value={plan}>
-                        {OPEN_CODE_PLAN_OPTIONS.map((option) => (
-                            <VSCodeOption key={option.value} value={option.value}>
-                                {option.label}
-                            </VSCodeOption>
+                        {planOptions.map((option) => (
+                            <LocalizedOption key={option.value} label={option.label} value={option.value} />
                         ))}
-                    </VSCodeDropdown>
+                    </LocalizedDropdown>
                 </DropdownContainer>
             </ProfileField>
 
             <ApiKeyField initialValue={apiKey} onChange={onApiKeyChange} providerName="OpenCode" />
 
             <ProfileField
-                description={
-                    onRefreshModels
-                        ? "Opening this list asks the gateway for its current models, so a model released after this build still appears."
-                        : undefined
-                }
+                description={onRefreshModels ? t("settings.ui.opencode.modelsHelp") : undefined}
                 htmlFor={modelSelectId}
-                label="Model">
+                label={t("settings.ui.model")}>
                 <DropdownContainer className="dropdown-container min-w-0">
                     <VSCodeDropdown
-                        aria-label="Model"
+                        aria-label={t("settings.ui.model")}
                         className="min-h-7 w-full"
                         id={modelSelectId}
                         onChange={dropdownChangeHandler(onModelChange)}
@@ -218,23 +218,23 @@ export function OpenCodeProviderCard({
             <ProfileField
                 description={
                     nativeApiFormat !== undefined && nativeApiFormat !== apiFormat
-                        ? `${modelId} is published through ${formatLabel(nativeApiFormat)}; Console translates this protocol.`
+                        ? t("settings.ui.opencode.protocolHelp", { model: modelId, format: formatLabel(nativeApiFormat, t) })
                         : undefined
                 }
                 htmlFor={formatId}
-                label="API Format">
+                label={t("settings.ui.apiFormat")}>
                 {/* One step below the Model list so an open picker above it is
                     not painted over by this control. */}
                 <DropdownContainer className="dropdown-container min-w-0" zIndex={999}>
                     <VSCodeDropdown
-                        aria-label="API Format"
+                        aria-label={t("settings.ui.apiFormat")}
                         className="min-h-7 w-full"
                         id={formatId}
                         onChange={dropdownChangeHandler((value) => onApiFormatChange(Number(value) as ApiFormat))}
                         value={String(selectedFormat)}>
                         {OPEN_CODE_API_FORMATS.map((candidate) => (
                             <VSCodeOption key={candidate} value={String(candidate)}>
-                                {formatLabel(candidate)}
+                                {formatLabel(candidate, t)}
                             </VSCodeOption>
                         ))}
                     </VSCodeDropdown>
@@ -260,35 +260,40 @@ export function OpenCodeProviderCard({
                             setThinkingChecked(checked)
                             onEnableThinkingChange?.(checked)
                         }}>
-                        Enable Thinking
+                        {t("settings.ui.enableThinking")}
                     </VSCodeCheckbox>
                     {thinkingChecked && thinking.mode === "effort" && (
                         <ReasoningEffortSelector
                             allowedEfforts={thinking.effortLevels ?? []}
                             defaultEffort={thinking.defaultEffort}
-                            description="Toggle above to enable thinking. The levels are the ones this model declares."
-                            label="Thinking Level"
+                            description={t("settings.ui.opencode.effortHelp")}
+                            label={t("settings.ui.thinkingLevel")}
                             onReasoningEffortChange={(value) => onEffortChange?.(value)}
                             reasoningEffort={effort}
                         />
                     )}
                     {thinkingChecked && thinking.mode === "budget" && (
                         <ProfileField
-                            description="Toggle above to enable thinking. The amount is this model's thinking token budget."
+                            description={t("settings.ui.opencode.budgetHelp")}
                             htmlFor={budgetId}
-                            label="Thinking Budget">
-                            <VSCodeDropdown
-                                aria-label="Thinking Budget"
+                            label={t("settings.ui.thinkingBudget")}>
+                            <LocalizedDropdown
+                                aria-label={t("settings.ui.thinkingBudget")}
                                 className="min-h-7 w-full"
                                 id={budgetId}
                                 onChange={dropdownChangeHandler((value) => onThinkingBudgetChange?.(Number(value)))}
+                                selectedLabel={t("settings.ui.tokens", {
+                                    count: resolveOpenCodeThinkingBudget(thinking, thinkingBudget).toLocaleString(),
+                                })}
                                 value={String(resolveOpenCodeThinkingBudget(thinking, thinkingBudget))}>
                                 {openCodeThinkingBudgetOptions(thinking, thinkingBudget).map((option) => (
-                                    <VSCodeOption key={option} value={String(option)}>
-                                        {option.toLocaleString()} tokens
-                                    </VSCodeOption>
+                                    <LocalizedOption
+                                        key={option}
+                                        label={t("settings.ui.tokens", { count: option.toLocaleString() })}
+                                        value={String(option)}
+                                    />
                                 ))}
-                            </VSCodeDropdown>
+                            </LocalizedDropdown>
                         </ProfileField>
                     )}
                 </div>
@@ -341,6 +346,6 @@ function dropdownChangeHandler(onValue: (value: string) => void): (event: Event 
     }
 }
 
-function formatLabel(apiFormat: ApiFormat): string {
-    return OPEN_CODE_API_FORMAT_LABELS[apiFormat] ?? "Unknown API Format"
+function formatLabel(apiFormat: ApiFormat, t: UiTranslator): string {
+    return OPEN_CODE_API_FORMAT_LABELS[apiFormat] ?? t("settings.ui.unknownFormat")
 }

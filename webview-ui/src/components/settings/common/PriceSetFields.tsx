@@ -1,5 +1,6 @@
 import type { PriceSet } from "@shared/proto/dline/models/metadata"
 import { useEffect, useId, useRef, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ProfileField, ProfileInlineGrid } from "../profile-ui"
 import { DebouncedTextField } from "./DebouncedTextField"
 
@@ -32,23 +33,24 @@ export function PriceSetFields({
     readOnly = false,
     onChange,
 }: PriceSetFieldsProps) {
+    const { t } = useUiTranslation()
     const id = useId()
     const latest = useRef(prices)
     useEffect(() => {
         latest.current = prices
     }, [prices])
-    const [errors, setErrors] = useState<Partial<Record<keyof PriceSet, string>>>({})
+    const [errors, setErrors] = useState<Partial<Record<keyof PriceSet, boolean>>>({})
     const slots: { key: keyof PriceSet; label: string; optional: boolean }[] = [
-        { key: "inputPrice", label: "Input Price", optional: false },
-        { key: "outputPrice", label: "Output Price", optional: false },
+        { key: "inputPrice", label: t("settings.ui.inputPrice"), optional: false },
+        { key: "outputPrice", label: t("settings.ui.outputPrice"), optional: false },
         ...(showCachePrices || (readOnly && (prices?.cacheReadPrice !== undefined || prices?.cacheWritePrice !== undefined))
             ? [
-                  { key: "cacheWritePrice" as const, label: "Cache Writes", optional: true },
-                  { key: "cacheReadPrice" as const, label: "Cache Reads", optional: true },
+                  { key: "cacheWritePrice" as const, label: t("settings.ui.cacheWrites"), optional: true },
+                  { key: "cacheReadPrice" as const, label: t("settings.ui.cacheReads"), optional: true },
               ]
             : []),
         ...(prices?.thinkingOutputPrice !== undefined
-            ? [{ key: "thinkingOutputPrice" as const, label: "Thinking Output", optional: true }]
+            ? [{ key: "thinkingOutputPrice" as const, label: t("settings.ui.thinkingOutput"), optional: true }]
             : []),
     ]
 
@@ -56,7 +58,7 @@ export function PriceSetFields({
         const empty = text.trim() === ""
         const value = optional && empty ? undefined : Number(text)
         if ((!optional && empty) || (value !== undefined && (!Number.isFinite(value) || value < 0))) {
-            setErrors((current) => ({ ...current, [slot]: "Enter a finite non-negative price." }))
+            setErrors((current) => ({ ...current, [slot]: true }))
             return
         }
         setErrors((current) => ({ ...current, [slot]: undefined }))
@@ -68,14 +70,14 @@ export function PriceSetFields({
     return (
         <ProfileInlineGrid>
             {slots.map(({ key, label, optional }) => {
-                const title = `${prefix ? `${prefix} ` : ""}${label} (${currencySymbol}/1M tokens)`
-                const accessibleName = `${accessiblePrefix ? `${accessiblePrefix} ` : ""}${title}`
+                const title = t("settings.ui.priceSlot", { scope: prefix, label, symbol: currencySymbol })
+                const accessibleName = t("settings.ui.scopedField", { scope: accessiblePrefix, label: title })
                 return (
                     <ProfileField htmlFor={readOnly ? undefined : `${id}-${key}`} key={key} label={title}>
                         {readOnly ? (
                             <span className="text-xs" data-price-slot={key}>
                                 {prices?.[key] === undefined
-                                    ? "Not published"
+                                    ? t("settings.ui.notPublished")
                                     : `${currencySymbol}${prices[key].toLocaleString("en-US", { maximumFractionDigits: 12 })}`}
                             </span>
                         ) : (
@@ -85,12 +87,12 @@ export function PriceSetFields({
                                 id={`${id}-${key}`}
                                 initialValue={prices?.[key] === undefined ? "" : String(prices[key])}
                                 onChange={(value) => update(key, value, optional)}
-                                placeholder={optional ? "Not published" : "Enter price"}
+                                placeholder={optional ? t("settings.ui.notPublished") : t("settings.ui.enterPrice")}
                             />
                         )}
                         {errors[key] && (
                             <span className="text-xs text-error" role="alert">
-                                {errors[key]}
+                                {t("settings.ui.priceInvalid")}
                             </span>
                         )}
                     </ProfileField>

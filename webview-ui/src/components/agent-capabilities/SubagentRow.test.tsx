@@ -4,11 +4,13 @@ import {
     RefreshedSubagents,
     SubagentCapabilitiesResponse,
     SubagentInfo,
+    SubagentToggles,
     UpdateSubagentConfigRequest,
 } from "@shared/proto/dline/file"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { UiLanguageProvider } from "@/i18n/UiLanguageProvider"
 import { FileServiceClient } from "../../services/grpc-client"
 import SubagentRow from "./SubagentRow"
 
@@ -236,7 +238,7 @@ beforeEach(() => {
             localSubagents: [...stored.values()],
         }))
     vi.mocked(FileServiceClient.openFile).mockReset().mockResolvedValue(Empty.create({}))
-    vi.mocked(FileServiceClient.deleteSubagentFile).mockReset().mockResolvedValue(Empty.create({}))
+    vi.mocked(FileServiceClient.deleteSubagentFile).mockReset().mockResolvedValue(SubagentToggles.create({}))
 })
 afterEach(cleanup)
 
@@ -914,5 +916,102 @@ describe("SubagentRow save and lifecycle boundaries", () => {
         expect(FileServiceClient.deleteSubagentFile).toHaveBeenCalledWith(
             expect.objectContaining({ subagentPath: agent.path, isGlobal: false }),
         )
+    })
+})
+
+describe("SubagentRow live UI language", () => {
+    it("switches both ways without remounting search, choices or directories and preserves exact scope and MCP URI patches", async () => {
+        const agent = makeAgent({ rules: [{ scope: "global", path: "guide.md" }] })
+        stored.set(agent.path, agent)
+        const onToggle = vi.fn()
+        const props = { agent, isGlobal: false, onToggle, onDelete: vi.fn() }
+        const tree = (language: "en" | "zh-CN") => (
+            <UiLanguageProvider language={language}>
+                <SubagentRow {...props} />
+            </UiLanguageProvider>
+        )
+        const view = render(tree("en"))
+        await expand()
+        tab("Rules")
+        const search = screen.getByRole("searchbox", { name: "Search Rules" })
+        fireEvent.change(search, { target: { value: "guide.md" } })
+        const globalRule = checkbox("Use rule global/guide.md")
+        const workspaceRule = checkbox("Use rule workspace/guide.md")
+        view.rerender(tree("zh-CN"))
+        expect(screen.getByRole("searchbox", { name: "搜索规则" })).toBe(search)
+        expect(search).toHaveValue("guide.md")
+        expect(checkbox("使用规则 global/guide.md")).toBe(globalRule)
+        expect(globalRule).toBeChecked()
+        expect(checkbox("使用规则 workspace/guide.md")).toBe(workspaceRule)
+        expect(screen.getByText("Workspace review policy")).toBeInTheDocument()
+        expect(screen.getByText("Global review policy")).toBeInTheDocument()
+        fireEvent.click(workspaceRule)
+        await waitFor(() =>
+            expect(screen.getByRole("status", { name: "子智能体配置保存状态" })).toHaveTextContent("子智能体配置已保存"),
+        )
+        expectPatch(1, agent, {
+            rules: [
+                { scope: "global", path: "guide.md" },
+                { scope: "workspace", path: "guide.md" },
+            ],
+            replaceRules: true,
+        })
+        view.rerender(tree("en"))
+        expect(checkbox("Use rule workspace/guide.md")).toBe(workspaceRule)
+        expect(workspaceRule).toBeChecked()
+        tab("MCP")
+        const resource = checkbox("Use MCP resource owner/github/repository://Instructions")
+        view.rerender(tree("zh-CN"))
+        expect(checkbox("使用 MCP 资源 owner/github/repository://Instructions")).toBe(resource)
+        expect(screen.getByText("Repository guide")).toBeInTheDocument()
+        fireEvent.click(resource)
+        await waitFor(() => expect(resource).toBeChecked())
+        expectPatch(2, agent, {
+            mcp: [{ server: "owner/github", tools: [], resources: ["repository://Instructions"] }],
+            replaceMcp: true,
+        })
+        view.rerender(tree("en"))
+        expect(checkbox("Use MCP resource owner/github/repository://Instructions")).toBe(resource)
+        expect(resource).toBeChecked()
+        expect(checkbox("Use MCP resource owner/github/repository://instructions")).not.toBeChecked()
+        expect(screen.getByText("Reviews code")).toBeInTheDocument()
+        expect(screen.getByRole("combobox", { name: "Profile" })).toHaveValue("profile-a")
+        expect(FileServiceClient.getAvailableTools).toHaveBeenCalledTimes(1)
+        expect(FileServiceClient.getSubagentCapabilities).toHaveBeenCalledTimes(1)
+        expect(FileServiceClient.getApiProfiles).toHaveBeenCalledTimes(1)
+        expect(onToggle).not.toHaveBeenCalled()
+    })
+
+    it("retranslates pending and retained rollback errors, preserves diagnostics and retries the same patch", async () => {
+        const agent = makeAgent()
+        stored.set(agent.path, agent)
+        const write = deferred<Empty>()
+        vi.mocked(FileServiceClient.updateSubagentConfig).mockImplementationOnce(() => write.promise)
+        const props = { agent, isGlobal: false, onToggle: vi.fn(), onDelete: vi.fn() }
+        const tree = (language: "en" | "zh-CN") => (
+            <UiLanguageProvider language={language}>
+                <SubagentRow {...props} />
+            </UiLanguageProvider>
+        )
+        const view = render(tree("en"))
+        await expand()
+        const choice = checkbox("Use search_files")
+        fireEvent.click(choice)
+        view.rerender(tree("zh-CN"))
+        expect(screen.getByRole("status", { name: "子智能体配置保存状态" })).toHaveTextContent("正在保存子智能体配置")
+        expect(checkbox("使用 search_files")).toBe(choice)
+        expect(choice).toBeChecked()
+        await act(async () => write.reject(new Error("Disk is read-only: C:\\workspace\\原始.yml")))
+        expect(screen.getByRole("alert")).toHaveTextContent("失败的更改已回滚")
+        expect(screen.getByRole("alert")).toHaveTextContent("Disk is read-only: C:\\workspace\\原始.yml")
+        expect(choice).not.toBeChecked()
+        view.rerender(tree("en"))
+        expect(screen.getByRole("alert")).toHaveTextContent("Failed change was rolled back")
+        expect(screen.getByRole("alert")).toHaveTextContent("Disk is read-only: C:\\workspace\\原始.yml")
+        expect(checkbox("Use search_files")).toBe(choice)
+        fireEvent.click(choice)
+        await saved()
+        expectPatch(2, agent, { tools: [...agent.tools, "search_files"], replaceTools: true })
+        expect(stored.get(agent.path)?.tools).toEqual([...agent.tools, "search_files"])
     })
 })

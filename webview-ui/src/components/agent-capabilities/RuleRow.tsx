@@ -6,7 +6,20 @@ import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { FileServiceClient } from "@/services/grpc-client"
+
+const RULE_TYPE_LABELS = [
+    { type: "rule", labelKey: "capabilities.type.rule" },
+    { type: "cline", labelKey: "capabilities.type.cline" },
+    { type: "cursor", labelKey: "capabilities.type.cursor" },
+    { type: "windsurf", labelKey: "capabilities.type.windsurf" },
+    { type: "agents", labelKey: "capabilities.type.agents" },
+    { type: "workflow", labelKey: "capabilities.type.workflow" },
+    { type: "skill", labelKey: "capabilities.type.skill" },
+    { type: "subagent", labelKey: "capabilities.type.subagent" },
+    { type: "hook", labelKey: "capabilities.type.hook" },
+] as const
 
 function isWin32Path(filePath: string): boolean {
     return /^[a-zA-Z]:\\/.test(filePath)
@@ -39,6 +52,9 @@ const RuleRow: React.FC<{
     alwaysEnabled?: boolean
     onDeleteSkill?: () => void
 }> = ({ rulePath, enabled, isGlobal, toggleRule, ruleType, isRemote = false, alwaysEnabled = false, onDeleteSkill }) => {
+    const { t } = useUiTranslation()
+    const typeKey = RULE_TYPE_LABELS.find((item) => item.type === ruleType)?.labelKey
+    const typeLabel = typeKey ? t(typeKey) : ruleType
     const displayName = getDisplayNameFromPath(rulePath)
     const skillDisplayName = getSkillDisplayNameFromSkillMdPath(rulePath)
 
@@ -163,9 +179,7 @@ const RuleRow: React.FC<{
                             <TooltipTrigger asChild className="cursor-help">
                                 <InfoIcon className="ml-1.5 opacity-70 size-[0.85rem]" />
                             </TooltipTrigger>
-                            <TooltipContent>
-                                Searches recursively for all AGENTS.md files in the workspace when a top-level AGENTS.md exists
-                            </TooltipContent>
+                            <TooltipContent>{t("capabilities.agentsHelp")}</TooltipContent>
                         </Tooltip>
                     )}
                 </span>
@@ -173,27 +187,28 @@ const RuleRow: React.FC<{
                 {/* Toggle Switch */}
                 <div className="flex items-center space-x-2 gap-2">
                     <Switch
+                        aria-label={t("capabilities.enableRule", { name: finalDisplayName })}
                         checked={displayedEnabled}
                         className="mx-1"
                         disabled={isDisabled}
                         key={rulePath}
                         onClick={handleToggle}
-                        title={isDisabled ? "This rule is required and cannot be disabled" : undefined}
+                        title={isDisabled ? t("capabilities.requiredRule") : undefined}
                     />
                     <Button
-                        aria-label={isRemote ? `View ${ruleType} file` : `Edit ${ruleType} file`}
+                        aria-label={t(isRemote ? "capabilities.viewFile" : "capabilities.editFile", { type: typeLabel })}
                         onClick={handleEditClick}
                         size="xs"
-                        title={isRemote ? `View ${ruleType} file (read-only)` : `Edit ${ruleType} file`}
+                        title={t(isRemote ? "capabilities.viewFileReadOnly" : "capabilities.editFile", { type: typeLabel })}
                         variant="icon">
                         {isRemote ? <EyeIcon /> : <PenIcon />}
                     </Button>
                     <Button
-                        aria-label={`Delete ${ruleType} file`}
+                        aria-label={t("capabilities.deleteFile", { type: typeLabel })}
                         disabled={isRemote}
                         onClick={handleDeleteClick}
                         size="xs"
-                        title={`Delete ${ruleType} file`}
+                        title={t("capabilities.deleteFile", { type: typeLabel })}
                         variant="icon">
                         <Trash2Icon />
                     </Button>

@@ -3,6 +3,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@components/ui/tooltip"
 import { OPENAI_SERVICE_TIER_OPTIONS, type OpenAiServiceTier } from "@shared/storage/types"
 import { CheckIcon } from "lucide-react"
 import { useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { SERVICE_TIER_ICONS } from "./ServiceTierIcons"
 
 interface TaskServiceTierControlProps {
@@ -10,25 +11,13 @@ interface TaskServiceTierControlProps {
     value?: OpenAiServiceTier
 }
 
-const SERVICE_TIER_DESCRIPTIONS: Record<OpenAiServiceTier, string> = {
-    auto: "Let OpenAI choose the request service tier.",
-    default: "Use the standard OpenAI service tier.",
-    flex: "Use the lower-cost flexible service tier.",
-    scale: "Use the Scale service tier.",
-    priority: "Use the priority service tier.",
-    ultrafast: "Use the ultra-fast service tier.",
-}
-
-function tierLabel(tier: OpenAiServiceTier): string {
-    return tier.charAt(0).toUpperCase() + tier.slice(1)
-}
-
 /** Icon-only Task-local OpenAI service-tier control with a Profile-style popover. */
 export function TaskServiceTierControl({ onSelect, value }: TaskServiceTierControlProps) {
+    const { t } = useUiTranslation()
     const [open, setOpen] = useState(false)
     const [hoveredTier, setHoveredTier] = useState<OpenAiServiceTier>()
     const ServiceTierIcon = SERVICE_TIER_ICONS[value ?? "auto"]
-    const serviceTierLabel = value ? tierLabel(value) : "No Task override"
+    const serviceTierLabel = value ? t(`chatInput.tier.${value}`) : t("chatInput.tier.none")
 
     const selectTier = (tier: OpenAiServiceTier) => {
         setOpen(false)
@@ -38,14 +27,14 @@ export function TaskServiceTierControl({ onSelect, value }: TaskServiceTierContr
     return (
         <Popover onOpenChange={setOpen} open={open}>
             <Tooltip>
-                {!open && <TooltipContent side="top">Service Tier: {serviceTierLabel}</TooltipContent>}
+                {!open && <TooltipContent side="top">{t("chatInput.tier.tooltip", { tier: serviceTierLabel })}</TooltipContent>}
                 <TooltipTrigger asChild>
                     <div
                         className="flex size-[18.5px] shrink-0 items-center justify-center text-[12.5px] leading-none"
                         data-chat-input-slot="service-tier">
                         <PopoverTrigger asChild>
                             <button
-                                aria-label="Task service tier"
+                                aria-label={t("chatInput.tier.control")}
                                 className="chat-input-control-outline inline-flex size-[18.5px] shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 text-xs leading-[18px] text-foreground shadow-none transition-colors duration-150 hover:bg-toolbar-hover focus-visible:bg-toolbar-hover"
                                 data-icon-only="true"
                                 data-service-tier-label={serviceTierLabel}
@@ -66,7 +55,7 @@ export function TaskServiceTierControl({ onSelect, value }: TaskServiceTierContr
 
             <PopoverContent
                 align="start"
-                aria-label="Task service tier options"
+                aria-label={t("chatInput.tier.options")}
                 className="min-w-56 overflow-hidden p-0 text-xs"
                 role="listbox"
                 side="top"
@@ -79,7 +68,7 @@ export function TaskServiceTierControl({ onSelect, value }: TaskServiceTierContr
                 <div
                     className="px-3 py-2 text-xs font-medium"
                     style={{ borderBottom: "1px solid var(--vscode-dropdown-border)" }}>
-                    Service Tier
+                    {t("chatInput.tier.title")}
                 </div>
                 {OPENAI_SERVICE_TIER_OPTIONS.map((tier) => {
                     const selected = value === tier
@@ -107,14 +96,14 @@ export function TaskServiceTierControl({ onSelect, value }: TaskServiceTierContr
                                 transition: "background 0.1s ease",
                             }}
                             tabIndex={0}
-                            title={SERVICE_TIER_DESCRIPTIONS[tier]}>
+                            title={t(`chatInput.tier.description.${tier}`)}>
                             <span
                                 className="mr-2 flex size-4 shrink-0 items-center justify-center text-xs leading-none"
                                 data-service-tier-option-icon={tier}>
                                 <OptionIcon aria-hidden="true" className="size-3 text-foreground" />
                             </span>
                             <span className="min-w-0 flex-1 truncate" data-service-tier-option-label={tier}>
-                                {tierLabel(tier)}
+                                {t(`chatInput.tier.${tier}`)}
                             </span>
                             <span
                                 className="ml-2 flex size-4 shrink-0 items-center justify-center rounded-full"

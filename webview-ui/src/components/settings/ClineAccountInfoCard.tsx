@@ -4,9 +4,11 @@ import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
 import { useState } from "react"
 import { useClineAuth } from "@/context/ClineAuthContext"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { AccountServiceClient } from "@/services/grpc-client"
 
 export const ClineAccountInfoCard = () => {
+    const { t } = useUiTranslation()
     const { clineUser } = useClineAuth()
     const { navigateToAccount, accountEnabled } = useExtensionState()
     const [isLoading, setIsLoading] = useState(false)
@@ -33,12 +35,12 @@ export const ClineAccountInfoCard = () => {
         <div className="max-w-[600px]">
             {user ? (
                 <VSCodeButton appearance="secondary" onClick={handleShowAccount}>
-                    View Billing & Usage
+                    {t("settings.ui.account.billing")}
                 </VSCodeButton>
             ) : (
                 <div>
                     <VSCodeButton className="mt-0" disabled={isLoading} onClick={handleLogin}>
-                        Sign Up with Dline
+                        {t("settings.ui.account.signup")}
                         {isLoading && (
                             <span className="ml-1 animate-spin">
                                 <span className="codicon codicon-refresh" />

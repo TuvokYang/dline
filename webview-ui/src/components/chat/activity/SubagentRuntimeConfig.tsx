@@ -1,27 +1,37 @@
 import type { TaskActivityRuntimeConfig } from "@shared/proto/dline/task"
+import type { UiTranslator } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 
 interface SubagentRuntimeConfigProps {
     runtime: TaskActivityRuntimeConfig | undefined
     className?: string
 }
 
-function thinkingLabel(runtime: TaskActivityRuntimeConfig): string | undefined {
+/** Provider and model identifiers stay raw; only the words the product owns are translated. */
+function thinkingLabel(runtime: TaskActivityRuntimeConfig, t: UiTranslator): string | undefined {
     if (runtime.reasoningEffort) return runtime.reasoningEffort
-    if (runtime.thinkingBudgetTokens !== undefined) return `${runtime.thinkingBudgetTokens.toLocaleString()} tokens`
-    if (runtime.thinkingEnabled !== undefined) return runtime.thinkingEnabled ? "enabled" : "disabled"
+    if (runtime.thinkingBudgetTokens !== undefined) {
+        return t("chatRows.common.tokens", { count: runtime.thinkingBudgetTokens.toLocaleString() })
+    }
+    if (runtime.thinkingEnabled !== undefined) {
+        return runtime.thinkingEnabled
+            ? t("chatRows.subagent.runtime.thinkingEnabled")
+            : t("chatRows.subagent.runtime.thinkingDisabled")
+    }
     return undefined
 }
 
 /** Display the effective runtime configuration captured by the subagent runner. */
 export function SubagentRuntimeConfig({ runtime, className }: SubagentRuntimeConfigProps) {
+    const { t } = useUiTranslation()
     if (!runtime) return null
     const items = [
-        ["Profile", runtime.profileName],
-        ["Provider", runtime.providerId],
-        ["Model", runtime.modelId],
-        ["API", runtime.apiFormat],
-        ["Thinking", thinkingLabel(runtime)],
-    ].filter((item): item is [string, string] => Boolean(item[1]))
+        ["profile", t("chatRows.subagent.runtime.profile"), runtime.profileName],
+        ["provider", t("chatRows.subagent.runtime.provider"), runtime.providerId],
+        ["model", t("chatRows.subagent.runtime.model"), runtime.modelId],
+        ["api", t("chatRows.subagent.runtime.api"), runtime.apiFormat],
+        ["thinking", t("chatRows.subagent.runtime.thinking"), thinkingLabel(runtime, t)],
+    ].filter((item): item is [string, string, string] => Boolean(item[2]))
     if (items.length === 0) return null
 
     return (
@@ -30,8 +40,11 @@ export function SubagentRuntimeConfig({ runtime, className }: SubagentRuntimeCon
                 .filter(Boolean)
                 .join(" ")}
             data-testid="subagent-runtime-config">
-            {items.map(([label, value], index) => (
-                <span className="inline-flex min-w-0 items-center gap-0.5" key={label} title={`${label}: ${value}`}>
+            {items.map(([id, label, value], index) => (
+                <span
+                    className="inline-flex min-w-0 items-center gap-0.5"
+                    key={id}
+                    title={t("chatRows.subagent.runtime.value", { label, value })}>
                     {index > 0 && <span aria-hidden="true">·</span>}
                     <span>{`${label}:`}</span>
                     <span className="min-w-0 truncate font-mono text-foreground">{value}</span>

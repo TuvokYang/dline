@@ -3,14 +3,17 @@ import { type ReactNode } from "react"
 import { ClineAuthProvider } from "./context/ClineAuthContext"
 import { ExtensionStateContextProvider } from "./context/ExtensionStateContext"
 import { PlatformProvider } from "./context/PlatformContext"
+import { UiLanguageBridge } from "./i18n/UiLanguageBridge"
 
 export function Providers({ children }: { children: ReactNode }) {
     return (
         <PlatformProvider>
             <ExtensionStateContextProvider>
-                <ClineAuthProvider>
-                    <HeroUIProvider>{children}</HeroUIProvider>
-                </ClineAuthProvider>
+                <UiLanguageBridge>
+                    <ClineAuthProvider>
+                        <HeroUIProvider>{children}</HeroUIProvider>
+                    </ClineAuthProvider>
+                </UiLanguageBridge>
             </ExtensionStateContextProvider>
         </PlatformProvider>
     )

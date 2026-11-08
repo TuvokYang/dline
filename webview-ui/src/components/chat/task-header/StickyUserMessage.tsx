@@ -1,5 +1,6 @@
 import { UiMessage } from "@shared/ExtensionMessage"
 import React, { memo, useCallback } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 import { highlightSubmittedMessage } from "./Highlights"
 
@@ -15,6 +16,7 @@ interface StickyUserMessageProps {
  */
 export const StickyUserMessage: React.FC<StickyUserMessageProps> = memo(
     ({ lastUserMessage, onScrollToMessage, isVisible }) => {
+        const { t } = useUiTranslation()
         const handleClick = useCallback(() => {
             if (onScrollToMessage) {
                 onScrollToMessage()
@@ -43,7 +45,7 @@ export const StickyUserMessage: React.FC<StickyUserMessageProps> = memo(
 
         return (
             <button
-                aria-label={`Scroll to your message: ${messageText}`}
+                aria-label={t("chatInput.header.scrollMessage", { message: messageText })}
                 className={cn(
                     "pointer-events-auto relative flex w-full items-center px-2.5 pt-2 pb-2 cursor-pointer select-none",
                     "backdrop-blur-sm border-0 text-left",
@@ -55,7 +57,7 @@ export const StickyUserMessage: React.FC<StickyUserMessageProps> = memo(
                     backgroundColor: "var(--vscode-badge-background)",
                     borderRadius: "3px",
                 }}
-                title="Click to scroll to your message"
+                title={t("chatInput.header.scrollMessageHint")}
                 type="button">
                 {/* Message text (truncated via CSS text-ellipsis) */}
                 <div

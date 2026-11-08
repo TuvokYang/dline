@@ -2,10 +2,10 @@ import {
     DEFAULT_LOCAL_SEARCH_ENGINE,
     isLocalSearchEngineId,
     LOCAL_SEARCH_ENGINE_IDS,
-    LOCAL_SEARCH_ENGINE_LABELS,
     type LocalSearchEngineId,
 } from "@shared/web-search"
 import { type ChangeEvent, type FocusEvent, useEffect, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { updateSetting } from "../utils/settingsHandlers"
 
 interface WebToolsSettingsProps {
@@ -13,15 +13,17 @@ interface WebToolsSettingsProps {
     searxngSearchUrl?: string
 }
 
-const ENGINE_OPTIONS: ReadonlyArray<{ value: LocalSearchEngineId; label: string }> = LOCAL_SEARCH_ENGINE_IDS.map((value) => ({
-    value,
-    label: LOCAL_SEARCH_ENGINE_LABELS[value],
-}))
+const engineLabelKeys = {
+    duckduckgo: "settings.ui.web.duckDuckGo",
+    bing: "settings.ui.web.bing",
+    searxng: "settings.ui.web.searXng",
+} as const satisfies Record<LocalSearchEngineId, string>
 
 const fieldClassName =
     "w-full rounded border border-input-border bg-input-background px-2 py-1 text-sm text-input-foreground outline-none focus:border-focus-border"
 
 const WebToolsSettings = ({ localWebSearchEngine, searxngSearchUrl }: WebToolsSettingsProps) => {
+    const { t } = useUiTranslation()
     const [engine, setEngine] = useState(localWebSearchEngine ?? DEFAULT_LOCAL_SEARCH_ENGINE)
     const [localUrl, setLocalUrl] = useState(searxngSearchUrl ?? "")
     const [token, setToken] = useState("")
@@ -54,24 +56,21 @@ const WebToolsSettings = ({ localWebSearchEngine, searxngSearchUrl }: WebToolsSe
         <div className="space-y-3 border-t border-editor-widget-border/50 pb-3 pt-3" data-testid="web-tools-settings">
             <div className="space-y-1">
                 <label className="block text-xs font-medium text-foreground" htmlFor="local-web-search-engine">
-                    Local Web Search engine
+                    {t("settings.ui.web.engine")}
                 </label>
                 <select
-                    aria-label="Local Web Search engine"
+                    aria-label={t("settings.ui.web.engine")}
                     className={fieldClassName}
                     id="local-web-search-engine"
                     onChange={handleEngineChange}
                     value={engine}>
-                    {ENGINE_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>
-                            {option.label}
+                    {LOCAL_SEARCH_ENGINE_IDS.map((value) => (
+                        <option key={value} value={value}>
+                            {t(engineLabelKeys[value])}
                         </option>
                     ))}
                 </select>
-                <p className="text-xs text-description">
-                    Choose the Dline engine used when Web Search runs locally. Each API Profile decides between hosted and local
-                    Web Tools under Web Tools mode.
-                </p>
+                <p className="text-xs text-description">{t("settings.ui.web.engineHelp")}</p>
             </div>
 
             {engine === "searxng" && (
@@ -93,22 +92,20 @@ const WebToolsSettings = ({ localWebSearchEngine, searxngSearchUrl }: WebToolsSe
                     </div>
                     <div className="space-y-1">
                         <label className="block text-xs font-medium text-foreground" htmlFor="searxng-search-token">
-                            SearXNG token
+                            {t("settings.ui.web.token")}
                         </label>
                         <input
-                            aria-label="SearXNG token"
+                            aria-label={t("settings.ui.web.token")}
                             autoComplete="new-password"
                             className={fieldClassName}
                             id="searxng-search-token"
                             onBlur={handleTokenBlur}
                             onChange={(event) => setToken(event.target.value)}
-                            placeholder="Leave blank to keep the stored token"
+                            placeholder={t("settings.ui.web.keepToken")}
                             type="password"
                             value={token}
                         />
-                        <p className="text-xs text-description">
-                            Stored only in VS Code Secret Storage and never displayed again.
-                        </p>
+                        <p className="text-xs text-description">{t("settings.ui.web.tokenHelp")}</p>
                     </div>
                 </div>
             )}

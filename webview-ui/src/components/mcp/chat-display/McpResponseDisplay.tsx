@@ -9,6 +9,7 @@ import { CODE_BLOCK_BG_COLOR } from "@/components/common/CodeBlock"
 import MarkdownBlock from "@/components/common/MarkdownBlock"
 import { DropdownContainer } from "@/components/settings/ApiOptions"
 import { updateSetting } from "@/components/settings/utils/settingsHandlers"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { useExtensionState } from "../../../context/ExtensionStateContext"
 import ImagePreview from "./ImagePreview"
 import LinkPreview from "./LinkPreview"
@@ -103,6 +104,7 @@ interface McpResponseDisplayProps {
 }
 
 const McpResponseDisplay: React.FC<McpResponseDisplayProps> = ({ responseText, embedded = false }) => {
+    const { t } = useUiTranslation()
     const { mcpResponsesCollapsed, mcpDisplayMode } = useExtensionState() // Get setting from context
     const containerStyle = embedded ? undefined : { maxHeight: TOOL_RESPONSE_MAX_HEIGHT }
     const headerInset = embedded ? "10px" : undefined
@@ -212,30 +214,36 @@ const McpResponseDisplay: React.FC<McpResponseDisplayProps> = ({ responseText, e
         if (isLoading && mcpDisplayMode === "rich") {
             return (
                 <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "50px" }}>
-                    <VSCodeProgressRing />
+                    <VSCodeProgressRing aria-label={t("capabilities.mcp.loadingResponse")} />
                 </div>
             )
         }
 
         if (mcpDisplayMode === "plain") {
-            return <UrlText>{truncateDataUris(responseText)}</UrlText>
+            return <UrlText>{truncateDataUris(responseText, t)}</UrlText>
         }
 
         if (mcpDisplayMode === "markdown") {
-            return <MarkdownBlock markdown={truncateDataUris(responseText)} />
+            return <MarkdownBlock markdown={truncateDataUris(responseText, t)} />
         }
 
         if (error) {
             return (
                 <>
-                    <div style={{ color: "var(--vscode-errorForeground)", marginBottom: "10px" }}>{error}</div>
+                    <div role="alert" style={{ color: "var(--vscode-errorForeground)", marginBottom: "10px" }}>
+                        {t("capabilities.mcp.processingError")}
+                        <details>
+                            <summary>{t("capabilities.diagnostics")}</summary>
+                            {error}
+                        </details>
+                    </div>
                     <UrlText>{responseText}</UrlText>
                 </>
             )
         }
 
         if (mcpDisplayMode === "rich") {
-            const segments = buildDisplaySegments(responseText, urlMatches)
+            const segments = buildDisplaySegments(responseText, urlMatches, t)
             return <>{segments.map(renderSegment)}</>
         }
 
@@ -258,7 +266,7 @@ const McpResponseDisplay: React.FC<McpResponseDisplayProps> = ({ responseText, e
                         ) : (
                             <ChevronRightIcon className="header-icon" size={16} />
                         )}
-                        Response
+                        {t("capabilities.mcp.response")}
                     </div>
                     <DropdownContainer
                         style={{ minWidth: isExpanded ? "auto" : "0", visibility: isExpanded ? "visible" : "hidden" }}>
@@ -293,7 +301,7 @@ const McpResponseDisplay: React.FC<McpResponseDisplayProps> = ({ responseText, e
                         ) : (
                             <ChevronRightIcon className="header-icon" size={16} />
                         )}
-                        Response (Error)
+                        {t("capabilities.mcp.responseError")}
                     </div>
                 </ResponseHeader>
                 {isExpanded && (
@@ -301,7 +309,7 @@ const McpResponseDisplay: React.FC<McpResponseDisplayProps> = ({ responseText, e
                         className="response-content themed-scrollbar"
                         data-testid="mcp-response-content"
                         style={{ overflowY: "auto" }}>
-                        <div style={{ color: "var(--vscode-errorForeground)" }}>Error parsing response:</div>
+                        <div style={{ color: "var(--vscode-errorForeground)" }}>{t("capabilities.mcp.parsingError")}</div>
                         <UrlText>{responseText}</UrlText>
                     </div>
                 )}
@@ -312,8 +320,9 @@ const McpResponseDisplay: React.FC<McpResponseDisplayProps> = ({ responseText, e
 
 // Wrap the entire McpResponseDisplay component with an error boundary
 const McpResponseDisplayWithErrorBoundary: React.FC<McpResponseDisplayProps> = (props) => {
+    const { t } = useUiTranslation()
     return (
-        <ChatErrorBoundary>
+        <ChatErrorBoundary errorBody={t("capabilities.mcp.boundaryBody")} errorTitle={t("capabilities.mcp.responseBoundary")}>
             <McpResponseDisplay {...props} />
         </ChatErrorBoundary>
     )

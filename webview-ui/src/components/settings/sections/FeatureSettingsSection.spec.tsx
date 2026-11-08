@@ -1,5 +1,7 @@
+import type { UiLanguage } from "@shared/UiLanguage"
 import { fireEvent, render, screen } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
+import { UiLanguageProvider } from "@/i18n/UiLanguageProvider"
 import FeatureSettingsSection from "./FeatureSettingsSection"
 
 const mockUpdateSetting = vi.fn()
@@ -34,6 +36,49 @@ vi.mock("../utils/settingsHandlers", () => ({
 }))
 
 describe("FeatureSettingsSection", () => {
+    it("updates feature metadata and search labels in the same tree while preserving raw drafts and engine values", () => {
+        mockUpdateSetting.mockClear()
+        const tree = (language: UiLanguage) => (
+            <UiLanguageProvider language={language}>
+                <FeatureSettingsSection renderSectionHeader={() => null} />
+            </UiLanguageProvider>
+        )
+        const view = render(tree("en"))
+        const hooks = screen.getByRole("switch", { name: "Hooks" })
+        const engine = screen.getByRole("combobox", { name: "Local Web Search engine" })
+        fireEvent.change(engine, { target: { value: "searxng" } })
+        const url = screen.getByRole("textbox", { name: "SearXNG URL" })
+        const token = screen.getByLabelText("SearXNG token")
+        fireEvent.change(url, { target: { value: "https://search.custom.test/raw-path" } })
+        fireEvent.change(token, { target: { value: "uncommitted-token" } })
+        const writes = mockUpdateSetting.mock.calls.length
+        view.rerender(tree("zh-CN"))
+        expect(screen.getByRole("switch", { name: "钩子" })).toBe(hooks)
+        expect(screen.getByRole("switch", { name: "功能提示" })).toBeVisible()
+        expect(screen.getByText("在思考阶段轮换显示提示，帮助你发现 Dline 的功能。")).toBeVisible()
+        expect(screen.getByRole("combobox", { name: "本地网页搜索引擎" })).toBe(engine)
+        expect(screen.getByRole("option", { name: "浏览器 / DuckDuckGo" })).toHaveValue("duckduckgo")
+        expect(screen.getByRole("option", { name: "浏览器 / Bing" })).toHaveValue("bing")
+        expect(engine).toHaveValue("searxng")
+        expect(screen.getByLabelText("SearXNG 令牌")).toBe(token)
+        expect(token).toHaveValue("uncommitted-token")
+        expect(url).toHaveValue("https://search.custom.test/raw-path")
+        expect(mockUpdateSetting).toHaveBeenCalledTimes(writes)
+        fireEvent.click(hooks)
+        expect(mockUpdateSetting).toHaveBeenLastCalledWith("hooksEnabled", true)
+        view.rerender(tree("en"))
+        expect(screen.getByRole("switch", { name: "Hooks" })).toBe(hooks)
+        expect(screen.getByRole("combobox", { name: "Local Web Search engine" })).toBe(engine)
+        expect(screen.getByRole("textbox", { name: "SearXNG URL" })).toBe(url)
+        expect(screen.getByLabelText("SearXNG token")).toBe(token)
+        expect(token).toHaveValue("uncommitted-token")
+        fireEvent.blur(url)
+        expect(mockUpdateSetting).toHaveBeenLastCalledWith("searxngSearchUrl", "https://search.custom.test/raw-path")
+        fireEvent.blur(token)
+        expect(mockUpdateSetting).toHaveBeenLastCalledWith("searxngSearchToken", "uncommitted-token")
+        expect(token).toHaveValue("")
+    })
+
     it("renders Hooks feature toggle", () => {
         const { container } = render(<FeatureSettingsSection renderSectionHeader={() => null} />)
 

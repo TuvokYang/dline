@@ -13,7 +13,10 @@ import { useEffect, useId, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { nativeSelectOptionStyle, nativeSelectStyle } from "@/components/ui/native-select-theme"
 import { Switch } from "@/components/ui/switch"
+import type { UiTranslator } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { FileServiceClient } from "@/services/grpc-client"
+import { CapabilityRichText } from "./CapabilityRichText"
 import useSubagentConfig, { type SubagentConfig } from "./useSubagentConfig"
 
 interface SubagentRowProps {
@@ -30,6 +33,7 @@ interface Choice {
     name: string
     description: string
     source: string
+    sourceLabel?: string
     scope?: string
     path?: string
     server?: string
@@ -43,7 +47,23 @@ interface Choice {
 }
 
 const TABS: Tab[] = ["tools", "rules", "skills", "workflows", "mcp"]
-const LABELS: Record<Tab, string> = { tools: "Tools", rules: "Rules", skills: "Skills", workflows: "Workflows", mcp: "MCP" }
+const LABELS = {
+    tools: "capabilities.tools",
+    rules: "capabilities.rules",
+    skills: "capabilities.skills",
+    workflows: "capabilities.workflows",
+    mcp: "capabilities.mcp",
+} as const
+const DIRECTORY_LABELS = {
+    tools: "capabilities.subagent.toolDirectory",
+    capabilities: "capabilities.subagent.capabilityDirectory",
+    profiles: "capabilities.subagent.profileDirectory",
+} as const
+const ACTION_ERRORS = {
+    toggle: "capabilities.subagent.toggleError",
+    delete: "capabilities.subagent.deleteError",
+    open: "capabilities.subagent.openError",
+} as const
 const PREREQUISITES: Record<Tab, string[]> = {
     tools: [],
     rules: [],
@@ -55,12 +75,28 @@ const ruleKey = (rule: { scope: string; path: string }) => JSON.stringify([rule.
 const mcpKey = (server: string, kind: string, value: string) => JSON.stringify([server, kind, value])
 const mcpSource = (name: string, displayName?: string) =>
     displayName && displayName !== name ? `${displayName} (${name})` : name
-const sourceName = (scope: string) => (scope ? scope[0].toUpperCase() + scope.slice(1) : "Unknown source")
+const sourceName = (scope: string, t: UiTranslator) => {
+    switch (scope) {
+        case "global":
+            return t("capabilities.subagent.source.global")
+        case "workspace":
+            return t("capabilities.subagent.source.workspace")
+        case "remote":
+            return t("capabilities.subagent.source.remote")
+        default:
+            return scope || t("capabilities.subagent.source.unknown")
+    }
+}
 const changeMembership = (values: string[], value: string, checked: boolean) =>
     checked ? [...new Set([...values, value])] : values.filter((item) => item !== value)
 
 /** Merge the read-only directory with selections, including disappeared entries. */
-function resourceChoices(tab: Exclude<ResourceTab, "mcp">, catalog: SubagentCapabilityInfo[], config: SubagentConfig): Choice[] {
+function resourceChoices(
+    tab: Exclude<ResourceTab, "mcp">,
+    catalog: SubagentCapabilityInfo[],
+    config: SubagentConfig,
+    t: UiTranslator,
+): Choice[] {
     const choices = new Map<string, Choice>()
     for (const item of catalog) {
         const key = tab === "rules" ? ruleKey(item) : item.name
@@ -68,7 +104,8 @@ function resourceChoices(tab: Exclude<ResourceTab, "mcp">, catalog: SubagentCapa
             ...item,
             key,
             value: item.name,
-            source: sourceName(item.scope),
+            source: item.scope,
+            sourceLabel: sourceName(item.scope, t),
             selected: tab === "rules" ? config.rules.some((rule) => ruleKey(rule) === key) : config[tab].includes(item.name),
             requires: PREREQUISITES[tab],
         })
@@ -82,11 +119,12 @@ function resourceChoices(tab: Exclude<ResourceTab, "mcp">, catalog: SubagentCapa
         choices.set(item.key, {
             ...item,
             value: item.name,
-            description: "This saved selection is no longer in the capability directory.",
-            source: item.scope ? sourceName(item.scope) : "Unavailable selections",
+            description: t("capabilities.subagent.missingDescription"),
+            source: item.scope || "unavailable",
+            sourceLabel: item.scope ? sourceName(item.scope, t) : t("capabilities.subagent.source.unavailable"),
             required: false,
             available: false,
-            unavailableReason: "Selected capability is missing or unavailable.",
+            unavailableReason: t("capabilities.subagent.missingReason"),
             selected: true,
             requires: PREREQUISITES[tab],
         })
@@ -94,7 +132,7 @@ function resourceChoices(tab: Exclude<ResourceTab, "mcp">, catalog: SubagentCapa
     return [...choices.values()]
 }
 
-function mcpChoices(catalog: SubagentCapabilitiesResponse["mcp"], config: SubagentConfig): Choice[] {
+function mcpChoices(catalog: SubagentCapabilitiesResponse["mcp"], config: SubagentConfig, t: UiTranslator): Choice[] {
     const choices = new Map<string, Choice>()
     for (const server of catalog) {
         const selected = config.mcp.filter((item) => item.server === server.name)
@@ -133,13 +171,13 @@ function mcpChoices(catalog: SubagentCapabilitiesResponse["mcp"], config: Subage
                     key,
                     name: value,
                     value,
-                    description: "This saved MCP selection is no longer advertised by its server.",
+                    description: t("capabilities.subagent.missingMcpDescription"),
                     source: mcpSource(selection.server, server?.displayName),
                     server: selection.server,
                     kind,
                     required: false,
                     available: false,
-                    unavailableReason: server?.unavailableReason || "Selected MCP server or item is missing or unavailable.",
+                    unavailableReason: server?.unavailableReason || t("capabilities.subagent.missingMcpReason"),
                     selected: true,
                     requires: kind === "tools" ? [Tool.LOAD_MCP, Tool.MCP_USE] : [Tool.MCP_ACCESS],
                 })
@@ -149,12 +187,16 @@ function mcpChoices(catalog: SubagentCapabilitiesResponse["mcp"], config: Subage
     return [...choices.values()]
 }
 
-function choiceLabel(tab: Tab, item: Choice) {
-    if (tab === "rules") return `Use rule ${item.scope}/${item.path}`
-    if (tab === "skills") return `Use skill ${item.name}`
-    if (tab === "workflows") return `Use workflow ${item.name}`
-    if (tab === "mcp") return `Use MCP ${item.kind === "resources" ? "resource" : "tool"} ${item.server}/${item.value}`
-    return `Use ${item.name}`
+function choiceLabel(tab: Tab, item: Choice, t: UiTranslator) {
+    if (tab === "rules") return t("capabilities.subagent.useRule", { scope: item.scope || "", path: item.path || "" })
+    if (tab === "skills") return t("capabilities.subagent.useSkill", { name: item.name })
+    if (tab === "workflows") return t("capabilities.subagent.useWorkflow", { name: item.name })
+    if (tab === "mcp")
+        return t(item.kind === "resources" ? "capabilities.subagent.useMcpResource" : "capabilities.subagent.useMcpTool", {
+            server: item.server || "",
+            value: item.value,
+        })
+    return t("capabilities.subagent.useTool", { name: item.name })
 }
 
 function SelectionRow({
@@ -170,6 +212,7 @@ function SelectionRow({
     disabled: boolean
     onChange: (checked: boolean) => void
 }) {
+    const { t } = useUiTranslation()
     const id = useId()
     const locked = disabled || item.required || !item.available || missing.length > 0
     return (
@@ -177,7 +220,7 @@ function SelectionRow({
             <label className={`flex gap-2.5 ${locked ? "opacity-70" : "cursor-pointer"}`}>
                 <input
                     aria-describedby={`${id}-description`}
-                    aria-label={choiceLabel(tab, item)}
+                    aria-label={choiceLabel(tab, item, t)}
                     checked={item.required || item.selected}
                     className="mt-0.5 shrink-0 accent-[var(--vscode-button-background)]"
                     disabled={locked}
@@ -188,9 +231,11 @@ function SelectionRow({
                     <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
                         <span className="break-all text-xs font-medium">{item.name}</span>
                         {item.kind && (
-                            <span className="text-[10px] text-description">{item.kind === "tools" ? "Tool" : "Resource"}</span>
+                            <span className="text-[10px] text-description">
+                                {t(item.kind === "tools" ? "capabilities.subagent.tool" : "capabilities.subagent.resource")}
+                            </span>
                         )}
-                        <span className="ml-auto text-[10px] text-description">{item.source}</span>
+                        <span className="ml-auto text-[10px] text-description">{item.sourceLabel ?? item.source}</span>
                     </span>
                     <span className="mt-1 block text-xs text-description" id={`${id}-description`}>
                         {item.description}
@@ -198,23 +243,31 @@ function SelectionRow({
                         {item.kind === "resources" && item.value !== item.name && (
                             <span className="block break-all">{item.value}</span>
                         )}
-                        {item.required && <span className="block">Required by policy · not saved as an ordinary selection</span>}
+                        {item.required && <span className="block">{t("capabilities.subagent.requiredSelection")}</span>}
                         {!item.available && (
-                            <span className="block text-warning">Unavailable: {item.unavailableReason || "Not available"}</span>
+                            <span className="block text-warning">
+                                {t("capabilities.subagent.unavailable", {
+                                    reason: item.unavailableReason || t("capabilities.subagent.notAvailable"),
+                                })}
+                            </span>
                         )}
-                        {missing.length > 0 && <span className="block text-warning">Requires {missing.join(" + ")}</span>}
+                        {missing.length > 0 && (
+                            <span className="block text-warning">
+                                {t("capabilities.subagent.requires", { tools: missing.join(" + ") })}
+                            </span>
+                        )}
                     </span>
                 </span>
             </label>
             {!item.required && item.selected && !item.available && (
                 <Button
-                    aria-label={`Remove unavailable selection: ${choiceLabel(tab, item)}`}
+                    aria-label={t("capabilities.subagent.removeUnavailableLabel", { selection: choiceLabel(tab, item, t) })}
                     className="ml-5 mt-1"
                     disabled={disabled}
                     onClick={() => onChange(false)}
                     size="xs"
                     variant="ghost">
-                    Remove unavailable selection
+                    {t("capabilities.subagent.removeUnavailable")}
                 </Button>
             )}
         </div>
@@ -223,6 +276,7 @@ function SelectionRow({
 
 /** Production editor: independent directories, bounded reads, field-only patches. */
 const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onToggle, onDelete }) => {
+    const { t } = useUiTranslation()
     const id = useId()
     const [expanded, setExpanded] = useState(false)
     const [tab, setTab] = useState<Tab>("tools")
@@ -240,7 +294,7 @@ const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onTog
     const [errors, setErrors] = useState<Partial<Record<"tools" | "capabilities" | "profiles", string>>>({})
     const { config, edit, saving, saved, error, refreshError, refresh } = useSubagentConfig(agent)
     const [pendingEnabled, setPendingEnabled] = useState<boolean>()
-    const [actionError, setActionError] = useState<string>()
+    const [actionError, setActionError] = useState<{ kind: keyof typeof ACTION_ERRORS; diagnostics: string }>()
     const toggleIntentRef = useRef(0)
     const mountedRef = useRef(true)
     const displayedEnabled = pendingEnabled ?? agent.enabled
@@ -319,8 +373,9 @@ const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onTog
             key: name,
             name,
             value: name,
-            source: "Unavailable selections",
-            description: "This saved tool is no longer in the tool directory.",
+            source: "unavailable",
+            sourceLabel: t("capabilities.subagent.source.unavailable"),
+            description: t("capabilities.subagent.missingToolDescription"),
             required: false,
             available: false,
             selected: true,
@@ -329,10 +384,10 @@ const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onTog
     }
     const inventory: Record<Tab, Choice[]> = {
         tools,
-        rules: resourceChoices("rules", capabilities.rules, config),
-        skills: resourceChoices("skills", capabilities.skills, config),
-        workflows: resourceChoices("workflows", capabilities.workflows, config),
-        mcp: mcpChoices(capabilities.mcp, config),
+        rules: resourceChoices("rules", capabilities.rules, config, t),
+        skills: resourceChoices("skills", capabilities.skills, config, t),
+        workflows: resourceChoices("workflows", capabilities.workflows, config, t),
+        mcp: mcpChoices(capabilities.mcp, config, t),
     }
     const missingTools = (item: Choice) => item.requires.filter((tool) => !effectiveTools.has(tool))
     const counts = (kind: Tab) => ({
@@ -385,10 +440,10 @@ const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onTog
         setActionError(undefined)
         try {
             await onToggle(agent.path, nextEnabled)
-        } catch {
+        } catch (cause) {
             if (mountedRef.current && toggleIntentRef.current === intent) {
                 setPendingEnabled(undefined)
-                setActionError("Could not change the subagent's enabled state.")
+                setActionError({ kind: "toggle", diagnostics: cause instanceof Error ? cause.message : String(cause) })
             }
         }
     }
@@ -398,13 +453,15 @@ const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onTog
             .then(() => {
                 if (mountedRef.current) onDelete()
             })
-            .catch(() => {
-                if (mountedRef.current) setActionError("Could not delete the subagent file.")
+            .catch((cause) => {
+                if (mountedRef.current)
+                    setActionError({ kind: "delete", diagnostics: cause instanceof Error ? cause.message : String(cause) })
             })
     }
     const handleEdit = () => {
-        FileServiceClient.openFile(StringRequest.create({ value: agent.path })).catch(() => {
-            if (mountedRef.current) setActionError("Could not open the subagent file.")
+        FileServiceClient.openFile(StringRequest.create({ value: agent.path })).catch((cause) => {
+            if (mountedRef.current)
+                setActionError({ kind: "open", diagnostics: cause instanceof Error ? cause.message : String(cause) })
         })
     }
     const changeTab = (next: Tab) => {
@@ -431,7 +488,7 @@ const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onTog
                 <button
                     aria-controls={`${id}-configuration`}
                     aria-expanded={expanded}
-                    aria-label={`Configure subagent ${agent.name}`}
+                    aria-label={t("capabilities.subagent.configure", { name: agent.name })}
                     className="mr-1 rounded p-0.5 hover:bg-input-background"
                     onClick={() => setExpanded(!expanded)}
                     type="button">
@@ -439,35 +496,40 @@ const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onTog
                 </button>
                 <span className="mr-1 flex min-w-0 flex-1 flex-wrap items-center" title={agent.path}>
                     <span className="ph-no-capture font-medium">{agent.name}</span>
-                    <span className="ml-2 text-[10px] text-description">{isGlobal ? "Global" : "Workspace"} subagent</span>
+                    <span className="ml-2 text-[10px] text-description">
+                        {t(isGlobal ? "capabilities.subagent.global" : "capabilities.subagent.workspace")}
+                    </span>
                     {agent.description && (
                         <span className="ml-2 max-w-[200px] truncate text-xs text-description">{agent.description}</span>
                     )}
                     <span className="ml-2 text-xs text-description">
-                        tools: {counts("tools").selected} + {requiredTools.size} required
+                        {t("capabilities.subagent.toolSummary", {
+                            selected: counts("tools").selected,
+                            required: requiredTools.size,
+                        })}
                     </span>
                 </span>
                 <div className="flex items-center gap-2">
                     <Switch
-                        aria-label={`Enable subagent ${agent.name}`}
+                        aria-label={t("capabilities.subagent.enable", { name: agent.name })}
                         checked={displayedEnabled}
                         className="mx-1"
                         onClick={handleToggle}
                     />
                     <Button
-                        aria-label="Edit subagent file"
+                        aria-label={t("capabilities.subagent.edit")}
                         onClick={handleEdit}
                         size="xs"
-                        title="Edit subagent file"
+                        title={t("capabilities.subagent.edit")}
                         variant="icon">
                         <PenIcon />
                     </Button>
                     <Button
-                        aria-label="Delete subagent file"
+                        aria-label={t("capabilities.subagent.delete")}
                         disabled={saving}
                         onClick={handleDelete}
                         size="xs"
-                        title="Delete subagent file"
+                        title={t("capabilities.subagent.delete")}
                         variant="icon">
                         <Trash2Icon />
                     </Button>
@@ -475,16 +537,20 @@ const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onTog
             </div>
             {actionError && (
                 <div className="mt-1 text-xs text-error" role="alert">
-                    {actionError}
+                    {t(ACTION_ERRORS[actionError.kind])}
+                    <details>
+                        <summary>{t("capabilities.diagnostics")}</summary>
+                        {actionError.diagnostics}
+                    </details>
                 </div>
             )}
             {expanded && (
                 <section
-                    aria-label={`${agent.name} configuration`}
+                    aria-label={t("capabilities.subagent.configuration", { name: agent.name })}
                     className="ml-6 mt-1 rounded bg-input-background p-3"
                     id={`${id}-configuration`}>
                     <label className="mb-3 flex flex-col gap-1 text-xs" htmlFor={`${id}-profile`}>
-                        <span className="font-medium">Profile</span>
+                        <span className="font-medium">{t("capabilities.subagent.profile")}</span>
                         <select
                             className="w-full rounded border p-1.5 text-xs"
                             disabled={loading.profiles || !!errors.profiles}
@@ -496,11 +562,11 @@ const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onTog
                             style={nativeSelectStyle}
                             value={config.profile}>
                             <option style={nativeSelectOptionStyle} value="">
-                                Default (act profile)
+                                {t("capabilities.subagent.defaultProfile")}
                             </option>
                             {config.profile && !profiles.some((profile) => profile.name === config.profile) && (
                                 <option style={nativeSelectOptionStyle} value={config.profile}>
-                                    {config.profile} (unavailable)
+                                    {t("capabilities.subagent.unavailableProfile", { name: config.profile })}
                                 </option>
                             )}
                             {profiles.map((profile) => (
@@ -512,23 +578,32 @@ const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onTog
                     </label>
                     {Object.entries(errors).length > 0 && (
                         <div className="mb-2 rounded border border-editor-group-border p-2 text-xs" role="alert">
-                            {Object.entries(errors).map(([kind, message]) => (
-                                <p className="my-1" key={kind}>
-                                    Could not load {kind}: {message}
-                                </p>
-                            ))}
+                            {(["tools", "capabilities", "profiles"] as const).map(
+                                (kind) =>
+                                    errors[kind] && (
+                                        <p className="my-1" key={kind}>
+                                            {t("capabilities.subagent.loadError", {
+                                                kind: t(DIRECTORY_LABELS[kind]),
+                                                reason: errors[kind] || "",
+                                            })}
+                                        </p>
+                                    ),
+                            )}
                             <Button onClick={() => setReload((current) => current + 1)} size="xs" variant="secondary">
-                                Retry capability directories
+                                {t("capabilities.subagent.retryDirectories")}
                             </Button>
                         </div>
                     )}
-                    <div aria-label="Capability categories" className="flex border-b border-editor-group-border" role="tablist">
+                    <div
+                        aria-label={t("capabilities.subagent.categories")}
+                        className="flex border-b border-editor-group-border"
+                        role="tablist">
                         {TABS.map((kind, index) => {
                             const count = counts(kind)
                             return (
                                 <button
                                     aria-controls={`${id}-panel-${kind}`}
-                                    aria-label={`${LABELS[kind]} (${count.active} active, ${count.selected} selected, ${count.required} required)`}
+                                    aria-label={t("capabilities.subagent.categoryCount", { name: t(LABELS[kind]), ...count })}
                                     aria-selected={tab === kind}
                                     className={`flex min-w-0 flex-1 flex-wrap items-center justify-center gap-1 border-0 border-b-2 bg-transparent px-1 py-2 text-xs ${tab === kind ? "border-link text-link" : "border-transparent text-description"}`}
                                     id={`${id}-tab-${kind}`}
@@ -553,11 +628,15 @@ const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onTog
                                     role="tab"
                                     tabIndex={tab === kind ? 0 : -1}
                                     type="button">
-                                    {LABELS[kind]}
+                                    {t(LABELS[kind])}
                                     <span className="rounded bg-text-block-background px-1 text-[10px]">
                                         {count.active}/{count.selected}
                                     </span>
-                                    {count.required > 0 && <span className="text-[10px]">+{count.required} required</span>}
+                                    {count.required > 0 && (
+                                        <span className="text-[10px]">
+                                            {t("capabilities.subagent.requiredCount", { count: count.required })}
+                                        </span>
+                                    )}
                                 </button>
                             )
                         })}
@@ -566,10 +645,10 @@ const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onTog
                         <div className="my-3 flex items-center gap-2 rounded border border-editor-group-border px-2">
                             <Search className="shrink-0 text-description" size={13} />
                             <input
-                                aria-label={`Search ${LABELS[tab]}`}
+                                aria-label={t("capabilities.subagent.search", { name: t(LABELS[tab]) })}
                                 className="min-w-0 flex-1 border-0 bg-transparent py-1.5 text-xs text-foreground outline-none"
                                 onChange={(event) => setQuery(event.target.value)}
-                                placeholder={`Search ${LABELS[tab].toLowerCase()}...`}
+                                placeholder={t("capabilities.subagent.searchPlaceholder", { name: t(LABELS[tab]) })}
                                 type="search"
                                 value={query}
                             />
@@ -577,10 +656,10 @@ const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onTog
                         {tab !== "tools" && (
                             <p className="mb-2 text-xs text-description">
                                 {tab === "rules"
-                                    ? "Selected rules are injected directly into this subagent's system prompt. No loader tool is required."
+                                    ? t("capabilities.subagent.ruleHelp")
                                     : tab === "mcp"
-                                      ? "Choose individual MCP tools and exact resource URIs. Tools require load_mcp + use_mcp_tool; resources require only access_mcp_resource. Selection does not bypass approval."
-                                      : `Choose which ${LABELS[tab].toLowerCase()} this subagent may load on demand, not up front.`}
+                                      ? t("capabilities.subagent.mcpHelp")
+                                      : t("capabilities.subagent.loadHelp", { name: t(LABELS[tab]) })}
                             </p>
                         )}
                         {prerequisites.length > 0 && !loading.tools && !errors.tools && (
@@ -588,20 +667,18 @@ const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onTog
                                 className="mb-2 rounded border border-editor-group-border bg-text-block-background p-2.5"
                                 role="note">
                                 <div className="flex items-center gap-1.5 text-xs font-medium">
-                                    <LockKeyhole size={13} /> Missing prerequisite tools
+                                    <LockKeyhole size={13} /> {t("capabilities.subagent.missingPrerequisites")}
                                 </div>
-                                <p className="my-1 text-[11px] text-description">
-                                    Selections are kept but inactive until their required tools are enabled.
-                                </p>
+                                <p className="my-1 text-[11px] text-description">{t("capabilities.subagent.prerequisiteHelp")}</p>
                                 <div className="flex flex-wrap gap-1.5">
                                     {prerequisites.map((tool) =>
                                         allTools.some((item) => item.name === tool) ? (
                                             <Button key={tool} onClick={() => setTool(tool, true)} size="xs" variant="secondary">
-                                                Enable {tool}
+                                                {t("capabilities.subagent.enableTool", { name: tool })}
                                             </Button>
                                         ) : (
                                             <span className="text-xs text-warning" key={tool}>
-                                                Unavailable tool: {tool}
+                                                {t("capabilities.subagent.unavailableTool", { name: tool })}
                                             </span>
                                         ),
                                     )}
@@ -610,36 +687,36 @@ const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onTog
                         )}
                         <div
                             aria-busy={catalogLoading}
-                            aria-label={`${LABELS[tab]} directory`}
+                            aria-label={t("capabilities.subagent.directory", { name: t(LABELS[tab]) })}
                             className="max-h-[280px] min-h-[120px] overflow-y-auto pr-1"
                             role="group">
                             {catalogLoading ? (
                                 <p className="text-xs text-description" role="status">
-                                    Loading available {LABELS[tab].toLowerCase()}...
+                                    {t("capabilities.subagent.loading", { name: t(LABELS[tab]) })}
                                 </p>
                             ) : catalogError && visible.length === 0 ? (
-                                <p className="text-xs text-description">Directory unavailable. Saved selections are unchanged.</p>
+                                <p className="text-xs text-description">{t("capabilities.subagent.directoryUnavailable")}</p>
                             ) : visible.length === 0 ? (
                                 <div className="flex min-h-[120px] flex-col items-center justify-center gap-2 text-center text-description">
                                     <span className="text-xs">
                                         {query.trim()
-                                            ? "No matching capabilities."
-                                            : `No ${LABELS[tab].toLowerCase()} available.`}
+                                            ? t("capabilities.subagent.noMatching")
+                                            : t("capabilities.subagent.noAvailable", { name: t(LABELS[tab]) })}
                                     </span>
                                     <span className="max-w-[300px] text-[11px]">
                                         {query.trim()
-                                            ? "Try another search. Hidden selections are unchanged."
-                                            : "Discoverable candidates are independent of the parent task's selections."}
+                                            ? t("capabilities.subagent.searchHelp")
+                                            : t("capabilities.subagent.directoryHelp")}
                                     </span>
                                 </div>
                             ) : (
                                 <>
                                     {required.length > 0 && (
                                         <section
-                                            aria-label={`Required ${LABELS[tab]}`}
+                                            aria-label={t("capabilities.subagent.requiredCategory", { name: t(LABELS[tab]) })}
                                             className="mb-2 border-b border-editor-group-border pb-2">
                                             <h4 className="my-1 px-2 text-[11px] font-semibold text-description">
-                                                Required by policy · separate from ordinary selections
+                                                {t("capabilities.subagent.requiredHelp")}
                                             </h4>
                                             {required.map((item) => (
                                                 <SelectionRow
@@ -656,7 +733,7 @@ const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onTog
                                     {[...new Set(ordinary.map((item) => item.source))].map((source) => (
                                         <div className="mb-2" key={source}>
                                             <h4 className="my-1 border-b border-editor-group-border px-2 py-1.5 text-[11px] font-semibold text-description">
-                                                {source}
+                                                {ordinary.find((item) => item.source === source)?.sourceLabel ?? source}
                                             </h4>
                                             <div
                                                 className={
@@ -683,51 +760,101 @@ const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onTog
                     </div>
                     <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 border-t border-editor-group-border pt-3 text-[11px] text-description">
                         <span>
-                            <output aria-label="Active rules">{counts("rules").active}</output> rules eligible for injection
+                            <CapabilityRichText
+                                parts={[
+                                    {
+                                        name: "count",
+                                        node: (
+                                            <output aria-label={t("capabilities.subagent.activeRules")}>
+                                                {counts("rules").active}
+                                            </output>
+                                        ),
+                                    },
+                                ]}
+                                render={(slot) => t("capabilities.subagent.rulesCount", { count: slot("count") })}
+                            />
                         </span>
                         <span>
-                            <output aria-label="Active skills">{counts("skills").active}</output> skills active
+                            <CapabilityRichText
+                                parts={[
+                                    {
+                                        name: "count",
+                                        node: (
+                                            <output aria-label={t("capabilities.subagent.activeSkills")}>
+                                                {counts("skills").active}
+                                            </output>
+                                        ),
+                                    },
+                                ]}
+                                render={(slot) => t("capabilities.subagent.skillsCount", { count: slot("count") })}
+                            />
                         </span>
                         <span>
-                            <output aria-label="Active workflows">{counts("workflows").active}</output> workflows active
+                            <CapabilityRichText
+                                parts={[
+                                    {
+                                        name: "count",
+                                        node: (
+                                            <output aria-label={t("capabilities.subagent.activeWorkflows")}>
+                                                {counts("workflows").active}
+                                            </output>
+                                        ),
+                                    },
+                                ]}
+                                render={(slot) => t("capabilities.subagent.workflowsCount", { count: slot("count") })}
+                            />
                         </span>
                         <span>
-                            <output aria-label="Active MCP items">{counts("mcp").active}</output> MCP items active
+                            <CapabilityRichText
+                                parts={[
+                                    {
+                                        name: "count",
+                                        node: (
+                                            <output aria-label={t("capabilities.subagent.activeMcp")}>
+                                                {counts("mcp").active}
+                                            </output>
+                                        ),
+                                    },
+                                ]}
+                                render={(slot) => t("capabilities.subagent.mcpCount", { count: slot("count") })}
+                            />
                         </span>
                     </div>
-                    <p className="my-2 text-[11px] text-description">
-                        Counts show active / selected ordinary choices; required items are separate. Rule conditions, runtime
-                        availability and real approval still apply. Changes apply to the next subagent run.
-                    </p>
+                    <p className="my-2 text-[11px] text-description">{t("capabilities.subagent.countHelp")}</p>
                 </section>
             )}
             {(expanded || saving || error || refreshError) && (
                 <div className="ml-6 mt-1">
                     <div
-                        aria-label="Subagent configuration save status"
+                        aria-label={t("capabilities.subagent.saveStatus")}
                         aria-live="polite"
                         className="text-xs text-description"
                         role="status">
                         {saving
-                            ? "Saving subagent configuration..."
+                            ? t("capabilities.subagent.saving")
                             : error
-                              ? "Some changes were not saved."
+                              ? t("capabilities.subagent.unsaved")
                               : refreshError
-                                ? "Saved choices kept; refreshed configuration could not be verified."
+                                ? t("capabilities.subagent.unverified")
                                 : saved
-                                  ? "Subagent configuration saved."
-                                  : "No unsaved changes."}
+                                  ? t("capabilities.subagent.saved")
+                                  : t("capabilities.subagent.noChanges")}
                     </div>
                     {error && (
                         <div className="mt-1 text-xs text-error" role="alert">
-                            {error}
+                            {error.kind === "save" &&
+                                t("capabilities.subagent.saveError", {
+                                    field:
+                                        error.field === "profile" ? t("capabilities.subagent.profile") : t(LABELS[error.field]),
+                                    reason: error.diagnostics,
+                                })}
                         </div>
                     )}
                     {refreshError && (
                         <div className="mt-1 text-xs text-error" role="alert">
-                            {refreshError}
+                            {t("capabilities.subagent.refreshError", { reason: refreshError.diagnostics })}
                             <Button className="ml-2" onClick={refresh} size="xs" variant="secondary">
-                                Retry refreshed configuration
+                                {t("capabilities.subagent.retryRefresh")}
                             </Button>
                         </div>
                     )}

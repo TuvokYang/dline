@@ -1,7 +1,9 @@
 import { UiMessage } from "@shared/ExtensionMessage"
 import { memo } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ApiErrorBox } from "./ApiErrorBox"
 import { ApiFailureContent } from "./ApiFailureContent"
+import { ChatUiText } from "./chat-view/components/ChatUiText"
 
 interface ErrorRowProps {
     message: UiMessage
@@ -11,6 +13,7 @@ interface ErrorRowProps {
 }
 
 const ErrorRow = memo(({ message, errorType, apiRequestFailedMessage, apiReqStreamingFailedMessage }: ErrorRowProps) => {
+    const { t } = useUiTranslation()
     const rawApiError = apiRequestFailedMessage || apiReqStreamingFailedMessage
 
     const renderErrorContent = () => {
@@ -23,14 +26,18 @@ const ErrorRow = memo(({ message, errorType, apiRequestFailedMessage, apiReqStre
                     <ApiErrorBox
                         error={message.text}
                         testId="error-message-box"
-                        title={errorType === "mistake_limit_reached" ? "Task Needs Attention" : "Error"}
+                        title={
+                            errorType === "mistake_limit_reached"
+                                ? t("chatRows.errors.taskNeedsAttention")
+                                : t("chatRows.errors.error")
+                        }
                     />
                 )
 
             case "diff_error":
                 return (
                     <div className="flex flex-col p-2 rounded text-xs opacity-80 bg-quote text-foreground">
-                        <div>The model used search patterns that don't match anything in the file. Retrying...</div>
+                        <div>{t("chatRows.errors.diffMismatch")}</div>
                     </div>
                 )
 
@@ -38,8 +45,13 @@ const ErrorRow = memo(({ message, errorType, apiRequestFailedMessage, apiReqStre
                 return (
                     <div className="flex flex-col p-2 rounded text-xs opacity-80 bg-quote text-foreground">
                         <div>
-                            Dline tried to access <code>{message.text}</code> which is blocked by the <code>.agentignore</code>
-                            file.
+                            <ChatUiText
+                                slots={{
+                                    file: <code>.agentignore</code>,
+                                    path: <code>{message.text}</code>,
+                                }}
+                                text={t("chatRows.errors.ignoredPath")}
+                            />
                         </div>
                     </div>
                 )

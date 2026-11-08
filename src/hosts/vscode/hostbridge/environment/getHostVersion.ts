@@ -16,5 +16,6 @@ export async function getHostVersion(_: EmptyRequest): Promise<GetHostVersionRes
         // field is absent for local workspaces. An empty string is treated as local — the
         // safe direction (false negative rather than false positive).
         remoteName: vscode.env.remoteName || undefined,
+        displayLanguage: vscode.env.language,
     }
 }

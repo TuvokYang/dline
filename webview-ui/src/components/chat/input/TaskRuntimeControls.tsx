@@ -10,13 +10,17 @@ import type { OpenAiServiceTier } from "@shared/storage/types"
 import { profileServiceTierEnabled, resolveProfileServiceTier } from "@shared/task-provider-overrides"
 import { resolveProfileReasoningConfig, resolveTaskThinkingConfig, validateTaskReasoningOverride } from "@shared/task-reasoning"
 import { useEffect, useMemo, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
+import { type RuntimeControlError, runtimeControlErrorText, thinkingEffortLabel } from "./runtime-presentation"
 import { TaskServiceTierControl } from "./TaskServiceTierControl"
 
 /** Task-local reasoning and OpenAI service-tier controls for the chat input toolbar. */
 export function TaskRuntimeControls() {
+    const { t } = useUiTranslation()
     const { apiConfiguration, currentTaskItem, mode, taskViewState } = useExtensionState()
     const { profiles } = useApiProfiles()
-    const [error, setError] = useState<string>()
+    const [errorState, setError] = useState<RuntimeControlError>()
+    const error = errorState ? runtimeControlErrorText(errorState, t) : undefined
 
     const taskId = taskViewState?.taskId
     const profileId = mode === "plan" ? apiConfiguration?.planModeProfileId : apiConfiguration?.actModeProfileId
@@ -78,10 +82,10 @@ export function TaskRuntimeControls() {
     const [budgetValue, setBudgetValue] = useState(String(configuredBudget))
     const thinkingLabel =
         thinkingValue === "budget"
-            ? "Budget"
+            ? t("chatInput.runtime.budget")
             : thinkingValue.startsWith("effort:")
-              ? thinkingValue.slice("effort:".length).replace(/^./, (character) => character.toUpperCase())
-              : "Thinking"
+              ? thinkingEffortLabel(thinkingValue.slice("effort:".length), t)
+              : t("chatInput.runtime.thinking")
 
     useEffect(() => setThinkingValue(configuredThinkingValue), [configuredThinkingValue])
     useEffect(() => setBudgetValue(String(configuredBudget)), [configuredBudget])
@@ -92,7 +96,7 @@ export function TaskRuntimeControls() {
         try {
             await updateTaskSettings(taskId, settings)
         } catch (caught) {
-            setError(caught instanceof Error ? caught.message : "Failed to update Task runtime settings.")
+            setError({ kind: "rpc", detail: caught instanceof Error ? caught.message : undefined })
         }
     }
 
@@ -111,7 +115,14 @@ export function TaskRuntimeControls() {
         const budgetTokens = budgetValue.trim() === "" ? Number.NaN : Number(budgetValue)
         const validation = validateTaskReasoningOverride({ kind: "budget", budgetTokens }, thinking)
         if (!validation.valid) {
-            setError(validation.message)
+            setError({
+                kind: "validation",
+                error: validation.error,
+                minimum: budgetBounds?.minimum,
+                maximum: budgetBounds?.maximum,
+                cannotDisable: budgetTokens === 0 && thinking?.canDisable === false,
+                invalidBounds: thinking?.supported === true && thinking.mode === "budget" && !budgetBounds,
+            })
             return
         }
         void commit(
@@ -140,17 +151,19 @@ export function TaskRuntimeControls() {
                     data-chat-input-slot="thinking">
                     <Select onValueChange={updateThinking} value={thinkingValue}>
                         <Tooltip>
-                            <TooltipContent side="top">Thinking: {thinkingLabel}</TooltipContent>
+                            <TooltipContent side="top">
+                                {t("chatInput.runtime.thinkingLabel", { label: thinkingLabel })}
+                            </TooltipContent>
                             <TooltipTrigger asChild>
                                 <div className="inline-flex h-[18.5px] min-w-0 max-w-full items-center">
                                     <SelectTrigger
-                                        aria-label="Task thinking override"
+                                        aria-label={t("chatInput.runtime.thinkingOverride")}
                                         className="chat-input-control-outline !h-[18.5px] inline-flex w-auto min-w-0 max-w-full items-center justify-center gap-0 overflow-hidden rounded-sm border-0 bg-toolbar-hover px-1 py-0 text-center text-xs font-medium leading-[18px] text-foreground shadow-none transition-colors duration-150 focus-visible:ring-0"
                                         showIcon={false}
                                         size="sm">
                                         <SelectValue
                                             className="inline-flex h-full min-w-0 items-center justify-center truncate text-center leading-[18px]"
-                                            placeholder="Thinking"
+                                            placeholder={t("chatInput.runtime.thinking")}
                                         />
                                     </SelectTrigger>
                                 </div>
@@ -158,7 +171,7 @@ export function TaskRuntimeControls() {
                         </Tooltip>
                         <SelectContent
                             align="start"
-                            aria-label="Task thinking override options"
+                            aria-label={t("chatInput.runtime.thinkingOptions")}
                             className="min-w-28"
                             position="popper"
                             side="top"
@@ -166,15 +179,15 @@ export function TaskRuntimeControls() {
                             {supportsEffort &&
                                 effortLevels.map((effort) => (
                                     <SelectItem key={effort} value={`effort:${effort}`}>
-                                        {effort.charAt(0).toUpperCase() + effort.slice(1)}
+                                        {thinkingEffortLabel(effort, t)}
                                     </SelectItem>
                                 ))}
-                            {supportsBudget && <SelectItem value="budget">Budget</SelectItem>}
+                            {supportsBudget && <SelectItem value="budget">{t("chatInput.runtime.budget")}</SelectItem>}
                         </SelectContent>
                     </Select>
                     {thinkingValue === "budget" && supportsBudget && (
                         <input
-                            aria-label="Task thinking budget"
+                            aria-label={t("chatInput.runtime.thinkingBudget")}
                             className="w-20 rounded-sm border border-dropdown-border bg-input-background px-1 py-0.5 text-xs text-input-foreground"
                             max={maxBudget}
                             min={minBudget}

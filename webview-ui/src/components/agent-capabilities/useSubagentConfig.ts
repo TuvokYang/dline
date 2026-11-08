@@ -17,12 +17,13 @@ interface Intent {
     field: Field
     apply: (config: SubagentConfig) => SubagentConfig
 }
+export type SubagentConfigError = { kind: "save"; field: Field; diagnostics: string } | { kind: "refresh"; diagnostics: string }
 interface Snapshot {
     config: SubagentConfig
     saving: boolean
     saved: boolean
-    error?: string
-    refreshError?: string
+    error?: SubagentConfigError
+    refreshError?: SubagentConfigError
 }
 
 const FIELDS: Field[] = ["tools", "rules", "skills", "workflows", "mcp", "profile"]
@@ -67,8 +68,8 @@ class SaveSession {
     private listeners = new Set<() => void>()
     private draining = false
     private saved = false
-    private error?: string
-    private refreshError?: string
+    private error?: SubagentConfigError
+    private refreshError?: SubagentConfigError
     private snapshot: Snapshot
     // Remember superseded write projections for the mounted session. Once a
     // value has been acknowledged, a later matching old prop is ambiguous:
@@ -169,7 +170,7 @@ class SaveSession {
         } catch (error) {
             if (fields.some(isCurrent)) {
                 const reason = error instanceof Error ? error.message : String(error)
-                this.refreshError = `Could not verify refreshed configuration: ${reason}. Latest local choices were kept.`
+                this.refreshError = { kind: "refresh", diagnostics: reason }
                 this.publish()
             }
         }
@@ -231,7 +232,7 @@ class SaveSession {
             } catch (error) {
                 failed = true
                 const reason = error instanceof Error ? error.message : String(error)
-                this.error = `Could not save ${intent.field}: ${reason}. Failed change was rolled back.`
+                this.error = { kind: "save", field: intent.field, diagnostics: reason }
             }
             this.pending.shift()
             this.versions[intent.field]++

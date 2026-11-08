@@ -1,5 +1,6 @@
 import type { TaskActivityEvent } from "@shared/proto/dline/task"
 import { useMemo } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { buildSubagentRetryAttempts, type SubagentRetryAttempt } from "./subagent-activity-model"
 
 function formatRetryDuration(milliseconds: number): string {
@@ -19,6 +20,7 @@ export function SubagentRetryTimeline({
     attempts?: readonly SubagentRetryAttempt[]
     currentAttempt?: number
 }) {
+    const { t } = useUiTranslation()
     const projectedAttempts = useMemo(
         () => attempts ?? buildSubagentRetryAttempts(events, currentAttempt),
         [attempts, events, currentAttempt],
@@ -27,18 +29,29 @@ export function SubagentRetryTimeline({
 
     return (
         <div className="min-w-0 text-[11px] text-description" data-testid="subagent-retry-timeline">
-            <div className="mb-1 font-semibold uppercase tracking-wide">Automatic retries ({projectedAttempts.length})</div>
+            <div className="mb-1 font-semibold uppercase tracking-wide">
+                {t("chatRows.subagent.retries", { count: projectedAttempts.length })}
+            </div>
             <ol className="m-0 space-y-0.5 p-0 list-none">
                 {projectedAttempts.map((attempt) => (
                     <li
                         className="flex min-w-0 flex-wrap items-center gap-x-1.5 font-mono"
                         data-testid="subagent-retry-attempt"
                         key={attempt.sequence}>
-                        <span>{`Retry ${attempt.retryAttempt}/${attempt.maxRetries}`}</span>
+                        <span>
+                            {t("chatRows.subagent.retry", {
+                                attempt: attempt.retryAttempt,
+                                maxRetries: attempt.maxRetries,
+                            })}
+                        </span>
                         <span aria-hidden="true">·</span>
-                        <span>{`wait ${formatRetryDuration(attempt.delayMs)}`}</span>
+                        <span>{t("chatRows.subagent.retryWait", { duration: formatRetryDuration(attempt.delayMs) })}</span>
                         <span aria-hidden="true">·</span>
-                        <span>{`total ${formatRetryDuration(attempt.cumulativeDelayMs)}`}</span>
+                        <span>
+                            {t("chatRows.subagent.retryTotal", {
+                                duration: formatRetryDuration(attempt.cumulativeDelayMs),
+                            })}
+                        </span>
                     </li>
                 ))}
             </ol>

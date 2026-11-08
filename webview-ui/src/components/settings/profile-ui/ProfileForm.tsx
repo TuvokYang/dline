@@ -45,12 +45,16 @@ export function ProfileField({ label, description, error, actions, htmlFor, clas
                     {actions ? <div className="flex shrink-0 items-center gap-1">{actions}</div> : null}
                 </div>
             ) : null}
-            <div className="min-w-0 [&_input]:min-h-7 [&_select]:min-h-7 [&_vscode-dropdown]:min-h-7 [&_vscode-dropdown]:w-full [&_vscode-text-field]:min-h-7 [&_vscode-text-field]:w-full">
+            <div className="min-w-0 [&_[slot='selected-value']]:text-sm [&_input]:min-h-7 [&_select]:min-h-7 [&_vscode-dropdown]:min-h-7 [&_vscode-dropdown]:w-full [&_vscode-option]:text-sm [&_vscode-text-field]:min-h-7 [&_vscode-text-field]:w-full">
                 {children}
             </div>
-            {description ? <p className="text-xs leading-normal text-description">{description}</p> : null}
+            {description ? (
+                <p className="m-0 line-clamp-none text-xs leading-normal text-description [&_span]:leading-[inherit]">
+                    {description}
+                </p>
+            ) : null}
             {error ? (
-                <p className="text-xs leading-normal text-error" role="alert">
+                <p className="m-0 line-clamp-none text-xs leading-normal text-error" role="alert">
                     {error}
                 </p>
             ) : null}

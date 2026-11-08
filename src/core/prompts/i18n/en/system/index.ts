@@ -120,5 +120,8 @@ export const systemPromptModules = [
     defineLegacyModule("workflows", "system", workflows),
     defineLegacyModule("userAuthority", "system", userAuthority),
     defineLegacyModule("userCommunication", "system", userCommunication),
-    defineLegacyModule("userInstructions", "system", userInstructions, { main: createRuntimeContract("CUSTOM_INSTRUCTIONS") }),
+    defineLegacyModule("userInstructions", "system", userInstructions, {
+        main: createRuntimeContract("CUSTOM_INSTRUCTIONS"),
+        fixedLanguage: createRuntimeContract("LANGUAGE"),
+    }),
 ] as const

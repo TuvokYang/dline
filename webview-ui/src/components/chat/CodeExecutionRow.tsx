@@ -2,6 +2,8 @@ import type { CodeExecutionPresentationV1, HostedCodeExecutionOperation } from "
 import type { UiSayTool } from "@shared/ExtensionMessage"
 import { ChevronDownIcon, ChevronRightIcon, TerminalIcon, TriangleAlertIcon } from "lucide-react"
 import { useState } from "react"
+import { type UiTranslator } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import ToolCardHeader from "./ToolCardHeader"
 
 interface CodeExecutionRowProps {
@@ -11,14 +13,20 @@ interface CodeExecutionRowProps {
     description?: string
 }
 
-function operationTitle(messageType: "ask" | "say", operation: HostedCodeExecutionOperation | undefined): string {
+/**
+ * Each operation names its own title, bound to the surface's translator.
+ *
+ * The key and its `ask` argument are chosen together here so a computed key never
+ * has to be matched against an argument type the public translator cannot correlate.
+ */
+function operationTitle(operation: HostedCodeExecutionOperation | undefined, ask: boolean, t: UiTranslator): string {
     switch (operation?.type) {
         case "bash":
-            return messageType === "ask" ? "Dline wants to run a command in the sandbox:" : "Dline ran a command in the sandbox:"
+            return t("chatRows.codeExecution.title.bash", { ask })
         case "text_editor":
-            return messageType === "ask" ? "Dline wants to edit a sandbox file:" : "Dline edited a sandbox file:"
+            return t("chatRows.codeExecution.title.textEditor", { ask })
         default:
-            return messageType === "ask" ? "Dline wants to run code in the sandbox:" : "Dline ran code in the sandbox:"
+            return t("chatRows.codeExecution.title.code", { ask })
     }
 }
 
@@ -36,14 +44,14 @@ function submittedText(operation: HostedCodeExecutionOperation | undefined, fall
     }
 }
 
-function statusLabel(status: CodeExecutionPresentationV1["status"]): string {
+function statusLabel(status: CodeExecutionPresentationV1["status"], t: UiTranslator): string {
     switch (status) {
         case "running":
-            return "Running"
+            return t("chatRows.common.status.running")
         case "completed":
-            return "Completed"
+            return t("chatRows.common.status.completed")
         case "failed":
-            return "Failed"
+            return t("chatRows.common.status.failed")
     }
 }
 
@@ -55,8 +63,9 @@ const OutputBlock = ({ label, text, tone }: { label: string; text: string; tone?
 )
 
 const CodeExecutionRow = ({ messageType, codeExecution, description }: CodeExecutionRowProps) => {
+    const { t } = useUiTranslation()
     const source = codeExecution?.source
-    const sourceLabel = source ? `${source.label} (Hosted)` : undefined
+    const sourceLabel = source ? `${source.label} (${t("chatRows.webSearch.execution.hosted")})` : undefined
     const operation = codeExecution?.operation
     const code = submittedText(operation, description)
     const output = codeExecution?.output
@@ -75,14 +84,14 @@ const CodeExecutionRow = ({ messageType, codeExecution, description }: CodeExecu
                 expansion={hasOutput ? { expanded: outputExpanded, onToggle: toggleOutput } : undefined}
                 icon={<TerminalIcon className="size-3" />}
                 testId="code-execution-header"
-                title={operationTitle(messageType, operation)}
+                title={operationTitle(operation, messageType === "ask", t)}
             />
             <div className="flex min-h-0 flex-1 flex-col space-y-2 overflow-hidden rounded-xs border border-editor-group-border bg-code px-2.5 py-[9px] select-text">
                 <div className="flex items-center justify-between gap-2">
                     {sourceLabel && <div className="text-xs font-semibold text-description">{sourceLabel}</div>}
                     {codeExecution && (
                         <div className="text-xs text-description" data-testid="code-execution-status">
-                            {statusLabel(codeExecution.status)}
+                            {statusLabel(codeExecution.status, t)}
                         </div>
                     )}
                 </div>
@@ -110,7 +119,11 @@ const CodeExecutionRow = ({ messageType, codeExecution, description }: CodeExecu
                     <>
                         <button
                             aria-expanded={outputExpanded}
-                            aria-label={outputExpanded ? "Collapse execution output" : "Expand execution output"}
+                            aria-label={
+                                outputExpanded
+                                    ? t("chatRows.codeExecution.collapseOutput")
+                                    : t("chatRows.codeExecution.expandOutput")
+                            }
                             className="flex w-full cursor-pointer items-center gap-1 border-0 border-t border-editor-widget-border/50 bg-transparent pt-2 text-left text-xs text-description"
                             data-testid="code-execution-output-toggle"
                             onClick={toggleOutput}
@@ -120,7 +133,9 @@ const CodeExecutionRow = ({ messageType, codeExecution, description }: CodeExecu
                             ) : (
                                 <ChevronRightIcon aria-hidden="true" className="size-3 shrink-0" />
                             )}
-                            <span>{outputExpanded ? "Hide output" : "Show output"}</span>
+                            <span>
+                                {outputExpanded ? t("chatRows.codeExecution.hideOutput") : t("chatRows.codeExecution.showOutput")}
+                            </span>
                         </button>
                         {outputExpanded && (
                             <div
@@ -130,12 +145,14 @@ const CodeExecutionRow = ({ messageType, codeExecution, description }: CodeExecu
                                 {output.stderr !== undefined && <OutputBlock label="stderr" text={output.stderr} tone="error" />}
                                 {output.returnCode !== undefined && (
                                     <div className="text-xs text-description" data-testid="code-execution-return-code">
-                                        Exit code: {output.returnCode}
+                                        {t("chatRows.codeExecution.exitCode", { code: output.returnCode })}
                                     </div>
                                 )}
                                 {(output.files?.length ?? 0) > 0 && (
                                     <div className="space-y-0.5">
-                                        <div className="text-xs font-semibold text-description">Files</div>
+                                        <div className="text-xs font-semibold text-description">
+                                            {t("chatRows.codeExecution.files")}
+                                        </div>
                                         {output.files?.map((file) => (
                                             <div className="ph-no-capture break-all font-mono text-xs" key={file}>
                                                 {file}

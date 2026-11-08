@@ -12,6 +12,7 @@ import {
     ExtensionStateContextType,
     useExtensionState,
 } from "@/context/ExtensionStateContext"
+import { UiLanguageBridge } from "@/i18n/UiLanguageBridge"
 import { StorybookThemes, TOOLKIT_TOKEN_MIRRORS } from "../../.storybook/themes"
 
 /** Properties the last applied palette wrote, so switching themes cannot strand a stale value. */
@@ -98,7 +99,11 @@ const ExtensionStateProviderWithOverrides: React.FC<{
     children: React.ReactNode
 }> = ({ overrides, children }) => {
     const extensionState = useExtensionState()
-    return <ExtensionStateContext.Provider value={{ ...extensionState, ...overrides }}>{children}</ExtensionStateContext.Provider>
+    return (
+        <ExtensionStateContext.Provider value={{ ...extensionState, ...overrides }}>
+            <UiLanguageBridge updateDocumentLanguage={false}>{children}</UiLanguageBridge>
+        </ExtensionStateContext.Provider>
+    )
 }
 
 const ClineAuthProviderWithOverrides: React.FC<{

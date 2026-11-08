@@ -2,19 +2,21 @@ import { DEFAULT_TERMINAL_COMMAND_TIMEOUT_SECONDS } from "@shared/terminal-setti
 import { VSCodeTextField } from "@vscode/webview-ui-toolkit/react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { updateSetting } from "./utils/settingsHandlers"
 import { useTextFieldHost } from "./utils/useTextFieldHost"
 
 const TerminalCommandTimeoutSetting = () => {
+    const { t } = useUiTranslation()
     const { terminalCommandTimeoutSeconds } = useExtensionState()
     const timeoutSeconds = terminalCommandTimeoutSeconds ?? DEFAULT_TERMINAL_COMMAND_TIMEOUT_SECONDS
     const initialInputValue = String(timeoutSeconds / 60)
     const [inputValue, setInputValue] = useState(initialInputValue)
     const inputValueRef = useRef(initialInputValue)
-    const [inputError, setInputError] = useState<string | null>(null)
+    const [inputError, setInputError] = useState<boolean | null>(null)
     const [isEditing, setIsEditing] = useState(false)
     const isEditingRef = useRef(false)
-    const textFieldHostProps = useTextFieldHost("Terminal command timeout (minutes)", inputValue, !isEditing)
+    const textFieldHostProps = useTextFieldHost(t("settings.ui.terminal.commandTimeout"), inputValue, !isEditing)
 
     const setDraftValue = useCallback((value: string) => {
         inputValueRef.current = value
@@ -37,7 +39,7 @@ const TerminalCommandTimeoutSetting = () => {
 
         const minutes = Number(value)
         if (!Number.isFinite(minutes) || minutes < 1) {
-            setInputError("Enter at least 1 minute")
+            setInputError(true)
             return
         }
 
@@ -62,7 +64,7 @@ const TerminalCommandTimeoutSetting = () => {
     return (
         <div className="mb-4">
             <label className="font-medium block mb-1" htmlFor="terminal-command-timeout">
-                Terminal command timeout (minutes)
+                {t("settings.ui.terminal.commandTimeout")}
             </label>
             <VSCodeTextField
                 {...textFieldHostProps}
@@ -75,10 +77,10 @@ const TerminalCommandTimeoutSetting = () => {
                 }}
                 onInput={(event) => handleChange(event as unknown as Event)}
             />
-            {inputError && <div className="text-(--vscode-errorForeground) text-xs mt-1">{inputError}</div>}
-            <p className="text-xs text-(--vscode-descriptionForeground) mt-1">
-                Maximum runtime before Dline terminates a command. Minimum 1 minute.
-            </p>
+            {inputError && (
+                <div className="text-(--vscode-errorForeground) text-xs mt-1">{t("settings.ui.terminal.minuteInvalid")}</div>
+            )}
+            <p className="text-xs text-(--vscode-descriptionForeground) mt-1">{t("settings.ui.terminal.timeoutHelp")}</p>
         </div>
     )
 }

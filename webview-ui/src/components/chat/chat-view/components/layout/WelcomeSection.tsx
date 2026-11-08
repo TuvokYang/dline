@@ -10,8 +10,10 @@ import HomeHeader from "@/components/welcome/HomeHeader"
 import { SuggestedTasks } from "@/components/welcome/SuggestedTasks"
 import CreateWorktreeModal from "@/components/worktrees/CreateWorktreeModal"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { WorktreeServiceClient } from "@/services/grpc-client"
 import { WelcomeSectionProps } from "../../types/chatTypes"
+import { ChatUiText } from "../ChatUiText"
 
 /**
  * Welcome section shown when there's no active task
@@ -25,6 +27,7 @@ export const WelcomeSection: React.FC<WelcomeSectionProps> = ({
     taskHistory,
     shouldShowQuickWins,
 }) => {
+    const { t } = useUiTranslation()
     // Track if we've shown the "What's New" modal this session
     const [hasShownWhatsNewModal, setHasShownWhatsNewModal] = useState(false)
     const [showWhatsNewModal, setShowWhatsNewModal] = useState(false)
@@ -92,8 +95,20 @@ export const WelcomeSection: React.FC<WelcomeSectionProps> = ({
                                                 <div className="flex items-center gap-1.5 text-xs">
                                                     <GitBranch className="w-3 h-3 stroke-[2.5] flex-shrink-0" />
                                                     <span className="break-all text-center">
-                                                        <span className="font-semibold">Current:</span>{" "}
-                                                        {currentWorktree.branch || "detached HEAD"}
+                                                        <ChatUiText
+                                                            slots={{
+                                                                label: (
+                                                                    <span className="font-semibold">
+                                                                        {t("chatInput.welcome.currentLabel")}
+                                                                    </span>
+                                                                ),
+                                                                branch: currentWorktree.branch || t("chatInput.welcome.detached"),
+                                                            }}
+                                                            text={t("chatInput.welcome.current", {
+                                                                label: "{label}",
+                                                                branch: "{branch}",
+                                                            })}
+                                                        />
                                                     </span>
                                                 </div>
                                                 <span className="break-all text-center max-w-[300px]">
@@ -101,9 +116,7 @@ export const WelcomeSection: React.FC<WelcomeSectionProps> = ({
                                                 </span>
                                             </button>
                                         </TooltipTrigger>
-                                        <TooltipContent side="bottom">
-                                            View and manage git worktrees. Great for running parallel Dline tasks.
-                                        </TooltipContent>
+                                        <TooltipContent side="bottom">{t("chatInput.welcome.worktrees")}</TooltipContent>
                                     </Tooltip>
                                 )}
                             </div>

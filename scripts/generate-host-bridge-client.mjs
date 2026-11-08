@@ -178,8 +178,10 @@ async function generateVscodeClientFile(hostServices) {
     const handlerMap = []
     for (const [serviceName, serviceDefinition] of Object.entries(hostServices)) {
         const name = serviceName.replace(/Service$/, "").toLowerCase()
+        // Keep the wire service identity independent of the local implementation directory.
+        const directory = name === "env" ? "environment" : name
         for (const [methodName, _methodDef] of Object.entries(serviceDefinition.service)) {
-            imports.push(`import { ${methodName} } from "@/hosts/vscode/hostbridge/${name}/${methodName}"`)
+            imports.push(`import { ${methodName} } from "@/hosts/vscode/hostbridge/${directory}/${methodName}"`)
         }
         imports.push("")
 

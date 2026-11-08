@@ -1,4 +1,5 @@
 import { CheckIcon } from "lucide-react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip"
 
 interface TaskCompletionBadgeProps {
@@ -14,14 +15,17 @@ interface TaskCompletionBadgeProps {
  * indicator cannot drift between panels.
  */
 export function TaskCompletionBadge({ side = "left", className }: TaskCompletionBadgeProps) {
+    const { t } = useUiTranslation()
+    const label = t("shell.completion.completed")
+
     return (
         <Tooltip>
             <TooltipTrigger asChild>
-                <span aria-label="Completed" className={className ?? "history-completion-status"} role="img">
+                <span aria-label={label} className={className ?? "history-completion-status"} role="img">
                     <CheckIcon aria-hidden="true" size={14} strokeWidth={2.4} />
                 </span>
             </TooltipTrigger>
-            <TooltipContent side={side}>Completed</TooltipContent>
+            <TooltipContent side={side}>{label}</TooltipContent>
         </Tooltip>
     )
 }

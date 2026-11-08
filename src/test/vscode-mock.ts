@@ -70,6 +70,9 @@ function closeAllEditors() {
 export const env = {
     machineId: "test-machine-id",
     appName: "VS Code",
+    get language(): string {
+        return "en"
+    },
     remoteName: undefined as string | undefined,
     isTelemetryEnabled: true,
     onDidChangeTelemetryEnabled: (_callback: (enabled: boolean) => void) => {

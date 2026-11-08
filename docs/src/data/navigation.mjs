@@ -151,6 +151,7 @@ export const sidebar = [
                     "developer-guide/prompt-architecture",
                     "developer-guide/storage",
                     "developer-guide/protobuf",
+                    "developer-guide/ui-i18n",
                 ],
             },
             {

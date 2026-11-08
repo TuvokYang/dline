@@ -1,5 +1,7 @@
+import type { UiLanguage } from "@shared/UiLanguage"
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { UiLanguageProvider } from "@/i18n/UiLanguageProvider"
 import { ConversationTrajectoryRail } from "../ConversationTrajectoryRail"
 import type { TrajectoryAttempt } from "../trajectory-model"
 
@@ -60,6 +62,47 @@ describe("ConversationTrajectoryRail source-index points", () => {
         expect(screen.getAllByTestId("trajectory-turn")[1]).toBe(bars[1])
         const currentLocations = screen.getAllByTestId("trajectory-turn").map((bar) => bar.getAttribute("aria-current"))
         expect(currentLocations).toEqual(["location", null, null])
+    })
+
+    it("retranslates an open preview without changing the active anchor or original selection payload", async () => {
+        const select = vi.fn()
+        const tree = (language: UiLanguage) => (
+            <UiLanguageProvider language={language}>
+                <ConversationTrajectoryRail activeTurnSeq={1} attempts={attempts} onSelectTurn={select} visible />
+            </UiLanguageProvider>
+        )
+        const view = render(tree("en"))
+        const rail = screen.getByRole("navigation", { name: "Conversation trajectory" })
+        const bar = screen.getAllByTestId("trajectory-turn")[1]
+        fireEvent.focus(bar)
+        const preview = await screen.findByTestId("trajectory-turn-preview")
+        const checkAnchor = () => {
+            expect(bar).toHaveAttribute("aria-current", "location")
+            expect(bar).toHaveAttribute("data-turn-index", "19")
+            expect(bar).toHaveAttribute("data-turn-seq", "1")
+            expect(bar).toHaveAttribute("data-turn-ts", "500")
+            expect(within(preview).getByText("equal timestamp")).toBeInTheDocument()
+            expect(within(preview).getByText("search_files").closest("li")).toHaveTextContent("search_files6")
+        }
+
+        view.rerender(tree("zh-CN"))
+        expect(screen.getByRole("navigation", { name: "对话轨迹" })).toBe(rail)
+        expect(screen.getByRole("button", { name: "跳转到消息：equal timestamp" })).toBe(bar)
+        expect(screen.getByTestId("trajectory-turn-preview")).toBe(preview)
+        expect(within(preview).getByText("第 1 次尝试")).toBeInTheDocument()
+        expect(within(preview).getByText("第 2 轮对话")).toBeInTheDocument()
+        expect(within(preview).getByText("4 轮请求")).toBeInTheDocument()
+        checkAnchor()
+        expect(select).not.toHaveBeenCalled()
+
+        view.rerender(tree("en"))
+        expect(screen.getByTestId("trajectory-turn-preview")).toBe(preview)
+        expect(bar).toHaveAccessibleName("Jump to message: equal timestamp")
+        expect(within(preview).getByText("4 rounds")).toBeInTheDocument()
+        checkAnchor()
+        fireEvent.click(bar)
+        expect(select).toHaveBeenCalledExactlyOnceWith(attempts[0].turns[1])
+        expect(select.mock.calls[0][0]).toBe(attempts[0].turns[1])
     })
 
     it("preserves the preview's prompt, attempt/turn labels, rounds and tool totals for a repeated timestamp point", async () => {

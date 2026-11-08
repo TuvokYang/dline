@@ -1,4 +1,5 @@
 // Mode import removed — no longer needed in profile-driven architecture
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { DebouncedTextField } from "../common/DebouncedTextField"
 import type { ApiProfile } from "./ProviderProfile"
@@ -17,16 +18,17 @@ export const DifyProvider = ({
     profile,
     onUpdate,
 }: DifyProviderProps) => {
+    const { t } = useUiTranslation()
     return (
         <div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <DebouncedTextField
                     initialValue={profile.baseUrl || ""}
                     onChange={(value) => onUpdate({ baseUrl: value })}
-                    placeholder="Enter base URL..."
+                    placeholder={t("settings.ui.enterBaseUrl")}
                     style={{ width: "100%", marginBottom: 10 }}
                     type="text">
-                    <span style={{ fontWeight: 500 }}>Base URL</span>
+                    <span style={{ fontWeight: 500 }}>{t("settings.ui.baseUrl")}</span>
                 </DebouncedTextField>
                 <ApiKeyField
                     initialValue={profile.apiKey}
@@ -34,9 +36,9 @@ export const DifyProvider = ({
                     providerName="Dify"
                 />
                 <div style={{ fontSize: "12px", color: "var(--vscode-descriptionForeground)", marginTop: "5px" }}>
-                    <p>Dify is a platform that provides access to various AI models through a unified API.</p>
+                    <p>{t("settings.ui.dify.help")}</p>
                     <p style={{ marginTop: "8px" }}>
-                        <strong>Note:</strong> The model selection is handled within your Dify application configuration.
+                        <strong>{t("settings.ui.note")}</strong> {t("settings.ui.dify.modelHelp")}
                     </p>
                 </div>
             </div>

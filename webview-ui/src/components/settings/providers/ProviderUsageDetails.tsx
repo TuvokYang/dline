@@ -10,6 +10,8 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/common/AlertDialog"
+import type { UiTranslator } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { formatCurrencyAmount } from "@/utils/currency"
 import { formatTokenMetric } from "@/utils/format"
 
@@ -44,16 +46,20 @@ export function usageUsedPercent(quota: AccountUsageQuotaData): number {
  * current. Relative wording is used because the exact clock time matters less
  * than whether the reading is stale.
  */
-export function formatUsageRetrievedAt(retrievedAt: string | undefined, now: number = Date.now()): string | undefined {
+export function formatUsageRetrievedAt(
+    retrievedAt: string | undefined,
+    t: UiTranslator,
+    now: number = Date.now(),
+): string | undefined {
     if (!retrievedAt) return undefined
     const readingTime = Date.parse(retrievedAt)
     if (!Number.isFinite(readingTime)) return undefined
     const elapsedMinutes = Math.floor((now - readingTime) / 60_000)
-    if (elapsedMinutes < 1) return "Updated just now"
-    if (elapsedMinutes < 60) return `Updated ${elapsedMinutes}m ago`
+    if (elapsedMinutes < 1) return t("settings.ui.usage.updatedNow")
+    if (elapsedMinutes < 60) return t("settings.ui.usage.updatedMinutes", { count: elapsedMinutes })
     const elapsedHours = Math.floor(elapsedMinutes / 60)
-    if (elapsedHours < 24) return `Updated ${elapsedHours}h ago`
-    return `Updated ${Math.floor(elapsedHours / 24)}d ago`
+    if (elapsedHours < 24) return t("settings.ui.usage.updatedHours", { count: elapsedHours })
+    return t("settings.ui.usage.updatedDays", { count: Math.floor(elapsedHours / 24) })
 }
 
 export function selectEffectiveUsageQuota(quotas: readonly AccountUsageQuotaData[]): AccountUsageQuotaData | undefined {
@@ -122,22 +128,25 @@ export function localCacheHitRate(usage: AccountUsageData): number | undefined {
     return (hit / total) * 100
 }
 
+type LocalUsageNote = { kind: "legacy" | "degraded"; message: string }
+
 /**
  * Say what a reader has to know about a local snapshot before trusting it.
  *
  * Degradation and an inclusive legacy contribution are both stated, because either
  * one makes the number smaller or larger than a fresh, complete read would be.
  */
-export function localUsageNotes(usage: AccountUsageData): string[] {
+export function localUsageNotes(usage: AccountUsageData, t: UiTranslator): LocalUsageNote[] {
     const local = usage.local
     if (!local) return []
-    const notes: string[] = []
+    const notes: LocalUsageNote[] = []
     if (local.legacyInputTokens !== undefined) {
-        notes.push(
-            local.legacyPartial ? "Includes an earlier day total that cannot be split by model" : "Includes an earlier day total",
-        )
+        notes.push({
+            kind: "legacy",
+            message: local.legacyPartial ? t("settings.ui.usage.legacyPartial") : t("settings.ui.usage.legacy"),
+        })
     }
-    if (local.degraded) notes.push("Local usage is incomplete")
+    if (local.degraded) notes.push({ kind: "degraded", message: t("settings.ui.usage.degraded") })
     return notes
 }
 
@@ -155,11 +164,12 @@ function progressColor(tone: ProviderUsageProgressTone): string {
 }
 
 export function ProviderUsageProgressBar({ quota }: { quota: AccountUsageQuotaData }) {
+    const { t } = useUiTranslation()
     const remainingPercent = usageRemainingPercent(quota)
     const tone = providerUsageProgressTone(remainingPercent)
     return (
         <div
-            aria-label={`${quota.label} usage`}
+            aria-label={t("settings.ui.usage.progress", { label: quota.label })}
             aria-valuemax={100}
             aria-valuemin={0}
             aria-valuenow={remainingPercent}
@@ -180,20 +190,20 @@ function formatTime(value: string | undefined): string | undefined {
     return Number.isNaN(date.getTime()) ? undefined : date.toLocaleString()
 }
 
-function resetResultMessage(outcome: string, quotaTypesReset: readonly string[]): string {
+function resetResultMessage(outcome: string, quotaTypesReset: readonly string[], t: UiTranslator): string {
     switch (outcome) {
         case "reset":
             return quotaTypesReset.length > 0
-                ? `Reset completed for ${quotaTypesReset.join(" and ")}.`
-                : "Eligible rate limits were reset."
+                ? t("settings.ui.usage.resetCompleted", { quotas: quotaTypesReset })
+                : t("settings.ui.usage.resetEligible")
         case "nothing_to_reset":
-            return "No rate limit currently needs to be reset."
+            return t("settings.ui.usage.nothingToReset")
         case "no_credit":
-            return "No reset card is available."
+            return t("settings.ui.usage.noCredit")
         case "already_redeemed":
-            return "This reset request was already redeemed."
+            return t("settings.ui.usage.alreadyRedeemed")
         default:
-            return "The reset request returned an unknown result."
+            return t("settings.ui.usage.unknownReset")
     }
 }
 
@@ -207,18 +217,23 @@ function resetResultMessage(outcome: string, quotaTypesReset: readonly string[])
  * a day total. A source that reported nothing renders nothing rather than zero.
  */
 function LocalDailyUsage({ usage }: { usage: AccountUsageData }) {
+    const { t } = useUiTranslation()
     const localInput = localTodayInput(usage)
     const localOutput = localTodayOutput(usage)
     const localHitRate = localCacheHitRate(usage)
-    const notes = localUsageNotes(usage)
+    const notes = localUsageNotes(usage, t)
 
     if (localInput === undefined || localOutput === undefined) {
         return usage.dailyInputTokens !== undefined || usage.dailyOutputTokens !== undefined ? (
             // Each metric stays on one line; a narrow tooltip moves the whole
             // second metric down instead of splitting a label from its value.
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-description">
-                <span className="whitespace-nowrap">Today In: {formatTokenMetric(usage.dailyInputTokens ?? 0)}</span>
-                <span className="whitespace-nowrap">Today Out: {formatTokenMetric(usage.dailyOutputTokens ?? 0)}</span>
+                <span className="whitespace-nowrap">
+                    {t("settings.ui.usage.todayInput", { count: formatTokenMetric(usage.dailyInputTokens ?? 0) })}
+                </span>
+                <span className="whitespace-nowrap">
+                    {t("settings.ui.usage.todayOutput", { count: formatTokenMetric(usage.dailyOutputTokens ?? 0) })}
+                </span>
             </div>
         ) : null
     }
@@ -226,15 +241,21 @@ function LocalDailyUsage({ usage }: { usage: AccountUsageData }) {
     return (
         <div className="flex flex-col gap-1 text-description">
             <div className="flex flex-wrap gap-x-4 gap-y-1">
-                <span className="whitespace-nowrap">Today In: {formatTokenMetric(localInput)}</span>
-                <span className="whitespace-nowrap">Today Out: {formatTokenMetric(localOutput)}</span>
+                <span className="whitespace-nowrap">
+                    {t("settings.ui.usage.todayInput", { count: formatTokenMetric(localInput) })}
+                </span>
+                <span className="whitespace-nowrap">
+                    {t("settings.ui.usage.todayOutput", { count: formatTokenMetric(localOutput) })}
+                </span>
                 {localHitRate === undefined ? null : (
-                    <span className="whitespace-nowrap">Cache hit: {localHitRate.toFixed(0)}%</span>
+                    <span className="whitespace-nowrap">
+                        {t("settings.ui.usage.cacheHit", { percent: localHitRate.toFixed(0) })}
+                    </span>
                 )}
             </div>
             {notes.map((note) => (
-                <span className="text-[10px] text-description" key={note}>
-                    {note}
+                <span className="text-[10px] text-description" key={note.kind}>
+                    {note.message}
                 </span>
             ))}
         </div>
@@ -265,8 +286,9 @@ export function ProviderUsageDetails({
     resetCreditsDisplay = "full",
     consumeResetCredit,
 }: ProviderUsageDetailsProps) {
+    const { t } = useUiTranslation()
     const [selectedCreditId, setSelectedCreditId] = useState<string>()
-    const [resultMessage, setResultMessage] = useState<string>()
+    const [resultMessage, setResultMessage] = useState<{ outcome: string; quotaTypesReset: string[] }>()
     const resetCredits = usage.resetCredits ?? []
     const nextResetCredit = resetCredits[0]
     const selectedCredit = resetCredits.find((credit) => credit.id === selectedCreditId)
@@ -276,13 +298,13 @@ export function ProviderUsageDetails({
         if (!selectedCreditId) return
         const result = await consumeResetCredit(selectedCreditId)
         if (!result) return
-        setResultMessage(resetResultMessage(result.outcome, result.quotaTypesReset))
+        setResultMessage({ outcome: result.outcome, quotaTypesReset: result.quotaTypesReset })
         setSelectedCreditId(undefined)
     }
 
     // Shown by both the chat tooltip and the expanded menu, because the reading
     // is only as current as the last refresh in either surface.
-    const retrievedAt = showRetrievedAt ? formatUsageRetrievedAt(usage.retrievedAt) : undefined
+    const retrievedAt = showRetrievedAt ? formatUsageRetrievedAt(usage.retrievedAt, t) : undefined
 
     return (
         <>
@@ -290,13 +312,13 @@ export function ProviderUsageDetails({
                 {retrievedAt ? <span className="text-[10px] text-description">{retrievedAt}</span> : null}
                 {usage.planType ? (
                     <div className="flex items-center justify-between gap-2">
-                        <span className="text-description">Plan</span>
+                        <span className="text-description">{t("settings.ui.opencode.plan")}</span>
                         <span className="font-medium text-foreground">{usage.planType}</span>
                     </div>
                 ) : null}
                 {!usage.planType && usage.remainingBalance !== undefined ? (
                     <div className="flex items-center justify-between gap-2">
-                        <span className="text-description">Balance</span>
+                        <span className="text-description">{t("settings.ui.usage.balance")}</span>
                         <span className="font-medium text-foreground">
                             {formatCurrencyAmount(usage.remainingBalance, usage.currency)}
                         </span>
@@ -313,24 +335,30 @@ export function ProviderUsageDetails({
                             <div className="flex items-center justify-between gap-2">
                                 <span>{quota.label}</span>
                                 <span className="font-medium text-foreground">
-                                    {usageRemainingPercent(quota).toFixed(0)}% remaining
+                                    {t("settings.ui.usage.remaining", { percent: usageRemainingPercent(quota).toFixed(0) })}
                                 </span>
                             </div>
                             <ProviderUsageProgressBar quota={quota} />
-                            {resetAt ? <span className="whitespace-nowrap text-description">Resets {resetAt}</span> : null}
+                            {resetAt ? (
+                                <span className="whitespace-nowrap text-description">
+                                    {t("settings.ui.usage.resets", { time: resetAt })}
+                                </span>
+                            ) : null}
                         </div>
                     )
                 })}
                 {supportsResetCredits ? (
                     <div className="mt-1 flex flex-col gap-1.5 border-t border-editor-widget-border/50 pt-2">
                         <span className="font-medium text-foreground">
-                            Reset cards: {usage.resetCreditsAvailableCount ? usage.resetCreditsAvailableCount : "none"}
+                            {t("settings.ui.usage.cards", { count: usage.resetCreditsAvailableCount ?? 0 })}
                         </span>
                         {resetCredits.length > 0 && resetCreditsDisplay === "summary" ? (
                             <div className="flex flex-col gap-0.5 text-description">
-                                <span>Next card expires</span>
+                                <span>{t("settings.ui.usage.nextExpiry")}</span>
                                 <span className="whitespace-nowrap">
-                                    {nextResetCredit?.expiresAt ? formatTime(nextResetCredit.expiresAt) : "Expiry unavailable"}
+                                    {nextResetCredit?.expiresAt
+                                        ? formatTime(nextResetCredit.expiresAt)
+                                        : t("settings.ui.usage.expiryUnavailable")}
                                 </span>
                             </div>
                         ) : resetCredits.length > 0 ? (
@@ -342,14 +370,18 @@ export function ProviderUsageDetails({
                                             className="flex min-w-0 items-center justify-between gap-2 rounded-xs bg-toolbar-hover/30 px-2 py-1.5"
                                             key={credit.id}>
                                             <div className="min-w-0" data-reset-credit-copy>
-                                                <span className="block font-medium text-foreground">Reset card {index + 1}</span>
+                                                <span className="block font-medium text-foreground">
+                                                    {t("settings.ui.usage.card", { index: index + 1 })}
+                                                </span>
                                                 <span className="block whitespace-nowrap text-description">
-                                                    {expiresAt ? `Expires ${expiresAt}` : "Expiry unavailable"}
+                                                    {expiresAt
+                                                        ? t("settings.ui.usage.expires", { time: expiresAt })
+                                                        : t("settings.ui.usage.expiryUnavailable")}
                                                 </span>
                                             </div>
                                             {showResetActions ? (
                                                 <button
-                                                    aria-label={`Use reset card ${index + 1}`}
+                                                    aria-label={t("settings.ui.usage.useCardIndex", { index: index + 1 })}
                                                     className="inline-flex min-h-7 shrink-0 items-center rounded-xs border border-error/70 bg-error/15 px-2 font-medium text-error hover:bg-error/25 disabled:opacity-50"
                                                     disabled={resetting}
                                                     onClick={() => {
@@ -357,7 +389,7 @@ export function ProviderUsageDetails({
                                                         setSelectedCreditId(credit.id)
                                                     }}
                                                     type="button">
-                                                    Use card
+                                                    {t("settings.ui.usage.useCard")}
                                                 </button>
                                             ) : null}
                                         </li>
@@ -365,7 +397,7 @@ export function ProviderUsageDetails({
                                 })}
                             </ul>
                         ) : (
-                            <span className="text-description">No available reset cards.</span>
+                            <span className="text-description">{t("settings.ui.usage.noCards")}</span>
                         )}
                     </div>
                 ) : null}
@@ -376,23 +408,23 @@ export function ProviderUsageDetails({
                 ) : null}
                 {resultMessage ? (
                     <div className="text-description" role="status">
-                        {resultMessage}
+                        {resetResultMessage(resultMessage.outcome, resultMessage.quotaTypesReset, t)}
                     </div>
                 ) : null}
             </div>
             <AlertDialog
                 onOpenChange={(open) => !open && !resetting && setSelectedCreditId(undefined)}
                 open={selectedCreditId !== undefined}>
-                <AlertDialogContent aria-label="Use a rate-limit reset card?">
+                <AlertDialogContent aria-label={t("settings.ui.usage.confirmTitle")}>
                     <AlertDialogHeader>
                         <AlertDialogTitle>
                             <TriangleAlertIcon className="size-5 text-editor-warning-foreground" />
-                            Use a rate-limit reset card?
+                            {t("settings.ui.usage.confirmTitle")}
                         </AlertDialogTitle>
                         <AlertDialogDescription>
-                            This consumes the selected reset card and resets eligible Provider limits. The card cannot be restored
-                            after use.
-                            {selectedCredit?.expiresAt ? ` It expires ${formatTime(selectedCredit.expiresAt)}.` : ""}
+                            {t("settings.ui.usage.confirmHelp", {
+                                expiry: selectedCredit?.expiresAt ? (formatTime(selectedCredit.expiresAt) ?? "") : "",
+                            })}
                         </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
@@ -401,14 +433,14 @@ export function ProviderUsageDetails({
                             disabled={resetting}
                             onClick={() => setSelectedCreditId(undefined)}
                             type="button">
-                            Cancel
+                            {t("settings.ui.cancel")}
                         </button>
                         <button
                             className="min-h-7 rounded-xs border border-error/70 bg-error/15 px-3 text-sm font-medium text-error hover:bg-error/25 disabled:opacity-50"
                             disabled={resetting}
                             onClick={() => void consumeReset()}
                             type="button">
-                            {resetting ? "Resetting…" : "Use reset card"}
+                            {resetting ? t("settings.ui.usage.resetting") : t("settings.ui.usage.useResetCard")}
                         </button>
                     </AlertDialogFooter>
                 </AlertDialogContent>

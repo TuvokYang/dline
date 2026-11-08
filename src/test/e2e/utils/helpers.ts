@@ -746,6 +746,7 @@ export const e2e = test
             launchOptions?: {
                 windowSize?: { width: number; height: number }
                 forceDeviceScaleFactor?: number
+                locale?: string
             },
         ) => Promise<ElectronApplication>
     }>({
@@ -863,6 +864,7 @@ export const e2e = test
                         "--no-sandbox",
                         ...(cdpPort !== undefined ? [`--remote-debugging-port=${cdpPort}`] : []),
                         "--disable-updates",
+                        ...(launchOptions.locale ? [`--locale=${launchOptions.locale}`] : []),
                         "--disable-workspace-trust",
                         ...FULL_RATE_RENDERING_ARGUMENTS,
                         ...(launchOptions.windowSize

@@ -5,6 +5,8 @@ import { memo, useCallback, useEffect, useMemo, useState } from "react"
 import styled from "styled-components"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
+import { formatReasoningEffort } from "./utils/uiLabels"
 
 const THUMB_SIZE = 16
 
@@ -109,24 +111,31 @@ const ThinkingControl = ({
     onReasoningConfigUpdate,
     mode,
     effortOptions = [],
-    effortLabel = "Reasoning Effort",
-    effortDescription = "Higher effort improves depth, but uses more tokens.",
-    budgetLabel = "Thinking Budget",
+    effortLabel: customEffortLabel,
+    effortDescription: customEffortDescription,
+    budgetLabel: customBudgetLabel,
     maxBudget,
     minBudget,
     defaultEnabled = false,
     defaultEffort,
     disableSupported = true,
     showModeSelector = true,
-    modeSelectorLabel = "Thinking Mode",
-    modeSelectorOptions = [
-        { value: "effort" as ThinkingMode, label: "Effort" },
-        { value: "budget" as ThinkingMode, label: "Budget" },
-    ],
+    modeSelectorLabel: customModeSelectorLabel,
+    modeSelectorOptions: customModeSelectorOptions,
     displayOptions,
-    displayLabel = "Reasoning Display",
+    displayLabel: customDisplayLabel,
     displayDescription,
 }: ThinkingControlProps) => {
+    const { t } = useUiTranslation()
+    const effortLabel = customEffortLabel ?? t("settings.ui.reasoningEffort")
+    const effortDescription = customEffortDescription ?? t("settings.ui.effortHelp")
+    const budgetLabel = customBudgetLabel ?? t("settings.ui.thinkingBudget")
+    const modeSelectorLabel = customModeSelectorLabel ?? t("settings.ui.thinkingMode")
+    const modeSelectorOptions = customModeSelectorOptions ?? [
+        { value: "effort", label: t("settings.ui.effort") },
+        { value: "budget", label: t("settings.ui.budget") },
+    ]
+    const displayLabel = customDisplayLabel ?? t("settings.ui.reasoningDisplay")
     const enableThinking = useMemo(() => {
         if (!disableSupported) return true
         const effort = reasoningConfig?.effort?.trim()
@@ -292,7 +301,7 @@ const ThinkingControl = ({
                     const target = event.target as (EventTarget & { checked?: boolean }) | null
                     handleEnableChange(target?.checked === true)
                 }}>
-                Enable Thinking
+                {t("settings.ui.enableThinking")}
             </VSCodeCheckbox>
 
             {showThinkingOptions && (
@@ -322,12 +331,12 @@ const ThinkingControl = ({
                             <Label className="text-xs font-medium">{effortLabel}</Label>
                             <Select onValueChange={handleEffortChange} value={selectedEffort}>
                                 <SelectTrigger className="w-full mt-1">
-                                    <SelectValue placeholder="Provider default" />
+                                    <SelectValue placeholder={t("settings.ui.providerDefault")} />
                                 </SelectTrigger>
                                 <SelectContent>
                                     {selectableEfforts.map((opt) => (
                                         <SelectItem key={opt} value={opt}>
-                                            {opt.charAt(0).toUpperCase() + opt.slice(1)}
+                                            {formatReasoningEffort(t, opt)}
                                         </SelectItem>
                                     ))}
                                 </SelectContent>
@@ -380,7 +389,7 @@ const ThinkingControl = ({
                     {shouldShowBudget && (
                         <div style={{ marginTop: 10, marginBottom: 5 }}>
                             <Label className="text-xs font-medium">
-                                {budgetLabel} ({localBudget.toLocaleString()} tokens)
+                                {t("settings.ui.budgetValue", { label: budgetLabel, count: localBudget.toLocaleString() })}
                             </Label>
                             <Container>
                                 {maximum !== undefined ? (
@@ -388,7 +397,10 @@ const ThinkingControl = ({
                                         $max={maximum}
                                         $min={minimum}
                                         $value={localBudget}
-                                        aria-label={`${budgetLabel}: ${localBudget.toLocaleString()} tokens`}
+                                        aria-label={t("settings.ui.budgetAccessible", {
+                                            label: budgetLabel,
+                                            count: localBudget.toLocaleString(),
+                                        })}
                                         aria-valuemax={maximum}
                                         aria-valuemin={minimum}
                                         aria-valuenow={localBudget}

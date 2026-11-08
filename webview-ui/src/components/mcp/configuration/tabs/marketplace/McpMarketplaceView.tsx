@@ -1,25 +1,28 @@
 import { EmptyRequest } from "@shared/proto/dline/common"
 import {
     VSCodeButton,
-    VSCodeDropdown,
     VSCodeOption,
     VSCodeProgressRing,
     VSCodeRadio,
     VSCodeRadioGroup,
     VSCodeTextField,
 } from "@vscode/webview-ui-toolkit/react"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { LocalizedDropdown, LocalizedOption } from "@/components/common/LocalizedDropdown"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { McpServiceClient } from "@/services/grpc-client"
 import McpMarketplaceCard from "./McpMarketplaceCard"
 import McpSubmitCard from "./McpSubmitCard"
+import type { McpMarketplaceError } from "./marketplace-errors"
 
 const McpMarketplaceView = () => {
+    const { t } = useUiTranslation()
     const { mcpServers, mcpMarketplaceCatalog, setMcpMarketplaceCatalog, remoteConfigSettings } = useExtensionState()
 
     const showMarketplace = remoteConfigSettings?.mcpMarketplaceEnabled !== false
     const [isLoading, setIsLoading] = useState(showMarketplace)
-    const [error, setError] = useState<string | null>(null)
+    const [error, setError] = useState<McpMarketplaceError | null>(null)
     const [isRefreshing, setIsRefreshing] = useState(false)
     const [searchQuery, setSearchQuery] = useState("")
     const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
@@ -82,7 +85,10 @@ const McpMarketplaceView = () => {
                 })
                 .catch((requestError) => {
                     console.error("Error refreshing MCP marketplace:", requestError)
-                    setError("Failed to load marketplace data")
+                    setError({
+                        kind: "load",
+                        diagnostics: requestError instanceof Error ? requestError.message : String(requestError),
+                    })
                 })
                 .finally(() => {
                     setIsLoading(false)
@@ -116,8 +122,9 @@ const McpMarketplaceView = () => {
             <div style={{ padding: "20px 20px 5px", display: "flex", flexDirection: "column", gap: "16px" }}>
                 {/* Search row */}
                 <VSCodeTextField
+                    aria-label={t("capabilities.mcp.marketplace.search")}
                     onInput={(e) => setSearchQuery((e.target as HTMLInputElement).value)}
-                    placeholder="Search MCPs..."
+                    placeholder={t("capabilities.mcp.marketplace.search")}
                     style={{ width: "100%" }}
                     value={searchQuery}>
                     <div
@@ -130,7 +137,7 @@ const McpMarketplaceView = () => {
                     />
                     {searchQuery && (
                         <div
-                            aria-label="Clear search"
+                            aria-label={t("capabilities.mcp.marketplace.clearSearch")}
                             className="codicon codicon-close"
                             onClick={() => setSearchQuery("")}
                             slot="end"
@@ -160,7 +167,7 @@ const McpMarketplaceView = () => {
                             fontWeight: 500,
                             flexShrink: 0,
                         }}>
-                        Filter:
+                        {t("capabilities.mcp.marketplace.filter")}
                     </span>
                     <div
                         style={{
@@ -168,19 +175,27 @@ const McpMarketplaceView = () => {
                             zIndex: 2,
                             flex: 1,
                         }}>
-                        <VSCodeDropdown
-                            onChange={(e) => setSelectedCategory((e.target as HTMLSelectElement).value || null)}
+                        <LocalizedDropdown
+                            aria-label={t("capabilities.mcp.marketplace.filter")}
+                            onChange={(e: Event | FormEvent<HTMLElement>) =>
+                                setSelectedCategory((e.target as HTMLSelectElement).value || null)
+                            }
+                            selectedLabel={
+                                (selectedCategory || "") === ""
+                                    ? t("capabilities.mcp.marketplace.allCategories")
+                                    : categories.find((category) => category === selectedCategory)
+                            }
                             style={{
                                 width: "100%",
                             }}
                             value={selectedCategory || ""}>
-                            <VSCodeOption value="">All Categories</VSCodeOption>
+                            <LocalizedOption label={t("capabilities.mcp.marketplace.allCategories")} value="" />
                             {categories.map((category) => (
                                 <VSCodeOption key={category} value={category}>
                                     {category}
                                 </VSCodeOption>
                             ))}
-                        </VSCodeDropdown>
+                        </LocalizedDropdown>
                     </div>
                 </div>
 
@@ -198,9 +213,10 @@ const McpMarketplaceView = () => {
                             fontWeight: 500,
                             marginTop: "3px",
                         }}>
-                        Sort:
+                        {t("capabilities.mcp.marketplace.sort")}
                     </span>
                     <VSCodeRadioGroup
+                        aria-label={t("capabilities.mcp.marketplace.sort")}
                         onChange={(e) => setSortBy((e.target as HTMLInputElement).value as typeof sortBy)}
                         style={{
                             display: "flex",
@@ -208,10 +224,10 @@ const McpMarketplaceView = () => {
                             marginTop: "-2.5px",
                         }}
                         value={sortBy}>
-                        <VSCodeRadio value="downloadCount">Most Installs</VSCodeRadio>
-                        <VSCodeRadio value="newest">Newest</VSCodeRadio>
-                        <VSCodeRadio value="stars">GitHub Stars</VSCodeRadio>
-                        <VSCodeRadio value="name">Name</VSCodeRadio>
+                        <VSCodeRadio value="downloadCount">{t("capabilities.mcp.marketplace.installs")}</VSCodeRadio>
+                        <VSCodeRadio value="newest">{t("capabilities.mcp.marketplace.newest")}</VSCodeRadio>
+                        <VSCodeRadio value="stars">{t("capabilities.mcp.marketplace.stars")}</VSCodeRadio>
+                        <VSCodeRadio value="name">{t("capabilities.mcp.marketplace.name")}</VSCodeRadio>
                     </VSCodeRadioGroup>
                 </div>
             </div>
@@ -240,7 +256,7 @@ const McpMarketplaceView = () => {
             {remoteConfigSettings?.allowedMCPServers && (
                 <div className="flex items-center gap-2 px-5 py-3 mx-5 mb-4 bg-vscode-textBlockQuote-background border-l-[3px] border-vscode-textLink-foreground">
                     <i className="codicon codicon-lock text-sm" />
-                    <span className="text-[13px]">Your organization has pre-configured the available MCP servers</span>
+                    <span className="text-[13px]">{t("capabilities.mcp.marketplace.preconfigured")}</span>
                 </div>
             )}
 
@@ -253,7 +269,7 @@ const McpMarketplaceView = () => {
                         alignItems: "center",
                         padding: "40px 20px",
                     }}>
-                    <VSCodeProgressRing />
+                    <VSCodeProgressRing aria-label={t("capabilities.mcp.marketplace.loading")} />
                 </div>
             ) : error ? (
                 <div
@@ -265,10 +281,22 @@ const McpMarketplaceView = () => {
                         padding: "40px 20px",
                         gap: "12px",
                     }}>
-                    <div style={{ color: "var(--vscode-errorForeground)" }}>{error}</div>
+                    <div role="alert" style={{ color: "var(--vscode-errorForeground)" }}>
+                        {t(
+                            error.kind === "load"
+                                ? "capabilities.mcp.marketplace.loadError"
+                                : "capabilities.mcp.marketplace.installError",
+                        )}
+                        {error.diagnostics && (
+                            <details>
+                                <summary>{t("capabilities.diagnostics")}</summary>
+                                {error.diagnostics}
+                            </details>
+                        )}
+                    </div>
                     <VSCodeButton appearance="secondary" onClick={() => fetchMarketplace(true)}>
                         <span className="codicon codicon-refresh" style={{ marginRight: "6px" }} />
-                        Retry
+                        {t("capabilities.mcp.marketplace.retry")}
                     </VSCodeButton>
                 </div>
             ) : (
@@ -283,8 +311,8 @@ const McpMarketplaceView = () => {
                                 color: "var(--vscode-descriptionForeground)",
                             }}>
                             {searchQuery || selectedCategory
-                                ? "No matching MCP servers found"
-                                : "No MCP servers found in the marketplace"}
+                                ? t("capabilities.mcp.marketplace.noMatching")
+                                : t("capabilities.mcp.marketplace.empty")}
                         </div>
                     ) : (
                         filteredItems.map((item) => (

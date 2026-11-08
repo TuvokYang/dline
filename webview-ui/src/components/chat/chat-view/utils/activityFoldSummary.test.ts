@@ -1,6 +1,7 @@
 import { indexPreEditCheckpointAttachments } from "@shared/chat/drawnMessages"
 import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
+import { translateUi } from "@/i18n/messages"
 import {
     completion,
     createFile,
@@ -12,7 +13,14 @@ import {
     userTask,
     workingRespond,
 } from "../components/messages/activityFoldStoryFixtures"
-import { describeActivityFold, describeFoldDetail, describeToolCalls, summarizeActivityFold } from "./activityFoldSummary"
+import {
+    type ActivityFoldSummary,
+    describeActivityFold,
+    describeActivityFoldParts,
+    describeFoldDetail,
+    describeToolCalls,
+    summarizeActivityFold,
+} from "./activityFoldSummary"
 import { type ActivityFold, isActivityFold } from "./chatRowKinds"
 import { groupChatRows } from "./messageUtils"
 
@@ -346,6 +354,90 @@ describe("summarizeActivityFold", () => {
     it("counts distinct requests in message segments too", () => {
         const folds = groupChatRows(finishedTurnTranscript, undefined, { level: "message_segment" }).filter(isActivityFold)
         expect(folds.map((fold) => summarizeActivityFold(fold, new Map()).rounds)).toEqual([2, 2])
+    })
+
+    it("gives every fact a unique semantic identity independent of translation and counts", () => {
+        const summary: ActivityFoldSummary = {
+            rounds: 2,
+            work: new Map([
+                ["read", 1],
+                ["write", 2],
+                ["command", 3],
+                ["subagent", 4],
+                ["web", 5],
+                ["browser", 6],
+                ["other", 7],
+            ]),
+            external: new Map([
+                ["read", 1],
+                ["command", 2],
+            ]),
+            tools: new Map(),
+            subagents: new Map(),
+            thoughts: 2,
+            checkpoints: 3,
+            assistantMessages: 4,
+            failures: new Map([
+                ["edit", 1],
+                ["read", 2],
+                ["subagent", 3],
+                ["command", 4],
+                ["web", 5],
+                ["browser", 6],
+            ]),
+        }
+        const expectedKinds = [
+            "rounds",
+            "work.read",
+            "work.write",
+            "work.command",
+            "work.subagent",
+            "work.web",
+            "work.browser",
+            "work.other",
+            "thoughts",
+            "checkpoints",
+            "messages",
+            "failure.edit",
+            "failure.read",
+            "failure.subagent",
+            "failure.command",
+            "failure.web",
+            "failure.browser",
+        ]
+        const english = describeActivityFoldParts(summary)
+        const chinese = describeActivityFoldParts(summary, (key, ...args) => translateUi("zh-CN", key, ...args))
+        const changedCounts = describeActivityFoldParts({
+            ...summary,
+            rounds: 3,
+            work: new Map(Array.from(summary.work, ([kind, count]) => [kind, count + 1])),
+            external: new Map(),
+        })
+        const sameText = describeActivityFoldParts(summary, () => "same translation")
+        for (const parts of [english, chinese, changedCounts, sameText]) {
+            expect(parts.map((part) => part.kind)).toEqual(expectedKinds)
+            expect(new Set(parts.map((part) => part.kind)).size).toBe(parts.length)
+            expect(parts.filter((part) => part.isFailure).map((part) => part.kind)).toEqual(expectedKinds.slice(-6))
+        }
+        expect(chinese.map((part) => part.text)).not.toEqual(english.map((part) => part.text))
+        expect(changedCounts.map((part) => part.text)).not.toEqual(english.map((part) => part.text))
+    })
+
+    it("keeps the fallback fact's identity when translated", () => {
+        const summary: ActivityFoldSummary = {
+            work: new Map(),
+            external: new Map(),
+            tools: new Map(),
+            subagents: new Map(),
+            failures: new Map(),
+            checkpoints: 0,
+            thoughts: 0,
+            assistantMessages: 0,
+        }
+        const english = describeActivityFoldParts(summary)
+        const chinese = describeActivityFoldParts(summary, (key, ...args) => translateUi("zh-CN", key, ...args))
+        expect(english).toEqual([{ kind: "finished", text: "Finished steps", isFailure: false }])
+        expect(chinese).toEqual([{ kind: "finished", text: "已完成的步骤", isFailure: false }])
     })
 
     it("names a fold with nothing countable as finished steps", () => {

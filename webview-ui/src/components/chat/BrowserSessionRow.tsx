@@ -15,13 +15,14 @@ import { TOOL_RESPONSE_MAX_HEIGHT, TOOL_RESPONSE_SCROLL_CLASS } from "@/componen
 import { ThinkingRow } from "@/components/chat/ThinkingRow"
 import CodeBlock, { CODE_BLOCK_BG_COLOR } from "@/components/common/CodeBlock"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 import { FileServiceClient } from "@/services/grpc-client"
 import { BrowserActionIcon } from "./browser-session/BrowserActionIcon"
 import { BrowserSessionToolbar } from "./browser-session/BrowserSessionToolbar"
 import {
-    BROWSER_SESSION_PHASE_LABELS,
     browserSessionAnchor,
+    browserSessionPhaseLabel,
     describeBrowserAction,
     headCheckpoint,
     projectBrowserSession,
@@ -132,6 +133,7 @@ const BrowserSessionRow = memo((props: BrowserSessionRowProps) => {
         expandedRows,
         onToggleExpand,
     } = props
+    const { t } = useUiTranslation()
     const { browserSettings } = useExtensionState()
     const prevHeightRef = useRef(0)
     const [consoleLogsExpanded, setConsoleLogsExpanded] = useState(false)
@@ -149,7 +151,7 @@ const BrowserSessionRow = memo((props: BrowserSessionRowProps) => {
     const head = useMemo(() => headCheckpoint(steps), [steps])
     const unfoldable = useMemo(() => unfoldableCheckpoints(steps), [steps])
     const notices = useMemo(() => steps.flatMap((step) => step.notices), [steps])
-    const summary = useMemo(() => summarizeBrowserSession(steps), [steps])
+    const summary = useMemo(() => summarizeBrowserSession(steps, t), [steps, t])
     const stepsId = `browser-session-${anchor?.ts ?? "empty"}-steps`
 
     const [currentPageIndex, setCurrentPageIndex] = useState(() => Math.max(0, pages.length - 1))
@@ -263,7 +265,7 @@ const BrowserSessionRow = memo((props: BrowserSessionRowProps) => {
             type="button">
             {isBrowsing ? <ProgressIndicator /> : <span className="codicon codicon-inspect" style={browserIconStyle} />}
             <span className="shrink-0" style={approveTextStyle}>
-                {BROWSER_SESSION_PHASE_LABELS[phase]}
+                {browserSessionPhaseLabel(phase, t)}
             </span>
             {isFolded && summary && <span className="min-w-0 truncate text-description">{summary}</span>}
             {isFolded ? <ChevronRightIcon className="!size-3 shrink-0" /> : <ChevronDownIcon className="!size-3 shrink-0" />}
@@ -279,7 +281,7 @@ const BrowserSessionRow = memo((props: BrowserSessionRowProps) => {
                 data-testid="browser-session-steps-toggle"
                 onClick={() => setStepsVisible((visible) => !visible)}
                 type="button">
-                <span className="min-w-0 truncate">{summary || "Steps"}</span>
+                <span className="min-w-0 truncate">{summary || t("chatRows.browser.steps")}</span>
                 {stepsVisible ? (
                     <ChevronDownIcon className="!size-3 shrink-0" />
                 ) : (
@@ -339,7 +341,7 @@ const BrowserSessionRow = memo((props: BrowserSessionRowProps) => {
                         }}>
                         {displayState.screenshot ? (
                             <img
-                                alt="Browser screenshot"
+                                alt={t("chatRows.browser.screenshot")}
                                 onClick={() =>
                                     FileServiceClient.openImage(StringRequest.create({ value: displayState.screenshot })).catch(
                                         (err) => console.error("Failed to open image:", err),
@@ -380,10 +382,12 @@ const BrowserSessionRow = memo((props: BrowserSessionRowProps) => {
                                 padding: `9px 8px ${consoleLogsExpanded ? 0 : 8}px 8px`,
                             }}>
                             {consoleLogsExpanded ? <ChevronDownIcon size={16} /> : <ChevronRightIcon size={16} />}
-                            <span style={consoleLogsTextStyle}>Console Logs</span>
+                            <span style={consoleLogsTextStyle}>{t("chatRows.browser.consoleLogs")}</span>
                         </div>
                         {consoleLogsExpanded && (
-                            <CodeBlock source={`${"```"}shell\n${displayState.consoleLogs || "(No new logs)"}\n${"```"}`} />
+                            <CodeBlock
+                                source={`${"```"}shell\n${displayState.consoleLogs || t("chatRows.browser.noNewLogs")}\n${"```"}`}
+                            />
                         )}
                     </div>
                     {currentPage?.actions.map((action) => (
@@ -430,7 +434,6 @@ const BrowserSessionRow = memo((props: BrowserSessionRowProps) => {
                                                 reasoningContent={thought.text}
                                                 showChevron={Boolean(thought.text?.trim())}
                                                 showTitle={true}
-                                                title="Thinking"
                                             />
                                         </div>
                                     ))}
@@ -443,11 +446,13 @@ const BrowserSessionRow = memo((props: BrowserSessionRowProps) => {
                                             data-testid="browser-session-step-action"
                                             key={action.messageTs}
                                             onClick={() => showPage(step.pageIndex)}
-                                            title={`Show page ${step.pageIndex + 1}`}
+                                            title={t("chatRows.browser.showPage", { page: step.pageIndex + 1 })}
                                             type="button">
                                             <BrowserActionIcon action={action.action} />
-                                            <span className="min-w-0 truncate">{describeBrowserAction(action)}</span>
-                                            <span className="shrink-0 text-description text-xs">Page {step.pageIndex + 1}</span>
+                                            <span className="min-w-0 truncate">{describeBrowserAction(action, t)}</span>
+                                            <span className="shrink-0 text-description text-xs">
+                                                {t("chatRows.browser.page", { page: step.pageIndex + 1 })}
+                                            </span>
                                         </button>
                                     ))}
                                     {step.notices.map(renderNotice)}
@@ -485,14 +490,15 @@ const BrowserSessionRow = memo((props: BrowserSessionRowProps) => {
 }, deepEqual)
 
 const BrowserActionBox = ({ action, coordinate, text }: { action: BrowserAction; coordinate?: string; text?: string }) => {
+    const { t } = useUiTranslation()
     return (
         <div style={browserActionBoxContainerStyle}>
             <div style={browserActionBoxContainerInnerStyle}>
                 <div style={browseActionRowContainerStyle}>
                     <BrowserActionIcon action={action} className="mr-2" />
                     <span style={browseActionRowStyle}>
-                        <span style={browseActionTextStyle}>Browse Action: </span>
-                        {describeBrowserAction({ action, coordinate, text })}
+                        <span style={browseActionTextStyle}>{t("chatRows.browser.browseAction")} </span>
+                        {describeBrowserAction({ action, coordinate, text }, t)}
                     </span>
                 </div>
             </div>
@@ -501,13 +507,14 @@ const BrowserActionBox = ({ action, coordinate, text }: { action: BrowserAction;
 }
 
 const BrowserCursor: React.FC<{ style?: CSSProperties }> = ({ style }) => {
+    const { t } = useUiTranslation()
     // (can't use svgs in vsc extensions)
     const cursorBase64 =
         "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABUAAAAYCAYAAAAVibZIAAAAAXNSR0IArs4c6QAAAERlWElmTU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAFaADAAQAAAABAAAAGAAAAADwi9a/AAADGElEQVQ4EZ2VbUiTURTH772be/PxZdsz3cZwC4RVaB8SAjMpxQwSWZbQG/TFkN7oW1Df+h6IRV9C+hCpKUSIZUXOfGM5tAKViijFFEyfZ7Ol29S1Pbdzl8Uw9+aBu91zzv3/nt17zt2DEZjBYOAkKrtFMXIghAWM8U2vMN/FctsxGRMpM7NbEEYNMM2CYUSInlJx3OpawO9i+XSNQYkmk2uFb9njzkcfVSr1p/GJiQKMULVaw2WuBv296UKRxWJR6wxGCmM1EAhSNppv33GBH9qI32cPTAtss9lUm6EM3N7R+RbigT+5/CeosFCZKpjEW+iorS1pb30wDUXzQfHqtD/9L3ieZ2ee1OJCmbL8QHnRs+4uj0wmW4QzrpCwvJ8zGg3JqAmhTLynuLiwv8/5KyND8Q3cEkUEDWu15oJE4KRQJt5hs1rcriGNRqP+DK4dyyWXXm/aFQ+cEpSJ8/LyDGPuEZNOmzsOroUSOqzXG/dtBU4ZysTZYKNut91sNo2Cq6cE9enz86s2g9OCMrFSqVC5hgb32u072W3jKMU90Hb1seC0oUwsB+t92bO/rKx0EFGkgFCnjjc1/gVvC8rE0L+4o63t4InjxwbAJQjTe3qD8QrLkXA4DC24fWtuajp06cLFYSBIFKGmXKPRRmAnME9sPt+yLwIWb9WN69fKoTneQz4Dh2mpPNkvfeV0jjecb9wNAkwIEVQq5VJOds4Kb+DXoAsiVquVwI1Dougpij6UyGYx+5cKroeDEFibm5lWRRMbH1+npmYrq6qhwlQHIbajZEf1fElcqGGFpGg9HMuKzpfBjhytCTMgkJ56RX09zy/ysENTBElmjIgJnmNChJqohDVQqpEfwkILE8v/o0GAnV9F1eEvofVQCbiTBEXOIPQh5PGgefDZeAcjrpGZjULBr/m3tZOnz7oEQWRAQZLjWlEU/XEJWySiILgRc5Cz1DkcAyuBFcnpfF0JiXWKpcolQXizhS5hKAqFpr0MVbgbuxJ6+5xX+P4wNpbqPPrugZfbmIbLmgQR3Aw8QSi66hUXulOFbF73GxqjE5BNXWNeAAAAAElFTkSuQmCC"
 
     return (
         <img
-            alt="cursor"
+            alt={t("chatRows.browser.cursor")}
             src={cursorBase64}
             style={{
                 width: "17px",

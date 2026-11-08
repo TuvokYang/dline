@@ -1,4 +1,5 @@
 import { type TaskRateMetricPoint, TaskRateRpmBasis } from "@shared/proto/dline/task"
+import { translateUi, type UiTranslator } from "@/i18n/messages"
 import { formatTokenMetric } from "../util"
 
 export type TaskMetricsView = "tokenCache" | "rates"
@@ -173,7 +174,10 @@ export function getTaskMetricsSeries(view: TaskMetricsView): readonly TaskMetric
 }
 
 /** Describe the left and right axis of a view so each rate keeps its own readable scale. */
-export function getTaskMetricsAxisTitles(view: TaskMetricsView): TaskMetricsAxisTitles {
+export function getTaskMetricsAxisTitles(
+    view: TaskMetricsView,
+    t: UiTranslator = (key, ...args) => translateUi("en", key, ...args),
+): TaskMetricsAxisTitles {
     if (view === "rates") {
         return {
             left: { label: "TPM", color: getSeriesColor("tpm") },
@@ -181,8 +185,8 @@ export function getTaskMetricsAxisTitles(view: TaskMetricsView): TaskMetricsAxis
         }
     }
     return {
-        left: { label: "Tokens" },
-        right: { label: "Cache Hit Rate", color: getSeriesColor("cacheHit") },
+        left: { label: t("chatInput.metrics.tokens") },
+        right: { label: t("chatInput.metrics.series.cacheHit"), color: getSeriesColor("cacheHit") },
     }
 }
 

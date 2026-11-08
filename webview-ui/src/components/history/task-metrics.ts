@@ -7,6 +7,7 @@
  * they drifted apart.
  */
 
+import { englishUiTranslator, type UiTranslator } from "@/i18n/messages"
 import { formatCurrencyAmount } from "@/utils/currency"
 
 /** Minimal shape both history panels can supply. */
@@ -65,15 +66,21 @@ export interface TaskUsageLabel {
  *
  * @param item Usage metadata of the task row.
  * @param fractionDigits Decimal places used when a real cost exists.
+ * @param t Translator the caller supplies; the English baseline is used when
+ *   a pure caller has no display language to select.
  * @returns The label to render, or undefined when there is nothing to show.
  */
-export function getTaskUsageLabel(item: TaskUsageSummary, fractionDigits = 2): TaskUsageLabel | undefined {
+export function getTaskUsageLabel(
+    item: TaskUsageSummary,
+    fractionDigits = 2,
+    t: UiTranslator = englishUiTranslator,
+): TaskUsageLabel | undefined {
     const cost = item.totalCost ?? 0
     if (Number.isFinite(cost) && cost > 0) {
         return {
             kind: "cost",
             text: formatCurrencyAmount(cost, item.currency, fractionDigits),
-            title: "Total cost",
+            title: t("shell.taskUsage.totalCost"),
         }
     }
 
@@ -81,7 +88,7 @@ export function getTaskUsageLabel(item: TaskUsageSummary, fractionDigits = 2): T
     if (tokens <= 0) return undefined
     return {
         kind: "tokens",
-        text: `${formatTokenCount(tokens)} tokens`,
-        title: `Total tokens: ${tokens.toLocaleString()}`,
+        text: t("shell.taskUsage.tokens", { count: formatTokenCount(tokens) }),
+        title: t("shell.taskUsage.totalTokens", { count: tokens.toLocaleString() }),
     }
 }

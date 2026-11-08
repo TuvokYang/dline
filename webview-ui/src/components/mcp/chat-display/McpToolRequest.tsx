@@ -1,5 +1,6 @@
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import { Fragment, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 
 interface McpToolRequestProps {
@@ -74,6 +75,7 @@ function DetailsHeading({ children }: { children: string }) {
  * reopens the description and arguments, which scroll beneath it on their own.
  */
 const McpToolRequest = ({ toolName, description, argumentsJson, hasResponse }: McpToolRequestProps) => {
+    const { t } = useUiTranslation()
     const [isExpanded, setIsExpanded] = useState(true)
     const hasArguments = !!argumentsJson && argumentsJson !== "{}"
     const hasDetails = !!description || hasArguments
@@ -110,7 +112,7 @@ const McpToolRequest = ({ toolName, description, argumentsJson, hasResponse }: M
                     data-testid="mcp-request-body">
                     {description && (
                         <div>
-                            <DetailsHeading>Description</DetailsHeading>
+                            <DetailsHeading>{t("capabilities.mcp.description")}</DetailsHeading>
                             <div
                                 className={cn(DETAILS_FRAME, "text-description whitespace-pre-wrap break-words")}
                                 data-testid="mcp-tool-description">
@@ -120,7 +122,7 @@ const McpToolRequest = ({ toolName, description, argumentsJson, hasResponse }: M
                     )}
                     {hasArguments && argumentsJson && (
                         <div className={cn(description && "mt-2")}>
-                            <DetailsHeading>Arguments</DetailsHeading>
+                            <DetailsHeading>{t("capabilities.mcp.arguments")}</DetailsHeading>
                             <McpToolArguments argumentsJson={argumentsJson} />
                         </div>
                     )}

@@ -3,6 +3,7 @@ import { readTimeWindowRate, withTimeWindowRateKind } from "@shared/providers/pr
 import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
 import { useEffect, useId, useRef, useState } from "react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ProfileField, ProfileInlineGrid, ProfileSectionTitle } from "../profile-ui"
 import { flushPendingDebouncedInputs } from "../utils/useDebouncedInput"
 import { DebouncedTextField } from "./DebouncedTextField"
@@ -42,6 +43,7 @@ function ClockField({
     value: number
     onChange: (value: number) => boolean
 }) {
+    const { t } = useUiTranslation()
     const id = useId()
     const [invalid, setInvalid] = useState(false)
     return (
@@ -57,7 +59,7 @@ function ClockField({
             />
             {invalid && (
                 <span className="text-xs text-error" role="alert">
-                    Use HH:MM between 00:00 and 24:00, with start before end and no overlapping windows.
+                    {t("settings.ui.clockInvalid")}
                 </span>
             )}
         </ProfileField>
@@ -80,13 +82,14 @@ export const TimeWindowEditor = ({
     currencySymbol,
     showCachePrices,
     editable,
-    heading = "Time Windows",
+    heading,
     peakOffPeakLabels = false,
     ratesEditable = editable,
     timezoneOffsetMinutes,
     defaultRate,
     onChange,
 }: TimeWindowEditorProps) => {
+    const { t } = useUiTranslation()
     const id = useId()
     const [flushFailed, setFlushFailed] = useState(false)
     const afterInputFlush = (change: () => void) => {
@@ -105,11 +108,9 @@ export const TimeWindowEditor = ({
     const offset = `${timezoneOffsetMinutes < 0 ? "-" : "+"}${formatClock(Math.abs(timezoneOffsetMinutes))}`
     const windowScope = (window: PricingTimeWindow, index: number) =>
         peakOffPeakLabels
-            ? `Peak window ${formatClock(window.startMinute)} – ${formatClock(window.endMinute)}`
-            : `Window ${index + 1}`
-    const chartLabel = peakOffPeakLabels
-        ? "Configured peak pricing windows in seller time"
-        : "Configured pricing windows in seller time"
+            ? t("settings.ui.peakWindowRange", { start: formatClock(window.startMinute), end: formatClock(window.endMinute) })
+            : t("settings.ui.window", { index: index + 1 })
+    const chartLabel = peakOffPeakLabels ? t("settings.ui.peakChart") : t("settings.ui.windowChart")
     const publish = (next: PricingTimeWindow[]) => {
         latest.current = next
         onChange?.(next)
@@ -135,41 +136,48 @@ export const TimeWindowEditor = ({
     return (
         <div className="flex min-w-0 flex-col gap-2">
             <div className="flex items-center justify-between gap-2">
-                <ProfileSectionTitle className="text-xs uppercase tracking-wide text-description">{heading}</ProfileSectionTitle>
+                <ProfileSectionTitle className="text-xs uppercase tracking-wide text-description">
+                    {heading ?? t("settings.ui.timeWindows")}
+                </ProfileSectionTitle>
                 {editable && (
                     <VSCodeButton disabled={!gap} onClick={() => afterInputFlush(addWindow)}>
-                        Add Time Window
+                        {t("settings.ui.addTimeWindow")}
                     </VSCodeButton>
                 )}
             </div>
             {flushFailed && (
                 <span className="text-xs text-error" role="alert">
-                    Pending inputs could not be saved. Retry before changing windows.
+                    {t("settings.ui.flushWindows")}
                 </span>
             )}
-            <span className="text-xs text-description">Seller time: UTC{offset}</span>
+            <span className="text-xs text-description">{t("settings.ui.sellerTime", { offset })}</span>
             <PricingTimeline label={chartLabel} peakOffPeakLabels={peakOffPeakLabels} windows={windows} />
             {windows.map((window, index) => (
                 <div className="flex flex-col gap-2 rounded-xs border border-editor-widget-border p-2" key={`${id}-${index}`}>
                     <strong className="text-xs">
-                        {peakOffPeakLabels ? "Peak window" : `Window ${index + 1}`} · {formatClock(window.startMinute)} –{" "}
-                        {formatClock(window.endMinute)}
+                        {t("settings.ui.windowRange", {
+                            label: peakOffPeakLabels
+                                ? t("settings.ui.peakWindow")
+                                : t("settings.ui.window", { index: index + 1 }),
+                            start: formatClock(window.startMinute),
+                            end: formatClock(window.endMinute),
+                        })}
                     </strong>
                     {editable && (
                         <ProfileInlineGrid>
                             <ClockField
-                                accessibleLabel={`${windowScope(window, index)} Start (HH:MM, UTC${offset})`}
-                                label={`Start (HH:MM, UTC${offset})`}
+                                accessibleLabel={t("settings.ui.clockStart", { scope: windowScope(window, index), offset })}
+                                label={t("settings.ui.clockStart", { scope: "", offset })}
                                 onChange={(startMinute) => replace(index, { startMinute })}
                                 value={window.startMinute}
                             />
                             <ClockField
-                                accessibleLabel={`${windowScope(window, index)} End (HH:MM, UTC${offset})`}
-                                label={`End (HH:MM, UTC${offset})`}
+                                accessibleLabel={t("settings.ui.clockEnd", { scope: windowScope(window, index), offset })}
+                                label={t("settings.ui.clockEnd", { scope: "", offset })}
                                 onChange={(endMinute) => replace(index, { endMinute })}
                                 value={window.endMinute}
                             />
-                            <ProfileField htmlFor={`${id}-${index}-kind`} label="Rate">
+                            <ProfileField htmlFor={`${id}-${index}-kind`} label={t("settings.ui.rate")}>
                                 <Select
                                     onValueChange={(kind) =>
                                         afterInputFlush(() =>
@@ -181,8 +189,8 @@ export const TimeWindowEditor = ({
                                         <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value="prices">Single rate</SelectItem>
-                                        <SelectItem value="bands">By context size</SelectItem>
+                                        <SelectItem value="prices">{t("settings.ui.singleRate")}</SelectItem>
+                                        <SelectItem value="bands">{t("settings.ui.byContext")}</SelectItem>
                                     </SelectContent>
                                 </Select>
                             </ProfileField>
@@ -211,7 +219,7 @@ export const TimeWindowEditor = ({
                         <VSCodeButton
                             appearance="secondary"
                             onClick={() => afterInputFlush(() => publish(latest.current.filter((_, at) => at !== index)))}>
-                            Remove Time Window
+                            {t("settings.ui.removeTimeWindow")}
                         </VSCodeButton>
                     )}
                 </div>

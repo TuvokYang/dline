@@ -2,6 +2,7 @@ import { HistoryItem } from "@shared/HistoryItem"
 import { StringRequest } from "@shared/proto/dline/common"
 import { ExternalLinkIcon } from "lucide-react"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { TaskServiceClient } from "@/services/grpc-client"
 
 /**
@@ -11,6 +12,7 @@ import { TaskServiceClient } from "@/services/grpc-client"
  * Each button opens the corresponding task in a new Editor Tab window.
  */
 const SpawnedTasksBar = () => {
+    const { t } = useUiTranslation()
     const { currentTaskItem, taskHistory } = useExtensionState()
 
     const spawnedTaskIds = currentTaskItem?.spawnedTaskIds
@@ -38,7 +40,7 @@ const SpawnedTasksBar = () => {
 
     return (
         <div className="px-4 flex items-center gap-1.5 py-1">
-            <span className="text-xs font-medium text-description shrink-0">Spawned:</span>
+            <span className="text-xs font-medium text-description shrink-0">{t("chatInput.header.spawned")}</span>
             <div className="flex items-center gap-1 flex-wrap">
                 {spawnedTaskIds.map((taskId) => (
                     <button
@@ -47,7 +49,7 @@ const SpawnedTasksBar = () => {
 							hover:brightness-110 cursor-pointer border-0"
                         key={taskId}
                         onClick={() => handleOpenTask(taskId)}
-                        title={`Open task: ${taskId}`}
+                        title={t("chatInput.header.openTask", { taskId })}
                         type="button">
                         <ExternalLinkIcon className="size-2.5 shrink-0" />
                         <span className="truncate max-w-32">{getTaskDisplayName(taskId)}</span>
