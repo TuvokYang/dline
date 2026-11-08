@@ -4,10 +4,13 @@ import { createRequire } from "node:module"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { promisify } from "node:util"
+import { load } from "cheerio"
 import { afterEach, describe, expect, it } from "vitest"
 
 const execute = promisify(execFile)
 const require = createRequire(import.meta.url)
+const MarkdownIt = require("markdown-it") as new (options: { html: boolean }) => { render(content: string): string }
+const markdown = new MarkdownIt({ html: true })
 const { readZip } = require("@vscode/vsce/out/zip.js") as {
     readZip(packagePath: string, filter: (name: string) => boolean): Promise<Map<string, Buffer>>
 }
@@ -67,7 +70,7 @@ afterEach(async () => {
     }
 })
 
-describe("marketplace language links in a VSIX", () => {
+describe("marketplace language links and images in a VSIX", () => {
     it.each([
         { channel: "production tag", ref: "v0.14.0" },
         { channel: "pre-release tag", ref: "dev-v0.13.0" },
@@ -107,6 +110,24 @@ describe("marketplace language links in a VSIX", () => {
         expect(entries.has("extension/marketplace.zh-cn.md")).toBe(false)
         expect(entries.has("extension/readme.marketplace.md")).toBe(false)
         expect(entries.has("extension/.readme.github.bak")).toBe(false)
+
+        const source = await fs.readFile(path.join(root, "README.marketplace.md"), "utf8")
+        const sourceImages = load(markdown.render(source))("img[src]")
+            .toArray()
+            .map((image) => image.attribs.src)
+        const images = load(markdown.render(readme ?? ""))("img[src]").toArray()
+        expect(sourceImages.map((image) => path.posix.extname(image))).toEqual([".png", ".gif", ".gif"])
+        expect(images).toHaveLength(sourceImages.length)
+        for (const [index, image] of images.entries()) {
+            const original = new URL(sourceImages[index], "https://repository.invalid/")
+            expect(new URL(image.attribs.src)).toMatchObject({
+                protocol: "https:",
+                hostname: "raw.githubusercontent.com",
+                pathname: `${new URL(repositoryUrl).pathname}/${expectedRef}${original.pathname}`,
+                search: original.search,
+                hash: original.hash,
+            })
+        }
 
         expect(await fs.readFile(path.join(root, "README.md"), "utf8")).toBe(originalReadme)
         expect(await fs.readFile(path.join(root, "package.json"), "utf8")).toBe(originalManifest)

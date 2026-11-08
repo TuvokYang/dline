@@ -91,7 +91,7 @@ function isRepositoryPath(target) {
 }
 
 /**
- * Absolute GitHub URL of a repository-relative path at `ref`.
+ * Absolute URL of a repository-relative path at `ref`.
  *
  * @param {string} repositoryUrl Repository web URL.
  * @param {string} ref Branch, tag, or commit.
@@ -105,6 +105,11 @@ function pinnedUrl(repositoryUrl, ref, view, target) {
     const normalized = path.posix.normalize(filePath.replace(/^\/+/, ""))
     if (normalized === ".." || normalized.startsWith("../")) {
         throw new Error(`Marketplace README link '${target}' points outside the repository.`)
+    }
+    const githubRepository = /^https?:\/\/github\.com\/([^/?#]+\/[^/?#]+)\/?$/i.exec(repositoryUrl)
+    if (view === "raw" && githubRepository) {
+        // Serve listing media directly, without GitHub's web raw redirect.
+        return `https://raw.githubusercontent.com/${githubRepository[1]}/${ref}/${normalized}${suffix}`
     }
     return `${repositoryUrl}/${view}/${ref}/${normalized}${suffix}`
 }

@@ -4,6 +4,9 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 ## [Unreleased]
 
+### Fixed
+- Marketplace listing icons and demo GIFs load directly from GitHub's raw files, reducing loading failures caused by web-page redirects.
+
 ## [0.13.1]
 
 ### Added
