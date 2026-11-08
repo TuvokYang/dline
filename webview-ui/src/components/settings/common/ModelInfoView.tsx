@@ -101,6 +101,7 @@ interface ModelInfoViewProps {
     selectedModelId: string
     modelInfo: ModelInfo
     isPopup?: boolean
+    peakOffPeakLabels?: boolean
     // Provider routing props (optional - only shown for Cline provider)
     providerSorting?: string
     onProviderSortingChange?: (value: string) => void
@@ -113,6 +114,7 @@ export const ModelInfoView = ({
     selectedModelId,
     modelInfo,
     isPopup,
+    peakOffPeakLabels,
     providerSorting,
     onProviderSortingChange,
     showProviderRouting,
@@ -222,6 +224,7 @@ export const ModelInfoView = ({
                 ) : null}
             </AdvancedSection>
             <PricingEditor
+                peakOffPeakLabels={peakOffPeakLabels}
                 pricing={modelInfo.pricing}
                 readOnly={true}
                 showCachePrices={modelInfo.capabilities?.supportsPromptCache === true}

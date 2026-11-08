@@ -8,20 +8,19 @@ import { flushPendingDebouncedInputs } from "../utils/useDebouncedInput"
 import { DebouncedTextField } from "./DebouncedTextField"
 import { PricingTierEditor } from "./ModelTierEditor"
 import { PriceSetFields } from "./PriceSetFields"
+import { formatPricingClock as formatClock, PricingTimeline } from "./PricingTimeline"
 
 interface TimeWindowEditorProps {
     windows: readonly PricingTimeWindow[]
     currencySymbol: string
     showCachePrices: boolean
     editable: boolean
+    heading?: string
+    peakOffPeakLabels?: boolean
     ratesEditable?: boolean
     timezoneOffsetMinutes: number
     defaultRate?: Pick<PricingTimeWindow, "prices" | "bands">
     onChange?: (windows: PricingTimeWindow[]) => void
-}
-
-function formatClock(minutes: number): string {
-    return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`
 }
 
 function parseClock(text: string): number | undefined {
@@ -81,6 +80,8 @@ export const TimeWindowEditor = ({
     currencySymbol,
     showCachePrices,
     editable,
+    heading = "Time Windows",
+    peakOffPeakLabels = false,
     ratesEditable = editable,
     timezoneOffsetMinutes,
     defaultRate,
@@ -102,6 +103,13 @@ export const TimeWindowEditor = ({
     }, [windows])
     const gap = firstGap(windows)
     const offset = `${timezoneOffsetMinutes < 0 ? "-" : "+"}${formatClock(Math.abs(timezoneOffsetMinutes))}`
+    const windowScope = (window: PricingTimeWindow, index: number) =>
+        peakOffPeakLabels
+            ? `Peak window ${formatClock(window.startMinute)} – ${formatClock(window.endMinute)}`
+            : `Window ${index + 1}`
+    const chartLabel = peakOffPeakLabels
+        ? "Configured peak pricing windows in seller time"
+        : "Configured pricing windows in seller time"
     const publish = (next: PricingTimeWindow[]) => {
         latest.current = next
         onChange?.(next)
@@ -127,9 +135,7 @@ export const TimeWindowEditor = ({
     return (
         <div className="flex min-w-0 flex-col gap-2">
             <div className="flex items-center justify-between gap-2">
-                <ProfileSectionTitle className="text-xs uppercase tracking-wide text-description">
-                    Time Windows
-                </ProfileSectionTitle>
+                <ProfileSectionTitle className="text-xs uppercase tracking-wide text-description">{heading}</ProfileSectionTitle>
                 {editable && (
                     <VSCodeButton disabled={!gap} onClick={() => afterInputFlush(addWindow)}>
                         Add Time Window
@@ -142,56 +148,23 @@ export const TimeWindowEditor = ({
                 </span>
             )}
             <span className="text-xs text-description">Seller time: UTC{offset}</span>
-            <div>
-                <svg
-                    aria-label="Configured pricing windows in seller time"
-                    className="block h-3 w-full overflow-hidden rounded-xs"
-                    preserveAspectRatio="none"
-                    role="img"
-                    viewBox="0 0 1440 12">
-                    <title>Configured pricing windows in seller time</title>
-                    <rect fill="var(--vscode-charts-green, #22c55e)" height="12" opacity="0.45" width="1440" x="0" />
-                    {windows.map((window, index) => (
-                        <rect
-                            data-window-index={index}
-                            fill="var(--vscode-charts-orange, #f59e0b)"
-                            height="12"
-                            key={index}
-                            width={window.endMinute - window.startMinute}
-                            x={window.startMinute}>
-                            <title>
-                                {formatClock(window.startMinute)} – {formatClock(window.endMinute)}
-                            </title>
-                        </rect>
-                    ))}
-                </svg>
-                <div aria-hidden className="mt-1 flex justify-between text-[10px] text-description">
-                    <span>00</span>
-                    <span>06</span>
-                    <span>12</span>
-                    <span>18</span>
-                    <span>24</span>
-                </div>
-                <div className="mt-1 flex gap-3 text-[11px]">
-                    <span style={{ color: "var(--vscode-charts-green, #22c55e)" }}>Default rates</span>
-                    <span style={{ color: "var(--vscode-charts-orange, #f59e0b)" }}>Window rates</span>
-                </div>
-            </div>
+            <PricingTimeline label={chartLabel} peakOffPeakLabels={peakOffPeakLabels} windows={windows} />
             {windows.map((window, index) => (
                 <div className="flex flex-col gap-2 rounded-xs border border-editor-widget-border p-2" key={`${id}-${index}`}>
                     <strong className="text-xs">
-                        Window {index + 1} · {formatClock(window.startMinute)} – {formatClock(window.endMinute)}
+                        {peakOffPeakLabels ? "Peak window" : `Window ${index + 1}`} · {formatClock(window.startMinute)} –{" "}
+                        {formatClock(window.endMinute)}
                     </strong>
                     {editable && (
                         <ProfileInlineGrid>
                             <ClockField
-                                accessibleLabel={`Window ${index + 1} Start (HH:MM, UTC${offset})`}
+                                accessibleLabel={`${windowScope(window, index)} Start (HH:MM, UTC${offset})`}
                                 label={`Start (HH:MM, UTC${offset})`}
                                 onChange={(startMinute) => replace(index, { startMinute })}
                                 value={window.startMinute}
                             />
                             <ClockField
-                                accessibleLabel={`Window ${index + 1} End (HH:MM, UTC${offset})`}
+                                accessibleLabel={`${windowScope(window, index)} End (HH:MM, UTC${offset})`}
                                 label={`End (HH:MM, UTC${offset})`}
                                 onChange={(endMinute) => replace(index, { endMinute })}
                                 value={window.endMinute}
@@ -226,7 +199,7 @@ export const TimeWindowEditor = ({
                         />
                     ) : (
                         <PriceSetFields
-                            accessiblePrefix={`Window ${index + 1}`}
+                            accessiblePrefix={windowScope(window, index)}
                             currencySymbol={currencySymbol}
                             onChange={(prices) => replace(index, { prices, bands: undefined })}
                             prices={window.prices}

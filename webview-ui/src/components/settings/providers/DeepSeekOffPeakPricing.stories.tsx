@@ -1,9 +1,11 @@
 import { type ModelPricing, PricingDayRule } from "@shared/proto/dline/models/metadata"
 import type { Meta, StoryObj } from "@storybook/react-vite"
+import { useState } from "react"
+import { expect, userEvent, within } from "storybook/test"
 import { createStorybookDecorator } from "@/config/StorybookDecorator"
 import { PricingEditor } from "../common/PricingEditor"
 
-// Explicit declarations, not runtime pricing rules. Both rates are independently authored.
+// Explicit rates; the real PricingEditor resolves the injected seller-day instant.
 export const DEEPSEEK_STORY_PRICING: ModelPricing = {
     currency: "CNY",
     strategy: {
@@ -23,11 +25,17 @@ export const DEEPSEEK_STORY_PRICING: ModelPricing = {
     },
 }
 
-function CardFixture({ pricing = DEEPSEEK_STORY_PRICING }: { pricing?: ModelPricing }) {
+function CardFixture({
+    pricing = DEEPSEEK_STORY_PRICING,
+    atMs = Date.parse("2026-11-03T01:00:00Z"),
+}: {
+    pricing?: ModelPricing
+    atMs?: number
+}) {
     return (
         <div className="flex w-[380px] flex-col gap-2 rounded-xs border border-editor-widget-border p-3">
             <span className="text-sm font-medium text-foreground">DeepSeek</span>
-            <PricingEditor pricing={pricing} readOnly={true} showCachePrices />
+            <PricingEditor atMs={atMs} peakOffPeakLabels pricing={pricing} readOnly={true} showCachePrices />
         </div>
     )
 }
@@ -45,8 +53,79 @@ const meta = {
 export default meta
 type Story = StoryObj<typeof meta>
 
-/** The configured weekday shape does not claim to be today's resolved calendar. */
-export const PublishedWindows: Story = { args: { pricing: DEEPSEEK_STORY_PRICING } }
+export const Weekday: Story = {
+    args: { atMs: Date.parse("2026-11-03T01:00:00Z") },
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement)
+        const chart = canvas.getByRole("img", { name: "Pricing windows for 2026-11-03 (UTC+08:00)" })
+        await expect(
+            Array.from(chart.querySelectorAll("[data-rate-kind]"), (bar) => [
+                bar.getAttribute("data-rate-kind"),
+                Number(bar.getAttribute("x")),
+                Number(bar.getAttribute("width")),
+            ]),
+        ).toEqual([
+            ["offPeak", 0, 540],
+            ["peak", 540, 180],
+            ["offPeak", 720, 120],
+            ["peak", 840, 240],
+            ["offPeak", 1080, 360],
+        ])
+        await expect(
+            canvas.getByRole("region", { name: "Peak window · 09:00 – 12:00" }).querySelector('[data-price-slot="inputPrice"]'),
+        ).toHaveTextContent("¥9")
+        await expect(
+            canvas
+                .getByRole("region", { name: "Off-peak window · 12:00 – 14:00" })
+                .querySelector('[data-price-slot="inputPrice"]'),
+        ).toHaveTextContent("¥4.5")
+    },
+}
+
+async function expectFullDayOffPeak(canvasElement: HTMLElement, day: string) {
+    const canvas = within(canvasElement)
+    const chart = canvas.getByRole("img", { name: `Pricing windows for ${day} (UTC+08:00)` })
+    await expect(chart.querySelectorAll('[data-rate-kind="peak"]')).toHaveLength(0)
+    await expect(chart.querySelectorAll('[data-rate-kind="offPeak"]')).toHaveLength(1)
+    await expect(chart.querySelector('[data-rate-kind="offPeak"]')).toHaveAttribute("width", "1440")
+    await expect(canvas.queryByRole("region", { name: /^Peak window/ })).toBeNull()
+    await expect(
+        canvas.getByRole("region", { name: "Off-peak window · 00:00 – 24:00" }).querySelector('[data-price-slot="inputPrice"]'),
+    ).toHaveTextContent("¥4.5")
+}
+
+export const Weekend: Story = {
+    args: { atMs: Date.parse("2026-11-08T05:20:00Z") },
+    play: ({ canvasElement }) => expectFullDayOffPeak(canvasElement, "2026-11-08"),
+}
+
+export const PublicHoliday: Story = {
+    args: { atMs: Date.parse("2026-10-01T02:00:00Z") },
+    play: ({ canvasElement }) => expectFullDayOffPeak(canvasElement, "2026-10-01"),
+}
+
+function DayTransition() {
+    const [atMs, setAtMs] = useState(Date.parse("2026-11-08T15:59:59Z"))
+    return (
+        <>
+            <button onClick={() => setAtMs(Date.parse("2026-11-08T16:00:00Z"))} type="button">
+                Next seller day
+            </button>
+            <CardFixture atMs={atMs} />
+        </>
+    )
+}
+
+export const SundayToMonday: Story = {
+    render: () => <DayTransition />,
+    play: async ({ canvasElement }) => {
+        await expectFullDayOffPeak(canvasElement, "2026-11-08")
+        const canvas = within(canvasElement)
+        await userEvent.click(canvas.getByRole("button", { name: "Next seller day" }))
+        const chart = canvas.getByRole("img", { name: "Pricing windows for 2026-11-09 (UTC+08:00)" })
+        await expect(chart.querySelectorAll('[data-rate-kind="peak"]')).toHaveLength(2)
+    },
+}
 
 export const TimeAndContext: Story = {
     args: {

@@ -12,6 +12,10 @@ describe("DeepSeek published billing terms", () => {
         ["deepseek-flash", "2026-11-03T04:00:00Z", 0.502],
         ["deepseek-v4-pro", "2026-11-03T01:00:00Z", 3.63],
         ["deepseek-v4-pro", "2026-11-03T04:00:00Z", 1.815],
+        ["deepseek-flash", "2026-11-08T01:00:00Z", 0.502],
+        ["deepseek-flash", "2026-10-01T06:00:00Z", 0.502],
+        ["deepseek-v4-pro", "2026-11-08T06:00:00Z", 1.815],
+        ["deepseek-v4-pro", "2026-10-01T01:00:00Z", 1.815],
     ] as const)("bills %s at %s using the explicit published rate", (id, at, amount) => {
         const result = calculateUsageCost(
             deepSeekModels[id].pricing,

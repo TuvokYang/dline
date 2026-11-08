@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { getCurrencySymbol, SUPPORTED_CURRENCY_CODES } from "@/utils/currency"
 import { ProfileField, ProfileSection, ProfileSectionTitle } from "../profile-ui"
 import { flushPendingDebouncedInputs } from "../utils/useDebouncedInput"
+import { DailyPricing } from "./DailyPricing"
 import { DebouncedTextField } from "./DebouncedTextField"
 import { appendPricingTier, PricingTierEditor } from "./ModelTierEditor"
 import { PriceSetFields } from "./PriceSetFields"
@@ -24,6 +25,8 @@ interface PricingEditorProps {
     tiersEditable?: boolean
     showCachePrices?: boolean
     readOnly?: boolean
+    peakOffPeakLabels?: boolean
+    atMs?: number
     onChange?: (pricing: ModelPricing) => void
     onReset?: () => void
 }
@@ -38,6 +41,8 @@ export function PricingEditor({
     tiersEditable = false,
     showCachePrices = false,
     readOnly = false,
+    peakOffPeakLabels = false,
+    atMs,
     onChange,
     onReset,
 }: PricingEditorProps) {
@@ -111,6 +116,8 @@ export function PricingEditor({
             }
         })
     const time = declaration?.strategy?.timeOfDay
+    const weekdayWindows = time?.schedule?.dayRule === PricingDayRule.PRICING_DAY_RULE_WEEKDAYS
+    const defaultRateLabel = peakOffPeakLabels ? "Off-peak" : "Default"
     const resetButton = !readOnly && onReset && (
         <VSCodeButton appearance="secondary" onClick={reset}>
             Reset Pricing
@@ -134,7 +141,9 @@ export function PricingEditor({
     return (
         <ProfileSection>
             <div className="flex items-center justify-between gap-2">
-                <ProfileSectionTitle className="text-xs uppercase tracking-wide text-description">Pricing</ProfileSectionTitle>
+                <ProfileSectionTitle className="text-xs uppercase tracking-wide text-description">
+                    {peakOffPeakLabels ? "Peak / Off-peak Pricing" : "Pricing"}
+                </ProfileSectionTitle>
                 {resetButton}
             </div>
             {flushFailed && (
@@ -214,20 +223,31 @@ export function PricingEditor({
                     tiers={declaration.strategy!.contextWindow!.bands}
                 />
             )}
-            {time && (
+            {time && peakOffPeakLabels && readOnly && (
+                <DailyPricing atMs={atMs} currencySymbol={symbol} showCachePrices={showCachePrices} time={time} />
+            )}
+            {time && (!peakOffPeakLabels || !readOnly) && (
                 <>
-                    <p className="m-0 text-[11px] text-description">
-                        {time.schedule?.dayRule === PricingDayRule.PRICING_DAY_RULE_WEEKDAYS
-                            ? "Weekdays"
-                            : time.schedule?.dayRule === PricingDayRule.PRICING_DAY_RULE_ALL_DAYS
-                              ? "All days"
-                              : "Applicable days not declared"}
-                        .
-                        {time.schedule?.defaultOnPublicHolidays
-                            ? ` Public holidays (${time.schedule.holidayCalendar || "calendar not declared"}) use default rates.`
-                            : ""}
-                        {" Configuration, not today's effective schedule. Default rates cover gaps and non-applicable days."}
-                    </p>
+                    {peakOffPeakLabels && (
+                        <p className="m-0 text-xs text-description">
+                            {weekdayWindows ? "Weekday peak windows." : "Daily peak windows."}
+                            {time.schedule?.defaultOnPublicHolidays ? " Public holidays use off-peak rates." : ""}
+                        </p>
+                    )}
+                    {!peakOffPeakLabels && (
+                        <p className="m-0 text-[11px] text-description">
+                            {weekdayWindows
+                                ? "Weekdays"
+                                : time.schedule?.dayRule === PricingDayRule.PRICING_DAY_RULE_ALL_DAYS
+                                  ? "All days"
+                                  : "Applicable days not declared"}
+                            .
+                            {time.schedule?.defaultOnPublicHolidays
+                                ? ` Public holidays (${time.schedule.holidayCalendar || "calendar not declared"}) use ${defaultRateLabel.toLowerCase()} rates.`
+                                : ""}
+                            {" Configuration, not today's effective schedule. Default rates cover gaps and non-applicable days."}
+                        </p>
+                    )}
                     {!readOnly && !fixedShape && (
                         <>
                             <ProfileField htmlFor={`${id}-offset`} label="Seller UTC offset (minutes)">
@@ -299,7 +319,7 @@ export function PricingEditor({
                             onChange={(prices) =>
                                 replaceTime((latest) => ({ ...latest, defaultBands: undefined, defaultPrices: prices }))
                             }
-                            prefix="Default"
+                            prefix={defaultRateLabel}
                             prices={time.defaultPrices}
                             readOnly={readOnly}
                             showCachePrices={showCachePrices}
@@ -309,7 +329,9 @@ export function PricingEditor({
                         currencySymbol={symbol}
                         defaultRate={{ prices: time.defaultPrices, bands: time.defaultBands }}
                         editable={!readOnly && tiersEditable}
+                        heading={peakOffPeakLabels ? "Peak windows (configuration)" : undefined}
                         onChange={(windows) => replaceTime((latest) => ({ ...latest, timeWindows: windows }))}
+                        peakOffPeakLabels={peakOffPeakLabels}
                         ratesEditable={!readOnly}
                         showCachePrices={showCachePrices}
                         timezoneOffsetMinutes={time.schedule?.timezoneOffsetMinutes ?? 0}

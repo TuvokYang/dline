@@ -10,6 +10,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Added experimental Away Mode: enable it in Settings → Features → Experimental, then send `/away` to keep the current task working while you are away, and new questions enter the mode automatically after ten minutes without an answer; workspace commands then skip approval while commands outside the workspace still need it and are refused after one minute, with existing permissions, ignore rules and hooks unchanged
 
 ### Changed
+- DeepSeek pricing charts follow the current day in Beijing time: weekends and public holidays show off-peak rates all day, weekdays show their actual peak/off-peak intervals, and windows are named by rate and time instead of numbers
 - Provider pricing tier numbers now appear in group headings instead of being repeated in price field labels, while accessible names still distinguish each tier
 - Subagent capability defaults such as `skills` changed: omitting `skills` used to mean all skills were visible, while now omitting a capability field or a legacy empty array `[]` selects nothing; clearing a category removes that field when saved instead of writing an empty array, and omitted or empty `tools` still means the default tool set
 - Aggressive rendering offers three folding levels: standard rows, activity folded between messages, and activity folded across a whole user turn; bulk expand and collapse are available, live work, failures, pending approvals and checked-out checkpoints stay visible, and expanding everything restores the standard order

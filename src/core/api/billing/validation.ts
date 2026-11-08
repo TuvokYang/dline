@@ -6,7 +6,7 @@ import {
     type PricingSchedule,
     type TimeOfDayPricing,
 } from "@shared/proto/dline/models/metadata"
-import { supportsCalendar } from "./calendars"
+import { supportsCalendar } from "@shared/providers/pricing-schedule"
 import type { BillingTokens, PricingIssue } from "./types"
 
 const present = (value: unknown): boolean => value !== undefined && value !== null

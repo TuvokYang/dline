@@ -5,7 +5,7 @@ import { AnthropicProviderConfig } from "@shared/proto/dline/provider/anthropic"
 import { BaseProviderConfig } from "@shared/proto/dline/provider/common"
 import { OpenAiProviderConfig } from "@shared/proto/dline/provider/openai"
 import { flatMeteredPricing } from "@shared/providers/pricing-shape"
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react"
 import { useState } from "react"
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 import { flushPendingDebouncedInputs } from "../utils/useDebouncedInput"
@@ -118,7 +118,10 @@ afterAll(() => {
     if (originalScrollIntoView) Object.defineProperty(HTMLElement.prototype, "scrollIntoView", originalScrollIntoView)
     else Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView")
 })
-afterEach(cleanup)
+afterEach(() => {
+    cleanup()
+    vi.useRealTimers()
+})
 
 describe.each(["openai", "anthropic"] as const)("%s custom URL pricing", (provider) => {
     it("gates price editing by the URL switch rather than custom model ID or URL contents", () => {
@@ -256,16 +259,20 @@ describe.each(["openai", "anthropic"] as const)("%s custom URL pricing", (provid
     })
 })
 
-it("renders the real DeepSeek footer from effective pricing and edits fixed time rates without a mode selector", async () => {
+it("renders actual DeepSeek weekday intervals and keeps price edits scoped to their stored rates", async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date("2026-11-03T01:00:00Z"))
     const view = render(<Host provider="deepseek" />)
     const values = () =>
         Array.from(view.container.querySelectorAll('[data-price-slot="inputPrice"]')).map((cell) =>
             Number.parseFloat(cell.textContent!.replace(/[^0-9.-]/g, "")),
         )
-    expect(values()).toEqual([1, 9, 9])
-    const bars = screen
-        .getByRole("img", { name: "Configured pricing windows in seller time" })
-        .querySelectorAll("[data-window-index]")
+    expect(values()).toEqual([1, 9, 1, 9, 1])
+    const offPeak = screen.getByRole("region", { name: "Off-peak window · 00:00 – 09:00" })
+    expect(offPeak.querySelector('[data-price-slot="inputPrice"]')).toHaveTextContent("¥1")
+    const peak = screen.getByRole("region", { name: "Peak window · 09:00 – 12:00" })
+    expect(peak.querySelector('[data-price-slot="inputPrice"]')).toHaveTextContent("¥9")
+    const bars = screen.getByRole("img").querySelectorAll('[data-rate-kind="peak"]')
     expect(Array.from(bars).map((bar) => [Number(bar.getAttribute("x")), Number(bar.getAttribute("width"))])).toEqual([
         [540, 180],
         [840, 240],
@@ -273,16 +280,39 @@ it("renders the real DeepSeek footer from effective pricing and edits fixed time
     fireEvent.click(screen.getByRole("button", { name: "Model Configuration" }))
     expect(screen.queryByLabelText("Pricing Mode")).toBeNull()
     expect(screen.queryByRole("button", { name: "Add Time Window" })).toBeNull()
-    fireEvent.input(screen.getByLabelText("Default Input Price (¥/1M tokens)"), { target: { value: "5" } })
-    fireEvent.input(screen.getByLabelText("Window 1 Output Price (¥/1M tokens)"), { target: { value: "29" } })
+    fireEvent.input(screen.getByLabelText("Off-peak Input Price (¥/1M tokens)"), { target: { value: "5" } })
+    fireEvent.input(screen.getByLabelText("Peak window 09:00 – 12:00 Output Price (¥/1M tokens)"), { target: { value: "29" } })
     await act(flushPendingDebouncedInputs)
     const saved = JSON.parse(screen.getByTestId("profile").textContent ?? "null")
     expect(saved.deepseek.pricing.strategy.timeOfDay.defaultPrices.inputPrice).toBe(5)
     expect(saved.deepseek.pricing.strategy.timeOfDay.timeWindows[0].prices.outputPrice).toBe(29)
-    expect(values()).toEqual([5, 9, 9])
+    expect(saved.deepseek.pricing.strategy.timeOfDay.timeWindows[1].prices.outputPrice).toBe(27)
+    expect(saved.deepseek.pricing.strategy.timeOfDay.schedule).toEqual(deepseekModel.pricing!.strategy!.timeOfDay!.schedule)
+    expect(values()).toEqual([5, 9, 5, 9, 5])
     await act(async () => {
         fireEvent.click(screen.getByRole("button", { name: "Reset Pricing" }))
     })
     expect(JSON.parse(screen.getByTestId("profile").textContent ?? "null").deepseek.pricing).toBeUndefined()
-    expect(values()).toEqual([1, 9, 9])
+    expect(values()).toEqual([1, 9, 1, 9, 1])
+})
+
+it("renders the real DeepSeek weekend as all-day off-peak while preserving the editable peak configuration", async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date("2026-11-08T05:20:00Z"))
+    render(<Host provider="deepseek" />)
+    const chart = screen.getByRole("img", { name: "Pricing windows for 2026-11-08 (UTC+08:00)" })
+    expect(chart.querySelectorAll('[data-rate-kind="peak"]')).toHaveLength(0)
+    const offPeak = screen.getByRole("region", { name: "Off-peak window · 00:00 – 24:00" })
+    expect(offPeak.querySelector('[data-price-slot="inputPrice"]')).toHaveTextContent("¥1")
+    expect(screen.queryByRole("region", { name: /^Peak window/ })).toBeNull()
+    const before = JSON.parse(screen.getByTestId("profile").textContent ?? "null")
+    expect(before.deepseek.pricing).toBeUndefined()
+    fireEvent.click(screen.getByRole("button", { name: "Model Configuration" }))
+    expect(screen.getByLabelText("Peak window 09:00 – 12:00 Output Price (¥/1M tokens)")).toHaveValue("27")
+    fireEvent.input(screen.getByLabelText("Off-peak Input Price (¥/1M tokens)"), { target: { value: "5" } })
+    await act(flushPendingDebouncedInputs)
+    const saved = JSON.parse(screen.getByTestId("profile").textContent ?? "null")
+    expect(saved.deepseek.pricing.strategy.timeOfDay.timeWindows).toEqual(deepseekModel.pricing!.strategy!.timeOfDay!.timeWindows)
+    expect(within(offPeak).getByText("¥5")).toBeVisible()
+    expect(chart.querySelectorAll('[data-rate-kind="peak"]')).toHaveLength(0)
 })

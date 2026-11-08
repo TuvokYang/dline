@@ -2,14 +2,10 @@ import {
     type ContextWindowPricing,
     type ModelPricing,
     type PriceSet,
-    PricingDayRule,
     type TimeOfDayPricing,
 } from "@shared/proto/dline/models/metadata"
-import { isPublicHoliday } from "./calendars"
+import { resolvePricingDay } from "@shared/providers/pricing-schedule"
 import type { PricingIssue } from "./types"
-
-export const MINUTE_MS = 60_000
-export const DAY_MS = 1440 * MINUTE_MS
 
 interface Rate {
     readonly prices?: PriceSet
@@ -22,9 +18,8 @@ export type SelectedRate =
 
 /** All inputs have already passed the declaration and instant validators. */
 export function rateAtInstant(time: TimeOfDayPricing, atMs: number): SelectedRate {
-    const schedule = time.schedule!
-    const local = new Date(atMs + schedule.timezoneOffsetMinutes * MINUTE_MS)
-    if (Number.isNaN(local.getTime())) {
+    const day = resolvePricingDay(time.schedule!, atMs)
+    if (!day) {
         return {
             kind: "invalid",
             issues: [
@@ -41,27 +36,20 @@ export function rateAtInstant(time: TimeOfDayPricing, atMs: number): SelectedRat
         id: "default",
         rate: { prices: time.defaultPrices, bands: time.defaultBands },
     }
-    const weekday = local.getUTCDay()
-    if (schedule.dayRule === PricingDayRule.PRICING_DAY_RULE_WEEKDAYS && (weekday === 0 || weekday === 6)) {
-        return fallback
-    }
-    if (schedule.defaultOnPublicHolidays) {
-        const holiday = isPublicHoliday(schedule.holidayCalendar, local.toISOString().slice(0, 10))
-        if (holiday === undefined) {
-            return {
-                kind: "invalid",
-                issues: [
-                    {
-                        path: "strategy.timeOfDay.schedule.holidayCalendar",
-                        code: "calendar-unavailable",
-                        message: "The holiday calendar does not cover the supplied seller-local date.",
-                    },
-                ],
-            }
+    if (day.windowsApply === false) return fallback
+    if (day.windowsApply === undefined) {
+        return {
+            kind: "invalid",
+            issues: [
+                {
+                    path: "strategy.timeOfDay.schedule.holidayCalendar",
+                    code: "calendar-unavailable",
+                    message: "The holiday calendar does not cover the supplied seller-local date.",
+                },
+            ],
         }
-        if (holiday) return fallback
     }
-    const minute = local.getUTCHours() * 60 + local.getUTCMinutes()
+    const minute = day.minute
     const windows = time.timeWindows ?? []
     const index = windows.findIndex((window) => minute >= window.startMinute && minute < window.endMinute)
     if (index < 0) return fallback

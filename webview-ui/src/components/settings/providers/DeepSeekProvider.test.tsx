@@ -237,10 +237,10 @@ describe("DeepSeekProvider", () => {
 
         expect(screen.getByRole("textbox", { name: "Context Window Size" })).toHaveValue("1000000")
         expect(screen.getByRole("textbox", { name: "Max Output Tokens" })).toHaveValue("384000")
-        expect(screen.getByRole("textbox", { name: "Default Input Price (¥/1M tokens)" })).toHaveValue("3")
-        expect(screen.getByRole("textbox", { name: "Default Output Price (¥/1M tokens)" })).toHaveValue("6")
-        expect(screen.getByRole("textbox", { name: "Default Cache Writes (¥/1M tokens)" })).toHaveValue("3")
-        expect(screen.getByRole("textbox", { name: "Default Cache Reads (¥/1M tokens)" })).toHaveValue("0.025")
+        expect(screen.getByRole("textbox", { name: "Off-peak Input Price (¥/1M tokens)" })).toHaveValue("3")
+        expect(screen.getByRole("textbox", { name: "Off-peak Output Price (¥/1M tokens)" })).toHaveValue("6")
+        expect(screen.getByRole("textbox", { name: "Off-peak Cache Writes (¥/1M tokens)" })).toHaveValue("3")
+        expect(screen.getByRole("textbox", { name: "Off-peak Cache Reads (¥/1M tokens)" })).toHaveValue("0.025")
     })
 
     it("persists a context override without losing a preceding API format edit or existing provider settings", async () => {

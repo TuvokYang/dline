@@ -46,6 +46,7 @@ interface ModelConfigurationProps {
     onPricingUpdate: (updates: Partial<ModelPricing>) => void
     onPricingReset?: () => void
     fixedPricingShape?: PricingShapeKind
+    peakOffPeakLabels?: boolean
 
     // Hosted server tools the user switched off for this profile. Absent means
     // "follow the model declaration", which is why an empty list is meaningful here
@@ -100,6 +101,7 @@ export const ModelConfiguration = ({
     onPricingUpdate,
     onPricingReset,
     fixedPricingShape,
+    peakOffPeakLabels,
     disabledServerTools,
     onDisabledServerToolsUpdate,
     fields,
@@ -414,6 +416,7 @@ export const ModelConfiguration = ({
                     key={defaults?.id}
                     onChange={onPricingUpdate}
                     onReset={onPricingReset}
+                    peakOffPeakLabels={peakOffPeakLabels}
                     pricing={pricingOverrides}
                     showCachePrices={hasCachePricingFields}
                     tiersEditable={tiersEditable}

@@ -17,6 +17,7 @@ function CardFixture({
     effort,
     modelId = "deepseek-v4-pro",
     pricing = DEEPSEEK_STORY_PRICING,
+    atMs = Date.parse("2026-11-03T01:00:00Z"),
 }: CardProps) {
     return (
         <div className="flex w-[400px] flex-col rounded-xs border border-editor-widget-border p-3">
@@ -24,6 +25,7 @@ function CardFixture({
             <DeepSeekProviderCard
                 apiFormat={apiFormat}
                 apiKey="sk-storybook0000000000000000"
+                atMs={atMs}
                 effort={effort}
                 enableThinking={enableThinking}
                 modelId={modelId}
@@ -54,6 +56,8 @@ type Story = StoryObj<typeof meta>
 
 /** Protocol and thinking controls share the same declared rates. */
 export const DeepSeekDirect: Story = {}
+export const Weekend: Story = { args: { atMs: Date.parse("2026-11-08T05:20:00Z") } }
+export const PublicHoliday: Story = { args: { atMs: Date.parse("2026-10-01T02:00:00Z") } }
 export const ResponsesProtocol: Story = { args: { apiFormat: ApiFormat.OPENAI_RESPONSES } }
 
 /**

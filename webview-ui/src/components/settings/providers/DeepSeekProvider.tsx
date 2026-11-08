@@ -215,10 +215,11 @@ export const DeepSeekProvider = ({ showModelOptions, isPopup, profile, onUpdate 
                         onCapabilitiesUpdate={handleCapabilitiesUpdate}
                         onPricingReset={() => updateProfile({ deepseek: { ...configToUpdate(), pricing: undefined } })}
                         onPricingUpdate={handlePricingUpdate}
+                        peakOffPeakLabels={true}
                         pricing={pc.pricing}
                     />
 
-                    <ModelInfoView isPopup={isPopup} modelInfo={modelInfo} selectedModelId={modelId} />
+                    <ModelInfoView isPopup={isPopup} modelInfo={modelInfo} peakOffPeakLabels={true} selectedModelId={modelId} />
                 </>
             )}
         </div>

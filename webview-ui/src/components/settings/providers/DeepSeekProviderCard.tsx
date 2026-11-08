@@ -44,6 +44,7 @@ export interface DeepSeekProviderCardProps {
     readonly modelId: string
     /** Effective model metadata, using the same declaration as the real Provider. */
     readonly pricing: ModelPricing | undefined
+    readonly atMs?: number
     readonly profileId: string
     readonly models: readonly string[]
     /** Whether thinking is enabled for this Profile. Defaults to on. */
@@ -60,15 +61,14 @@ export interface DeepSeekProviderCardProps {
 /**
  * DeepSeek Profile card.
  *
- * DeepSeek publishes peak and off-peak prices for the same models, so the
- * Profile surface has to state which rate is running and what the alternative
- * costs. A card that showed one price would describe only half the bill.
+ * Shows the actual peak/off-peak windows for the seller's current day.
  */
 export function DeepSeekProviderCard({
     apiFormat,
     apiKey,
     modelId,
     pricing,
+    atMs,
     profileId,
     models,
     enableThinking = true,
@@ -163,7 +163,7 @@ export function DeepSeekProviderCard({
 
             <ProviderUsage enabled pollIntervalMs={null} profileId={profileId} />
 
-            <PricingEditor pricing={pricing} readOnly={true} showCachePrices />
+            <PricingEditor atMs={atMs} peakOffPeakLabels={true} pricing={pricing} readOnly={true} showCachePrices />
         </div>
     )
 }
