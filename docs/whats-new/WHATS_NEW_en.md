@@ -15,6 +15,14 @@ Format rules, enforced by webview-ui/vite-whats-new.ts at build time:
   Unit tests enforce both.
 -->
 
+## 0.14.0
+
+- **English/Chinese UI**: follow VS Code or switch manually; model replies can follow your language automatically.
+- **Subagent Auto Compact**: with Auto Compact on, subagents summarize context in memory and keep working.
+- **Independent subagents**: choose named agents' Rules, Skills, Workflows and MCP separately; approvals stay unchanged.
+- **DeepSeek daily rates**: peak first, then off-peak, with merged time headings; weekends and holidays stay off-peak.
+- **Chat navigation**: hover or focus to use the trajectory and scroll buttons, without overlap in short windows.
+
 ## 0.13.2
 
 - **English/Chinese UI**: follow VS Code or switch manually; model replies can follow your language automatically.

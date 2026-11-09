@@ -2,7 +2,7 @@
     "name": "dline",
     "displayName": "Dline",
     "description": "Comprehensive multi-task automated coding agent with per-task model Profiles, persistent state, scoped capabilities, and global approval settings with per-action granularity.",
-    "version": "0.13.2",
+    "version": "0.14.0",
     "icon": "assets/icons/icon.png",
     "engines": {
         "vscode": "^1.134.0"
