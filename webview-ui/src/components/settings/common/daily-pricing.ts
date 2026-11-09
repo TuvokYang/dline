@@ -1,4 +1,4 @@
-import type { PricingTimeWindow, TimeOfDayPricing } from "@shared/proto/dline/models/metadata"
+import { PricingTimeWindow, type TimeOfDayPricing } from "@shared/proto/dline/models/metadata"
 import { PRICING_DAY_MINUTES } from "@shared/providers/pricing-schedule"
 
 export interface DailyPricingWindow extends PricingTimeWindow {
@@ -21,4 +21,17 @@ export function dailyPricingWindows(time: TimeOfDayPricing, windowsApply: boolea
         windows.push({ ...fallback, startMinute: start, endMinute: PRICING_DAY_MINUTES, kind: "offPeak" })
     }
     return windows
+}
+
+/** Group identical rates for display only, preserving every interval and distinct price set. */
+export function dailyPricingRateGroups(windows: readonly DailyPricingWindow[]): readonly (readonly DailyPricingWindow[])[] {
+    const groups = new Map<string, DailyPricingWindow[]>()
+    for (const window of windows) {
+        const rates = PricingTimeWindow.toJSON({ ...window, startMinute: 0, endMinute: 0 })
+        const key = JSON.stringify(rates)
+        const group = groups.get(key)
+        if (group) group.push(window)
+        else groups.set(key, [window])
+    }
+    return [...groups.values()]
 }

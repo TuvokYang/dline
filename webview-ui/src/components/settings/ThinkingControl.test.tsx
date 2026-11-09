@@ -2,6 +2,7 @@
 import { fireEvent, render, screen } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { describe, expect, it, vi } from "vitest"
+import { UiLanguageProvider } from "@/i18n/UiLanguageProvider"
 import ThinkingControl from "./ThinkingControl"
 
 vi.mock("@vscode/webview-ui-toolkit/react", () => ({
@@ -45,6 +46,36 @@ describe("ThinkingControl", () => {
             thinkingBudget: undefined,
             display: undefined,
         })
+    })
+
+    it("keeps effort labels and raw updates while the interface language changes", () => {
+        const onUpdate = vi.fn()
+        const tree = (language: "en" | "zh-CN") => (
+            <UiLanguageProvider language={language}>
+                <ThinkingControl
+                    effortOptions={["low", "high", "max"]}
+                    mode="effort-only"
+                    onReasoningConfigUpdate={onUpdate}
+                    reasoningConfig={{ enableThinking: true, effort: "high", display: "omitted" }}
+                />
+            </UiLanguageProvider>
+        )
+        const view = render(tree("en"))
+        const selector = screen.getByRole("combobox")
+        for (const language of ["zh-CN", "en"] as const) {
+            view.rerender(tree(language))
+            expect(screen.getByRole("combobox")).toBe(selector)
+            expect(selector).toHaveTextContent("High")
+            fireEvent.click(selector)
+            expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["Low", "High", "Max"])
+            fireEvent.click(screen.getByRole("option", { name: "Max", exact: true }))
+            expect(onUpdate).toHaveBeenLastCalledWith({
+                enableThinking: true,
+                effort: "max",
+                thinkingBudget: undefined,
+                display: "omitted",
+            })
+        }
     })
 
     it.each([undefined, true])("keeps explicit None off even with enableThinking=%s and an enabled default", (enableThinking) => {

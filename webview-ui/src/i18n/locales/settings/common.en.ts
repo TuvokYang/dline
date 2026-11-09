@@ -146,6 +146,8 @@ export const en = {
     "settings.ui.peakWindowRange": ({ start, end }: { start: string; end: string }) => `Peak window ${start} – ${end}`,
     "settings.ui.windowRange": ({ label, start, end }: { label: string; start: string; end: string }) =>
         `${label} · ${start} – ${end}`,
+    "settings.ui.ratePeriods": ({ label, periods }: { label: string; periods: string }) => `${label} · ${periods}`,
+    "settings.ui.otherTimes": "Other times",
     "settings.ui.peakChart": "Configured peak pricing windows in seller time",
     "settings.ui.windowChart": "Configured pricing windows in seller time",
     "settings.ui.sellerTime": ({ offset }: { offset: string }) => `Seller time: UTC${offset}`,

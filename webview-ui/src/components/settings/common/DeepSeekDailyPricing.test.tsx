@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { UiLanguageProvider } from "@/i18n/UiLanguageProvider"
 import { deepSeekModels } from "../../../../../src/core/api/providers/models/deepseek"
 import { PricingEditor } from "./PricingEditor"
 
@@ -59,20 +60,22 @@ describe("DeepSeek seller-day pricing", () => {
         expect(screen.queryByRole("heading", { name: /^Peak window/ })).toBeNull()
     })
 
-    it("renders five actual weekday intervals with the matching Flash rates", () => {
+    it("keeps five timeline intervals but aggregates weekday prices into peak then off-peak", () => {
         showAt("2026-11-03T01:00:00Z")
         expect(intervals()).toEqual(weekdayIntervals)
-        const expected = [
-            ["Off-peak window · 00:00 – 09:00", ["¥1", "¥4", "Not published", "¥0.02"]],
-            ["Peak window · 09:00 – 12:00", ["¥2", "¥8", "Not published", "¥0.04"]],
-            ["Off-peak window · 12:00 – 14:00", ["¥1", "¥4", "Not published", "¥0.02"]],
-            ["Peak window · 14:00 – 18:00", ["¥2", "¥8", "Not published", "¥0.04"]],
-            ["Off-peak window · 18:00 – 24:00", ["¥1", "¥4", "Not published", "¥0.02"]],
-        ] as const
-        expect(
-            screen.getAllByRole("heading", { level: 3, name: /^(Peak|Off-peak) window/ }).map((heading) => heading.textContent),
-        ).toEqual(expected.map(([title]) => title))
-        for (const [title, amounts] of expected) expect(prices(card(title))).toEqual(amounts)
+        const sections = screen.getAllByRole("region")
+        expect(sections).toHaveLength(2)
+        expect(sections.map((section) => section.getAttribute("aria-label"))).toEqual([
+            "Peak window · 09:00 – 12:00, 14:00 – 18:00",
+            "Off-peak window · Other times",
+        ])
+        expect(prices(sections[0])).toEqual(["¥2", "¥8", "Not published", "¥0.04"])
+        expect(prices(sections[1])).toEqual(["¥1", "¥4", "Not published", "¥0.02"])
+        for (const [index, kind] of ["peak", "offPeak"].entries()) {
+            const heading = sections[index].querySelector("h3")!
+            const bar = screen.getByRole("img").querySelector(`[data-rate-kind="${kind}"]`)!
+            expect(heading.getAttribute("style")).toContain(bar.getAttribute("fill"))
+        }
     })
 
     it("uses the selected model's prices rather than a Flash-specific table", () => {
@@ -98,6 +101,122 @@ describe("DeepSeek seller-day pricing", () => {
         expect(intervals()).toEqual(weekdayIntervals)
     })
 
+    it("switches grouped headings without changing the day, values or section identity", () => {
+        const pricing = deepSeekModels["deepseek-flash"].pricing
+        const tree = (language: "en" | "zh-CN") => (
+            <UiLanguageProvider language={language}>
+                <PricingEditor
+                    atMs={Date.parse("2026-11-09T02:00:00Z")}
+                    peakOffPeakLabels
+                    pricing={pricing}
+                    readOnly
+                    showCachePrices
+                />
+            </UiLanguageProvider>
+        )
+        const view = render(tree("en"))
+        const sections = screen.getAllByRole("region")
+        view.rerender(tree("zh-CN"))
+        expect(screen.getAllByRole("region")).toEqual(sections)
+        expect(sections[0]).toHaveAccessibleName("高峰窗口 · 09:00 – 12:00, 14:00 – 18:00")
+        expect(sections[1]).toHaveAccessibleName("低峰窗口 · 其它时间")
+        expect(prices(sections[0])).toEqual(["¥2", "¥8", "未公布", "¥0.04"])
+        expect(prices(sections[1])).toEqual(["¥1", "¥4", "未公布", "¥0.02"])
+        expect(intervals()).toEqual(weekdayIntervals)
+        view.rerender(tree("en"))
+        expect(screen.getAllByRole("region")).toEqual(sections)
+        expect(sections[1]).toHaveAccessibleName("Off-peak window · Other times")
+    })
+
+    it("does not deduplicate an explicit zero rate with an unpublished rate", () => {
+        const pricing = structuredClone(deepSeekModels["deepseek-flash"].pricing!)
+        const windows = pricing.strategy!.timeOfDay!.timeWindows
+        windows[0].prices = { inputPrice: 2, outputPrice: 8, cacheReadPrice: 0 }
+        windows[1].prices = { inputPrice: 2, outputPrice: 8 }
+        render(
+            <PricingEditor
+                atMs={Date.parse("2026-11-09T02:00:00Z")}
+                peakOffPeakLabels
+                pricing={pricing}
+                readOnly
+                showCachePrices
+            />,
+        )
+        expect(screen.getAllByRole("region")).toHaveLength(2)
+        expect(prices(card("Peak window · 09:00 – 12:00, 14:00 – 18:00"))).toEqual([
+            "¥2",
+            "¥8",
+            "Not published",
+            "¥0",
+            "¥2",
+            "¥8",
+            "Not published",
+            "Not published",
+        ])
+    })
+
+    it("keeps different context thresholds visible inside the single peak group", () => {
+        const pricing = structuredClone(deepSeekModels["deepseek-flash"].pricing!)
+        const time = pricing.strategy!.timeOfDay!
+        time.timeWindows = time.timeWindows.map((window, index) => ({
+            ...window,
+            prices: undefined,
+            bands: {
+                bands: [
+                    { maxInputTokens: index === 0 ? 128_000 : 256_000, prices: { inputPrice: 0, outputPrice: 3 } },
+                    { prices: { inputPrice: 6, outputPrice: 9 } },
+                ],
+            },
+        }))
+        render(
+            <PricingEditor
+                atMs={Date.parse("2026-11-09T02:00:00Z")}
+                peakOffPeakLabels
+                pricing={pricing}
+                readOnly
+                showCachePrices
+            />,
+        )
+        const peak = card("Peak window · 09:00 – 12:00, 14:00 – 18:00")
+        expect(screen.getAllByRole("region")).toHaveLength(2)
+        expect(within(peak).getByText("Tier 1 · 0 ≤ input tokens ≤ 128,000")).toBeVisible()
+        expect(within(peak).getByText("Tier 1 · 0 ≤ input tokens ≤ 256,000")).toBeVisible()
+        expect(peak.querySelectorAll("[data-price-slot]")).toHaveLength(16)
+    })
+
+    it("preserves default context bands on an off-peak-only day", () => {
+        const pricing = structuredClone(deepSeekModels["deepseek-flash"].pricing!)
+        const time = pricing.strategy!.timeOfDay!
+        time.defaultPrices = undefined
+        time.defaultBands = {
+            bands: [
+                { maxInputTokens: 128_000, prices: { inputPrice: 0, outputPrice: 3, cacheReadPrice: 0 } },
+                { prices: { inputPrice: 6, outputPrice: 9 } },
+            ],
+        }
+        render(
+            <PricingEditor
+                atMs={Date.parse("2026-11-08T02:00:00Z")}
+                peakOffPeakLabels
+                pricing={pricing}
+                readOnly
+                showCachePrices
+            />,
+        )
+        expect(intervals()).toEqual([["offPeak", 0, 1440]])
+        expect(screen.getAllByRole("region")).toHaveLength(1)
+        expect(prices(card("Off-peak window · 00:00 – 24:00"))).toEqual([
+            "¥0",
+            "¥3",
+            "Not published",
+            "¥0",
+            "¥6",
+            "¥9",
+            "Not published",
+            "Not published",
+        ])
+    })
+
     it("preserves nested context bands and explicit zero prices within the active day", () => {
         const pricing = structuredClone(deepSeekModels["deepseek-flash"].pricing!)
         pricing.strategy!.timeOfDay!.timeWindows[0] = {
@@ -113,8 +232,24 @@ describe("DeepSeek seller-day pricing", () => {
         vi.useFakeTimers()
         vi.setSystemTime(new Date("2026-11-03T01:00:00Z"))
         render(<PricingEditor peakOffPeakLabels pricing={pricing} readOnly showCachePrices />)
-        const peak = card("Peak window · 09:00 – 12:00")
+        const peak = card("Peak window · 09:00 – 12:00, 14:00 – 18:00")
         expect(within(peak).getByText("Tier 1 · 0 ≤ input tokens ≤ 128,000")).toBeVisible()
-        expect(prices(peak)).toEqual(["¥0", "¥3", "Not published", "Not published", "¥6", "¥9", "Not published", "¥0"])
+        expect(screen.getAllByRole("region")).toHaveLength(2)
+        expect(prices(peak)).toEqual([
+            "¥0",
+            "¥3",
+            "Not published",
+            "Not published",
+            "¥6",
+            "¥9",
+            "Not published",
+            "¥0",
+            "¥2",
+            "¥8",
+            "Not published",
+            "¥0.04",
+        ])
+        expect(within(peak).getByText("09:00 – 12:00")).toBeVisible()
+        expect(within(peak).getByText("14:00 – 18:00")).toBeVisible()
     })
 })

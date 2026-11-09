@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { hoverPastTooltipDelay } from "@/components/ui/__tests__/tooltipHover"
+import { UiLanguageProvider } from "@/i18n/UiLanguageProvider"
 import { TaskRuntimeControls } from "./TaskRuntimeControls"
 import { TaskServiceTierControl } from "./TaskServiceTierControl"
 
@@ -149,6 +150,34 @@ describe("chat input TaskRuntimeControls", () => {
             },
         ]
         mocks.updateTaskSettings.mockResolvedValue(undefined)
+    })
+
+    it("keeps original effort labels and raw Task updates across language changes", async () => {
+        const user = userEvent.setup()
+        const tree = (language: "en" | "zh-CN") => (
+            <UiLanguageProvider language={language}>
+                <TaskRuntimeControls />
+            </UiLanguageProvider>
+        )
+        const view = render(tree("en"))
+        const trigger = screen.getByRole("combobox", { name: "Task thinking override" })
+        view.rerender(tree("zh-CN"))
+        expect(screen.getByRole("combobox", { name: "任务思考覆盖设置" })).toBe(trigger)
+        expect(trigger).toHaveTextContent("High")
+        expect(mocks.updateTaskSettings).not.toHaveBeenCalled()
+        await user.click(trigger)
+        expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["None", "Low", "Medium", "High"])
+        await user.click(screen.getByRole("option", { name: "Low", exact: true }))
+        await waitFor(() =>
+            expect(mocks.updateTaskSettings).toHaveBeenCalledWith("task-1", {
+                actModeReasoningOverrideKind: "effort",
+                actModeReasoningOverrideEffort: "low",
+            }),
+        )
+        view.rerender(tree("en"))
+        expect(screen.getByRole("combobox", { name: "Task thinking override" })).toBe(trigger)
+        expect(trigger).toHaveTextContent("Low")
+        expect(mocks.updateTaskSettings).toHaveBeenCalledTimes(1)
     })
 
     it.each([

@@ -267,10 +267,11 @@ it("renders actual DeepSeek weekday intervals and keeps price edits scoped to th
         Array.from(view.container.querySelectorAll('[data-price-slot="inputPrice"]')).map((cell) =>
             Number.parseFloat(cell.textContent!.replace(/[^0-9.-]/g, "")),
         )
-    expect(values()).toEqual([1, 9, 1, 9, 1])
-    const offPeak = screen.getByRole("region", { name: "Off-peak window · 00:00 – 09:00" })
+    expect(values()).toEqual([9, 1])
+    expect(screen.getAllByRole("region")).toHaveLength(2)
+    const offPeak = screen.getByRole("region", { name: "Off-peak window · Other times" })
     expect(offPeak.querySelector('[data-price-slot="inputPrice"]')).toHaveTextContent("¥1")
-    const peak = screen.getByRole("region", { name: "Peak window · 09:00 – 12:00" })
+    const peak = screen.getByRole("region", { name: "Peak window · 09:00 – 12:00, 14:00 – 18:00" })
     expect(peak.querySelector('[data-price-slot="inputPrice"]')).toHaveTextContent("¥9")
     const bars = screen.getByRole("img").querySelectorAll('[data-rate-kind="peak"]')
     expect(Array.from(bars).map((bar) => [Number(bar.getAttribute("x")), Number(bar.getAttribute("width"))])).toEqual([
@@ -288,12 +289,12 @@ it("renders actual DeepSeek weekday intervals and keeps price edits scoped to th
     expect(saved.deepseek.pricing.strategy.timeOfDay.timeWindows[0].prices.outputPrice).toBe(29)
     expect(saved.deepseek.pricing.strategy.timeOfDay.timeWindows[1].prices.outputPrice).toBe(27)
     expect(saved.deepseek.pricing.strategy.timeOfDay.schedule).toEqual(deepseekModel.pricing!.strategy!.timeOfDay!.schedule)
-    expect(values()).toEqual([5, 9, 5, 9, 5])
+    expect(values()).toEqual([9, 9, 5])
     await act(async () => {
         fireEvent.click(screen.getByRole("button", { name: "Reset Pricing" }))
     })
     expect(JSON.parse(screen.getByTestId("profile").textContent ?? "null").deepseek.pricing).toBeUndefined()
-    expect(values()).toEqual([1, 9, 1, 9, 1])
+    expect(values()).toEqual([9, 1])
 })
 
 it("renders the real DeepSeek weekend as all-day off-peak while preserving the editable peak configuration", async () => {

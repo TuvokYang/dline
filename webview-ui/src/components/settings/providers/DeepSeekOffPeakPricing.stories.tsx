@@ -72,13 +72,14 @@ export const Weekday: Story = {
             ["offPeak", 1080, 360],
         ])
         await expect(
-            canvas.getByRole("region", { name: "Peak window · 09:00 – 12:00" }).querySelector('[data-price-slot="inputPrice"]'),
+            canvas
+                .getByRole("region", { name: "Peak window · 09:00 – 12:00, 14:00 – 18:00" })
+                .querySelector('[data-price-slot="inputPrice"]'),
         ).toHaveTextContent("¥9")
         await expect(
-            canvas
-                .getByRole("region", { name: "Off-peak window · 12:00 – 14:00" })
-                .querySelector('[data-price-slot="inputPrice"]'),
+            canvas.getByRole("region", { name: "Off-peak window · Other times" }).querySelector('[data-price-slot="inputPrice"]'),
         ).toHaveTextContent("¥4.5")
+        await expect(canvas.getAllByRole("region")).toHaveLength(2)
     },
 }
 

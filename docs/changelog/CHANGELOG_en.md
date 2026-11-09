@@ -6,6 +6,8 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 ### Changed
 - The chat trajectory and scroll-to-top/bottom buttons appear when hovering over messages, stay usable with keyboard focus, and fade after both hover and focus leave; scrolling first is no longer needed.
+- Thinking effort options in settings and the task toolbar keep their original English labels, such as `Low`, `High`, and `Max`; surrounding labels and help follow the interface language without changing the selected or saved effort.
+- When a DeepSeek day has both rates, price details show two groups: peak first with all its intervals in the heading, then default off-peak for "Other times"; heading colors match the timeline, and weekends and public holidays still show only full-day off-peak rates.
 
 ### Fixed
 - Fixed the bottom of the chat trajectory overlapping floating buttons; short message areas place the buttons side by side, while long trajectories still scroll internally to the last turn.

@@ -1,6 +1,6 @@
 import type { UiTranslator } from "@/i18n/messages"
 
-/** Protocol effort identifiers remain unchanged; only known product labels are translated. */
+/** Keep original effort labels in every UI language without changing protocol identifiers. */
 export function formatReasoningEffort(t: UiTranslator, effort: string): string {
     switch (effort) {
         case "none":

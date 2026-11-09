@@ -1,5 +1,10 @@
 import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 
+export const PRICING_RATE_COLORS = {
+    peak: "var(--vscode-charts-orange, #f59e0b)",
+    offPeak: "var(--vscode-charts-green, #22c55e)",
+} as const
+
 export interface PricingInterval {
     readonly startMinute: number
     readonly endMinute: number
@@ -34,16 +39,12 @@ export function PricingTimeline({
                 role="img"
                 viewBox="0 0 1440 12">
                 <title>{label}</title>
-                <rect fill="var(--vscode-charts-green, #22c55e)" height="12" opacity="0.45" width="1440" x="0" />
+                <rect fill={PRICING_RATE_COLORS.offPeak} height="12" opacity="0.45" width="1440" x="0" />
                 {windows.map((window, index) => (
                     <rect
                         data-rate-kind={window.kind}
                         data-window-index={index}
-                        fill={
-                            window.kind === "offPeak"
-                                ? "var(--vscode-charts-green, #22c55e)"
-                                : "var(--vscode-charts-orange, #f59e0b)"
-                        }
+                        fill={PRICING_RATE_COLORS[window.kind ?? "peak"]}
                         height="12"
                         key={`${window.startMinute}-${window.endMinute}`}
                         opacity={window.kind === "offPeak" ? 0.45 : undefined}
@@ -63,11 +64,11 @@ export function PricingTimeline({
                 <span>24</span>
             </div>
             <div className="mt-1 flex gap-3 text-[11px]">
-                <span style={{ color: "var(--vscode-charts-green, #22c55e)" }}>
+                <span style={{ color: PRICING_RATE_COLORS.offPeak }}>
                     {peakOffPeakLabels ? t("settings.ui.offPeakRates") : t("settings.ui.defaultRates")}
                 </span>
                 {(!peakOffPeakLabels || windows.some((window) => window.kind !== "offPeak")) && (
-                    <span style={{ color: "var(--vscode-charts-orange, #f59e0b)" }}>
+                    <span style={{ color: PRICING_RATE_COLORS.peak }}>
                         {peakOffPeakLabels ? t("settings.ui.peakRates") : t("settings.ui.windowRates")}
                     </span>
                 )}
