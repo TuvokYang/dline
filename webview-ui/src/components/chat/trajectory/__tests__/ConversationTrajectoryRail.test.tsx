@@ -40,9 +40,7 @@ afterEach(cleanup)
 describe("ConversationTrajectoryRail source-index points", () => {
     it("keeps all points enabled, selects full targets and keys/marks them by seq rather than timestamp", () => {
         const select = vi.fn()
-        const { rerender } = render(
-            <ConversationTrajectoryRail activeTurnSeq={1} attempts={attempts} onSelectTurn={select} visible />,
-        )
+        const { rerender } = render(<ConversationTrajectoryRail activeTurnSeq={1} attempts={attempts} onSelectTurn={select} />)
         const bars = screen.getAllByTestId("trajectory-turn")
         expect(bars).toHaveLength(3)
         expect(screen.getAllByTestId("trajectory-attempt")).toHaveLength(2)
@@ -58,7 +56,7 @@ describe("ConversationTrajectoryRail source-index points", () => {
             [2, undefined, 20],
         ])
         const replaced = [{ ...attempts[0], turns: attempts[0].turns.map((turn) => ({ ...turn, anchorTs: 9 })) }, attempts[1]]
-        rerender(<ConversationTrajectoryRail activeTurnSeq={0} attempts={replaced} onSelectTurn={select} visible />)
+        rerender(<ConversationTrajectoryRail activeTurnSeq={0} attempts={replaced} onSelectTurn={select} />)
         expect(screen.getAllByTestId("trajectory-turn")[1]).toBe(bars[1])
         const currentLocations = screen.getAllByTestId("trajectory-turn").map((bar) => bar.getAttribute("aria-current"))
         expect(currentLocations).toEqual(["location", null, null])
@@ -68,7 +66,7 @@ describe("ConversationTrajectoryRail source-index points", () => {
         const select = vi.fn()
         const tree = (language: UiLanguage) => (
             <UiLanguageProvider language={language}>
-                <ConversationTrajectoryRail activeTurnSeq={1} attempts={attempts} onSelectTurn={select} visible />
+                <ConversationTrajectoryRail activeTurnSeq={1} attempts={attempts} onSelectTurn={select} />
             </UiLanguageProvider>
         )
         const view = render(tree("en"))
@@ -106,7 +104,7 @@ describe("ConversationTrajectoryRail source-index points", () => {
     })
 
     it("preserves the preview's prompt, attempt/turn labels, rounds and tool totals for a repeated timestamp point", async () => {
-        render(<ConversationTrajectoryRail activeTurnSeq={1} attempts={attempts} onSelectTurn={vi.fn()} visible />)
+        render(<ConversationTrajectoryRail activeTurnSeq={1} attempts={attempts} onSelectTurn={vi.fn()} />)
         fireEvent.focus(screen.getAllByTestId("trajectory-turn")[1])
         await waitFor(() => expect(screen.getByTestId("trajectory-turn-preview")).toBeInTheDocument())
         const preview = within(screen.getByTestId("trajectory-turn-preview"))

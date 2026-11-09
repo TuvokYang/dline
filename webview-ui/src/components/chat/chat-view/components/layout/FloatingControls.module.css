@@ -1,0 +1,10 @@
+.buttons {
+    flex-direction: column;
+}
+
+/* Keep room for a scrollable rail when the composer leaves a short message area. */
+@container chat-messages (height < 12rem) {
+    .buttons {
+        flex-direction: row;
+    }
+}

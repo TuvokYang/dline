@@ -8,7 +8,7 @@ import { useTrajectoryRailViewport } from "./useTrajectoryRailViewport"
 interface TrajectoryRailOverlayProps {
     taskId?: string
     taskInstanceId?: string
-    /** The chat list's scroll element; the rail follows its scrolling and its top message. */
+    /** The chat list's scroll element, used to locate its top message. */
     scroller: HTMLElement | null
     onSelectTurn: (turn: TrajectoryTurn) => void
 }
@@ -26,14 +26,7 @@ export const TrajectoryRailOverlay = memo(function TrajectoryRailOverlay({
     onSelectTurn,
 }: TrajectoryRailOverlayProps) {
     const attempts = useTrajectory(taskId, taskInstanceId)
-    const { scrolling, topVisibleIndex } = useTrajectoryRailViewport(scroller)
+    const { topVisibleIndex } = useTrajectoryRailViewport(scroller)
     const activeTurnSeq = useActiveTurn(attempts, topVisibleIndex)
-    return (
-        <ConversationTrajectoryRail
-            activeTurnSeq={activeTurnSeq}
-            attempts={attempts}
-            onSelectTurn={onSelectTurn}
-            visible={scrolling}
-        />
-    )
+    return <ConversationTrajectoryRail activeTurnSeq={activeTurnSeq} attempts={attempts} onSelectTurn={onSelectTurn} />
 })

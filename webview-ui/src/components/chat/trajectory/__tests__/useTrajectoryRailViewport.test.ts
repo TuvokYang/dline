@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { RAIL_SCROLL_IDLE_MS, useTrajectoryRailViewport } from "../useTrajectoryRailViewport"
+import { useTrajectoryRailViewport } from "../useTrajectoryRailViewport"
 
 describe("useTrajectoryRailViewport", () => {
     beforeEach(() => {
@@ -11,30 +11,6 @@ describe("useTrajectoryRailViewport", () => {
         vi.useRealTimers()
         vi.restoreAllMocks()
         vi.unstubAllGlobals()
-    })
-
-    it("shows the rail while the list scrolls and hides it once scrolling has been idle", () => {
-        const scroller = document.createElement("div")
-        const { result } = renderHook(() => useTrajectoryRailViewport(scroller))
-        expect(result.current.scrolling).toBe(false)
-
-        act(() => {
-            scroller.dispatchEvent(new Event("scroll"))
-        })
-        expect(result.current.scrolling).toBe(true)
-
-        // Every scroll event of a gesture restarts the idle wait.
-        act(() => {
-            vi.advanceTimersByTime(RAIL_SCROLL_IDLE_MS - 1)
-            scroller.dispatchEvent(new Event("scroll"))
-            vi.advanceTimersByTime(RAIL_SCROLL_IDLE_MS - 1)
-        })
-        expect(result.current.scrolling).toBe(true)
-
-        act(() => {
-            vi.advanceTimersByTime(1)
-        })
-        expect(result.current.scrolling).toBe(false)
     })
 
     it("reads source metadata at most once per frame using real row geometry and the eight-pixel threshold", () => {
@@ -81,23 +57,23 @@ describe("useTrajectoryRailViewport", () => {
         expect(result.current.topVisibleIndex).toBe(0)
         flush()
         expect(result.current.topVisibleIndex).toBe(67)
-        expect(result.current.scrolling).toBe(true)
         expect(requestFrame).toHaveBeenCalledTimes(2)
-        act(() => vi.advanceTimersByTime(1_200))
-        expect(result.current.scrolling).toBe(false)
     })
 
-    it("stops listening when the list goes away", () => {
+    it("cancels queued reads and stops listening when the list goes away", () => {
+        const requestFrame = vi.fn(() => 42)
+        const cancelFrame = vi.fn()
+        vi.stubGlobal("requestAnimationFrame", requestFrame)
+        vi.stubGlobal("cancelAnimationFrame", cancelFrame)
         const scroller = document.createElement("div")
-        const { result, rerender } = renderHook(({ element }) => useTrajectoryRailViewport(element), {
+        const { rerender } = renderHook(({ element }) => useTrajectoryRailViewport(element), {
             initialProps: { element: scroller as HTMLElement | null },
         })
+        expect(requestFrame).toHaveBeenCalledTimes(1)
 
         rerender({ element: null })
-        act(() => {
-            scroller.dispatchEvent(new Event("scroll"))
-        })
-
-        expect(result.current.scrolling).toBe(false)
+        expect(cancelFrame).toHaveBeenCalledExactlyOnceWith(42)
+        act(() => scroller.dispatchEvent(new Event("scroll")))
+        expect(requestFrame).toHaveBeenCalledTimes(1)
     })
 })

@@ -4,6 +4,7 @@ import { convertProtoToClineMessage } from "@shared/proto-conversions/cline-mess
 import type React from "react"
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { Virtuoso } from "react-virtuoso"
+import { FLOATING_CONTROL_VISIBILITY } from "@/components/chat/floating-control-styles"
 import { StickyUserMessage } from "@/components/chat/task-header/StickyUserMessage"
 import { TrajectoryRailOverlay } from "@/components/chat/trajectory/TrajectoryRailOverlay"
 import type { TrajectoryTurn } from "@/components/chat/trajectory/trajectory-model"
@@ -35,6 +36,7 @@ import { nestedScrollerConsumesWheel } from "../../utils/scrollUtils"
 import { findFirstVisibleMessage, ROW_SOURCE_INDEX_ATTRIBUTE } from "../../utils/viewportRowAnchor"
 import { decideWindowGrowth, SCROLL_SETTLE_MS } from "../../utils/windowGrowthTiming"
 import { createMessageRenderer, rowSourceIndex } from "../messages/MessageRenderer"
+import floatingControls from "./FloatingControls.module.css"
 import {
     type AnchoredPage,
     type JumpAlign,
@@ -184,12 +186,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
     const [windowGeneration] = useState(createMessageWindowGeneration)
     const edgeJumpInFlightRef = useRef<ScrollEdge | null>(null)
 
-    // Floating scroll-to-bottom/top button state
-    const [floatingBtnVisible, setFloatingBtnVisible] = useState(false)
     const [floatingBtnDir, setFloatingBtnDir] = useState<"bottom" | "top">("bottom")
-    const hideBtnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-    const wasBtnShownRef = useRef(false)
-    const showScrollToBottomRef = useRef(false)
     // Track webview visibility so we can pause Virtuoso updates when hidden
     const [isWebviewHidden, setIsWebviewHidden] = useState(() => document.visibilityState === "hidden")
     const isWebviewHiddenRef = useRef(isWebviewHidden)
@@ -241,10 +238,6 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
         absoluteBottomLoadedRef,
         showScrollToBottom,
     } = scrollBehavior
-
-    useEffect(() => {
-        showScrollToBottomRef.current = showScrollToBottom
-    }, [showScrollToBottom])
 
     // Pause range processing while the webview is hidden. Restoring the bottom
     // is owned by useScrollBehavior so only one visibility listener can issue a
@@ -1131,23 +1124,12 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 
     const virtuosoInstanceKey = `${taskKey}:${clineMessages.length === 0 ? "empty" : "loaded"}`
 
-    // Floating button: scroll listener for visibility + wheel listener for direction.
+    // Scrolling schedules window growth; wheel input also selects the navigation direction.
     // Attached to Virtuoso inner scroller, not the outer scrollContainerRef.
     useEffect(() => {
         void virtuosoInstanceKey
         const container = scrollContainerRef.current
         if (!container) return
-
-        const showButton = () => {
-            if (hideBtnTimerRef.current) clearTimeout(hideBtnTimerRef.current)
-            if (!isAtBottomRef.current || showScrollToBottomRef.current) {
-                setFloatingBtnVisible(true)
-                wasBtnShownRef.current = true
-                hideBtnTimerRef.current = setTimeout(() => {
-                    setFloatingBtnVisible(false)
-                }, 5000)
-            }
-        }
 
         const onScroll = () => {
             // Stamped here rather than in the range handler: a range change is a
@@ -1155,7 +1137,6 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
             // cannot say whether the reader is currently moving the viewport.
             lastScrollAtRef.current = Date.now()
             scheduleDeferredWindowGrowth()
-            showButton()
         }
 
         const el = container.querySelector('[data-virtuoso-scroller="true"]') as HTMLElement | null
@@ -1174,7 +1155,6 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                 cancelProgrammaticScroll()
             }
             setFloatingBtnDir(direction === "up" ? "top" : "bottom")
-            showButton()
         }
 
         if (el) {
@@ -1187,7 +1167,6 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                 el.removeEventListener("scroll", onScroll)
                 el.removeEventListener("wheel", onWheel)
             }
-            if (hideBtnTimerRef.current) clearTimeout(hideBtnTimerRef.current)
         }
     }, [
         cancelProgrammaticScroll,
@@ -1216,7 +1195,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                 />
             </div>
 
-            <div className="grow flex relative" ref={scrollContainerRef}>
+            <div className="grow flex relative [container-type:size] [container-name:chat-messages]" ref={scrollContainerRef}>
                 <Virtuoso
                     atBottomStateChange={(atBottom) => {
                         setIsAtBottom(atBottom)
@@ -1241,7 +1220,6 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 
                         if (atBottom && !absoluteBottomLoaded) {
                             setFloatingBtnDir("bottom")
-                            setFloatingBtnVisible(true)
                         }
                     }}
                     atBottomThreshold={10}
@@ -1281,120 +1259,98 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                     totalListHeightChanged={handleMeasuredLayoutChange}
                 />
 
-                <TrajectoryRailOverlay
-                    onSelectTurn={selectTrajectoryTurn}
-                    scroller={scroller}
-                    taskId={taskViewState?.taskId}
-                    taskInstanceId={taskViewState?.taskInstanceId}
-                />
-
-                {/* Bulk fold control. It lives in the floating column because the
-                    sticky user message owns the top edge with z-10; an in-flow
-                    toolbar there was covered the moment a message was pinned.
-                    Visibility follows the pointer and scrolling only: hovering
-                    anywhere over the conversation reveals it, and focus-visible
-                    keeps it reachable from the keyboard. */}
-                {foldControlVisible && (
-                    <div
-                        className={cn(
-                            "absolute z-20 transition-opacity duration-300 ease-out",
-                            "bottom-[calc(1rem+2.5rem+0.5rem)] right-4",
-                            "opacity-0 pointer-events-none",
-                            "group-hover/messages:opacity-100 group-hover/messages:pointer-events-auto",
-                            floatingBtnVisible && "opacity-100 pointer-events-auto",
-                            "has-[:focus-visible]:opacity-100 has-[:focus-visible]:pointer-events-auto",
-                        )}
-                        data-testid="folding-controls">
-                        <button
-                            aria-label={t(allFoldsOpen ? "chatInput.timeline.collapseAll" : "chatInput.timeline.expandAll")}
-                            className={cn(
-                                FLOATING_CONTROL,
-                                "hover:bg-background/90 hover:shadow-xl hover:scale-105",
-                                "active:scale-95 transition-all duration-200",
-                            )}
-                            onClick={() =>
-                                scrollBehavior.replaceFoldExpansion(
-                                    allFoldsOpen
-                                        ? {}
-                                        : {
-                                              ...chatState.expandedFolds,
-                                              ...Object.fromEntries(closedFolds.map((fold) => [fold._activityFoldId, true])),
-                                          },
-                                )
-                            }
-                            title={t(allFoldsOpen ? "chatInput.timeline.collapseAll" : "chatInput.timeline.expandAll")}
-                            type="button">
-                            <span
-                                className={cn("codicon text-base", allFoldsOpen ? "codicon-list-flat" : "codicon-list-tree")}
-                                style={allFoldsOpen ? { transform: "scaleX(0.86)" } : undefined}
-                            />
-                        </button>
+                {/* Separate layout rows keep the rail out of the controls' painted and clickable area. */}
+                <div
+                    className={cn(
+                        "group/floating pointer-events-none absolute inset-0 z-10 grid grid-rows-[minmax(0,1fr)_auto]",
+                        (foldControlVisible || showScrollToBottom) && "gap-2 pb-4",
+                    )}>
+                    <div className="relative min-h-0">
+                        <TrajectoryRailOverlay
+                            onSelectTurn={selectTrajectoryTurn}
+                            scroller={scroller}
+                            taskId={taskViewState?.taskId}
+                            taskInstanceId={taskViewState?.taskInstanceId}
+                        />
                     </div>
-                )}
-
-                {/* Floating scroll direction button — dims after 5s idle, stays armed */}
-                {showScrollToBottom && (
-                    <div
-                        className={cn(
-                            "absolute bottom-4 right-4 z-20 pointer-events-auto transition-opacity duration-300 ease-out",
-                            // The wrapper exists only while the reader is away from the
-                            // live bottom, so the affordance is warranted for as long as
-                            // it is rendered and must remain clickable. The idle timer is
-                            // presentation only: it may lower prominence, never remove
-                            // interactivity. Tying pointer events to it produced a
-                            // control that hit-testing and assistive technology both
-                            // still reported as a button while the row underneath
-                            // silently swallowed every click.
-                            floatingBtnVisible ? "opacity-100" : "opacity-40 hover:opacity-100",
-                        )}>
-                        <button
-                            aria-label={t(floatingBtnDir === "bottom" ? "chatInput.timeline.bottom" : "chatInput.timeline.top")}
-                            className={cn(
-                                FLOATING_CONTROL,
-                                "hover:bg-background/90 hover:shadow-xl hover:scale-105",
-                                "active:scale-95 transition-all duration-200",
+                    {(foldControlVisible || showScrollToBottom) && (
+                        <div className={cn(floatingControls.buttons, "mr-4 flex items-end justify-end gap-2")}>
+                            {foldControlVisible && (
+                                <div
+                                    className={cn(FLOATING_CONTROL_VISIBILITY, "transition-opacity duration-300 ease-out")}
+                                    data-testid="folding-controls">
+                                    <button
+                                        aria-label={t(
+                                            allFoldsOpen ? "chatInput.timeline.collapseAll" : "chatInput.timeline.expandAll",
+                                        )}
+                                        className={cn(
+                                            FLOATING_CONTROL,
+                                            "hover:bg-background/90 hover:shadow-xl hover:scale-105",
+                                            "active:scale-95 transition-all duration-200",
+                                        )}
+                                        onClick={() =>
+                                            scrollBehavior.replaceFoldExpansion(
+                                                allFoldsOpen
+                                                    ? {}
+                                                    : {
+                                                          ...chatState.expandedFolds,
+                                                          ...Object.fromEntries(
+                                                              closedFolds.map((fold) => [fold._activityFoldId, true]),
+                                                          ),
+                                                      },
+                                            )
+                                        }
+                                        title={t(
+                                            allFoldsOpen ? "chatInput.timeline.collapseAll" : "chatInput.timeline.expandAll",
+                                        )}
+                                        type="button">
+                                        <span
+                                            className={cn(
+                                                "codicon text-base",
+                                                allFoldsOpen ? "codicon-list-flat" : "codicon-list-tree",
+                                            )}
+                                            style={allFoldsOpen ? { transform: "scaleX(0.86)" } : undefined}
+                                        />
+                                    </button>
+                                </div>
                             )}
-                            onClick={() => {
-                                if (floatingBtnDir === "bottom") {
-                                    userScrollIntentRef.current = null
-                                    disableAutoScrollRef.current = false
-                                    void jumpToEdge("bottom")
-                                } else {
-                                    userScrollIntentRef.current = { direction: "up", recordedAt: Date.now() }
-                                    disableAutoScrollRef.current = true
-                                    void jumpToEdge("top")
-                                }
-                                if (hideBtnTimerRef.current) clearTimeout(hideBtnTimerRef.current)
-                                setFloatingBtnVisible(false)
-                            }}
-                            style={{
-                                animation: !wasBtnShownRef.current
-                                    ? undefined
-                                    : floatingBtnVisible
-                                      ? "btnAppear 400ms cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards"
-                                      : undefined,
-                            }}
-                            type="button">
-                            <span
-                                className={cn(
-                                    "codicon text-base",
-                                    floatingBtnDir === "bottom" ? "codicon-chevron-down" : "codicon-chevron-up",
+                            {/* Keep the fold action in its original slot when bottom-following needs no scroll button. */}
+                            <div className={cn(FLOATING_CONTROL_VISIBILITY, "h-10 transition-opacity duration-300 ease-out")}>
+                                {showScrollToBottom && (
+                                    <button
+                                        aria-label={t(
+                                            floatingBtnDir === "bottom" ? "chatInput.timeline.bottom" : "chatInput.timeline.top",
+                                        )}
+                                        className={cn(
+                                            FLOATING_CONTROL,
+                                            "hover:bg-background/90 hover:shadow-xl hover:scale-105",
+                                            "active:scale-95 transition-all duration-200",
+                                        )}
+                                        onClick={() => {
+                                            if (floatingBtnDir === "bottom") {
+                                                userScrollIntentRef.current = null
+                                                disableAutoScrollRef.current = false
+                                                void jumpToEdge("bottom")
+                                            } else {
+                                                userScrollIntentRef.current = { direction: "up", recordedAt: Date.now() }
+                                                disableAutoScrollRef.current = true
+                                                void jumpToEdge("top")
+                                            }
+                                        }}
+                                        type="button">
+                                        <span
+                                            className={cn(
+                                                "codicon text-base",
+                                                floatingBtnDir === "bottom" ? "codicon-chevron-down" : "codicon-chevron-up",
+                                            )}
+                                        />
+                                    </button>
                                 )}
-                            />
-                        </button>
-                    </div>
-                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
             </div>
-
-            {/* Button appear animation */}
-            <style>{`
-				@keyframes btnAppear {
-					0% { transform: scale(0); opacity: 0; box-shadow: 0 0 0 0 rgba(0,0,0,0); }
-					40% { transform: scale(1.4); opacity: 1; box-shadow: 0 0 16px 2px rgba(0,0,0,0.25); }
-					70% { transform: scale(0.85); box-shadow: 0 0 8px 1px rgba(0,0,0,0.12); }
-					100% { transform: scale(1); box-shadow: 0 1px 3px 1px rgba(0,0,0,0.08); }
-				}
-			`}</style>
         </div>
     )
 }

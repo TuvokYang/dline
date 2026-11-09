@@ -2,7 +2,6 @@ import type { Meta, StoryObj } from "@storybook/react-vite"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { ConversationTrajectoryRail } from "./ConversationTrajectoryRail"
 import type { TrajectoryAttempt, TrajectoryTurn } from "./trajectory-model"
-import { RAIL_SCROLL_IDLE_MS } from "./useTrajectoryRailViewport"
 
 /** A user message counts as the current turn once its top is this close to the viewport top. */
 const ACTIVE_TURN_TOP_SLACK_PX = 12
@@ -94,7 +93,7 @@ const meta: Meta<typeof ConversationTrajectoryRail> = {
 export default meta
 type Story = StoryObj<typeof meta>
 
-/** Scroll the mock chat: the rail fades in, tracks the current turn, and fades out after the scroll settles. */
+/** Hover the mock chat or focus a bar to reveal the rail; scrolling only updates the current turn. */
 export const InChat: Story = {
     render: () => <ChatFixture attempts={ATTEMPTS} />,
 }
@@ -116,30 +115,24 @@ export const Overflowing: Story = {
 
 interface ChatFixtureProps {
     attempts: TrajectoryAttempt[]
-    /** Holds the rail up instead of showing it only while scrolling. */
+    /** Holds the rail up without requiring hover or keyboard focus. */
     alwaysVisible?: boolean
 }
 
 function ChatFixture({ attempts, alwaysVisible = false }: ChatFixtureProps) {
     const scrollerRef = useRef<HTMLDivElement>(null)
-    const [scrolling, setScrolling] = useState(false)
     const [activeTurnSeq, setActiveTurnSeq] = useState<number | undefined>(attempts[0]?.turns[0]?.seq)
 
     useEffect(() => {
         const scroller = scrollerRef.current
         if (!scroller) return
-        let hideTimer: ReturnType<typeof setTimeout> | undefined
         const onScroll = () => {
-            setScrolling(true)
-            clearTimeout(hideTimer)
-            hideTimer = setTimeout(() => setScrolling(false), RAIL_SCROLL_IDLE_MS)
             const anchors = Array.from(scroller.querySelectorAll<HTMLElement>("[data-anchor-seq]"))
             const passed = anchors.filter((anchor) => anchor.offsetTop <= scroller.scrollTop + ACTIVE_TURN_TOP_SLACK_PX)
             setActiveTurnSeq(Number((passed.at(-1) ?? anchors[0])?.dataset.anchorSeq))
         }
         scroller.addEventListener("scroll", onScroll, { passive: true })
         return () => {
-            clearTimeout(hideTimer)
             scroller.removeEventListener("scroll", onScroll)
         }
     }, [])
@@ -151,7 +144,7 @@ function ChatFixture({ attempts, alwaysVisible = false }: ChatFixtureProps) {
     }, [])
 
     return (
-        <div className="relative h-[640px] w-full max-w-[460px] overflow-hidden border border-muted-foreground/30 bg-background">
+        <div className="group/messages group/floating relative h-[640px] w-full max-w-[460px] overflow-hidden border border-muted-foreground/30 bg-background">
             <div className="h-full overflow-y-auto px-3 [scrollbar-width:none]" ref={scrollerRef}>
                 {attempts.map((attempt) => (
                     <div key={attempt.id}>
@@ -169,8 +162,8 @@ function ChatFixture({ attempts, alwaysVisible = false }: ChatFixtureProps) {
             <ConversationTrajectoryRail
                 activeTurnSeq={activeTurnSeq}
                 attempts={attempts}
+                className={alwaysVisible ? "opacity-100 pointer-events-auto" : undefined}
                 onSelectTurn={jumpToTurn}
-                visible={alwaysVisible || scrolling}
             />
         </div>
     )

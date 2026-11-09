@@ -126,7 +126,7 @@ async function renderedOrder(sidebar: Frame) {
 }
 
 e2e(
-    "Folding - canonical settings, Standard expansion, reopening and scroll-revealed trajectory",
+    "Folding - canonical settings, Standard expansion, reopening and hover-revealed trajectory",
     async ({ dlineDir, dlineDocsDir, helper, openVSCode, server, userDataDir, workspaceDir }, testInfo) => {
         e2e.setTimeout(240_000)
         const task = "E2E_FOLDING_CANONICAL"
@@ -172,6 +172,7 @@ e2e(
                         expect(await row.evaluate((element) => element.closest("[data-fold-id]") === null)).toBe(true)
                     }
                 } else await expect(sidebar.locator(`[data-message-ts="${base + 5}"]`)).toHaveCount(0)
+                await sidebar.locator('[data-virtuoso-scroller="true"]').hover({ position: { x: 2, y: 100 } })
                 await sidebar.getByRole("button", { name: "Expand all activity", exact: true }).click()
                 // Every block keeps its row and header while open, so the reader
                 // can close it again with the same control.
@@ -207,14 +208,14 @@ e2e(
             const scroller = sidebar.locator('[data-virtuoso-scroller="true"]')
             for (const expanded of [false, true]) {
                 if (expanded) await sidebar.getByRole("button", { name: "Expand all activity", exact: true }).click()
-                await page.mouse.move(100, 100)
+                await sidebar.getByTestId("chat-input").click()
+                await page.mouse.move(1100, 80)
                 await expect(rail.rail).toHaveCSS("opacity", "0")
                 const oldTop = await scroller.evaluate((element) => element.scrollTop)
                 await scroller.hover({ position: { x: 2, y: 100 } })
-                await page.mouse.wheel(0, oldTop > 100 ? -450 : 450)
-                await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).not.toBe(oldTop)
                 await expect(rail.rail).toHaveCSS("opacity", "1")
                 await expect(rail.rail).toHaveCSS("pointer-events", "auto")
+                expect(await scroller.evaluate((element) => element.scrollTop)).toBe(oldTop)
                 await rail.bar("E2E_FOLDING_TURN_1").click()
                 await expect(sidebar.locator(`[data-message-ts="${base + 100}"]`)).toBeInViewport({ timeout: 30_000 })
                 await expect(rail.bar("E2E_FOLDING_TURN_1")).toHaveAttribute("aria-current", "location")
@@ -347,7 +348,7 @@ e2e(
             // drawn on its own: it lives behind a block whose header states the
             // count. Assert the header that owns the failed row rather than the
             // number of blocks, because a turn may hold more than one block.
-            const header = sidebar.getByTestId("activity-fold-header").filter({ hasText: "1 command error" })
+            const header = sidebar.getByTestId("activity-fold-header").filter({ hasText: "1 cmd failed" })
             await expect(header).toHaveCount(1)
             await testInfo.attach("folding-failed-command", { body: await page.screenshot(), contentType: "image/png" })
 
@@ -404,7 +405,7 @@ e2e(
             // in the block and its header states the error. Before the fix this
             // header could not appear: the row was still partial, so folding read it
             // as live work and left it outside every block.
-            const header = sidebar.getByTestId("activity-fold-header").filter({ hasText: "1 command error" })
+            const header = sidebar.getByTestId("activity-fold-header").filter({ hasText: "1 cmd failed" })
             await expect(header).toHaveCount(1)
 
             // Opening the block shows the rejected command, and its card states the

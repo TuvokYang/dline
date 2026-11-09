@@ -1,4 +1,5 @@
 import { type FocusEvent, useState } from "react"
+import { FLOATING_CONTROL_VISIBILITY } from "@/components/chat/floating-control-styles"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
 import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
@@ -19,8 +20,7 @@ interface ConversationTrajectoryRailProps {
     attempts: readonly TrajectoryAttempt[]
     /** The turn whose user message is at the top of the viewport. */
     activeTurnSeq?: number
-    /** Whether the list is being scrolled. A rail the pointer or focus is on stays shown either way. */
-    visible: boolean
+    className?: string
     onSelectTurn: (turn: TrajectoryTurn) => void
 }
 
@@ -37,9 +37,14 @@ interface ConversationTrajectoryRailProps {
  * spacing does not fit, the bars scroll inside the rail, follow the current
  * turn, and fade out at each edge that hides more.
  */
-export function ConversationTrajectoryRail({ attempts, activeTurnSeq, visible, onSelectTurn }: ConversationTrajectoryRailProps) {
+export function ConversationTrajectoryRail({
+    attempts,
+    activeTurnSeq,
+    className,
+    onSelectTurn,
+}: ConversationTrajectoryRailProps) {
     const { t } = useUiTranslation()
-    // Keeps the rail up while the reader is using it, after the scroll that revealed it has stopped.
+    // Pause active-turn following while the reader is using the rail.
     const [engaged, setEngaged] = useState(false)
     // State rather than refs: the rail renders nothing until the first turn arrives, and the
     // layout hooks must attach to the elements once they exist.
@@ -58,14 +63,14 @@ export function ConversationTrajectoryRail({ attempts, activeTurnSeq, visible, o
     }
 
     return (
-        // biome-ignore lint/a11y/noNoninteractiveElementInteractions: pointer and focus tracking only keep the rail shown; the bars inside are the controls.
+        // biome-ignore lint/a11y/noNoninteractiveElementInteractions: pointer and focus tracking pause internal scrolling; the bars inside are the controls.
         <nav
             aria-label={t("chatInput.trajectory.title")}
             className={cn(
                 // One translucent backdrop behind the whole rail keeps the bars legible over the chat text underneath.
                 "absolute top-1/2 right-1 z-10 flex -translate-y-1/2 flex-col rounded-[4px] bg-background/35 p-1 backdrop-blur-sm transition-opacity duration-200",
-                // A hidden rail must not take clicks meant for the chat underneath it.
-                visible || engaged ? "opacity-100" : "pointer-events-none opacity-0",
+                FLOATING_CONTROL_VISIBILITY,
+                className,
             )}
             data-testid="trajectory-rail"
             onBlur={releaseFocus}

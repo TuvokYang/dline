@@ -4,6 +4,12 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 ## [Unreleased]
 
+### Changed
+- The chat trajectory and scroll-to-top/bottom buttons appear when hovering over messages, stay usable with keyboard focus, and fade after both hover and focus leave; scrolling first is no longer needed.
+
+### Fixed
+- Fixed the bottom of the chat trajectory overlapping floating buttons; short message areas place the buttons side by side, while long trajectories still scroll internally to the last turn.
+
 ## [0.13.2]
 
 ### Added
