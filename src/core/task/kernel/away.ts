@@ -101,7 +101,10 @@ export function resumesAutomaticResponse(state: TaskState, interactionId: string
         primary?.interactionId === interactionId &&
         (primary.kind === "resume" || primary.kind === "cancelled_resume") &&
         primary.acceptedResponse?.actionId === "resume" &&
-        state.dialog.interrupted?.acceptedResponse?.origin === "timeout"
+        (state.dialog.interrupted?.acceptedResponse?.origin === "timeout" ||
+            Object.values(state.dialog.approvalsByBlock).some(
+                (interaction) => interaction.acceptedResponse?.origin === "timeout",
+            ))
     )
 }
 
@@ -114,7 +117,20 @@ export function validDeadline(interaction: DialogInteraction, configuration: Awa
     )
 }
 
-/** A configuration update invalidates old qualifications; enabling never arms an existing ask. */
+function commandApprovalDeadline(state: TaskState, now: number | undefined): InteractionDeadline | undefined {
+    const configuration = state.away?.configuration
+    if (!configuration?.enabled || typeof now !== "number" || !Number.isFinite(now)) return undefined
+    const active = isAway(state)
+    if (!active && !configuration.automatic) return undefined
+    return {
+        kind: active ? "external_command" : "command_approval",
+        deadlineAt: now + (active ? EXTERNAL_COMMAND_TIMEOUT_MS : ASK_AWAY_TIMEOUT_MS),
+        modeRevocation: configuration.modeRevocation,
+        automaticRevocation: configuration.automaticRevocation,
+    }
+}
+
+/** A configuration update invalidates old qualifications; enabling never arms an existing interaction. */
 export function reduceAway(state: TaskState, event: TaskEvent): TaskState {
     const now = event.now
     if (event.type === "away.configured") {
@@ -161,11 +177,16 @@ export function reduceAway(state: TaskState, event: TaskEvent): TaskState {
             event.queueDeliveryEntries.map((entry) => entry.entryId),
         )
     if (event.type === "user.submit" || event.type === "dialog.responded") return applyControl(state, event.userControl)
-    if (event.type === "provider.turn_ready" && isAway(state) && typeof now === "number" && Number.isFinite(now)) {
-        const configuration = state.away.configuration
-        const external = new Set(
+    if (event.type === "provider.turn_ready") {
+        const deadline = commandApprovalDeadline(state, now)
+        if (!deadline) return state
+        const commands = new Set(
             event.turnPlan.blocks
-                .filter((block) => block.approval.kind === "manual" && block.approval.externalCommand)
+                .filter(
+                    (block) =>
+                        block.approval.kind === "manual" &&
+                        (block.approval.externalCommand || block.approval.presentationAsk === "command"),
+                )
                 .map((block) => block.blockId),
         )
         return {
@@ -175,17 +196,7 @@ export function reduceAway(state: TaskState, event: TaskEvent): TaskState {
                 approvalsByBlock: Object.fromEntries(
                     Object.entries(state.dialog.approvalsByBlock).map(([id, interaction]) => [
                         id,
-                        external.has(id)
-                            ? {
-                                  ...interaction,
-                                  deadline: {
-                                      kind: "external_command" as const,
-                                      deadlineAt: now + EXTERNAL_COMMAND_TIMEOUT_MS,
-                                      modeRevocation: configuration.modeRevocation,
-                                      automaticRevocation: configuration.automaticRevocation,
-                                  },
-                              }
-                            : interaction,
+                        commands.has(id) ? { ...interaction, deadline } : interaction,
                     ]),
                 ),
             },
@@ -193,29 +204,12 @@ export function reduceAway(state: TaskState, event: TaskEvent): TaskState {
     }
     if (
         (event.type === "dialog.requested" || event.type === "dialog.interrupt_requested") &&
-        event.externalCommand &&
-        isAway(state) &&
-        typeof now === "number" &&
-        Number.isFinite(now)
+        (event.kind === "command_approval" || event.externalCommand)
     ) {
-        const configuration = state.away.configuration
         const interaction = state.dialog.primary
-        if (!interaction || interaction.interactionId !== event.interactionId) return state
-        return {
-            ...state,
-            dialog: {
-                ...state.dialog,
-                primary: {
-                    ...interaction,
-                    deadline: {
-                        kind: "external_command",
-                        deadlineAt: now + EXTERNAL_COMMAND_TIMEOUT_MS,
-                        modeRevocation: configuration.modeRevocation,
-                        automaticRevocation: configuration.automaticRevocation,
-                    },
-                },
-            },
-        }
+        const deadline = commandApprovalDeadline(state, now)
+        if (!interaction || interaction.interactionId !== event.interactionId || !deadline) return state
+        return { ...state, dialog: { ...state.dialog, primary: { ...interaction, deadline } } }
     }
     if ((event.type === "dialog.requested" || event.type === "dialog.interrupt_requested") && event.kind === "followup") {
         const configuration = state.away?.configuration
@@ -303,7 +297,7 @@ export function acceptAwayDeadline(state: TaskState, interaction: TimedDialogInt
             ),
         },
     }
-    return deadlineKind === "ask" ? enterAway(next, "ask_timeout") : next
+    return deadlineKind === "external_command" ? next : enterAway(next, "ask_timeout")
 }
 
 export function validAwayConfiguration(value: unknown): value is AwayConfigurationFact {

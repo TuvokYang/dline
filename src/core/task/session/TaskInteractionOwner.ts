@@ -362,7 +362,8 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
             (candidate) => candidate?.interactionId === command.interactionId,
         )
         if (!interaction || interaction.turnId !== command.turnId || interaction.acceptedResponse?.origin !== "timeout") return
-        if (command.deadlineKind === "external_command" && interaction.blockId) {
+        const commandApproval = command.deadlineKind !== "ask"
+        if (commandApproval && interaction.blockId) {
             const feedbackRef = await this.payloads.put(
                 encodeTaskPayload<DialogDraftEnvelope>({
                     kind: "dialog_draft",
@@ -387,13 +388,10 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
             return
         }
         const delivered = await this.resolve(command.interactionId, {
-            actionId: command.deadlineKind === "external_command" ? "reject" : "reply",
+            actionId: commandApproval ? "reject" : "reply",
             origin: "timeout",
             draft: {
-                text:
-                    command.deadlineKind === "external_command"
-                        ? formatResponse.awayCommandTimeout()
-                        : formatResponse.awayAskTimeout(),
+                text: commandApproval ? formatResponse.awayCommandTimeout() : formatResponse.awayAskTimeout(),
                 images: [],
                 files: [],
             },

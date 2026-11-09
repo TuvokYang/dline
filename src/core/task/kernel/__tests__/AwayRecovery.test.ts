@@ -4,7 +4,7 @@ import { transition } from "../transition"
 import { createInitialTaskState, type TaskEvent, type TaskState } from "../types"
 
 const configuration = { enabled: true, automatic: true, modeRevocation: 0, automaticRevocation: 0 }
-function acceptedTimeout(): TaskState {
+function acceptedTimeout(kind: "ask" | "command_approval" = "ask"): TaskState {
     const base = createInitialTaskState("away-recovery")
     const result = transition(
         {
@@ -16,13 +16,13 @@ function acceptedTimeout(): TaskState {
                 primary: {
                     interactionId: "ask",
                     turnId: "turn",
-                    kind: "followup",
+                    kind: kind === "ask" ? "followup" : "command_approval",
                     status: "awaiting",
                     createdRevision: 0,
                     presentationRef: "question",
                     receiverGeneration: 0,
-                    actionRules: [{ actionId: "reply", payloadPolicy: "draft" }],
-                    deadline: { kind: "ask", deadlineAt: 1000, modeRevocation: 0, automaticRevocation: 0 },
+                    actionRules: [{ actionId: kind === "ask" ? "reply" : "reject", payloadPolicy: "draft" }],
+                    deadline: { kind, deadlineAt: 1000, modeRevocation: 0, automaticRevocation: 0 },
                 },
             },
         },
@@ -47,10 +47,10 @@ function step(state: TaskState, event: TaskEvent) {
 }
 
 describe("accepted Away response recovery", () => {
-    it("offers Resume without delivering while paused, then restores exactly the already accepted answer", () => {
+    it.each(["ask", "command_approval"] as const)("restores the accepted %s response only after Resume", (kind) => {
         const restored = hydrate({
             taskId: "away-recovery",
-            snapshot: acceptedTimeout(),
+            snapshot: acceptedTimeout(kind),
             journalTail: { seq: 0 },
             openReason: "crash_recovery",
         })
@@ -102,7 +102,7 @@ describe("accepted Away response recovery", () => {
             expect.objectContaining({
                 type: "dialog.deliver_automatic",
                 interactionId: "ask",
-                deadlineKind: "ask",
+                deadlineKind: kind,
                 generation: 1,
             }),
         ])

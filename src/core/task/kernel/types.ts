@@ -388,7 +388,7 @@ export interface AwaySlice {
 }
 
 export interface InteractionDeadline {
-    readonly kind: "ask" | "external_command"
+    readonly kind: "ask" | "command_approval" | "external_command"
     readonly deadlineAt: number
     readonly modeRevocation: number
     readonly automaticRevocation: number

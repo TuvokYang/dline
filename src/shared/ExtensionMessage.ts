@@ -653,7 +653,7 @@ export interface ActiveInteractionView {
      */
     anchorSynthetic?: boolean
     /** Absolute backend deadline. The Webview only displays it and never settles it. */
-    deadline?: { kind: "ask" | "external_command"; deadlineAt: number }
+    deadline?: { kind: "ask" | "command_approval" | "external_command"; deadlineAt: number }
 }
 
 /** Footer content owned exclusively by the backend task projection. */

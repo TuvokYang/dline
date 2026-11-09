@@ -163,7 +163,11 @@ describe("Away footer controls", () => {
         )
     })
 
-    it.each(["ask", "external_command"] as const)("keeps the %s deadline display-only at zero", async (kind) => {
+    it.each([
+        "ask",
+        "command_approval",
+        "external_command",
+    ] as const)("keeps the %s deadline display-only at zero", async (kind) => {
         vi.useFakeTimers()
         vi.setSystemTime(1000)
         const initial = view()

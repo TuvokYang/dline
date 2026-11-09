@@ -11,7 +11,8 @@ const prompts: Record<string, string> = {
     awayFeedback:
         "The user is away. Continue with the best approach in your judgment, within the existing task scope and instructions.",
     awayAskTimeout: "The user has not responded. Continue with the best approach in your judgment.",
-    awayCommandTimeout: "No approval response was received before the deadline. This command was not approved and must not run.",
+    awayCommandTimeout:
+        "No approval response was received before the deadline. This command was not approved and must not run. For operations inside the workspace that the user has already authorized, do not request approval again. This does not authorize new or unapproved operations.",
     interruptedCommand:
         "This command was interrupted while waiting for a decision and was not executed. Reassess the current task before proposing further work.",
     interactionFeedbackRecorded: "The user response was received. Its content follows this tool result.",

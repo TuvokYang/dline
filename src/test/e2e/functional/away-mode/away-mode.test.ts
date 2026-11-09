@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises"
+import { access, readdir, readFile } from "node:fs/promises"
 import path from "node:path"
 import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
@@ -134,6 +134,79 @@ e2e(
             await input.press("Enter")
             await expect(sidebar.getByText("E2E_AWAY_NORMAL_DONE", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
             expect(server.openAiRequestCount).toBe(4)
+            await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+        } finally {
+            await app.close()
+        }
+    },
+)
+
+e2e(
+    "Away - command approvals wait ten minutes to enter, then reject after sixty seconds without execution",
+    async ({ helper, openVSCode, workspaceDir, dlineDocsDir, server, userDataDir }) => {
+        // The product deadlines run in real extension-host time, not a shortened test-only timer.
+        e2e.setTimeout(780_000)
+        server.resetOpenAiMock()
+        const marker = path.join(workspaceDir, "approval-must-not-run.txt")
+        const command = `node -e "require('fs').writeFileSync(${JSON.stringify(marker).replaceAll('"', "'")},'unexpected')"`
+        server.enqueueOpenAiResponses(
+            {
+                type: "tool",
+                id: "automatic-command",
+                name: "execute_command",
+                arguments: { command, workdirectory: ".", requires_approval: true, synchronous: true },
+            },
+            {
+                type: "tool",
+                id: "away-external-command",
+                name: "execute_command",
+                arguments: { command, workdirectory: "..", requires_approval: true, synchronous: true },
+                expectedToolResults: [{ callId: "automatic-command", contentIncludes: "already authorized" }],
+            },
+            {
+                type: "tool",
+                id: "deadline-done",
+                name: "attempt_completion",
+                arguments: { result: "E2E_AWAY_DEADLINES_DONE" },
+                expectedToolResults: [{ callId: "away-external-command", contentIncludes: "already authorized" }],
+            },
+        )
+        const app = await openVSCode(workspaceDir, { DLINE_EXPERIMENTAL_AWAY_MODE: "true" })
+        try {
+            const page = await app.firstWindow()
+            await E2ETestHelper.openClineSidebar(page)
+            const sidebar = await helper.getSidebar(page)
+            await E2ETestHelper.dismissWhatsNewModal(sidebar)
+            await helper.signin(sidebar)
+            await enableAway(page, sidebar)
+            await openSettings(page, sidebar)
+            await sidebar.getByRole("switch", { name: "Automatic Away Mode", exact: true }).click()
+            await expect(sidebar.getByRole("switch", { name: "Automatic Away Mode", exact: true })).toHaveAttribute(
+                "aria-checked",
+                "true",
+            )
+            await sidebar.getByRole("button", { name: "Done", exact: true }).click()
+            const startedAt = Date.now()
+            await sidebar.getByTestId("chat-input").fill("E2E_AUTO_AWAY_APPROVAL_TASK")
+            await sidebar.getByTestId("send-button").click()
+            await expect(sidebar.getByRole("timer")).toContainText(/Automatic Away Mode: (10:00|9:\d{2})/, { timeout: 60_000 })
+            await expect(sidebar.locator('vscode-button[aria-label="Stop Away Mode"]')).toHaveCount(0)
+            await expect.poll(() => server.openAiRequestCount, { timeout: 660_000, intervals: [1000] }).toBe(2)
+            expect(Date.now() - startedAt).toBeGreaterThanOrEqual(600_000)
+            const awayStartedAt = Date.now()
+            await expect(sidebar.locator('vscode-button[aria-label="Stop Away Mode"]')).toBeVisible()
+            await expect(sidebar.getByRole("timer")).toContainText("External command approval timeout:")
+            await expect.poll(() => server.openAiRequestCount, { timeout: 120_000, intervals: [1000] }).toBe(3)
+            expect(Date.now() - awayStartedAt).toBeGreaterThanOrEqual(58_000)
+            await expect(sidebar.getByText("E2E_AWAY_DEADLINES_DONE", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+            await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" })
+            const requests = server.getMockConsumptions("openai-compatible-chat")
+            expect(requests).toHaveLength(3)
+            expect(requests.every((request) => request.contractError === undefined)).toBe(true)
+            expect(requests[1].requestToolResults.map((result) => result.callId)).toEqual(["automatic-command"])
+            expect(requests[2].requestToolResults.map((result) => result.callId)).toContain("away-external-command")
+            const evidence = await roundEvidence(dlineDocsDir, await singleTaskId(dlineDocsDir))
+            expect(evidence.rounds.at(-1)?.draft.materialPlan?.activeAway?.source).toBe("ask_timeout")
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
         } finally {
             await app.close()

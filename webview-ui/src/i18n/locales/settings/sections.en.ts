@@ -63,7 +63,7 @@ export const en = {
         "Allow /away with a task message to keep the current task working while you are away. Turning this off also exits active Away Mode.",
     "settings.ui.away.automatic": "Automatic Away Mode",
     "settings.ui.away.automaticHelp":
-        "Enter Away Mode when a new question goes unanswered for ten minutes. This does not apply to questions already waiting when enabled.",
+        "Enter Away Mode after a new question or command approval waits ten minutes; timed-out commands are rejected. Command approvals while away are rejected after 60 seconds. Existing waits are not affected when enabled.",
     "settings.ui.away.saveError": "The Away Mode setting could not be saved. Try again.",
     "settings.ui.compact.description":
         "When the model window exceeds Maximum context, that absolute cap is the trigger center. Otherwise, the percentage-derived reserve is clamped between the minimum and maximum reserve. A 2K estimation tolerance is applied automatically.",

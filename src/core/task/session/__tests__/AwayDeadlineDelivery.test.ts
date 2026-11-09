@@ -171,15 +171,19 @@ describe("Away deadline delivery", () => {
         expect(h.runtime.getState().dialog.primary).toBeUndefined()
     })
 
-    it.each(["command", "ask_timeout"] as const)("delivers the one-minute late approval rejection in %s Away", async (source) => {
+    it.each([
+        "command",
+        "ask_timeout",
+        undefined,
+    ] as const)("delivers the late approval rejection with Away source %s", async (source) => {
         vi.useFakeTimers()
         vi.setSystemTime(1000)
         const h = harness({
             ...createInitialTaskState("deadline"),
             flow: { phase: "running" },
             away: {
-                configuration: { ...configuration, automatic: false },
-                mode: { source, enteredRevision: 0, modeRevocation: 0 },
+                configuration: { ...configuration, automatic: source === undefined },
+                ...(source ? { mode: { source, enteredRevision: 0, modeRevocation: 0 } } : {}),
             },
         })
         let requestedAt = 0
@@ -196,15 +200,20 @@ describe("Away deadline delivery", () => {
             externalCommand: true,
         })
         await reveal(h, "command")
-        expect(h.runtime.getState().dialog.primary?.deadline?.deadlineAt).toBe(requestedAt + 60000)
+        const timeoutMs = source ? 60000 : 600000
+        expect(h.runtime.getState().dialog.primary?.deadline?.deadlineAt).toBe(requestedAt + timeoutMs)
         h.runtime.allowRestoredCommands()
-        await vi.advanceTimersByTimeAsync(60000)
+        await vi.advanceTimersByTimeAsync(timeoutMs)
         expect(await waiting).toMatchObject({ actionId: "reject", origin: "timeout" })
-        expect(h.runtime.getState().away?.mode?.source).toBe(source)
+        expect(h.runtime.getState().away?.mode?.source).toBe(source ?? "ask_timeout")
         expect(h.runtime.getState().dialog.primary).toBeUndefined()
     })
 
-    it.each(["followup", "command_approval"] as const)("journals one paired automatic result for an unowned %s", async (kind) => {
+    it.each([
+        { kind: "followup" as const, deadlineKind: "ask" as const },
+        { kind: "command_approval" as const, deadlineKind: "external_command" as const },
+        { kind: "command_approval" as const, deadlineKind: "command_approval" as const },
+    ])("journals one paired automatic result for an unowned $kind / $deadlineKind", async ({ kind, deadlineKind }) => {
         vi.useFakeTimers()
         vi.setSystemTime(1000)
         const payloads = new InMemoryTaskPayloadStore()
@@ -251,7 +260,7 @@ describe("Away deadline delivery", () => {
                     presentationRef: "question",
                     actionRules: [{ actionId: kind === "followup" ? "reply" : "reject", payloadPolicy: "draft" }],
                     deadline: {
-                        kind: kind === "followup" ? "ask" : "external_command",
+                        kind: deadlineKind,
                         deadlineAt: 2000,
                         modeRevocation: 0,
                         automaticRevocation: 0,

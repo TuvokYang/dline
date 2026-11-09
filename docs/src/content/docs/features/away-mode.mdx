@@ -16,9 +16,9 @@ This is an [experimental feature](/features/experimental/). Rollout participatio
 When the rollout is available, open **Settings → Features → Experimental → Away Mode**:
 
 - **Enable Away Mode** permits entering the mode. It is off by default.
-- **Automatic Away Mode** permits entry when a new ordinary question goes unanswered for ten minutes. It is also off by default and is disabled while the main option is off; its saved choice is retained.
+- **Automatic Away Mode** permits entry when a new ordinary question or command approval goes unanswered for ten minutes. A timed-out command is rejected without running it, then the task enters Away Mode. The option is off by default and is disabled while the main option is off; its saved choice is retained.
 
-If the rollout is unavailable, the group is hidden without erasing either preference. Turning an option on does not retroactively arm a question that is already waiting.
+If the rollout is unavailable, the group is hidden without erasing either preference. Turning an option on does not retroactively arm a question or approval that is already waiting.
 
 With the main option enabled, type `/away` with your task message and send it, or insert Away from the command menu:
 
@@ -35,14 +35,16 @@ While you are away, Dline continues within the task's existing scope and instruc
 Command approval depends on the workspace and the command's working directory:
 
 - Commands classified inside the workspace may proceed under the task's Away permission.
-- Commands classified outside it still require manual approval, even with other automatic approval or YOLO settings. An unanswered approval expires after one minute as **not approved**, without running the command or treating the expiry as a user denial.
+- Commands classified outside it still require manual approval, even with other automatic approval or YOLO settings. A new command approval while away expires after 60 seconds as **not approved**, without running the command or treating the expiry as a user denial.
 - Other tools retain their existing approval rules. Disabled tools, permission rules, `.agentignore`, hooks, and explicit instructions still apply.
 
 <Aside type="caution">
 The command boundary does not analyze shell syntax to infer every file or service a command might affect. Away Mode is not a sandbox and does not turn an inside-workspace working directory into a guarantee that a command has no outside effects. Keep your task instructions and command permissions appropriate to the work.
 </Aside>
 
-After you reopen the task, the countdown continues toward its original deadline. Reaching zero does not itself submit an answer or approve a command.
+Both command timeouts remind the model that workspace operations you have already authorized do not need another approval request. This reminder grants no new permission; the timed-out command must not run.
+
+After you reopen the task, the countdown continues toward its original deadline. The display does not submit answers or approvals; the task runtime owns timeout decisions.
 
 ## Stop Away Mode without stopping the task
 
@@ -57,6 +59,6 @@ The action:
 
 Read-only task windows display the state but disable the action. Completed tasks do not offer it.
 
-Sending normal content also ends Away Mode. Editing a draft, browsing history, an empty Resume, and a plain approval without content do not count as returning. Turning off **Automatic Away Mode** only revokes unanswered-question eligibility; it does not exit a task already away. Turning off **Enable Away Mode**, or losing the rollout, exits active modes while current work continues.
+Sending normal content also ends Away Mode. Editing a draft, browsing history, an empty Resume, and a plain approval without content do not count as returning. Turning off **Automatic Away Mode** revokes pending automatic-entry deadlines for questions and command approvals; it does not exit a task already away. Turning off **Enable Away Mode**, or losing the rollout, exits active modes while current work continues.
 
 Subsequent model requests return to normal interaction. Stopping the mode does not create an extra API request, cancel an in-flight one, or rewrite conversation history.

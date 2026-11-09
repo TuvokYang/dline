@@ -60,7 +60,8 @@ export const zhCN = {
     "settings.ui.away.enable": "启用离开模式",
     "settings.ui.away.help": "允许通过 /away 携带任务消息，在你离开时继续当前任务。关闭此选项也会退出正在进行的离开模式。",
     "settings.ui.away.automatic": "自动离开模式",
-    "settings.ui.away.automaticHelp": "新问题十分钟未获回答时进入离开模式。启用时已在等待回答的问题不受影响。",
+    "settings.ui.away.automaticHelp":
+        "新问题或命令审批等待十分钟后进入离开模式，超时命令默认拒绝。离开期间的命令审批在 60 秒后拒绝。启用时已有的等待不受影响。",
     "settings.ui.away.saveError": "无法保存离开模式设置。请重试。",
     "settings.ui.compact.description":
         "模型窗口超过最大上下文时，以该绝对上限为触发中心；否则，将按百分比计算的预留量限制在最小与最大预留量之间。自动应用 2K 的估算容差。",

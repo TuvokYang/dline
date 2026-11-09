@@ -39,7 +39,7 @@ export interface CanonicalDialogProjection {
     readonly failure?: { readonly stage: "prepare" | "reveal"; readonly message: string }
     /** The compaction that completed while this dialog waited for the user. */
     readonly outlivedCompactionId?: string
-    readonly deadline?: { readonly kind: "ask" | "external_command"; readonly deadlineAt: number }
+    readonly deadline?: { readonly kind: "ask" | "command_approval" | "external_command"; readonly deadlineAt: number }
 }
 
 export type CanonicalHaltProjection =

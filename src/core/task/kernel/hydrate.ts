@@ -75,7 +75,7 @@ function validRoundState(state: TaskState): boolean {
         return (
             deadline === undefined ||
             (deadline !== null &&
-                ["ask", "external_command"].includes(deadline.kind) &&
+                ["ask", "command_approval", "external_command"].includes(deadline.kind) &&
                 Number.isFinite(deadline.deadlineAt) &&
                 revision(deadline.modeRevocation) &&
                 revision(deadline.automaticRevocation))

@@ -166,8 +166,13 @@ export function reduceTurn(state: TurnSlice, event: TaskEvent): TurnReduction {
     }
     if (event.type === "approval.responded") {
         if (state.turnId !== event.turnId || !state.manualApprovalBlockIds.includes(event.blockId)) return { state, commands: [] }
+        // A timeout is absence of approval for this call, not a user refusal of later work.
         const decidedBlocks = (
-            event.approved ? replaceBlock(state.blocks, event.blockId, "ready") : rejectAndSkipLater(state.blocks, event.blockId)
+            event.approved
+                ? replaceBlock(state.blocks, event.blockId, "ready")
+                : event.origin === "timeout"
+                  ? replaceBlock(state.blocks, event.blockId, "rejected")
+                  : rejectAndSkipLater(state.blocks, event.blockId)
         ).map((block) =>
             block.blockId === event.blockId
                 ? {

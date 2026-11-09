@@ -655,18 +655,19 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
         return [{ ...commandBase(next, 0), type: "provider.start", draftRef: compose.draftRef!, turnId: compose.turnId }]
     }
     if (event.type === "dialog.resolved" && resumesAutomaticResponse(previous, event.interactionId)) {
-        const interaction = next.dialog.primary
-        const deadlineKind = interaction?.acceptedResponse?.deadlineKind
-        if (!interaction || deadlineKind === undefined) return []
-        return [
-            {
-                ...commandBase(next, 0),
-                type: "dialog.deliver_automatic",
-                interactionId: interaction.interactionId,
-                turnId: interaction.turnId,
-                deadlineKind,
-            },
-        ]
+        return [next.dialog.primary, ...Object.values(next.dialog.approvalsByBlock)].flatMap((interaction, index): Command[] => {
+            const deadlineKind = interaction?.acceptedResponse?.deadlineKind
+            if (interaction?.acceptedResponse?.origin !== "timeout" || deadlineKind === undefined) return []
+            return [
+                {
+                    ...commandBase(next, index),
+                    type: "dialog.deliver_automatic",
+                    interactionId: interaction.interactionId,
+                    turnId: interaction.turnId,
+                    deadlineKind,
+                },
+            ]
+        })
     }
     if (event.type === "approval.requested" || event.type === "dialog.requested" || event.type === "dialog.interrupt_requested") {
         const interaction = findInteraction(next, event.interactionId)

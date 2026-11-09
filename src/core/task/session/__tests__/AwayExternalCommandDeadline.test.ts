@@ -43,12 +43,18 @@ afterEach(async () => {
 // timeout as a user denial would lose the neutral paired result or run the command.
 describe("Away planned external command deadline", () => {
     it.each([
-        { source: "command" as const, failFirstDelivery: false },
-        { source: "ask_timeout" as const, failFirstDelivery: false },
-        { source: "command" as const, failFirstDelivery: true },
+        { source: "command" as const, failFirstDelivery: false, timeoutMs: 60000, failCommit: undefined },
+        { source: "ask_timeout" as const, failFirstDelivery: false, timeoutMs: 60000, failCommit: undefined },
+        { source: "command" as const, failFirstDelivery: true, timeoutMs: 60000, failCommit: undefined },
+        { source: undefined, failFirstDelivery: false, timeoutMs: 600000, failCommit: undefined },
+        { source: undefined, failFirstDelivery: true, timeoutMs: 600000, failCommit: undefined },
+        { source: undefined, failFirstDelivery: false, timeoutMs: 600000, failCommit: "acceptance" },
+        { source: undefined, failFirstDelivery: false, timeoutMs: 600000, failCommit: "rejection" },
     ])("keeps the planned approval manual and journals one timed-out result: $source / transient failure $failFirstDelivery", async ({
         source,
         failFirstDelivery,
+        timeoutMs,
+        failCommit,
     }) => {
         vi.useFakeTimers()
         vi.setSystemTime(1000)
@@ -78,12 +84,12 @@ describe("Away planned external command deadline", () => {
             cwd: process.cwd(),
             workspaceRoots: [process.cwd()],
             settings: DEFAULT_AUTO_APPROVAL_SETTINGS,
-            blanket: { yoloMode: true, approveAll: true },
-            inheritsApproval: true,
-            awayActive: true,
-            awayCommandScope: "external",
+            blanket: { yoloMode: source !== undefined, approveAll: source !== undefined },
+            inheritsApproval: source !== undefined,
+            ...(source ? { awayActive: true, awayCommandScope: "external" as const } : {}),
         })
-        expect(plan.approval).toMatchObject({ kind: "manual", externalCommand: true })
+        expect(plan.approval).toMatchObject({ kind: "manual", presentationAsk: "command" })
+        if (source) expect(plan.approval).toMatchObject({ externalCommand: true })
         const invocationRef = await payloads.put(
             encodeTaskPayload<ToolInvocationEnvelope>({
                 kind: "tool_invocation",
@@ -128,8 +134,8 @@ describe("Away planned external command deadline", () => {
             initialState: {
                 ...createInitialTaskState("deadline"),
                 away: {
-                    configuration: { enabled: true, automatic: false, modeRevocation: 0, automaticRevocation: 0 },
-                    mode: { source, enteredRevision: 0, modeRevocation: 0 },
+                    configuration: { enabled: true, automatic: source === undefined, modeRevocation: 0, automaticRevocation: 0 },
+                    ...(source ? { mode: { source, enteredRevision: 0, modeRevocation: 0 } } : {}),
                 },
                 flow: { phase: "running", provider: { commandId: "provider", originRevision: 0, status: "running" } },
             },
@@ -162,8 +168,10 @@ describe("Away planned external command deadline", () => {
                 {
                     domain: "provider",
                     execute: async (command) => {
-                        if (command.type === "provider.start")
+                        if (command.type === "provider.start") {
+                            expect((await vault.load("deadline"))!.state.turn.blocks[0].approvalTimedOut).toBe(true)
                             sent.push(decodeTaskPayload<ProviderDraftEnvelope>(await payloads.read(command.draftRef)))
+                        }
                     },
                 },
             ],
@@ -189,7 +197,7 @@ describe("Away planned external command deadline", () => {
         await runtime.waitForQuiescence()
         expect(runtime.getState().dialog.approvalsByBlock.command).toMatchObject({
             status: "awaiting",
-            deadline: { kind: "external_command", deadlineAt: 61000 },
+            deadline: { kind: source ? "external_command" : "command_approval", deadlineAt: 1000 + timeoutMs },
         })
         const put = payloads.put.bind(payloads)
         let deliveryWrites = 0
@@ -200,11 +208,37 @@ describe("Away planned external command deadline", () => {
             }
             return put(bytes)
         })
-        await vi.advanceTimersByTimeAsync(59999)
+        const save = vault.save.bind(vault)
+        let commitFailures = 0
+        vi.spyOn(vault, "save").mockImplementation(async (snapshot) => {
+            const accepted = snapshot.state.dialog.approvalsByBlock.command?.acceptedResponse?.origin === "timeout"
+            const rejected = snapshot.state.turn.blocks[0]?.approvalTimedOut === true
+            if (!commitFailures && ((failCommit === "acceptance" && accepted) || (failCommit === "rejection" && rejected))) {
+                commitFailures++
+                throw new Error("Transient timeout snapshot failure")
+            }
+            return save(snapshot)
+        })
+        await vi.advanceTimersByTimeAsync(timeoutMs - 1)
         expect(sent).toEqual([])
         await vi.advanceTimersByTimeAsync(1)
+        if (failCommit) {
+            expect(commitFailures).toBe(1)
+            if (failCommit === "acceptance") expect(sent).toEqual([])
+            expect(executed).not.toHaveBeenCalled()
+            // The existing commit owner recovers a failed snapshot on the next event.
+            // Until then the operation remains fail-closed, never approved or executed.
+            const recovery = await runtime.submit({
+                type: "away.configured",
+                generation: 0,
+                configuration: runtime.getState().away!.configuration,
+            })
+            if (recovery.kind !== "accepted") throw new Error(recovery.diagnostic.message)
+            await recovery.receipt.durable
+        }
         await runtime.waitForQuiescence()
         expect(executed).not.toHaveBeenCalled()
+        expect(runtime.getState().away?.mode?.source).toBe(source ?? "ask_timeout")
         expect(sent).toHaveLength(1)
         expect(deliveryWrites).toBe(failFirstDelivery ? 2 : 1)
         expect(runtime.getState().turn.blocks[0]).toMatchObject({ phase: "rejected", approvalTimedOut: true })
@@ -222,6 +256,9 @@ describe("Away planned external command deadline", () => {
         expect(results).toHaveLength(1)
         expect(results[0]).toMatchObject({ type: "tool_result", function_id: "call", dline_tid: "command" })
         expect(results[0]).not.toHaveProperty("is_error")
+        expect(results[0]).toMatchObject({
+            content: [{ type: "text", text: expect.stringMatching(/workspace.*already authorized/i) }],
+        })
         expect(rows.addToClineMessages).not.toHaveBeenCalled()
         expect((await vault.load("deadline"))!.state.turn.blocks[0].approvalTimedOut).toBe(true)
     })

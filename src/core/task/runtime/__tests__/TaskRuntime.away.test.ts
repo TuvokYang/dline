@@ -12,17 +12,21 @@ function step(state: TaskState, event: EventInput) {
     if (result.kind === "rejected") throw new Error(result.diagnostic.message)
     return result
 }
-function awaiting(automatic = true, timing: { readonly now?: number } = { now: 1000 }): TaskState {
+function awaiting(
+    automatic = true,
+    timing: { readonly now?: number } = { now: 1000 },
+    kind: "followup" | "command_approval" = "followup",
+): TaskState {
     let state: TaskState = { ...createInitialTaskState("deadline"), flow: { phase: "running" } }
     state = step(state, { type: "away.configured", configuration: { ...configuration, automatic } }).state
     const requested = step(state, {
         type: "dialog.requested",
         interactionId: "question",
         turnId: "turn",
-        kind: "followup",
+        kind,
         now: timing.now,
         presentationRef: "question-body",
-        actionRules: [{ actionId: "reply", payloadPolicy: "draft" }],
+        actionRules: [{ actionId: kind === "followup" ? "reply" : "approve", payloadPolicy: "draft" }],
     })
     const prepare = requested.commands.find((c) => c.type === "dialog.prepare")!
     const prepared = step(requested.state, {
@@ -153,10 +157,13 @@ describe("Runtime-owned Away deadlines", () => {
         expect(r.saved()?.state.roundMaterial?.notices).toHaveLength(1)
     })
 
-    it("uses an absolute ten-minute deadline, commits Away and typed response before delivery, and does not repeat", async () => {
+    it.each([
+        "followup",
+        "command_approval",
+    ] as const)("commits the absolute ten-minute %s timeout before delivery without repeating", async (kind) => {
         vi.useFakeTimers()
         vi.setSystemTime(1000)
-        const state = awaiting()
+        const state = awaiting(true, { now: 1000 }, kind)
         expect(state.dialog.primary?.deadline?.deadlineAt).toBe(601000)
         const r = runtime(state)
         runtimes.push(r.instance)
@@ -170,7 +177,7 @@ describe("Runtime-owned Away deadlines", () => {
         expect(r.deliveries[0].state.away?.mode?.source).toBe("ask_timeout")
         expect(r.deliveries[0].state.dialog.primary).toMatchObject({
             status: "resolving",
-            acceptedResponse: { origin: "timeout", actionId: "reply" },
+            acceptedResponse: { origin: "timeout", actionId: kind === "followup" ? "reply" : "reject" },
         })
         expect(r.instance.getState().dialog.primary?.deadline).toBeUndefined()
         await vi.advanceTimersByTimeAsync(600000)
@@ -258,8 +265,11 @@ describe("Runtime-owned Away deadlines", () => {
         expect(r.instance.getState()).toBe(state)
     })
 
-    it("lets only one of a human response and the due event settle the question", () => {
-        const state = awaiting()
+    it.each([
+        "followup",
+        "command_approval",
+    ] as const)("lets only one of a human response and the due event settle %s", (kind) => {
+        const state = awaiting(true, { now: 1000 }, kind)
         const due: TaskEvent = {
             type: "away.deadline_due",
             generation: 0,
@@ -277,7 +287,7 @@ describe("Runtime-owned Away deadlines", () => {
             turnId: "turn",
             stateRevision: state.revision,
             receiverGeneration: 0,
-            actionId: "reply",
+            actionId: kind === "followup" ? "reply" : "approve",
             draftRef: "answer",
         }
         const firstHuman = transition(state, human)
@@ -291,14 +301,14 @@ describe("Runtime-owned Away deadlines", () => {
         expect(firstDue.state.away?.mode?.source).toBe("ask_timeout")
     })
 
-    it("does not retroactively arm an old ask after enabling automatic Away", () => {
-        const state = awaiting(false)
+    it.each(["followup", "command_approval"] as const)("does not retroactively arm %s after enabling automatic Away", (kind) => {
+        const state = awaiting(false, { now: 1000 }, kind)
         const enabled = step(state, { type: "away.configured", configuration }).state
         expect(enabled.dialog.primary?.deadline).toBeUndefined()
     })
 
-    it("closing automatic eligibility removes the deadline and reopening does not restore it", () => {
-        const state = awaiting()
+    it.each(["followup", "command_approval"] as const)("revokes the %s deadline without restoring it on reopen", (kind) => {
+        const state = awaiting(true, { now: 1000 }, kind)
         const closed = step(state, {
             type: "away.configured",
             configuration: { ...configuration, automatic: false, automaticRevocation: 1 },

@@ -19,9 +19,14 @@ export function InteractionDeadline({ deadline }: { deadline: NonNullable<Active
     const seconds = Math.max(0, Math.ceil((deadline.deadlineAt - now) / 1000))
     return (
         <div aria-live="off" className="mb-1 text-xs text-description" role="timer">
-            {t(deadline.kind === "ask" ? "chatInput.interaction.askDeadline" : "chatInput.interaction.commandDeadline", {
-                time: `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`,
-            })}
+            {t(
+                deadline.kind === "external_command"
+                    ? "chatInput.interaction.commandDeadline"
+                    : "chatInput.interaction.askDeadline",
+                {
+                    time: `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`,
+                },
+            )}
         </div>
     )
 }
