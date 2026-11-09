@@ -127,6 +127,7 @@ export class CerebrasHandler extends ApiHandler {
 
         try {
             const model = this.getModel()
+            const sentAtMs = Date.now()
             const stream = await client.chat.completions.create({
                 model: model.id,
                 messages: cerebrasMessages,
@@ -182,10 +183,14 @@ export class CerebrasHandler extends ApiHandler {
                 // Handle usage information from Cerebras API
                 // Usage is typically only available in the final chunk
                 if (chunk.usage) {
-                    const totalCost = this.calculateCost({
-                        inputTokens: chunk.usage.prompt_tokens || 0,
-                        outputTokens: chunk.usage.completion_tokens || 0,
-                    })
+                    const cost = ApiHandler.calculateUsageCost(
+                        model.info.pricing,
+                        {
+                            inputTokens: chunk.usage.prompt_tokens || 0,
+                            outputTokens: chunk.usage.completion_tokens || 0,
+                        },
+                        sentAtMs,
+                    )
 
                     yield {
                         type: "usage",
@@ -193,7 +198,7 @@ export class CerebrasHandler extends ApiHandler {
                         outputTokens: chunk.usage.completion_tokens || 0,
                         cacheReadTokens: 0,
                         cacheWriteTokens: 0,
-                        totalCost,
+                        ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                     }
                 }
             }
@@ -255,16 +260,5 @@ export class CerebrasHandler extends ApiHandler {
                 // Default rate limits for unknown models
                 return { requestsPerMinute: 30, tokensPerMinute: 60_000 }
         }
-    }
-
-    private calculateCost({ inputTokens, outputTokens }: { inputTokens: number; outputTokens: number }): number {
-        const model = this.getModel()
-        const inputPrice = model.info.pricing?.inputPrice || 0
-        const outputPrice = model.info.pricing?.outputPrice || 0
-
-        const inputCost = (inputPrice / 1_000_000) * inputTokens
-        const outputCost = (outputPrice / 1_000_000) * outputTokens
-
-        return inputCost + outputCost
     }
 }

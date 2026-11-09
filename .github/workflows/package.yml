@@ -13,6 +13,11 @@ on:
         type: string
         required: false
         default: ci
+      registry:
+        description: Target registry identity (open-vsx or vscode-marketplace).
+        type: string
+        required: false
+        default: open-vsx
       source_ref:
         description: Optional branch, tag, or SHA to package instead of the caller SHA.
         type: string
@@ -54,6 +59,7 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  VSIX_REGISTRY: ${{ inputs.registry }}
 
 jobs:
   validate-profile:
@@ -82,6 +88,10 @@ jobs:
           fi
           if [[ "$PROFILE" == "ci" && "$CHANNEL" == "production" ]]; then
             echo "Error: the production channel requires the release profile"
+            exit 1
+          fi
+          if [[ "$VSIX_REGISTRY" != "open-vsx" && "$VSIX_REGISTRY" != "vscode-marketplace" ]]; then
+            echo "Error: registry must be 'open-vsx' or 'vscode-marketplace'"
             exit 1
           fi
           if [[ -n "$ARTIFACT_KEY" && ! "$ARTIFACT_KEY" =~ ^[A-Za-z0-9._-]+$ ]]; then
@@ -157,15 +167,38 @@ jobs:
               exit 1
               ;;
           esac
+          artifact_prefix=dline
+          if [[ "$VSIX_REGISTRY" == "vscode-marketplace" ]]; then
+            artifact_prefix=dline-vscode-marketplace
+          fi
           echo "filename=$filename" >> "$GITHUB_OUTPUT"
-          echo "artifact_name=dline-vsix-$artifact_key" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=${artifact_prefix}-vsix-$artifact_key" >> "$GITHUB_OUTPUT"
           echo "commit_sha=$commit_sha" >> "$GITHUB_OUTPUT"
 
       - name: Build channel VSIX
         env:
           CHANNEL: ${{ inputs.channel }}
           DLINE_ENVIRONMENT: production
-        run: node scripts/package-vsix.mjs --channel "$CHANNEL" --out "dist/${{ steps.package.outputs.filename }}"
+        shell: bash
+        run: |
+          set -euo pipefail
+          # --registry selects the registry-specific package identity: the VS Code
+          # Marketplace requires a globally unique name, Open VSX does not.
+          # A manual override may check out a historical tag whose packaging
+          # script predates this flag, so probe the checked-out CLI instead of
+          # assuming it. Rejecting is required: a script without --registry can
+          # only emit the globally taken name 'dline' for the Marketplace.
+          identity_args=()
+          packager_usage=$(node scripts/package-vsix.mjs --help 2>&1 || true)
+          if grep -q -- '--registry' <<<"$packager_usage"; then
+            identity_args+=(--registry "$VSIX_REGISTRY")
+          elif [[ "$VSIX_REGISTRY" == "vscode-marketplace" ]]; then
+            echo "Error: the packaging script at this ref predates --registry, so it cannot produce the VS Code Marketplace identity."
+            echo "A tag that predates registry-specific identities cannot be republished to the VS Code Marketplace."
+            echo "Promote a release whose packaging script supports --registry."
+            exit 1
+          fi
+          npm run vsix -- --channel "$CHANNEL" "${identity_args[@]}" --out "dist/${{ steps.package.outputs.filename }}"
 
       - name: Inspect packaged VSIX
         id: artifact
@@ -249,8 +282,12 @@ jobs:
           version=$(node -p "require('./package.json').version")
           commit_sha=$(git rev-parse HEAD)
           artifact_key="${ARTIFACT_KEY:-$commit_sha}"
+          artifact_prefix=dline
+          if [[ "$VSIX_REGISTRY" == "vscode-marketplace" ]]; then
+            artifact_prefix=dline-vscode-marketplace
+          fi
           echo "filename=dline-${version}.vsix" >> "$GITHUB_OUTPUT"
-          echo "artifact_name=dline-vsix-$artifact_key" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=${artifact_prefix}-vsix-$artifact_key" >> "$GITHUB_OUTPUT"
           echo "commit_sha=$commit_sha" >> "$GITHUB_OUTPUT"
 
       - name: Build production VSIX
@@ -262,7 +299,23 @@ jobs:
           OTEL_EXPORTER_OTLP_PROTOCOL: ${{ secrets.OTEL_EXPORTER_OTLP_PROTOCOL }}
           OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT }}
           OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
-        run: node scripts/package-vsix.mjs --channel production --out "dist/${{ steps.package.outputs.filename }}"
+        shell: bash
+        run: |
+          set -euo pipefail
+          # --registry selects the registry-specific package identity: the VS Code
+          # Marketplace requires a globally unique name, Open VSX does not.
+          # A manual override may check out a historical tag whose packaging
+          # script predates this flag, so pass it only when the script supports it.
+          identity_args=()
+          packager_usage=$(node scripts/package-vsix.mjs --help 2>&1 || true)
+          if grep -q -- '--registry' <<<"$packager_usage"; then
+            identity_args+=(--registry "$VSIX_REGISTRY")
+          elif [[ "$VSIX_REGISTRY" == "vscode-marketplace" ]]; then
+            echo "Error: the packaging script at this ref predates --registry, so it cannot produce the VS Code Marketplace identity."
+            echo "Repackage from a ref that supports registry-specific identities, or publish this ref to Open VSX only."
+            exit 1
+          fi
+          npm run vsix -- --channel production "${identity_args[@]}" --out "dist/${{ steps.package.outputs.filename }}"
 
       - name: Inspect packaged VSIX
         id: artifact

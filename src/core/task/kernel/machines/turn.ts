@@ -20,6 +20,7 @@ export function toolTerminalManifestPayload(state: TurnSlice): { readonly toolTe
                     invocationRef: block.invocationRef,
                     ...(block.approvalFeedbackRef === undefined ? {} : { approvalFeedbackRef: block.approvalFeedbackRef }),
                     ...(block.deniedByUser && block.phase === "rejected" ? { deniedByUser: true } : {}),
+                    ...(block.approvalTimedOut ? { approvalTimedOut: true as const } : {}),
                 })),
         },
     }
@@ -65,6 +66,7 @@ export function reduceTurn(state: TurnSlice, event: TaskEvent): TurnReduction {
             attempt: block.attempt,
             lanes: block.lanes,
             turnEnding: block.turnEnding,
+            ...(block.disposition ? { disposition: block.disposition } : {}),
             invocationRef: block.invocationRef,
         }))
         return {
@@ -164,14 +166,23 @@ export function reduceTurn(state: TurnSlice, event: TaskEvent): TurnReduction {
     }
     if (event.type === "approval.responded") {
         if (state.turnId !== event.turnId || !state.manualApprovalBlockIds.includes(event.blockId)) return { state, commands: [] }
+        // A timeout is absence of approval for this call, not a user refusal of later work.
         const decidedBlocks = (
-            event.approved ? replaceBlock(state.blocks, event.blockId, "ready") : rejectAndSkipLater(state.blocks, event.blockId)
+            event.approved
+                ? replaceBlock(state.blocks, event.blockId, "ready")
+                : event.origin === "timeout"
+                  ? replaceBlock(state.blocks, event.blockId, "rejected")
+                  : rejectAndSkipLater(state.blocks, event.blockId)
         ).map((block) =>
             block.blockId === event.blockId
                 ? {
                       ...block,
                       ...(event.feedbackRef === undefined ? {} : { approvalFeedbackRef: event.feedbackRef }),
-                      ...(event.approved ? {} : { deniedByUser: true }),
+                      ...(event.approved
+                          ? {}
+                          : event.origin === "timeout"
+                            ? { approvalTimedOut: true as const }
+                            : { deniedByUser: true }),
                   }
                 : block,
         )

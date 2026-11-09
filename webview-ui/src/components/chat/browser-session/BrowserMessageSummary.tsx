@@ -1,4 +1,5 @@
 import type { UiMessage } from "@shared/ExtensionMessage"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { describeBrowserMessage } from "./browser-session-model"
 
 /**
@@ -9,10 +10,11 @@ import { describeBrowserMessage } from "./browser-session-model"
  * data URL and must never reach text rendering.
  */
 export function BrowserMessageSummary({ message }: { message: UiMessage }) {
+    const { t } = useUiTranslation()
     return (
         <div className="flex min-w-0 items-center gap-2.5" data-testid="browser-message-summary">
             <span className="codicon codicon-inspect shrink-0" />
-            <span className="min-w-0 truncate">{describeBrowserMessage(message)}</span>
+            <span className="min-w-0 truncate">{describeBrowserMessage(message, t)}</span>
         </div>
     )
 }

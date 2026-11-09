@@ -5,6 +5,7 @@ import type { ReactNode } from "react"
 import McpResponseDisplay from "@/components/mcp/chat-display/McpResponseDisplay"
 import McpToolRequest from "@/components/mcp/chat-display/McpToolRequest"
 import McpResourceRow from "@/components/mcp/configuration/tabs/installed/server-row/McpResourceRow"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 import { findMatchingResourceOrTemplate } from "@/utils/mcp"
 import { CHAT_ROW_HEADER_CLASSNAMES } from "./constants"
@@ -32,6 +33,7 @@ function McpCallHeader({
     isExpanded,
     onToggleExpand,
 }: Pick<McpCallRowProps, "icon" | "title" | "isFinal" | "isExpanded" | "onToggleExpand"> & { toolName?: string }) {
+    const { t } = useUiTranslation()
     if (!isFinal) {
         return (
             <div className={CHAT_ROW_HEADER_CLASSNAMES}>
@@ -43,7 +45,7 @@ function McpCallHeader({
     return (
         <button
             aria-expanded={isExpanded}
-            aria-label={isExpanded ? "Collapse MCP call" : "Expand MCP call"}
+            aria-label={isExpanded ? t("chatRows.mcp.collapseCall") : t("chatRows.mcp.expandCall")}
             className={cn(
                 CHAT_ROW_HEADER_CLASSNAMES,
                 "w-full cursor-pointer select-none border-0 bg-transparent p-0 text-left text-inherit",

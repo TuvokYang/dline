@@ -2,12 +2,13 @@ import { DEFAULT_CHAT_INPUT_SEND_SHORTCUT } from "@shared/ChatInputSendShortcut"
 import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
 import type { SemanticTrigger } from "@shared/input-semantics/lexer"
 import { EmptyRequest, StringRequest } from "@shared/proto/dline/common"
-import { FileSearchRequest, FileSearchType, type RefreshedDlineToggles } from "@shared/proto/dline/file"
+import { FileSearchRequest, FileSearchType, type GitCommit, type RefreshedDlineToggles } from "@shared/proto/dline/file"
 import type { SlashCommand } from "@shared/slashCommands"
 import type React from "react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { useTaskCapabilityToggles } from "@/hooks/useTaskCapabilityToggles"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { FileServiceClient, SlashServiceClient } from "@/services/grpc-client"
 import { shouldCompleteMenuSelection } from "@/utils/chat-input-shortcut"
 import {
@@ -31,13 +32,6 @@ import { useComposerState } from "./semantic-composer/useComposerState"
 /** The "File" row is preselected when the mention menu opens without a query. */
 const DEFAULT_CONTEXT_MENU_OPTION = getContextMenuOptionIndex(ContextMenuOptionType.File)
 const FILE_SEARCH_DEBOUNCE_MS = 200
-
-interface GitCommit {
-    type: ContextMenuOptionType.Git
-    value: string
-    label: string
-    description: string
-}
 
 /** Where the open menu was triggered; it stays open only while the caret still completes that trigger. */
 interface MenuAnchor {
@@ -158,6 +152,7 @@ function useCloseOnOutsideClick(open: boolean, containerRef: React.RefObject<HTM
  * is never lost silently.
  */
 export function useComposerMenus({ engine, catalog, onPicked }: ComposerMenusOptions): ComposerMenus {
+    const { t } = useUiTranslation()
     const {
         chatInputSendShortcut,
         setLocalWorkflowToggles,
@@ -207,8 +202,8 @@ export function useComposerMenus({ engine, catalog, onPicked }: ComposerMenusOpt
     const [availableSkillCommands, setAvailableSkillCommands] = useState<SlashCommand[]>()
     const slashSources = useSlashCommandSources(workflowDescriptions, availableSkillCommands)
     const slashEntries = useMemo(
-        () => getMatchingSlashCommands(slashOpen ? query : "", getAvailableSlashCommands(slashSources, catalog)),
-        [catalog, query, slashOpen, slashSources],
+        () => getMatchingSlashCommands(slashOpen ? query : "", getAvailableSlashCommands(slashSources, catalog, t)),
+        [catalog, query, slashOpen, slashSources, t],
     )
     const [slashIndex, setSlashIndex] = useState(0)
     const slashContainerRef = useRef<HTMLDivElement>(null)
@@ -359,14 +354,7 @@ export function useComposerMenus({ engine, catalog, onPicked }: ComposerMenusOpt
         if (selectedType !== ContextMenuOptionType.Git && !/^[a-f0-9]+$/i.test(query)) return
         FileServiceClient.searchCommits(StringRequest.create({ value: query }))
             .then((response) => {
-                setGitCommits(
-                    (response.commits ?? []).map((commit) => ({
-                        type: ContextMenuOptionType.Git,
-                        value: commit.hash,
-                        label: commit.subject,
-                        description: `${commit.shortHash} by ${commit.author} on ${commit.date}`,
-                    })),
-                )
+                setGitCommits(response.commits ?? [])
             })
             .catch((error) => console.error("Error searching commits:", error))
     }, [query, selectedType])
@@ -375,9 +363,18 @@ export function useComposerMenus({ engine, catalog, onPicked }: ComposerMenusOpt
         () => [
             { type: ContextMenuOptionType.Problems, value: "problems" },
             { type: ContextMenuOptionType.Terminal, value: "terminal" },
-            ...gitCommits,
+            ...gitCommits.map((commit) => ({
+                type: ContextMenuOptionType.Git,
+                value: commit.hash,
+                label: commit.subject,
+                description: t("chatInput.composer.gitCommitDescription", {
+                    shortHash: commit.shortHash,
+                    author: commit.author,
+                    date: commit.date,
+                }),
+            })),
         ],
-        [gitCommits],
+        [gitCommits, t],
     )
 
     const selectMention = useCallback(
@@ -404,8 +401,8 @@ export function useComposerMenus({ engine, catalog, onPicked }: ComposerMenusOpt
     )
 
     const mentionOptions = useCallback(
-        () => getContextMenuOptions(query, selectedType, queryItems, fileResults),
-        [fileResults, query, queryItems, selectedType],
+        () => getContextMenuOptions(query, selectedType, queryItems, fileResults, t),
+        [fileResults, query, queryItems, selectedType, t],
     )
 
     const handleKeyDown = useCallback(

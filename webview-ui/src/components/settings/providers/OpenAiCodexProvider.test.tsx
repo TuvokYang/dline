@@ -5,8 +5,10 @@ import {
     OpenAiCodexFlowStatus,
 } from "@shared/proto/dline/account"
 import { ApiProfile } from "@shared/proto/dline/profile"
+import type { UiLanguage } from "@shared/UiLanguage"
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { UiLanguageProvider } from "@/i18n/UiLanguageProvider"
 import { OpenAiCodexProvider } from "./OpenAiCodexProvider"
 
 const mocks = vi.hoisted(() => ({
@@ -156,12 +158,28 @@ describe("OpenAiCodexProvider OAUTH control", () => {
         const signOut = screen.getByRole("button", { name: "Sign out" })
         expect(accountCard).toContainElement(signInAgain)
         expect(accountCard).toContainElement(signOut)
-        expect(signInAgain).toHaveClass("bg-button-background")
-        expect(signOut).toHaveClass("text-error")
-        // The Controller reads usage once when the Profile becomes active. The
-        // panel remounts on every expand and tab switch, so it shows that
-        // snapshot and reads only when the user refreshes.
-        expect(mocks.getUsage).not.toHaveBeenCalled()
+        await waitFor(() => expect(mocks.getUsage).toHaveBeenCalledWith({ profileId: profile.id }))
+    })
+
+    it("automatically refreshes account usage while signed in", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true })
+        const view = renderProvider
+        mocks.getStatus.mockResolvedValue({
+            profileId: profile.id,
+            status: OpenAiCodexAuthStatus.OPEN_AI_CODEX_AUTH_STATUS_AUTHENTICATED,
+        })
+        const rendered = view()
+        try {
+            await waitFor(() => expect(mocks.getUsage).toHaveBeenCalledTimes(1))
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(60_000)
+            })
+            expect(mocks.getUsage).toHaveBeenCalledTimes(2)
+            expect(screen.getByRole("button", { name: "Usage 7 day 17%" })).toBeInTheDocument()
+        } finally {
+            rendered.unmount()
+            vi.useRealTimers()
+        }
     })
 
     it("opens the OAUTH dialog immediately and then shows the transient authorization URI", async () => {
@@ -225,7 +243,6 @@ describe("OpenAiCodexProvider OAUTH control", () => {
 
         fireEvent.click(screen.getByRole("button", { name: /Advanced: import OAuth credential JSON/ }))
         const input = screen.getByRole("textbox", { name: "OpenAI Codex OAuth JSON" })
-        expect(input).toHaveClass("h-24", "max-h-24")
         const oauthJson = JSON.stringify({ access_token: "manual-secret", expires: 1_900_000_000_000 })
         fireEvent.change(input, { target: { value: oauthJson } })
         fireEvent.click(screen.getByRole("button", { name: "Import credential" }))
@@ -351,6 +368,54 @@ describe("OpenAiCodexProvider OAUTH control", () => {
         expect(await screen.findByText("Sign-in failed. Try again.")).toBeInTheDocument()
         expect(screen.queryByLabelText("ChatGPT sign-in URL")).not.toBeInTheDocument()
         expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument()
+    })
+
+    it("switches an open OAuth portal both ways without restarting the flow or clearing callback/JSON drafts", async () => {
+        const tree = (language: UiLanguage) => (
+            <UiLanguageProvider language={language}>
+                <OpenAiCodexProvider onUpdate={vi.fn()} profile={profile} showModelOptions={false} />
+            </UiLanguageProvider>
+        )
+        const view = render(tree("en"))
+        fireEvent.click(await screen.findByRole("button", { name: "Sign in" }))
+        const dialog = await screen.findByRole("dialog", { name: "Sign in to ChatGPT" })
+        const callback = screen.getByRole("textbox", { name: "Full callback URL" })
+        const callbackUri = "http://localhost:1455/auth/callback?code=raw-code&state=raw-state"
+        fireEvent.change(callback, { target: { value: callbackUri } })
+        fireEvent.click(screen.getByRole("button", { name: /Advanced: import OAuth credential JSON/ }))
+        const json = screen.getByRole("textbox", { name: "OpenAI Codex OAuth JSON" })
+        const credential = JSON.stringify({ access_token: "raw-json-draft" })
+        fireEvent.change(json, { target: { value: credential } })
+        mocks.openInBrowser.mockRejectedValueOnce(new Error("browser diagnostic"))
+        fireEvent.click(screen.getByRole("button", { name: "Open in browser again" }))
+        expect(await screen.findByRole("alert")).toHaveTextContent("Could not open the browser.")
+        const statusReads = mocks.getStatus.mock.calls.length
+
+        view.rerender(tree("zh-CN"))
+        expect(screen.getByRole("dialog", { name: "登录 ChatGPT" })).toBe(dialog)
+        expect(screen.getByRole("textbox", { name: "完整回调 URL" })).toBe(callback)
+        expect(callback).toHaveValue(callbackUri)
+        expect(screen.getByRole("textbox", { name: "OpenAI Codex OAuth JSON" })).toBe(json)
+        expect(json).toHaveValue(credential)
+        expect(screen.getByRole("button", { name: /高级：导入 OAuth 凭据 JSON/ })).toHaveAttribute("aria-expanded", "true")
+        expect(screen.getByRole("alert")).toHaveTextContent("无法打开浏览器。请复制登录 URL 并手动打开。")
+        expect(screen.getByLabelText("ChatGPT 登录 URL")).toHaveValue(activeFlow.authorizationUrl)
+
+        view.rerender(tree("en"))
+        expect(screen.getByRole("dialog", { name: "Sign in to ChatGPT" })).toBe(dialog)
+        expect(callback).toHaveValue(callbackUri)
+        expect(json).toHaveValue(credential)
+        expect(screen.getByRole("alert")).toHaveTextContent("Could not open the browser.")
+        expect(mocks.signIn).toHaveBeenCalledTimes(1)
+        expect(mocks.getStatus).toHaveBeenCalledTimes(statusReads)
+        expect(mocks.cancel).not.toHaveBeenCalled()
+        fireEvent.click(screen.getByRole("button", { name: "Finish sign-in" }))
+        expect(mocks.complete).toHaveBeenCalledExactlyOnceWith({
+            profileId: profile.id,
+            flowId: activeFlow.flowId,
+            callbackUri,
+        })
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument())
     })
 
     it("never renders raw start or import error payloads", async () => {

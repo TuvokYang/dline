@@ -1,19 +1,28 @@
 import type { UsageTransaction as ClineAccountUsageTransaction } from "@shared/ClineAccount"
 import type { UsageTransaction as ProtoUsageTransaction, UserOrganization } from "@shared/proto/dline/account"
 
-export const getMainRole = (roles?: string[]) => {
+/** Stable role identity of an organization; display text is resolved by the view. */
+export type MainRole = "owner" | "admin" | "member"
+
+/**
+ * Pick the highest organization role the service reported.
+ *
+ * The values are identities, not display text: a view translates them, so a
+ * language switch never changes which role was detected.
+ */
+export const getMainRole = (roles?: string[]): MainRole | undefined => {
     if (!roles) {
         return undefined
     }
 
     if (roles.includes("owner")) {
-        return "Owner"
+        return "owner"
     }
     if (roles.includes("admin")) {
-        return "Admin"
+        return "admin"
     }
 
-    return "Member"
+    return "member"
 }
 
 export const getClineUris = (base: string, type: "dashboard" | "credits", route?: "account" | "organization") => {

@@ -2,6 +2,7 @@ import { FileTextIcon } from "lucide-react"
 import { memo } from "react"
 import { CopyButton } from "@/components/common/CopyButton"
 import MarkdownBlock from "@/components/common/MarkdownBlock"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 
 interface GenerateReportProps {
@@ -11,6 +12,7 @@ interface GenerateReportProps {
 }
 
 const GenerateReportRow = memo(({ title, content, headClassNames }: GenerateReportProps) => {
+    const { t } = useUiTranslation()
     return (
         <div className="rounded-sm border border-slate-300/30 dark:border-slate-700/30 overflow-visible bg-slate-100/20 dark:bg-slate-900/10 p-2 pt-3 relative">
             <div className="absolute top-2 right-2 z-10">
@@ -19,7 +21,9 @@ const GenerateReportRow = memo(({ title, content, headClassNames }: GenerateRepo
             <div className={cn(headClassNames, "justify-between px-1")}>
                 <div className="flex gap-2 items-center">
                     <FileTextIcon className="size-2 text-slate-500 dark:text-slate-400" />
-                    <span className="text-slate-700 dark:text-slate-200 font-semibold">{title || "Report"}</span>
+                    <span className="text-slate-700 dark:text-slate-200 font-semibold">
+                        {title || t("chatRows.report.defaultTitle")}
+                    </span>
                 </div>
             </div>
             <div className="w-full relative border-t-1 border-slate-300/20 dark:border-slate-700/20 rounded-b-sm">

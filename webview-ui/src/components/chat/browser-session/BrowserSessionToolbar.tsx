@@ -1,6 +1,7 @@
 import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react"
 import type { CSSProperties } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 
 interface BrowserSessionToolbarProps {
     currentPageIndex: number
@@ -24,6 +25,7 @@ const stepStyle: CSSProperties = { color: "var(--vscode-descriptionForeground)",
 
 /** Page navigation at the bottom of the browser frame. */
 export function BrowserSessionToolbar({ currentPageIndex, pageCount, onNext, onPrevious }: BrowserSessionToolbarProps) {
+    const { t } = useUiTranslation()
     const hasPages = pageCount > 1
     if (!hasPages) return null
 
@@ -32,23 +34,23 @@ export function BrowserSessionToolbar({ currentPageIndex, pageCount, onNext, onP
             {hasPages && (
                 <div style={navigationStyle}>
                     <span style={stepStyle}>
-                        Step {currentPageIndex + 1} of {pageCount}
+                        {t("chatRows.browser.stepOf", { current: currentPageIndex + 1, total: pageCount })}
                     </span>
                     <div style={buttonGroupStyle}>
                         <VSCodeButton
                             appearance="icon"
-                            aria-label="Previous browser step"
+                            aria-label={t("chatRows.browser.previousStep")}
                             disabled={currentPageIndex === 0}
                             onClick={onPrevious}
-                            title="Previous browser step">
+                            title={t("chatRows.browser.previousStep")}>
                             <ChevronLeftIcon aria-hidden size={16} />
                         </VSCodeButton>
                         <VSCodeButton
                             appearance="icon"
-                            aria-label="Next browser step"
+                            aria-label={t("chatRows.browser.nextStep")}
                             disabled={currentPageIndex === pageCount - 1}
                             onClick={onNext}
-                            title="Next browser step">
+                            title={t("chatRows.browser.nextStep")}>
                             <ChevronRightIcon aria-hidden size={16} />
                         </VSCodeButton>
                     </div>

@@ -8,6 +8,7 @@ import {
 } from "@shared/proto/dline/state"
 import type { Mode } from "@shared/storage/types"
 import { useCallback, useEffect, useMemo, useRef } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { StateServiceClient } from "../../../services/grpc-client"
 import {
     type TransitionDraftComposer,
@@ -52,6 +53,7 @@ function toProtoMode(mode: Mode): PlanActMode {
  * published phase.
  */
 export function useProfileSwitch({ profileSwitch, draft, composer }: UseProfileSwitchOptions): UseProfileSwitchResult {
+    const { t } = useUiTranslation()
     const draftRef = useRef(draft)
     const composerRef = useRef(composer)
     // A confirmation answers a request made earlier; the draft that request carried
@@ -125,17 +127,19 @@ export function useProfileSwitch({ profileSwitch, draft, composer }: UseProfileS
     const statusText = useMemo(() => {
         switch (profileSwitch?.phase) {
             case "preflighting":
-                return "Checking target context window..."
+                return t("chatInput.switch.checkingTarget")
             case "awaiting_confirmation":
-                return "Confirmation required"
+                return t("chatInput.switch.confirmationRequired")
             case "committing":
-                return `Activating ${profileSwitch.targetProfile ?? "target Profile"}...`
+                return t("chatInput.switch.activating", {
+                    profile: profileSwitch.targetProfile ?? t("chatInput.switch.targetProfile"),
+                })
             case "failed":
                 return undefined
             default:
                 return undefined
         }
-    }, [profileSwitch])
+    }, [profileSwitch, t])
 
     return {
         requestSwitch,

@@ -21,6 +21,7 @@ import { protoToAccountUsage } from "@shared/proto-conversions/account-usage-con
 import { convertProtoToClineMessage } from "@shared/proto-conversions/cline-message"
 import { convertProtoMcpServersToMcpServers } from "@shared/proto-conversions/mcp/mcp-server-conversion"
 import { fromProtobufModels } from "@shared/proto-conversions/models/typeConversion"
+import { DEFAULT_UI_LANGUAGE_PREFERENCE, normalizeUiLanguagePreference, resolveUiLanguage } from "@shared/UiLanguage"
 import type React from "react"
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
 import {
@@ -35,6 +36,7 @@ import type { McpMarketplaceCatalog, McpServer, McpViewTab } from "../../../src/
 import { orderMessagesByTs } from "../../../src/shared/message-order"
 import type { TaskCapabilityToggles } from "../../../src/shared/TaskCapabilityToggles"
 import { type HistoryTaskOpening, type HistoryTaskTarget, useHistoryTaskOpening } from "../hooks/useHistoryTaskOpening"
+import { translateUi } from "../i18n/messages"
 import {
     McpServiceClient,
     ModelsServiceClient,
@@ -151,14 +153,14 @@ const interactionFetchKey = (taskViewKey: string | undefined, interaction: Activ
  * rendered `[object Object]` would be no more useful than the blank panel it
  * replaces.
  */
-function describeHydrationFailure(error: unknown): string {
+function describeHydrationFailure(error: unknown): HydrationFailureReason {
     if (error instanceof Error) {
         return error.message
     }
     if (typeof error === "string") {
         return error
     }
-    return "Unknown state subscription failure"
+    return { kind: "unknown" }
 }
 
 /**
@@ -169,7 +171,8 @@ function describeHydrationFailure(error: unknown): string {
  * to tell the two apart, and the view rendered nothing at all — the blank
  * panel. Naming the failure separately is what makes it reportable.
  */
-export type HydrationStatus = { status: "pending" } | { status: "failed"; reason: string } | { status: "ready" }
+export type HydrationFailureReason = string | { kind: "unknown" | "closed" }
+export type HydrationStatus = { status: "pending" } | { status: "failed"; reason: HydrationFailureReason } | { status: "ready" }
 
 const requestHistoryTaskOpen = (id: string) => TaskServiceClient.showTaskWithId(StringRequest.create({ value: id }))
 
@@ -370,6 +373,7 @@ export const ExtensionStateContextProvider: React.FC<{
         browserSettings: DEFAULT_BROWSER_SETTINGS,
         focusChainSettings: DEFAULT_FOCUS_CHAIN_SETTINGS,
         preferredLanguage: "English",
+        uiLanguage: DEFAULT_UI_LANGUAGE_PREFERENCE,
         chatInputSendShortcut: DEFAULT_CHAT_INPUT_SEND_SHORTCUT,
         aggressiveRendering: DEFAULT_AGGRESSIVE_RENDERING_SETTING,
         mode: "act",
@@ -402,6 +406,9 @@ export const ExtensionStateContextProvider: React.FC<{
         mcpResponsesCollapsed: false, // Default value (expanded), will be overwritten by extension state
         strictPlanModeEnabled: false,
         yoloModeToggled: false,
+        awayModeEnabled: false,
+        autoAwayModeEnabled: false,
+        awayModeGateEnabled: false,
         customPrompt: undefined,
         useAutoCondense: true,
         autoCondenseTriggerPercent: DEFAULT_AUTO_CONDENSE_TRIGGER_PERCENT,
@@ -469,8 +476,12 @@ export const ExtensionStateContextProvider: React.FC<{
         setMessageWindow((current) => orderMessagesByTs(typeof update === "function" ? update(current) : update))
     }, [])
     const [firstItemIndex, setFirstItemIndex] = useState(0)
+    // This owner sits outside UiLanguageBridge. Resolve from the same committed
+    // state and read the current language when a pending navigation fails.
+    const uiLanguageRef = useRef(resolveUiLanguage(state.uiLanguage, state.hostDisplayLanguage))
+    uiLanguageRef.current = resolveUiLanguage(state.uiLanguage, state.hostDisplayLanguage)
     const handleHistoryTaskOpenFailure = useCallback((target: HistoryTaskTarget) => {
-        window.alert(`Could not open task '${target.task || target.id}'.`)
+        window.alert(translateUi(uiLanguageRef.current, "runtime.history.openFailed", { task: target.task || target.id }))
     }, [])
     const { historyTaskOpening, openHistoryTask, dismissHistoryTaskOpening } = useHistoryTaskOpening({
         taskViewState: state.taskViewState,
@@ -1031,6 +1042,21 @@ export const ExtensionStateContextProvider: React.FC<{
                             const newState = {
                                 ...(isPatch ? prevState : {}),
                                 ...stateFields,
+                                uiLanguage:
+                                    isPatch && !Object.hasOwn(stateFields, "uiLanguage")
+                                        ? prevState.uiLanguage
+                                        : normalizeUiLanguagePreference(stateFields.uiLanguage),
+                                hostDisplayLanguage:
+                                    isPatch && !Object.hasOwn(stateFields, "hostDisplayLanguage")
+                                        ? prevState.hostDisplayLanguage
+                                        : typeof stateFields.hostDisplayLanguage === "string"
+                                          ? stateFields.hostDisplayLanguage
+                                          : undefined,
+                                awayModeEnabled: stateFields.awayModeEnabled ?? (isPatch ? prevState.awayModeEnabled : false),
+                                autoAwayModeEnabled:
+                                    stateFields.autoAwayModeEnabled ?? (isPatch ? prevState.autoAwayModeEnabled : false),
+                                awayModeGateEnabled:
+                                    stateFields.awayModeGateEnabled ?? (isPatch ? prevState.awayModeGateEnabled : false),
                                 accountUsage: protoToAccountUsage(response.accountUsage),
                                 autoApprovalSettings: shouldUpdateAutoApproval
                                     ? stateFields.autoApprovalSettings
@@ -1075,9 +1101,7 @@ export const ExtensionStateContextProvider: React.FC<{
                 // render, and is as terminal as an error for a panel that never
                 // hydrated.
                 setHydration((current) =>
-                    current.status === "ready"
-                        ? current
-                        : { status: "failed", reason: "State subscription closed before any state arrived" },
+                    current.status === "ready" ? current : { status: "failed", reason: { kind: "closed" } },
                 )
             },
         })
@@ -1449,6 +1473,10 @@ export const ExtensionStateContextProvider: React.FC<{
     // Auto-refresh model lists on API key availability
     useEffect(() => {
         if (modelRefreshAttempted.current) return
+        // `openRouterModels` starts as the single built-in default, so "one entry"
+        // means "no listing has arrived yet" - not "the catalog is empty". Waiting
+        // for the backend subscription alone leaves a cached catalog unrendered
+        // when that subscription delivers nothing, so this stays as the fallback.
         const needsOpenRouter = !openRouterModels || Object.keys(openRouterModels).length <= 1
         const needsVercel = !vercelAiGatewayModels || Object.keys(vercelAiGatewayModels).length === 0
         if (!needsOpenRouter && !needsVercel) return

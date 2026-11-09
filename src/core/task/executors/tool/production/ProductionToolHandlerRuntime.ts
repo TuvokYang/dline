@@ -4,6 +4,7 @@ import type { ToolDenial, ToolHandlerResult } from "../../../tools/ToolExecution
 import { describeToolDenial, presentToolDenial, ToolExecutorCoordinator } from "../../../tools/ToolExecutorCoordinator"
 import { ToolValidator } from "../../../tools/ToolValidator"
 import type { TaskConfig } from "../../../tools/types/TaskConfig"
+import { resolveToolInteractionPolicy } from "./ToolInteractionPolicy"
 
 /**
  * Shared task-scoped handler registry used by provider planning and tool execution.
@@ -19,7 +20,7 @@ export class ProductionToolHandlerRuntime {
     }
 
     execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
-        return this.coordinator.execute(config, block)
+        return this.coordinator.execute(config, block, resolveToolInteractionPolicy)
     }
 
     presentDenial(config: TaskConfig, block: ToolUse): Promise<void> {

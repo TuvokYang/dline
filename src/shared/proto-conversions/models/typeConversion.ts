@@ -1,6 +1,8 @@
 import { ModelInfo } from "@shared/api"
 import { OpenRouterModelInfo, ModelInfo as ProtoModelInfo } from "@shared/proto/dline/models"
 import { ThinkingConfig } from "@shared/proto/dline/models/metadata"
+import { migrateModelPricing, modelPricingForWrite } from "@shared/providers/pricing-shape"
+import { pricingFromLegacyFields } from "./pricing-legacy"
 
 /** Preserve declarations without deriving support or mode from a budget value. */
 function convertThinkingConfig(protoConfig: ThinkingConfig | undefined): ThinkingConfig | undefined {
@@ -15,7 +17,10 @@ function toProtobufThinkingConfig(appConfig: ThinkingConfig | undefined): Thinki
 
 /** Read the complete declaration, falling back to the legacy projection only when absent. */
 export function fromProtobufModelInfo(protoInfo: OpenRouterModelInfo): ModelInfo {
-    if (protoInfo.modelInfo) return ProtoModelInfo.fromPartial(protoInfo.modelInfo)
+    if (protoInfo.modelInfo) {
+        const modelInfo = ProtoModelInfo.fromPartial(protoInfo.modelInfo)
+        return { ...modelInfo, pricing: migrateModelPricing(modelInfo.pricing) }
+    }
     return {
         id: "", // id resolved from map key by caller
         capabilities: {
@@ -27,13 +32,7 @@ export function fromProtobufModelInfo(protoInfo: OpenRouterModelInfo): ModelInfo
             contextWindow: protoInfo.contextWindow ?? undefined,
             thinking: convertThinkingConfig(protoInfo.thinkingConfig),
         },
-        pricing: {
-            inputPrice: protoInfo.inputPrice,
-            outputPrice: protoInfo.outputPrice,
-            cacheWritesPrice: protoInfo.cacheWritesPrice,
-            cacheReadsPrice: protoInfo.cacheReadsPrice,
-            tiers: protoInfo.tiers.length > 0 ? protoInfo.tiers : undefined,
-        },
+        pricing: pricingFromLegacyFields(protoInfo),
         description: protoInfo.description,
         name: protoInfo.name,
         temperature: protoInfo.temperature,
@@ -46,24 +45,18 @@ export function fromProtobufModelInfo(protoInfo: OpenRouterModelInfo): ModelInfo
  */
 export function toProtobufModelInfo(modelInfo: ModelInfo): OpenRouterModelInfo {
     return OpenRouterModelInfo.create({
-        modelInfo: ProtoModelInfo.fromPartial(modelInfo),
+        modelInfo: ProtoModelInfo.fromPartial({ ...modelInfo, pricing: modelPricingForWrite(modelInfo.pricing) }),
         name: modelInfo.name,
         temperature: modelInfo.temperature,
         apiFormat: modelInfo.apiFormats?.[0],
-        currency: modelInfo.pricing?.currency,
         maxTokens: modelInfo.capabilities?.maxTokens,
         contextWindow: modelInfo.capabilities?.contextWindow,
         supportsImages: modelInfo.capabilities?.supportsImages,
         supportsPromptCache: modelInfo.capabilities?.supportsPromptCache,
         supportsReasoning: modelInfo.capabilities?.supportsReasoning,
-        inputPrice: modelInfo.pricing?.inputPrice,
-        outputPrice: modelInfo.pricing?.outputPrice,
-        cacheWritesPrice: modelInfo.pricing?.cacheWritesPrice,
-        cacheReadsPrice: modelInfo.pricing?.cacheReadsPrice,
         description: modelInfo.description,
         thinkingConfig: toProtobufThinkingConfig(modelInfo.capabilities?.thinking),
         supportsGlobalEndpoint: modelInfo.capabilities?.supportsGlobalEndpoint,
-        tiers: modelInfo.pricing?.tiers || [],
     })
 }
 

@@ -64,6 +64,22 @@ function sameDescriptors(left: readonly InputSemanticDescriptor[], right: readon
 const UNDISCOVERED_REVISION = 0
 
 /**
+ * Whether the built-in `/away` command may be offered or admitted.
+ *
+ * Away Mode is a gated capability: while the rollout is unavailable or the user
+ * has not enabled it, a task may not enter the mode, so the command must not be
+ * offered and a submission must not act on it. Lexing refuses it here rather
+ * than expanding it, so the Webview menu, typed input and backend admission all
+ * read the same fact.
+ */
+export interface SemanticCommandAvailability {
+    readonly awayMode: boolean
+}
+
+/** The built-in command a capability answer withdraws. */
+const AWAY_COMMAND_ID = "command.away"
+
+/**
  * Core owner of the input semantic catalog.
  *
  * The revision is the contract the Webview and admission share: it advances
@@ -82,10 +98,26 @@ export class InputSemanticCatalogService {
 
     private lastConflicts: readonly CatalogConflict[] = []
 
-    constructor(private readonly port: CapabilityInventoryPort) {}
+    constructor(
+        private readonly port: CapabilityInventoryPort,
+        private commandAvailability: SemanticCommandAvailability = { awayMode: true },
+    ) {}
 
     current(): InputSemanticCatalog {
         return this.catalog
+    }
+
+    /**
+     * Publish a new answer about gated built-in commands.
+     *
+     * The answer is part of the catalog, so a consumer that already cached a
+     * projection learns that `/away` was withdrawn exactly as it learns about a
+     * withdrawn capability: through a new revision, not through a second channel.
+     */
+    async setCommandAvailability(availability: SemanticCommandAvailability): Promise<InputSemanticCatalog> {
+        if (availability.awayMode === this.commandAvailability.awayMode) return this.catalog
+        this.commandAvailability = availability
+        return this.refresh()
     }
 
     /**
@@ -130,9 +162,22 @@ export class InputSemanticCatalogService {
      * out rather than made ambiguous.
      */
     private async compose(): Promise<readonly InputSemanticDescriptor[]> {
-        const admitted = admitDescriptors([...BUILTIN_INPUT_SEMANTICS, ...projectInventory(await this.port.readInventory())])
+        const builtins = this.availableBuiltins()
+        const admitted = admitDescriptors([...builtins, ...projectInventory(await this.port.readInventory())])
         this.recordConflicts(admitted.conflicts)
         return admitted.descriptors
+    }
+
+    /**
+     * The built-in descriptors this device may offer.
+     *
+     * A gated command is removed rather than marked unavailable: an offered
+     * row is inserted and sent, so the only honest way to withdraw it is to stop
+     * resolving its trigger.
+     */
+    private availableBuiltins(): readonly InputSemanticDescriptor[] {
+        if (this.commandAvailability.awayMode) return BUILTIN_INPUT_SEMANTICS
+        return BUILTIN_INPUT_SEMANTICS.filter((descriptor) => descriptor.id !== AWAY_COMMAND_ID)
     }
 
     /** Keep the latest refusals and report them once per change, not on every refresh. */

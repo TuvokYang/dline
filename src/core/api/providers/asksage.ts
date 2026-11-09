@@ -108,6 +108,7 @@ export class AskSageHandler extends ApiHandler {
             }
 
             // Make request to AskSage API
+            const sentAtMs = Date.now()
             const response = await providerFetch(`${this.apiUrl}/query`, {
                 method: "POST",
                 headers: this.headers(),
@@ -143,12 +144,17 @@ export class AskSageHandler extends ApiHandler {
 
             // Yield usage information if available
             if (result.usage) {
-                yield {
-                    type: "usage",
+                const tokens = {
                     inputTokens: result.usage.model_tokens.prompt_tokens,
                     outputTokens: result.usage.model_tokens.completion_tokens,
                     cacheReadTokens: 0,
                     cacheWriteTokens: 0,
+                }
+                const cost = ApiHandler.calculateUsageCost(model.info.pricing, tokens, sentAtMs)
+                yield {
+                    type: "usage",
+                    ...tokens,
+                    ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                 }
             }
         } catch (error) {

@@ -11,6 +11,7 @@ export function domainFor(command: Command): ExecutorDomain {
             return "tool"
         case "dialog.prepare":
         case "dialog.reveal":
+        case "dialog.deliver_automatic":
             return "dialog"
         case "compose.round":
             return "compose"

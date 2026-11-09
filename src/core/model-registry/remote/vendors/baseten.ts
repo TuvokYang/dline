@@ -4,6 +4,7 @@
  * Baseten follows the OpenAI listing shape but reports per-token prices as
  * strings and uses `context_length` for the input window.
  */
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import type { ModelPricing } from "@shared/providers/types"
 import type { ProviderModelReconciliationMode } from "../../provider-model-reconciliation"
 import { ModelListingSource, readPerMillionPrice, readPositiveNumber } from "../model-listing-source"
@@ -24,7 +25,7 @@ export class BasetenModelSource extends ModelListingSource {
         if (inputPrice === undefined && outputPrice === undefined) {
             return undefined
         }
-        return { inputPrice, outputPrice }
+        return flatMeteredPricing(inputPrice, outputPrice)
     }
 }
 

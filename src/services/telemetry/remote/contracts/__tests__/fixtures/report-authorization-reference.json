@@ -112,8 +112,8 @@
                     "authorization_code": "sssssssssssssssssssssssssssssssssssssssssss",
                     "state": "awaiting_issue",
                     "authorization_expires_at": 1792886400000,
-                    "ticket_expires_at": 1800576000000,
-                    "poll_after_ms": 60000
+                    "ticket_expires_at": 1795392000000,
+                    "poll_after_ms": 300000
                 }
             },
             "server_stores": [
@@ -150,8 +150,17 @@
                     "authorization_revision": 1,
                     "authorization_expires_at": 1792886400000,
                     "capture_expires_at": 1792808200000,
-                    "ticket_expires_at": 1800576000000,
+                    "ticket_expires_at": 1795392000000,
                     "issue_state": "open",
+                    "issue_url": "https://github.com/TuvokYang/dline/issues/123",
+                    "issue_snapshot_at": 1792803600000,
+                    "server_time": 1792803601000,
+                    "checked_at": 1792803601000,
+                    "next_query_at": 1792803601000,
+                    "status_version": {
+                        "grant_seq": 1,
+                        "issue_seq": 1
+                    },
                     "resolution": {
                         "state": "investigating"
                     },
@@ -161,13 +170,15 @@
             "forbidden_response_fields": [
                 "issue",
                 "issue_number",
-                "issue_url",
                 "repository",
                 "owner",
                 "repo",
                 "title",
                 "authorization_code",
-                "public_code"
+                "public_code",
+                "access_token",
+                "body",
+                "node_id"
             ]
         }
     },
@@ -188,8 +199,11 @@
             },
             "issue": {
                 "id": 2001,
+                "node_id": "I_fixture_2001",
                 "number": 123,
                 "state": "open",
+                "state_reason": null,
+                "updated_at": "2026-10-24T01:00:00Z",
                 "title": "[Report Bug] Provider request fails after retry",
                 "body": "### Diagnostic telemetry consent\n\n- [x] I consent to temporary high-density telemetry\n\n### Dline telemetry support code\n\nDLN-BNKP-5RJG-NE6R-Y290",
                 "labels": [
@@ -201,8 +215,11 @@
                     "login": "reporter-fixture"
                 }
             },
+            "label": {
+                "name": "telemetry-approved"
+            },
             "sender": {
-                "login": "allowlisted-maintainer"
+                "login": "TuvokYang"
             }
         },
         "expected": {
@@ -330,14 +347,17 @@
     "invalid_cases": [
         {
             "name": "approved-label-without-issue-consent",
+            "precondition": "new unlinked ticket; no previous consented Issue association",
             "expected": {
-                "claim_state": "pending_approval",
+                "authorization_state": "awaiting_issue",
+                "claim_created": false,
                 "token_issued": false,
                 "zero_business_writes": true
             }
         },
         {
             "name": "approval-by-non-allowlisted-actor",
+            "precondition": "ticket already linked to a pending claim by a consented opened event",
             "expected": {
                 "claim_state": "pending_approval",
                 "token_issued": false,

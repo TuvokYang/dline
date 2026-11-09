@@ -4,6 +4,7 @@
  * Adding a provider means adding one subclass file and one entry here; the
  * orchestration, storage, credential and merge layers stay untouched.
  */
+import { getProviderCatalog } from "@shared/providers/model-infos"
 import type { ProviderRemoteSource } from "../model-source"
 import { aiHubMixModelSource } from "./aihubmix"
 import { anthropicModelSource } from "./anthropic"
@@ -20,10 +21,13 @@ import { ocaModelSource } from "./oca"
 import { ollamaModelSource } from "./ollama"
 import { openAiModelSource } from "./openai"
 import { openAiCodexModelSource } from "./openai-codex"
+import { openCodeModelSource } from "./opencode"
 import { openRouterModelSource } from "./openrouter"
+import { qwenModelSource } from "./qwen"
 import { requestyModelSource } from "./requesty"
 import { sapAiCoreModelSource } from "./sapaicore"
 import { vercelAiGatewayModelSource } from "./vercel"
+import { zAiModelSource } from "./zai"
 
 export const MODEL_SOURCES: readonly ProviderRemoteSource[] = [
     aiHubMixModelSource,
@@ -41,14 +45,30 @@ export const MODEL_SOURCES: readonly ProviderRemoteSource[] = [
     ollamaModelSource,
     openAiModelSource,
     openAiCodexModelSource,
+    openCodeModelSource,
     openRouterModelSource,
+    qwenModelSource,
     requestyModelSource,
     sapAiCoreModelSource,
     vercelAiGatewayModelSource,
+    zAiModelSource,
 ]
 
 const sourcesById = new Map<string, ProviderRemoteSource>(MODEL_SOURCES.map((source) => [source.providerId, source]))
 
+/**
+ * Catalog keys that read a provider's listing without being its provider id.
+ *
+ * A Profile option can select an alternative catalog (a billing plan, a region)
+ * while the vendor still serves one listing. The key the settings form sends is
+ * that catalog key, so it must resolve to the owning provider's source instead
+ * of reporting that the provider cannot be listed.
+ */
 export function getModelSource(providerId: string): ProviderRemoteSource | undefined {
-    return sourcesById.get(providerId)
+    const direct = sourcesById.get(providerId)
+    if (direct) {
+        return direct
+    }
+    const ownerId = getProviderCatalog(providerId)?.provider.provider
+    return ownerId ? sourcesById.get(ownerId) : undefined
 }

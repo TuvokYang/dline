@@ -41,7 +41,7 @@ export type ProviderExecutionChunk =
           readonly replyRows?: ProviderReplyPresentationRows
           readonly projection?: Readonly<Record<string, unknown>>
       }
-    | { readonly kind: "usage"; readonly usage: Readonly<Record<string, number>> }
+    | { readonly kind: "usage"; readonly usage: Readonly<Record<string, number>>; readonly currency?: string }
     /** How much the streaming response occupies so far; presentation only, never journaled. */
     | ({ readonly kind: "receiving" } & ProviderReceivingEstimate)
     /** The request failed before its first chunk and will be sent again; nothing reached the journal. */
@@ -165,6 +165,8 @@ interface UsageAccumulator {
     value?: Readonly<Record<string, number>>
     /** Usage of attempts a retry replaced; consumed, but never part of the conversation. */
     abandoned?: Readonly<Record<string, number>>
+    currency?: string
+    abandonedCurrency?: string
     /** Timing of the attempt whose stream completed. */
     attemptTiming?: ProviderAttemptTiming
 }
@@ -172,8 +174,10 @@ interface UsageAccumulator {
 /** Close the current attempt so the retried one starts from an empty usage bucket. */
 function sealAbandonedAttempt(usage: UsageAccumulator): void {
     if (!usage.value) return
+    if (usage.value.totalCost !== undefined) usage.abandonedCurrency = usage.currency
     usage.abandoned = sumAttemptUsage(usage.abandoned, usage.value)
     usage.value = undefined
+    usage.currency = undefined
 }
 
 /** Everything the logical request consumed across its attempts. */
@@ -352,9 +356,12 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
     ): Promise<void> {
         if (!record) return
         try {
+            const consumed = consumedUsage(usage)
+            const currency = usage.value?.totalCost !== undefined ? usage.currency : usage.abandonedCurrency
             await record.settle({
-                usage: consumedUsage(usage),
+                usage: consumed,
                 contextUsage: usage.value,
+                ...(currency ? { currency } : {}),
                 outcome,
                 ...(usage.attemptTiming ? { attemptTiming: usage.attemptTiming } : {}),
                 ...(outcome === "failed" ? { failure } : {}),
@@ -389,8 +396,9 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
         }
     }
 
-    private absorbUsage(accumulated: UsageAccumulator, usage: Readonly<Record<string, number>>): void {
+    private absorbUsage(accumulated: UsageAccumulator, usage: Readonly<Record<string, number>>, currency?: string): void {
         accumulated.value = mergeProviderUsage(accumulated.value, usage)
+        if (usage.totalCost !== undefined) accumulated.currency = currency
         try {
             this.port.recordUsage?.(usage)
         } catch {
@@ -438,7 +446,7 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
                 }
                 if (finalChunk) {
                     if (chunk.kind === "usage") {
-                        this.absorbUsage(usage, chunk.usage)
+                        this.absorbUsage(usage, chunk.usage, chunk.currency)
                         continue
                     }
                     throw new Error("ChunkAfterFinal")
@@ -474,7 +482,7 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
                     continue
                 }
                 if (chunk.kind === "usage") {
-                    this.absorbUsage(usage, chunk.usage)
+                    this.absorbUsage(usage, chunk.usage, chunk.currency)
                     continue
                 }
                 if (transientId && chunk.transientId !== transientId) throw new Error("FinalTransientIdentityMismatch")

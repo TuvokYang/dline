@@ -127,7 +127,6 @@ function projectResponseContent(input: InteractionContinuationInput, fileContent
                 : declinedNewTaskResponse(text ?? "", images, fileContent)
         case "report_bug":
             return input.actionId === "approve" ? formatResponse.reportBugOpened(false) : formatResponse.reportBugCancelled()
-        case "followup":
         default:
             return formatResponse.toolResult(`<feedback>\n${text ?? ""}\n</feedback>`, images, fileContent)
     }

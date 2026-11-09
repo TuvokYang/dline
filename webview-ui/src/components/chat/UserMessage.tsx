@@ -7,6 +7,7 @@ import { openTaskResource } from "@/components/chat/input/semantic-composer/reso
 import { type ResourceChipResolver, ResourceChipResolverContext, sentResourceNode } from "@/components/common/ResourceChip"
 import Thumbnails from "@/components/common/Thumbnails"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { CheckpointsServiceClient } from "@/services/grpc-client"
 import { markSubmittedEntities, type SubmittedResource, submittedResourcesByKey } from "@/services/input-semantics/highlight"
 import { UserInputMarkdownBody } from "./UserInputMarkdownBody"
@@ -53,6 +54,7 @@ const UserMessage: React.FC<UserMessageProps> = ({
     inputKind = "direct",
     queuedInputMode,
 }) => {
+    const { t } = useUiTranslation()
     const [isEditing, setIsEditing] = useState(false)
     const [editedText, setEditedText] = useState(text || "")
     const textAreaRef = useRef<HTMLTextAreaElement>(null)
@@ -157,8 +159,8 @@ const UserMessage: React.FC<UserMessageProps> = ({
             {queued && !isEditing ? (
                 <header className="mb-1.5 flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-description">
                     <span aria-hidden="true" className="codicon codicon-list-ordered" />
-                    <span>Queued input</span>
-                    {queuedInputMode === "steering" ? <span>· Steering</span> : null}
+                    <span>{t("chatRows.user.queued")}</span>
+                    {queuedInputMode === "steering" ? <span>{t("chatRows.user.steering")}</span> : null}
                 </header>
             ) : null}
             {isEditing ? (
@@ -192,19 +194,19 @@ const UserMessage: React.FC<UserMessageProps> = ({
                         {!checkpointManagerErrorMessage && (
                             <RestoreButton
                                 isPrimary={false}
-                                label="Restore All"
+                                label={t("chatRows.user.restoreAll")}
                                 onClick={handleRestoreWorkspace}
                                 ref={restoreAllButtonRef}
-                                title="Restore both the chat and workspace files to this checkpoint and send your edited message"
+                                title={t("chatRows.user.restoreAllTitle")}
                                 type="taskAndWorkspace"
                             />
                         )}
                         <RestoreButton
                             isPrimary={true}
-                            label="Restore Chat"
+                            label={t("chatRows.user.restoreChat")}
                             onClick={handleRestoreWorkspace}
                             ref={restoreChatButtonRef}
-                            title="Restore just the chat to this checkpoint and send your edited message"
+                            title={t("chatRows.user.restoreChatTitle")}
                             type="task"
                         />
                     </div>

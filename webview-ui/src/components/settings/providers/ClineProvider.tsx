@@ -1,4 +1,5 @@
 import { CLINE_PROVIDER_APP_URL, CLINE_PROVIDER_DEFAULT_API_BASE_URL } from "@shared/providers/cline-runtime"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import ClineModelPicker from "../ClineModelPicker"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { DebouncedTextField } from "../common/DebouncedTextField"
@@ -19,6 +20,7 @@ interface ClineProviderProps {
  * Delegates model selection to ClineModelPicker.
  */
 export const ClineProvider = ({ showModelOptions, isPopup, profile, onUpdate }: ClineProviderProps) => {
+    const { t } = useUiTranslation()
     return (
         <div>
             <ApiKeyField
@@ -32,7 +34,7 @@ export const ClineProvider = ({ showModelOptions, isPopup, profile, onUpdate }: 
                 onChange={(baseUrl) => onUpdate({ baseUrl })}
                 placeholder={CLINE_PROVIDER_DEFAULT_API_BASE_URL}
                 style={{ width: "100%" }}>
-                Cline Provider API Base URL
+                {t("settings.ui.cline.baseUrl")}
             </DebouncedTextField>
 
             {showModelOptions && (

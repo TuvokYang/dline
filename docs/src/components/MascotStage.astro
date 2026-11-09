@@ -1,17 +1,16 @@
 ---
 /**
  * The live 3D mascot. The stage is a button: activating it replays the
- * warm-up routine. The three.js module loads lazily and only when the
- * table-of-contents column is visible, so narrow screens never download it.
+ * warm-up routine. The three.js module loads lazily on wide screens, where
+ * splash pages and the table-of-contents column leave room in the corner.
  */
 const route = Astro.locals.starlightRoute
 const isChinese = route.lang.toLowerCase().startsWith("zh")
 const label = isChinese ? "Dline 机器人：点击重播热身操" : "Dline robot: click to replay its warm-up"
-// Only pages with a table-of-contents column have room for the stage.
-const hasToc = Boolean(route.toc)
+const hasRoom = route.entry.data.template === "splash" || Boolean(route.toc)
 ---
 
-{hasToc && <button type="button" class="dline-mascot" aria-label={label} title={label} hidden />}
+{hasRoom && <button type="button" class="dline-mascot" aria-label={label} title={label} hidden />}
 
 <script>
 	import { showMascotWhen } from "../mascot/lazy-mount.js"
@@ -25,15 +24,15 @@ const hasToc = Boolean(route.toc)
 
 <style>
 	/*
-	 * The stage scales with the window (a third of its shorter side), so the
-	 * robot keeps the same proportion to the page at every size.
+	 * Article pages scale the stage with the shorter viewport edge; the splash
+	 * page supplies a smaller size and reserves room beside its entry cards.
 	 */
 	.dline-mascot {
 		position: fixed;
 		inset-inline-end: 0.25rem;
 		inset-block-end: 0.25rem;
 		z-index: 1;
-		width: clamp(12rem, 33vmin, 28rem);
+		width: var(--dline-mascot-size, clamp(12rem, 33vmin, 28rem));
 		aspect-ratio: 1 / 1;
 		padding: 0;
 		border: 0;

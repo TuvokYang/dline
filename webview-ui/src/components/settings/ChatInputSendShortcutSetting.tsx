@@ -5,23 +5,26 @@ import {
 } from "@shared/ChatInputSendShortcut"
 import { VSCodeDropdown, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
+import { ProfileField } from "./profile-ui"
 import { updateSetting } from "./utils/settingsHandlers"
 
-const OPTIONS: Array<{ label: string; value: ChatInputSendShortcut }> = [
-    { label: "Enter", value: "enter" },
-    { label: "Ctrl + Enter", value: "ctrlEnter" },
-    { label: "Shift + Enter", value: "shiftEnter" },
-]
+const OPTIONS = [
+    { label: "settings.general.chatInputSendShortcut.enter", value: "enter" },
+    { label: "settings.general.chatInputSendShortcut.ctrlEnter", value: "ctrlEnter" },
+    { label: "settings.general.chatInputSendShortcut.shiftEnter", value: "shiftEnter" },
+] as const satisfies readonly { label: string; value: ChatInputSendShortcut }[]
 
 const ChatInputSendShortcutSetting = () => {
     const { chatInputSendShortcut } = useExtensionState()
+    const { t } = useUiTranslation()
+    const value = chatInputSendShortcut ?? DEFAULT_CHAT_INPUT_SEND_SHORTCUT
+    const selectedLabel = OPTIONS.find((option) => option.value === value)!.label
 
     return (
-        <div className="mb-4">
-            <label className="block mb-1 text-base font-medium" htmlFor="chat-input-send-shortcut">
-                Send messages with
-            </label>
+        <ProfileField htmlFor="chat-input-send-shortcut" label={t("settings.general.chatInputSendShortcut.label")}>
             <VSCodeDropdown
+                aria-label={t("settings.general.chatInputSendShortcut.label")}
                 className="w-full"
                 id="chat-input-send-shortcut"
                 onChange={(event) => {
@@ -30,14 +33,15 @@ const ChatInputSendShortcutSetting = () => {
                         updateSetting("chatInputSendShortcut", value)
                     }
                 }}
-                value={chatInputSendShortcut ?? DEFAULT_CHAT_INPUT_SEND_SHORTCUT}>
+                value={value}>
+                <span slot="selected-value">{t(selectedLabel)}</span>
                 {OPTIONS.map((option) => (
                     <VSCodeOption key={option.value} value={option.value}>
-                        {option.label}
+                        {t(option.label)}
                     </VSCodeOption>
                 ))}
             </VSCodeDropdown>
-        </div>
+        </ProfileField>
     )
 }
 

@@ -10,7 +10,7 @@ import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordina
 import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { getTaskCompletionTelemetry } from "../utils"
-import { attachToolFeedbackFiles, sayFeedbackOnce } from "../utils/UserFeedbackUtils"
+import { attachToolFeedbackFiles, sayFeedbackOnce, separateRoundFeedback } from "../utils/UserFeedbackUtils"
 
 const MAKE_PLAN_ASK = "make_plan" as const
 
@@ -73,15 +73,14 @@ export class MakePlanHandler implements IToolHandler, IPartialBlockHandler {
         const responseFiles = outcome.draft?.files
 
         config.taskState.isAwaitingPlanResponse = false
-
+        telemetryService.captureTaskCompleted(config.ulid ?? "", getTaskCompletionTelemetry(config))
+        const separated = await separateRoundFeedback(config, outcome)
+        if (separated) return separated
         if (text || (images && images.length > 0) || (responseFiles && responseFiles.length > 0)) {
             await sayFeedbackOnce(config, "messageResponse", text, images, responseFiles, outcome)
         }
-
         const attachments = await attachToolFeedbackFiles(responseFiles)
         const fileContentString = attachments.text
-
-        telemetryService.captureTaskCompleted(config.ulid ?? "", getTaskCompletionTelemetry(config))
 
         // Handle mode switching response
         if (config.taskState.didRespondToPlanAskBySwitchingMode) {

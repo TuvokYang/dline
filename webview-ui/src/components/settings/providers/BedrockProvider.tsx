@@ -1,19 +1,14 @@
 import { BedrockProviderConfig } from "@shared/proto/dline/provider/bedrock"
 import BedrockData from "@shared/providers/bedrock.json"
 import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
-import {
-    VSCodeCheckbox,
-    VSCodeDropdown,
-    VSCodeOption,
-    VSCodeRadio,
-    VSCodeRadioGroup,
-    VSCodeTextField,
-} from "@vscode/webview-ui-toolkit/react"
+import { VSCodeCheckbox, VSCodeOption, VSCodeRadio, VSCodeRadioGroup, VSCodeTextField } from "@vscode/webview-ui-toolkit/react"
 import Fuse from "fuse.js"
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react"
 import styled from "styled-components"
+import { LocalizedDropdown, LocalizedOption } from "@/components/common/LocalizedDropdown"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { DebouncedTextField } from "../common/DebouncedTextField"
 import { ModelInfoView } from "../common/ModelInfoView"
 import { DropdownContainer } from "../common/ModelSelector"
@@ -33,6 +28,7 @@ interface BedrockProviderProps {
 
 /** AWS Bedrock provider â€?all data from ApiProfile. All aws* fields stored in profile.bedrock. */
 export const BedrockProvider = ({ showModelOptions, isPopup, profile, onUpdate }: BedrockProviderProps) => {
+    const { t } = useUiTranslation()
     const { remoteConfigSettings } = useExtensionState()
     const remote = remoteConfigSettings as any // legacy compat for remote config fields
 
@@ -53,6 +49,20 @@ export const BedrockProvider = ({ showModelOptions, isPopup, profile, onUpdate }
     const { models: bedrockModels, defaultModelId: bedrockDefaultModelId } = useProviderModels("bedrock")
     const modelInfoAny = resolveProfileModelInfo(profile, { models: bedrockModels, defaultModelId: bedrockDefaultModelId })
     const modelId = modelInfoAny.id
+    const selectedModelLabel = awsBedrockCustomSelected
+        ? t("settings.ui.customBadge")
+        : modelId === ""
+          ? t("settings.ui.selectModel")
+          : Object.keys(bedrockModels).includes(modelId)
+            ? modelId
+            : undefined
+    const selectedBaseModelId = awsBedrockCustomModelBaseId || bedrockDefaultModelId
+    const selectedBaseModelLabel =
+        selectedBaseModelId === ""
+            ? t("settings.ui.selectModel")
+            : Object.keys(bedrockModels).includes(selectedBaseModelId)
+              ? selectedBaseModelId
+              : undefined
     const modelInfo = modelInfoAny as any
     const thinking = modelInfoAny.capabilities?.thinking
     const thinkingSupported = thinking?.supported === true && modelInfoAny.capabilities?.supportsReasoning !== false
@@ -151,9 +161,9 @@ export const BedrockProvider = ({ showModelOptions, isPopup, profile, onUpdate }
                     persistConfig("awsAuthentication", (e.target as HTMLInputElement)?.value)
                 }}
                 value={awsAuthentication}>
-                <VSCodeRadio value="apikey">API Key</VSCodeRadio>
-                <VSCodeRadio value="profile">AWS Profile</VSCodeRadio>
-                <VSCodeRadio value="credentials">AWS Credentials</VSCodeRadio>
+                <VSCodeRadio value="apikey">{t("settings.ui.aws.apiKey")}</VSCodeRadio>
+                <VSCodeRadio value="profile">{t("settings.ui.aws.profile")}</VSCodeRadio>
+                <VSCodeRadio value="credentials">{t("settings.ui.aws.credentials")}</VSCodeRadio>
             </VSCodeRadioGroup>
 
             {awsAuthentication === "profile" ? (
@@ -162,8 +172,8 @@ export const BedrockProvider = ({ showModelOptions, isPopup, profile, onUpdate }
                     initialValue={awsProfile}
                     key="profile"
                     onChange={(value) => persistConfig("awsProfile", value)}
-                    placeholder="Enter profile name (default if empty)">
-                    <span className="font-medium">AWS Profile Name</span>
+                    placeholder={t("settings.ui.aws.profilePlaceholder")}>
+                    <span className="font-medium">{t("settings.ui.aws.profileName")}</span>
                 </DebouncedTextField>
             ) : awsAuthentication === "apikey" ? (
                 <DebouncedTextField
@@ -171,52 +181,50 @@ export const BedrockProvider = ({ showModelOptions, isPopup, profile, onUpdate }
                     initialValue={awsBedrockApiKey}
                     key="apikey"
                     onChange={(value) => persistConfig("awsBedrockApiKey", value)}
-                    placeholder="Enter Bedrock Api Key"
+                    placeholder={t("settings.ui.aws.bedrockKeyPlaceholder")}
                     type="password">
-                    <span className="font-medium">AWS Bedrock Api Key</span>
+                    <span className="font-medium">{t("settings.ui.aws.bedrockKey")}</span>
                 </DebouncedTextField>
             ) : (
                 <>
                     <DebouncedTextField
-                        ariaLabel="AWS Access Key"
+                        ariaLabel={t("settings.ui.aws.accessKey")}
                         className="w-full"
                         initialValue={awsAccessKey}
                         key="accessKey"
                         onChange={(value) => persistConfig("awsAccessKey", value)}
-                        placeholder="Enter Access Key..."
+                        placeholder={t("settings.ui.aws.enterAccessKey")}
                         type="password">
-                        <span className="font-medium">AWS Access Key</span>
+                        <span className="font-medium">{t("settings.ui.aws.accessKey")}</span>
                     </DebouncedTextField>
                     <DebouncedTextField
-                        ariaLabel="AWS Secret Key"
+                        ariaLabel={t("settings.ui.aws.secretKey")}
                         className="w-full"
                         initialValue={awsSecretKey}
                         onChange={(value) => persistConfig("awsSecretKey", value)}
-                        placeholder="Enter Secret Key..."
+                        placeholder={t("settings.ui.aws.enterSecretKey")}
                         type="password">
-                        <span className="font-medium">AWS Secret Key</span>
+                        <span className="font-medium">{t("settings.ui.aws.secretKey")}</span>
                     </DebouncedTextField>
                     <DebouncedTextField
-                        ariaLabel="AWS Session Token"
+                        ariaLabel={t("settings.ui.aws.sessionToken")}
                         className="w-full"
                         initialValue={awsSessionToken}
                         onChange={(value) => persistConfig("awsSessionToken", value)}
-                        placeholder="Enter Session Token..."
+                        placeholder={t("settings.ui.aws.enterToken")}
                         type="password">
-                        <span className="font-medium">AWS Session Token</span>
+                        <span className="font-medium">{t("settings.ui.aws.sessionToken")}</span>
                     </DebouncedTextField>
                 </>
             )}
 
             <Tooltip>
-                <TooltipContent hidden={remote?.awsRegion === undefined}>
-                    This setting is managed by your organization's remote configuration
-                </TooltipContent>
+                <TooltipContent hidden={remote?.awsRegion === undefined}>{t("settings.ui.managed")}</TooltipContent>
                 <TooltipTrigger>
                     <DropdownContainer className="dropdown-container mb-2.5" zIndex={DROPDOWN_Z_INDEX - 1}>
                         <div className="flex items-center gap-2 mb-1">
                             <label htmlFor="aws-region">
-                                <span className="font-medium">AWS Region</span>
+                                <span className="font-medium">{t("settings.ui.aws.region")}</span>
                             </label>
                             {remote?.awsRegion !== undefined && (
                                 <i className="codicon codicon-lock text-description text-sm flex items-center" />
@@ -242,13 +250,13 @@ export const BedrockProvider = ({ showModelOptions, isPopup, profile, onUpdate }
                                     setIsDropdownVisible(true)
                                 }}
                                 onKeyDown={handleKeyDown}
-                                placeholder="Search or enter custom region..."
+                                placeholder={t("settings.ui.aws.searchRegion")}
                                 role="combobox"
                                 style={{ width: "100%", zIndex: DROPDOWN_Z_INDEX - 1, position: "relative", minWidth: 130 }}
                                 value={searchTerm}>
                                 {searchTerm && searchTerm !== currentRegion && (
                                     <div
-                                        aria-label="Clear search"
+                                        aria-label={t("settings.ui.clearSearch")}
                                         className="input-icon-button codicon codicon-close"
                                         onClick={() => {
                                             setSearchTerm("")
@@ -296,9 +304,7 @@ export const BedrockProvider = ({ showModelOptions, isPopup, profile, onUpdate }
 
             <div className="flex flex-col">
                 <Tooltip>
-                    <TooltipContent hidden={remote?.awsBedrockEndpoint === undefined}>
-                        This setting is managed by your organization's remote configuration
-                    </TooltipContent>
+                    <TooltipContent hidden={remote?.awsBedrockEndpoint === undefined}>{t("settings.ui.managed")}</TooltipContent>
                     <TooltipTrigger>
                         <div className="flex items-center gap-2">
                             <VSCodeCheckbox
@@ -309,7 +315,7 @@ export const BedrockProvider = ({ showModelOptions, isPopup, profile, onUpdate }
                                     setAwsEndpointSelected(c)
                                     if (!c) persistConfig("awsBedrockEndpoint", "")
                                 }}>
-                                Use custom VPC endpoint
+                                {t("settings.ui.aws.customVpc")}
                             </VSCodeCheckbox>
                             {remote?.awsBedrockEndpoint !== undefined && (
                                 <i className="codicon codicon-lock text-description text-sm flex items-center" />
@@ -321,7 +327,7 @@ export const BedrockProvider = ({ showModelOptions, isPopup, profile, onUpdate }
                                 disabled={remote?.awsBedrockEndpoint !== undefined}
                                 initialValue={awsBedrockEndpoint}
                                 onChange={(value) => persistConfig("awsBedrockEndpoint", value)}
-                                placeholder="Enter VPC Endpoint URL (optional)"
+                                placeholder={t("settings.ui.aws.vpcPlaceholder")}
                                 type="text"
                             />
                         )}
@@ -330,7 +336,7 @@ export const BedrockProvider = ({ showModelOptions, isPopup, profile, onUpdate }
 
                 <Tooltip>
                     <TooltipContent hidden={remote?.awsUseCrossRegionInference === undefined}>
-                        This setting is managed by your organization's remote configuration
+                        {t("settings.ui.managed")}
                     </TooltipContent>
                     <TooltipTrigger>
                         <div className="flex items-center gap-2">
@@ -340,7 +346,7 @@ export const BedrockProvider = ({ showModelOptions, isPopup, profile, onUpdate }
                                 onChange={(e: any) =>
                                     persistConfig("awsUseCrossRegionInference", String(e.target.checked === true))
                                 }>
-                                Use cross-region inference
+                                {t("settings.ui.aws.crossRegion")}
                             </VSCodeCheckbox>
                             {remote?.awsUseCrossRegionInference !== undefined && (
                                 <i className="codicon codicon-lock text-description text-sm" />
@@ -352,7 +358,7 @@ export const BedrockProvider = ({ showModelOptions, isPopup, profile, onUpdate }
                 {awsUseCrossRegionInference && modelInfo.supportsGlobalEndpoint && (
                     <Tooltip>
                         <TooltipContent hidden={remote?.awsUseGlobalInference === undefined}>
-                            This setting is managed by your organization's remote configuration
+                            {t("settings.ui.managed")}
                         </TooltipContent>
                         <TooltipTrigger>
                             <div className="flex items-center gap-2">
@@ -362,7 +368,7 @@ export const BedrockProvider = ({ showModelOptions, isPopup, profile, onUpdate }
                                     onChange={(e: any) =>
                                         persistConfig("awsUseGlobalInference", String(e.target.checked === true))
                                     }>
-                                    Use global inference profile
+                                    {t("settings.ui.aws.global")}
                                 </VSCodeCheckbox>
                                 {remote?.awsUseGlobalInference !== undefined && (
                                     <i className="codicon codicon-lock text-description text-sm" />
@@ -375,7 +381,7 @@ export const BedrockProvider = ({ showModelOptions, isPopup, profile, onUpdate }
                 {modelInfo.capabilities?.supportsPromptCache && (
                     <Tooltip>
                         <TooltipContent hidden={remote?.awsBedrockUsePromptCache === undefined}>
-                            This setting is managed by your organization's remote configuration
+                            {t("settings.ui.managed")}
                         </TooltipContent>
                         <TooltipTrigger>
                             <div className="flex items-center gap-2">
@@ -385,7 +391,7 @@ export const BedrockProvider = ({ showModelOptions, isPopup, profile, onUpdate }
                                     onChange={(e: any) =>
                                         persistConfig("awsBedrockUsePromptCache", String(e.target.checked === true))
                                     }>
-                                    Use prompt caching
+                                    {t("settings.ui.aws.cache")}
                                 </VSCodeCheckbox>
                                 {remote?.awsBedrockUsePromptCache !== undefined && (
                                     <i className="codicon codicon-lock text-description text-sm" />
@@ -397,18 +403,16 @@ export const BedrockProvider = ({ showModelOptions, isPopup, profile, onUpdate }
             </div>
 
             <p className="mt-1 text-sm text-description">
-                {awsAuthentication === "profile"
-                    ? "Using AWS Profile credentials from ~/.aws/credentials. Leave profile name empty to use the default profile."
-                    : "Authenticate by either providing the keys above or use the default AWS credential providers."}
+                {awsAuthentication === "profile" ? t("settings.ui.aws.profileHelp") : t("settings.ui.aws.credentialsHelp")}
             </p>
 
             {showModelOptions && (
                 <>
                     <label htmlFor="bedrock-model-dropdown">
-                        <span className="font-medium">Model</span>
+                        <span className="font-medium">{t("settings.ui.model")}</span>
                     </label>
                     <DropdownContainer className="dropdown-container" zIndex={DROPDOWN_Z_INDEX - 2}>
-                        <VSCodeDropdown
+                        <LocalizedDropdown
                             className="w-full"
                             id="bedrock-model-dropdown"
                             onChange={(e: any) => {
@@ -423,35 +427,34 @@ export const BedrockProvider = ({ showModelOptions, isPopup, profile, onUpdate }
                                     },
                                 })
                             }}
+                            selectedLabel={selectedModelLabel}
                             value={awsBedrockCustomSelected ? "custom" : modelId}>
-                            <VSCodeOption value="">Select a model...</VSCodeOption>
+                            <LocalizedOption label={t("settings.ui.selectModel")} value="" />
                             {Object.keys(bedrockModels).map((mid) => (
                                 <VSCodeOption className="whitespace-normal wrap-break-word max-w-full" key={mid} value={mid}>
                                     {mid}
                                 </VSCodeOption>
                             ))}
-                            <VSCodeOption value="custom">Custom</VSCodeOption>
-                        </VSCodeDropdown>
+                            <LocalizedOption label={t("settings.ui.customBadge")} value="custom" />
+                        </LocalizedDropdown>
                     </DropdownContainer>
 
                     {awsBedrockCustomSelected && (
                         <div>
-                            <p className="mt-1 text-sm text-description">
-                                Select "Custom" when using the Application Inference Profile in Bedrock.
-                            </p>
+                            <p className="mt-1 text-sm text-description">{t("settings.ui.aws.customHelp")}</p>
                             <DebouncedTextField
                                 className="w-full mt-0.5"
                                 id="bedrock-model-input"
                                 initialValue={modelId}
                                 onChange={(value) => onUpdate({ modelId: value, modelInfo: undefined })}
-                                placeholder="Enter custom model ID...">
-                                <span className="font-medium">Model ID</span>
+                                placeholder={t("settings.ui.aws.customModel")}>
+                                <span className="font-medium">{t("settings.ui.modelId")}</span>
                             </DebouncedTextField>
                             <label htmlFor="bedrock-base-model-dropdown">
-                                <span className="font-medium">Base Inference Model</span>
+                                <span className="font-medium">{t("settings.ui.aws.baseModel")}</span>
                             </label>
                             <DropdownContainer className="dropdown-container" zIndex={DROPDOWN_Z_INDEX - 3}>
-                                <VSCodeDropdown
+                                <LocalizedDropdown
                                     className="w-full"
                                     id="bedrock-base-model-dropdown"
                                     onChange={(e: any) =>
@@ -460,8 +463,9 @@ export const BedrockProvider = ({ showModelOptions, isPopup, profile, onUpdate }
                                             bedrock: { ...pc, awsBedrockCustomModelBaseId: e.target.value },
                                         })
                                     }
+                                    selectedLabel={selectedBaseModelLabel}
                                     value={awsBedrockCustomModelBaseId || bedrockDefaultModelId}>
-                                    <VSCodeOption value="">Select a model...</VSCodeOption>
+                                    <LocalizedOption label={t("settings.ui.selectModel")} value="" />
                                     {Object.keys(bedrockModels).map((mid) => (
                                         <VSCodeOption
                                             className="whitespace-normal wrap-break-word max-w-full"
@@ -470,7 +474,7 @@ export const BedrockProvider = ({ showModelOptions, isPopup, profile, onUpdate }
                                             {mid}
                                         </VSCodeOption>
                                     ))}
-                                </VSCodeDropdown>
+                                </LocalizedDropdown>
                             </DropdownContainer>
                         </div>
                     )}

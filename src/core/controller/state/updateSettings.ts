@@ -12,6 +12,7 @@ import { Empty } from "@shared/proto/dline/common"
 import { PlanActMode, McpDisplayMode as ProtoMcpDisplayMode, UpdateSettingsRequest } from "@shared/proto/dline/state"
 import type { SettingsKey } from "@shared/storage/state-keys"
 import { TelemetrySetting } from "@shared/TelemetrySetting"
+import { isUiLanguagePreference } from "@shared/UiLanguage"
 import { isLocalSearchEngineId } from "@shared/web-search"
 import { ClineEnv } from "@/config"
 import { settingsAffectPromptFreshness } from "@/core/prompts/system-prompt-cache/PromptFreshnessProjection"
@@ -29,6 +30,8 @@ import { telemetryService } from "../../../services/telemetry"
 import { BrowserSettings as SharedBrowserSettings } from "../../../shared/BrowserSettings"
 import { Controller } from ".."
 import { accountLogoutClicked } from "../account/accountLogoutClicked"
+import { publishInputSemanticCatalog } from "../slash/subscribeToInputSemanticCatalog"
+import { getAwaySettings } from "./awaySettings"
 
 /**
  * Safely access a field from a runtime plain object without `as unknown as Record`.
@@ -54,8 +57,16 @@ function getStringConfigField(config: unknown, field: string): string | undefine
  */
 export async function updateSettings(controller: Controller, request: UpdateSettingsRequest): Promise<Empty> {
     const startedAt = performance.now()
-    const fields = Object.keys(request).sort()
+    const fields = Object.entries(request)
+        .filter(([key, value]) => key !== "metadata" && value !== undefined)
+        .map(([key]) => key)
+        .sort()
+    const isUiLanguageOnly = fields.length === 1 && fields[0] === "uiLanguage"
     try {
+        const uiLanguage = request.uiLanguage
+        if (uiLanguage !== undefined && !isUiLanguagePreference(uiLanguage)) {
+            throw new Error("Invalid UI language preference")
+        }
         const localWebSearchEngine = request.localWebSearchEngine
         if (localWebSearchEngine !== undefined && !isLocalSearchEngineId(localWebSearchEngine)) {
             throw new Error(`Unsupported local web search engine: ${localWebSearchEngine}`)
@@ -83,6 +94,33 @@ export async function updateSettings(controller: Controller, request: UpdateSett
             }
             if (!isValidAutoCondenseReservePair(resolvedMinReserveTokens, resolvedMaxReserveTokens)) {
                 throw new Error("Auto-compact reserve minimum cannot exceed maximum")
+            }
+        }
+
+        if ("__awayRevocations" in request) throw new Error("Away revocation metadata is not a user setting")
+        const awayPatch: { awayModeEnabled?: boolean; autoAwayModeEnabled?: boolean } = {}
+        for (const key of ["awayModeEnabled", "autoAwayModeEnabled"] as const) {
+            if (request[key] === undefined) continue
+            if (typeof request[key] !== "boolean") throw new Error(`${key} must be a boolean`)
+            awayPatch[key] = request[key]
+        }
+        if (uiLanguage !== undefined) {
+            // Await the existing repository owner, not an optimistic settings cache.
+            // A later failure in another store or publication cannot undo this commit.
+            await controller.stateManager.mutateGlobalSettingsKey("uiLanguage", () => uiLanguage)
+        }
+        if (Object.keys(awayPatch).length > 0) {
+            await getAwaySettings(controller.stateManager).mutate(awayPatch)
+            // The catalog decides whether `/away` exists, so the composer must learn
+            // the new answer now. The preference is already committed at this point,
+            // and a failed capability refresh is recoverable on the next request, so
+            // it must not turn a successful settings write into an error.
+            try {
+                await publishInputSemanticCatalog(controller)
+            } catch (error) {
+                Logger.warn(
+                    `[AwaySettings] Failed to publish the command catalog after an Away change: ${error instanceof Error ? error.message : String(error)}`,
+                )
             }
         }
 
@@ -569,7 +607,7 @@ export async function updateSettings(controller: Controller, request: UpdateSett
         await controller.stateManager.flushPendingState()
         const flushMs = Math.round(performance.now() - flushStartedAt)
         const configureStartedAt = performance.now()
-        await controller.configureGlobalComponents()
+        if (!isUiLanguageOnly) await controller.configureGlobalComponents()
         const configureMs = Math.round(performance.now() - configureStartedAt)
 
         // A running Task holds a frozen prompt. Settings that the freshness

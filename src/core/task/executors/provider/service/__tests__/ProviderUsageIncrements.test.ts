@@ -119,6 +119,41 @@ describe("ProviderUsageIncrements", () => {
     })
 })
 
+describe("usage amount currency", () => {
+    it("keeps a reported zero and its currency through token-only snapshots", () => {
+        const increments = new ProviderUsageIncrements()
+        const zero = increments.next({ type: "usage", inputTokens: 2, outputTokens: 1, totalCost: 0, currency: "CNY" })
+        expect(zero).toMatchObject({ totalCost: 0, costUsageReported: 1 })
+        increments.next({ type: "usage", inputTokens: 2, outputTokens: 5 })
+        expect(increments.currency).toBe("CNY")
+    })
+
+    it("does not inherit the previous amount's currency for a new unlabelled amount", () => {
+        const increments = new ProviderUsageIncrements()
+        increments.next({ type: "usage", inputTokens: 2, outputTokens: 1, totalCost: 1, currency: "CNY" })
+        increments.next({ type: "usage", inputTokens: 2, outputTokens: 5, totalCost: 2 })
+        expect(increments.currency).toBeUndefined()
+    })
+
+    it("carries currency while adding deltas and replacing their total with a snapshot", () => {
+        const increments = new ProviderUsageIncrements()
+        increments.next({ type: "usage", usageMode: "delta", inputTokens: 2, outputTokens: 1, totalCost: 1, currency: "CNY" })
+        const delta = increments.next({
+            type: "usage",
+            usageMode: "delta",
+            inputTokens: 3,
+            outputTokens: 1,
+            totalCost: 2,
+            currency: "CNY",
+        })
+        expect(delta).toMatchObject({ totalCost: 3, costUsageReported: 1 })
+        expect(increments.currency).toBe("CNY")
+        const snapshot = increments.next({ type: "usage", inputTokens: 5, outputTokens: 2, totalCost: 4, currency: "CNY" })
+        expect(snapshot).toMatchObject({ totalCost: 4, costUsageReported: 1 })
+        expect(increments.currency).toBe("CNY")
+    })
+})
+
 describe("sumAttemptUsage", () => {
     it("adds separate attempts and keeps the cost reported only when every attempt priced itself", () => {
         const priced = { inputTokens: 100, totalCost: 0.01, costUsageReported: 1 }

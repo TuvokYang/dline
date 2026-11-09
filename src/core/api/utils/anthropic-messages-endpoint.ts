@@ -1,5 +1,6 @@
 import type { ContentBlockParam, MessageParam } from "@anthropic-ai/sdk/resources/messages/messages"
 import { hostedToolName } from "@/shared/messages/content"
+import type { ModelPricing } from "@/shared/proto/dline/models/metadata"
 import { recordHostedToolDeferralResolved, recordHostedToolDeferred } from "../observability/hosted-tool-deferral"
 import type { ApiRawStreamServerToolChunk, ApiStream, ApiStreamUsageChunk } from "../transform/stream"
 import { ApiUsageAccumulator, type NormalizedApiUsage } from "../transform/usage-accumulator"
@@ -18,7 +19,15 @@ export interface AnthropicMessagesEndpointOptions {
     /** Canonical request history before the first endpoint response. */
     messages: readonly MessageParam[]
     /** Open one Messages stream while preserving the provider's request-scoped options. */
-    openStream(messages: MessageParam[]): Promise<AsyncIterable<AnthropicMessagesStreamEvent>>
+    openStream(
+        messages: MessageParam[],
+    ): Promise<
+        AsyncIterable<AnthropicMessagesStreamEvent> | { stream: AsyncIterable<AnthropicMessagesStreamEvent>; sentAtMs: number }
+    >
+    /** Effective declaration used only when the response does not report its own amount. */
+    pricing?: ModelPricing
+    /** Read an authoritative amount from this protocol's raw usage object. */
+    readReportedCost?: (usage: unknown) => Pick<ApiStreamUsageChunk, "totalCost" | "currency"> | undefined
     /** Test and policy override; the default permits four continuation requests. */
     maxPauseTurnContinuations?: number
 }
@@ -37,6 +46,8 @@ interface UsageExtensionsSnapshot {
     hasThoughts: boolean
     totalCost: number
     hasCost: boolean
+    currency?: string
+    hasResponse: boolean
 }
 
 function emptyUsage(): NormalizedApiUsage {
@@ -50,6 +61,7 @@ function emptyUsageExtensions(): UsageExtensionsSnapshot {
         hasThoughts: false,
         totalCost: 0,
         hasCost: false,
+        hasResponse: false,
     }
 }
 
@@ -63,6 +75,7 @@ function addUsage(left: NormalizedApiUsage, right: NormalizedApiUsage): Normaliz
 }
 
 function addUsageExtensions(left: UsageExtensionsSnapshot, right: UsageExtensionsSnapshot): UsageExtensionsSnapshot {
+    const hasCost = left.hasCost || right.hasCost
     return {
         serverTools: {
             webSearchRequests: left.serverTools.webSearchRequests + right.serverTools.webSearchRequests,
@@ -71,8 +84,10 @@ function addUsageExtensions(left: UsageExtensionsSnapshot, right: UsageExtension
         },
         thoughtsTokenCount: left.thoughtsTokenCount + right.thoughtsTokenCount,
         hasThoughts: left.hasThoughts || right.hasThoughts,
-        totalCost: left.totalCost + right.totalCost,
-        hasCost: left.hasCost || right.hasCost,
+        totalCost: hasCost ? left.totalCost + right.totalCost : 0,
+        hasCost,
+        currency: hasCost ? (right.hasCost ? right.currency : left.currency) : undefined,
+        hasResponse: left.hasResponse || right.hasResponse,
     }
 }
 
@@ -98,9 +113,10 @@ function applyUsageExtensions(current: UsageExtensionsSnapshot, chunk: ApiStream
         current.hasThoughts = true
         current.thoughtsTokenCount = applyValue(current.thoughtsTokenCount, chunk.thoughtsTokenCount)
     }
-    if (typeof chunk.totalCost === "number" && Number.isFinite(chunk.totalCost)) {
+    if (typeof chunk.totalCost === "number" && Number.isFinite(chunk.totalCost) && chunk.totalCost >= 0) {
         current.hasCost = true
-        current.totalCost = applyValue(current.totalCost, chunk.totalCost)
+        current.totalCost = chunk.totalCost
+        current.currency = chunk.currency
     }
 }
 
@@ -132,7 +148,12 @@ function cumulativeUsageChunk(
         }
     }
     if (extensions.hasThoughts) cumulative.thoughtsTokenCount = extensions.thoughtsTokenCount
-    if (extensions.hasCost) cumulative.totalCost = extensions.totalCost
+    delete cumulative.totalCost
+    delete cumulative.currency
+    if (extensions.hasCost) {
+        cumulative.totalCost = extensions.totalCost
+        if (extensions.currency !== undefined) cumulative.currency = extensions.currency
+    }
     return cumulative
 }
 
@@ -266,11 +287,14 @@ export async function* streamAnthropicMessagesEndpoint(options: AnthropicMessage
         const collector = new AnthropicAssistantContentCollector()
         const requestUsage = new ApiUsageAccumulator()
         const requestExtensions = emptyUsageExtensions()
-        const stream = await options.openStream(messages)
+        requestExtensions.hasResponse = true
+        const opened = await options.openStream(messages)
+        const { stream, sentAtMs } = Symbol.asyncIterator in opened ? { stream: opened, sentAtMs: Number.NaN } : opened
 
         for await (const chunk of handleAnthropicMessagesApiStreamResponse(
             observeAnthropicStream(stream, collector),
             serverToolState,
+            { pricing: options.pricing, sentAtMs, readReportedCost: options.readReportedCost },
         )) {
             if (chunk.type !== "usage") {
                 if (chunk.type === "server_tool" && chunk.replay?.segment === "result") reportResumedResult(chunk)

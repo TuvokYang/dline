@@ -3,7 +3,9 @@ import {
     MAX_AUTO_CONDENSE_TRIGGER_PERCENT,
     MIN_AUTO_CONDENSE_TRIGGER_PERCENT,
 } from "@shared/auto-condense"
+import type { AwayRevocations } from "@shared/away"
 import type { Settings } from "@shared/storage/state-keys"
+import { AWAY_REVOCATIONS_KEY, INITIAL_AWAY_REVOCATIONS, parseAwayRevocations } from "./away-revocations"
 import {
     type PersistedSettingsDocument,
     SETTINGS_REPOSITORY_REVISION_KEY,
@@ -12,6 +14,7 @@ import {
 } from "./settings-types"
 
 const METADATA_KEYS = new Set<string>([
+    AWAY_REVOCATIONS_KEY,
     SETTINGS_REPOSITORY_REVISION_KEY,
     SETTINGS_REPOSITORY_SCHEMA_KEY,
     SETTINGS_REPOSITORY_SOURCE_ID_KEY,
@@ -22,6 +25,7 @@ export interface ParsedSettingsDocument {
     readonly revision: number
     readonly sourceId: string
     readonly values: Settings
+    readonly awayRevocations: AwayRevocations
 }
 
 export function parseSettingsDocument(input: unknown): ParsedSettingsDocument {
@@ -37,30 +41,46 @@ export function parseSettingsDocument(input: unknown): ParsedSettingsDocument {
         revision: Number.isSafeInteger(revisionValue) && Number(revisionValue) >= 0 ? Number(revisionValue) : 0,
         sourceId: typeof sourceIdValue === "string" ? sourceIdValue : "legacy",
         values: values as Settings,
+        awayRevocations: parseAwayRevocations(document[AWAY_REVOCATIONS_KEY]),
     }
 }
+
+export class SettingsPatchError extends Error {}
 
 export function applySettingsPatch(current: Settings, patch: Partial<Settings>): Settings {
     const next = { ...(current as Record<string, unknown>) }
-    for (const [key, value] of Object.entries(patch)) {
-        if (METADATA_KEYS.has(key)) throw new Error(`Reserved Settings repository key cannot be mutated: ${key}`)
-        if (value === undefined) delete next[key]
-        else next[key] = value
+    try {
+        for (const [key, value] of Object.entries(patch)) {
+            if (METADATA_KEYS.has(key)) throw new Error(`Reserved Settings repository key cannot be mutated: ${key}`)
+            if (value === undefined) delete next[key]
+            else next[key] = value
+        }
+        validateSettings(next as Settings)
+    } catch (error) {
+        throw new SettingsPatchError(error instanceof Error ? error.message : "Invalid Settings patch", { cause: error })
     }
-    validateSettings(next as Settings)
     return next as Settings
 }
 
-export function buildPersistedSettingsDocument(values: Settings, revision: number, sourceId: string): PersistedSettingsDocument {
+export function buildPersistedSettingsDocument(
+    values: Settings,
+    revision: number,
+    sourceId: string,
+    awayRevocations: AwayRevocations = INITIAL_AWAY_REVOCATIONS,
+): PersistedSettingsDocument {
     return {
         ...(values as Record<string, unknown>),
         [SETTINGS_REPOSITORY_SCHEMA_KEY]: 1,
         [SETTINGS_REPOSITORY_REVISION_KEY]: revision,
         [SETTINGS_REPOSITORY_SOURCE_ID_KEY]: sourceId,
+        [AWAY_REVOCATIONS_KEY]: awayRevocations,
     }
 }
 
 export function validateSettings(values: Settings): void {
+    for (const key of ["awayModeEnabled", "autoAwayModeEnabled"] as const) {
+        if (values[key] !== undefined && typeof values[key] !== "boolean") throw new Error(`${key} must be a boolean`)
+    }
     const trigger = values.autoCondenseTriggerPercent
     if (
         trigger !== undefined &&

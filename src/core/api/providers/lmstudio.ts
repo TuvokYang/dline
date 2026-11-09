@@ -61,8 +61,10 @@ export class LmStudioHandler extends ApiHandler {
         ]
 
         try {
+            const model = this.getModel()
+            const sentAtMs = Date.now()
             const stream = await client.chat.completions.create({
-                model: this.getModel().id,
+                model: model.id,
                 messages: openAiMessages,
                 stream: true,
                 stream_options: { include_usage: true },
@@ -97,10 +99,12 @@ export class LmStudioHandler extends ApiHandler {
                         totalInputTokens: chunk.usage.prompt_tokens,
                         cacheReadTokens: chunk.usage.prompt_tokens_details?.cached_tokens,
                     })
+                    const tokens = { ...inputUsage, outputTokens: chunk.usage.completion_tokens || 0 }
+                    const cost = ApiHandler.calculateUsageCost(model.info.pricing, tokens, sentAtMs)
                     yield {
                         type: "usage",
-                        ...inputUsage,
-                        outputTokens: chunk.usage.completion_tokens || 0,
+                        ...tokens,
+                        ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                     }
                 }
             }

@@ -142,4 +142,18 @@ describe("ProviderUsage polling policy", () => {
         // request would only multiply a failure the user must fix by signing in.
         expect(mocks.getProviderUsage).toHaveBeenCalledTimes(1)
     })
+
+    it("does not expand a snapshot that has only local statistics", () => {
+        mocks.extensionState.accountUsage = {
+            profileId: "profile-deepseek",
+            providerId: "deepseek",
+            currency: "",
+            local: { inputTokens: 1_500, outputTokens: 200, usageReported: true, retrievedAt: new Date().toISOString() },
+        }
+
+        render(<ProviderUsage enabled pollIntervalMs={null} profileId="profile-deepseek" />)
+
+        expect(screen.getByRole("button", { name: /^Usage No usage data/ })).toBeDisabled()
+        expect(mocks.getProviderUsage).not.toHaveBeenCalled()
+    })
 })

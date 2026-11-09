@@ -9,6 +9,7 @@ import styled from "styled-components"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { PLATFORM_CONFIG, PlatformType } from "@/config/platform.config"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ModelsServiceClient } from "@/services/grpc-client"
 import { OPENROUTER_MODEL_PICKER_Z_INDEX } from "./OpenRouterModelPicker"
 import { AIhubmixProvider } from "./providers/AihubmixProvider"
@@ -82,6 +83,7 @@ export const DropdownContainer = styled.div<{ zIndex?: number }>`
 // biome-ignore lint: "vscode" module augmentation removed — not available in webview context
 
 const ApiOptions = ({ showModelOptions, apiErrorMessage, modelIdErrorMessage, isPopup, currentMode }: ApiOptionsProps) => {
+    const { t } = useUiTranslation()
     // Use full context state for immediate save payload
     const { apiConfiguration, remoteConfigSettings } = useExtensionState()
     const { profiles, updateProfile, addProfile } = useApiProfiles()
@@ -301,16 +303,16 @@ const ApiOptions = ({ showModelOptions, apiErrorMessage, modelIdErrorMessage, is
                         <TooltipTrigger>
                             <div className="flex items-center gap-2 mb-1">
                                 <label htmlFor="api-provider">
-                                    <span style={{ fontWeight: 500 }}>API Provider</span>
+                                    <span style={{ fontWeight: 500 }}>{t("settings.ui.apiProvider")}</span>
                                 </label>
                                 <i className="codicon codicon-lock text-description text-sm" />
                             </div>
                         </TooltipTrigger>
-                        <TooltipContent>Provider options are managed by your organization's remote configuration</TooltipContent>
+                        <TooltipContent>{t("settings.ui.managedProviders")}</TooltipContent>
                     </Tooltip>
                 ) : (
                     <label htmlFor="api-provider">
-                        <span style={{ fontWeight: 500 }}>API Provider</span>
+                        <span style={{ fontWeight: 500 }}>{t("settings.ui.apiProvider")}</span>
                     </label>
                 )}
                 <ProviderDropdownWrapper ref={dropdownRef}>
@@ -326,7 +328,7 @@ const ApiOptions = ({ showModelOptions, apiErrorMessage, modelIdErrorMessage, is
                             setIsDropdownVisible(true)
                         }}
                         onKeyDown={handleKeyDown}
-                        placeholder="Search and select provider..."
+                        placeholder={t("settings.ui.searchProvider")}
                         role="combobox"
                         style={{
                             width: "100%",
@@ -337,7 +339,7 @@ const ApiOptions = ({ showModelOptions, apiErrorMessage, modelIdErrorMessage, is
                         value={searchTerm}>
                         {searchTerm && searchTerm !== currentProviderLabel && (
                             <div
-                                aria-label="Clear search"
+                                aria-label={t("settings.ui.clearSearch")}
                                 className="input-icon-button codicon codicon-close"
                                 onClick={() => {
                                     setSearchTerm("")

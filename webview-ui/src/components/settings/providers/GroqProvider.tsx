@@ -28,7 +28,6 @@ export const GroqProvider = ({ showModelOptions, isPopup, profile, onUpdate }: G
             {showModelOptions && (
                 <>
                     <ModelSelector
-                        label="Model"
                         models={models}
                         onChange={(e) =>
                             onUpdate({

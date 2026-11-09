@@ -27,6 +27,7 @@ import { nousResearchModels } from "./nousresearch"
 import { openAiDefaultModelId, openAiModels } from "./openai"
 import { openAiCodexModels } from "./openai-codex"
 import { openAIDefaultImageModelId, openAIImageModels } from "./openai-image"
+import { openCodeModels } from "./opencode"
 import { mainlandQwenModels } from "./qwen-cn"
 import { qwenCodeModels } from "./qwen-code"
 import { internationalQwenModels } from "./qwen-intl"
@@ -44,6 +45,30 @@ const emptyModels: Record<string, any> = {}
 const firstKey = <T extends Record<string, unknown>>(obj: T): string => Object.keys(obj)[0] || ""
 
 export const allProviderModels: Record<string, ProviderModelsConfig> = {
+    // One selectable provider with one catalog per plan. The Profile's mode
+    // selects the catalog; neither declares a model, because the gateway listing
+    // is the only authority for what each plan serves.
+    opencode: {
+        provider: "opencode",
+        providerName: "OpenCode",
+        baseUrl: "https://opencode.ai/inference",
+        billingUrl: "https://opencode.ai/console",
+        billingMode: "console",
+        /**
+         * The Console catalog is this provider's own one, and the shared seed
+         * type keeps it at the top level.
+         *
+         * Declaring an empty `opencode-console` entry instead would make the
+         * registry answer the Console key from that empty document, and the built-in
+         * Console models above would disappear from every Console Profile.
+         */
+        models: openCodeModels,
+        catalogs: {
+            "opencode-go": {
+                models: {},
+            },
+        },
+    },
     anthropic: {
         provider: "anthropic",
         providerName: "Anthropic",
@@ -130,15 +155,15 @@ export const allProviderModels: Record<string, ProviderModelsConfig> = {
         billingMode: "token",
         models: internationalQwenModels,
         defaultModelId: firstKey(internationalQwenModels),
-    },
-    "qwen-cn": {
-        provider: "qwen-cn",
-        providerName: "Alibaba Qwen (Mainland China)",
-        regionVariantOf: "qwen",
-        baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        billingMode: "token",
-        models: mainlandQwenModels,
-        defaultModelId: firstKey(mainlandQwenModels),
+        // The mainland endpoint serves its own model set; the region option on
+        // the Profile selects it, so it is a catalog here rather than a second
+        // selectable provider.
+        catalogs: {
+            "qwen-cn": {
+                models: mainlandQwenModels,
+                defaultModelId: firstKey(mainlandQwenModels),
+            },
+        },
     },
     doubao: {
         provider: "doubao",
@@ -259,15 +284,12 @@ export const allProviderModels: Record<string, ProviderModelsConfig> = {
         billingMode: "token",
         models: internationalZAiModels,
         defaultModelId: firstKey(internationalZAiModels),
-    },
-    "zai-cn": {
-        provider: "zai-cn",
-        providerName: "Z AI (Mainland China)",
-        regionVariantOf: "zai",
-        baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-        billingMode: "token",
-        models: mainlandZAiModels,
-        defaultModelId: firstKey(mainlandZAiModels),
+        catalogs: {
+            "zai-cn": {
+                models: mainlandZAiModels,
+                defaultModelId: firstKey(mainlandZAiModels),
+            },
+        },
     },
     fireworks: {
         provider: "fireworks",

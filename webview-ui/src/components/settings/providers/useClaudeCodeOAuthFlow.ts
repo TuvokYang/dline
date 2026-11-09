@@ -7,6 +7,7 @@ import {
     ClaudeCodeProfileRequest,
 } from "@shared/proto/dline/account"
 import { useCallback, useEffect, useRef, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { AccountServiceClient } from "@/services/grpc-client"
 
 export type ClaudeCodeOAuthDialogPhase = "idle" | "starting" | "active" | "completing" | "timed-out" | "failed"
@@ -26,8 +27,16 @@ export interface ClaudeCodeOAuthFlowState {
     markTimedOut: () => void
 }
 
-function describeError(error: unknown): string {
-    return error instanceof Error && error.message ? error.message : "Something went wrong. Try again."
+const operationErrorKeys = {
+    start: "settings.ui.auth.claudeStartError",
+    complete: "settings.ui.auth.claudeCompleteError",
+    signOut: "settings.ui.auth.claudeSignOutError",
+} as const
+
+type ClaudeCodeOAuthError = { operation: keyof typeof operationErrorKeys; diagnostic?: string }
+
+function describeError(operation: ClaudeCodeOAuthError["operation"], error: unknown): ClaudeCodeOAuthError {
+    return { operation, diagnostic: error instanceof Error && error.message ? error.message : undefined }
 }
 
 /**
@@ -38,12 +47,13 @@ function describeError(error: unknown): string {
  * pasted value.
  */
 export function useClaudeCodeOAuthFlow(profileId: string): ClaudeCodeOAuthFlowState {
+    const { t } = useUiTranslation()
     const [phase, setPhase] = useState<ClaudeCodeOAuthDialogPhase>("idle")
     const [flow, setFlow] = useState<ClaudeCodeAuthFlow>()
     const [status, setStatus] = useState<ClaudeCodeAuthStatus>(ClaudeCodeAuthStatus.CLAUDE_CODE_AUTH_STATUS_UNSPECIFIED)
     const [account, setAccount] = useState<ClaudeCodeAuthStatusResponse["account"]>()
     const [busy, setBusy] = useState(false)
-    const [error, setError] = useState<string>()
+    const [error, setError] = useState<ClaudeCodeOAuthError>()
     const mounted = useRef(true)
 
     useEffect(() => {
@@ -97,7 +107,7 @@ export function useClaudeCodeOAuthFlow(profileId: string): ClaudeCodeOAuthFlowSt
             setPhase("active")
         } catch (caught) {
             if (!mounted.current) return
-            setError(describeError(caught))
+            setError(describeError("start", caught))
             setPhase("failed")
         } finally {
             if (mounted.current) setBusy(false)
@@ -121,7 +131,7 @@ export function useClaudeCodeOAuthFlow(profileId: string): ClaudeCodeOAuthFlowSt
                 setPhase("idle")
             } catch (caught) {
                 if (!mounted.current) return
-                setError(describeError(caught))
+                setError(describeError("complete", caught))
                 setPhase("active")
             } finally {
                 if (mounted.current) setBusy(false)
@@ -158,7 +168,7 @@ export function useClaudeCodeOAuthFlow(profileId: string): ClaudeCodeOAuthFlowSt
             setAccount(undefined)
             setStatus(ClaudeCodeAuthStatus.CLAUDE_CODE_AUTH_STATUS_MISSING)
         } catch (caught) {
-            if (mounted.current) setError(describeError(caught))
+            if (mounted.current) setError(describeError("signOut", caught))
         } finally {
             if (mounted.current) setBusy(false)
         }
@@ -173,7 +183,7 @@ export function useClaudeCodeOAuthFlow(profileId: string): ClaudeCodeOAuthFlowSt
         status,
         account,
         busy,
-        error,
+        error: error ? t(operationErrorKeys[error.operation], { diagnostic: error.diagnostic ?? "" }) : undefined,
         signIn,
         complete,
         cancel,

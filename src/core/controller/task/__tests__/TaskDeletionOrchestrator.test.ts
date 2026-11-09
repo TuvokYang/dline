@@ -1,5 +1,8 @@
 import fs from "node:fs/promises"
+import os from "node:os"
 import path from "node:path"
+import { registerTaskMetricsWriter, resetTaskMetricsDeletionGuard } from "@core/metrics/MetricsDeletionGuard"
+import { SqliteUnifyStoreBackend, sqliteUnifyStoreRegistry } from "@core/storage/backend/sqlite/SqliteUnifyStore"
 import { expect } from "chai"
 import { afterEach, beforeEach, describe, it, vi } from "vitest"
 import type { TaskLockService } from "../../../locks/TaskLockService"
@@ -133,6 +136,109 @@ describe("TaskDeletionOrchestrator", () => {
             expect(taskDirectoryExists).to.be.false
         } finally {
             await fs.rm(taskDirPath, { recursive: true, force: true })
+        }
+    })
+
+    it("removes a task whose history view holds a read-only metrics lease", async () => {
+        const documentsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "dline-delete-lease-"))
+        const taskId = "task-with-metrics-lease"
+        const taskDirPath = path.join(documentsRoot, "tasks", taskId)
+        await fs.mkdir(taskDirPath, { recursive: true })
+        const paths = {
+            taskDirPath,
+            apiConversationHistoryFilePath: path.join(taskDirPath, "api.jsonl"),
+            uiMessagesFilePath: path.join(taskDirPath, "ui.jsonl"),
+            contextHistoryFilePath: path.join(taskDirPath, "context.jsonl"),
+            taskMetadataFilePath: path.join(taskDirPath, "metadata.json"),
+        }
+        const metricsPath = path.join(taskDirPath, "metrics.db")
+        await fs.writeFile(paths.taskMetadataFilePath, "x")
+
+        // A real reading lease, opened exactly the way a history view opens it, so the
+        // deletion has to release an actual SQLite connection rather than a stub.
+        const writer = new SqliteUnifyStoreBackend()
+        const writable = await writer.open(metricsPath)
+        await writable.close()
+        const reader = new SqliteUnifyStoreBackend()
+        const lease = await reader.open(metricsPath, { readonly: true })
+        expect(sqliteUnifyStoreRegistry.getReferenceCount(metricsPath)).to.equal(1)
+
+        let releasedLease: { readonly released: boolean } | undefined
+        registerTaskMetricsWriter(taskId, async () => {
+            await lease.close()
+            releasedLease = { released: sqliteUnifyStoreRegistry.getReferenceCount(metricsPath) === 0 }
+            return releasedLease
+        })
+        mockController.getTaskWithId = async () => paths
+        mockController.deleteTaskFromState = async () => [taskId]
+
+        const previousDocs = process.env.DLINE_DOCS_DIR
+        process.env.DLINE_DOCS_DIR = documentsRoot
+        try {
+            const result = await orchestrator.deleteSingle(taskId)
+
+            expect(result.success).to.be.true
+            expect(releasedLease).to.deep.equal({ released: true })
+            const taskDirectoryExists = await fs.access(taskDirPath).then(
+                () => true,
+                () => false,
+            )
+            expect(taskDirectoryExists).to.be.false
+        } finally {
+            if (previousDocs === undefined) delete process.env.DLINE_DOCS_DIR
+            else process.env.DLINE_DOCS_DIR = previousDocs
+            resetTaskMetricsDeletionGuard()
+            await lease.close().catch(() => undefined)
+            await fs.rm(documentsRoot, { recursive: true, force: true })
+        }
+    })
+
+    it("reports a failed deletion when the metrics lease cannot be released", async () => {
+        const documentsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "dline-delete-held-"))
+        const taskId = "task-with-held-metrics"
+        const taskDirPath = path.join(documentsRoot, "tasks", taskId)
+        await fs.mkdir(taskDirPath, { recursive: true })
+        const paths = {
+            taskDirPath,
+            apiConversationHistoryFilePath: path.join(taskDirPath, "api.jsonl"),
+            uiMessagesFilePath: path.join(taskDirPath, "ui.jsonl"),
+            contextHistoryFilePath: path.join(taskDirPath, "context.jsonl"),
+            taskMetadataFilePath: path.join(taskDirPath, "metadata.json"),
+        }
+        const metricsPath = path.join(taskDirPath, "metrics.db")
+        await fs.writeFile(paths.taskMetadataFilePath, "x")
+        const writer = new SqliteUnifyStoreBackend()
+        const writable = await writer.open(metricsPath)
+        await writable.close()
+        registerTaskMetricsWriter(taskId, async () => ({ released: false, reason: "worker wedged" }))
+        mockController.getTaskWithId = async () => paths
+        mockController.deleteTaskFromState = async () => [taskId]
+
+        const previousDocs = process.env.DLINE_DOCS_DIR
+        process.env.DLINE_DOCS_DIR = documentsRoot
+        try {
+            const result = await orchestrator.deleteSingle(taskId)
+
+            // A deletion that could not release the database must not claim success, and
+            // it must say why rather than leaving the caller to guess.
+            expect(result.success).to.be.false
+            expect(result.error).to.contain("worker wedged")
+            const taskDirectoryExists = await fs.access(taskDirPath).then(
+                () => true,
+                () => false,
+            )
+            expect(taskDirectoryExists).to.be.true
+            expect(
+                await fs.access(metricsPath).then(
+                    () => true,
+                    () => false,
+                ),
+            ).to.be.true
+        } finally {
+            if (previousDocs === undefined) delete process.env.DLINE_DOCS_DIR
+            else process.env.DLINE_DOCS_DIR = previousDocs
+            resetTaskMetricsDeletionGuard()
+            await fs.rm(documentsRoot, { recursive: true, force: true })
         }
     })
 

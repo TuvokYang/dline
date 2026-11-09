@@ -3,7 +3,7 @@ import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
-import { readTaskUiMessages, rewriteTaskUiMessages } from "@e2e/utils/task-instance-store"
+import { readTaskUiMessages, rewriteTaskUiMessages, waitForTaskRelease } from "@e2e/utils/task-instance-store"
 import { type TrajectoryTurnPreview, trajectoryRail } from "@e2e/utils/trajectory-rail"
 import { expect, type Frame } from "@playwright/test"
 import type { UiMessage } from "@shared/ExtensionMessage"
@@ -307,7 +307,7 @@ e2e(
 )
 
 e2e(
-    "Trajectory - clicking a turn outside the loaded window scrolls the chat to its user message",
+    "Trajectory - source-index jumps work for unloaded and loaded turns with reversed anchor timestamps",
     async ({ dlineDocsDir, helper, sidebar, server, userDataDir }) => {
         e2e.setTimeout(180_000)
         const task = "E2E_TRAJECTORY_JUMP_TASK"
@@ -330,6 +330,8 @@ e2e(
         // The middle turn is followed by far more rows than the latest message window holds,
         // so reopening loads only the tail and the middle user message is not in the chat.
         await closeCurrentTask(sidebar)
+        await waitForTaskRelease(dlineDocsDir, taskId)
+        let sourceIndices: number[] = []
         await rewriteTaskUiMessages(dlineDocsDir, taskId, (messages) => {
             const start = messages.reduce((max, message) => Math.max(max, message.ts), 0) + 1
             // Three tail pages: the reopened chat and its first older page both stop well short of the middle turn.
@@ -340,26 +342,49 @@ e2e(
                 text: `E2E_TRAJECTORY_JUMP_FILLER_${index + 1}`,
             }))
             const tailStart = start + 1 + filler.length
+            // The last user input is physically last, but its identity predates every earlier row.
+            const latestTs = messages.reduce((min, message) => Math.min(min, message.ts), start) - 1
+            sourceIndices = [0, messages.length, messages.length + 1 + filler.length]
             return [
                 ...messages,
                 { ts: start, type: "say", say: "user_feedback", text: middle },
                 ...filler,
-                { ts: tailStart, type: "say", say: "user_feedback", text: latest },
+                { ts: latestTs, type: "say", say: "user_feedback", text: latest },
                 { ts: tailStart + 1, type: "say", say: "text", text: "E2E_TRAJECTORY_JUMP_LATEST_ANSWER" },
             ]
         })
+        const seeded = await readTaskUiMessages(dlineDocsDir, taskId)
+        expect([
+            seeded.findIndex(({ text }) => text === task),
+            seeded.findIndex(({ text }) => text === middle),
+            seeded.findIndex(({ text }) => text === latest),
+        ]).toEqual(sourceIndices)
         await reopenTask(sidebar, task)
 
         const timeline = sidebar.getByTestId("virtuoso-item-list")
-        await expect(timeline.getByText(latest, { exact: true })).toBeVisible({ timeout: 30_000 })
+        // Presentation keeps its existing timestamp order, distinct from committed source order.
+        await expect(timeline.getByText("E2E_TRAJECTORY_JUMP_LATEST_ANSWER", { exact: true })).toBeVisible({ timeout: 30_000 })
+        await expect(timeline.getByText(latest, { exact: true })).toHaveCount(0)
         const rail = trajectoryRail(sidebar)
         // Only a completed turn closes an attempt, so the two later turns share one band.
         await expect.poll(() => rail.prompts(), { timeout: 30_000 }).toEqual([[task], [middle, latest]])
+        expect((await rail.attempts()).flat().map(({ seq, anchorIndex }) => [seq, anchorIndex])).toEqual([
+            [0, sourceIndices[0]],
+            [1, sourceIndices[1]],
+            [2, sourceIndices[2]],
+        ])
         await expect(timeline.getByText(middle, { exact: true })).toHaveCount(0)
 
         await rail.jumpTo(middle)
         await expect(timeline.getByText(middle, { exact: true })).toBeVisible({ timeout: 30_000 })
         await expect(rail.bar(middle)).toHaveAttribute("aria-current", "location", { timeout: 30_000 })
+        // The second click takes the loaded-row path, without replacing or filtering the rail.
+        await rail.jumpTo(middle)
+        await expect(timeline.getByText(middle, { exact: true })).toBeVisible()
+        await rail.jumpTo(latest)
+        await expect(timeline.getByText(latest, { exact: true })).toBeVisible({ timeout: 30_000 })
+        await expect(rail.bar(latest)).toHaveAttribute("aria-current", "location", { timeout: 30_000 })
+        expect(await rail.prompts()).toEqual([[task], [middle, latest]])
         expect(server.openAiRequestCount).toBe(1)
         await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
     },

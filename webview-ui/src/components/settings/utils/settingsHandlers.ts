@@ -1,5 +1,5 @@
 import type { Settings } from "@shared/proto/dline/state"
-import { McpDisplayMode, UpdateSettingsRequest, UpdateTaskSettingsRequest } from "@shared/proto/dline/state"
+import { McpDisplayMode, type UpdateSettingsRequest, UpdateTaskSettingsRequest } from "@shared/proto/dline/state"
 import { StateServiceClient } from "@/services/grpc-client"
 
 import { SettingsRequestTracker } from "./settingsRequestTracker"
@@ -54,9 +54,12 @@ export const updateSettings = (settings: SettingsUpdate) => {
         Object.assign(updateRequest, { [field]: convertToProtoValue(field, value) })
     }
 
+    // The client owns wire encoding. Snapshot the caller's typed patch here;
+    // rebuilding it through a cached schema can silently discard newer fields.
+    const request: UpdateSettingsRequest = structuredClone({ metadata: undefined, ...updateRequest })
     return settingsRequestTracker.trackQueued(
         settingsRequestKeys("global", Object.keys(updateRequest)),
-        () => StateServiceClient.updateSettings(UpdateSettingsRequest.create(updateRequest)),
+        () => StateServiceClient.updateSettings(request),
         "Failed to update settings:",
     )
 }

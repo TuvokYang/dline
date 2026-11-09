@@ -1,9 +1,9 @@
 // English prompts - key-value pairs only, no code logic.
 const prompts: Record<string, string> = {
-    description: `[TURN-END] Present a COMPLETE implementation or design plan covering ALL user requirements. Available in both ACT and PLAN modes. In ACT MODE, use this tool only when the user explicitly requests a plan. In PLAN MODE, use it after thorough exploration and analysis when ready to present the plan. Your response MUST include the full plan with detailed analysis, architecture decisions, and a complete task_progress checklist organized with a required # Title and optional ## Section headings covering every step needed to fulfill ALL requirements. Do not simplify or omit parts of the plan - the user needs to see the entire plan to review it. Do not call repeatedly - use qna_respond for questions and discussion.
-However, if while writing your response you realize you need more exploration before providing a complete plan, set the optional needs_more_exploration parameter.`,
-    focusOmissionDescriptionClause:
-        ", and a complete task_progress checklist organized with a required # Title and optional ## Section headings",
+    description: `[TURN-END] Present a COMPLETE implementation or design plan covering ALL user requirements. Available in both ACT and PLAN modes. In ACT MODE, use this tool only when the user explicitly requests a plan. In PLAN MODE, use it after thorough exploration and analysis when ready to present the plan. Include the full plan, detailed analysis, architecture decisions, and every implementation step for review. Do not call repeatedly; use qna_respond for questions and discussion. If more exploration is needed, set needs_more_exploration.
+
+Follow the TODO update rules when providing task_progress.`,
+    focusOmissionDescriptionClause: "\n\nFollow the TODO update rules when providing task_progress.",
     responseInstruction:
         "The response to provide to the user. Do not call tools inside this parameter. You MUST use the response parameter rather than placing response text directly inside <make_plan>.",
     responseUsage: "Your response here",

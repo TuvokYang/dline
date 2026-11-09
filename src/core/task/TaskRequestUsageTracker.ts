@@ -4,6 +4,7 @@ import { ApiUsageAccumulator, type NormalizedApiUsage } from "@core/api/transfor
 export interface TaskRequestUsageSnapshot extends NormalizedApiUsage {
     thoughtsTokens?: number
     totalCost?: number
+    currency?: string
     cacheUsageReported: boolean
 }
 
@@ -12,6 +13,7 @@ export class TaskRequestUsageTracker {
     private readonly accumulator = new ApiUsageAccumulator()
     private thoughtsTokens: number | undefined
     private totalCost: number | undefined
+    private currency: string | undefined
     private cacheUsageReported = false
 
     apply(chunk: ApiStreamUsageChunk): TaskRequestUsageSnapshot {
@@ -20,8 +22,9 @@ export class TaskRequestUsageTracker {
         if (typeof chunk.thoughtsTokenCount === "number" && Number.isFinite(chunk.thoughtsTokenCount)) {
             this.thoughtsTokens = Math.max(0, Math.floor(chunk.thoughtsTokenCount))
         }
-        if (typeof chunk.totalCost === "number" && Number.isFinite(chunk.totalCost)) {
-            this.totalCost = Math.max(0, chunk.totalCost)
+        if (typeof chunk.totalCost === "number" && Number.isFinite(chunk.totalCost) && chunk.totalCost >= 0) {
+            this.totalCost = chunk.usageMode === "delta" ? (this.totalCost ?? 0) + chunk.totalCost : chunk.totalCost
+            this.currency = chunk.currency
         }
         return this.toSnapshot(usage)
     }
@@ -34,7 +37,9 @@ export class TaskRequestUsageTracker {
         return {
             ...usage,
             ...(this.thoughtsTokens === undefined ? {} : { thoughtsTokens: this.thoughtsTokens }),
-            ...(this.totalCost === undefined ? {} : { totalCost: this.totalCost }),
+            ...(this.totalCost === undefined
+                ? {}
+                : { totalCost: this.totalCost, ...(this.currency ? { currency: this.currency } : {}) }),
             cacheUsageReported: this.cacheUsageReported,
         }
     }

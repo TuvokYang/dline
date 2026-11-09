@@ -179,6 +179,16 @@ describe("summarizeBrowserSession", () => {
     })
 })
 
+describe("summarizeBrowserSession with a translator", () => {
+    it("reports the counts through the surface's own language", () => {
+        const messages = [launch(1), action(2, { action: "click", coordinate: "1,2" }), result(3, "https://example.com/a")]
+        // The fake translator drops the count, so the joined keys prove which messages ran.
+        expect(summarizeBrowserSession(projectBrowserSession(messages).steps, (key) => key)).toBe(
+            "chatRows.browser.summary.launch, chatRows.browser.summary.click",
+        )
+    })
+})
+
 describe("resolveBrowserSessionPhase", () => {
     const running = projectBrowserSession(session.slice(0, 8))
     const pending = projectBrowserSession([{ ts: 1, type: "ask", ask: "browser_action_launch", text: "https://example.com" }])

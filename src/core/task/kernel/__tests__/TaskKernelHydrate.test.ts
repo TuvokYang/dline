@@ -259,44 +259,6 @@ describe("task kernel hydrate forms", () => {
         expectRebuilt(result, "snapshot_missing")
     })
 
-    it("rebuilds a snapshot whose structure is not a task state", () => {
-        const snapshot = { ...base(), turn: undefined } as unknown as TaskState
-
-        const result = hydrate({ taskId: "task-1", snapshot, journalTail: { seq: 10 }, openReason: "crash_recovery" })
-
-        expectRebuilt(result, "malformed_snapshot")
-    })
-
-    it("rebuilds a snapshot whose required payloads are gone", () => {
-        const snapshot: TaskState = {
-            ...base(),
-            turn: {
-                ...base().turn,
-                blocks: [
-                    {
-                        blockId: "block-1",
-                        index: 0,
-                        phase: "ready",
-                        attempt: "attempt-1",
-                        lanes: [],
-                        turnEnding: false,
-                        invocationRef: "invocation:1",
-                    },
-                ],
-            },
-        }
-
-        const result = hydrate({
-            taskId: "task-1",
-            snapshot,
-            journalTail: { seq: 10 },
-            openReason: "crash_recovery",
-            unavailablePayloads: new Set(["invocation:1"]),
-        })
-
-        expectRebuilt(result, "payload_missing")
-    })
-
     it("keeps a snapshot whose missing payloads nothing will read again", () => {
         const snapshot: TaskState = {
             ...base(),

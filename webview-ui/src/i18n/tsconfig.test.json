@@ -1,0 +1,27 @@
+{
+    "extends": "../../tsconfig.app.json",
+    "compilerOptions": {
+        "noEmit": true
+    },
+    "include": [
+        "./**/*.ts",
+        "./**/*.tsx",
+        "../vite-env.d.ts",
+        "../whats-new-module.d.ts",
+        "../context/ExtensionStateContext.ui-language.test.tsx",
+        "../components/settings/__tests__/UiLanguageSetting.test.tsx",
+        "../components/settings/SettingsView.ui-language.test.tsx",
+        "../components/**/*.i18n.test.tsx",
+        "../components/**/*I18n.test.tsx",
+        "../components/common/LocalizedDropdown.test.tsx",
+        "../components/common/LocalizedDropdown.consumers.test.tsx",
+        "../components/chat/__tests__/ChatRow.generate-image.test.tsx",
+        "../components/chat/__tests__/chatRows.localization.test.tsx",
+        "../components/chat/chat-view/components/ChatUiText.test.tsx",
+        "../task-interaction/__tests__/*.i18n.test.tsx",
+        "../utils/__tests__/ui-presenters.test.tsx",
+        "../../../src/shared/UiLanguage.ts",
+        "../../../src/shared/__tests__/UiLanguage.test.ts"
+    ],
+    "exclude": []
+}

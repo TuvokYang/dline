@@ -124,6 +124,8 @@ export interface ScrollBehavior {
     toggleRowExpansion: (ts: number, origin?: RowExpansionOrigin) => void
     /** Toggles an activity fold by id; the reader takes the viewport first. */
     toggleFoldExpansion: (foldId: string) => void
+    /** Bulk folding also transfers viewport ownership to the reader. */
+    replaceFoldExpansion: (expanded: Record<string, boolean>) => void
     handleRowHeightChange: (isTaller: boolean) => void
     showScrollToBottom: boolean
     setShowScrollToBottom: React.Dispatch<React.SetStateAction<boolean>>

@@ -21,6 +21,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import MarkdownBlock from "../common/MarkdownBlock"
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover"
 import { SubagentMetrics } from "./activity/SubagentMetrics"
@@ -87,16 +88,17 @@ const statusIcon = (status: DisplayStatus) => {
 }
 
 function SubagentContext({ context }: { context: string }) {
+    const { t } = useUiTranslation()
     const displayContext = normalizeSubagentDisplayText(context)
     return (
         <Popover>
             <PopoverTrigger asChild>
                 <button
-                    aria-label="Show full subagent context"
+                    aria-label={t("chatRows.subagent.showFullContext")}
                     className="flex w-full min-w-0 max-w-full items-center gap-1 overflow-hidden rounded-xs border border-editor-group-border bg-transparent px-2 py-1 text-left text-[11px] text-foreground opacity-80 cursor-pointer"
                     data-testid="subagent-context"
                     type="button">
-                    <span className="shrink-0 font-semibold">Context</span>
+                    <span className="shrink-0 font-semibold">{t("chatRows.common.context")}</span>
                     <span className="min-w-0 flex-1 truncate whitespace-nowrap" data-testid="subagent-context-content">
                         {displayContext}
                     </span>
@@ -233,6 +235,7 @@ function workCardSummary(entry: SubagentDisplayItem): string {
 }
 
 function SubagentPromptText({ prompt, isExpanded, onShowMore }: SubagentPromptTextProps) {
+    const { t } = useUiTranslation()
     const promptRef = useRef<HTMLDivElement | null>(null)
     const [showMoreVisible, setShowMoreVisible] = useState(false)
 
@@ -275,7 +278,7 @@ function SubagentPromptText({ prompt, isExpanded, onShowMore }: SubagentPromptTe
             </div>
             {!isExpanded && showMoreVisible && (
                 <button
-                    aria-label="Show full subagent prompt"
+                    aria-label={t("chatRows.subagent.showFullPrompt")}
                     className="absolute right-0 bottom-0 z-10 text-[11px] text-link border-0 px-1 py-[1px] cursor-pointer leading-none rounded-[2px]"
                     onClick={onShowMore}
                     style={{ backgroundColor: "var(--vscode-editor-background)" }}
@@ -285,7 +288,7 @@ function SubagentPromptText({ prompt, isExpanded, onShowMore }: SubagentPromptTe
                         className="pointer-events-none absolute inset-y-0 -left-[6px] w-[6px]"
                         style={{ background: "linear-gradient(to left, var(--vscode-editor-background), transparent)" }}
                     />
-                    Show more
+                    {t("chatRows.subagent.showMore")}
                 </button>
             )}
         </div>
@@ -293,6 +296,7 @@ function SubagentPromptText({ prompt, isExpanded, onShowMore }: SubagentPromptTe
 }
 
 export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
+    const { t } = useUiTranslation()
     const [expandedPrompts, setExpandedPrompts] = useState<Record<number, boolean>>({})
     // Holds only the reader's own choices; an absent key means the default fold.
     const [collapsedItems, setCollapsedItems] = useState<Record<string, boolean>>({})
@@ -353,7 +357,7 @@ export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
     }, [getById, parsedData])
 
     if (!data) {
-        return <div className="text-foreground opacity-80">Subagent status update unavailable.</div>
+        return <div className="text-foreground opacity-80">{t("chatRows.subagent.unavailable")}</div>
     }
 
     const liveCancellableIds = new Set(
@@ -367,15 +371,15 @@ export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
     const showCancelButton = Boolean(taskId && cancellableIds.length > 1)
 
     const singular = data.items.length === 1
-    const title = singular ? "Dline wants to use a subagent:" : "Dline wants to use subagents:"
+    const title = singular ? t("chatRows.subagent.title.singular") : t("chatRows.subagent.title.plural")
     const isPromptConstructionRow = message.ask === "use_subagents" || message.say === "use_subagents"
     const statusSummary =
         data.status === "timeout"
-            ? "Timed out"
+            ? t("chatRows.subagent.status.timedOut")
             : data.status === "cancelled"
-              ? "Cancelled"
+              ? t("chatRows.subagent.status.cancelled")
               : data.status === "running" && data.items.some((entry) => entry.background)
-                ? "Running in background"
+                ? t("chatRows.subagent.status.runningBackground")
                 : undefined
     const toggleSection = (itemKey: string, section: SubagentWorkSectionKey) => {
         setExpandedSections((previous) => {
@@ -406,7 +410,7 @@ export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
         <div className="mb-2">
             <div className="flex items-center gap-2.5 mb-3">
                 <button
-                    aria-label={collapsed ? "Expand subagent status" : "Collapse subagent status"}
+                    aria-label={collapsed ? t("chatRows.subagent.expandStatus") : t("chatRows.subagent.collapseStatus")}
                     className="flex min-w-0 items-center gap-2.5 border-0 bg-transparent p-0 text-left cursor-pointer"
                     onClick={() => setCollapsed((value) => !value)}
                     type="button">
@@ -424,7 +428,7 @@ export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
                         }}
                         size="sm"
                         variant="danger">
-                        Cancel all
+                        {t("chatRows.subagent.cancelAll")}
                     </Button>
                 )}
             </div>
@@ -447,17 +451,19 @@ export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
                         const toolsExpanded = expandedSections[itemKey]?.tools ?? true
                         const outputExpanded = expandedSections[itemKey]?.output ?? false
                         const hasStructuredPrompt = Boolean(entry.task || entry.context)
-                        const displaySubagentName = entry.subagentName?.trim() || "default"
+                        const displaySubagentName = entry.subagentName?.trim() || t("chatRows.subagent.defaultName")
                         const isStreamingPromptUnderConstruction =
                             isPromptConstructionRow && message.partial === true && index === data.items.length - 1
                         const showToolsSection = !isStreamingPromptUnderConstruction && toolSteps.length > 0
                         const showOutputSection = !isStreamingPromptUnderConstruction && hasOutput
                         const isBackground = entry.background === true
                         const ExecutionModeIcon = isBackground ? SendToBackIcon : BringToFrontIcon
-                        const executionModeLabel = isBackground ? "Background" : "Foreground"
+                        const executionModeLabel = isBackground
+                            ? t("chatRows.common.background")
+                            : t("chatRows.common.foreground")
                         const executionModeIndicator = (
                             <div
-                                aria-label={`Execution mode: ${executionModeLabel}`}
+                                aria-label={t("chatRows.common.executionMode", { mode: executionModeLabel })}
                                 className={`flex min-w-[88px] shrink-0 items-center justify-center gap-1 rounded-xs border px-1.5 py-0.5 text-[11px] font-medium ${
                                     isBackground
                                         ? "border-editor-warning-foreground/40 bg-editor-warning-foreground/10 text-editor-warning-foreground"
@@ -484,7 +490,11 @@ export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
                                     className="flex min-w-0 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 overflow-hidden px-2 py-1.5"
                                     data-testid="subagent-item-header">
                                     <button
-                                        aria-label={`${isItemCollapsed ? "Expand" : "Collapse"} subagent ${displaySubagentName}`}
+                                        aria-label={
+                                            isItemCollapsed
+                                                ? t("chatRows.subagent.expandItem", { name: displaySubagentName })
+                                                : t("chatRows.subagent.collapseItem", { name: displaySubagentName })
+                                        }
                                         className="flex min-w-0 flex-1 items-center gap-1.5 border-0 bg-transparent p-0 text-left text-foreground cursor-pointer"
                                         onClick={() => toggleCollapsedItem(itemKey)}
                                         type="button">
@@ -525,7 +535,7 @@ export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
                                                     )
                                                 }
                                                 size="sm">
-                                                Finish
+                                                {t("chatRows.common.finish")}
                                             </Button>
                                         )}
                                         {showItemRetryButton && (
@@ -542,7 +552,7 @@ export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
                                                     )
                                                 }
                                                 size="sm">
-                                                Retry
+                                                {t("chatRows.common.retry")}
                                             </Button>
                                         )}
                                         {showItemCancelButton && (
@@ -557,7 +567,7 @@ export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
                                                 }
                                                 size="sm"
                                                 variant="danger">
-                                                Cancel
+                                                {t("chatRows.common.cancel")}
                                             </Button>
                                         )}
                                     </div>
@@ -590,11 +600,15 @@ export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
                                         className="flex min-h-0 flex-[0_1_auto] flex-col overflow-hidden px-2 pb-1.5"
                                         data-testid="subagent-item-body">
                                         <SubagentWorkSection
-                                            ariaLabel={`${taskExpanded ? "Collapse" : "Expand"} subagent task`}
+                                            ariaLabel={
+                                                taskExpanded
+                                                    ? t("chatRows.subagent.collapseTask")
+                                                    : t("chatRows.subagent.expandTask")
+                                            }
                                             expanded={taskExpanded}
                                             onToggle={() => toggleSection(itemKey, "task")}
                                             scrollTestId="subagent-task-scroll"
-                                            title="Task">
+                                            title={t("chatRows.subagent.section.task")}>
                                             <div className="min-w-0 max-w-full space-y-1.5">
                                                 {hasStructuredPrompt ? (
                                                     <>
@@ -616,11 +630,15 @@ export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
                                         </SubagentWorkSection>
                                         {showToolsSection && (
                                             <SubagentWorkSection
-                                                ariaLabel={`${toolsExpanded ? "Collapse" : "Expand"} subagent tools`}
+                                                ariaLabel={
+                                                    toolsExpanded
+                                                        ? t("chatRows.subagent.collapseTools")
+                                                        : t("chatRows.subagent.expandTools")
+                                                }
                                                 expanded={toolsExpanded}
                                                 onToggle={() => toggleSection(itemKey, "tools")}
                                                 scrollTestId="subagent-tools-scroll"
-                                                title={`Tools (${toolSteps.length})`}>
+                                                title={t("chatRows.subagent.section.tools", { count: toolSteps.length })}>
                                                 <SubagentToolTimeline
                                                     compact
                                                     detailsMode="none"
@@ -631,12 +649,16 @@ export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
                                         )}
                                         {showOutputSection && (
                                             <SubagentWorkSection
-                                                ariaLabel={`${outputExpanded ? "Hide" : "Show"} subagent output`}
+                                                ariaLabel={
+                                                    outputExpanded
+                                                        ? t("chatRows.subagent.hideOutput")
+                                                        : t("chatRows.subagent.showOutput")
+                                                }
                                                 contentClassName="space-y-2 text-xs"
                                                 expanded={outputExpanded}
                                                 onToggle={() => toggleSection(itemKey, "output")}
                                                 scrollTestId="subagent-output-scroll"
-                                                title="Output">
+                                                title={t("chatRows.subagent.section.output")}>
                                                 <SubagentRetryTimeline attempts={retryAttempts} />
                                                 {entry.result && entry.status === "completed" && (
                                                     <div className="opacity-80 wrap-anywhere" data-testid="subagent-output">

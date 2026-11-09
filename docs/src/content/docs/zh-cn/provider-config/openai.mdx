@@ -44,7 +44,29 @@ Dline 提供两种使用 OpenAI 模型的方式：
 
 </Steps>
 
-同一个 **OpenAI** 服务商也可以连接 Azure OpenAI 和其他兼容 OpenAI API 的服务，见 [OpenAI 兼容服务](/zh-cn/provider-config/openai-compatible/)。
+### 自定义 Base URL
+
+保持 **Use custom base URL** 未勾选时，请求发送到 OpenAI。勾选后，请求改为发送到你填写的其他地址，例如自建网关或其他兼容 OpenAI API 的服务。
+
+<Steps>
+
+1. 勾选 **Use custom base URL**，填入服务提供的地址，例如 `https://gateway.example.com/v1`。填写 API 地址本身，而不是服务商官网首页。
+
+2. 把该服务签发的 Key 粘贴到 **OpenAI API Key** 输入框。
+
+3. 在 **Model** 中选择模型。如果服务的模型 ID 未内置在 Dline 中，勾选 **Use custom model ID** 并在 **Model ID** 中手动输入。
+
+</Steps>
+
+<Aside>
+使用自定义 Base URL 时，Dline 只会把 Key 发送到你填写的地址。费用与价格由该服务决定，与 OpenAI 无关。
+</Aside>
+
+### Azure OpenAI
+
+- 在 **Use custom base URL** 中填写 Azure OpenAI 资源的地址。
+- 需要固定 API 版本时，勾选 **Set Azure API version** 并填写版本，默认 `2024-10-01-preview`。
+- 勾选 **Use Azure Identity Authentication** 可以复用现有的 Azure 托管身份认证。它不会主动发起登录，只会复用已有的认证状态（例如 `az login`）。
 
 <span id="chatgpt-subscription"></span>
 

@@ -2,6 +2,7 @@ import { sapAiCoreModels } from "@shared/api"
 import { SapAiCoreModelDeployment } from "@shared/proto/index.dline"
 import { VSCodeDropdown, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
 import React, { memo, useEffect, useMemo } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { DropdownContainer } from "./common/ModelSelector"
 
 export const SAP_AI_CORE_MODEL_PICKER_Z_INDEX = 1_000
@@ -26,9 +27,11 @@ const SapAiCoreModelPicker: React.FC<SapAiCoreModelPickerProps> = ({
     selectedModelId,
     selectedDeploymentId,
     onModelChange,
-    placeholder = "Select a model...",
+    placeholder: customPlaceholder,
     useOrchestrationMode = false,
 }) => {
+    const { t } = useUiTranslation()
+    const placeholder = customPlaceholder ?? t("settings.ui.selectModel")
     // Auto-fix deployment ID mismatch or missing deployment ID when deployments change (when ai core creds changes)
     useEffect(() => {
         if (!selectedModelId) {
@@ -123,7 +126,7 @@ const SapAiCoreModelPicker: React.FC<SapAiCoreModelPickerProps> = ({
                 // Add section separator (disabled option)
                 options.push(
                     <VSCodeOption disabled key="deployed-header" value="">
-                        ── Deployed Models ──
+                        {t("settings.ui.sap.deployed")}
                     </VSCodeOption>,
                 )
 
@@ -141,7 +144,7 @@ const SapAiCoreModelPicker: React.FC<SapAiCoreModelPickerProps> = ({
                 // Add section separator (disabled option)
                 options.push(
                     <VSCodeOption disabled key="supported-header" value="">
-                        ── Not Deployed Models ──
+                        {t("settings.ui.sap.notDeployed")}
                     </VSCodeOption>,
                 )
 
@@ -161,7 +164,7 @@ const SapAiCoreModelPicker: React.FC<SapAiCoreModelPickerProps> = ({
     return (
         <DropdownContainer className="dropdown-container" zIndex={SAP_AI_CORE_MODEL_PICKER_Z_INDEX}>
             <label htmlFor="sap-ai-core-model-dropdown">
-                <span className="font-medium">Model</span>
+                <span className="font-medium">{t("settings.ui.model")}</span>
             </label>
             <VSCodeDropdown
                 id="sap-ai-core-model-dropdown"

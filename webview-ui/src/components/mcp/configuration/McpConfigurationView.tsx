@@ -5,6 +5,7 @@ import { convertProtoMcpServersToMcpServers } from "@shared/proto-conversions/mc
 import { useEffect, useState } from "react"
 import styled from "styled-components"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { McpServiceClient } from "@/services/grpc-client"
 import { Tab, TabContent } from "../../common/Tab"
 import ViewHeader from "../../common/ViewHeader"
@@ -18,6 +19,7 @@ type McpViewProps = {
 }
 
 const McpConfigurationView = ({ onDone, initialTab }: McpViewProps) => {
+    const { t } = useUiTranslation()
     const { remoteConfigSettings, setMcpServers, environment } = useExtensionState()
     // Show marketplace by default unless remote config explicitly disables it
     const showMarketplace = remoteConfigSettings?.mcpMarketplaceEnabled !== false
@@ -54,7 +56,7 @@ const McpConfigurationView = ({ onDone, initialTab }: McpViewProps) => {
 
     return (
         <Tab>
-            <ViewHeader environment={environment} onDone={onDone} title="MCP Servers" />
+            <ViewHeader environment={environment} onDone={onDone} title={t("capabilities.mcp.title")} />
 
             {/* Tabs container stays outside the scroll area so it does not scroll away */}
             <div
@@ -67,16 +69,16 @@ const McpConfigurationView = ({ onDone, initialTab }: McpViewProps) => {
                 }}>
                 {showMarketplace && (
                     <TabButton isActive={activeTab === "marketplace"} onClick={() => handleTabChange("marketplace")}>
-                        Marketplace
+                        {t("capabilities.mcp.marketplace")}
                     </TabButton>
                 )}
                 {showRemoteServers && (
                     <TabButton isActive={activeTab === "addRemote"} onClick={() => handleTabChange("addRemote")}>
-                        Remote Servers
+                        {t("capabilities.mcp.remoteServers")}
                     </TabButton>
                 )}
                 <TabButton isActive={activeTab === "configure"} onClick={() => handleTabChange("configure")}>
-                    Configure
+                    {t("capabilities.mcp.configure")}
                 </TabButton>
             </div>
 

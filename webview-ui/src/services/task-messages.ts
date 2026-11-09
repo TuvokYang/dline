@@ -16,22 +16,24 @@ export async function fetchTaskMessages(
 }
 
 /**
- * Fetch a page of `count` messages centred on the message with `anchorTs`.
+ * Fetch a page of `count` messages around a source index, with optional timestamp identity.
+ * Without an index, preserve the existing timestamp-only navigation contract.
  *
  * The extension locates the anchor in the sequence it pages, so the page holds
  * the anchor whenever `anchorFound` is true; otherwise the page is empty.
  */
 export async function fetchAnchoredTaskMessages(
     view: Pick<TaskViewState, "taskId" | "taskInstanceId"> | undefined,
-    anchorTs: number,
+    anchorTs: number | undefined,
     count: number,
+    anchorIndex?: number,
 ): Promise<FetchMessageResponse> {
-    return requestTaskMessages(view, { referenceIndex: 0, count, anchorTs })
+    return requestTaskMessages(view, { referenceIndex: 0, count, anchorTs, anchorIndex })
 }
 
 async function requestTaskMessages(
     view: Pick<TaskViewState, "taskId" | "taskInstanceId"> | undefined,
-    page: { referenceIndex: number; count: number; anchorTs?: number },
+    page: { referenceIndex: number; count: number; anchorTs?: number; anchorIndex?: number },
 ): Promise<FetchMessageResponse> {
     if (!view?.taskId || !view.taskInstanceId) throw new Error("No opened Task instance")
     const request = FetchMessageRequest.create({

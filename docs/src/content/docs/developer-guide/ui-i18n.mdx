@@ -1,0 +1,78 @@
+---
+title: Interface language and UI translation
+description: Choose the interface language and use Dline's typed English and Chinese UI messages without resetting UI state.
+---
+
+Dline's Webview product interface supports English and Simplified Chinese, including settings and providers, chat and task controls, history, accounts, capabilities, MCP, onboarding and worktrees. User/model messages, code, paths, identifiers, raw diagnostics and external descriptions keep their original content.
+
+## Choose the interface language
+
+Open **Settings → General → Interface language**:
+
+| Choice | Value | Behavior |
+| --- | --- | --- |
+| Auto | `auto` | Default. Follows the VS Code display language. Chinese variants select Simplified Chinese; absent or unsupported host metadata falls back to English. |
+| English | `en` | Use English regardless of the VS Code display language. |
+| Simplified Chinese | `zh-CN` | Use Simplified Chinese regardless of the VS Code display language. |
+
+The choice saves automatically and applies to open Dline panels, including while a task is streaming. Reopening settings or restarting the host retains an explicit choice. Select Auto again to resume following the host. Dline reads host display-language metadata at startup; apply a VS Code display-language change through its normal restart/reopen boundary.
+
+`auto` remains the stored preference even when the current interface renders in English. Missing or invalid older preferences also read as `auto`. A failed update shows a retryable message; retry from the control rather than assuming that closing settings saved a failed update.
+
+The separate **Model response language** setting controls model replies. Its option names follow the interface language while saved fixed-language values remain unchanged. **Auto** follows the language of the user's own messages, not VS Code or the interface; code, logs and quotations do not determine that language. A direct language instruction for the current task takes precedence. The existing default remains English.
+
+Interface language does not change the model preference, model requests, user/model text, code, paths, raw tool output, currency or time policy. Switching does not reload the Webview or reset drafts and navigation. **Done** only closes settings.
+
+What's New shows the active language edition. Its full changelog link opens `CHANGELOG.md` for Chinese and `docs/changelog/CHANGELOG_en.md` for English; the release version and acknowledgment remain the same.
+
+## Translate a component
+
+Add matching keys to the owning domain under `webview-ui/src/i18n/locales/{settings,chatInput,chatRows,capabilities,shell}/`. Root `en.ts` and `zh_CN.ts` assemble these domains. Chinese resource filenames use `zh_CN.ts` or a `.zh_CN.ts` suffix; runtime language tags, preference values and resource keys still use `zh-CN`. English defines keys and named-argument types; Chinese resources use `UiResource` against their own English module, without importing the root dictionary. English is the runtime fallback for unavailable translations. Keep complete sentences and meaningful count branches in resources rather than concatenating fragments.
+
+```tsx
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
+
+export function InterfaceLanguageLabel() {
+    const { t } = useUiTranslation()
+    return <span>{t("settings.general.uiLanguage.label")}</span>
+}
+```
+
+Dynamic entries use named semantic arguments:
+
+```ts
+t("settings.general.uiLanguage.followHost", { language: "English" })
+```
+
+For pure presenters, inject `UiTranslator`, or pass `UiLanguage` to `translateUi(language, key, ...args)` from `i18n/messages.ts`. Invalid keys and missing or incorrectly typed arguments are compile-time errors. Module-level configurations keep keys, not already translated strings; output-affecting memos and callbacks depend on the current translator.
+
+Translate labels together with descriptions, tooltips, placeholders, accessible names and loading/error wrappers. Preserve user content and stable IDs. Store semantic operation/error kinds plus raw diagnostics in asynchronous state, and translate while rendering; do not add the translator to loading, saving or polling dependencies.
+
+Use `i18n/UiText.tsx` for complete sentences containing named React slots for links, code, emphasis or controls. Keep semantic slot keys stable when sentence order changes; never inject translated HTML. FAST dropdowns also need a React-owned `selected-value` slot and updated option ARIA, since changing slotted text alone does not refresh their cached display. Do not remount controls to change language.
+
+## Settings typography
+
+Reuse `ProfileForm` and `ProfileField` for settings fields. The form owns the `gap-4` between fields; do not stack per-field bottom margins on it. Field labels and selected values use `text-sm`; help text uses `text-xs` with a 1.5 line height. These sizes follow the VS Code font size. Keep help paragraphs margin-free and unclamped inside the field, including inherited line height for nested spans, rather than changing global paragraph styles used by chat. Preserve description IDs, pending/error/retry semantics and stored values.
+
+Verify computed styles and geometry in a real Webview at narrow and wide sidebar widths, in both languages. Toolkit shadow styles can override inherited typography, so class assertions or jsdom alone do not prove the result.
+
+## Assemble language context
+
+`UiLanguagePreference` contains `auto`, `en` and `zh-CN`; effective `UiLanguage` contains only `en` and `zh-CN`. `resolveUiLanguage(preference, hostDisplayLanguage)` derives the effective value without overwriting the preference.
+
+The production language bridge reads the final ExtensionState and supplies a controlled `UiLanguageProvider`. It also mounts `UiDocumentLanguage` once to update the document's `lang` attribute. Components consume `useUiTranslation()` instead of keeping a second language preference.
+
+Storybook overrides must wrap the language bridge, not sit beneath a Provider that resolved an earlier state. `createStorybookDecorator` supplies translation context from the final overrides without taking document ownership; a preview leaf can mount `UiDocumentLanguage` once. The Interface Language stories have an interactive preview root that owns both the final state and document language.
+
+## Verify a migrated surface
+
+Use the `implement-i18n` Skill for focused implementation guidance. Verify both switching directions in the same mounted tree, accessible names, memo/presenter output, portal content, retained drafts/focus, and save failure/retry. Language-setting integration also covers old full snapshots, omitted patch fields, stale revisions, persistent reopen and multiple panels.
+
+The focused test configuration includes translator type errors and language integration tests:
+
+```powershell
+.\webview-ui\node_modules\.bin\tsc.cmd --noEmit -p webview-ui/src/i18n/tsconfig.test.json
+npm run test:run -- webview-ui/src/components/settings/SettingsView.ui-language.test.tsx webview-ui/src/context/ExtensionStateContext.ui-language.test.tsx webview-ui/src/components/settings/__tests__/UiLanguageSetting.test.tsx
+```
+
+Keep migration claims specific to tested surfaces. A word list or directory audit does not establish that an entire screen is translated.

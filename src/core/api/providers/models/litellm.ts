@@ -19,12 +19,6 @@ export const liteLlmModelInfoSaneDefaults: LiteLLMModelInfo = {
         maxTokens: -1,
         contextWindow: 128_000,
     },
-    pricing: {
-        inputPrice: 0,
-        outputPrice: 0,
-        cacheWritesPrice: 0,
-        cacheReadsPrice: 0,
-    },
     temperature: 0,
 }
 

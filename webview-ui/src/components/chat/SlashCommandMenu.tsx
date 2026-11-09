@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef } from "react"
 import ScreenReaderAnnounce from "@/components/common/ScreenReaderAnnounce"
 import { useMenuAnnouncement } from "@/hooks/useMenuAnnouncement"
+import { type UiMessageKey } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import type { SlashMenuEntry, SlashMenuSection } from "@/utils/slash-commands"
 
 interface SlashCommandMenuProps {
@@ -16,8 +18,8 @@ interface SlashCommandMenuProps {
 }
 
 interface SectionStyle {
-    readonly title: string
-    readonly typeLabel: string
+    readonly titleKey: Extract<UiMessageKey, `chatRows.menu.slash.title.${string}`>
+    readonly typeLabelKey: Extract<UiMessageKey, `chatRows.menu.slash.badge.${string}`>
     readonly badgeClass: string
     readonly badgeColor: string
 }
@@ -25,26 +27,26 @@ interface SectionStyle {
 /** Header, badge text and badge color per section. */
 const SECTION_STYLES: Readonly<Record<SlashMenuSection, SectionStyle>> = {
     default: {
-        title: "Default Commands",
-        typeLabel: "Command",
+        titleKey: "chatRows.menu.slash.title.default",
+        typeLabelKey: "chatRows.menu.slash.badge.command",
         badgeClass: "bg-(--vscode-textLink-foreground)/15",
         badgeColor: "var(--vscode-textLink-foreground)",
     },
     workflow: {
-        title: "Workflows",
-        typeLabel: "Workflow",
+        titleKey: "chatRows.menu.slash.title.workflow",
+        typeLabelKey: "chatRows.menu.slash.badge.workflow",
         badgeClass: "bg-(--vscode-terminal-ansiGreen)/15",
         badgeColor: "var(--vscode-terminal-ansiGreen)",
     },
     skill: {
-        title: "Skills",
-        typeLabel: "Skill",
+        titleKey: "chatRows.menu.slash.title.skill",
+        typeLabelKey: "chatRows.menu.slash.badge.skill",
         badgeClass: "bg-(--vscode-terminal-ansiYellow)/15",
         badgeColor: "var(--vscode-terminal-ansiYellow)",
     },
     mcp: {
-        title: "MCP Prompts",
-        typeLabel: "MCP",
+        titleKey: "chatRows.menu.slash.title.mcp",
+        typeLabelKey: "chatRows.menu.slash.badge.mcp",
         badgeClass: "bg-(--vscode-terminal-ansiMagenta)/15",
         badgeColor: "var(--vscode-terminal-ansiMagenta)",
     },
@@ -57,6 +59,7 @@ const SlashCommandMenu: React.FC<SlashCommandMenuProps> = ({
     onMouseDown,
     entries,
 }) => {
+    const { t } = useUiTranslation()
     const menuRef = useRef<HTMLDivElement>(null)
 
     // Screen reader announcements
@@ -98,7 +101,7 @@ const SlashCommandMenu: React.FC<SlashCommandMenuProps> = ({
                     <div
                         className="text-xs text-(--vscode-descriptionForeground) px-3 py-1 font-bold border-b border-(--vscode-editorGroup-border)"
                         role="presentation">
-                        {style.title}
+                        {t(style.titleKey)}
                     </div>
                 )}
                 <div
@@ -125,7 +128,7 @@ const SlashCommandMenu: React.FC<SlashCommandMenuProps> = ({
                     <span
                         className={`text-[0.8em] font-bold shrink-0 ml-2 px-1.5 py-0.5 rounded-full leading-normal ${style.badgeClass}`}
                         style={selected ? { backgroundColor: style.badgeColor, color: "#fff" } : { color: style.badgeColor }}>
-                        {style.typeLabel}
+                        {t(style.typeLabelKey)}
                     </span>
                 </div>
             </React.Fragment>
@@ -143,7 +146,7 @@ const SlashCommandMenu: React.FC<SlashCommandMenuProps> = ({
             <ScreenReaderAnnounce message={announcement} />
             <div
                 aria-activedescendant={entries.length > 0 ? `slash-command-menu-item-${selectedIndex}` : undefined}
-                aria-label="Slash commands"
+                aria-label={t("chatRows.menu.slash.label")}
                 className="bg-(--vscode-dropdown-background) border border-(--vscode-editorGroup-border) rounded-[3px] shadow-[0_4px_10px_rgba(0,0,0,0.25)] flex flex-col overflow-y-auto"
                 ref={menuRef}
                 role="listbox"
@@ -153,7 +156,9 @@ const SlashCommandMenu: React.FC<SlashCommandMenuProps> = ({
                     entries.map(renderEntry)
                 ) : (
                     <div aria-selected="false" className="py-2 px-3 cursor-default flex flex-col" role="option">
-                        <div className="text-[0.85em] text-(--vscode-descriptionForeground)">No matching commands found</div>
+                        <div className="text-[0.85em] text-(--vscode-descriptionForeground)">
+                            {t("chatRows.menu.slash.empty")}
+                        </div>
                     </div>
                 )}
             </div>

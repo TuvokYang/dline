@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { findFirstVisibleMessage, findFirstVisibleRow } from "./viewportRowAnchor"
+import { findFirstVisibleMessage, findFirstVisibleRow, findFirstVisibleSourceRow } from "./viewportRowAnchor"
 
 type Box = { top: number; height: number }
 type RowSpec = Box & {
@@ -7,6 +7,8 @@ type RowSpec = Box & {
     ts?: number
     /** Row identity every rendered row carries, grouped rows included. */
     rowTs?: number
+    sourceIndex?: number
+    readingIndex?: number
     /** Offset of the message element inside its row. */
     inset?: number
 }
@@ -29,6 +31,8 @@ function createScroller(rows: RowSpec[]): HTMLElement {
         const content = document.createElement("div")
         if (spec.ts !== undefined) content.dataset.messageTs = String(spec.ts)
         if (spec.rowTs !== undefined) content.dataset.rowTs = String(spec.rowTs)
+        if (spec.sourceIndex !== undefined) content.dataset.rowSourceIndex = String(spec.sourceIndex)
+        if (spec.readingIndex !== undefined) content.dataset.rowTrajectoryIndex = String(spec.readingIndex)
         const inset = spec.inset ?? 0
         boxes.set(content, { top: spec.top + inset, height: spec.height - inset })
         row.appendChild(content)
@@ -110,5 +114,46 @@ describe("findFirstVisibleRow", () => {
 
         expect(findFirstVisibleRow(scroller, { minVisiblePx: 8 })).toEqual({ ts: 20, viewportOffset: -10 })
         expect(findFirstVisibleMessage(scroller, { minVisiblePx: 8 })).toEqual({ ts: 30, viewportOffset: 110 })
+    })
+})
+
+describe("findFirstVisibleSourceRow", () => {
+    afterEach(() => vi.restoreAllMocks())
+
+    it("reads a grouped row's real source metadata using row geometry, regardless of timestamp or virtual-list index", () => {
+        const scroller = createScroller([
+            { rowTs: 900, sourceIndex: 5, top: 10, height: 60 },
+            { rowTs: 30, sourceIndex: 67, top: 80, height: 140, inset: 30 },
+            { rowTs: 20, sourceIndex: 90, ts: 20, top: 220, height: 40 },
+        ])
+        expect(findFirstVisibleSourceRow(scroller, { minVisiblePx: 8 })).toEqual({ sourceIndex: 67, viewportOffset: -20 })
+        expect(findFirstVisibleMessage(scroller)).toEqual({ ts: 20, viewportOffset: 120 })
+    })
+
+    it("retains source zero and ignores an eight-pixel sliver of a previous interval", () => {
+        const scroller = createScroller([
+            { rowTs: Number.NaN, sourceIndex: 0, top: 40, height: 64 },
+            { rowTs: -1, sourceIndex: 22, top: 104, height: 50 },
+        ])
+        expect(findFirstVisibleSourceRow(scroller)).toEqual({ sourceIndex: 0, viewportOffset: -60 })
+        expect(findFirstVisibleSourceRow(scroller, { minVisiblePx: 8 })).toEqual({ sourceIndex: 22, viewportOffset: 4 })
+    })
+
+    it("uses a transient row's reading context without turning it into a durable source target", () => {
+        const scroller = createScroller([
+            { rowTs: 0, readingIndex: 42, top: 90, height: 90 },
+            { rowTs: 500, sourceIndex: 80, top: 180, height: 40 },
+        ])
+        expect(findFirstVisibleSourceRow(scroller)).toEqual({ sourceIndex: 42, viewportOffset: -10 })
+        expect(scroller.querySelector('[data-row-ts="0"]')?.hasAttribute("data-row-source-index")).toBe(false)
+    })
+
+    it("does not manufacture zero from absent metadata or read an offscreen row", () => {
+        const scroller = createScroller([
+            { rowTs: 0, ts: 0, top: 100, height: 50 },
+            { rowTs: 7, sourceIndex: 0, top: 600, height: 50 },
+        ])
+        expect(findFirstVisibleSourceRow(scroller)).toBeNull()
+        expect(findFirstVisibleMessage(scroller)).toEqual({ ts: 0, viewportOffset: 0 })
     })
 })

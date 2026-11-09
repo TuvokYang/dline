@@ -1,4 +1,5 @@
 import React from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { QuickWinTask } from "./quickWinTasks"
 
 interface QuickWinCardProps {
@@ -29,6 +30,8 @@ const renderIcon = (iconName?: string) => {
 }
 
 const QuickWinCard: React.FC<QuickWinCardProps> = ({ task, onExecute }) => {
+    const { t } = useUiTranslation()
+
     return (
         <div
             className="flex items-center mb-2 py-0 px-5 space-x-3 rounded-full cursor-pointer group transition-colors duration-150 ease-in-out bg-white/2 border border-(--vscode-panel-border) hover:bg-(--vscode-list-hoverBackground)"
@@ -39,9 +42,11 @@ const QuickWinCard: React.FC<QuickWinCardProps> = ({ task, onExecute }) => {
 
             <div className="grow min-w-0">
                 <h3 className="text-sm font-medium truncate text-(--vscode-editor-foreground) leading-tight mb-0 mt-0 pt-3">
-                    {task.title}
+                    {t(task.titleKey)}
                 </h3>
-                <p className="text-xs truncate text-(--vscode-descriptionForeground) leading-tight mt-px">{task.description}</p>
+                <p className="text-xs truncate text-(--vscode-descriptionForeground) leading-tight mt-px">
+                    {t(task.descriptionKey)}
+                </p>
             </div>
         </div>
     )

@@ -3,12 +3,16 @@ import { StringRequest } from "@shared/proto/dline/common"
 import { memo, useCallback, useMemo, useState } from "react"
 import { cleanPathPrefix } from "@/components/common/CodeAccordian"
 import { useWorkspaceDisplayPath } from "@/hooks/useWorkspaceDisplayPath"
+import { translateUi, type UiTranslator } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 import { FileServiceClient } from "@/services/grpc-client"
 import type { WorkspacePathFormatter } from "@/utils/workspaceDisplayPath"
 import { getIconByToolName, getToolsNotInCurrentActivities, isLowStakesTool } from "../../utils/messageUtils"
 import { ToolItemRow } from "./ToolItemRow"
 import type { ToolItemText, ToolRowParts } from "./tool-row-layout"
+
+const englishUi: UiTranslator = (key, ...args) => translateUi("en", key, ...args)
 
 interface ToolGroupRendererProps {
     messages: UiMessage[]
@@ -66,29 +70,38 @@ export function formatScale(
     files: number | undefined,
     unit: keyof typeof UNIT_PLURALS,
     truncated = false,
+    t: UiTranslator = englishUi,
 ): string {
     if (count == null) {
         return ""
     }
-    const amount = truncated ? `${count}+` : String(count)
-    const unitLabel = count === 1 && !truncated ? unit : UNIT_PLURALS[unit]
-    if (!files) {
-        return ` (${amount} ${unitLabel})`
-    }
-    return ` (${amount} ${unitLabel} · ${files} file${files === 1 ? "" : "s"})`
+    return t(unit === "match" ? "chatInput.tool.matchScale" : "chatInput.tool.refScale", { count, files, truncated })
 }
 
 /** Render a search as `"terms" in dir/ (pattern) (N matches · M files)`. */
-export function formatSearchDisplay(tool: UiSayTool): ToolItemText & { row: ToolRowParts } {
+export function formatSearchDisplay(tool: UiSayTool, t: UiTranslator = englishUi): ToolItemText & { row: ToolRowParts } {
     const terms = formatSearchTerms(tool.regex || "")
     const cleanedPath = cleanPathPrefix(tool.path || "")
     const pattern = tool.filePattern && tool.filePattern !== "*" ? ` (${tool.filePattern})` : ""
-    const scale = formatScale(tool.count, tool.files, "match", tool.truncated)
+    const scale = formatScale(tool.count, tool.files, "match", tool.truncated, t)
 
     return {
-        displayText: `${terms.displayText} in ${cleanedPath}/${pattern}${scale}`,
-        tooltipText: `${terms.tooltipText} in ${cleanedPath}/${pattern}${scale}`,
-        row: { prefix: terms.displayText, prefixSeparator: " in ", path: `${cleanedPath}/`, suffix: `${pattern}${scale}`.trim() },
+        displayText: t("chatInput.tool.searchDisplay", {
+            target: terms.displayText,
+            path: `${cleanedPath}/`,
+            suffix: `${pattern}${scale}`,
+        }),
+        tooltipText: t("chatInput.tool.searchDisplay", {
+            target: terms.tooltipText,
+            path: `${cleanedPath}/`,
+            suffix: `${pattern}${scale}`,
+        }),
+        row: {
+            prefix: terms.displayText,
+            prefixSeparator: t("chatInput.tool.inSeparator"),
+            path: `${cleanedPath}/`,
+            suffix: `${pattern}${scale}`.trim(),
+        },
     }
 }
 
@@ -97,15 +110,15 @@ export function formatSearchDisplay(tool: UiSayTool): ToolItemText & { row: Tool
  * Falls back to a generic target when the symbol could not be resolved, so the
  * row is never empty.
  */
-export function formatReferencesDisplay(tool: UiSayTool): ToolItemText & { row: ToolRowParts } {
-    const target = tool.symbolName ? `"${tool.symbolName}"` : "references"
+export function formatReferencesDisplay(tool: UiSayTool, t: UiTranslator = englishUi): ToolItemText & { row: ToolRowParts } {
+    const target = tool.symbolName ? `"${tool.symbolName}"` : t("chatInput.tool.references")
     const cleanedPath = cleanPathPrefix(tool.path || "")
-    const scale = formatScale(tool.count, tool.files, "ref")
+    const scale = formatScale(tool.count, tool.files, "ref", false, t)
 
     return {
-        displayText: `${target} in ${cleanedPath}${scale}`,
-        tooltipText: `${target} in ${cleanedPath}${scale}`,
-        row: { prefix: target, prefixSeparator: " in ", path: cleanedPath, suffix: scale.trim() },
+        displayText: t("chatInput.tool.searchDisplay", { target, path: cleanedPath, suffix: scale }),
+        tooltipText: t("chatInput.tool.searchDisplay", { target, path: cleanedPath, suffix: scale }),
+        row: { prefix: target, prefixSeparator: t("chatInput.tool.inSeparator"), path: cleanedPath, suffix: scale.trim() },
     }
 }
 
@@ -114,24 +127,25 @@ export function formatReferencesDisplay(tool: UiSayTool): ToolItemText & { row: 
  * Shares the completed-state formatters so the same operation reads the same
  * way before and after it finishes.
  */
-export function getActivityText(reported: UiSayTool, formatPath: WorkspacePathFormatter = keepReportedPath): ToolItemText | null {
+export function getActivityText(
+    reported: UiSayTool,
+    formatPath: WorkspacePathFormatter = keepReportedPath,
+    t: UiTranslator = englishUi,
+): ToolItemText | null {
     const tool = withDisplayPath(reported, formatPath)
     const cleanedPath = cleanPathPrefix(tool.path || "")
-
     switch (tool.tool) {
         case "readFile": {
-            if (!tool.path) {
-                return null
-            }
-            const lineHint =
-                tool.readLineStart != null && tool.readLineEnd != null ? ` (lines ${tool.readLineStart}-${tool.readLineEnd})` : ""
+            if (!tool.path) return null
+            const start = tool.readLineStart
+            const end = tool.readLineEnd
             return {
-                displayText: `Reading ${cleanedPath}${lineHint}...`,
-                tooltipText: `Reading ${cleanedPath}${lineHint}`,
+                displayText: t("chatInput.tool.reading", { path: cleanedPath, start, end, pending: true }),
+                tooltipText: t("chatInput.tool.reading", { path: cleanedPath, start, end }),
                 row: {
-                    prefix: "Reading",
+                    prefix: t("chatInput.tool.readingPrefix"),
                     path: cleanedPath,
-                    suffix: lineHint ? `lines ${tool.readLineStart}-${tool.readLineEnd}` : "",
+                    suffix: start != null && end != null ? t("chatInput.tool.lines", { start, end }) : "",
                     suffixSeparator: " · ",
                 },
             }
@@ -140,37 +154,35 @@ export function getActivityText(reported: UiSayTool, formatPath: WorkspacePathFo
         case "listFilesRecursive":
             return tool.path
                 ? {
-                      displayText: `Exploring ${cleanedPath}/...`,
-                      tooltipText: `Exploring ${cleanedPath}/`,
-                      row: { prefix: "Exploring", path: `${cleanedPath}/` },
+                      displayText: t("chatInput.tool.exploring", { path: cleanedPath, pending: true }),
+                      tooltipText: t("chatInput.tool.exploring", { path: cleanedPath }),
+                      row: { prefix: t("chatInput.tool.exploringPrefix"), path: `${cleanedPath}/` },
                   }
                 : null
         case "searchFiles": {
-            if (!tool.regex || !tool.path) {
-                return null
-            }
-            const search = formatSearchDisplay(tool)
+            if (!tool.regex || !tool.path) return null
+            const search = formatSearchDisplay(tool, t)
             return {
-                displayText: `Searching ${search.displayText}...`,
-                tooltipText: `Searching ${search.tooltipText}`,
-                row: { ...search.row, prefix: `Searching ${search.row.prefix}` },
+                displayText: t("chatInput.tool.searching", { target: search.displayText, pending: true }),
+                tooltipText: t("chatInput.tool.searching", { target: search.tooltipText }),
+                row: { ...search.row, prefix: t("chatInput.tool.searching", { target: search.row.prefix ?? "" }) },
             }
         }
         case "findReferences": {
             if (!tool.path) return null
-            const references = formatReferencesDisplay(tool)
+            const references = formatReferencesDisplay(tool, t)
             return {
-                displayText: `Finding ${references.displayText}...`,
-                tooltipText: `Finding ${references.tooltipText}`,
-                row: { ...references.row, prefix: `Finding ${references.row.prefix}` },
+                displayText: t("chatInput.tool.finding", { target: references.displayText, pending: true }),
+                tooltipText: t("chatInput.tool.finding", { target: references.tooltipText }),
+                row: { ...references.row, prefix: t("chatInput.tool.finding", { target: references.row.prefix ?? "" }) },
             }
         }
         case "listCodeDefinitionNames":
             return tool.path
                 ? {
-                      displayText: `Analyzing ${cleanedPath}/...`,
-                      tooltipText: `Analyzing ${cleanedPath}/`,
-                      row: { prefix: "Analyzing", path: `${cleanedPath}/` },
+                      displayText: t("chatInput.tool.analyzing", { path: cleanedPath, pending: true }),
+                      tooltipText: t("chatInput.tool.analyzing", { path: cleanedPath }),
+                      row: { prefix: t("chatInput.tool.analyzingPrefix"), path: `${cleanedPath}/` },
                   }
                 : null
         default:
@@ -224,6 +236,7 @@ const getCurrentActivities = (allMessages: UiMessage[]): UiMessage[] => {
  * Shows both completed tools AND currently active tools in a unified list (only for last group).
  */
 export const ToolGroupRenderer = memo(({ messages, allMessages, isLastGroup, showSummary = true }: ToolGroupRendererProps) => {
+    const { t } = useUiTranslation()
     const [expandedItems, setExpandedItems] = useState<Record<number, boolean>>({})
 
     // Filter out tools in the "current activities" range (being shown in loading state)
@@ -255,11 +268,11 @@ export const ToolGroupRenderer = memo(({ messages, allMessages, isLastGroup, sho
                     parsedTool,
                     reasoning: undefined,
                     isActive: true,
-                    activityText: getActivityText(parsedTool, formatPath),
+                    activityText: getActivityText(parsedTool, formatPath, t),
                 }
             })
             .filter((item) => item.activityText)
-    }, [currentActivities, formatPath])
+    }, [currentActivities, formatPath, t])
 
     // Merge: completed items first, then active items (active only added to last group).
     // An active call replaces its own completed entry. Matching is by row identity,
@@ -270,7 +283,10 @@ export const ToolGroupRenderer = memo(({ messages, allMessages, isLastGroup, sho
         return [...completed, ...activeTools]
     }, [completedTools, activeTools])
 
-    const summary = getToolGroupSummaryFromParsedTools(completedTools.map((item) => item.parsedTool))
+    const summary = getToolGroupSummaryFromParsedTools(
+        completedTools.map((item) => item.parsedTool),
+        t,
+    )
 
     const handleOpenFile = useCallback((filePath: string) => {
         FileServiceClient.openFileRelativePath(StringRequest.create({ value: filePath })).catch((err) =>
@@ -294,7 +310,7 @@ export const ToolGroupRenderer = memo(({ messages, allMessages, isLastGroup, sho
             {/* Content - unified list of completed + active tools */}
             <div className="min-w-0">
                 {allTools.map(({ tool, parsedTool, isActive, activityText }) => {
-                    const info = getToolDisplayInfo(parsedTool, formatPath)
+                    const info = getToolDisplayInfo(parsedTool, formatPath, t)
                     if (!info) {
                         return null
                     }
@@ -457,6 +473,7 @@ function pathOnlyText(path: string): ToolItemText {
 export function getToolDisplayInfo(
     reported: UiSayTool,
     formatPath: WorkspacePathFormatter = keepReportedPath,
+    t: UiTranslator = englishUi,
 ): ToolDisplayInfo | null {
     const tool = withDisplayPath(reported, formatPath)
     const icon = getIconByToolName(tool.tool)
@@ -469,7 +486,9 @@ export function getToolDisplayInfo(
     switch (tool.tool) {
         case "readFile": {
             const lineNote =
-                tool.readLineStart != null && tool.readLineEnd != null ? ` · lines ${tool.readLineStart}-${tool.readLineEnd}` : ""
+                tool.readLineStart != null && tool.readLineEnd != null
+                    ? ` · ${t("chatInput.tool.lines", { start: tool.readLineStart, end: tool.readLineEnd })}`
+                    : ""
             const cleaned = cleanPathPrefix(shownFilePath)
             return {
                 icon,
@@ -479,7 +498,10 @@ export function getToolDisplayInfo(
                 tooltipText: `${cleaned}${lineNote}`,
                 row: {
                     path: cleaned,
-                    suffix: lineNote ? `lines ${tool.readLineStart}-${tool.readLineEnd}` : "",
+                    suffix:
+                        tool.readLineStart != null && tool.readLineEnd != null
+                            ? t("chatInput.tool.lines", { start: tool.readLineStart, end: tool.readLineEnd })
+                            : "",
                     suffixSeparator: " · ",
                 },
             }
@@ -495,20 +517,22 @@ export function getToolDisplayInfo(
                 icon,
                 path: folderPath,
                 label: `search: ${tool.regex}`,
-                ...formatSearchDisplay(tool),
+                ...formatSearchDisplay(tool, t),
             }
         case "findReferences":
             return {
                 icon,
                 path: filePath,
                 label: "references",
-                ...formatReferencesDisplay(tool),
+                ...formatReferencesDisplay(tool, t),
             }
         case "renameSymbol": {
-            const newName = tool.regex
-            const preview = tool.dryRun ? " (preview)" : ""
-            const summary = newName ? ` → "${newName}"` : ""
-            const change = `${tool.count ?? "?"} changes in ${tool.files ?? "?"} files${preview}${summary}`
+            const change = t("chatInput.tool.rename", {
+                count: tool.count ?? "?",
+                files: tool.files ?? "?",
+                preview: Boolean(tool.dryRun),
+                name: tool.regex,
+            })
             return {
                 icon,
                 path: filePath,
@@ -518,11 +542,12 @@ export function getToolDisplayInfo(
             }
         }
         case "replaceText": {
-            const find = tool.regex
-            const preview = tool.dryRun ? " (preview)" : ""
-            const change = find
-                ? `"${find}" → (${tool.count ?? "?"} in ${tool.files ?? "?"} files)${preview}`
-                : `${tool.count ?? "?"} changes in ${tool.files ?? "?"} files`
+            const change = t("chatInput.tool.replace", {
+                count: tool.count ?? "?",
+                files: tool.files ?? "?",
+                preview: Boolean(tool.dryRun),
+                find: tool.regex,
+            })
             return {
                 icon,
                 path: filePath,
@@ -539,7 +564,7 @@ export function getToolDisplayInfo(
 /**
  * Get summary label for a tool group - shows what's been added to context.
  */
-export function getToolGroupSummaryFromParsedTools(tools: UiSayTool[]): string {
+export function getToolGroupSummaryFromParsedTools(tools: UiSayTool[], t: UiTranslator = englishUi): string {
     const counts = { read: 0, list: 0, search: 0, def: 0, refs: 0 }
 
     for (const tool of tools) {
@@ -563,26 +588,7 @@ export function getToolGroupSummaryFromParsedTools(tools: UiSayTool[]): string {
         }
     }
 
-    const parts: string[] = []
-    const action = counts.read > 0 || counts.list > 0 ? " read " : " "
-
-    if (counts.read > 0) {
-        parts.push(`${counts.read} file${counts.read > 1 ? "s" : ""}`)
-    }
-    if (counts.list > 0) {
-        parts.push(`${counts.list} folder${counts.list > 1 ? "s" : ""}`)
-    }
-    if (counts.def > 0) {
-        parts.push(`${counts.def} definition${counts.def > 1 ? "s" : ""}`)
-    }
-    if (counts.search > 0) {
-        parts.push(`performed ${counts.search} search${counts.search > 1 ? "es" : ""}`)
-    }
-    if (counts.refs > 0) {
-        parts.push(`found ${counts.refs} reference${counts.refs > 1 ? "s" : ""}`)
-    }
-
-    return parts.length === 0 ? "Context" : `Dline${action}${parts.join(", ")}`
+    return t("chatInput.tool.summary", counts)
 }
 
 /** Props for the expanded content renderer. */

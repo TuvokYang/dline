@@ -1,6 +1,8 @@
 import { OpenAiCodexAuthStatus } from "@shared/proto/dline/account"
 import { CheckCircle2Icon, CircleDashedIcon, LoaderIcon, TriangleAlertIcon } from "lucide-react"
 import { type ReactNode, useEffect } from "react"
+import type { UiTranslator } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ProfileActionRow, ProfileNotice, ProfileSection } from "../profile-ui"
 import { OpenAiCodexOAuthDialog } from "./OpenAiCodexOAuthDialog"
 import { OpenAiCodexUsage } from "./OpenAiCodexUsage"
@@ -32,34 +34,34 @@ interface StatusPresentation {
     guidance?: string
 }
 
-function statusPresentation(status: OpenAiCodexAuthStatus): StatusPresentation {
+function statusPresentation(status: OpenAiCodexAuthStatus, t: UiTranslator): StatusPresentation {
     switch (status) {
         case OpenAiCodexAuthStatus.OPEN_AI_CODEX_AUTH_STATUS_AUTHENTICATED:
-            return { label: "Signed in", severity: "normal" }
+            return { label: t("settings.ui.auth.signedIn"), severity: "normal" }
         case OpenAiCodexAuthStatus.OPEN_AI_CODEX_AUTH_STATUS_REFRESHABLE_EXPIRED:
-            return { label: "Signed in · refreshing", severity: "normal" }
+            return { label: t("settings.ui.auth.refreshing"), severity: "normal" }
         case OpenAiCodexAuthStatus.OPEN_AI_CODEX_AUTH_STATUS_LEGACY_SHARED:
             return {
-                label: "Sign-in required",
+                label: t("settings.ui.auth.required"),
                 severity: "attention",
-                guidance: "This profile needs its own ChatGPT sign-in.",
+                guidance: t("settings.ui.auth.profileHelp"),
             }
         case OpenAiCodexAuthStatus.OPEN_AI_CODEX_AUTH_STATUS_MALFORMED:
             return {
-                label: "Invalid credential",
+                label: t("settings.ui.auth.invalid"),
                 severity: "attention",
-                guidance: "The stored credential cannot be read. Sign in again.",
+                guidance: t("settings.ui.auth.invalidHelp"),
             }
         case OpenAiCodexAuthStatus.OPEN_AI_CODEX_AUTH_STATUS_REAUTHENTICATION_REQUIRED:
             return {
-                label: "Sign-in expired",
+                label: t("settings.ui.auth.expired"),
                 severity: "attention",
-                guidance: "The credential can no longer refresh. Sign in again.",
+                guidance: t("settings.ui.auth.expiredHelp"),
             }
         case OpenAiCodexAuthStatus.OPEN_AI_CODEX_AUTH_STATUS_MISSING:
-            return { label: "Not signed in", severity: "normal" }
+            return { label: t("settings.ui.auth.notSignedIn"), severity: "normal" }
         default:
-            return { label: "Checking", severity: "normal" }
+            return { label: t("settings.ui.auth.checking"), severity: "normal" }
     }
 }
 
@@ -99,12 +101,13 @@ export function OpenAiCodexOAuthControl({
     profileId: string
     onAuthenticatedChange?: (authenticated: boolean) => void
 }) {
+    const { t } = useUiTranslation()
     const flow = useOpenAiCodexOAuthFlow(profileId)
     const authenticated = isOpenAiCodexAuthenticated(flow.status)
-    const presentation = statusPresentation(flow.status)
+    const presentation = statusPresentation(flow.status, t)
     const inProgress = flow.dialog.phase === "starting" || flow.dialog.phase === "active" || flow.dialog.phase === "completing"
     const checking = !inProgress && flow.status === OpenAiCodexAuthStatus.OPEN_AI_CODEX_AUTH_STATUS_UNSPECIFIED
-    const label = inProgress ? "Signing in" : presentation.label
+    const label = inProgress ? t("settings.ui.auth.signingIn") : presentation.label
     const actionsDisabled = flow.busy || inProgress
     const blockingError = flow.statusError ?? (flow.dialog.phase === "closed" ? flow.actionError : undefined)
     const accountName = flow.account?.displayName?.trim()
@@ -117,14 +120,16 @@ export function OpenAiCodexOAuthControl({
     }, [authenticated, onAuthenticatedChange])
 
     return (
-        <ProfileSection aria-label="ChatGPT account">
+        <ProfileSection aria-label={t("settings.ui.auth.account", { provider: "ChatGPT" })}>
             <div className="min-w-0 rounded-xs border border-editor-widget-border/60 bg-toolbar-hover/20 p-2">
                 <ProfileActionRow className="justify-between gap-2">
                     <span className="flex min-w-0 items-center gap-1.5 text-xs text-description">
                         <span aria-hidden="true" className="flex shrink-0 items-center">
                             {statusIcon(flow.status, presentation.severity, checking || inProgress)}
                         </span>
-                        <span className="truncate">ChatGPT: {label}</span>
+                        <span className="truncate">
+                            {t("settings.ui.auth.providerStatus", { provider: "ChatGPT", status: label })}
+                        </span>
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
                         <button
@@ -132,7 +137,7 @@ export function OpenAiCodexOAuthControl({
                             disabled={actionsDisabled}
                             onClick={() => void flow.start()}
                             type="button">
-                            {authenticated ? "Sign in again" : "Sign in"}
+                            {authenticated ? t("settings.ui.auth.signInAgain") : t("settings.ui.auth.signIn")}
                         </button>
                         {authenticated ? (
                             <button
@@ -140,19 +145,19 @@ export function OpenAiCodexOAuthControl({
                                 disabled={actionsDisabled}
                                 onClick={() => void flow.signOut()}
                                 type="button">
-                                Sign out
+                                {t("settings.ui.auth.signOut")}
                             </button>
                         ) : null}
                     </span>
                 </ProfileActionRow>
                 {authenticated ? (
                     <div
-                        aria-label="Signed-in ChatGPT account"
+                        aria-label={t("settings.ui.auth.signedInAccount", { provider: "ChatGPT" })}
                         className="mt-2 min-w-0 border-t border-editor-widget-border/50 pt-2 text-xs text-description"
                         role="group">
                         <div className="flex min-w-0 items-center gap-2">
                             <span className="truncate font-medium text-foreground">
-                                {accountName ?? accountEmail ?? "ChatGPT account"}
+                                {accountName ?? accountEmail ?? t("settings.ui.auth.account", { provider: "ChatGPT" })}
                             </span>
                             {accountType ? (
                                 <span className="shrink-0 rounded-full border border-editor-widget-border bg-toolbar-hover/50 px-1.5 py-0.5 text-[10px] font-medium text-foreground">
@@ -163,11 +168,10 @@ export function OpenAiCodexOAuthControl({
                         {accountEmail && accountEmail !== accountName ? (
                             <div className="mt-0.5 truncate">{accountEmail}</div>
                         ) : null}
-                        {accountExpiry ? <div className="mt-0.5 truncate">Sign-in expires {accountExpiry}</div> : null}
-                        {/* Read on demand like Claude Code: the usage endpoint is
-						    billed against the subscription that serves
-						    conversations, so a timer would spend that budget. */}
-                        <OpenAiCodexUsage enabled pollIntervalMs={null} profileId={profileId} />
+                        {accountExpiry ? (
+                            <div className="mt-0.5 truncate">{t("settings.ui.auth.expires", { date: accountExpiry })}</div>
+                        ) : null}
+                        <OpenAiCodexUsage enabled profileId={profileId} />
                     </div>
                 ) : null}
             </div>

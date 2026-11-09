@@ -3,7 +3,15 @@
 import type { McpMarketplaceCatalog, McpMarketplaceItem } from "@shared/mcp"
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import type { ButtonHTMLAttributes, HTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react"
+import {
+    type ButtonHTMLAttributes,
+    Children,
+    type HTMLAttributes,
+    type InputHTMLAttributes,
+    isValidElement,
+    type ReactNode,
+    type SelectHTMLAttributes,
+} from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import McpMarketplaceView from "./McpMarketplaceView"
 
@@ -43,8 +51,17 @@ vi.mock("@vscode/webview-ui-toolkit/react", () => ({
             {children}
         </button>
     ),
-    VSCodeDropdown: ({ children, ...props }: SelectHTMLAttributes<HTMLSelectElement>) => <select {...props}>{children}</select>,
-    VSCodeOption: (props: React.OptionHTMLAttributes<HTMLOptionElement>) => <option {...props} />,
+    VSCodeDropdown: ({ children, ...props }: SelectHTMLAttributes<HTMLSelectElement>) => (
+        <select {...props}>
+            {Children.toArray(children).filter(
+                (child) => !isValidElement<{ slot?: string }>(child) || child.props.slot !== "selected-value",
+            )}
+        </select>
+    ),
+    VSCodeOption: ({
+        ariaLabel: _ariaLabel,
+        ...props
+    }: React.OptionHTMLAttributes<HTMLOptionElement> & { ariaLabel?: string }) => <option {...props} />,
     VSCodeProgressRing: () => <div data-testid="progress-ring" />,
     VSCodeRadio: ({ children, ...props }: InputHTMLAttributes<HTMLInputElement> & { children?: ReactNode }) => (
         <label>

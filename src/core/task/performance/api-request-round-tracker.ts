@@ -188,6 +188,19 @@ export class ApiRequestRoundTracker {
     }
 
     /** Abort every still-open send and return the exact terminal handles and records for finalization. */
+    /**
+     * The settled record of one send, if it already reached its terminal.
+     *
+     * A consumer that must report the settled numbers of a send it did not itself
+     * finish reads them here instead of re-measuring the duration, so the reported
+     * duration has one source.
+     */
+    roundRecord(handle: ApiRequestRoundHandle): ApiRequestRoundRecord | undefined {
+        const state = this.rounds.get(handle.roundId)
+        if (!state || !sameHandle(state, handle)) return undefined
+        return state.terminalRecord
+    }
+
     abortOpenRounds(): readonly { readonly handle: ApiRequestRoundHandle; readonly record: ApiRequestRoundRecord }[] {
         const aborted: { handle: ApiRequestRoundHandle; record: ApiRequestRoundRecord }[] = []
         for (const state of this.rounds.values()) {

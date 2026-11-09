@@ -1,5 +1,6 @@
 import type { ApiProfile } from "@shared/proto/dline/profile"
 import { PROFILE_PROVIDER_KEYS } from "@shared/providers/profile-model-info"
+import { readProviderConfigField } from "@shared/providers/provider-config"
 
 /**
  * Whether a Profile serves a custom model: exactly when the user switched its
@@ -16,6 +17,5 @@ export function isCustomModel(profile: ApiProfile): boolean {
     if (profile.provider === "bedrock") return profile.bedrock?.awsBedrockCustomSelected === true
     const providerKey = PROFILE_PROVIDER_KEYS[profile.provider]
     const config: unknown = providerKey ? profile[providerKey] : undefined
-    if (typeof config !== "object" || config === null) return false
-    return (config as { customModelEnabled?: unknown }).customModelEnabled === true
+    return readProviderConfigField(config, "customModelEnabled") === true
 }

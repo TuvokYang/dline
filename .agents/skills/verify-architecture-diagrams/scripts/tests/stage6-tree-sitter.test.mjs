@@ -67,6 +67,30 @@ test("Stage 6 proves TypeScript and Python modules without package or tsconfig",
     assert.deepEqual(pyFindings, [])
 })
 
+test("Stage 6 requires every exact qualified symbol instead of accepting its containing class", async (t) => {
+    const root = fixture(t)
+    write(
+        root,
+        "source.ts",
+        "export class Owner { existing() {} readonly field = () => 1 } export class Other { missing() {} foreignField = 1 }",
+    )
+    const inspect = (selector) =>
+        checkAstForTask({
+            task: task("TASK-SYMBOL", [{ path: "source.ts", kind: "symbol", selector }], { modules: new Map(), edges: [] }),
+            wsModules: null,
+            repoRoot: root,
+        })
+    assert.deepEqual(await inspect("Owner.existing"), [])
+    assert.deepEqual(await inspect("Owner.field"), [])
+    for (const selector of ["Owner.missing", "Owner.foreignField", "Owner.existing; Owner.missing", ""]) {
+        assert.equal(
+            (await inspect(selector)).some((finding) => finding.rule === "owned-symbol-unverifiable"),
+            true,
+            selector,
+        )
+    }
+})
+
 test("Stage 6 fails closed for missing symbols and records indirect wiring as not checked", async (t) => {
     const root = fixture(t)
     write(root, "source.mjs", "export function present(){ return 1 }\n")

@@ -298,9 +298,18 @@ async function withinBound(work: Promise<unknown> | undefined): Promise<void> {
     clearTimeout(timer)
 }
 
-/** Error class and code only: messages may carry paths or server text. */
+/**
+ * Error class, code and message.
+ *
+ * A failing cycle used to print `Error` alone, which named neither the step nor
+ * its cause, so a permanently failing delivery was indistinguishable from an
+ * empty log. The message is included because this log is local and content-free:
+ * every message on this path is written here, and none embeds a body, bearer or
+ * server text.
+ */
 function describe(error: unknown): string {
     if (!(error instanceof Error)) return typeof error
     const code = (error as NodeJS.ErrnoException).code
-    return code ? `${error.name} ${code}` : error.name
+    const detail = error.message ? `: ${error.message}` : ""
+    return code ? `${error.name} ${code}${detail}` : `${error.name}${detail}`
 }

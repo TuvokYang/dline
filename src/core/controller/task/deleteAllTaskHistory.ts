@@ -1,8 +1,10 @@
+import { releaseTaskMetricsBeforeDeletion } from "@core/metrics/MetricsDeletionGuard"
 import { DeleteAllTaskHistoryCount } from "@shared/proto/dline/task"
 import fs from "fs/promises"
 import path from "path"
 import { getDlineCheckpointsDir, getDlineDocumentsPath } from "@/core/storage/disk"
 import { closeInstanceStoragesUnder } from "@/core/storage/instance"
+import { findExistingTaskMetricsDatabase } from "@/core/storage/task-metrics-database"
 import { HostProvider } from "@/hosts/host-provider"
 import { ShowMessageRequest, ShowMessageType } from "@/shared/proto/dline/host/window"
 import { Logger } from "@/shared/services/Logger"
@@ -58,7 +60,13 @@ export async function deleteAllTaskHistory(controller: Controller): Promise<Dele
 
                 // Delete non-favorited task directories
                 const preserveTaskIds = favoritedTasks.map((task) => task.id)
-                await cleanupTaskFiles(preserveTaskIds)
+                const removed = await cleanupTaskFiles(preserveTaskIds)
+                if (removed.length < totalTasks - favoritedTasks.length) {
+                    HostProvider.window.showMessage({
+                        type: ShowMessageType.WARNING,
+                        message: `${totalTasks - favoritedTasks.length - removed.length} task(s) could not be removed and were kept.`,
+                    })
+                }
 
                 // Update webview
                 try {
@@ -68,7 +76,11 @@ export async function deleteAllTaskHistory(controller: Controller): Promise<Dele
                 }
 
                 return DeleteAllTaskHistoryCount.create({
-                    tasksDeleted: totalTasks - favoritedTasks.length,
+                    // Only the directories that were really removed are counted. A task
+                    // whose metrics database could not be released is kept on disk, so
+                    // reporting the requested count would claim a deletion that did not
+                    // happen.
+                    tasksDeleted: removed.length,
                 })
             }
             // No favorited tasks found - show warning and ask user what to do
@@ -95,12 +107,13 @@ export async function deleteAllTaskHistory(controller: Controller): Promise<Dele
         controller.stateManager.setGlobalState("taskHistory", [])
         await controller.stateManager.taskHistory.clearAll()
 
+        let removedCount = 0
         try {
             // Remove the per-task directories only. The task history database also
             // lives under `tasks/`, and it is open right now, so removing the whole
             // directory would either fail or destroy the store this process still
             // writes to.
-            await cleanupTaskFiles([])
+            removedCount = (await cleanupTaskFiles([])).length
 
             // Remove checkpoints directory contents
             const checkpointsDirPath = await getDlineCheckpointsDir()
@@ -122,7 +135,7 @@ export async function deleteAllTaskHistory(controller: Controller): Promise<Dele
         }
 
         return DeleteAllTaskHistoryCount.create({
-            tasksDeleted: totalTasks,
+            tasksDeleted: removedCount,
         })
     } catch (error) {
         Logger.error("Error in deleteAllTaskHistory:", error)
@@ -136,9 +149,14 @@ export async function deleteAllTaskHistory(controller: Controller): Promise<Dele
  * Only directories are considered: `tasks/` also holds the task history
  * database, and deleting that file out from under the open store would discard
  * the index this process is still writing to.
+ *
+ * @returns the ids of the directories that were really removed. A directory whose
+ * metrics database could not be released is kept and omitted, so a caller reporting
+ * how many tasks it deleted cannot count a task that still exists on disk.
  */
-async function cleanupTaskFiles(preserveTaskIds: string[]) {
+async function cleanupTaskFiles(preserveTaskIds: string[]): Promise<string[]> {
     const taskDirPath = path.join(await getDlineDocumentsPath(), "tasks")
+    const deleted: string[] = []
 
     try {
         if (await fileExistsAtPath(taskDirPath)) {
@@ -148,20 +166,35 @@ async function cleanupTaskFiles(preserveTaskIds: string[]) {
 
             // Delete only non-preserved task directories
             for (const dir of taskDirs) {
-                if (!preserveTaskIds.includes(dir)) {
-                    // Task dir path is not workspace specific
-                    const taskRoot = path.join(taskDirPath, dir)
-                    await closeInstanceStoragesUnder(taskRoot)
-                    await fs.rm(taskRoot, {
-                        recursive: true,
-                        force: true,
-                    })
+                if (preserveTaskIds.includes(dir)) continue
+                // Task dir path is not workspace specific
+                const taskRoot = path.join(taskDirPath, dir)
+                // The unified metrics database is held outside the instance storage
+                // registry: its writer runs on a worker thread and a history view takes a
+                // read-only lease. Removing the directory while either holds the file
+                // leaves `metrics.db` behind, so release is proven first and a task that
+                // cannot be released is reported as kept instead of counted as deleted.
+                const metricsDatabase = await findExistingTaskMetricsDatabase(dir)
+                if (metricsDatabase) {
+                    const released = await releaseTaskMetricsBeforeDeletion({ taskId: dir, databasePath: metricsDatabase })
+                    if (!released.released) {
+                        Logger.warn(
+                            `[cleanupTaskFiles] Keeping task ${dir}: metrics database was not released (${released.reason ?? "unknown"})`,
+                        )
+                        continue
+                    }
                 }
+                await closeInstanceStoragesUnder(taskRoot)
+                await fs.rm(taskRoot, {
+                    recursive: true,
+                    force: true,
+                })
+                deleted.push(dir)
             }
         }
     } catch (error) {
         Logger.error("Error cleaning up task files:", error)
     }
 
-    return true
+    return deleted
 }

@@ -98,15 +98,16 @@ async function pendingRepairPlan(input: LegacyConversationRepairInput): Promise<
         (entry) => entry.kind === "rewind" && entry.watermark.seq > latestMarker.watermark.seq,
     )
     if (!latestRewind?.target) return undefined
+    const targetSeq = latestRewind.target.seq
     // A rewind whose target includes any completed repair generation retains
     // that generation in the projected prefix. Replaying it would hide later
     // runtime summaries that already supersede the legacy span.
-    if (repairMarkers.some((marker) => marker.watermark.seq <= latestRewind.target!.seq)) return undefined
+    if (repairMarkers.some((marker) => marker.watermark.seq <= targetSeq)) return undefined
 
     const operationSuffix = `@rewind:${latestRewind.watermark.seq}`
     const markerOperationId = `${LEGACY_COMPACTION_MIGRATION_OPERATION}${operationSuffix}`
     if (await input.journal.findByOperation(markerOperationId)) return undefined
-    const facts = factsAt(input, importedLengthAt(recorded, latestRewind.target.seq, input.canonicalLength))
+    const facts = factsAt(input, importedLengthAt(recorded, targetSeq, input.canonicalLength))
     // Restoring before every surviving legacy fact needs no durable generation.
     if (facts.cards.length === 0 && facts.deletedRanges.length === 0) return undefined
     return {

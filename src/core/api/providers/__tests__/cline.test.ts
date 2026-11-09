@@ -78,6 +78,7 @@ describe("ClineHandler", () => {
                                 usage: {
                                     prompt_tokens: 17,
                                     completion_tokens: 9,
+                                    cost: 0,
                                 },
                             },
                         ]),
@@ -104,6 +105,7 @@ describe("ClineHandler", () => {
                 inputTokens: 17,
                 outputTokens: 9,
                 totalCost: 0,
+                currency: "USD",
             },
         ])
     })
@@ -120,6 +122,7 @@ describe("ClineHandler", () => {
                                 usage: {
                                     prompt_tokens: 1000,
                                     completion_tokens: 200,
+                                    cost: 0,
                                     prompt_tokens_details: {
                                         cached_tokens: 500,
                                     },
@@ -150,6 +153,7 @@ describe("ClineHandler", () => {
                 inputTokens: 200,
                 outputTokens: 200,
                 totalCost: 0,
+                currency: "USD",
             },
         ])
     })

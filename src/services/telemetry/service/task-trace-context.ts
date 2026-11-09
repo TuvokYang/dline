@@ -4,6 +4,7 @@ import type {
     ProviderTelemetryRole,
 } from "@shared/provider-attempt-observer"
 import type { ApiRequestRoundUsage } from "@/core/task/performance/api-request-round-types"
+import type { UsageToolCall } from "@/core/task/telemetry/UsageToolCalls"
 import type { ObservabilityAttributes, SignalSpanHandle } from "./pipeline-port"
 
 export interface ProviderAttemptScopeInput {
@@ -29,6 +30,16 @@ export interface TaskTraceSource {
     providerAttemptUsage?(input: ProviderAttemptUsageInput): void
     /** Terminal the logical request after its instrumented ApiHandler stream closes. */
     providerRequestCompleted?(input: ProviderAttemptScopeInput): void
+    /**
+     * Settle one subagent logical request with the tools it asked for. The
+     * Provider stream only produced the calls; the caller executed them.
+     *
+     * This carries no usage: the send's tokens were already reported by the
+     * attempt observer, and only the tool outcomes arrive this late.
+     */
+    providerLogicalToolsSettled?(input: ProviderAttemptScopeInput, toolCalls: readonly UsageToolCall[]): void
+    /** The subagent stream asked for no tool, so deferral is over and the request ends here. */
+    providerLogicalToolsExpected?(input: ProviderAttemptScopeInput): void
 }
 
 const sources = new Map<string, TaskTraceSource>()

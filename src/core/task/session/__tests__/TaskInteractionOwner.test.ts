@@ -58,7 +58,7 @@ function createOwner(options?: {
     readonly publishRow?: (row: UiMessage) => unknown
     readonly submit?: (event: { type: string }) => Promise<{
         readonly kind: "accepted"
-        readonly receipt?: { readonly durable: Promise<void> }
+        readonly receipt?: { readonly revision: number; readonly durable: Promise<void> }
     }>
 }): {
     owner: TaskInteractionOwner
@@ -81,6 +81,7 @@ function createOwner(options?: {
         options?.publishRow,
     )
     const session = {
+        writable: true,
         ...(options?.nextPresentationId ? { owners: { nextPresentationId: options.nextPresentationId } } : {}),
         state: options?.state ?? (() => createInitialTaskState("task-1")),
         assembly: {
@@ -90,6 +91,7 @@ function createOwner(options?: {
                     announce?.()
                     return options?.submit?.(event) ?? { kind: "accepted" as const }
                 },
+                waitForDurable: vi.fn(async () => {}),
             },
         },
     } as unknown as ActiveTaskSession
@@ -106,6 +108,131 @@ function continuationPort(outcome: UnownedDialogOutcome): UnownedDialogContinuat
 }
 
 describe("TaskInteractionOwner", () => {
+    it("keeps a live receiver parked after a retirement commit fails and delivers only after a durable retry", async () => {
+        let failRetirement = true
+        const { owner, whenSubmitted } = createOwner({
+            submit: async (event) => ({
+                kind: "accepted",
+                receipt: {
+                    revision: 1,
+                    durable:
+                        event.type === "dialog.resolved" && failRetirement
+                            ? Promise.reject(new Error("Vault unavailable"))
+                            : Promise.resolve(),
+                },
+            }),
+        })
+        const submitted = whenSubmitted()
+        let delivered = false
+        const waiting = owner.open({ turnId: "turn", interactionId: "question", kind: "followup", presentation: "Choose" })
+        void waiting.then(() => {
+            delivered = true
+        })
+        await submitted
+        const answer = {
+            actionId: "reply" as const,
+            origin: "timeout" as const,
+            draft: { text: "Continue", images: [], files: [] },
+        }
+        expect(await owner.resolve("question", answer)).toBe(false)
+        expect(delivered).toBe(false)
+        failRetirement = false
+        expect(await owner.resolve("question", answer)).toBe(true)
+        expect(await waiting).toEqual(answer)
+    })
+
+    it("retires Resume into the accepted automatic response instead of submitting the recovery draft again", async () => {
+        const base = restoredPrimary("recovery", "resume")
+        const state: TaskState = {
+            ...base,
+            flow: { phase: "paused" },
+            dialog: {
+                ...base.dialog,
+                primary: {
+                    ...base.dialog.primary!,
+                    status: "resolving",
+                    acceptedResponse: { actionId: "resume", stateRevision: 0, receiverGeneration: 0 },
+                },
+                interrupted: {
+                    ...base.dialog.primary!,
+                    interactionId: "ask",
+                    kind: "followup",
+                    status: "resolving",
+                    acceptedResponse: {
+                        actionId: "reply",
+                        origin: "timeout",
+                        deadlineKind: "ask",
+                        stateRevision: 0,
+                        receiverGeneration: 0,
+                    },
+                },
+            },
+        }
+        const continuation = continuationPort("continued")
+        const { owner, submitted } = createOwner({ state: () => state, continuation })
+        expect(await owner.resolve("recovery", { actionId: "resume" })).toBe(true)
+        expect(submitted).toEqual(["dialog.resolved"])
+        expect(continuation.continue).not.toHaveBeenCalled()
+    })
+
+    it("does not reopen or erase a committed automatic answer after an unowned continuation fails", async () => {
+        const base = restoredPrimary("question", "followup")
+        const acceptedResponse = {
+            actionId: "reply",
+            origin: "timeout" as const,
+            deadlineKind: "ask" as const,
+            stateRevision: 0,
+            receiverGeneration: 0,
+        }
+        const state: TaskState = {
+            ...base,
+            flow: { phase: "waiting" },
+            dialog: { ...base.dialog, primary: { ...base.dialog.primary!, status: "resolving", acceptedResponse } },
+        }
+        const continuation = continuationPort("failed")
+        const { owner, submitted } = createOwner({ state: () => state, continuation })
+        expect(await owner.resolve("question", { actionId: "reply", origin: "timeout" })).toBe(false)
+        expect(continuation.continue).toHaveBeenCalledOnce()
+        expect(submitted).toEqual([])
+        expect(state.dialog.primary?.acceptedResponse).toBe(acceptedResponse)
+    })
+
+    it("does not deliver an accepted timeout through a paused session", async () => {
+        const base = restoredPrimary("question", "followup")
+        const state: TaskState = {
+            ...base,
+            flow: { phase: "paused" },
+            dialog: {
+                ...base.dialog,
+                primary: {
+                    ...base.dialog.primary!,
+                    status: "resolving",
+                    acceptedResponse: {
+                        actionId: "reply",
+                        origin: "timeout",
+                        deadlineKind: "ask",
+                        stateRevision: 0,
+                        receiverGeneration: 0,
+                    },
+                },
+            },
+        }
+        const continuation = continuationPort("continued")
+        const { owner, submitted } = createOwner({ state: () => state, continuation })
+        await owner.deliverAutomatic({
+            type: "dialog.deliver_automatic",
+            commandId: "automatic",
+            originRevision: 1,
+            generation: 0,
+            interactionId: "question",
+            turnId: "turn-restored",
+            deadlineKind: "ask",
+        })
+        expect(continuation.continue).not.toHaveBeenCalled()
+        expect(submitted).toEqual([])
+        expect(state.dialog.primary?.acceptedResponse?.origin).toBe("timeout")
+    })
+
     // A compaction review typed beside a completion takes the slot over until it
     // is answered; the kernel restores the completion afterwards.
     it("interrupts the dialog holding the slot when asked to, and requests normally when the slot is free", async () => {
@@ -245,6 +372,33 @@ describe("TaskInteractionOwner", () => {
             }),
         )
         expect(messages.addToClineMessages).not.toHaveBeenCalled()
+    })
+
+    // The preview row is drawn before the command runs, so it cannot know the
+    // directory; the approval states it as a field rather than as a text suffix.
+    it("states a command approval's directory as a field on the row it takes over", async () => {
+        const rows: UiMessage[] = [{ ts: 10, type: "say", say: "command", text: "npm test", partial: true }]
+        const messages = createMessages(rows)
+        const { owner } = createOwner({ messages, nextPresentationId: () => 50 })
+
+        await owner.anchor({
+            interactionId: "approval:tid-command",
+            kind: "tool_approval",
+            ask: "command",
+            body: "npm test",
+            row: 10,
+            workingDirectory: "/tmp/elsewhere",
+        })
+
+        expect(messages.finalizeClineMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                ts: 10,
+                text: "npm test",
+                command: "npm test",
+                commandWorkingDirectory: "/tmp/elsewhere",
+                commandAsksApproval: true,
+            }),
+        )
     })
 
     // Every tool streams its card before approval, not only commands: a Web Fetch
@@ -650,7 +804,7 @@ describe("TaskInteractionOwner", () => {
         const { owner, whenSubmitted } = createOwner({
             submit: async (event) =>
                 event.type === "dialog.resolved"
-                    ? { kind: "accepted", receipt: { durable: retirementDurable } }
+                    ? { kind: "accepted", receipt: { revision: 1, durable: retirementDurable } }
                     : { kind: "accepted" },
         })
         const waiting = owner.open({ turnId: "turn-1", interactionId: "i-1", kind: "followup", presentation: "ask" })

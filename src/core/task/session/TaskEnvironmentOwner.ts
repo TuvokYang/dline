@@ -32,6 +32,7 @@ export interface TaskEnvironmentOwnerOptions {
     readonly subagents: BackgroundSubagentProvider
     readonly readState: () => Readonly<TaskState>
     readonly focusChain?: FocusChainInstructionPort
+    readonly beforeRequest?: () => Promise<void>
 }
 
 /**
@@ -46,7 +47,7 @@ export class TaskEnvironmentOwner implements ComposeEnvironmentPort {
     private readonly projection: TaskEnvironmentProjection
     private renderedFileDetails = false
 
-    constructor(options: TaskEnvironmentOwnerOptions) {
+    constructor(private readonly options: TaskEnvironmentOwnerOptions) {
         this.projection = new TaskEnvironmentProjection({
             identity: { taskId: options.taskId, cwd: options.cwd },
             host: options.host,
@@ -66,9 +67,10 @@ export class TaskEnvironmentOwner implements ComposeEnvironmentPort {
         })
     }
 
-    async render(input: { readonly signal: AbortSignal }): Promise<string | undefined> {
+    async render(input: { readonly signal: AbortSignal; readonly turnId?: string }): Promise<string | undefined> {
         if (input.signal.aborted) throw input.signal.reason
-        const text = await this.projection.build(!this.renderedFileDetails)
+        await this.options.beforeRequest?.()
+        const text = await this.projection.build(!this.renderedFileDetails, undefined, { requestId: input.turnId })
         if (input.signal.aborted) throw input.signal.reason
         this.renderedFileDetails = true
         // The snapshot is journaled with the round, so what it described is now

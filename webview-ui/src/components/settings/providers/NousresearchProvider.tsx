@@ -28,7 +28,6 @@ export const NousResearchProvider = ({ showModelOptions, isPopup, profile, onUpd
             {showModelOptions && (
                 <>
                     <ModelSelector
-                        label="Model"
                         models={models}
                         onChange={(e) =>
                             onUpdate({

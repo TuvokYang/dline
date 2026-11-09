@@ -1,4 +1,5 @@
 import { StringRequest } from "@shared/proto/dline/common"
+import type { UiTranslator } from "@/i18n/messages"
 import { WebServiceClient } from "@/services/grpc-client"
 
 // Represents a URL found in the text with its position and metadata
@@ -22,7 +23,7 @@ export interface DisplaySegment {
  * Truncates a single data URI to show prefix + first 20 chars
  * e.g. "data:image/png;base64,iVBORw0KGgo..." becomes "[IMAGE] data:image/png;base64,iVBORw0KGgoAAAANS..."
  */
-export const truncateSingleDataUri = (dataUri: string): string => {
+export const truncateSingleDataUri = (dataUri: string, t: UiTranslator): string => {
     const commaIndex = dataUri.indexOf(",")
     if (commaIndex === -1) {
         return dataUri
@@ -30,15 +31,15 @@ export const truncateSingleDataUri = (dataUri: string): string => {
     const dataStart = commaIndex + 1
     const data = dataUri.substring(dataStart)
     const truncatedData = data.length > 20 ? `${data.substring(0, 20)}...` : data
-    return `[IMAGE] ${dataUri.substring(0, dataStart)}${truncatedData}`
+    return `${t("capabilities.mcp.imageMarker")} ${dataUri.substring(0, dataStart)}${truncatedData}`
 }
 
 /**
  * Truncates all data URIs in text
  * e.g. "data:image/png;base64,iVBORw0KGgo..." becomes "[IMAGE] data:image/png;base64,iVBORw..."
  */
-export const truncateDataUris = (text: string): string => {
-    return text.replace(/data:[^;,]+(?:;[^,]+)?,[^\s<>"']+/g, (match) => truncateSingleDataUri(match))
+export const truncateDataUris = (text: string, t: UiTranslator): string => {
+    return text.replace(/data:[^;,]+(?:;[^,]+)?,[^\s<>"']+/g, (match) => truncateSingleDataUri(match, t))
 }
 
 // Safely create a URL object with error handling and ensure HTTPS
@@ -343,8 +344,8 @@ export const processResponseUrls = (
 
             // Process URLs in the background
             await processUrlTypes(matches, onMatchesUpdated, cancellationToken)
-        } catch (_error) {
-            onError("Failed to process response content. Switch to plain text mode to view safely.")
+        } catch (error) {
+            onError(error instanceof Error ? error.message : String(error))
         }
     }
 
@@ -364,7 +365,7 @@ export const processResponseUrls = (
  * @param urlMatches - Array of URL matches with their positions and types
  * @returns Array of display segments describing how to render the content
  */
-export const buildDisplaySegments = (responseText: string, urlMatches: UrlMatch[]): DisplaySegment[] => {
+export const buildDisplaySegments = (responseText: string, urlMatches: UrlMatch[], t: UiTranslator): DisplaySegment[] => {
     const segments: DisplaySegment[] = []
     let lastIndex = 0
     let segmentIndex = 0
@@ -396,7 +397,7 @@ export const buildDisplaySegments = (responseText: string, urlMatches: UrlMatch[
 
         // Add the URL text itself (truncate data URIs since they're very long)
         const isDataUri = url.startsWith("data:")
-        const urlContent = isDataUri ? truncateSingleDataUri(fullMatch) : fullMatch
+        const urlContent = isDataUri ? truncateSingleDataUri(fullMatch, t) : fullMatch
         segments.push({
             type: "url",
             content: urlContent,

@@ -4,6 +4,8 @@ import type { InteractionActionType } from "./Interaction"
 
 /** Draft content submitted with an interaction action. */
 export interface InteractionDraft {
+    /** Added by trusted admission, never decoded from the Webview request. */
+    admittedInputRef?: string
     text: string
     images: string[]
     files: string[]

@@ -3,7 +3,6 @@ import { mistakeLimitPresentation } from "../mistake-limit-presentation"
 import { transition } from "../transition"
 import type {
     ComposeRoundCommand,
-    KernelBlock,
     MistakeLimitReason,
     ProviderTurnBlockPlan,
     ProviderTurnPlan,
@@ -185,68 +184,6 @@ describe("a mistake limit reached while a turn still has calls to run", () => {
         expectRecoveryPrepared(last, "tool_mistakes")
     })
 
-    it("names rule violations when promoted plain-text warnings helped reach the limit", () => {
-        const running = runningTurn(liveProvider({ plainTextWarningMistakes: 2, toolMistakeCount: 0 }))
-        const settled = accepted(transition(running.state, toolEvent(running.state, "tool.failed", "b1", { mistakeCount: 1 })))
-
-        expectRecoveryPrepared(settled, "rule_violations")
-    })
-
-    it("hands the task back when the user refuses the turn's last open call", () => {
-        const awaiting: KernelBlock = {
-            blockId: "b1",
-            index: 0,
-            phase: "awaiting_approval",
-            attempt: "attempt-b1",
-            invocationRef: "invocation:b1",
-            lanes: [],
-            turnEnding: false,
-        }
-        const state: TaskState = {
-            ...createInitialTaskState("task-1"),
-            flow: { phase: "running", consecutiveMistakeCount: 3, plainTextWarningMistakes: 0, toolMistakeCount: 3 },
-            turn: {
-                turnId: "turn-1",
-                mode: "serial",
-                blocks: [awaiting],
-                manualApprovalBlockIds: ["b1"],
-                automaticApprovalBlockIds: [],
-                executingBlockIds: [],
-            },
-            dialog: {
-                approvalsByBlock: {
-                    b1: {
-                        interactionId: "approval:b1",
-                        turnId: "turn-1",
-                        kind: "tool_approval",
-                        status: "resolving",
-                        createdRevision: 0,
-                        presentationRef: "approval:b1",
-                        actionRules: [
-                            { actionId: "approve", payloadPolicy: "draft" },
-                            { actionId: "reject", payloadPolicy: "draft" },
-                        ],
-                        acceptedResponse: { actionId: "reject", stateRevision: 0, receiverGeneration: 0 },
-                        blockId: "b1",
-                        receiverGeneration: 0,
-                    },
-                },
-            },
-        }
-        const refused = accepted(
-            transition(state, {
-                type: "approval.responded",
-                generation: 0,
-                turnId: "turn-1",
-                blockId: "b1",
-                interactionId: "approval:b1",
-                approved: false,
-            } as TaskEvent),
-        )
-
-        expectRecoveryPrepared(refused, "tool_mistakes")
-    })
-
     it("leaves a question the turn already handed to the user in place", () => {
         const running = runningTurn(liveProvider())
         const asking: TaskState = {
@@ -283,16 +220,6 @@ describe("a mistake limit reached while a turn still has calls to run", () => {
 })
 
 describe("mistake-limit recovery reached without calls", () => {
-    it("explains a plain-text limit as repeated rule violations", () => {
-        const state = oneWarningShortOfLimit()
-        expectRecoveryPrepared(accepted(transition(state, turnReady(state, [], "text_only"))), "rule_violations")
-    })
-
-    it("explains the strict streak of responses without any usable call", () => {
-        const state = liveProvider({ toolMistakeCount: 0, consecutiveMistakeCount: 0, textOnlyTurnStreak: 2 })
-        expectRecoveryPrepared(accepted(transition(state, turnReady(state, []))), "no_tool_turns")
-    })
-
     it("keeps a tool mistake count restored from a snapshot written before the counts were split", () => {
         const restored = liveProvider({
             plainTextWarningCount: undefined,

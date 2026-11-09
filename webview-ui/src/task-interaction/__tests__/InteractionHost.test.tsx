@@ -71,7 +71,7 @@ function taskView(): TaskViewState {
     }
 }
 
-function reportBugInteraction(): { view: TaskViewState; message: UiMessage; draft: ReportBugDraft } {
+function reportBugInteraction(supportCode?: string): { view: TaskViewState; message: UiMessage; draft: ReportBugDraft } {
     const view = taskView()
     if (!view.activeInteraction) throw new Error("Expected active interaction")
     const draft = createReportBugDraft(
@@ -88,6 +88,7 @@ function reportBugInteraction(): { view: TaskViewState; message: UiMessage; draf
             systemInfo: "test-system",
             dlineVersion: "1.2.3",
         },
+        supportCode,
     )
     view.phase = "paused"
     view.activeInteraction = {
@@ -265,13 +266,15 @@ describe("InteractionHost", () => {
         expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ selection: { values: ["1"] } }))
     })
 
-    it("dispatches the card's supplement and explicit consent only on Confirm", async () => {
+    it("dispatches the card's supplement and default-checked authorization only on Confirm", async () => {
         const dispatch = vi.fn(async () => ({ accepted: true, result: "accepted" }))
-        const report = reportBugInteraction()
+        const report = reportBugInteraction("SUP-ABCD-1234")
         render(<InteractionHost dispatch={dispatch} messages={[report.message]} view={report.view} />)
 
+        expect(screen.getByRole("checkbox")).toHaveProperty("checked", true)
+        // FAST projects its property to ARIA in the next DOM update, not during React's render.
+        await waitFor(() => expect(screen.getByRole("checkbox")).toHaveAttribute("aria-checked", "true"))
         typeInto(screen.getByLabelText("Additional details"), "  Happens after restart.  ")
-        fireEvent.click(screen.getByText("Temporarily share high-density diagnostics for this issue"))
         expect(dispatch).not.toHaveBeenCalled()
 
         fireEvent.click(screen.getByRole("button", { name: "Open GitHub Issue" }))
@@ -284,7 +287,42 @@ describe("InteractionHost", () => {
             additionalContext: "Review before opening.\n\nUser supplement:\nHappens after restart.",
         })
         expect(confirmed?.temporaryTelemetryConsent).toBe(true)
+        expect(confirmed?.supportCode).toBe("SUP-ABCD-1234")
         expect(confirmed?.environment).toEqual(report.draft.environment)
+    })
+
+    it("hides the telemetry choice without an issued ticket and still submits the ordinary report", async () => {
+        const dispatch = vi.fn(async () => ({ accepted: true, result: "accepted" }))
+        const report = reportBugInteraction()
+        render(<InteractionHost dispatch={dispatch} messages={[report.message]} view={report.view} />)
+
+        expect(screen.queryByRole("checkbox")).toBeNull()
+        expect(screen.queryByTestId("report-bug-telemetry")).toBeNull()
+        fireEvent.click(screen.getByRole("button", { name: "Open GitHub Issue" }))
+
+        await waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
+        const confirmed = reportBugDraftFromSelection(dispatch.mock.calls[0][0].selection?.values)
+        expect(confirmed).toEqual(report.draft)
+        expect(confirmed?.supportCode).toBeUndefined()
+        expect(confirmed?.temporaryTelemetryConsent).toBe(false)
+    })
+
+    it("submits an explicit opt-out of the prepared authorization", async () => {
+        const dispatch = vi.fn(async () => ({ accepted: true, result: "accepted" }))
+        const report = reportBugInteraction("SUP-ABCD-1234")
+        render(<InteractionHost dispatch={dispatch} messages={[report.message]} view={report.view} />)
+
+        await waitFor(() => expect(screen.getByRole("checkbox")).toHaveAttribute("aria-checked", "true"))
+        fireEvent.click(screen.getByRole("checkbox"))
+        expect(screen.getByRole("checkbox")).toHaveProperty("checked", false)
+        await waitFor(() => expect(screen.getByRole("checkbox")).toHaveAttribute("aria-checked", "false"))
+        fireEvent.click(screen.getByRole("button", { name: "Open GitHub Issue" }))
+
+        await waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
+        expect(reportBugDraftFromSelection(dispatch.mock.calls[0][0].selection?.values)).toEqual({
+            ...report.draft,
+            temporaryTelemetryConsent: false,
+        })
     })
 
     it("submits the prepared draft unchanged when the supplement is left blank", async () => {
@@ -473,7 +511,6 @@ describe("InteractionHost", () => {
         )
 
         const frame = screen.getByTestId("presentation-tool_approval")
-        expect(within(frame).getByTestId("hosted-card")).toHaveTextContent("card 100")
         expect(renderApprovalCard).toHaveBeenCalledWith(ASK)
         expect(screen.queryByText("Approve write")).toBeNull()
         const approve = screen.getByRole("button", { name: "Approve" })

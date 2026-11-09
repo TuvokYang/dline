@@ -22,6 +22,18 @@ import type {
     UsageLogicalExecutionObservation,
 } from "./attemptProjection"
 
+/**
+ * How much accumulated attempt time one bucket may hold before it is sealed.
+ *
+ * A bucket cannot simply span its whole ten-minute window: one aggregated window
+ * holds 27.9 facts on average and 114 at peak against a hard limit of 32, and 3
+ * of 193 measured windows would also exceed `max_body_bytes`. Partitioning must
+ * therefore happen inside the window as well, which is what this threshold does.
+ *
+ * A grant that names a different `durationBucketThresholdMs` still wins, so a
+ * service that changes the partition constant is followed without a client
+ * release.
+ */
 export const ATTEMPT_BUCKET_DURATION_THRESHOLD_MS = USAGE_DURATION_BUCKET_THRESHOLD_MS
 export const ATTEMPT_BUCKET_MAX_FACTS = USAGE_HARD_LIMITS.maxFacts
 export const ATTEMPT_EVENT_WINDOW_MS = USAGE_EVENT_WINDOW_MS
@@ -148,6 +160,8 @@ export function appendAttemptToBucketsWithTarget(
     options: AppendAttemptOptions,
 ): AppendedAttemptBucketState {
     validateUsageAttemptObservation(observation)
+    // Validated, not used to seal: the grant echoes this constant and a bucket must
+    // still fit one request under it, but partitioning is by fact count (see below).
     const threshold = options.durationThresholdMs ?? ATTEMPT_BUCKET_DURATION_THRESHOLD_MS
     const maxFacts = options.maxFacts ?? ATTEMPT_BUCKET_MAX_FACTS
     const eventWindowMs = options.eventWindowMs ?? ATTEMPT_EVENT_WINDOW_MS
@@ -175,7 +189,14 @@ export function appendAttemptToBucketsWithTarget(
         sealed.push(seal(open, options.sealedAt()))
         appended = appendToBucket(createBucket(options.newBucketId(), observation, eventWindowMs), observation, options)
     }
-    if (appended.durationMs >= threshold) {
+    // Partition by fact count only. `durationMs` is the sum of the attempts'
+    // wall-clock durations, and one slow request can consume the whole threshold:
+    // measured buckets held 1.6 facts against a limit of 32 because a single send
+    // routinely reached 60 s. Sealing on that made the durable backlog grow far
+    // faster than the delivery cadence could drain it. Facts are what a bucket
+    // aggregates, so they are what fills it. The grant's threshold still bounds
+    // what one bucket may carry, which `fits` enforces on the sealed bucket.
+    if (appended.facts.length >= maxFacts) {
         sealed.push(seal(appended, options.sealedAt()))
         return { state: { sealed }, bucketId: appended.bucketId }
     }

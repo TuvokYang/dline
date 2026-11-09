@@ -114,7 +114,7 @@ async function harness(kind: string, toolName: string, actionId: string, options
             if (result.kind === "rejected") return result
             state = result.state
             submitted.push(event)
-            return { kind: "accepted", receipt: { durable: Promise.resolve() } }
+            return { kind: "accepted", receipt: { revision: state.revision, durable: Promise.resolve() } }
         }),
     }
     const reveal = restored.initialCommands.find((command) => command.type === "dialog.reveal")
@@ -131,6 +131,10 @@ async function harness(kind: string, toolName: string, actionId: string, options
         clineMessages: rows,
         addToClineMessages: vi.fn(async (row: UiMessage) => {
             rows.push(row)
+        }),
+        addToClineMessagesOrdered: vi.fn(async (row: UiMessage) => {
+            rows.push(row)
+            rows.sort((left, right) => left.ts - right.ts)
         }),
         flushUiMessages: vi.fn(async () => undefined),
         updateClineMessage: vi.fn(),
@@ -159,6 +163,7 @@ async function harness(kind: string, toolName: string, actionId: string, options
     const owner = new TaskInteractionOwner(messages, payloads, continuation)
     const onTurnEndAwaiting = vi.fn()
     owner.bind({
+        writable: true,
         state: () => state,
         assembly: { runtime },
         owners: { nextPresentationId: () => ts++ },

@@ -1,3 +1,4 @@
+import { formatResponse } from "@core/prompts/responses"
 import type { UiAskQuestion, UiMessage } from "@shared/ExtensionMessage"
 import {
     ADMITTED_SUBMISSION,
@@ -7,7 +8,9 @@ import {
     submittedRowFields,
 } from "@shared/input-semantics/submitted-input"
 import { Logger } from "@shared/services/Logger"
+import { DlineDefaultTool } from "@shared/tools"
 import { serializeDurableToolResult, toolResultReplayOf } from "../DurableToolResult"
+import { FocusChainPrompts } from "../focus-chain/prompts"
 import { interactionKindForToolName, projectInteractionContinuation } from "../interaction/InteractionContinuation"
 import type { InteractionOutcome } from "../interaction/InteractionProtocol"
 import type { KernelBlock, TaskState } from "../kernel"
@@ -72,6 +75,7 @@ const never = () => false
  */
 const RESTORED_TOOL_DIALOG_POLICIES: ReadonlyMap<string, RestoredToolDialogPolicy> = new Map<string, RestoredToolDialogPolicy>([
     ["followup", { replacesInterruption: always }],
+    ["command_approval", { replacesInterruption: always }],
     ["make_plan", { replacesInterruption: never }],
     ["qna_response", { replacesInterruption: never }],
     ["generate_report", { replacesInterruption: never }],
@@ -117,8 +121,8 @@ export interface RestoredToolDialogPorts {
      * such an answer cannot take effect, so the dialog stays answerable instead.
      */
     readonly publishPostCommit?: PostCommitPublisher
-    /** Replays the report's confirmed external effect before recording its restored tool result. */
-    readonly reportBug?: (outcome: InteractionOutcome) => Promise<boolean>
+    /** Replays the report's effect; cancellation needs the persisted preview because it carries no selection. */
+    readonly reportBug?: (outcome: InteractionOutcome, presentation?: string) => Promise<boolean>
     /**
      * Admit a reply that names a command or mention, as `TaskInputMaterializer.admitReply` does.
      *
@@ -177,14 +181,17 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
             const target = await this.target(block, resolution)
             if (!target) return false
             // `continue` submits the answer as ordinary input, which writes its own row.
-            if (target.recorded === "failed") return true
+            if (target.recorded === "failed") {
+                if (resolution.outcome.roundMaterialOwned) await this.present(resolution, resolution.outcome.draft, undefined)
+                return true
+            }
             // Admitted before anything acts or is shown, so a reply admission
             // refuses leaves the dialog answerable with nothing done.
             const reply = await this.reply(target, resolution)
             if (
                 target.kind === "report_bug" &&
                 target.recorded === "none" &&
-                !(await this.ports.reportBug?.(resolution.outcome))
+                !(await this.ports.reportBug?.(resolution.outcome, this.reportBugPresentation(resolution.interactionId)))
             ) {
                 return false
             }
@@ -213,18 +220,53 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
         const { invocation, kind, turnId, operationId } = target
         const draft = resolution.outcome.draft
         const reply = await this.reply(target, resolution)
-        const result = await projectInteractionContinuation({
-            kind,
-            functionId: invocation.functionId,
-            dlineTid: invocation.dlineTid,
-            chatContent: { message: reply?.modelText ?? draft?.text, images: draft?.images, files: draft?.files },
-            actionId: resolution.outcome.actionId,
-        })
+        const result =
+            kind === "command_approval"
+                ? {
+                      toolResult: {
+                          type: "tool_result" as const,
+                          function_id: invocation.functionId,
+                          dline_tid: invocation.dlineTid,
+                          content: [
+                              {
+                                  type: "text" as const,
+                                  text:
+                                      resolution.outcome.origin === "timeout"
+                                          ? formatResponse.awayCommandTimeout()
+                                          : formatResponse.interruptedCommand(),
+                              },
+                          ],
+                      },
+                      documents: [],
+                  }
+                : await projectInteractionContinuation({
+                      kind,
+                      functionId: invocation.functionId,
+                      dlineTid: invocation.dlineTid,
+                      chatContent: resolution.outcome.roundMaterialOwned
+                          ? undefined
+                          : { message: reply?.modelText ?? draft?.text, images: draft?.images, files: draft?.files },
+                      actionId: resolution.outcome.actionId,
+                  })
         const documentPayloadRefs = await putAttachedDocuments(this.ports.payloads, result.documents)
+        // Keep the live call's ignored-parameter diagnostic in the restored answer,
+        // but never execute its progress update or show a duplicate warning row.
+        const toolResult =
+            kind === "completion" && Object.hasOwn(invocation.input, "task_progress")
+                ? {
+                      ...result.toolResult,
+                      content: [
+                          ...(typeof result.toolResult.content === "string"
+                              ? [{ type: "text" as const, text: result.toolResult.content }]
+                              : result.toolResult.content),
+                          { type: "text" as const, text: FocusChainPrompts.ignoredCompletionProgress },
+                      ],
+                  }
+                : result.toolResult
         const envelope: ToolResultEnvelope = {
             kind: "tool_result",
             blockId: invocation.dlineTid,
-            content: serializeDurableToolResult(result.toolResult, toolResultReplayOf(invocation)),
+            content: serializeDurableToolResult(toolResult, toolResultReplayOf(invocation)),
             ...(documentPayloadRefs ? { documentPayloadRefs } : {}),
             // The result carries the reply's text; the ref only keeps the authority its admission granted.
             ...(reply ? { feedbackInputRefs: [reply.payloadRef] } : {}),
@@ -247,7 +289,7 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
             if (!(await this.prepare(resolution))) return "failed"
             const target = await this.target(block, resolution)
             if (this.fallback.accepts(resolution) && target?.recorded === "failed") {
-                return this.fallback.continue(resolution)
+                return resolution.outcome.roundMaterialOwned ? this.resume(resolution) : this.fallback.continue(resolution)
             }
             if (target?.postCommit) return await this.commit(target, target.postCommit, resolution)
             return await this.resume(resolution)
@@ -316,7 +358,8 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
      */
     private reply(target: RestoredToolTarget, resolution: UnownedDialogResolution): Promise<AdmittedReply | undefined> {
         const draft = resolution.outcome.draft
-        if (!draft || resolution.queuedInput || target.recorded !== "none") return Promise.resolve(undefined)
+        if (!draft || resolution.outcome.origin === "timeout" || resolution.queuedInput || target.recorded !== "none")
+            return Promise.resolve(undefined)
         let admission = this.admissions.get(resolution)
         if (!admission) {
             admission = this.ports.admitReply(dialogAnswerOf(draft))
@@ -328,7 +371,12 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
     /** The tool behind a restored dialog, or undefined when the dialog does not belong to its block's tool. */
     private async target(block: KernelBlock, resolution: UnownedDialogResolution): Promise<RestoredToolTarget | undefined> {
         const invocation = decodeTaskPayload<ToolInvocationEnvelope>(await this.ports.payloads.read(block.invocationRef))
-        const kind = invocation.kind === "tool_invocation" ? interactionKindForToolName(invocation.toolName) : undefined
+        const kind =
+            invocation.kind !== "tool_invocation"
+                ? undefined
+                : resolution.kind === "command_approval" && invocation.toolName === DlineDefaultTool.BASH
+                  ? "command_approval"
+                  : interactionKindForToolName(invocation.toolName)
         const policy = kind ? RESTORED_TOOL_DIALOG_POLICIES.get(kind) : undefined
         if (!kind || !policy || kind !== resolution.kind || invocation.dlineTid !== block.blockId) return undefined
         const effect = policy.effect?.(invocation, resolution) ?? RESUME
@@ -389,6 +437,13 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
             .turn.blocks.find((block) => block.blockId === resolution.interactionId && block.phase === "cancelled")
     }
 
+    /** The exact report's persisted preview owns its pre-issued public code, including after restart. */
+    private reportBugPresentation(interactionId: string): string | undefined {
+        return this.ports.messages.clineMessages.find(
+            (row) => row.type === "ask" && row.ask === "report_bug" && row.interactionId === interactionId,
+        )?.text
+    }
+
     /** Show the answer as the live handler does: the picked option and one feedback row. */
     private async present(
         resolution: UnownedDialogResolution,
@@ -406,7 +461,7 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
                 await this.publish(messages.clineMessages[index])
             }
         }
-        if (resolution.outcome.feedbackPresented || !draft) return
+        if (resolution.outcome.feedbackPresented || resolution.outcome.origin === "timeout" || !draft) return
         // A reply admitted as input shows what acted in it. Otherwise nothing in
         // it ran: it is shown as typed, and a structured reply names its
         // resources without resolving them.

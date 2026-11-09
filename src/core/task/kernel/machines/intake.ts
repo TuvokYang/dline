@@ -14,6 +14,7 @@ export const INTAKE_BOX_LIMIT = 32
 export interface IntakeReductionContext {
     readonly admittedEntryIds?: readonly EntryId[]
     readonly journalWatermark?: JournalWatermark
+    readonly acceptedRevision?: number
 }
 
 export interface IntakeReduction {
@@ -160,6 +161,7 @@ export function reduceIntake(state: IntakeSlice, event: TaskEvent, context: Inta
                     source: "user",
                     mode: event.mode ?? "queued",
                     sequence: nextSequence(state.queued),
+                    userControl: event.userControl,
                     queue: { editing: false },
                     state: "accepted",
                 }),
@@ -192,7 +194,15 @@ export function reduceIntake(state: IntakeSlice, event: TaskEvent, context: Inta
     if (event.type === "input_queue.edit_committed") {
         return {
             state: updateAllBoxes(state, [event.entryId], (entry) =>
-                isMutableRetainedEntry(entry) ? { ...entry, payloadRef: event.payloadRef, queue: { editing: false } } : entry,
+                isMutableRetainedEntry(entry)
+                    ? {
+                          ...entry,
+                          payloadRef: event.payloadRef,
+                          userControl: event.userControl,
+                          acceptedRevision: undefined,
+                          queue: { editing: false },
+                      }
+                    : entry,
             ),
             commands: [],
         }
@@ -241,6 +251,8 @@ export function reduceIntake(state: IntakeSlice, event: TaskEvent, context: Inta
                     source: "user",
                     mode: event.mode ?? "queued",
                     sequence: nextSequence(state.queued, event.sequence),
+                    acceptedRevision: context.acceptedRevision,
+                    userControl: event.userControl,
                     state: "accepted",
                 }),
             },

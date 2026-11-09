@@ -83,6 +83,42 @@ describe("TaskApiResponseExecutionRepository", () => {
         ).rejects.toThrow("API response execution Task mismatch")
     })
 
+    it("persists an explicit zero-tool settlement without changing its terminal identity", async () => {
+        const location = path.join(root, "zero-tools.db")
+        const record: ApiResponseExecutionRecord = {
+            ...execution("task-a:request-a:provider:0", 0, 11_000),
+            toolCount: 0,
+            completedToolCount: 0,
+            failedToolCount: 0,
+            cancelledToolCount: 0,
+        }
+        const writer = new TaskApiResponseExecutionRepository({ taskId: "task-a", location })
+        repositories.push(writer)
+
+        await writer.append([record])
+        await writer.close()
+
+        const reader = new TaskApiResponseExecutionRepository({ taskId: "task-a", location, readOnly: true })
+        repositories.push(reader)
+        await expect(reader.readRange({ startMs: 10_000, endMs: 12_000, maxPoints: 10 })).resolves.toEqual([record])
+    })
+
+    it("rejects a zero-tool turn-end interaction without writing an execution", async () => {
+        const repository = new TaskApiResponseExecutionRepository({ taskId: "task-a", location: path.join(root, "turn-end.db") })
+        repositories.push(repository)
+        const record: ApiResponseExecutionRecord = {
+            ...execution("task-a:request-a:provider:0", 0, 11_000),
+            terminalKind: "turn_end_awaiting_user",
+            toolCount: 0,
+            completedToolCount: 0,
+            failedToolCount: 0,
+            cancelledToolCount: 0,
+        }
+
+        await expect(repository.append([record])).rejects.toThrow()
+        await expect(repository.readRecent()).resolves.toEqual([])
+    })
+
     it("does not repeat an initialization failure while closing", async () => {
         const repository = new TaskApiResponseExecutionRepository({ taskId: "task-a", location: root })
         repositories.push(repository)

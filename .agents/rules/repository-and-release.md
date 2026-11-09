@@ -1,6 +1,8 @@
 # Repository, Branch, and Release Contract
 
-This rule defines repository discovery, fork safety, branch roles, worktree isolation, pull requests, releases, and hotfixes. Other `.agents` workflows and skills must reference this contract instead of hard-coding remote names, repository owners, repository URLs, or personal branches.
+This rule owns repository identity, branch roles, authorization, compatibility and release acceptance constraints. It does not duplicate execution procedures. Use `dev-version-bump` for version preparation and a development pre-release, `release` for production promotion, `hotfix-release` for urgent-fix coordination, and `create-pull-request` for ordinary PR work. These operations have different goals and are not one combined workflow.
+
+Reusable guidance must reference this contract rather than hard-code repository owners, remote aliases, URLs or personal branches.
 
 ## 1. Stable branch roles
 
@@ -14,15 +16,7 @@ A remote name is never a branch role. Names such as `origin`, `upstream`, or any
 
 ## 2. Dynamic repository and remote discovery
 
-Before proposing any Git or pull-request write, perform read-only discovery:
-
-```text
-git branch --show-current
-git status --short
-git remote -v
-git rev-parse --abbrev-ref --symbolic-full-name "@{upstream}"
-git branch -vv
-```
+Before proposing any Git or pull-request write, establish the current branch, working-tree changes, remote fetch/push URLs, upstream and tracking state. `create-pull-request` and `release` contain the operation-specific discovery commands.
 
 Resolve the repository, remote, and destination in this order:
 
@@ -68,9 +62,14 @@ Treat these as separate authorizations:
 - submit a review or reply;
 - merge a PR/MR;
 - push `dev`;
-- promote or push `main`;
-- create and push a tag;
+- squash/commit on `main`;
+- push `main`;
+- back-merge the release commit into `dev`;
+- create a local tag;
+- push a tag;
 - publish a GitHub Release, Marketplace package, or other external state.
+
+A user instruction may explicitly authorize several named operations; do not ask again for the same granted scope. A workflow, version bump, successful check or existing commit grants no additional operation. In particular, local tag creation does not authorize tag push, and neither authorizes an unrelated publication or override.
 
 Never use unconditional `--force`. When history replacement is explicitly approved, refresh the remote SHA and bind an explicit `--force-with-lease` to that SHA.
 
@@ -86,19 +85,7 @@ Never use unconditional `--force`. When history replacement is explicitly approv
 
 Development may proceed directly on `dev` or on an independent branch. Independent branches and worktrees are recommended when isolation, parallel work, review, or recovery benefits justify them.
 
-An ordinary PR uses this mandatory path:
-
-```text
-independent feature/bugfix/docs/refactor/chore branch
-  -> focused local verification
-  -> authorized push to the dynamically resolved fork/upstream
-  -> PR to dev
-  -> CI and review
-  -> merge to dev
-  -> dev integration verification
-```
-
-Hard requirements:
+Use `create-pull-request` for the ordered discovery, verification, preview and authorized writes. The PR contract is:
 
 - The source/head of an ordinary PR must be an independent development branch.
 - Direct work on `dev` is allowed, but if that work must be submitted as an ordinary PR it must first be placed on an independent source branch. `main` is never a development branch.
@@ -117,7 +104,7 @@ After changes enter `dev`, run and record the checks required by the actual blas
 - formatting and lint;
 - Smoke and Vitest;
 - applicable Webview, Storybook, or focused functional E2E tests;
-- one production VSIX packaged before the required E2E gate, then the three-platform work smoke and four daily workflows against that exact artifact;
+- one final VSIX per registry publisher, each packaged before its own required E2E gate: one Linux work smoke, then each of four daily workflows on Linux, macOS and Windows against that exact artifact;
 - full functional E2E only in production release validation or explicit investigation, and no dev-tier E2E in required CI or release gates;
 - VSIX identity, content, and tested-artifact verification;
 - version, lockfile, bilingual changelog, bilingual What's New, and manifest consistency for a release candidate.
@@ -126,26 +113,13 @@ Promotion may be proposed only when the release candidate's required checks pass
 
 ## 7. Promotion from dev to main
 
-`main` keeps one squash commit per release, not the `dev` history. Promotion squashes the verified `dev` candidate into a single `release: X.Y.Z` commit on `main`, then back-merges that commit into `dev` with the `ours` strategy. The back-merge records the squash commit as an ancestor of `dev` without changing `dev` content, so the next promotion's merge base is the previous release instead of the original fork point; skipping it makes every later squash reapply already-released changes and conflict on lines changed twice.
+`main` keeps one squash commit per release, not the `dev` history. The production commit is `release: X.Y.Z`; its tree must equal the exact verified `dev` candidate. The release commit must become an ancestor of `dev` through an `ours` back-merge that leaves `dev` content unchanged. That back-merge must land before another promotion; otherwise a later squash can reapply already-released changes.
 
 History that reached `main` before this rule (fast-forward promotions up to `v0.9.4`) stays as it is. Never rewrite `main` to remove it.
 
-Perform release promotion in this order:
+Use `release` for the fetch, candidate verification, push previews, separately authorized squash/back-merge/tag operations and publication observation. Its evidence must bind explicit remote-tracking `dev`/`main` SHAs, the verified tree and the tested artifact; bare local branch names are not remote facts.
 
-1. Fetch and read explicit `refs/remotes/<remote>/dev` and `refs/remotes/<remote>/main` SHAs, then compute the merge base and diff from those refs; never treat bare local `dev` or `main` as remote facts.
-2. Confirm that integrated `dev` passed the complete release gate.
-3. Confirm version, lockfile, bilingual changelog, bilingual What's New, and VSIX contracts.
-4. Show the squash method, the verified `dev` SHA, the resolved destination, and the release commit message.
-5. Obtain authorization to write `main`.
-6. On `main`, run `git merge --squash <verified-dev-sha>` and commit `release: X.Y.Z` with a body summarizing the release from the bilingual changelog.
-7. Verify that the squash commit's tree equals the verified `dev` tree (`git diff --quiet <verified-dev-sha> <squash-sha>`); any difference blocks the push.
-8. Push `main` as a normal fast-forward of the remote `main`.
-9. Back-merge on `dev`: `git merge -s ours --no-edit <squash-sha>`, verify that the `dev` tree is unchanged, and push `dev` as a normal fast-forward. This is part of the same promotion and must complete before any later promotion.
-10. Obtain separate authorization to create and push the production tag.
-11. Create `vX.Y.Z` only on the verified squash commit at the `main` head.
-12. Observe the automated Release, VSIX, and Marketplace gates.
-
-The production workflows already accept this shape: `release.yml` requires the tag to point at the current `main` head, and `publish-vscode-marketplace.yml` requires the tag to be an ancestor of `main`. Neither requires `dev` commits in `main` history.
+The automatic `release.yml` gate requires the production tag at current `main` head. The separate manual override in `publish-vscode-marketplace.yml` requires main ancestry and an explicit reason; it is not the automatic continuation and is not an ordinary release shortcut. Neither shape requires the individual `dev` commits in `main` history.
 
 Never:
 
@@ -159,11 +133,7 @@ Never:
 
 ## 8. Hotfixes
 
-The default hotfix path remains on the mainline. The fix may be developed directly on `dev` or on a recommended independent bugfix branch. If a PR is used, its source must be independent and its base must be `dev`:
-
-```text
-fix on dev, or independent bugfix branch -> optional PR to dev -> dev gate -> squash promotion to main and back-merge into dev -> production tag on main
-```
+Hotfixes keep the same branch and acceptance contracts: the fix enters `dev` directly or through an independent bugfix PR, and production promotion still satisfies §6–§7. Use `hotfix-release` for the incident-specific checks; it delegates version files to `dev-version-bump` and production promotion to `release` rather than repeating those procedures.
 
 Do not build a production side branch from an old release tag when that commit would not belong to `main` history.
 
@@ -178,7 +148,7 @@ Until that strategy is approved, the hotfix workflow must stop instead of invent
 
 ## 9. Tag semantics
 
-- A development release tag must match `dev-vX.Y.Z`, point to the exact current `dev` head, and may be pushed only after tag creation is authorized. It triggers the `Publish Pre-release` workflow, whose GitHub pre-release and registry jobs consume the tested VSIX only after the complete reusable Tests workflow, including full Vitest, one package job, and the three-platform work smoke plus four daily workflows against that same artifact.
+- A development release tag must match `dev-vX.Y.Z` and point to exact current `dev` head. `Publish Pre-release` gates publication on full Vitest and each registry publisher's packaged VSIX passing one Linux work smoke and each of four daily workflows on Linux, macOS and Windows. Version preparation and the separately authorized development tag operations belong to `dev-version-bump`.
 - A `dev-vX.Y.Z` tag is never a production baseline and must not trigger the Production Release or production Marketplace workflow.
 - A production tag must match `vX.Y.Z` and point to a verified `main` commit.
 - Creating a local tag, pushing it, and replacing a remote tag are separate operations.
@@ -194,24 +164,30 @@ Until that strategy is approved, the hotfix workflow must stop instead of invent
 | `dev` + `dev-vX.Y.Z` | `dline` | `X.Y.Z` from the tag; `Y` odd | `pre-release` | Pre-release |
 | `dev` without a tag | `dline-insiders` | `major.<pre-release minor>.<unix-seconds>` | `insiders` | Release |
 
-`tuvokyang.dline` carries both the release and the pre-release track; `dline-insiders` is a separate extension with its own version sequence. A pre-release keeps the production manifest identity and differs only by the VSIX pre-release marker (`Microsoft.VisualStudio.Code.PreRelease`, set by vsce `preRelease`) and by the GitHub asset name `dline-X.Y.Z-pre-release.vsix`. Registry gates reject a pre-release VSIX without the marker and a production VSIX that carries it. A Marketplace `version` accepts only three numeric segments, so a semver pre-release suffix such as `0.9.4-rc.1` cannot be published.
+The source manifest and Open VSX retain publisher `tuvokyang`; VS Code Marketplace packages use `tuvokyangdline`, applied before compilation through `npm run vsix:vscode-marketplace`. These are separate extension IDs and separate compiled artifacts. Both local `vsix` commands only build and package; VS Code Marketplace uploads must run through GitHub Actions, never locally.
 
-Changelog lifecycle:
+Within each registry, `dline` carries both the release and pre-release tracks; `dline-insiders` is a separate extension with its own version sequence. A pre-release keeps its registry's production manifest identity and differs only by the VSIX pre-release marker (`Microsoft.VisualStudio.Code.PreRelease`, set by vsce `preRelease`) and by the GitHub asset name `dline-X.Y.Z-pre-release.vsix`. Registry gates reject a pre-release VSIX without the marker and a production VSIX that carries it. A Marketplace `version` accepts only three numeric segments, so a semver pre-release suffix such as `0.9.4-rc.1` cannot be published.
 
-- `CHANGELOG.md` and `docs/changelog/CHANGELOG_en.md` are one bilingual release history. Their headings and user-visible scope must remain equivalent.
-- Every user-visible change integrated into `dev` is added to the paired `## [Unreleased]` sections after the behavior is implemented and verified. Do not record plans, unverified claims, or internal-only churn as shipped behavior.
-- Untagged Insiders builds show the cumulative `Unreleased` section in the latest maintainers-only draft. They do not create permanent version sections and do not bump `package.json` or What's New for each commit.
-- Preparing a pre-release or production patch freezes the applicable non-empty `Unreleased` content into the exact `## [X.Y.Z]` section and recreates an empty `## [Unreleased]` section above it. Later pre-release patches contain only the delta since the preceding pre-release.
-- A production release section must stand alone and summarize every user-visible change since the preceding production release, including changes already described across odd-minor pre-releases and any final `Unreleased` delta. It must not merely point readers to pre-release sections.
-- An empty `Unreleased` section is valid between integrations. A tagged pre-release or production section must exist and be non-empty; release-note generation fails rather than publishing incomplete notes.
+Release-content invariants:
 
-Version bump rules:
+- The paired changelogs have equivalent headings and user-visible scope. `Unreleased` records implemented, verified dev changes, not plans or internal-only churn.
+- `Unreleased` is the cumulative user-visible difference from the latest published production release. Verify that release's tag/commit and its shipped behavior before writing entries; the preceding commit, PR, local version bump, or development checkpoint is not the baseline.
+- Describe an unreleased feature once by its final behavior. Correct its existing Added/Changed entry as development evolves; do not list fixes to its unshipped intermediate versions as released-product regressions.
+- Use Fixed only for a defect present in the release baseline. Omit reverted experiments, intermediate implementations, and changes with no net user-visible difference from that release; commit history is evidence, not a changelog outline.
+- Rollout-gated (gray-release) features and their changes must not appear in either language of the changelog or What's New. Add them only when the rollout restriction is removed and they ship as regular released features.
+- Tagged sections are non-empty. A production section covers all user-visible changes since the preceding production release, including the pre-release changes, rather than linking to a partial delta.
+- A prepared version agrees across package, lockfile, both changelogs and both top What's New sections. The What's New editions agree on version and item count and follow the parser's supported syntax.
+- Insiders is rolling: an untagged integration does not create a permanent version section or bump package/What's New for each commit.
+
+Use `dev-version-bump` for base selection, changelog freezing, cumulative notes, What's New writing and file updates. Keep that procedure out of this rule and out of the production promotion steps.
+
+Version policy:
 
 - A registry keys a version only by publisher, name, and number; the pre-release track is a flag on that number. Production and pre-release therefore split one version space by minor parity, as the VS Code publishing guide recommends.
 - Production releases use an even minor (`0.10.0`, `0.10.1`, `0.12.0`). Pre-releases use an odd minor (`0.11.0`, `0.11.1`, `0.13.0`). A pre-release never reuses a number a production release needs.
 - Insiders follows the pre-release line: its major and minor are the package version's when the minor is odd, and the next odd minor when the package minor is even, with the patch replaced by a timestamp. Every Insiders build therefore sorts above the production release it follows.
-- Preparing a production release bumps `package.json` on `dev` to the next even minor (or the next patch of the current even minor for a fix release). Starting a pre-release line bumps it to the next odd minor. The minor never decreases.
-- Every version bump, production, patch, or pre-release, also adds a `## X.Y.Z` section for the new version at the top of `docs/whats-new/WHATS_NEW_en.md` and `docs/whats-new/WHATS_NEW.md`. The webview build ships only that first section in the What's New dialog, so it must stand alone for the version; dev-version-bump defines its content and syntax. `webview-ui/src/__tests__/vite-whats-new.test.ts` fails until both editions start with the `package.json` version and carry the same number of items, so a bump without What's New cannot pass the Tests workflow that gates every release.
+- Production preparation targets the next even minor, or the next patch of the current even minor for a fix release; a new pre-release line targets the next odd minor. The minor never decreases.
+- Every version bump includes a standalone top `## X.Y.Z` What's New section in both editions. `webview-ui/src/__tests__/vite-whats-new.test.ts` checks it against the package version and bilingual item count; a package-only bump does not satisfy the release contract.
 - `scripts/release-version-policy.mjs` is the single source of these rules. `scripts/package-vsix.mjs` rejects a `vX.Y.Z` tag with an odd minor and a `dev-vX.Y.Z` tag with an even minor before packaging.
 - Versions released before this rule, up to `0.9.4`, keep their numbers; `0.10.0` is the first release under it.
 
@@ -228,9 +204,9 @@ A deleted Marketplace extension ID cannot be reused, so renaming a channel means
 
 Packaging is not publishing. Producing a VSIX never implies authorization to publish it; Marketplace publication remains a separate external write under §3.
 
-Registry publication currently targets Open VSX only. `publish-vsix-registries.yml` skips the VS Code Marketplace job unless a caller passes `publish_marketplace: true`, and the registry gate records the Marketplace as disabled rather than failed.
+Registry publication enables both Open VSX and the VS Code Marketplace by default. Each receives its own verified publisher-specific VSIX and SHA-256; do not rewrite a manifest or rebuild after testing. The aggregate gate requires at least one registry to succeed, so report each registry's result separately; skipped/disabled is not published. The GitHub Release retains the default-publisher VSIX asset. The ordered automatic and manual paths are documented in `release`.
 
-The Open VSX job checks the track of an existing version before publishing and fails on a mismatch instead of reporting a skipped duplicate as published. Before the parity rule, `dev-v0.9.4` occupied `0.9.4` on Open VSX as a pre-release, so the production `v0.9.4` could not reach it.
+The Open VSX job checks the track of an existing version before publishing. A track mismatch fails; a skipped duplicate is not reported as a new publication.
 
 ## 11. Workflow and skill authoring rules
 
@@ -245,7 +221,7 @@ Git, PR, and release instructions must:
 - omit maintainer-specific repositories, remotes, and personal branches;
 - avoid execution links or examples from another repository.
 
-## 11. Minimum verification scenarios
+## 12. Minimum verification scenarios
 
 After changing a Git workflow or skill, verify at least:
 
@@ -260,5 +236,5 @@ After changing a Git workflow or skill, verify at least:
 9. rejection of ordinary development or PR creation from `main`;
 10. rejection of promotion when the `dev` gate fails;
 11. authorized squash promotion after the complete `dev` gate passes, with a tree-equality check against the verified `dev` SHA and the `ours` back-merge into `dev`;
-12. `dev-vX.Y.Z` development release tags only from the exact `dev` head, with GitHub pre-release and Marketplace pre-release publication blocked until full Vitest, one package job, and the three-platform work smoke plus four daily workflows pass against the same VSIX;
+12. `dev-vX.Y.Z` development release tags only from exact `dev` head, with GitHub pre-release and enabled registry publication blocked until full Vitest and each registry publisher's final VSIX passes one Linux work smoke and all four daily workflows on all three platforms;
 13. production tag creation only from the final verified `main` commit.

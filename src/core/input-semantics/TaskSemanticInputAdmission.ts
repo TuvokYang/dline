@@ -1,3 +1,4 @@
+import type { UserInputControl } from "@shared/away"
 import { semanticInputDiagnostic } from "@shared/input-semantics/diagnostics"
 import { isResourceNode, isSlashCommandNode, type SemanticInputDocument } from "@shared/input-semantics/document"
 import { Logger } from "@shared/services/Logger"
@@ -60,10 +61,26 @@ export class TaskSemanticInputAdmission implements TaskInputAdmissionPort {
                 parts: result.admitted.parts,
                 authorizedTools: result.admitted.authorizedTools,
                 explicitInstructions: result.admitted.explicitInstructions,
+                ...userControlOf(document, input, result.admitted.userControl),
                 ...(result.admitted.barrier === undefined ? {} : { barrier: result.admitted.barrier }),
             },
         }
     }
+}
+
+/** Commands win over the same submission's ordinary-content return candidate. */
+function userControlOf(
+    document: SemanticInputDocument,
+    input: { readonly images?: readonly string[]; readonly files?: readonly string[] },
+    control: UserInputControl | undefined,
+): { readonly userControl?: UserInputControl } {
+    if (control?.kind === "enter_away") return { userControl: control }
+    const hasContent = document.nodes.some((node) =>
+        node.kind === "text" || node.kind === "literal"
+            ? node.text.trim().length > 0
+            : node.kind === "mention" || isResourceNode(node) || isSlashCommandNode(node),
+    )
+    return hasContent || carriesFlatAttachments(input) ? { userControl: { kind: "user_returned" } } : {}
 }
 
 function carriesFlatAttachments(input: { readonly images?: readonly string[]; readonly files?: readonly string[] }): boolean {

@@ -28,11 +28,23 @@ on:
         description: SHA-256 recorded by the verification job.
         type: string
         required: true
+      marketplace_artifact_name:
+        description: Verified workflow artifact built for the tuvokyangdline publisher.
+        type: string
+        required: true
+      marketplace_asset_name:
+        description: Exact Marketplace VSIX filename inside its artifact.
+        type: string
+        required: true
+      marketplace_expected_sha256:
+        description: SHA-256 recorded for the Marketplace VSIX.
+        type: string
+        required: true
       publish_marketplace:
-        description: Also publish to the VS Code Marketplace. Disabled by default, which leaves Open VSX as the only registry.
+        description: Publish the separate tuvokyangdline VSIX to the VS Code Marketplace.
         type: boolean
         required: false
-        default: false
+        default: true
 
 permissions:
   actions: read
@@ -43,10 +55,20 @@ env:
 
 jobs:
   verify-source:
-    name: Verify release source and package identity
+    name: Verify release source and package identity (${{ matrix.registry }})
     if: github.repository == 'TuvokYang/dline'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        registry: ${{ fromJSON(inputs.publish_marketplace && '["open-vsx","vscode-marketplace"]' || '["open-vsx"]') }}
+    env:
+      REGISTRY: ${{ matrix.registry }}
+      ARTIFACT_NAME: ${{ matrix.registry == 'vscode-marketplace' && inputs.marketplace_artifact_name || inputs.artifact_name }}
+      ASSET_NAME: ${{ matrix.registry == 'vscode-marketplace' && inputs.marketplace_asset_name || inputs.asset_name }}
+      EXPECTED_SHA256: ${{ matrix.registry == 'vscode-marketplace' && inputs.marketplace_expected_sha256 || inputs.expected_sha256 }}
+      EXPECTED_PUBLISHER: ${{ matrix.registry == 'vscode-marketplace' && 'tuvokyangdline' || 'tuvokyang' }}
     steps:
       - name: Checkout release tag
         if: inputs.channel != 'insiders'
@@ -63,8 +85,6 @@ jobs:
           CHANNEL: ${{ inputs.channel }}
           COMMIT_SHA: ${{ inputs.commit_sha }}
           RELEASE_TAG: ${{ inputs.release_tag }}
-          ARTIFACT_NAME: ${{ inputs.artifact_name }}
-          ASSET_NAME: ${{ inputs.asset_name }}
           REQUESTED_TAG: ${{ github.event.inputs.tag }}
           REQUESTED_REASON: ${{ github.event.inputs.reason }}
           TESTED_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
@@ -151,6 +171,9 @@ jobs:
               ;;
           esac
 
+          if [[ "$REGISTRY" == 'vscode-marketplace' ]]; then
+            expected_artifact="dline-vscode-marketplace-vsix-${COMMIT_SHA}"
+          fi
           if [[ "$ARTIFACT_NAME" != "$expected_artifact" ]]; then
             echo "Error: artifact name does not match the tested release commit."
             exit 1
@@ -170,14 +193,12 @@ jobs:
       - name: Download verified VSIX
         uses: actions/download-artifact@v8
         with:
-          name: ${{ inputs.artifact_name }}
+          name: ${{ env.ARTIFACT_NAME }}
           path: release-artifact
 
       - name: Verify package channel and digest
         env:
           CHANNEL: ${{ inputs.channel }}
-          ASSET_NAME: ${{ inputs.asset_name }}
-          EXPECTED_SHA256: ${{ inputs.expected_sha256 }}
           TAG_VERSION: ${{ steps.source.outputs.version }}
         shell: bash
         run: |
@@ -195,20 +216,35 @@ jobs:
           fi
           manifest_path="$RUNNER_TEMP/vsix-package.json"
           unzip -p "$vsix_path" extension/package.json > "$manifest_path"
-          if ! jq -e --arg channel "$CHANNEL" --arg asset "$ASSET_NAME" --arg version "$TAG_VERSION" '
-            .publisher == "tuvokyang" and
+          # The VS Code Marketplace requires a globally unique extension name, so
+          # its publisher-specific package carries a dedicated name and display
+          # name. Open VSX keys by publisher and name and keeps the stable identity.
+          if [[ "$CHANNEL" == 'insiders' ]]; then
+            expected_name=dline-insiders
+            expected_display_name='Dline (Insiders)'
+          elif [[ "$REGISTRY" == 'vscode-marketplace' ]]; then
+            expected_name=dline-main
+            expected_display_name='Dline (Stable)'
+          else
+            expected_name=dline
+            expected_display_name=Dline
+          fi
+          if ! jq -e --arg channel "$CHANNEL" --arg asset "$ASSET_NAME" --arg version "$TAG_VERSION" --arg publisher "$EXPECTED_PUBLISHER" --arg name "$expected_name" --arg display_name "$expected_display_name" '
+            .publisher == $publisher and
+            .name == $name and
+            .displayName == $display_name and
             (.version | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) and
             (
-              ($channel == "insiders" and .name == "dline-insiders" and .preview == true and $asset == ("dline-insiders-" + .version + ".vsix")) or
-              ($channel == "pre-release" and .name == "dline" and .preview != true and .version == $version) or
-              ($channel == "production" and .name == "dline" and .preview != true and .version == $version)
+              ($channel == "insiders" and .preview == true and $asset == ("dline-insiders-" + .version + ".vsix")) or
+              ($channel == "pre-release" and .preview != true and .version == $version) or
+              ($channel == "production" and .preview != true and .version == $version)
             )
           ' "$manifest_path" >/dev/null; then
             echo "Error: VSIX manifest does not match the release channel."
             exit 1
           fi
           # The VSIX pre-release marker, not the extension name, selects the
-          # Marketplace track of tuvokyang.dline; it must match the channel.
+          # Marketplace track of the extension; it must match the channel.
           if unzip -p "$vsix_path" extension.vsixmanifest | grep -q 'Id="Microsoft.VisualStudio.Code.PreRelease"'; then
             marked_pre_release=true
           else
@@ -226,8 +262,7 @@ jobs:
   publish-marketplace:
     needs: verify-source
     name: Publish VS Code Marketplace
-    # Marketplace publication is switched off unless a caller opts in; the
-    # aggregate gate records it as disabled rather than as a failed registry.
+    # Both registries consume their own verified publisher-specific package.
     if: inputs.publish_marketplace && github.repository == 'TuvokYang/dline'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -265,7 +300,7 @@ jobs:
       - name: Download verified VSIX
         uses: actions/download-artifact@v8
         with:
-          name: ${{ inputs.artifact_name }}
+          name: ${{ inputs.marketplace_artifact_name }}
           path: release-artifact
 
       - name: Publish VSIX
@@ -273,8 +308,8 @@ jobs:
         env:
           VSCE_PAT: ${{ secrets.DLINE_VSCODE_RELEASE_PUBLISH_PAT }}
           CHANNEL: ${{ inputs.channel }}
-          ASSET_NAME: ${{ inputs.asset_name }}
-          EXPECTED_SHA256: ${{ inputs.expected_sha256 }}
+          ASSET_NAME: ${{ inputs.marketplace_asset_name }}
+          EXPECTED_SHA256: ${{ inputs.marketplace_expected_sha256 }}
           VSCE_BIN: ${{ steps.vsce.outputs.bin }}
         shell: bash
         run: |

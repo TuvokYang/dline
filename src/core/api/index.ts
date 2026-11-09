@@ -35,6 +35,7 @@ import { OcaHandler } from "./providers/oca"
 import { OllamaHandler } from "./providers/ollama"
 import { OpenAiHandler } from "./providers/openai"
 import { OpenAiCodexHandler } from "./providers/openai-codex"
+import { OpenCodeHandler } from "./providers/opencode"
 import { OpenRouterHandler } from "./providers/openrouter"
 import { QwenHandler } from "./providers/qwen"
 import { QwenCodeHandler } from "./providers/qwen-code"
@@ -185,6 +186,9 @@ function createHandlerForProvider(ctx: ApiHandlerContext): ApiHandler {
             break
         case "wandb":
             handler = new WandbHandler(ctx)
+            break
+        case "opencode":
+            handler = new OpenCodeHandler(ctx)
             break
         default:
             throw new Error(`Unknown provider: ${profile.provider}`)

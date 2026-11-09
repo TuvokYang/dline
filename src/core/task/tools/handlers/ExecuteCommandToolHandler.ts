@@ -2,8 +2,7 @@ import { resolveProvider } from "@core/api"
 import type { ToolUse } from "@core/assistant-message"
 import { getPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
-import { formatCommandApprovalBody } from "@core/task/ask-row"
-import { WorkspacePathAdapter } from "@core/workspace/WorkspacePathAdapter"
+import { commandApprovalBody } from "@core/task/ask-row"
 import { showSystemNotification } from "@integrations/notifications"
 import type { CommandExecutionOutcome } from "@integrations/terminal"
 import { DEFAULT_TERMINAL_COMMAND_TIMEOUT_SECONDS, MIN_TERMINAL_COMMAND_TIMEOUT_SECONDS } from "@shared/terminal-settings"
@@ -18,7 +17,7 @@ import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { applyModelContentFixes } from "../utils/ModelContentProcessor"
 import { resolveSelfBoundResultBytes } from "../utils/tool-result-budget"
 import { parseCommandExecutionOptions } from "./command-execution-options"
-import { resolveCommandWorkdirectory } from "./command-workdirectory"
+import { resolveCommandTarget } from "./command-workdirectory"
 
 export { resolveCommandTimeoutSeconds } from "./command-execution-options"
 
@@ -80,14 +79,10 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
             return
         }
 
-        await uiHelpers.say(
-            "command",
-            uiHelpers.removeClosingTag(block, "command", command),
-            undefined,
-            undefined,
-            true,
-            block.ts,
-        )
+        // The directory is resolved when the command runs, so the preview row has
+        // no directory to state yet; the approval anchor and the run row add it.
+        const commandLine = uiHelpers.removeClosingTag(block, "command", command)
+        await uiHelpers.say("command", commandLine, undefined, undefined, true, block.ts, block.ts)
     }
 
     async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
@@ -115,6 +110,10 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
                 "error",
                 "Dline tried to use execute_command without value for required parameter 'command'. Retrying...",
             )
+            // Report through the missing-parameter boundary as well: it also closes
+            // the command preview this call already streamed, and this branch keeps
+            // its own wording for the user.
+            await config.callbacks.sayAndCreateMissingParamError(this.name, "command", undefined, block.ts)
             return formatResponse.toolError(formatResponse.executeCommandMissingCommandError())
         }
 
@@ -139,64 +138,22 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
             command = applyModelContentFixes(command)
         }
 
-        // Handle multi-workspace command execution
-        let actualCommand: string = command
-
-        let workspaceHintUsed = false
-        let workspaceHint: string | undefined
-
-        let requestedWorkdirectory = workdirectoryParam
-        const adapter = new WorkspacePathAdapter({
-            cwd: config.cwd,
-            isMultiRootEnabled: config.isMultiRootEnabled,
-            workspaceManager: config.workspaceManager,
-        })
-
-        if (config.isMultiRootEnabled && config.workspaceManager) {
-            // Check if command has a workspace hint prefix
-            // e.g., "@backend:npm install" or just "npm install"
-            const commandMatch = command.match(/^@(\w+):(.+)$/)
-
-            if (commandMatch) {
-                workspaceHintUsed = true
-                workspaceHint = commandMatch[1]
-                actualCommand = commandMatch[2].trim()
-
-                // Resolve to get the workspace directory
-                if (!requestedWorkdirectory) {
-                    requestedWorkdirectory = adapter.resolvePath(".", workspaceHint)
-                }
-
-                // Update command to remove the workspace prefix for display
-                command = actualCommand
-            }
-            // If no hint, use primary workspace (cwd)
-        }
-
-        const workdirectoryHintMatch = requestedWorkdirectory?.match(/^@([^:]+):(.*)$/)
-        if (workdirectoryHintMatch && config.isMultiRootEnabled && config.workspaceManager) {
-            workspaceHintUsed = true
-            workspaceHint = workdirectoryHintMatch[1]
-            requestedWorkdirectory = adapter.resolvePath(workdirectoryHintMatch[2] || ".", workspaceHint)
-        } else if (requestedWorkdirectory) {
-            requestedWorkdirectory = adapter.resolvePath(requestedWorkdirectory)
-        }
-
-        let resolvedWorkdirectory: Awaited<ReturnType<typeof resolveCommandWorkdirectory>>
+        let resolvedWorkdirectory: Awaited<ReturnType<typeof resolveCommandTarget>>
         try {
-            resolvedWorkdirectory = await resolveCommandWorkdirectory({
+            resolvedWorkdirectory = await resolveCommandTarget({
                 cwd: config.cwd,
-                requestedPath: requestedWorkdirectory,
-                workspaceRoots: config.workspaceManager?.getRoots().map((root) => root.path),
+                command,
+                workdirectory: workdirectoryParam,
+                isMultiRootEnabled: config.isMultiRootEnabled,
+                workspaceManager: config.workspaceManager,
             })
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error)
-            if (!config.isSubagentExecution) {
-                await config.callbacks.say("error", message)
-            }
+            if (!config.isSubagentExecution) await config.callbacks.say("error", message)
             return formatResponse.toolError(message)
         }
-        const executionDir = resolvedWorkdirectory.path
+        const { path: executionDir, actualCommand, workspaceHint, workspaceHintUsed } = resolvedWorkdirectory
+        command = actualCommand
 
         // Check command permission validation (DLINE_COMMAND_PERMISSIONS env var)
         const permissionResult = config.services.commandPermissionController.validateCommand(actualCommand)
@@ -268,13 +225,16 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
         const admissionOutcome = config.admissionOutcome
 
         if (!config.isSubagentExecution) {
+            const approvalBody = commandApprovalBody(actualCommand, executionDir)
             await config.callbacks.say(
                 "command",
-                formatCommandApprovalBody(actualCommand, executionDir),
+                approvalBody.commandLine,
                 undefined,
                 undefined,
                 false,
                 block.ts,
+                undefined,
+                approvalBody,
             )
         }
         const wasAutoApproved = admissionOutcome === undefined

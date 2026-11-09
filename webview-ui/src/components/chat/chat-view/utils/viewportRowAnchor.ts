@@ -16,6 +16,12 @@ const LIST_ROW_SELECTOR = "[data-item-index]"
  */
 export const ROW_TS_ATTRIBUTE = "data-row-ts"
 const ROW_SELECTOR = `[${ROW_TS_ATTRIBUTE}]`
+/** A real committed member of this row, never inherited from another row. */
+export const ROW_SOURCE_INDEX_ATTRIBUTE = "data-row-source-index"
+/** Reading context for transient rows; never a durable message identity or jump target. */
+export const ROW_TRAJECTORY_INDEX_ATTRIBUTE = "data-row-trajectory-index"
+
+export type ViewportSourceAnchor = { sourceIndex: number; viewportOffset: number }
 
 type VisibleOptions = { minVisiblePx?: number }
 
@@ -71,4 +77,28 @@ export function findFirstVisibleMessage(scroller: HTMLElement, options: VisibleO
  */
 export function findFirstVisibleRow(scroller: HTMLElement, options: VisibleOptions = {}): ViewportMessageAnchor | null {
     return firstVisible(scroller, ROW_SELECTOR, (element) => Number(element.getAttribute(ROW_TS_ATTRIBUTE)), options)
+}
+
+/**
+ * Read the source interval at the first visible row, using the same real list-row
+ * geometry as timestamp scroll anchors. A transient row may carry reading context,
+ * but it still has no source identity of its own. No timestamp is consulted.
+ */
+export function findFirstVisibleSourceRow(
+    scroller: HTMLElement,
+    { minVisiblePx = 0 }: VisibleOptions = {},
+): ViewportSourceAnchor | null {
+    const viewport = scroller.getBoundingClientRect()
+    for (const element of scroller.querySelectorAll<HTMLElement>(ROW_SELECTOR)) {
+        const row = element.closest<HTMLElement>(LIST_ROW_SELECTOR) ?? element
+        const bounds = row.getBoundingClientRect()
+        if (bounds.height <= 0 || bounds.bottom <= viewport.top + minVisiblePx) continue
+        if (bounds.top >= viewport.bottom) return null
+        const value = element.getAttribute(ROW_SOURCE_INDEX_ATTRIBUTE) ?? element.getAttribute(ROW_TRAJECTORY_INDEX_ATTRIBUTE)
+        if (value === null) continue
+        const sourceIndex = Number(value)
+        if (!Number.isFinite(sourceIndex)) continue
+        return { sourceIndex, viewportOffset: bounds.top - viewport.top }
+    }
+    return null
 }

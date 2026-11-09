@@ -1,4 +1,4 @@
-import { TrajectoryRequest } from "@shared/proto/dline/task"
+import { TrajectoryRequest, TrajectoryState } from "@shared/proto/dline/task"
 import { useEffect, useMemo, useState } from "react"
 import { TaskServiceClient } from "@/services/grpc-client"
 import { getTaskViewKey } from "@/services/task-messages"
@@ -62,7 +62,10 @@ function followTrajectory(opening: Opening, publish: (log: TrajectoryLog) => voi
                 }
                 // Only a shown trajectory proves the source healthy: a failing stream also
                 // ends with an unavailable reset, and resetting on that would retry it at the minimum forever.
-                if (update.reset && isTrajectoryShown(next)) retryDelay = TRAJECTORY_RESUBSCRIBE_MIN_MS
+                if (update.reset && next.state !== TrajectoryState.TRAJECTORY_STATE_ERROR && isTrajectoryShown(next)) {
+                    retryDelay = TRAJECTORY_RESUBSCRIBE_MIN_MS
+                }
+                // Every reset and based delta is authoritative, including an empty rebuild or error.
                 log = next
                 publish(next)
             },
@@ -90,8 +93,8 @@ function followTrajectory(opening: Opening, publish: (log: TrajectoryLog) => voi
 }
 
 /**
- * The trajectory attempts of the shown opening, empty while the extension
- * reports the trajectory unavailable or broken.
+ * The current projection of the shown opening, empty when the extension sends no turns
+ * or reports it unavailable. No earlier snapshot substitutes for the current log.
  */
 export function useTrajectory(taskId: string | undefined, taskInstanceId: string | undefined): readonly TrajectoryAttempt[] {
     const key = getTaskViewKey({ taskId, taskInstanceId })

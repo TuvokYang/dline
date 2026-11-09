@@ -230,6 +230,33 @@ describe("RemoteUsageCoordinator", () => {
             .filter((line) => line.kind === "logical")
     }
 
+    class ThrowingWorker extends FakeWorker {
+        constructor(private readonly failure: Error) {
+            super()
+        }
+
+        override async runCycle(): Promise<UsageCycleResult> {
+            throw this.failure
+        }
+    }
+
+    it("reports why a delivery cycle failed instead of printing the error class alone", async () => {
+        // A bare `Error` left the operator with no failing step and no cause, so a
+        // permanently failing delivery was indistinguishable from an empty log.
+        worker = new ThrowingWorker(new Error("usage attempt policy generation is invalid"))
+        const logs: { level: RemoteUsageLogLevel; message: string }[] = []
+        const usage = coordinator((level, message) => logs.push({ level, message }))
+
+        await usage.start()
+        scheduler.fire()
+        await waitFor(() => logs.some((entry) => entry.message.includes("delivery cycle failed")))
+
+        expect(logs.find((entry) => entry.message.includes("delivery cycle failed"))?.message).toContain(
+            "usage attempt policy generation is invalid",
+        )
+        await usage.dispose()
+    })
+
     /** Wait for background appends or the cycle chain, which run on real file I/O. */
     async function waitFor(condition: () => boolean | Promise<boolean>): Promise<void> {
         const deadline = Date.now() + 5_000

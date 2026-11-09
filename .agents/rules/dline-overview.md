@@ -81,7 +81,11 @@ Do not add a parallel boolean lifecycle beside `TaskRuntime`. New transitions mu
 - Turn-ending tools also participate in assistant-message ordering, durable interaction state, and recovery.
 - Tool presentation may be a grouped tool row, a dedicated say/ask row, or a backend-owned interaction. Follow an existing tool with the same ownership model.
 
-Load `add-new-tool` for the complete change chain.
+Approval is decided outside handlers. `TaskToolExecutionOwner.readAdmissionSnapshot` alone reads auto-approve settings, YOLO, approve-all and MCP per-tool autoApprove. Admission classifies the call through `ToolAdmissionRegistry` → `ToolPreflight` → `resolveApprovalKind`; `ProductionToolHandlerRuntime.approval()` maps `none` to no stage, `automatic`/`ai_approver` to kernel automatic approval carrying risk facts re-evaluated by `ProductionApprovalPolicyAdapter`, and `manual` to a kernel tool_approval dialog anchored by `ProductionDialogAdapter` through `TaskInteractionOwner.anchor`.
+
+Handlers receive approved executions only: no approval prompts, permission-setting reads, or admissionOutcomes-based bypasses. Admission is parameter-only with respect to the target: no file read/stat/realpath, network or process work before approval. Kernel transitions/machines/dialog own the lifecycle; do not copy legacy handler approval logic or add parallel lifecycle booleans. A new permission scope, toggle, ceiling or public settings field requires the user's contract decision before implementation.
+
+Load `integrate-new-tool` for the long integration workflow and `add-new-tool` for concrete implementation skills and examples. `prompt-engineering` owns text/projection rules; `reviewing-prompt-contracts` teaches their review.
 
 ## Prompt architecture
 
@@ -106,7 +110,9 @@ Do not add model-family directories such as generic, next-gen, GPT-specific, XS,
 - Provider metadata and API format determine native tool, server-tool, image, reasoning, and transport capabilities.
 - OpenAI-compatible SDK clients should use the shared client/transport factories instead of constructing unobserved clients.
 
-A provider change usually crosses API configuration/proto conversion, handler construction, ModelRegistry metadata, settings UI, validation, and tests. Discover the current analogous provider before editing.
+One provider has one handler. `ApiHandler` owns request construction, decoding, usage normalization and safe error mapping, not vendor model facts. Each model fact has one authority: vendor listing for what it publishes, local catalog only for what it cannot express. Derive protocol defaults without turning them into a whitelist; preserve choices the provider can carry. Convert prices once at the boundary. Token accounting, per-request cost and account subscription quota are distinct contracts. A new persisted provider_config arm requires the user's contract decision and compatible field numbering.
+
+Discover the nearest analogous provider before editing. Load `integrate-new-provider` for a new provider's long cross-layer workflow; load `add-new-provider` for technical methods, including local plan/catalog-source changes that do not need that whole workflow.
 
 ## Storage and recovery
 
@@ -135,6 +141,6 @@ Choose the smallest layer that proves the behavior:
 - load and soak behavior: the explicit pressure tier;
 - release behavior: GitHub Actions, VSIX content, and ancestry gates.
 
-The required CI/release gate packages one VSIX, runs the work smoke and four daily workflows on Windows, macOS, and Linux against that same artifact, and publishes only after all cells pass. Full functional E2E runs only in production release validation or when explicitly requested; dev E2E is development-only.
+The required CI/release gate packages one VSIX, runs one work smoke on Linux, then each of the four daily workflows on Windows, macOS, and Linux against that same artifact, and publishes only after all cells pass. Full functional E2E runs only in production release validation or when explicitly requested; dev E2E is development-only. Load `use-vitest`, `use-e2e`, and `e2e-validation` for the corresponding work skills and processes.
 
 For lifecycle, persistence, protocol, or tool changes, test failure paths and restart/recovery, not only the successful in-memory path.

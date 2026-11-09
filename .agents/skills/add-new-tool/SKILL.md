@@ -1,30 +1,19 @@
 ---
 name: add-new-tool
-description: Add a new AI-callable built-in tool to Dline across identity, admission and approval classification, concurrency lanes, prompt descriptors and profiles, handler execution, interaction ownership, subagent exposure, host bridges, Webview presentation, recovery, and tests.
+description: Implement or diagnose built-in tool identity, admission, approval classification, lanes, descriptors, handlers, interactions, host/UI wiring and recovery, with concrete examples; use integrate-new-tool for the full integration workflow.
 ---
 
 # Add a New Dline Tool
 
-Use this skill only after reading the nearest analogous tool end to end: identity, admission, approval classification, lanes, prompt descriptor, handler, presentation, and tests. A tool is complete only when all of these agree.
+Use this skill for concrete tool-development techniques, including targeted repairs. Read the nearest analogous tool end to end: identity, admission, approval classification, lanes, descriptor, handler, presentation and tests. Load `integrate-new-tool` for a new tool's long implementation workflow; this skill's topics are not an instruction to run every integration stage for a local change.
 
 ---
 
-## Architecture Contract
-
-Read this before editing; every step below follows from it.
-
-- **Approval is decided outside the handler.** `TaskToolExecutionOwner.readAdmissionSnapshot` is the only reader of auto-approve settings, YOLO, approve-all, and MCP per-tool `autoApprove`. Admission (`ToolAdmissionRegistry.prepareRegisteredToolAdmission` → `ToolPreflight.admitToolCall` → `approval-kind.resolveApprovalKind`) classifies the call. `ProductionToolHandlerRuntime.approval()` maps the decision:
-  - `none` → no approval stage;
-  - `automatic` or `ai_approver` → kernel automatic approval carrying risk facts, re-evaluated by `ProductionApprovalPolicyAdapter`;
-  - `manual` → a kernel `tool_approval` dialog whose card `ProductionDialogAdapter` writes through `TaskInteractionOwner.anchor`.
-- **A handler only receives approved executions.** It must not open approval prompts, read auto-approve settings, YOLO, or `config.admissionOutcomes` to change behavior, and must not touch its target before approval. Some existing handlers still do this; they are legacy and must not be copied.
-- **Admission is pure with respect to the target.** No file reads, `stat`, `realpath`, network, or process work before approval. Admission returns presentation as data.
-- **The kernel owns lifecycle.** `src/core/task/kernel/` (transitions, machines, dialog) is the lifecycle authority. Do not add lifecycle booleans to handlers, `TaskState`, or the Webview.
-- **Prompt profiles are exactly Standard and Lite.** No model-family tool variants.
+Approval, admission and kernel ownership are defined in `dline-overview`; canonical prompt/profile contracts are in `prompt-engineering`. The topics below explain the corresponding implementation points.
 
 ---
 
-## Step 0: Classify Before Editing
+## Classify Ownership and Exposure
 
 Choose the ownership model that matches the behavior:
 
@@ -47,52 +36,52 @@ Adding a new permission scope, auto-approve toggle, ceiling, or settings field c
 
 ---
 
-## Step 1: Identity
+## Identity
 
 1. `src/shared/tools.ts`:
    - add the `DlineDefaultTool` value;
-   - add it to `READ_ONLY_TOOLS` only if it never changes the workspace (this drives checkpoint decisions through `toolMayChangeWorkspace`);
+   - add it to `READ_ONLY_TOOLS` only when its behavior is read-only; workspace-mutation tickets have a separate explicit classification in the coordinator, described below;
    - add it to `CONVERSATIONAL_TOOL_NAMES` only if it opens a user interaction.
 2. `src/core/task/kernel/turn/tool-identities.ts`:
    - add the same string to `KernelToolId`;
    - add it to `KERNEL_CONVERSATIONAL_TOOL_IDS` when it owns a user interaction.
 
-No test checks `DlineDefaultTool` against `KernelToolId`; compare the two lists manually.
+These are separate declarations; compare their values when adding an identity. The lane coverage test reads `toolHandlersMap`, so passing it does not by itself prove that both identity declarations agree.
 
 ---
 
-## Step 2: Admission
+## Admission
 
 File: `src/core/task/executors/tool/ToolAdmissionRegistry.ts`.
 
 - `REQUIRED_PARAMETERS`: required parameters.
 - `validateParameters`: value checks (follow the existing `bash`, `spawn_task`, and `browser_action` branches).
 - `declaredPaths`: needed when the tool targets paths through parameters other than `path`/`file_path`, or several paths (for example a source and a destination). The default branch handles one path only.
-- `DYNAMIC_WRITE_FANOUT_TOOLS`: when writes can fan out beyond the declared paths.
+- Dynamic write fanout: a declared file may be only an anchor, not the complete write set. Follow `reviewRegisteredToolBoundary` for the post-approval review and the dynamic-write lane assignments in `tool-lanes.ts`; do not discover files or canonicalize targets during admission.
 - Approval card payload: map the tool in `PRESENTATION_TOOLS` / `approvalAsk` / `buildPresentation`, or implement `IApprovalPresentingToolHandler.getApprovalPresentation` on the handler. Both must build the card from parameters only. Unmapped tools fall back to a neutral `genericTool` card.
 
 Tests: `src/core/task/executors/tool/__tests__/ToolAdmissionRegistry.test.ts`, including "classifies every remaining tool".
 
 ---
 
-## Step 3: Permission Scope and Approval Kind
+## Permission Scope and Approval Kind
 
 Files: `src/core/task/kernel/turn/approval-kind.ts`, `src/shared/AutoApprovalSettings.ts`.
 
 - Put the tool in exactly one scope: `READ_TOOLS`, `EDIT_TOOLS`, or `DIRECT_SCOPES`. Interaction-owning tools are recognized by `ownsItsInteraction`.
 - An unclassified tool falls through to the `conversational` scope. That scope has no toggle and a fixed ceiling, so every call becomes a manual prompt unless YOLO or approve-all is on.
 - `resolveApprovalKind` order: ceiling `manual_only` → inherited approval → interaction-owning tools get `none` → blanket or scope toggle gives `automatic` → `ai_approvable` gives `ai_approver` → otherwise `manual`.
-- A new scope needs `PermissionScope`, `DEFAULT_CEILINGS`, `FIXED_CEILING_SCOPES` or a configurable ceiling, `isScopeToggledOn`, `ConfigurablePermissionScope`/`ceilings`, and the settings round trip. Ask the user first (see Step 0).
+- A new scope needs `PermissionScope`, `DEFAULT_CEILINGS`, `FIXED_CEILING_SCOPES` or a configurable ceiling, `isScopeToggledOn`, `ConfigurablePermissionScope`/`ceilings`, and the settings round trip. Ask the user first, as described under ownership classification.
 
 Tests: `src/core/task/tools/__tests__/AutoApprove.ceilings.test.ts`, `autoApprove.conversational.test.ts`, `src/core/task/executors/tool/__tests__/ToolPreflight.test.ts`, `production/__tests__/ProductionToolHandlerRuntime.riskFacts.test.ts`.
 
 ---
 
-## Step 4: Concurrency Lanes
+## Concurrency Lanes
 
 File: `src/core/task/kernel/turn/tool-lanes.ts`.
 
-Lanes are named exclusive resources compared by exact string. Calls that hold the same lane run one at a time; calls with disjoint lanes may run in parallel. Classify the tool in exactly one way:
+Lanes are named exclusive resources compared by exact string. Calls that hold the same lane run one at a time; calls with disjoint lanes may run in parallel. Declare all memberships the tool needs; static and parameterized lanes can be combined:
 
 - `STATIC_LANES`: fixed lanes, such as `LANE_USER_INTERACTION` for interactive or turn-ending tools and `LANE_DIFF_EDITOR` for tools that drive the diff editor;
 - `PATH_SCOPED_TOOLS`: per-path `write-path:` lanes for tools that write declared paths (usually combined with a static lane);
@@ -103,16 +92,18 @@ Test: `src/core/task/kernel/turn/__tests__/tool-lanes.test.ts` ("classifies ever
 
 ---
 
-## Step 5: AI-Visible Text Through I18n
+## AI-Visible Text Through I18n
 
-- Create `src/core/prompts/i18n/en/tools/<name>.ts` for the description, parameter instructions, usage constraints, and handler diagnostics.
+Follow `prompt-engineering` for project asset rules; load `reviewing-prompt-contracts` for consumer tracing and contract review examples.
+
+- Create `src/core/prompts/i18n/en/tools/<name>.ts` for the description, parameter instructions, usage constraints, and examples. Shared handler results, errors, feedback, and restored answers belong in `i18n/en/tools/toolHandlers.ts` through `formatResponse` in `src/core/prompts/responses.ts`; reuse the owning tool module for existing tool-specific diagnostics rather than duplicating them.
 - Register it in `src/core/prompts/i18n/en/tools/index.ts` `toolPromptModules` with `defineLegacyModule(...)`. Use `createRuntimeContract` when the text has runtime variables.
 - Read it with `getPrompt` or `renderPrompt` from `src/core/prompts/i18n`.
 - Update `src/core/prompts/i18n/__tests__/prompt-asset-inventory.test.ts`: expected namespaces, total module count, per-group counts, and tool entries.
 
 ---
 
-## Step 6: Canonical Descriptor and Profiles
+## Canonical Descriptor and Profiles
 
 - `src/core/prompts/tools/tool-specs.ts`: add one entry to `STANDARD_TOOL_SPECS` with `spec(...)`, or `nativeSpec(...)` only when XML exposure is intentionally unsupported. The `ProfileToolSpec`/`ProfileToolParam` types live in `profile-tool-set.ts`; Lite derives from the same spec through `tool-profile.ts`.
 - Model parameter types, requiredness, enum values, dependencies, and runtime `contextRequirements` explicitly. Include `task_progress` only when the tool participates in the focus-tracking contract.
@@ -123,7 +114,7 @@ Tests: `src/core/prompts/tools/__tests__/provider-projector.test.ts`, `xml-tool-
 
 ---
 
-## Step 7: Handler and Registration
+## Handler and Registration
 
 Handler file: `src/core/task/tools/handlers/<ToolName>Handler.ts`.
 
@@ -146,7 +137,7 @@ Register the handler in `toolHandlersMap` in `src/core/task/tools/ToolExecutorCo
 
 The map is an exhaustive `Record<DlineDefaultTool, ...>`, so TypeScript fails until the entry exists. `ProductionToolHandlerRuntime` registers mapped handlers automatically.
 
-After approval, the coordinator runs: explicit-instruction gate → `awaitToolCallPreconditions` → `handler.execute` → `applyToolCallSideEffects`. Tools that may run only on an explicit user instruction also go through `src/core/task/explicit-instructions/explicit-tool-gate.ts`.
+After approval, `ToolExecutorCoordinator.execute()` checks the explicit-instruction gate, opens a workspace-mutation ticket when applicable, settles preceding progress, and calls the execution policy or handler. It settles the mutation ticket in `finally` and completes checklist handling through `ToolCallProgress.finish()`. Explicit-only tools use `src/core/task/explicit-instructions/explicit-tool-gate.ts`; do not duplicate that authorization in the handler.
 
 ### Minimal handler shape
 
@@ -194,16 +185,17 @@ test-tools/utils/math.ts L3:17
 
 ---
 
-## Step 8: Side Effects and File Bookkeeping
+## Side Effects and File Bookkeeping
 
-- `src/core/task/tools/ToolCallSideEffects.ts`: `toolMayChangeWorkspace` derives from `READ_ONLY_TOOLS` and `CONVERSATIONAL_TOOL_NAMES`. Add file-editing tools to `NAMED_FILE_EDIT_TOOLS` so each call gets its own checkpoint.
+- `src/core/task/tools/ToolExecutorCoordinator.ts`: add file-editing tools to `WORKSPACE_MUTATION_TOOLS`. Extend `mayMutateWorkspace()` when parameters distinguish a preview from a real mutation; `rename` and `replace_text` use `dry_run` this way. The coordinator pairs `beginWorkspaceMutation` with settlement in `finally`, including failure and cancellation paths. A handler must not create a second checkpoint queue.
+- `src/core/task/tools/ToolCallSideEffects.ts` owns `ToolCallProgress`, which applies supported checklist updates at presentation or completion. It is not the workspace-mutation registry.
 - File tracking: `config.services.taskFileTracker`, `config.services.fileContextTracker` (`src/core/context/context-tracking/FileContextTracker.ts`), and `config.taskState.fileReadCache`. Follow `WriteToFileToolHandler` and `ReadFileToolHandler`. Do not record file context for paths the tool deleted.
 
-Tests: `src/core/task/tools/__tests__/ToolCallSideEffects.preconditions.test.ts`, `ToolExecutorCoordinator.taskProgress.test.ts`.
+Tests: `src/core/task/tools/__tests__/ToolExecutorCoordinator.taskProgress.test.ts` covers mutation tickets, non-mutating tools, previews and checkpoint-barrier failure alongside checklist behavior.
 
 ---
 
-## Step 9: Turn-Ending and Interactive Tools
+## Turn-Ending and Interactive Tools
 
 Read `AskFollowupQuestionToolHandler`, `MakePlanHandler`, `QnaRespondHandler`, `GenerateReportHandler`, and `AttemptCompletionHandler` first, and follow the matching one.
 
@@ -232,7 +224,7 @@ Tests: `src/core/task/interaction/__tests__/HandlerInteractionMatrix.test.ts`, `
 
 ---
 
-## Step 10: Subagent Exposure
+## Subagent Exposure
 
 - `src/core/task/tools/subagent/DefaultSubagentConfig.ts`: `DEFAULT_SUBAGENT_ALLOWED_TOOLS` and `DEFAULT_SUBAGENT_YAML_CONTENT` define the default allowlist.
 - `src/core/task/tools/subagent/subagent-tool-policy.ts`: `isForbiddenSubagentTool` (turn-ending, conversational, and delegation tools) and `sanitizeSubagentTools`.
@@ -242,7 +234,7 @@ Tests: `src/core/task/tools/subagent/__tests__/subagent-tool-policy.delegation.t
 
 ---
 
-## Step 11: Webview Presentation
+## Webview Presentation
 
 ### Grouped rows
 
@@ -261,9 +253,9 @@ Tests: `npm run test:webview` plus focused component tests.
 
 ---
 
-## Step 12: Host Bridge for IDE-Native Capability Only
+## Host Bridge for IDE-Native Capability Only
 
-Skip this step when core Node.js code can implement the tool without VS Code APIs. Core code depends on `HostProvider` (`src/hosts/host-provider.ts`), never on `vscode`.
+Skip a host bridge when core Node.js can implement the tool without VS Code APIs. Core code depends on `HostProvider` (`src/hosts/host-provider.ts`), never on `vscode`.
 
 1. Add the contract under `proto/dline/host/{service}.proto` with the `dline` namespace and compatible field numbers.
 2. Run `npm run protos`; never edit generated files.
@@ -287,7 +279,7 @@ if (applied) {
 
 ---
 
-## Step 13: Lifecycle, Cancellation, and Recovery
+## Lifecycle, Cancellation, and Recovery
 
 - A running tool defines its terminal projections: completed, failed, cancelled, interrupted, and restored.
 - Lifecycle changes go through kernel events and transitions, not handler or Webview booleans.
@@ -296,60 +288,6 @@ if (applied) {
 
 ---
 
-## Step 14: Verify the Chain
+## Select Verification for the Changed Boundary
 
-Run the smallest checks that prove each changed boundary, then broaden for shared contracts:
-
-```text
-npm run check-types
-npm run lint
-npm run test:run -- <focused test files>
-npm run test:snapshot             # canonical prompt output changed
-npm run test:webview              # Webview presentation changed
-npm run protos                    # a Proto source changed
-```
-
-Also verify, when applicable:
-
-- admission: required parameters, declared paths, and zero target I/O before approval;
-- approval kind for each auto-approve configuration, including rejection with zero side effects;
-- lane classification and parallel behavior;
-- Standard and Lite membership, native and XML projections;
-- partial streaming and final result ordering;
-- cancellation, interruption, and restart recovery;
-- subagent allowlist and configuration UI exposure;
-- E2E when the change crosses a real host, ProtoBus, persistence, or Task lifecycle boundary.
-
----
-
-## Completion Checklist
-
-### Identity and admission
-- [ ] `DlineDefaultTool`, `READ_ONLY_TOOLS`, `CONVERSATIONAL_TOOL_NAMES` (`src/shared/tools.ts`)
-- [ ] `KernelToolId` and `KERNEL_CONVERSATIONAL_TOOL_IDS` (`kernel/turn/tool-identities.ts`)
-- [ ] `ToolAdmissionRegistry`: required parameters, validation, declared paths, approval presentation
-- [ ] permission scope in `approval-kind.ts`
-- [ ] lane classification in `tool-lanes.ts`
-
-### Prompt
-- [ ] i18n module registered; prompt-asset inventory updated
-- [ ] one canonical descriptor in `tool-specs.ts`
-- [ ] Standard/Lite membership in `tool-ids.ts`
-- [ ] snapshots regenerated with `npm run test:snapshot`
-
-### Runtime
-- [ ] handler registered in `toolHandlersMap`; no approval logic inside it
-- [ ] `NAMED_FILE_EDIT_TOOLS` and file tracking for editing tools
-- [ ] turn-ending set, interaction kind, and restore policy for interactive tools
-- [ ] subagent policy, default allowlist decision, and `TOOL_DESCRIPTIONS`
-
-### Host and presentation, when required
-- [ ] Proto source, `npm run protos`, host adapter, `HostProvider` exposure
-- [ ] grouped row, dedicated row, or activity rendering chosen intentionally
-- [ ] `UiSayTool`/`UiAsk` changed only for a real shared contract
-- [ ] loading, completed, failed, cancelled, interrupted, and restored states covered
-
-### Verification
-- [ ] focused tests pass, including admission, approval-kind, lane, and inventory tests
-- [ ] type checking and lint pass
-- [ ] relevant Webview or E2E coverage passes
+Each topic above lists its owning tests. Load `use-vitest` for execution and snapshot regeneration. `integrate-new-tool` owns the end-to-end integration order and completion checklist.

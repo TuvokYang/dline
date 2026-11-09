@@ -1,4 +1,6 @@
 // Mode import removed — no longer needed in profile-driven architecture
+
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import type { ApiProfile } from "./ProviderProfile"
 
 interface VSCodeLmProviderProps {
@@ -9,12 +11,10 @@ interface VSCodeLmProviderProps {
 
 /** VS Code LM provider �?uses built-in VS Code language models. No API configuration needed. */
 export const VSCodeLmProvider = ({}: VSCodeLmProviderProps) => {
+    const { t } = useUiTranslation()
     return (
         <div>
-            <p style={{ fontSize: "12px", color: "var(--vscode-descriptionForeground)" }}>
-                VS Code LM uses the built-in language models available in your VS Code installation. No API key or configuration
-                is needed.
-            </p>
+            <p style={{ fontSize: "12px", color: "var(--vscode-descriptionForeground)" }}>{t("settings.ui.vscodeLm.help")}</p>
         </div>
     )
 }

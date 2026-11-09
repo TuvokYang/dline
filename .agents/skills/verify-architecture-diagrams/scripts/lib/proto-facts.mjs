@@ -2,6 +2,7 @@
 
 import fs from "node:fs"
 import path from "node:path"
+import { attachProtoTypeIdentities } from "./proto-identities.mjs"
 
 function normalized(filePath) {
     return filePath.replaceAll("\\", "/")
@@ -52,19 +53,27 @@ function tokenize(source) {
         }
         if (char === '"' || char === "'") {
             const quote = char
-            index += 1
+            const start = index++
+            const tokenLine = line
+            let escaped = false
             while (index < source.length) {
                 if (source[index] === "\\") {
+                    escaped = true
                     index += 2
                     continue
                 }
-                if (source[index] === quote) {
-                    index += 1
-                    break
-                }
+                if (source[index] === quote) break
                 if (source[index] === "\n") line += 1
                 index += 1
             }
+            // A string is never a keyword. Escaped import paths are unsupported,
+            // not guessed from an undecoded token or treated as local declarations.
+            tokens.push({
+                value: null,
+                string: escaped || source[index] !== quote ? null : source.slice(start + 1, index),
+                line: tokenLine,
+            })
+            index += 1
             continue
         }
         if (/[A-Za-z_]/.test(char)) {
@@ -115,6 +124,63 @@ function parseRpc(tokens, start) {
     }
 }
 
+function blockEnd(tokens, start) {
+    let depth = 1
+    for (let cursor = start + 1; cursor < tokens.length; cursor++) {
+        if (tokens[cursor].value === "{") depth++
+        if (tokens[cursor].value === "}" && --depth === 0) return cursor
+    }
+    return -1
+}
+
+function declarationRanges(tokens, file, packageName, diagnostics) {
+    const types = []
+    const imports = []
+    const services = []
+    const walk = (start, end, scope, topLevel) => {
+        let cursor = start
+        while (cursor < end) {
+            const token = tokens[cursor]
+            const name = tokens[cursor + 1]?.value
+            if (["message", "enum", "service"].includes(token.value)) {
+                const validHeader = /^[A-Za-z_][A-Za-z0-9_]*$/.test(name ?? "") && tokens[cursor + 2]?.value === "{"
+                const close = validHeader ? blockEnd(tokens, cursor + 2) : -1
+                if (close < 0 || close >= end) {
+                    diagnostics.push({ file, line: token.line, message: `unable to parse ${token.value} declaration` })
+                    break
+                }
+                const fullName = scope ? `${scope}.${name}` : name
+                if (token.value === "service" && topLevel) services.push({ start: cursor, body: cursor + 2, end: close })
+                if (["message", "enum"].includes(token.value)) {
+                    types.push({ file, line: token.line, name, fullName, kind: token.value })
+                    if (token.value === "message") walk(cursor + 3, close, fullName, false)
+                }
+                cursor = close + 1
+                continue
+            }
+            if (topLevel && token.value === "import") {
+                const visibility = ["public", "weak"].includes(name) ? name : "private"
+                const literal = tokens[cursor + (visibility === "private" ? 1 : 2)]
+                if (literal?.string !== undefined) imports.push({ path: literal.string, visibility, target: null })
+            }
+            // Fields, options and oneofs are not type declarations, even when
+            // their names are keywords or their option bodies contain braces.
+            while (cursor < end && tokens[cursor].value !== ";") {
+                if (tokens[cursor].value === "{") {
+                    const close = blockEnd(tokens, cursor)
+                    if (close < 0) return
+                    cursor = close + 1
+                    break
+                }
+                cursor++
+            }
+            if (tokens[cursor]?.value === ";") cursor++
+        }
+    }
+    walk(0, tokens.length, packageName, true)
+    return { types, imports, services }
+}
+
 function parseProtoFile(source, file) {
     const tokens = tokenize(source)
     const diagnostics = []
@@ -128,18 +194,12 @@ function parseProtoFile(source, file) {
         packageName = parts.join("")
         break
     }
+    const declarations = declarationRanges(tokens, file, packageName, diagnostics)
     const services = []
-    for (let index = 0; index < tokens.length; index += 1) {
-        if (tokens[index].value !== "service") continue
-        const serviceToken = tokens[index]
-        const name = tokens[index + 1]?.value
-        let cursor = index + 2
-        while (cursor < tokens.length && tokens[cursor].value !== "{") cursor += 1
-        if (!name || tokens[cursor]?.value !== "{") {
-            diagnostics.push({ file, line: serviceToken.line, message: "service declaration is missing a name or body" })
-            continue
-        }
-        cursor += 1
+    for (const range of declarations.services) {
+        const serviceToken = tokens[range.start]
+        const name = tokens[range.start + 1].value
+        let cursor = range.body + 1
         let depth = 1
         const methods = []
         while (cursor < tokens.length && depth > 0) {
@@ -174,23 +234,20 @@ function parseProtoFile(source, file) {
             fullName: packageName ? `${packageName}.${name}` : name,
             methods,
         })
-        index = cursor - 1
     }
-    return { services, diagnostics }
+    return { path: file, package: packageName, imports: declarations.imports, types: declarations.types, services, diagnostics }
 }
 
 export function readProtoFacts({ repoRoot = process.cwd(), protoRoot = "proto" } = {}) {
     const absoluteRoot = path.resolve(repoRoot)
     const absoluteProto = path.resolve(absoluteRoot, protoRoot)
-    const services = []
-    const diagnostics = []
-    for (const filePath of protoFiles(absoluteProto)) {
-        const result = parseProtoFile(fs.readFileSync(filePath, "utf8"), normalized(path.relative(absoluteRoot, filePath)))
-        services.push(...result.services)
-        diagnostics.push(...result.diagnostics)
-    }
+    const files = protoFiles(absoluteProto).map((filePath) =>
+        parseProtoFile(fs.readFileSync(filePath, "utf8"), normalized(path.relative(absoluteRoot, filePath))),
+    )
+    attachProtoTypeIdentities(files, normalized(path.relative(absoluteRoot, absoluteProto)))
+    const services = files.flatMap((file) => file.services)
     services.sort((left, right) => left.fullName.localeCompare(right.fullName) || left.file.localeCompare(right.file))
-    return { services, diagnostics }
+    return { services, types: files.flatMap((file) => file.types), files, diagnostics: files.flatMap((file) => file.diagnostics) }
 }
 
 export function readProtoServiceFacts(options = {}) {

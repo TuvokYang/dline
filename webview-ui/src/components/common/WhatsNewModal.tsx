@@ -1,23 +1,23 @@
 import React from "react"
-import { useMount } from "react-use"
 import GitHubIcon from "@/assets/GitHubIcon"
 import WhatsNewItems from "@/components/common/WhatsNewItems"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { DLINE_REPOSITORY_URL } from "@/config/source-links"
-import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
+import { UiText } from "@/i18n/UiText"
 
 interface WhatsNewModalProps {
     open: boolean
     onClose: () => void
+    /** Release version reported by the extension; it is an identity, not display copy. */
     version: string
 }
 
 export const WhatsNewModal: React.FC<WhatsNewModalProps> = ({ open, onClose, version }) => {
-    const { refreshOpenRouterModels } = useExtensionState()
-
-    // Get latest model list in case user hits shortcut button to set model
-    useMount(refreshOpenRouterModels)
-
+    const { t } = useUiTranslation()
+    // Announcements never choose a model, so this dialog must not start a model
+    // listing request. It is mounted by the welcome surface, which the panel
+    // returns to whenever the task closes.
     const inlineCodeStyle: React.CSSProperties = {
         backgroundColor: "var(--vscode-textCodeBlock-background)",
         padding: "2px 6px",
@@ -34,7 +34,7 @@ export const WhatsNewModal: React.FC<WhatsNewModalProps> = ({ open, onClose, ver
                 <DialogTitle
                     className="shrink-0 leading-normal tracking-normal mb-3 pr-6"
                     style={{ color: "var(--vscode-editor-foreground)" }}>
-                    🎉 New in v{version}
+                    {t("shell.whatsNew.title", { version })}
                 </DialogTitle>
 
                 <div className="min-h-0 overflow-y-auto" id="whats-new-description">
@@ -44,7 +44,7 @@ export const WhatsNewModal: React.FC<WhatsNewModalProps> = ({ open, onClose, ver
                     <div className="flex flex-col items-center gap-3 mt-4 pt-4 border-t border-[var(--vscode-widget-border)]">
                         <div className="flex items-center gap-4">
                             <a
-                                aria-label="Star us on GitHub"
+                                aria-label={t("shell.whatsNew.starAria")}
                                 className="text-[var(--vscode-foreground)] hover:text-[var(--vscode-textLink-activeForeground)] transition-colors"
                                 href={DLINE_REPOSITORY_URL}
                                 rel="noopener noreferrer"
@@ -55,15 +55,20 @@ export const WhatsNewModal: React.FC<WhatsNewModalProps> = ({ open, onClose, ver
 
                         {/* GitHub Star CTA */}
                         <p className="text-sm text-center" style={{ color: "var(--vscode-descriptionForeground)" }}>
-                            Please support Dline by{" "}
-                            <a
-                                href={DLINE_REPOSITORY_URL}
-                                rel="noopener noreferrer"
-                                style={{ color: "var(--vscode-textLink-foreground)" }}
-                                target="_blank">
-                                starring us on GitHub
-                            </a>
-                            .
+                            <UiText
+                                slots={{
+                                    link: (
+                                        <a
+                                            href={DLINE_REPOSITORY_URL}
+                                            rel="noopener noreferrer"
+                                            style={{ color: "var(--vscode-textLink-foreground)" }}
+                                            target="_blank">
+                                            {t("shell.whatsNew.starLink")}
+                                        </a>
+                                    ),
+                                }}
+                                text={t("shell.whatsNew.star")}
+                            />
                         </p>
                     </div>
                 </div>

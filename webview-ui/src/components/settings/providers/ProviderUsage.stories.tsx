@@ -8,6 +8,13 @@ import {
     claudeFableExhaustedUsageFixture,
     claudeUsageFixture,
     codexUsageFixture,
+    openCodeBalanceUsageFixture,
+    openCodeGoPlusUsageFixture,
+    openCodeGoTeamsUsageFixture,
+    openCodeGoUsageFixture,
+    openCodeNoDataUsageFixture,
+    unreportedCacheUsageFixture,
+    zeroCacheHitUsageFixture,
 } from "./usageStoryFixtures"
 
 /**
@@ -45,11 +52,36 @@ const meta = {
 export default meta
 type Story = StoryObj<typeof meta>
 
-/** Balance account (DeepSeek): balance summary plus today's token counts. */
+/** Balance and local day totals, including a measured 75% cache hit rate. */
 export const Balance: Story = {
     args: { title: "DeepSeek" },
     decorators: withUsage(balanceUsageFixture),
-    play: expandCard,
+    play: async (context) => {
+        await expandCard(context)
+        await expect(within(context.canvasElement).getByText("Cache hit: 75%")).toBeVisible()
+    },
+}
+
+/** A reported zero must render as 0%, not disappear as unknown. */
+export const CacheHitZero: Story = {
+    args: { title: "DeepSeek" },
+    decorators: withUsage(zeroCacheHitUsageFixture),
+    play: async (context) => {
+        await expandCard(context)
+        await expect(within(context.canvasElement).getByText("Cache hit: 0%")).toBeVisible()
+    },
+}
+
+/** A missing cache split must not be presented as a measured zero. */
+export const CacheNotReported: Story = {
+    args: { title: "DeepSeek" },
+    decorators: withUsage(unreportedCacheUsageFixture),
+    play: async (context) => {
+        await expandCard(context)
+        const canvas = within(context.canvasElement)
+        await expect(canvas.getByText(/^Today In:/)).toBeVisible()
+        await expect(canvas.queryByText(/^Cache hit:/)).not.toBeInTheDocument()
+    },
 }
 
 /** Codex subscription: rolling "5 hour" / "7 day" windows with reset cards. */
@@ -71,4 +103,48 @@ export const ClaudeFableExhausted: Story = {
     args: { title: "Claude Code" },
     decorators: withUsage(claudeFableExhaustedUsageFixture),
     play: expandCard,
+}
+
+/**
+ * OpenCode pay-as-you-go: Dline accumulates the per-response cost, and shows
+ * no remaining balance because Console publishes no balance endpoint.
+ */
+export const OpenCodeBalance: Story = {
+    args: { title: "OpenCode" },
+    decorators: withUsage(openCodeBalanceUsageFixture),
+    play: expandCard,
+}
+
+/** OpenCode Go ($10/month): three windows against the plan's per-model limit. */
+export const OpenCodeGo: Story = {
+    args: { title: "OpenCode" },
+    decorators: withUsage(openCodeGoUsageFixture),
+    play: expandCard,
+}
+
+/** OpenCode Go Plus ($40/month): the same windows against a higher limit. */
+export const OpenCodeGoPlus: Story = {
+    args: { title: "OpenCode" },
+    decorators: withUsage(openCodeGoPlusUsageFixture),
+    play: expandCard,
+}
+
+/**
+ * OpenCode Go Teams ($20/member/month). Read beside `OpenCodeGo` this is the
+ * story that makes a monthly limit derived from `billing_source` visibly
+ * wrong: the gateway reports `go` for a Teams member, but the limit differs.
+ */
+export const OpenCodeGoTeams: Story = {
+    args: { title: "OpenCode" },
+    decorators: withUsage(openCodeGoTeamsUsageFixture),
+    play: expandCard,
+}
+
+/**
+ * No cost has been reported yet. The card stays collapsed and says so instead
+ * of drawing an empty window that would read as "nothing used".
+ */
+export const OpenCodeNoData: Story = {
+    args: { title: "OpenCode" },
+    decorators: withUsage(openCodeNoDataUsageFixture),
 }

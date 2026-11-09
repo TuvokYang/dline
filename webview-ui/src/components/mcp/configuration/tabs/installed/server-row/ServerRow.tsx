@@ -7,20 +7,15 @@ import {
     UpdateMcpTimeoutRequest,
 } from "@shared/proto/dline/mcp"
 import { convertProtoMcpServersToMcpServers } from "@shared/proto-conversions/mcp/mcp-server-conversion"
-import {
-    VSCodeCheckbox,
-    VSCodeDropdown,
-    VSCodeOption,
-    VSCodePanels,
-    VSCodePanelTab,
-    VSCodePanelView,
-} from "@vscode/webview-ui-toolkit/react"
+import { VSCodeCheckbox, VSCodePanels, VSCodePanelTab, VSCodePanelView } from "@vscode/webview-ui-toolkit/react"
 import { KeyRoundIcon, RefreshCcwIcon, Trash2Icon } from "lucide-react"
 import { type FormEvent, useState } from "react"
+import { LocalizedDropdown, LocalizedOption } from "@/components/common/LocalizedDropdown"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 import { McpServiceClient } from "@/services/grpc-client"
 import { getMcpServerDisplayName } from "@/utils/mcp"
@@ -28,19 +23,14 @@ import McpPromptRow from "./McpPromptRow"
 import McpResourceRow from "./McpResourceRow"
 import McpToolRow from "./McpToolRow"
 
-// constant JSX.Elements
-const TimeoutOptions = [
-    { value: "30", label: "30 seconds" },
-    { value: "60", label: "1 minute" },
-    { value: "300", label: "5 minutes" },
-    { value: "600", label: "10 minutes" },
-    { value: "1800", label: "30 minutes" },
-    { value: "3600", label: "1 hour" },
-].map((option) => (
-    <VSCodeOption key={option.value} value={option.value}>
-        {option.label}
-    </VSCodeOption>
-))
+const TIMEOUT_OPTIONS = [
+    { value: "30", labelKey: "capabilities.mcp.timeout.30" },
+    { value: "60", labelKey: "capabilities.mcp.timeout.60" },
+    { value: "300", labelKey: "capabilities.mcp.timeout.300" },
+    { value: "600", labelKey: "capabilities.mcp.timeout.600" },
+    { value: "1800", labelKey: "capabilities.mcp.timeout.1800" },
+    { value: "3600", labelKey: "capabilities.mcp.timeout.3600" },
+] as const
 
 const ServerRow = ({
     server,
@@ -55,6 +45,7 @@ const ServerRow = ({
     enabled?: boolean
     onToggleEnabled?: (enabled: boolean) => void
 }) => {
+    const { t } = useUiTranslation()
     const { mcpMarketplaceCatalog, setMcpServers, remoteConfigSettings } = useExtensionState()
 
     const [isExpanded, setIsExpanded] = useState(false)
@@ -99,6 +90,8 @@ const ServerRow = ({
             return DEFAULT_MCP_TIMEOUT_SECONDS.toString()
         }
     })
+
+    const selectedTimeout = TIMEOUT_OPTIONS.find((option) => option.value === timeoutValue)
 
     const handleTimeoutChange = (event: Event | FormEvent<HTMLElement>) => {
         const select = event.target as HTMLSelectElement
@@ -163,9 +156,9 @@ const ServerRow = ({
                 e.stopPropagation()
                 handleClearVariables()
             }}
-            title="Forget the values saved for this server's ${env:...} references and reconnect"
+            title={t("capabilities.mcp.forgetVariables")}
             variant="secondary">
-            {isClearingVariables ? "Clearing..." : "Clear Saved Variables"}
+            {t(isClearingVariables ? "capabilities.mcp.clearing" : "capabilities.mcp.clearVariables")}
         </Button>
     )
 
@@ -266,39 +259,42 @@ const ServerRow = ({
                 {/* On the row itself, so clearing a wrong saved value does not depend on expanding the server first. */}
                 {hasEnvironmentReferences && (
                     <Button
+                        aria-label={t("capabilities.mcp.clearVariables")}
                         disabled={server.status === "connecting" || isRestarting || isClearingVariables}
                         onClick={(e) => {
                             e.stopPropagation()
                             handleClearVariables()
                         }}
                         size="icon"
-                        title="Clear Saved Variables"
+                        title={t("capabilities.mcp.clearVariables")}
                         variant="icon">
                         <KeyRoundIcon />
                     </Button>
                 )}
                 {!server.error && (
                     <Button
+                        aria-label={t("capabilities.mcp.restart")}
                         disabled={server.status === "connecting" || isRestarting || !isServerEnabled}
                         onClick={(e) => {
                             e.stopPropagation()
                             handleRestart()
                         }}
                         size="icon"
-                        title="Restart Server"
+                        title={t("capabilities.mcp.restart")}
                         variant="icon">
                         <RefreshCcwIcon />
                     </Button>
                 )}
                 {!server.error && hasTrashIcon && !isWorkspaceServer && (
                     <Button
+                        aria-label={t("capabilities.mcp.delete")}
                         disabled={isDeleting}
                         onClick={(e) => {
                             e.stopPropagation()
                             handleDelete()
                         }}
                         size="icon"
-                        title="Delete Server"
+                        title={t("capabilities.mcp.delete")}
                         variant="icon">
                         <Trash2Icon />
                     </Button>
@@ -309,7 +305,7 @@ const ServerRow = ({
                     <TooltipTrigger asChild>
                         <div className="flex items-center gap-2">
                             <Switch
-                                aria-label={`Enable ${serverDisplayName}`}
+                                aria-label={t("capabilities.mcp.enable", { name: serverDisplayName })}
                                 checked={isServerEnabled}
                                 disabled={isAlwaysEnabled}
                                 key={server.name}
@@ -322,7 +318,7 @@ const ServerRow = ({
                         </div>
                     </TooltipTrigger>
                     <TooltipContent className="max-w-xs" hidden={!isAlwaysEnabled} side="top">
-                        This server can't be disabled because it is enabled by your organization
+                        {t("capabilities.mcp.required")}
                     </TooltipContent>
                 </Tooltip>
                 <div
@@ -336,7 +332,13 @@ const ServerRow = ({
 
             {server.error ? (
                 <div className="text-sm bg-text-block-background rounded-b-sm">
-                    <div className="text-failed-icon mb-2 px-2.5 break-words">{server.error}</div>
+                    <div className="text-failed-icon mb-2 px-2.5 break-words" role="alert">
+                        {t("capabilities.mcp.connectionError")}
+                        <details>
+                            <summary>{t("capabilities.diagnostics")}</summary>
+                            {server.error}
+                        </details>
+                    </div>
                     {server.oauthRequired &&
                         (server.oauthAuthStatus === "unauthenticated" ||
                             server.oauthAuthStatus === "reauthentication-required") && (
@@ -349,7 +351,11 @@ const ServerRow = ({
                                     ).catch((error) => console.error("Error authorizing MCP server", error))
                                 }}
                                 variant="default">
-                                {server.oauthAuthStatus === "reauthentication-required" ? "Reauthorize" : "Authenticate"}
+                                {t(
+                                    server.oauthAuthStatus === "reauthentication-required"
+                                        ? "capabilities.mcp.reauthorize"
+                                        : "capabilities.mcp.authenticate",
+                                )}
                             </Button>
                         )}
                     {/* Authentication state can outlive the server that asked for it, so retrying stays available. */}
@@ -358,7 +364,11 @@ const ServerRow = ({
                         disabled={server.status === "connecting" || isRestarting}
                         onClick={handleRestart}
                         variant="secondary">
-                        {server.status === "connecting" || isRestarting ? "Retrying..." : "Retry Connection"}
+                        {t(
+                            server.status === "connecting" || isRestarting
+                                ? "capabilities.mcp.retrying"
+                                : "capabilities.mcp.retryConnection",
+                        )}
                     </Button>
 
                     {hasEnvironmentReferences && clearVariablesButton("m-2.5 mt-0 max-w-[calc(100%-20px)]")}
@@ -369,7 +379,7 @@ const ServerRow = ({
                             disabled={isDeleting}
                             onClick={handleDelete}
                             variant="danger">
-                            {isDeleting ? "Deleting..." : "Delete Server"}
+                            {t(isDeleting ? "capabilities.mcp.deleting" : "capabilities.mcp.delete")}
                         </Button>
                     )}
                 </div>
@@ -377,11 +387,17 @@ const ServerRow = ({
                 isExpanded && (
                     <div className="bg-text-block-background p-2.5 pt-0 text-sm rounded-b-sm">
                         <VSCodePanels>
-                            <VSCodePanelTab id="tools">Tools ({server.tools?.length || 0})</VSCodePanelTab>
-                            <VSCodePanelTab id="resources">
-                                Resources ({[...(server.resourceTemplates || []), ...(server.resources || [])].length || 0})
+                            <VSCodePanelTab id="tools">
+                                {t("capabilities.mcp.toolsCount", { count: server.tools?.length || 0 })}
                             </VSCodePanelTab>
-                            <VSCodePanelTab id="prompts">Prompts ({server.prompts?.length || 0})</VSCodePanelTab>
+                            <VSCodePanelTab id="resources">
+                                {t("capabilities.mcp.resourcesCount", {
+                                    count: [...(server.resourceTemplates || []), ...(server.resources || [])].length,
+                                })}
+                            </VSCodePanelTab>
+                            <VSCodePanelTab id="prompts">
+                                {t("capabilities.mcp.promptsCount", { count: server.prompts?.length || 0 })}
+                            </VSCodePanelTab>
 
                             <VSCodePanelView id="tools-view">
                                 {server.tools && server.tools.length > 0 ? (
@@ -393,7 +409,7 @@ const ServerRow = ({
                                                 className="mb-1 text-xs"
                                                 data-tool="all-tools"
                                                 onChange={handleAutoApproveChange}>
-                                                Auto-approve all tools
+                                                {t("capabilities.mcp.autoApproveAll")}
                                             </VSCodeCheckbox>
                                         )}
                                         {server.tools.map((tool) => (
@@ -401,7 +417,7 @@ const ServerRow = ({
                                         ))}
                                     </div>
                                 ) : (
-                                    <div className="text-description py-2.5">No tools found</div>
+                                    <div className="text-description py-2.5">{t("capabilities.mcp.noTools")}</div>
                                 )}
                             </VSCodePanelView>
 
@@ -417,7 +433,7 @@ const ServerRow = ({
                                         ))}
                                     </div>
                                 ) : (
-                                    <div className="py-2.5 text-description">No resources found</div>
+                                    <div className="py-2.5 text-description">{t("capabilities.mcp.noResources")}</div>
                                 )}
                             </VSCodePanelView>
 
@@ -441,7 +457,7 @@ const ServerRow = ({
                                             padding: "10px 0",
                                             color: "var(--vscode-descriptionForeground)",
                                         }}>
-                                        No prompts found
+                                        {t("capabilities.mcp.noPrompts")}
                                     </div>
                                 )}
                             </VSCodePanelView>
@@ -449,10 +465,17 @@ const ServerRow = ({
 
                         {!isWorkspaceServer && (
                             <div className="my-2.5 mx-1.5">
-                                <label className="block mb-1 text-[13px]">Request Timeout</label>
-                                <VSCodeDropdown className="w-full" onChange={handleTimeoutChange} value={timeoutValue}>
-                                    {TimeoutOptions}
-                                </VSCodeDropdown>
+                                <label className="block mb-1 text-[13px]">{t("capabilities.mcp.requestTimeout")}</label>
+                                <LocalizedDropdown
+                                    aria-label={t("capabilities.mcp.requestTimeout")}
+                                    className="w-full"
+                                    onChange={handleTimeoutChange}
+                                    selectedLabel={selectedTimeout === undefined ? undefined : t(selectedTimeout.labelKey)}
+                                    value={timeoutValue}>
+                                    {TIMEOUT_OPTIONS.map((option) => (
+                                        <LocalizedOption key={option.value} label={t(option.labelKey)} value={option.value} />
+                                    ))}
+                                </LocalizedDropdown>
                             </div>
                         )}
                         <Button
@@ -460,7 +483,11 @@ const ServerRow = ({
                             disabled={server.status === "connecting" || isRestarting}
                             onClick={handleRestart}
                             variant="secondary">
-                            {server.status === "connecting" || isRestarting ? "Restarting..." : "Restart Server"}
+                            {t(
+                                server.status === "connecting" || isRestarting
+                                    ? "capabilities.mcp.restarting"
+                                    : "capabilities.mcp.restart",
+                            )}
                         </Button>
 
                         {hasEnvironmentReferences && clearVariablesButton("w-[calc(100%-14px)] mt-1 mx-1.5 mb-3")}
@@ -471,7 +498,7 @@ const ServerRow = ({
                                 disabled={isDeleting}
                                 onClick={handleDelete}
                                 variant="danger">
-                                {isDeleting ? "Deleting..." : "Delete Server"}
+                                {t(isDeleting ? "capabilities.mcp.deleting" : "capabilities.mcp.delete")}
                             </Button>
                         )}
                     </div>

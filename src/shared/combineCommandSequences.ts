@@ -1,4 +1,5 @@
-import { UiMessage } from "./ExtensionMessage"
+import { type CommandRow, readCommandRow } from "./commandRow"
+import type { UiMessage } from "./ExtensionMessage"
 
 /**
  * Combines sequences of command and command_output messages in an array of ClineMessages.
@@ -50,10 +51,10 @@ export function combineCommandSequences(messages: UiMessage[]): UiMessage[] {
         if (msg.ask === "command" || msg.say === "command") {
             const output = outputByCmdTs.get(msg.ts)
             if (output !== undefined) {
-                combinedCommands.set(msg.ts, {
-                    ...msg,
-                    text: (msg.text || "") + (output.length > 0 ? `\n${COMMAND_OUTPUT_STRING}\n${output}` : ""),
-                })
+                // The output is its own fact, so it is merged into the field rather
+                // than appended to the command line a reader would have to split.
+                const row = readCommandRow(msg)
+                combinedCommands.set(msg.ts, { ...msg, ...writeOutput(row, output) })
             } else {
                 combinedCommands.set(msg.ts, { ...msg })
             }
@@ -72,5 +73,23 @@ export function combineCommandSequences(messages: UiMessage[]): UiMessage[] {
             return msg
         })
 }
-export const COMMAND_OUTPUT_STRING = "Output:"
-export const COMMAND_REQ_APP_STRING = "REQ_APP"
+export { COMMAND_OUTPUT_STRING, COMMAND_REQ_APP_STRING } from "./commandRow"
+
+/**
+ * A command row with its output attached.
+ *
+ * The row keeps its command line, directory and approval state; only the output
+ * changes, and it changes in the field that owns it. A legacy row that stated
+ * everything in one string still reads correctly because the split happens here.
+ */
+function writeOutput(row: CommandRow, output: string): Partial<UiMessage> {
+    // A row may already carry output in its own text; the arriving output is
+    // appended to it rather than replacing it, so a mixed row loses nothing.
+    const merged = row.output.length === 0 ? output : output.length === 0 ? row.output : `${row.output}\n${output}`
+    return {
+        command: row.command,
+        commandWorkingDirectory: row.workingDirectory,
+        commandOutput: merged,
+        commandAsksApproval: row.requestsApproval,
+    }
+}

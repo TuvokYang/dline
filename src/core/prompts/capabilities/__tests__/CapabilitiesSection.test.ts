@@ -15,15 +15,13 @@ describe("renderCapabilitiesSection", () => {
             ],
         })
 
-        expect(section).toContain(
-            [
-                "- Server `docs` (tools: 2):",
-                "  - `docs.search`: Search docs",
-                "  - `docs.fetch`: Fetch a page",
-                "- Server `otel` (tools: 1):",
-                "  - `otel.query_logs`: Query logs",
-            ].join("\n"),
-        )
+        expect(section.split("\n").filter((line) => /^\s*- /.test(line))).toEqual([
+            "- Server `docs` (tools: 2):",
+            "  - `docs.search`: Search docs",
+            "  - `docs.fetch`: Fetch a page",
+            "- Server `otel` (tools: 1):",
+            "  - `otel.query_logs`: Query logs",
+        ])
     })
 
     it("keeps MCP descriptions to one bounded line", () => {
@@ -33,17 +31,19 @@ describe("renderCapabilitiesSection", () => {
         })
         const toolLine = section.split("\n").find((line) => line.startsWith("  - `docs.search`:")) ?? ""
 
-        expect(toolLine).toContain("Search docs")
-        expect(toolLine.length).toBeLessThanOrEqual("  - `docs.search`: ".length + 240)
+        expect(toolLine).toBe(`  - \`docs.search\`: Search docs ${"x".repeat(228)}`)
     })
 
     it("leaves capabilities without a server as a flat list", () => {
         const section = renderCapabilitiesSection({
             ...EMPTY,
-            skills: [{ name: "review", description: "Review changes" }],
+            skills: [
+                { name: "review", description: "Review changes" },
+                { name: "release", description: "Ship a version" },
+            ],
         })
+        const skillLines = section.split("\n").filter((line) => line.trimStart().startsWith("- `"))
 
-        expect(section).toContain("- `review`: Review changes")
-        expect(section).not.toContain("Server")
+        expect(skillLines).toEqual(["- `review`: Review changes", "- `release`: Ship a version"])
     })
 })

@@ -1,6 +1,5 @@
 import { ModelInfo, openAiModelInfoSaneDefaults } from "@shared/api"
 import { SELECTOR_SEPARATOR, stringifyVsCodeLmModelSelector } from "@shared/vsCodeSelectorUtils"
-import { calculateApiCostAnthropic } from "@utils/cost"
 import * as vscode from "vscode"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
@@ -404,9 +403,13 @@ export class VsCodeLmHandler extends ApiHandler implements SingleCompletionHandl
             // Extensions can register tools using vscode.lm.registerTool()
 
             // The Language Model API sends no thinking parameter; the chat model ID is the sent model.
+            let sentAtMs = Number.NaN
             const { stream } = await ApiHandler.observeProviderStreamResponse(
                 ApiHandler.identifyProviderAttempt("vscode-lm", { model: client.id }),
-                () => client.sendRequest(vsCodeLmMessages, requestOptions, requestCancellation.token),
+                () => {
+                    sentAtMs = Date.now()
+                    return client.sendRequest(vsCodeLmMessages, requestOptions, requestCancellation.token)
+                },
                 (response) => response.stream,
             )
             if (!stream) throw new Error("Cline <Language Model API>: Response stream is unavailable")
@@ -477,12 +480,19 @@ export class VsCodeLmHandler extends ApiHandler implements SingleCompletionHandl
             // Count tokens in the accumulated text after stream completion
             const totalOutputTokens: number = await this.countTokens(accumulatedText)
 
-            // Report final usage after stream completion
+            const cost = ApiHandler.calculateUsageCost(
+                this.getModel().info.pricing,
+                {
+                    inputTokens: totalInputTokens,
+                    outputTokens: totalOutputTokens,
+                },
+                sentAtMs,
+            )
             yield {
                 type: "usage",
                 inputTokens: totalInputTokens,
                 outputTokens: totalOutputTokens,
-                totalCost: calculateApiCostAnthropic(this.getModel().info, totalInputTokens, totalOutputTokens),
+                ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
             }
         } catch (error: unknown) {
             this.ensureCleanState()
@@ -551,10 +561,7 @@ export class VsCodeLmHandler extends ApiHandler implements SingleCompletionHandl
                     supportsImages: false, // VSCode Language Model API currently doesn't support image inputs
                     supportsPromptCache: true,
                 },
-                pricing: {
-                    inputPrice: 0,
-                    outputPrice: 0,
-                },
+                pricing: this.ctx.profile.modelInfo?.id === modelId ? this.ctx.profile.modelInfo.pricing : undefined,
             }
 
             return { id: modelId, info: modelInfo }

@@ -4,6 +4,7 @@ import type { SlashCommandNamespace } from "@shared/input-semantics/document"
 import type { McpServer } from "@shared/mcp"
 import type { GlobalInstructionsFile } from "@shared/remote-config/schema"
 import { PLATFORM_CONFIG, PlatformType } from "@/config/platform.config"
+import { englishUiTranslator, type UiMessageKey, type UiTranslator } from "@/i18n/messages"
 import {
     getBuiltInSlashCommands,
     pathToCommandName,
@@ -30,6 +31,24 @@ function sectionOf(command: SlashCommand): SlashMenuSection {
 export const DEFAULT_SLASH_COMMANDS: SlashCommand[] = getBuiltInSlashCommands(
     PLATFORM_CONFIG.type === PlatformType.VSCODE ? "vscode" : "standalone",
 )
+
+const BUILTIN_DESCRIPTION_KEYS = {
+    newtask: "runtime.slash.newtask",
+    "explain-changes": "runtime.slash.explainChanges",
+    "deep-planning": "runtime.slash.deepPlanning",
+    smol: "runtime.slash.compact",
+    compact: "runtime.slash.compact",
+    newrule: "runtime.slash.newrule",
+    reportbug: "runtime.slash.reportbug",
+    away: "runtime.slash.away",
+} as const satisfies Record<string, UiMessageKey>
+
+function localizedBuiltInCommands(t: UiTranslator): SlashCommand[] {
+    return DEFAULT_SLASH_COMMANDS.map((command) => {
+        const entry = Object.entries(BUILTIN_DESCRIPTION_KEYS).find(([name]) => name === command.name)
+        return entry ? { ...command, description: t(entry[1]) } : command
+    })
+}
 
 /**
  * Get workflow slash commands from enabled toggles.
@@ -162,7 +181,7 @@ export function getSkillCommands(
  * Gets MCP prompt commands from connected MCP servers
  * Format: mcp:<server-name>:<prompt-name>
  */
-export function getMcpPromptCommands(mcpServers: McpServer[] = []): SlashCommand[] {
+export function getMcpPromptCommands(mcpServers: McpServer[] = [], t: UiTranslator = englishUiTranslator): SlashCommand[] {
     const commands: SlashCommand[] = []
 
     for (const server of mcpServers) {
@@ -173,7 +192,7 @@ export function getMcpPromptCommands(mcpServers: McpServer[] = []): SlashCommand
         for (const prompt of server.prompts) {
             commands.push({
                 name: `${server.name}:${prompt.name}`,
-                description: prompt.description || prompt.title || `MCP prompt from ${server.name}`,
+                description: prompt.description || prompt.title || t("runtime.slash.mcpPrompt", { server: server.name }),
                 section: "mcp",
             })
         }
@@ -226,9 +245,13 @@ export interface SlashMenuEntry {
  * resolve would be inserted and then sent as plain text, so it is never
  * offered. Sources that list the same command twice yield one row.
  */
-export function getAvailableSlashCommands(sources: SlashCommandSources, catalog: InputSemanticCatalog): SlashMenuEntry[] {
+export function getAvailableSlashCommands(
+    sources: SlashCommandSources,
+    catalog: InputSemanticCatalog,
+    t: UiTranslator = englishUiTranslator,
+): SlashMenuEntry[] {
     const candidates = [
-        ...DEFAULT_SLASH_COMMANDS,
+        ...localizedBuiltInCommands(t),
         ...getWorkflowCommands(
             sources.localWorkflowToggles ?? {},
             sources.globalWorkflowToggles ?? {},
@@ -243,7 +266,7 @@ export function getAvailableSlashCommands(sources: SlashCommandSources, catalog:
             sources.remoteSkillsToggles,
             sources.availableSkillCommands,
         ),
-        ...getMcpPromptCommands(sources.mcpServers),
+        ...getMcpPromptCommands(sources.mcpServers, t),
     ]
     const triggers = indexCommandTriggers(catalog)
     const entries = new Map<string, SlashMenuEntry>()

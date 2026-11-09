@@ -57,3 +57,7 @@ tests/**/cache
 # Backup created by scripts/marketplace-readme.mjs while publishing.
 # Should never be committed: only exists if a publish aborts mid-swap.
 .README.github.bak
+
+# Keep documentation source GIF assets tracked.
+!/assets/docs/ui/docs-parallel-tasks.gif
+!/assets/docs/ui/docs-parallel-tasks-light.gif

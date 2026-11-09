@@ -20,6 +20,7 @@ function config(overrides: Partial<TaskConfig> = {}): TaskConfig {
     return {
         mode: "plan",
         yoloModeToggled: true,
+        interactions: { present: async () => undefined },
         callbacks: {
             say: vi.fn(async () => 1),
             switchToActMode: vi.fn(async () => true),
@@ -33,37 +34,7 @@ function config(overrides: Partial<TaskConfig> = {}): TaskConfig {
 }
 
 describe("ToolInteractionPolicy", () => {
-    it("owns the YOLO follow-up decision before the handler opens an interaction", async () => {
-        const task = config()
-
-        const result = await resolveToolInteractionPolicy(
-            task,
-            block(DlineDefaultTool.ASK, { question: "Which path?", options: "[]" }),
-        )
-
-        expect(result).toContain("Which path?")
-        expect(task.callbacks.say).toHaveBeenCalledOnce()
-    })
-
-    it("owns the YOLO make_plan mode switch and settles its retained row", async () => {
-        const task = config({
-            messageState: {
-                clineMessages: [{ ts: 1, type: "ask", ask: "make_plan", text: "pending", partial: true }],
-                updateTaskHistory: vi.fn(async () => []),
-            } as unknown as TaskConfig["messageState"],
-        })
-
-        const result = await resolveToolInteractionPolicy(
-            task,
-            block(DlineDefaultTool.MAKE_PLAN, { response: "# Plan", needs_more_exploration: "false" }),
-        )
-
-        expect(result).toBeTruthy()
-        expect(task.callbacks.switchToActMode).toHaveBeenCalledOnce()
-        expect(task.messageState.clineMessages[0]).toMatchObject({ text: JSON.stringify({ response: "# Plan" }), partial: false })
-        expect(task.messageState.updateTaskHistory).toHaveBeenCalledOnce()
-    })
-
+    // Final presentation and automatic progress are covered by real VS Code E2E.
     it("delegates ordinary interactions and failed mode switches to the handler", async () => {
         await expect(
             resolveToolInteractionPolicy(

@@ -41,25 +41,6 @@ test("product package, CI and architecture tests do not depend on this Skill", (
     assert.equal(fs.existsSync(path.join(repoRoot, "scripts/architecture/import-graph.mjs")), false)
 })
 
-test("diagram skills and workflows publish the exact opt-in, evidence and Skill-local command", () => {
-    const documents = [
-        ".agents/skills/verify-architecture-diagrams/SKILL.md",
-        ".agents/skills/designing-workstream-diagrams/SKILL.md",
-        ".agents/workflows/diagram-driven-task.md",
-        ".agents/workflows/executing-diagram-task.md",
-    ].map((relative) => fs.readFileSync(path.join(repoRoot, relative), "utf8"))
-    for (const content of documents) {
-        assert.match(content, /Architecture-Mode: diagram-driven-v1/)
-        assert.match(content, /Architecture Evidence/)
-        assert.match(content, /schema(?:-v2| version 2|_version: 2)/i)
-        assert.match(content, /\{node, artifact\}/)
-    }
-    const command = /node \.agents\/skills\/verify-architecture-diagrams\/scripts\/verify-diagrams\.mjs/
-    assert.match(documents[0], command)
-    assert.match(documents[2], command)
-    assert.match(documents[3], command)
-})
-
 test("a copied Skill runs in a non-Node project without repository dependencies", (t) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "dline-architecture-copied-skill-"))
     t.after(() => fs.rmSync(root, { recursive: true, force: true }))

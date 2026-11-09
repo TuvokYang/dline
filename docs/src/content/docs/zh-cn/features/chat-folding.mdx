@@ -1,0 +1,31 @@
+---
+title: 聊天折叠
+description: 在长任务中按请求轮次或用户回合折叠活动记录，选择折叠级别并展开查看详情。
+---
+
+聊天折叠把已经完成的活动记录收进可展开的块中，方便浏览较长的对话。
+
+## 开启条件与入口
+
+先满足[实验性功能](/zh-cn/features/experimental/)中的遥测参与条件并获得灰度资格，再打开 **Settings → General → Chat folding**。默认级别为 **Standard (no folding)**。
+
+## 选择折叠级别
+
+| 选项 | 展示方式 |
+| --- | --- |
+| **Standard (no folding)** | 不增加额外的活动折叠层，按常规聊天行展示 |
+| **Fold activity within each request round** | 在每次模型请求的轮次内折叠已完成活动，不跨请求合并 |
+| **Fold activity between messages** | 折叠相邻助手消息之间的已完成活动，可以跨多个请求轮次 |
+| **Fold the whole turn into one block** | 在同一用户回合内跨助手消息合并已完成内容 |
+
+运行中的工作保持可见。折叠块显示已完成活动的摘要，发生失败时会标出错误数量。
+
+## 查看折叠内容
+
+- 点击折叠块，展开该段活动并查看原有工具结果。
+- 需要通览细节时，将鼠标移到聊天区，使用 **Expand all activity**；全部展开后，同一按钮变为 **Collapse all activity**。只有存在可折叠内容时才显示该控制。
+- 要持续使用常规展示，在设置中选回 **Standard (no folding)**，而不是仅展开当前折叠块。
+
+## 灰度开放与设置
+
+灰度资格撤销后，聊天恢复为 **Standard (no folding)**，已选级别会保留。

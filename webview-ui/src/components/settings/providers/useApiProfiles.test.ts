@@ -55,7 +55,69 @@ describe("useApiProfiles", () => {
         expect(result.current.profiles[0]?.id).to.equal(profileId)
     })
 
-    it("flushes an in-flight Catalog mutation before Settings can close", async () => {
+    it("falls back to saved values after an automatic save fails without treating it as a load error", async () => {
+        mocks.getApiProfiles.mockResolvedValue({ profiles: [ApiProfile.create({ id: "save-failure", name: "Before" })] })
+        mocks.updateApiProfiles.mockRejectedValueOnce(new Error("Profile save failed"))
+        const wrapper = ({ children }: PropsWithChildren) =>
+            React.createElement(
+                ExtensionStateContext.Provider,
+                { value: { profileCatalogRevision: 240 } as ExtensionStateContextType },
+                children,
+            )
+        const { result } = renderHook(() => useApiProfiles(), { wrapper })
+        await waitFor(() => expect(result.current.profiles[0]?.id).to.equal("save-failure"))
+        act(() => result.current.updateProfile("save-failure", { name: "Draft" }))
+        await waitFor(() => expect(result.current.saveError?.message).to.equal("Profile save failed"))
+        expect(result.current.loaded).to.equal(true)
+        expect(result.current.error).to.equal(undefined)
+        await waitFor(() => expect(result.current.profiles[0]?.name).to.equal("Before"))
+        await act(async () => {
+            await result.current.reloadProfiles()
+        })
+        expect(result.current.profiles[0]?.name).to.equal("Before")
+        act(() => result.current.updateProfile("save-failure", { name: "Saved after failure" }))
+        await waitFor(() => expect(result.current.saveError).to.equal(undefined))
+        expect(result.current.profiles[0]?.name).to.equal("Saved after failure")
+        expect(mocks.updateApiProfiles).toHaveBeenCalledTimes(2)
+    })
+
+    it.each(["rename", "new-key"])("rolls back a failed key clear before a later %s edit", async (edit) => {
+        mocks.getApiProfiles.mockResolvedValue({
+            profiles: [
+                ApiProfile.create({
+                    id: "key-clear",
+                    name: "Before",
+                    apiKey: "saved-test-key",
+                }),
+            ],
+        })
+        mocks.updateApiProfiles.mockRejectedValueOnce(new Error("Profile save failed"))
+        const wrapper = ({ children }: PropsWithChildren) =>
+            React.createElement(
+                ExtensionStateContext.Provider,
+                { value: { profileCatalogRevision: edit === "rename" ? 241 : 242 } as ExtensionStateContextType },
+                children,
+            )
+        const { result } = renderHook(() => useApiProfiles(), { wrapper })
+        await waitFor(() => expect(result.current.profiles[0]?.id).toBe("key-clear"))
+        act(() => result.current.updateProfile("key-clear", { apiKey: "" }))
+        await waitFor(() => expect(result.current.saveError).toBeDefined())
+        expect(mocks.updateApiProfiles.mock.calls[0][0].clearApiKeyProfileIds).toEqual(["key-clear"])
+        await waitFor(() => expect(result.current.profiles[0]?.apiKey).toBe("saved-test-key"))
+        act(() =>
+            result.current.updateProfile(
+                "key-clear",
+                edit === "rename" ? { name: "Renamed" } : { apiKey: "replacement-test-key" },
+            ),
+        )
+        await waitFor(() => expect(result.current.saveError).toBeUndefined())
+        const request = mocks.updateApiProfiles.mock.calls[1][0]
+        expect(request.clearApiKeyProfileIds).toEqual([])
+        expect(request.profiles[0].apiKey).toBe(edit === "rename" ? "saved-test-key" : "replacement-test-key")
+        expect(mocks.updateApiProfiles).toHaveBeenCalledTimes(2)
+    })
+
+    it("waits for an in-flight automatic Catalog mutation without creating another write", async () => {
         let resolveUpdate!: (value: object) => void
         mocks.getApiProfiles.mockResolvedValue({
             profiles: [ApiProfile.create({ id: "profile-flush", name: "Before" })],
@@ -82,8 +144,10 @@ describe("useApiProfiles", () => {
         await Promise.resolve()
         expect(flushed).to.equal(false)
 
-        resolveUpdate({})
-        await flush
+        await act(async () => {
+            resolveUpdate({})
+            await flush
+        })
         expect(flushed).to.equal(true)
     })
 

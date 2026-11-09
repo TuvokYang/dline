@@ -82,31 +82,155 @@ message ModelCapabilities {
   repeated string input_media_types = 15;
 }
 
-/** Pricing tier for context-window-based tiered models. */
-message PricingTier {
-  uint64 context_window = 1;
-  optional double input_price = 2;
-  optional double output_price = 3;
-  optional double cache_writes_price = 4;
-  optional double cache_reads_price = 5;
-}
-
-/** Thinking output price tier. */
-message ThinkingOutputPriceTier {
-  uint64 token_limit = 1;
-  double price = 2;
-}
-
-/** Per-model pricing information. */
-message ModelPricing {
+/** One complete price set. Every applied unit price comes from exactly one of these. */
+message PriceSet {
   optional double input_price = 1;
   optional double output_price = 2;
-  optional double cache_writes_price = 3;
-  optional double cache_reads_price = 4;
-  optional string currency = 5;
-  repeated PricingTier tiers = 6;
-  optional double thinking_output_price = 7;
-  repeated ThinkingOutputPriceTier thinking_output_price_tiers = 8;
+  optional double cache_write_price = 3;
+  optional double cache_read_price = 4;
+  /** Billed instead of output_price while the model is in thinking mode. */
+  optional double thinking_output_price = 5;
+}
+
+/** One price for every request. */
+message FlatPricing {
+  PriceSet prices = 1;
+}
+
+/** One price band selected by the request's total input tokens. */
+message ContextWindowBand {
+  /** Inclusive upper bound in tokens. The last band omits it and is unbounded. */
+  optional uint64 max_input_tokens = 1;
+  PriceSet prices = 2;
+}
+
+/** Price bands ordered by ascending input-token usage. */
+message ContextWindowPricing {
+  repeated ContextWindowBand bands = 1;
+}
+
+/**
+ * A local-time interval that bills at its own rate.
+ *
+ * Windows inside one schedule never overlap, so an instant falls into at most
+ * one of them and a request's price cannot depend on the order they are listed
+ * in. Every instant no window covers bills at the schedule's default rate.
+ */
+message PricingTimeWindow {
+  /** Minutes from local midnight, inclusive. */
+  uint32 start_minute = 1;
+  /** Minutes from local midnight, exclusive. 1440 is the end of the day. */
+  uint32 end_minute = 2;
+  /** Rate billed inside this window. Exactly one shape applies. */
+  oneof rate {
+    PriceSet prices = 3;
+    ContextWindowPricing bands = 4;
+  }
+}
+
+/** Which local days a schedule evaluates against. */
+enum PricingDayRule {
+  PRICING_DAY_RULE_UNSPECIFIED = 0;
+  PRICING_DAY_RULE_WEEKDAYS = 1;
+  PRICING_DAY_RULE_ALL_DAYS = 2;
+}
+
+/**
+ * Which local days the windows of a schedule are evaluated against.
+ *
+ * The seller publishes one offset, not a timezone name, so this carries the
+ * offset directly instead of pulling in a timezone database.
+ */
+message PricingSchedule {
+  /** Seller offset in minutes east of UTC. Windows are meaningless without it. */
+  int32 timezone_offset_minutes = 1;
+  // The windows moved to TimeOfDayPricing.time_windows, which carries their
+  // rates. Reusing this number would read window bounds as window prices.
+  reserved 2;
+  reserved "peak_windows";
+  PricingDayRule day_rule = 3;
+  /** Whether public holidays bill at the default rate for the whole day. */
+  bool default_on_public_holidays = 4;
+  /** Calendar identifier resolved locally, such as "CN". Empty disables the rule. */
+  string holiday_calendar = 5;
+}
+
+/**
+ * Price chosen by when the request started, then by input tokens.
+ *
+ * The schedule splits the local day into a default rate and a set of
+ * non-overlapping windows that each carry their own rate. Time is the outer
+ * dimension because the seller decides which rate applies once per request,
+ * before the token band narrows the price inside that rate.
+ *
+ * A seller that publishes one discounted period expresses it as one window plus
+ * the default; one that publishes two peak periods publishes two windows over
+ * the same default. Both DeepSeek's daily peak periods and the OpenCode Go
+ * gateway therefore use one shape instead of a fixed two-rate split.
+ */
+message TimeOfDayPricing {
+  PricingSchedule schedule = 1;
+  // Retired: peak/off-peak was a fixed two-rate split that could not describe
+  // more than one window or give a window its own token bands.
+  reserved 2, 3, 4, 5;
+  reserved "peak_prices", "off_peak_prices", "peak_bands", "off_peak_bands";
+  /** Rate for every instant no window covers. Exactly one shape applies. */
+  oneof default_rate {
+    PriceSet default_prices = 6;
+    ContextWindowPricing default_bands = 7;
+  }
+  /** Non-overlapping local-time intervals, each carrying its own rate. */
+  repeated PricingTimeWindow time_windows = 8;
+}
+
+/** How a model's price is chosen. Exactly one strategy applies. */
+message PricingStrategy {
+  oneof kind {
+    FlatPricing flat = 1;
+    ContextWindowPricing context_window = 2;
+    TimeOfDayPricing time_of_day = 3;
+  }
+}
+
+/** Legacy envelope, retained only to read previously stored prices. */
+message MeteredPricing {
+  option deprecated = true;
+  string currency = 1;
+  PricingStrategy strategy = 2;
+}
+
+/** Legacy account-mode marker without a numeric model price. Read compatibility only. */
+message SubscriptionPricing {
+  option deprecated = true;
+  reserved 1;
+}
+
+/** Legacy account-mode marker without a currency or rate. Read compatibility only. */
+message FreePricing {
+  option deprecated = true;
+  reserved 1;
+}
+
+/**
+ * One model price declaration, independent of account payment or quota mode.
+ *
+ * Currency and strategy are the only fields written by current producers.
+ * Deprecated envelopes are consumed once at read boundaries and never written back.
+ * An absent price remains unknown; a published zero is represented by zero rates.
+ */
+message ModelPricing {
+  optional string currency = 12;
+  optional PricingStrategy strategy = 13;
+
+  // Decode-only compatibility. Never reuse these numbers for canonical fields.
+  oneof legacy_mode {
+    MeteredPricing metered = 9 [deprecated = true];
+    SubscriptionPricing subscription = 10 [deprecated = true];
+    FreePricing free = 11 [deprecated = true];
+  }
+  // Former flat price and tier fields. Kept reserved so no later field reuses
+  // their numbers with a different meaning.
+  reserved 1, 2, 3, 4, 5, 6, 7, 8;
 }
 
 /** Capabilities for a dedicated image generation model. */

@@ -1,8 +1,24 @@
 import type { ModelInfo } from "@shared/proto/dline/models"
-import type { ModelCapabilities, ModelPricing } from "@shared/proto/dline/models/metadata"
+import type { ModelCapabilities } from "@shared/proto/dline/models/metadata"
+import { flatMeteredPricing, readBands, readCurrency, readPriceSet } from "@shared/providers/pricing-shape"
 import should from "should"
 import { describe, it } from "vitest"
 import { buildEffectiveModelInfo } from "../effective-model-info"
+
+/** Banded rates are listed lowest-first and the last band is unbounded. */
+function bandedPricing(bands: { maxInputTokens?: number; inputPrice: number; outputPrice: number }[]) {
+    return {
+        currency: "USD",
+        strategy: {
+            contextWindow: {
+                bands: bands.map((band) => ({
+                    maxInputTokens: band.maxInputTokens,
+                    prices: { inputPrice: band.inputPrice, outputPrice: band.outputPrice },
+                })),
+            },
+        },
+    }
+}
 
 describe("buildEffectiveModelInfo", () => {
     it("merges partial thinking overrides without losing declarations or reviving false and empty values", () => {
@@ -37,11 +53,7 @@ describe("buildEffectiveModelInfo", () => {
                 supportsImages: false,
                 supportsPromptCache: false,
             } as ModelCapabilities,
-            pricing: {
-                inputPrice: 1,
-                outputPrice: 2,
-                currency: "USD",
-            } as ModelPricing,
+            pricing: flatMeteredPricing(1, 2),
         }
 
         const result = buildEffectiveModelInfo("registry-model", registryModel, {
@@ -50,10 +62,7 @@ describe("buildEffectiveModelInfo", () => {
                 supportsImages: true,
                 temperature: 0.7,
             } as unknown as ModelCapabilities,
-            pricing: {
-                inputPrice: 0.5,
-                cacheReadsPrice: 0.05,
-            } as ModelPricing,
+            pricing: flatMeteredPricing(0.5, 2, undefined, 0.05),
         })
 
         result.id.should.equal("registry-model")
@@ -62,10 +71,10 @@ describe("buildEffectiveModelInfo", () => {
         should(result.capabilities?.maxTokens).equal(64_000)
         should(result.capabilities?.supportsImages).equal(true)
         should(result.capabilities?.temperature).equal(0.7)
-        should(result.pricing?.inputPrice).equal(0.5)
-        should(result.pricing?.outputPrice).equal(2)
-        should(result.pricing?.cacheReadsPrice).equal(0.05)
-        should(result.pricing?.currency).equal("USD")
+        should(readPriceSet(result.pricing?.strategy?.flat?.prices).inputPrice).equal(0.5)
+        should(readPriceSet(result.pricing?.strategy?.flat?.prices).outputPrice).equal(2)
+        should(readPriceSet(result.pricing?.strategy?.flat?.prices).cacheReadPrice).equal(0.05)
+        should(readCurrency(result.pricing)).equal("USD")
     })
 
     it("should preserve an explicit context window over inherited context tiers", () => {
@@ -121,24 +130,59 @@ describe("buildEffectiveModelInfo", () => {
         should(result.capabilities?.contextWindow).equal(200_000)
     })
 
-    it("should preserve an explicitly empty pricing tier override", () => {
+    it("should replace token bands when the profile enables band editing", () => {
         const registryModel: ModelInfo = {
             id: "tiered-pricing-model",
-            pricing: {
-                inputPrice: 1,
-                outputPrice: 2,
-                tiers: [{ contextWindow: 128_000, inputPrice: 3, outputPrice: 4 }],
-            } as ModelPricing,
+            pricing: bandedPricing([
+                { maxInputTokens: 128_000, inputPrice: 1, outputPrice: 2 },
+                { inputPrice: 3, outputPrice: 4 },
+            ]),
         }
 
         const result = buildEffectiveModelInfo("tiered-pricing-model", registryModel, {
-            pricing: { tiers: [] } as unknown as ModelPricing,
+            pricing: bandedPricing([
+                { maxInputTokens: 64_000, inputPrice: 7, outputPrice: 8 },
+                { inputPrice: 9, outputPrice: 10 },
+            ]),
             pricingTiersEnabled: true,
         })
 
-        should(result.pricing?.tiers).deepEqual([])
-        should(result.pricing?.inputPrice).equal(1)
-        should(result.pricing?.outputPrice).equal(2)
+        should(readBands(result.pricing).map((band) => band.maxInputTokens)).deepEqual([64_000, undefined])
+        should(readPriceSet(readBands(result.pricing)[0].prices).inputPrice).equal(7)
+        should(readPriceSet(readBands(result.pricing)[1].prices).outputPrice).equal(10)
+    })
+
+    it("should apply a complete pricing override independently of the historical editing flag", () => {
+        const registryModel: ModelInfo = {
+            id: "tiered-pricing-model",
+            pricing: bandedPricing([{ inputPrice: 1, outputPrice: 2 }]),
+        }
+
+        const result = buildEffectiveModelInfo("tiered-pricing-model", registryModel, {
+            pricing: bandedPricing([{ inputPrice: 7, outputPrice: 8 }]),
+            pricingTiersEnabled: false,
+        })
+
+        should(readBands(result.pricing).length).equal(1)
+        should(readPriceSet(readBands(result.pricing)[0].prices).inputPrice).equal(7)
+    })
+
+    it("should replace a zero price with an explicit complete Profile declaration", () => {
+        const registryModel: ModelInfo = {
+            id: "plan-model",
+            pricing: flatMeteredPricing(0, 0),
+        }
+
+        const result = buildEffectiveModelInfo("plan-model", registryModel, {
+            pricing: flatMeteredPricing(1, 2),
+        })
+
+        should(readPriceSet(result.pricing?.strategy?.flat?.prices)).deepEqual({
+            inputPrice: 1,
+            outputPrice: 2,
+            cacheWritePrice: 0,
+            cacheReadPrice: 0,
+        })
     })
 
     it("should compose model info from provider overrides when model id is empty", () => {
@@ -148,18 +192,15 @@ describe("buildEffectiveModelInfo", () => {
                 supportsPromptCache: true,
                 temperature: 0.2,
             } as unknown as ModelCapabilities,
-            pricing: {
-                inputPrice: 0.1,
-                outputPrice: 0.2,
-            } as ModelPricing,
+            pricing: flatMeteredPricing(0.1, 0.2),
         })
 
         result.id.should.equal("")
         should(result.capabilities?.contextWindow).equal(32_000)
         should(result.capabilities?.supportsPromptCache).equal(true)
         should(result.capabilities?.temperature).equal(0.2)
-        should(result.pricing?.inputPrice).equal(0.1)
-        should(result.pricing?.outputPrice).equal(0.2)
+        should(readPriceSet(result.pricing?.strategy?.flat?.prices).inputPrice).equal(0.1)
+        should(readPriceSet(result.pricing?.strategy?.flat?.prices).outputPrice).equal(0.2)
     })
 
     it("should use the explicit model id when registry metadata is missing", () => {

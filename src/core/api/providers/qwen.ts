@@ -57,6 +57,10 @@ export class QwenHandler extends ApiHandler {
             }
             try {
                 this.client = createOpenAIClient({
+                    // Both endpoints are current. Alibaba now also offers a
+                    // workspace-scoped host per region and recommends migrating to it,
+                    // but states that these regional hosts keep working, and a Profile
+                    // can always override the URL.
                     baseURL:
                         this.baseUrl ||
                         (this.useChinaApi()
@@ -104,6 +108,7 @@ export class QwenHandler extends ApiHandler {
             temperature = undefined
         }
 
+        const sentAtMs = Date.now()
         const stream = await client.chat.completions.create({
             model: model.id,
             max_completion_tokens: model.info.capabilities?.maxTokens,
@@ -149,10 +154,12 @@ export class QwenHandler extends ApiHandler {
                     // @ts-expect-error-next-line
                     cacheWriteTokens: chunk.usage.prompt_cache_miss_tokens,
                 })
+                const tokens = { ...inputUsage, outputTokens: chunk.usage.completion_tokens || 0 }
+                const cost = ApiHandler.calculateUsageCost(model.info.pricing, tokens, sentAtMs)
                 yield {
                     type: "usage",
-                    ...inputUsage,
-                    outputTokens: chunk.usage.completion_tokens || 0,
+                    ...tokens,
+                    ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                 }
             }
         }

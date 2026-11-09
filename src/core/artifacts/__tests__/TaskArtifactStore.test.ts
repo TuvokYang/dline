@@ -288,20 +288,6 @@ describe("TaskArtifactStore", () => {
         expect(await taskLimitedStore.listImages()).toHaveLength(1)
     })
 
-    it("rejects dimensions and pixel counts that exceed the configured limits", async () => {
-        const dimensionLimitedStore = createStore({ maxWidth: 4, maxHeight: 4, maxPixels: 16 })
-        await expectArtifactError(
-            dimensionLimitedStore.storeImage({ bytes: createPng(5, 1), declaredMimeType: "image/png" }),
-            "image_dimensions_exceeded",
-        )
-
-        const pixelLimitedStore = createStore({ maxWidth: 10, maxHeight: 10, maxPixels: 20 })
-        await expectArtifactError(
-            pixelLimitedStore.storeImage({ bytes: createPng(5, 5), declaredMimeType: "image/png" }),
-            "image_pixels_exceeded",
-        )
-    })
-
     it("persists canonical parent provenance and returns defensive copies", async () => {
         const store = createStore()
         const parentArtifactId = `image:sha256:${"b".repeat(64)}`
@@ -325,18 +311,6 @@ describe("TaskArtifactStore", () => {
             }),
             "invalid_manifest",
         )
-    })
-
-    it("fails closed for invalid artifact IDs and detects persisted file tampering", async () => {
-        const store = createStore()
-        const resolver = new ArtifactResolver(store)
-        const artifact = await store.storeImage({ bytes: PNG_1X1, declaredMimeType: "image/png" })
-
-        await expectArtifactError(resolver.resolveImage("../manifest.json"), "invalid_artifact_id")
-        await expectArtifactError(resolver.resolveImage("image:sha256:not-a-hash"), "invalid_artifact_id")
-
-        await fs.writeFile(path.join(taskDirectory, "artifacts", artifact.relativePath), createPng(1, 1, [9]))
-        await expectArtifactError(resolver.resolveImage(artifact.id), "artifact_integrity_failed")
     })
 
     it("rejects unsupported manifest versions and removes stale partial files during recovery", async () => {

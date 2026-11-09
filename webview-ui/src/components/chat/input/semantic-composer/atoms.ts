@@ -1,4 +1,4 @@
-import { type InputSemanticCatalog, resolveCommandTrigger } from "@shared/input-semantics/catalog"
+import { commandCompositionOf, type InputSemanticCatalog, resolveCommandTrigger } from "@shared/input-semantics/catalog"
 import { commandNamespaceOf } from "@shared/input-semantics/command-namespace"
 import type { FileNodeOrigin, SemanticResourceRef } from "@shared/input-semantics/document"
 import { formatMentionReference, parseMentionReference } from "@shared/input-semantics/mention-reference"
@@ -40,7 +40,7 @@ export function createCommandAtom(catalog: InputSemanticCatalog, commandId: stri
         sourceText: trigger,
         canonicalName: canonicalNameOf(descriptor.trigger),
         namespace: commandNamespaceOf(descriptor.id),
-        compositionMode: descriptor.lifecycle === "task" ? "lifecycle_barrier" : "composable",
+        compositionMode: commandCompositionOf(descriptor),
     }
 }
 

@@ -10,6 +10,7 @@
  * step so that this class stays a plain listing reader.
  */
 
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import type { ModelCapabilities, ModelPricing } from "@shared/providers/types"
 import type { ProviderModelReconciliationMode } from "../../provider-model-reconciliation"
 import { isRecord, ModelListingSource, readPerMillionPrice, readPositiveNumber, readString } from "../model-listing-source"
@@ -85,13 +86,12 @@ export class OpenRouterModelSource extends ModelListingSource {
     }
 
     protected override readPricing(raw: unknown): ModelPricing | undefined {
-        return {
-            inputPrice: readPerMillionPrice(raw, "pricing.prompt") ?? 0,
-            outputPrice: readPerMillionPrice(raw, "pricing.completion") ?? 0,
-            cacheWritesPrice: readPerMillionPrice(raw, "pricing.input_cache_write"),
-            cacheReadsPrice: readPerMillionPrice(raw, "pricing.input_cache_read"),
-            tiers: isRecord(raw) && Array.isArray(raw.tiers) ? raw.tiers : undefined,
-        }
+        const input = readPerMillionPrice(raw, "pricing.prompt")
+        const output = readPerMillionPrice(raw, "pricing.completion")
+        const cacheWrite = readPerMillionPrice(raw, "pricing.input_cache_write")
+        const cacheRead = readPerMillionPrice(raw, "pricing.input_cache_read")
+        if ([input, output, cacheWrite, cacheRead].every((rate) => rate === undefined)) return undefined
+        return flatMeteredPricing(input, output, cacheWrite, cacheRead)
     }
 
     protected override readModelId(raw: unknown): string | undefined {

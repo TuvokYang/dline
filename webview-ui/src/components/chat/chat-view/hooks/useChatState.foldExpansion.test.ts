@@ -9,7 +9,7 @@ import { useChatState } from "./useChatState"
 import { useScrollBehavior } from "./useScrollBehavior"
 
 function turnFold(messages: UiMessage[]): ActivityFold {
-    const fold = groupChatRows(messages, undefined, { level: "turn" }).find(isActivityFold)
+    const fold = groupChatRows(messages, undefined, { level: "user_turn" }).find(isActivityFold)
     if (!fold) throw new Error("expected the transcript to fold one turn")
     return fold
 }

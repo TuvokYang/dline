@@ -72,7 +72,6 @@ export class WebFetchToolHandler implements IFullyManagedTool {
 
         try {
             const url: string | undefined = block.params.url
-            const prompt: string | undefined = block.params.prompt
 
             const provider = config.api.getProviderId?.()
 
@@ -97,10 +96,6 @@ export class WebFetchToolHandler implements IFullyManagedTool {
                 config.taskState.consecutiveMistakeCount++
                 return await config.callbacks.sayAndCreateMissingParamError(this.name, "url", undefined, block.ts)
             }
-            if (!prompt) {
-                config.taskState.consecutiveMistakeCount++
-                return await config.callbacks.sayAndCreateMissingParamError(this.name, "prompt", undefined, block.ts)
-            }
             config.taskState.consecutiveMistakeCount = 0
 
             // Create message for approval
@@ -113,7 +108,6 @@ export class WebFetchToolHandler implements IFullyManagedTool {
                     schemaVersion: 1,
                     status: "running",
                     url,
-                    prompt,
                 },
             }
             terminalMessage = sharedMessageProps
@@ -145,7 +139,12 @@ export class WebFetchToolHandler implements IFullyManagedTool {
             }
 
             throwIfCancelled(operationSignal)
-            const result = await this.provider.fetch({ url, prompt, signal: operationSignal })
+            const prompt = this.provider.supportsPrompt ? block.params.prompt : undefined
+            const result = await this.provider.fetch({
+                url,
+                signal: operationSignal,
+                ...(prompt === undefined ? {} : { prompt }),
+            })
             throwIfCancelled(operationSignal)
             const completedMessage: UiSayTool = {
                 ...sharedMessageProps,
@@ -155,7 +154,6 @@ export class WebFetchToolHandler implements IFullyManagedTool {
                     status: "completed",
                     source: result.source,
                     url: result.url,
-                    prompt: result.prompt,
                     content: result.content,
                 },
             }
@@ -163,7 +161,6 @@ export class WebFetchToolHandler implements IFullyManagedTool {
             return formatResponse.toolResult(
                 JSON.stringify({
                     url: result.url,
-                    prompt: result.prompt,
                     source: result.source,
                     content: result.content,
                 }),

@@ -6,6 +6,7 @@ import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import OpenAI from "openai"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { ApiHandler, ApiHandlerContext } from "../ApiHandler"
+import type { BillingTokens } from "../billing/types"
 import { withRetry } from "../retry"
 import { sanitizeAnthropicMessages } from "../transform/anthropic-format"
 import { convertAnthropicMessageToGemini } from "../transform/gemini-format"
@@ -50,6 +51,7 @@ export class AIhubmixHandler extends ApiHandler {
             try {
                 this.anthropicClient = new Anthropic({
                     apiKey: this.apiKey,
+                    maxRetries: 0,
                     baseURL: this.baseUrl,
                     defaultHeaders: {
                         "APP-Code": this.appCode,
@@ -72,6 +74,7 @@ export class AIhubmixHandler extends ApiHandler {
             try {
                 this.openaiClient = new OpenAI({
                     apiKey: this.apiKey,
+                    maxRetries: 0,
                     baseURL: `${this.baseUrl}/v1`,
                     defaultHeaders: {
                         "APP-Code": this.appCode,
@@ -156,11 +159,13 @@ export class AIhubmixHandler extends ApiHandler {
 
     private async *createAnthropicMessage(systemPrompt: string, messages: any[]): ApiStream {
         const client = this.ensureAnthropicClient()
-        const modelId = this.modelId
+        const model = this.getModel()
+        const modelId = model.id
 
         // Sanitize messages to remove Cline-specific fields like call_id that are not allowed by Anthropic API
         const sanitizedMessages = sanitizeAnthropicMessages(messages, false)
 
+        const sentAtMs = Date.now()
         const stream = await client.messages.create({
             model: modelId,
             temperature: 0,
@@ -170,10 +175,17 @@ export class AIhubmixHandler extends ApiHandler {
             stream: true,
         })
 
+        let responseTokens: BillingTokens | undefined
         for await (const chunk of stream) {
             switch (chunk?.type) {
                 case "message_start":
                     const usage = chunk.message.usage
+                    responseTokens = {
+                        inputTokens: usage.input_tokens,
+                        outputTokens: usage.output_tokens,
+                        cacheWriteTokens: usage.cache_creation_input_tokens ?? undefined,
+                        cacheReadTokens: usage.cache_read_input_tokens ?? undefined,
+                    }
                     yield {
                         type: "usage",
                         inputTokens: usage.input_tokens || 0,
@@ -182,13 +194,26 @@ export class AIhubmixHandler extends ApiHandler {
                         cacheReadTokens: usage.cache_read_input_tokens || undefined,
                     }
                     break
-                case "message_delta":
+                case "message_delta": {
+                    const cost =
+                        responseTokens && chunk.delta?.stop_reason
+                            ? ApiHandler.calculateUsageCost(
+                                  model.info.pricing,
+                                  {
+                                      ...responseTokens,
+                                      outputTokens: Math.max(responseTokens.outputTokens, chunk.usage.output_tokens),
+                                  },
+                                  sentAtMs,
+                              )
+                            : undefined
                     yield {
                         type: "usage",
                         inputTokens: 0,
                         outputTokens: chunk.usage.output_tokens || 0,
+                        ...(cost?.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                     }
                     break
+                }
                 case "content_block_start":
                     if (chunk.content_block.type === "text") {
                         yield {
@@ -211,7 +236,8 @@ export class AIhubmixHandler extends ApiHandler {
 
     private async *createOpenaiResponseMessage(systemPrompt: string, messages: any[]): ApiStream {
         const client = this.ensureOpenaiClient()
-        const modelId = this.modelId
+        const model = this.getModel()
+        const modelId = model.id
 
         const input = (messages || []).map((m: any) => {
             const role = m.role || "user"
@@ -228,6 +254,7 @@ export class AIhubmixHandler extends ApiHandler {
             return { role, content }
         })
 
+        const sentAtMs = Date.now()
         const stream = await (client as any).responses.stream({
             model: modelId,
             instructions: systemPrompt,
@@ -241,10 +268,21 @@ export class AIhubmixHandler extends ApiHandler {
             }
             if (event?.type === "response.completed") {
                 const usage = event.response?.usage || {}
+                const tokens = { inputTokens: usage.input_tokens || 0, outputTokens: usage.output_tokens || 0 }
+                const cost = ApiHandler.calculateUsageCost(
+                    model.info.pricing,
+                    {
+                        inputTokens: usage.input_tokens - (usage.input_tokens_details?.cached_tokens ?? 0),
+                        outputTokens: usage.output_tokens,
+                        cacheReadTokens: usage.input_tokens_details?.cached_tokens,
+                        thoughtsTokenCount: usage.output_tokens_details?.reasoning_tokens,
+                    },
+                    sentAtMs,
+                )
                 yield {
                     type: "usage",
-                    inputTokens: usage.input_tokens || 0,
-                    outputTokens: usage.output_tokens || 0,
+                    ...tokens,
+                    ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                 }
                 continue
             }
@@ -256,7 +294,8 @@ export class AIhubmixHandler extends ApiHandler {
 
     private async *createOpenaiMessage(systemPrompt: string, messages: any[]): ApiStream {
         const client = this.ensureOpenaiClient()
-        const modelId = this.modelId
+        const model = this.getModel()
+        const modelId = model.id
 
         const openaiMessages = [{ role: "system", content: systemPrompt }, ...convertToOpenAiMessages(messages)]
 
@@ -269,6 +308,7 @@ export class AIhubmixHandler extends ApiHandler {
 
         const fixedRequestBody = this.fixToolChoice(requestBody)
 
+        const sentAtMs = Date.now()
         const stream = await client.chat.completions.create(fixedRequestBody)
 
         for await (const chunk of stream as any) {
@@ -281,10 +321,19 @@ export class AIhubmixHandler extends ApiHandler {
             }
 
             if (chunk.usage) {
+                const tokens = { inputTokens: chunk.usage.prompt_tokens || 0, outputTokens: chunk.usage.completion_tokens || 0 }
+                const cost = ApiHandler.calculateUsageCost(
+                    model.info.pricing,
+                    {
+                        inputTokens: chunk.usage.prompt_tokens,
+                        outputTokens: chunk.usage.completion_tokens,
+                    },
+                    sentAtMs,
+                )
                 yield {
                     type: "usage",
-                    inputTokens: chunk.usage.prompt_tokens || 0,
-                    outputTokens: chunk.usage.completion_tokens || 0,
+                    ...tokens,
+                    ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                 }
             }
         }

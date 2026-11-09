@@ -40,8 +40,11 @@ export type DeliveryOutcome =
     | { readonly kind: "wait"; readonly code: string; readonly retryAfterMs?: number }
     /** 413: the server stored nothing; usage drops the batch, logs split it in half. */
     | { readonly kind: "too_large" }
-    /** The server will never accept this batch. */
-    | { readonly kind: "discard"; readonly code: string }
+    /**
+     * The server will never accept this batch. `path` is the refused body location
+     * a contract error names, kept for bounded local evidence of what was wrong.
+     */
+    | { readonly kind: "discard"; readonly code: string; readonly path?: string }
     | { readonly kind: "stop"; readonly scope: StopScope; readonly code: string }
 
 /**
@@ -71,7 +74,9 @@ export function classifyUsageResponse(response: WireResponse, now = Date.now()):
     if (status === 413) return { kind: "too_large" }
     if (status === 404 || status === 405) return { kind: "stop", scope: "profile", code: code ?? "endpoint_unavailable" }
     if (status === 408 || status >= 500) return { kind: "replay", ...delay }
-    if (status >= 400) return { kind: "discard", code: code ?? `http_${status}` }
+    if (status >= 400) {
+        return { kind: "discard", code: code ?? `http_${status}`, ...(error.path ? { path: error.path } : {}) }
+    }
     return { kind: "replay", ...delay }
 }
 

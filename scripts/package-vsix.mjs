@@ -36,7 +36,7 @@ import { execSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { createDistributionManifest, INSIDERS_PACKAGE_NAME } from "./extension-manifest-identity.mjs"
+import { createDistributionManifest, resolveTargetIdentity } from "./extension-manifest-identity.mjs"
 import { withMarketplaceReadme } from "./marketplace-readme.mjs"
 import { assertChannelVersion, createInsidersVersion as createPolicyInsidersVersion } from "./release-version-policy.mjs"
 import { packageVsix } from "./vsix-packager.mjs"
@@ -56,6 +56,10 @@ const INSIDERS_DRAFT_TAG_PATTERN = /^insiders-[0-9a-f]{40}$/
 
 const PRE_RELEASE_CHANNEL = "pre-release"
 const SUPPORTED_CHANNELS = new Set(["auto", "ci", "production", PRE_RELEASE_CHANNEL, "insiders"])
+
+const VSCODE_MARKETPLACE_REGISTRY = "vscode-marketplace"
+const SUPPORTED_REGISTRIES = new Set(["open-vsx", VSCODE_MARKETPLACE_REGISTRY])
+const VSCODE_MARKETPLACE_PUBLISHER = "tuvokyangdline"
 
 /**
  * Run a git command and return its trimmed output.
@@ -301,11 +305,13 @@ function resolveRequestedChannel(requestedChannel, packageVersion) {
  * Parse CLI options used by CI and local packaging.
  *
  * @param {string[]} argv Command-line arguments.
- * @returns {{requestedChannel: string, outputPath: string|null}}
+ * @returns {{requestedChannel: string, outputPath: string|null, publisherOverride: string|null}}
  */
 function parseArguments(argv) {
     let requestedChannel = "auto"
     let outputPath = null
+    let publisherOverride = null
+    let registry = null
 
     for (let index = 0; index < argv.length; index += 1) {
         const argument = argv[index]
@@ -315,8 +321,16 @@ function parseArguments(argv) {
         } else if (argument === "--out") {
             outputPath = argv[index + 1]
             index += 1
+        } else if (argument === "--publisher") {
+            publisherOverride = argv[index + 1]
+            index += 1
+        } else if (argument === "--registry") {
+            registry = argv[index + 1]
+            index += 1
         } else if (argument === "--help" || argument === "-h") {
-            console.log("Usage: npm run vsix -- [--channel auto|ci|insiders|pre-release|production] [--out <path>]")
+            console.log(
+                "Usage: npm run vsix -- [--channel auto|ci|insiders|pre-release|production] [--out <path>] [--publisher <id>] [--registry open-vsx|vscode-marketplace]",
+            )
             process.exit(0)
         } else {
             fail(`Unknown argument '${argument}'.`)
@@ -330,25 +344,36 @@ function parseArguments(argv) {
         fail("--out requires a path.")
     }
 
-    return { requestedChannel, outputPath }
+    if (argv.includes("--publisher") && !publisherOverride) {
+        fail("--publisher requires an ID.")
+    }
+    if (registry !== null && !SUPPORTED_REGISTRIES.has(registry)) {
+        fail(`Unsupported registry '${registry}'.`)
+    }
+    return { requestedChannel, outputPath, publisherOverride, registry }
 }
 
 /**
  * Apply a channel identity to a package manifest in place.
  *
- * Only Insiders is a separate extension. A pre-release keeps the production
- * identity: it is the same extension on the Marketplace pre-release track, so
- * its manifest must not diverge from the release it precedes.
+ * Only Insiders and the VS Code Marketplace build are separate extensions. A
+ * pre-release keeps the production package name: it is the same extension on
+ * the Marketplace pre-release track, so its manifest must not diverge from the
+ * release it precedes.
  *
  * @param {object} pkg Parsed package.json.
  * @param {"ci"|"production"|"pre-release"|"insiders"} channel Target channel.
  * @param {string} version Version to publish.
+ * @param {string|null} publisherOverride Publisher for this package only.
+ * @param {string|null} registry Target registry.
  * @returns {boolean} True when the manifest was modified.
  */
-function applyChannelIdentity(pkg, channel, version) {
-    if (channel !== "insiders") return false
+function applyChannelIdentity(pkg, channel, version, publisherOverride, registry) {
+    const { packageName, publisher } = resolveTargetIdentity(channel, registry, pkg.name, pkg.publisher, publisherOverride)
+    const changed = packageName !== pkg.name || publisher !== pkg.publisher
+    if (!changed) return false
 
-    const transformed = createDistributionManifest(pkg, INSIDERS_PACKAGE_NAME, version)
+    const transformed = createDistributionManifest(pkg, packageName, version, publisher)
     for (const key of Object.keys(pkg)) delete pkg[key]
     Object.assign(pkg, transformed)
     return true
@@ -356,7 +381,7 @@ function applyChannelIdentity(pkg, channel, version) {
 
 // --- Main ---
 
-const { requestedChannel, outputPath } = parseArguments(process.argv.slice(2))
+const { requestedChannel, outputPath, publisherOverride, registry } = parseArguments(process.argv.slice(2))
 const packageVersion = readPackageJson().version
 const { channel, version, tag } = resolveRequestedChannel(requestedChannel, packageVersion)
 const resolvedOutputPath = outputPath ? (path.isAbsolute(outputPath) ? outputPath : path.join(PROJECT_ROOT, outputPath)) : null
@@ -381,9 +406,11 @@ await withMarketplaceReadme(
             fs.writeFileSync(PACKAGE_JSON_PATH, originalContent)
         })
 
-        if (applyChannelIdentity(pkg, channel, version)) {
+        if (applyChannelIdentity(pkg, channel, version, publisherOverride, registry)) {
             writePackageJson(pkg)
-            console.log(`[package-vsix] Applied ${channel} identity: name=${pkg.name}, version=${pkg.version}`)
+            console.log(
+                `[package-vsix] Applied ${channel} identity: publisher=${pkg.publisher}, name=${pkg.name}, version=${pkg.version}`,
+            )
         } else {
             console.log(`[package-vsix] Packaging ${channel} identity: name=${pkg.name}, version=${pkg.version}`)
         }

@@ -1,6 +1,8 @@
 import { type GetTaskRateMetricsResponse, TaskRateMetricsResolution as ProtoResolution } from "@shared/proto/dline/task"
+import type { UiLanguage } from "@shared/UiLanguage"
 import { act, renderHook, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { UiLanguageProvider } from "@/i18n/UiLanguageProvider"
 import {
     type TaskRateMetricsResolution,
     type UseTaskRateMetricsOptions,
@@ -181,13 +183,39 @@ describe("useTaskRateMetrics", () => {
         expect(result.current.data).toBeUndefined()
     })
 
+    it("retranslates a retained RPC failure without retrying or changing the refresh action", async () => {
+        mocks.getTaskRateMetrics.mockRejectedValueOnce(new Error("history unavailable"))
+        let language: UiLanguage = "en"
+        const { result, rerender } = renderHook(
+            () => useTaskRateMetrics({ enabled: true, resolution: "minute", taskId: "task-1" }),
+            { wrapper: ({ children }) => <UiLanguageProvider language={language}>{children}</UiLanguageProvider> },
+        )
+        await waitFor(() => expect(result.current.error).toBe("Failed to load API rate history: history unavailable"))
+        const refresh = result.current.refresh
+        const request = mocks.getTaskRateMetrics.mock.calls[0]?.[0]
+
+        language = "zh-CN"
+        rerender()
+        expect(result.current.error).toBe("加载 API 速率历史失败：history unavailable")
+        expect(result.current.refresh).toBe(refresh)
+        expect(result.current.loading).toBe(false)
+
+        language = "en"
+        rerender()
+        expect(result.current.error).toBe("Failed to load API rate history: history unavailable")
+        expect(result.current.refresh).toBe(refresh)
+        expect(mocks.getTaskRateMetrics).toHaveBeenCalledTimes(1)
+        expect(mocks.getTaskRateMetrics.mock.calls[0]?.[0]).toBe(request)
+        expect(result.current.data).toBeUndefined()
+    })
+
     it("surfaces an RPC error and retries on demand", async () => {
         mocks.getTaskRateMetrics
             .mockRejectedValueOnce(new Error("history unavailable"))
             .mockResolvedValueOnce(response(2, 24 * 60 * 60 * 1_000))
         const { result } = renderHook(() => useTaskRateMetrics({ enabled: true, resolution: "day", taskId: "task-1" }))
 
-        await waitFor(() => expect(result.current.error).toBe("history unavailable"))
+        await waitFor(() => expect(result.current.error).toBe("Failed to load API rate history: history unavailable"))
         act(() => result.current.refresh())
         await waitFor(() => expect(result.current.data?.points.some(({ activeSeconds }) => activeSeconds === 2)).toBe(true))
         expect(mocks.getTaskRateMetrics).toHaveBeenCalledTimes(2)

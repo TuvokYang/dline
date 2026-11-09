@@ -5,7 +5,7 @@
  * assumed capability envelope. Authentication uses a bare `api-key` header
  * rather than a bearer token.
  */
-import type { ModelCapabilities, ModelPricing } from "@shared/providers/types"
+import type { ModelCapabilities } from "@shared/providers/types"
 import type { ProviderModelReconciliationMode } from "../../provider-model-reconciliation"
 import { ModelListingSource } from "../model-listing-source"
 import type { ProviderRemoteContext } from "../model-source"
@@ -35,10 +35,6 @@ export class HicapModelSource extends ModelListingSource {
             supportsImages: true,
             supportsPromptCache: true,
         }
-    }
-
-    protected override readPricing(): ModelPricing {
-        return { inputPrice: 0, outputPrice: 0, cacheWritesPrice: 0, cacheReadsPrice: 0 }
     }
 }
 

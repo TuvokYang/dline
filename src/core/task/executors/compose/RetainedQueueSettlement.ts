@@ -1,6 +1,7 @@
 import type { QueuePayloadIdentity, TaskState } from "../../kernel"
 import type { ConversationJournal, JournalWatermark, TaskPayloadStore } from "../../stores"
 import { RetainedInputJournalBatch } from "./RetainedInputJournalBatch"
+import { RoundMaterialComposer } from "./RoundMaterialComposer"
 
 export interface RetainedQueueSettlementDecision {
     readonly deliveryId: string
@@ -53,9 +54,9 @@ function pendingDeliveries(state: Readonly<TaskState>): readonly PendingDelivery
 /**
  * Resolves journal facts only after the compose/provider writers have drained.
  *
- * A visible provider final or interruption proves the batch entered the durable
- * conversation. Otherwise the staged batch is retracted atomically and may be
- * released. Lookup or retraction failure produces no guessed decision.
+ * A prepared round or a legacy provider terminal proves durable inclusion.
+ * Otherwise the staged batch is retracted atomically and may be released.
+ * Lookup or retraction failure produces no guessed decision.
  */
 export async function settleRetainedQueueDeliveries(
     state: Readonly<TaskState>,
@@ -74,6 +75,26 @@ export async function settleRetainedQueueDeliveries(
             }
             if (!sameEntries(evidence.receipt.entries, delivery.entries)) throw new Error("RetainedDeliveryIdentityConflict")
             const compose = state.flow.compose?.commandId === delivery.ownerId ? state.flow.compose : undefined
+            if (compose?.materialPlan) {
+                const checkpoint = await new RoundMaterialComposer(payloads, journal).inspect(compose.commandId)
+                if (checkpoint) {
+                    const receipt = checkpoint.prepared.queueJournalReceipt
+                    if (
+                        checkpoint.prepared.draft.materialPlan?.id !== compose.materialPlan.id ||
+                        !receipt ||
+                        receipt.deliveryId !== delivery.deliveryId ||
+                        receipt.journalWatermark.seq !== evidence.receipt.watermark.seq ||
+                        !sameEntries(receipt.entries, delivery.entries)
+                    )
+                        throw new Error("RetainedPreparedCausationUnproven")
+                    decisions.push({
+                        deliveryId: delivery.deliveryId,
+                        outcome: "consumed",
+                        journalWatermark: checkpoint.watermark,
+                    })
+                    continue
+                }
+            }
             const provider = compose ? state.flow.provider : undefined
             const settled = provider
                 ? ((await journal.findByOperation(`provider.final:${provider.commandId}`)) ??

@@ -1,6 +1,6 @@
 ---
 name: writing-documentation
-description: Write or revise Dline documentation with evidence-based claims, bilingual Chinese and English deliverables under docs, current navigation and links, concise developer-focused prose, and verification of examples and assets.
+description: Revises Dline documentation with evidence-based claims, bilingual Chinese and English deliverables, current navigation and links, and release notes whose entries state a user-visible outcome. Use when writing or correcting pages under docs, README material, CHANGELOG.md, or the What's New editions. Do not use for code comments or internal design notes.
 ---
 
 # Writing Documentation
@@ -13,9 +13,7 @@ Use this skill for user-facing guides, feature pages, architecture documents, tr
 - Files under `.agents/` use English.
 - Documentation under `docs/` must provide Chinese and English deliverables for the same scope.
 - Root documentation follows the established pairing, such as `README.md` (English, the default) and `README_zh.md` (Chinese). Marketplace and in-extension readers see `README.marketplace.md`, which packaging copies over `README.md`; update it when the change affects that listing and run `src/__tests__/marketplace-readme-refs.test.ts`.
-- Release notes follow the established pairing: `CHANGELOG.md` (Chinese) and `docs/changelog/CHANGELOG_en.md` (English).
-- User-visible changes integrated into `dev` are recorded in the paired `Unreleased` sections. Follow repository-and-release for the changelog lifecycle and load dev-version-bump when freezing those entries into a version; routine Insiders updates do not bump package versions or What's New.
-- The What's New dialog source follows the same pairing: `docs/whats-new/WHATS_NEW.md` (Chinese) and `docs/whats-new/WHATS_NEW_en.md` (English, the edition the dialog renders). Every version update adds a `## X.Y.Z` section to both; load dev-version-bump for the section rules, because the webview build rejects any other Markdown.
+- Release notes and the What's New editions follow their own pairing and wording rules: `CHANGELOG.md` (Chinese) with `docs/changelog/CHANGELOG_en.md` (English), and `docs/whats-new/WHATS_NEW.md` (Chinese) with `docs/whats-new/WHATS_NEW_en.md` (English, the edition the dialog renders). Section 9 covers those files.
 - The docs site is Astro Starlight. Every site page is a pair with the same slug: English at `docs/src/content/docs/<slug>.mdx` (served at the site root) and Chinese at `docs/src/content/docs/zh-cn/<slug>.mdx` (served under `/zh-cn/`), as declared in `docs/src/data/locales.mjs`. `npm run docs:check` fails when either edition is missing.
 - Ask the user before inventing a new public URL structure only for documentation outside the site content tree.
 
@@ -128,7 +126,53 @@ After writing both language versions:
 - avoid duplicate pages that explain the same contract differently;
 - keep language counterparts discoverable according to the site's current localization convention.
 
-## 9. Verification
+## 9. Write release notes and What's New
+
+These four files have their own reader: someone deciding whether to upgrade. `CHANGELOG.md` and `docs/changelog/CHANGELOG_en.md` record what shipped; the two What's New editions present one release's highlights, and the dialog renders the English one.
+
+Record a change when a user can observe it: a capability, control or default they now have or lost, a failure that no longer happens, a limit that changes how they work. Internal work stays out of all four files: behavior-preserving refactors, tests, build and CI wiring, formatting, and dependency bumps with no user effect. What's New is stricter, because a highlight the reader cannot find in the product is a false promise. A release carrying only small fixes ships no What's New section, and a section is never padded to reach a count.
+
+| Situation | Result |
+|---|---|
+| finished work, not yet released | `[Unreleased]` in both changelogs, `## Unreleased` in both What's New editions |
+| cutting a version | those entries move into the tagged `## X.Y.Z` section; load `dev-version-bump` for the version range and file set |
+| entry feels long | keep the condition the user must know, drop the mechanism |
+| What's New entry | bold lead-in, then one sentence of behavior |
+| What's New budget | at most five entries per version, each within 128 characters counting the lead-in |
+| the other language | same changes, same order, same count; natural phrasing, no differing limits |
+
+Write the outcome the reader receives, not the machinery that delivers it:
+
+```text
+# mechanism: nothing the reader can act on
+- The task runtime stores conversations in a journal; continuing an older task imports it
+  unchanged and per-task state.json replaces snapshot.json
+
+# outcome: what happens to the user, including the price
+- Continuing a task after upgrading keeps its conversation; an older task may reopen as
+  interrupted and continue through Resume
+```
+
+A What's New entry leads with the outcome in bold and stops there:
+
+```text
+# a label with no behavior
+- **MCP tools on demand**
+
+# outcome, consequence, and cost
+- **发送区只剩一个按钮**：发送、恢复、排队、取消合并为一个按钮，任务运行时发送即排队，悬停 3 秒转为取消。
+```
+
+The shape is a build contract for the What's New editions: the newest section is a bare `## X.Y.Z` heading, each section is one flat `- ` list with two-space continuations, and inline syntax is limited to bold, backtick code, and absolute `https://` links without nesting. Changelogs use `## [X.Y.Z]`.
+
+| Mistake | Correction |
+|---|---|
+| two unrelated changes joined by "and also" | split into separate entries |
+| an older release's feature restated as new | drop it, or return it to its own section |
+| a table, RPC, endpoint or class name in the entry | name the setting or control the user clicks |
+| a translation copied sentence by sentence | describe the same behavior naturally in each language |
+
+## 10. Verification
 
 Verify at least:
 
@@ -141,8 +185,16 @@ Verify at least:
 - no stale product names remain outside intentional migration context;
 - `npm run docs:check` passes while iterating and `npm run docs:verify` (tests, content check, build, and dist check) passes before completion. Install the docs site dependencies first with `npm ci` in `docs/`; preview with `npm run docs`.
 
+For the release notes and What's New files, run:
+
+```bash
+npx vitest run webview-ui/src/__tests__/vite-whats-new.test.ts src/__tests__/extract-changelog-section.test.ts
+```
+
+The first fails on a malformed section, on a first version that differs from `package.json`, and on editions that differ in version or count. The second treats an empty released section as an error during extraction. Then read the diff for the budgets, the bilingual count, published sections left untouched, and UTF-8 with LF endings.
+
 For substantial user-facing docs, request an independent review for technical accuracy and language parity.
 
 ## Completion report
 
-Report both language files, navigation or asset changes, sources used to verify behavior, validation performed, and any environment-dependent statement that could not be confirmed.
+Report both language files, navigation or asset changes, sources used to verify behavior, validation performed, and any environment-dependent statement that could not be confirmed. For release notes and What's New, report the files changed and the entries added or reworded, or state that they were intentionally left unchanged because the change has no user-visible effect.

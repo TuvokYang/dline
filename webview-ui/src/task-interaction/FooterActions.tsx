@@ -1,6 +1,14 @@
 import type { TaskViewAction, TaskViewState } from "@shared/ExtensionMessage"
 import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
 import { useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
+import { InteractionDeadline } from "./InteractionDeadline"
+import {
+    type InteractionActionError,
+    interactionActionFailure,
+    interactionActionLabel,
+    interactionErrorText,
+} from "./presentation"
 import { composerCarriesAction } from "./task-actions"
 import {
     type AcceptedInteractionSettlement,
@@ -25,26 +33,6 @@ export interface FooterActionsProps {
     onSuccessorAccepted?: (transfer: PendingSuccessorDraftTransfer) => void
 }
 
-function errorMessage(error: unknown): string {
-    return error instanceof Error && error.message ? error.message : "The action could not be completed."
-}
-
-/** Turn stable dispatch outcomes into recovery guidance instead of exposing protocol enums. */
-function rejectedInteractionMessage(result: string): string {
-    switch (result) {
-        case "stale_interaction":
-            return "This action is no longer current. Reopen the task and try again."
-        case "invalid_runtime_event":
-            return "Dline could not continue the task. Your message was restored; try again."
-        case "task_read_only":
-            return "This task is open in another window and cannot be changed here."
-        case "invalid_payload":
-            return "This response could not be read. Your message was restored; review its attachments and try again."
-        default:
-            return `Interaction was not accepted: ${result || "unknown error"}`
-    }
-}
-
 /** Render and dispatch footer actions without inspecting message history. */
 export function FooterActions({
     view,
@@ -56,6 +44,7 @@ export function FooterActions({
     onDraftRejected,
     onSuccessorAccepted,
 }: FooterActionsProps) {
+    const { t } = useUiTranslation()
     // A dispatch is pending for the task and interaction that issued it, but not
     // for a single `stateRevision`. Cancelling makes the backend publish further
     // projections of the same task while the RPC is still in flight; keying the
@@ -63,33 +52,37 @@ export function FooterActions({
     // mid-cancellation, so the user could fire duplicate cancels against a task
     // that was already winding down. Switching task or interaction still starts
     // a fresh scope, because that is genuinely different work.
-    const dispatchScope = `${view.taskId}:${view.activeInteraction?.interactionId ?? ""}`
+    const taskScope = `${view.taskId}:${view.taskInstanceId ?? ""}`
+    const dispatchScope = `${taskScope}:${view.activeInteraction?.interactionId ?? ""}`
     const [pendingState, setPendingState] = useState<string>()
-    const pending = pendingState === dispatchScope
-    const beginPending = () => setPendingState(dispatchScope)
+    const pending = pendingState === dispatchScope || pendingState === taskScope
+    const beginPending = (scope = dispatchScope) => setPendingState(scope)
     // Clear only the scope this call owns; a late settle must not release the
     // pending state of a newer projection that has already started its own work.
     const endPending = (scope: string) => setPendingState((current) => (current === scope ? undefined : current))
     // Errors stay bound to the exact projection that produced them: a newer
     // backend state supersedes the failure the user was shown.
     const errorScope = `${dispatchScope}:${view.stateRevision}`
-    const [errorState, setErrorState] = useState<{ scope: string; message: string }>()
-    const error = errorState?.scope === errorScope ? errorState.message : undefined
-    const setError = (message?: string) => setErrorState(message ? { scope: errorScope, message } : undefined)
+    const [errorState, setErrorState] = useState<{ scope: string; error: InteractionActionError }>()
+    const error = errorState?.scope === errorScope ? interactionErrorText(errorState.error, t) : undefined
+    const setError = (error?: InteractionActionError) => setErrorState(error ? { scope: errorScope, error } : undefined)
     const actions = view.footer.actions.filter((action) => !composerCarriesAction(view, action))
-    if (actions.length === 0) {
+    const deadline = view.activeInteraction?.status === "awaiting" ? view.activeInteraction.deadline : undefined
+    if (actions.length === 0 && !deadline) {
         return null
     }
 
     return (
         <div className="mx-3.5">
+            {deadline ? <InteractionDeadline deadline={deadline} /> : null}
             {error ? (
                 <div className="mb-1 text-xs text-(--vscode-errorForeground)" role="alert">
                     {error}
                 </div>
             ) : null}
-            <div className="flex gap-1.5">
+            <div className="flex flex-wrap gap-1.5">
                 {actions.map((action) => {
+                    const label = interactionActionLabel(view, action, t)
                     const targetsTask = action.dispatchTarget === "task"
                     const carriesDraft = action.payloadPolicy === "draft" || action.payloadPolicy === "draft_and_selection"
                     const dispatcherAvailable = targetsTask ? Boolean(dispatchTaskAction) : Boolean(view.activeInteraction)
@@ -99,7 +92,7 @@ export function FooterActions({
                         <VSCodeButton
                             appearance={action.appearance === "primary" ? "primary" : "secondary"}
                             aria-disabled={buttonDisabled}
-                            aria-label={action.label}
+                            aria-label={label}
                             className="flex-1 border border-(--vscode-panel-border) rounded focus:ring-2 focus:ring-[--vscode-focusBorder]"
                             disabled={buttonDisabled}
                             key={action.type}
@@ -111,16 +104,17 @@ export function FooterActions({
                                     const supportedTaskAction =
                                         action.type === "cancel" ||
                                         action.type === "retry" ||
+                                        action.type === "stop_away" ||
                                         (action.type === "continue_in_background" && Boolean(action.activityId))
                                     if (!dispatchTaskAction || !supportedTaskAction) {
                                         return
                                     }
-                                    const taskScope = dispatchScope
+                                    const pendingScope = action.type === "stop_away" ? taskScope : dispatchScope
                                     setError(undefined)
-                                    beginPending()
+                                    beginPending(pendingScope)
                                     void dispatchTaskAction(action)
-                                        .catch((cause: unknown) => setError(errorMessage(cause)))
-                                        .finally(() => endPending(taskScope))
+                                        .catch((cause: unknown) => setError(interactionActionFailure(cause)))
+                                        .finally(() => endPending(pendingScope))
                                     return
                                 }
                                 const capturedDraft = captureInteractionDraft(draft)
@@ -141,7 +135,7 @@ export function FooterActions({
                                 void dispatch(request)
                                     .then((response) => {
                                         if (!response.accepted) {
-                                            setError(rejectedInteractionMessage(response.result))
+                                            setError({ kind: "rejected", result: response.result })
                                             if (carriesDraft) {
                                                 onDraftRejected?.(settlement)
                                             }
@@ -156,7 +150,7 @@ export function FooterActions({
                                         }
                                     })
                                     .catch((cause: unknown) => {
-                                        setError(errorMessage(cause))
+                                        setError(interactionActionFailure(cause))
                                         if (carriesDraft) {
                                             onDraftRejected?.(settlement)
                                         }
@@ -164,7 +158,7 @@ export function FooterActions({
                                     .finally(() => endPending(interactionScope))
                             }}
                             role="button">
-                            {action.label}
+                            {label}
                         </VSCodeButton>
                     )
                 })}

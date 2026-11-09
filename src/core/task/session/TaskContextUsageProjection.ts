@@ -116,8 +116,6 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
     private publication: Promise<void> = Promise.resolve()
     /** A streaming redraw is already queued; it will read the latest figure when it runs. */
     private streamingRedrawQueued = false
-    /** Tokens the conversation gained after the last provider report, not yet carried by any request. */
-    private pendingTail = 0
 
     constructor(private readonly options: TaskContextUsageProjectionOptions) {
         const restored = options.restored
@@ -212,18 +210,6 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
             })
     }
 
-    /**
-     * Records what the round added after the last provider report.
-     *
-     * A compaction scheduled before the next ordinary request condenses this
-     * tail as well, so its own request is shown carrying it. Nothing is drawn
-     * here: an ordinary request reports the tail itself once it is sent.
-     */
-    staged(input: { readonly pendingContextTokens: number }): void {
-        const tokens = input.pendingContextTokens
-        this.pendingTail = Number.isFinite(tokens) && tokens > 0 ? Math.floor(tokens) : 0
-    }
-
     /** A request that reported nothing, or never entered the conversation, leaves the previous figure standing. */
     async unmeasured(request: { readonly turnId: string }): Promise<void> {
         if (!this.inFlight(request.turnId)) return
@@ -283,7 +269,6 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
         const indicator = this.indicator
         if (!indicator) return
         const scope = this.options.scope()
-        this.pendingTail = 0
         this.lineage = {
             kind: "compaction_pass",
             operationId: compactionId,
@@ -357,8 +342,6 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
      * anything keeps the figure it had.
      */
     compacted(input: { readonly contextTokens: number; readonly contextWindow: number }): void {
-        // The summary replaced whatever tail the round had added.
-        this.pendingTail = 0
         const scope = this.options.scope()
         const measured = {
             durableContextTokens: input.contextTokens,
@@ -438,8 +421,6 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
         readonly contextWindow: number
         readonly opening?: ContextWindowRequestOpening
     }): void {
-        // An ordinary request carries the tail and reports it as part of its own occupancy.
-        this.pendingTail = 0
         const indicator = this.indicatorFor(request.contextWindow)
         const scope = this.options.scope()
         const segments = openingSegments(indicator.getSnapshot(), request.opening)

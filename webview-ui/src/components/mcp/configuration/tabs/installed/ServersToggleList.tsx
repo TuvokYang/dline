@@ -1,4 +1,5 @@
 import { McpServer } from "@shared/mcp"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import ServerRow from "./server-row/ServerRow"
 
 const ServersToggleList = ({
@@ -16,6 +17,7 @@ const ServersToggleList = ({
     getServerEnabled?: (server: McpServer) => boolean
     onToggleServer?: (server: McpServer, enabled: boolean) => void
 }) => {
+    const { t } = useUiTranslation()
     const gapClasses = {
         small: "gap-0",
         medium: "gap-2.5",
@@ -39,7 +41,7 @@ const ServersToggleList = ({
         </div>
     ) : (
         <div className="flex flex-col items-center gap-3 my-5 text-(--vscode-descriptionForeground)">
-            No MCP servers installed
+            {t("capabilities.mcp.noInstalled")}
         </div>
     )
 }

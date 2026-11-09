@@ -17,11 +17,9 @@ describe("BrowserWebFetchProvider", () => {
         await expect(
             provider.fetch({
                 url: "https://example.test/docs",
-                prompt: "Extract the release notes",
             }),
-        ).resolves.toEqual({
+        ).resolves.toStrictEqual({
             url: "https://example.test/docs",
-            prompt: "Extract the release notes",
             content: "# Dline\n\nFetched locally",
             source: {
                 id: "browser",
@@ -40,9 +38,7 @@ describe("BrowserWebFetchProvider", () => {
         fetcher.urlToMarkdown.mockRejectedValueOnce(new Error("Navigation timed out"))
         const provider = new BrowserWebFetchProvider(() => fetcher)
 
-        await expect(provider.fetch({ url: "https://example.test/slow", prompt: "Read the page" })).rejects.toThrow(
-            "Navigation timed out",
-        )
+        await expect(provider.fetch({ url: "https://example.test/slow" })).rejects.toThrow("Navigation timed out")
         expect(fetcher.closeBrowser).toHaveBeenCalledOnce()
     })
 
@@ -51,9 +47,9 @@ describe("BrowserWebFetchProvider", () => {
         fetcher.launchBrowser.mockImplementationOnce(() => new Promise(() => undefined))
         const provider = new BrowserWebFetchProvider(() => fetcher)
 
-        await expect(
-            provider.fetch({ url: "https://example.test/cold", prompt: "Read the page", timeoutMs: 10 }),
-        ).rejects.toThrow("Web fetch timed out after 1 seconds")
+        await expect(provider.fetch({ url: "https://example.test/cold", timeoutMs: 10 })).rejects.toThrow(
+            "Web fetch timed out after 1 seconds",
+        )
         expect(fetcher.closeBrowser).toHaveBeenCalledOnce()
     })
 
@@ -65,7 +61,6 @@ describe("BrowserWebFetchProvider", () => {
             const provider = new BrowserWebFetchProvider(() => fetcher)
             const fetching = provider.fetch({
                 url: "https://example.test/cleanup",
-                prompt: "Read the page",
                 timeoutMs: 10,
             })
 
@@ -85,7 +80,6 @@ describe("BrowserWebFetchProvider", () => {
         const controller = new AbortController()
         const fetching = provider.fetch({
             url: "https://example.test/restore",
-            prompt: "Read the page",
             signal: controller.signal,
         })
 

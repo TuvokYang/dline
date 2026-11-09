@@ -1,7 +1,8 @@
 import type { TaskViewState } from "@shared/ExtensionMessage"
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
-import React, { type ComponentType } from "react"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import React from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { UiLanguageProvider } from "@/i18n/UiLanguageProvider"
 import { ChatRowContent } from "../ChatRow"
 
 void React
@@ -109,7 +110,7 @@ const baseProps = {
     onToggleExpand: vi.fn(),
 }
 
-const TestableChatRowContent = ChatRowContent as ComponentType<Record<string, unknown>>
+const TestableChatRowContent = ChatRowContent
 
 describe("ChatRow image generation rendering", () => {
     beforeEach(() => {
@@ -279,20 +280,66 @@ describe("ChatRow image generation rendering", () => {
             />,
         )
         const partialImage = await screen.findByRole("img", { name: "Generated image partial 1" })
-        expect(screen.getByTestId("image-generation-scroll")).toHaveClass(
-            "max-h-[60vh]",
-            "overflow-y-auto",
-            "overscroll-x-contain",
-        )
-        expect(partialImage.parentElement).toHaveClass("w-full")
         expect(partialImage.parentElement?.style.maxHeight).toBe("60vh")
         unmount()
 
         render(<TestableChatRowContent {...baseProps} message={message} />)
         const finalImage = await screen.findByRole("img", { name: "Generated image 1" })
-        expect(finalImage.closest("[data-testid='image-generation-artifacts']")).toHaveClass("grid-cols-1")
-        expect(finalImage.closest("[data-testid='image-generation-artifacts']")).not.toHaveClass("sm:grid-cols-2")
         expect(finalImage.parentElement?.style.maxHeight).toBe("60vh")
+    })
+
+    it("does not translate reference input or refetch artifacts when the interface language changes", async () => {
+        const onAddToInput = vi.fn()
+        const row = <TestableChatRowContent {...baseProps} isExpanded message={message} onAddToInput={onAddToInput} />
+        const { rerender } = render(<UiLanguageProvider language="en">{row}</UiLanguageProvider>)
+        const image = await screen.findByRole("img", { name: "Generated image 1" })
+        const requestCount = getImageArtifact.mock.calls.length
+
+        rerender(<UiLanguageProvider language="zh-CN">{row}</UiLanguageProvider>)
+        expect(screen.getByRole("img", { name: "生成的图片第 1 张" })).toBe(image)
+        fireEvent.click(screen.getByRole("button", { name: "用作参考" }))
+        expect(onAddToInput).toHaveBeenLastCalledWith(
+            `Use image artifact ${artifactId} as a reference for the next image generation.`,
+        )
+        expect(getImageArtifact).toHaveBeenCalledTimes(requestCount)
+
+        rerender(<UiLanguageProvider language="en">{row}</UiLanguageProvider>)
+        expect(screen.getByRole("img", { name: "Generated image 1" })).toBe(image)
+        fireEvent.click(screen.getByRole("button", { name: "Use as Reference" }))
+        expect(onAddToInput).toHaveBeenLastCalledWith(
+            `Use image artifact ${artifactId} as a reference for the next image generation.`,
+        )
+        expect(getImageArtifact).toHaveBeenCalledTimes(requestCount)
+    })
+
+    it.each([
+        { failure: null, english: "Failed to load image content.", chinese: "无法加载图片内容。" },
+        { failure: new Error("artifact req_42: denied"), english: "artifact req_42: denied", chinese: "artifact req_42: denied" },
+    ])("renders preview failures in the current language without another request: $english", async ({
+        failure,
+        english,
+        chinese,
+    }) => {
+        let rejectPreview: (reason: unknown) => void = () => {
+            throw new Error("Preview request has not started")
+        }
+        getImageArtifact.mockImplementationOnce(
+            () =>
+                new Promise((_, reject) => {
+                    rejectPreview = reject
+                }),
+        )
+        const row = <TestableChatRowContent {...baseProps} message={message} />
+        const { rerender } = render(<UiLanguageProvider language="en">{row}</UiLanguageProvider>)
+        await waitFor(() => expect(getImageArtifact).toHaveBeenCalledTimes(1))
+        rerender(<UiLanguageProvider language="zh-CN">{row}</UiLanguageProvider>)
+        await act(async () => rejectPreview(failure))
+        expect(await screen.findByText(chinese)).toBeVisible()
+        rerender(<UiLanguageProvider language="en">{row}</UiLanguageProvider>)
+        expect(screen.getByText(english)).toBeVisible()
+        rerender(<UiLanguageProvider language="zh-CN">{row}</UiLanguageProvider>)
+        expect(screen.getByText(chinese)).toBeVisible()
+        expect(getImageArtifact).toHaveBeenCalledTimes(1)
     })
 
     it("opens from the image, toggles fit mode, copies, references, and collapses", async () => {
@@ -314,7 +361,6 @@ describe("ChatRow image generation rendering", () => {
         const fillButtons = screen.getAllByRole("button", { name: "Fill image preview" })
         fireEvent.click(fillButtons[fillButtons.length - 1])
         expect(image).toHaveAttribute("data-display-mode", "fill")
-        expect(image).toHaveClass("object-cover")
         fireEvent.click(screen.getByRole("button", { name: "Copy Artifact ID" }))
         fireEvent.click(screen.getByRole("button", { name: "Use as Reference" }))
         fireEvent.click(screen.getByRole("button", { name: "Collapse image generation" }))

@@ -1,4 +1,4 @@
-import { ServerTool } from "@shared/proto/dline/models/metadata"
+import { PricingDayRule, ServerTool } from "@shared/proto/dline/models/metadata"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { recordDiagnostic } from "@/services/telemetry/instrumentation/diagnostic-recorder"
 import { streamAnthropicMessagesEndpoint } from "../anthropic-messages-endpoint"
@@ -56,6 +56,104 @@ const messageDelta = (stopReason: "end_turn" | "pause_turn" | "tool_use" | null,
 })
 
 describe("streamAnthropicMessagesEndpoint", () => {
+    it("prices each pause_turn response using its own send time and full input before accumulating usage", async () => {
+        let now = Date.parse("2026-11-03T01:59:59Z")
+        vi.spyOn(Date, "now").mockImplementation(() => now)
+        const responses = [
+            [
+                messageStart(700_000),
+                { type: "content_block_start", index: 0, content_block: { type: "text", text: "continue" } },
+                messageDelta("pause_turn", 0),
+            ],
+            [messageStart(700_000), messageDelta("end_turn", 0)],
+        ]
+        const sentTimes = [now, Date.parse("2026-11-03T02:00:01Z")]
+        const chunks = await collect(
+            streamAnthropicMessagesEndpoint({
+                messages: [{ role: "user", content: "Search" }],
+                pricing: {
+                    currency: "CNY",
+                    strategy: {
+                        timeOfDay: {
+                            schedule: {
+                                timezoneOffsetMinutes: 0,
+                                dayRule: PricingDayRule.PRICING_DAY_RULE_ALL_DAYS,
+                                defaultOnPublicHolidays: false,
+                                holidayCalendar: "",
+                            },
+                            defaultBands: {
+                                bands: [
+                                    { maxInputTokens: 1_000_000, prices: { inputPrice: 1, outputPrice: 2 } },
+                                    { prices: { inputPrice: 100, outputPrice: 200 } },
+                                ],
+                            },
+                            timeWindows: [
+                                {
+                                    startMinute: 60,
+                                    endMinute: 120,
+                                    bands: {
+                                        bands: [
+                                            { maxInputTokens: 1_000_000, prices: { inputPrice: 5, outputPrice: 6 } },
+                                            { prices: { inputPrice: 500, outputPrice: 600 } },
+                                        ],
+                                    },
+                                },
+                            ],
+                        },
+                    },
+                },
+                openStream: async () => {
+                    now = sentTimes.shift()!
+                    const stream = createAsyncIterable(responses.shift() ?? [])
+                    return { stream, sentAtMs: now }
+                },
+            }),
+        )
+        const usage = chunks.filter((chunk) => chunk.type === "usage")
+        expect(usage.at(-1)).toMatchObject({ inputTokens: 1_400_000, outputTokens: 0, totalCost: 4.2, currency: "CNY" })
+        // The next response's input snapshot retains the already known subtotal.
+        expect(usage.filter((chunk) => chunk.totalCost !== undefined).map((chunk) => chunk.totalCost)).toEqual([3.5, 3.5, 4.2])
+    })
+
+    it.each([
+        {
+            label: "same currency",
+            first: { totalCost: 1, currency: "CNY" },
+            second: { totalCost: 2, currency: "CNY" },
+            amount: 3,
+            currency: "CNY",
+        },
+        {
+            label: "reported zero",
+            first: { totalCost: 0, currency: "USD" },
+            second: { totalCost: 0, currency: "USD" },
+            amount: 0,
+            currency: "USD",
+        },
+        { label: "unpriced response", first: undefined, second: { totalCost: 2, currency: "USD" }, amount: 2, currency: "USD" },
+    ])("keeps continuation amount provenance for $label", async ({ first, second, amount, currency }) => {
+        const results = [first, second]
+        const responses = [
+            [
+                messageStart(10),
+                { type: "content_block_start", index: 0, content_block: { type: "text", text: "continue" } },
+                messageDelta("pause_turn", 1),
+            ],
+            [messageStart(20), messageDelta("end_turn", 2)],
+        ]
+        const chunks = await collect(
+            streamAnthropicMessagesEndpoint({
+                messages: [{ role: "user", content: "test" }],
+                readReportedCost: (usage) => ((usage as { output_tokens?: number }).output_tokens ? results.shift() : undefined),
+                openStream: async () => ({ stream: createAsyncIterable(responses.shift() ?? []), sentAtMs: 0 }),
+            }),
+        )
+        const usage = chunks.filter((chunk) => chunk.type === "usage").at(-1)
+        expect(usage).toMatchObject({ inputTokens: 30, outputTokens: 3 })
+        expect(usage.totalCost).toBe(amount)
+        expect(usage.currency).toBe(currency)
+    })
+
     it("replays raw pause_turn blocks in order and reports cumulative usage across requests", async () => {
         const citation = {
             type: "web_search_result_location",

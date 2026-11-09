@@ -1,5 +1,5 @@
 import type { Anthropic } from "@anthropic-ai/sdk"
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { buildClaudeCodeBetas } from "@/integrations/anthropic-claude-code/beta-headers"
 import type { AnthropicMessagesRequestBody } from "../request-builder"
 import { ANTHROPIC_FAST_MODE_BETA, ApiKeyAnthropicTransport, ClaudeCodeSubscriptionTransport } from "../transport"
@@ -11,6 +11,7 @@ const body = {
     stream: true,
 } as AnthropicMessagesRequestBody
 const stream = { async *[Symbol.asyncIterator]() {} }
+afterEach(() => vi.restoreAllMocks())
 
 function fakeClient() {
     const create = vi.fn().mockResolvedValue(stream)
@@ -68,13 +69,19 @@ describe("ClaudeCodeSubscriptionTransport", () => {
     })
 
     it("renews the credential once on 401 and keeps the renewed client for continuations", async () => {
+        let now = 1_000
+        vi.spyOn(Date, "now").mockImplementation(() => now)
         const rejected = fakeClient()
         rejected.betaCreate.mockRejectedValueOnce(httpError(401))
         const renewed = fakeClient()
-        const renewClient = vi.fn().mockResolvedValue(renewed.client)
+        const renewClient = vi.fn().mockImplementation(async () => {
+            now = 2_000
+            return renewed.client
+        })
         const transport = new ClaudeCodeSubscriptionTransport(rejected.client, renewClient)
 
-        await transport.open(body, headers)
+        const opened = await transport.open(body, headers)
+        expect(opened).toEqual({ stream, sentAtMs: 2_000 })
         await transport.open({ ...body, messages: [] }, headers)
 
         expect(renewClient).toHaveBeenCalledTimes(1)

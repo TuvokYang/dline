@@ -1,6 +1,5 @@
-// Gate: decide whether AST verification may run for a task.
-// Every reason here is a postponement, never a defect, because a task that is
-// planned, blocked, coordinating or unverified has not claimed implementation.
+// Inspection is read-only and may precede completion. A recorded blocker still
+// prevents conformance; it must not prevent collecting the evidence to resolve it.
 
 import { evaluateGates } from "./task-model.mjs"
 
@@ -22,13 +21,16 @@ export function evaluateTaskGate(task, planGraph, tasks) {
         }
     }
 
+    const upstreamReady = pending.length === 0
     for (const reason of local.reasons) pending.push(reason)
+    if (task.blockers.length > 0) pending.push(`blockers is not empty (${task.blockers.length})`)
     // Record contradictions are reported separately; they must not be read as gate postponement.
     const contradictions = []
 
     return {
         taskId: task.id,
-        astAllowed: pending.length === 0,
+        astAllowed: local.astAllowed && upstreamReady,
+        readyForConformance: pending.length === 0,
         reasons: dedupe(pending),
         contradictions,
         status: task.status,

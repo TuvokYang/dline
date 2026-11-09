@@ -268,8 +268,13 @@ function replaceMessageWindow(
  * realtime frame arrived.
  */
 function resolveFetchedCopy(fetchedMessage: UiMessage, localMessage: UiMessage | undefined): UiMessage {
-    if (!localMessage) return fetchedMessage
-    return localMessage.partial === true && fetchedCopySupersedes(fetchedMessage) ? fetchedMessage : localMessage
+    if (!localMessage || (localMessage.partial === true && fetchedCopySupersedes(fetchedMessage))) return fetchedMessage
+    if (localMessage.messageIndex === fetchedMessage.messageIndex) return localMessage
+    // Content precedence does not freeze a position that a committed rewrite moved.
+    const projected = { ...localMessage }
+    delete projected.messageIndex
+    if (fetchedMessage.messageIndex !== undefined) projected.messageIndex = fetchedMessage.messageIndex
+    return projected
 }
 
 /**

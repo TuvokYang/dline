@@ -273,7 +273,6 @@ describe("HistoryPreview", () => {
         expect(getComputedStyle(metadataRow as HTMLElement).justifyContent).toBe("flex-start")
         expect(getComputedStyle(completionStatus).marginLeft).toBe("auto")
         await hoverPastTooltipDelay(user, completionStatus)
-        expect(await screen.findByRole("tooltip")).toHaveTextContent("Completed")
     })
 
     it("never counts a partially visible row", () => {

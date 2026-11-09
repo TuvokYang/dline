@@ -22,8 +22,9 @@ import type { ProductionToolExecutionService } from "../ProductionToolAdapter"
 import { reviewRegisteredToolBoundary, type ToolAdmissionSnapshot } from "../ToolAdmissionRegistry"
 import type { ToolDomainSurface } from "../ToolDomainSurface"
 import type { ToolRunCommand } from "../ToolExecutionDomain"
+import { usesAwayFeedback } from "./AwayToolPolicy"
 import type { ProductionToolHandlerRuntime } from "./ProductionToolHandlerRuntime"
-import { resolveToolInteractionPolicy } from "./ToolInteractionPolicy"
+import { planProductionTool } from "./ProductionToolPlanner"
 
 export interface ProductionToolConfigFactoryInput {
     readonly command: ToolRunCommand
@@ -36,6 +37,8 @@ export interface ProductionToolConfigFactory {
     create(input: ProductionToolConfigFactoryInput): TaskConfig
     /** Value-only snapshot used by the post-approval canonical boundary review. */
     readAdmissionSnapshot(block: ToolUse): ToolAdmissionSnapshot
+    prepareAdmissionSnapshot?(block: ToolUse): Promise<ToolAdmissionSnapshot>
+    settleAwayFeedback?(block: ToolUse): Promise<void>
 }
 
 export interface DefaultProductionToolExecutionServiceOptions {
@@ -315,20 +318,46 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
     ): Promise<SerializedToolResult> {
         const block = materializeToolInvocation(input.invocation)
         const description = ToolDisplayUtils.getToolDescription(block, this.options.runtime.coordinator)
+        const snapshot = await (this.options.config.prepareAdmissionSnapshot?.(block) ??
+            this.options.config.readAdmissionSnapshot(block))
+        if (usesAwayFeedback(block.name, snapshot.awayActive === true, input.invocation.disposition)) {
+            await this.options.config.settleAwayFeedback?.(block)
+            return serializeResult(input.invocation, formatResponse.awayFeedback(), description)
+        }
         let config: TaskConfig = {
             ...this.options.config.create({ ...input, coordinator: this.options.runtime.coordinator }),
             ...(lease ? { contextBudget: lease } : {}),
+        }
+        const recheckCommand =
+            block.name === DlineDefaultTool.BASH && (snapshot.awayActive || input.invocation.awayCommandApproval === "workspace")
+        if (
+            recheckCommand &&
+            input.invocation.awayCommandApproval !== "manual" &&
+            !config.admissionOutcome &&
+            planProductionTool(this.options.runtime.coordinator, block, snapshot).approval.kind !== "none"
+        ) {
+            const outcome = await config.interactions.open({
+                kind: "command_approval",
+                turnId: input.command.turnId!,
+                interactionId: input.invocation.dlineTid,
+                ...(snapshot.awayCommandScope === "external" ? { externalCommand: true as const } : {}),
+                presentation: block.params.command!,
+                existingTs: block.ts,
+            })
+            if (outcome.actionId !== "approve")
+                return serializeResult(
+                    input.invocation,
+                    outcome.origin === "timeout" ? formatResponse.awayCommandTimeout() : formatResponse.toolDenied(),
+                    description,
+                )
+            config = { ...config, admissionOutcome: { ...outcome, source: "manual" } }
         }
         // Every terminal write of the call, including a refusal below, lands on its approval row.
         const approvalAnchor = config.messageState?.clineMessages.find(
             (message) => message.interactionId === approvalInteractionId(input.invocation.dlineTid),
         )
         if (approvalAnchor) block.ts = approvalAnchor.ts
-        const boundary = await reviewRegisteredToolBoundary(
-            block,
-            block.name as DlineDefaultTool,
-            this.options.config.readAdmissionSnapshot(block),
-        )
+        const boundary = await reviewRegisteredToolBoundary(block, block.name as DlineDefaultTool, snapshot)
         if (boundary.outcome === "rejected") {
             const message =
                 boundary.code === "scope_widened"
@@ -356,10 +385,7 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
             }
             config = createLocalWebSearchFallbackConfig(config, message)
         }
-        const policyResult = await resolveToolInteractionPolicy(config, block)
-        const result = normalizeToolExecutionResult(
-            policyResult === undefined ? await this.options.runtime.execute(config, block) : policyResult,
-        )
+        const result = normalizeToolExecutionResult(await this.options.runtime.execute(config, block))
         const response = await this.deferWithoutRoom(
             config,
             input.invocation,

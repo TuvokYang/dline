@@ -1,5 +1,7 @@
+import { effectiveAggressiveRendering, projectAggressiveRendering } from "@shared/AggressiveRendering"
+import { awayConfigurationEnabled } from "@shared/away"
 import { describe, expect, it, vi } from "vitest"
-import { ExperimentalFeatureFlag, REMOTE_ROLLOUT_FEATURE_FLAGS } from "@/shared/services/feature-flags/feature-flags"
+import { ExperimentalFeatureFlag } from "@/shared/services/feature-flags/feature-flags"
 import { FeatureFlagsService } from "../FeatureFlagsService"
 import type { FeatureFlagPayload, IFeatureFlagsProvider } from "../providers/IFeatureFlagsProvider"
 import { LayeredFeatureFlagsProvider } from "../providers/LayeredFeatureFlagsProvider"
@@ -24,6 +26,23 @@ describe("FeatureFlagsService", () => {
         expect(service.getAccountEnabled()).toBe(true)
     })
 
+    it.each([false, true])("development gates offer features without choosing user preferences (bundled=%s)", (bundled) => {
+        const service = new FeatureFlagsService(new LocalFeatureFlagsProvider(bundled ? {} : { IS_DEV: "true" }, bundled))
+        const foldingGate = service.getAggressiveRenderingEnabled()
+        expect(foldingGate).toBe(true)
+        expect(effectiveAggressiveRendering(projectAggressiveRendering("none", foldingGate))).toBe("none")
+        expect(effectiveAggressiveRendering(projectAggressiveRendering("user_turn", foldingGate))).toBe("user_turn")
+        expect(
+            awayConfigurationEnabled({
+                available: true,
+                gateEnabled: service.getBooleanFlagEnabled(ExperimentalFeatureFlag.AWAY_MODE),
+                awayModeEnabled: false,
+                autoAwayModeEnabled: true,
+                revocations: { mode: 0, automatic: 0 },
+            }),
+        ).toBe(false)
+    })
+
     it("keeps every switch at its default when the provider has no opinion", () => {
         const service = new FeatureFlagsService(providerReturning({}))
 
@@ -33,7 +52,6 @@ describe("FeatureFlagsService", () => {
     })
 
     it("allows the rollout provider to offer external file checkpoints", () => {
-        expect(REMOTE_ROLLOUT_FEATURE_FLAGS).toContain(ExperimentalFeatureFlag.EXTERNAL_FILE_CHECKPOINTS)
         const service = new FeatureFlagsService(providerReturning({ "checkpoint-external-files": true }))
 
         expect(service.getExternalFileCheckpointsEnabled()).toBe(true)
@@ -41,7 +59,6 @@ describe("FeatureFlagsService", () => {
 
     it("keeps aggressive rendering off until the rollout offers it", () => {
         expect(new FeatureFlagsService(providerReturning({})).getAggressiveRenderingEnabled()).toBe(false)
-        expect(REMOTE_ROLLOUT_FEATURE_FLAGS).toContain(ExperimentalFeatureFlag.AGGRESSIVE_RENDERING)
 
         const offered = new FeatureFlagsService(providerReturning({ aggressive_rendering: true }))
         expect(offered.getAggressiveRenderingEnabled()).toBe(true)

@@ -7,8 +7,11 @@ export interface OpenInteractionRequest {
     turnId: string
     interactionId: string
     kind: InteractionKind
+    externalCommand?: true
     presentation: string
     existingTs?: number
+    /** Runtime-only hook after durable final presentation, before admitting feedback. Never replayed on restore. */
+    afterPresented?: () => Promise<void>
     /**
      * `interrupt` takes the slot over from a dialog already waiting for the
      * user, which comes back unchanged once this one is answered. Without it a
@@ -23,6 +26,7 @@ export interface CompleteInteractionRequest {
     completionId: string
     presentation: string
     existingTs?: number
+    afterPresented?: () => Promise<void>
 }
 
 export interface RetryInteractionRequest {
@@ -42,6 +46,10 @@ export interface MistakeLimitInteractionRequest {
 }
 
 export interface InteractionOutcome {
+    /** Distinguishes an automatic deadline outcome from user-authored input. */
+    origin?: "user" | "timeout"
+    /** The accepted body follows the paired result as ordered round material. */
+    roundMaterialOwned?: true
     actionId: InteractionResponse["actionId"]
     draft?: InteractionDraft
     selection?: InteractionSelection

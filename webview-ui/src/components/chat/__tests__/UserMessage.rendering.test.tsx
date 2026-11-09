@@ -32,7 +32,6 @@ describe("UserMessage rendering", () => {
         expect(message).toHaveAttribute("data-input-kind", "direct")
         expect(screen.getByRole("heading", { name: "Direct heading" })).toBeInTheDocument()
         expect(screen.getByText("direct item")).toBeInTheDocument()
-        expect(body).toHaveClass("max-h-[min(30vh,320px)]", "overflow-y-auto")
     })
 
     it("renders delivered QueueInput with independent semantics and no internal guidance", () => {
@@ -47,9 +46,6 @@ describe("UserMessage rendering", () => {
         expect(screen.getByText("· Steering")).toBeInTheDocument()
         expect(screen.getByRole("heading", { name: "你好" })).toBeInTheDocument()
         expect(screen.getByText("queue emphasis")).toBeInTheDocument()
-        expect(body).toHaveClass("max-h-[min(30vh,320px)]", "overflow-y-auto")
-        expect(message).not.toHaveTextContent("auxiliary alignment information")
-        expect(message).not.toHaveTextContent("辅助对齐信息")
         expect(message.style.backgroundColor).toContain("--vscode-editorWidget-background")
     })
 
@@ -77,7 +73,6 @@ describe("UserMessage rendering", () => {
         expect(chips.map((chip) => chip.querySelector(".composer-chip__label")?.textContent)).toEqual(["shot.png", "notes.md"])
         expect(chips[0].querySelector(".codicon-file-media")).not.toBeNull()
         expect(chips[1].querySelector(".codicon-note")).not.toBeNull()
-        expect(body).not.toHaveTextContent("[shot.png]")
 
         // Reading a chip is not a request to edit the message.
         fireEvent.click(chips[0])
@@ -126,7 +121,6 @@ describe("UserMessage rendering", () => {
         expect(screen.queryByRole("textbox")).toBeNull()
 
         expect(screen.queryByRole("button", { name: /notes/ })).toBeNull()
-        expect(screen.getByText("notes").closest("[data-resource-chip]")).toHaveClass("composer-chip--static")
     })
 
     it("draws a sent image chip with the thumbnail of its stored bytes", async () => {

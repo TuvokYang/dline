@@ -206,7 +206,8 @@ export class WebSearchToolHandler implements IFullyManagedTool {
             if (!descriptor) {
                 throw new Error(`Local web search engine "${engineId}" is not configured`)
             }
-            const response = await registry.search(engineId, { query })
+            const prompt = descriptor.supportsPrompt ? block.params.prompt : undefined
+            const response = await registry.search(engineId, { query, ...(prompt === undefined ? {} : { prompt }) })
             const items = filterByDomains(response.items, allowedDomains, blockedDomains)
             const completedMessage: UiSayTool = {
                 ...sharedMessageProps,

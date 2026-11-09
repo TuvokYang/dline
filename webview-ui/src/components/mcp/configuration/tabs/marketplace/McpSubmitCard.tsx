@@ -1,4 +1,8 @@
+import { CapabilityRichText } from "@/components/agent-capabilities/CapabilityRichText"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
+
 const McpSubmitCard = () => {
+    const { t } = useUiTranslation()
     return (
         <div
             style={{
@@ -31,11 +35,22 @@ const McpSubmitCard = () => {
                         fontWeight: 600,
                         color: "var(--vscode-foreground)",
                     }}>
-                    Submit MCP Server
+                    {t("capabilities.mcp.marketplace.submit")}
                 </h3>
                 <p style={{ fontSize: "13px", margin: 0, color: "var(--vscode-descriptionForeground)" }}>
-                    Suggest an MCP server through the{" "}
-                    <a href="https://github.com/TuvokYang/Dline/issues/new">Dline issue tracker</a>
+                    <CapabilityRichText
+                        parts={[
+                            {
+                                name: "tracker",
+                                node: (
+                                    <a href="https://github.com/TuvokYang/Dline/issues/new">
+                                        {t("capabilities.mcp.marketplace.tracker")}
+                                    </a>
+                                ),
+                            },
+                        ]}
+                        render={(slot) => t("capabilities.mcp.marketplace.submitHelp", { tracker: slot("tracker") })}
+                    />
                 </p>
             </div>
         </div>

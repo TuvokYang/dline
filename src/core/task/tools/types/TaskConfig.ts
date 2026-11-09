@@ -6,6 +6,7 @@ import type { IgnoreController } from "@core/ignore/IgnoreController"
 import type { ImageGenerationService } from "@core/image-generation/ImageGenerationService"
 import type { CommandPermissionController } from "@core/permissions"
 import type { ExplicitInstructionAuthorization, ExplicitInstructionConsumePort } from "@core/task/explicit-instructions/types"
+import type { FocusChainUpdateResult } from "@core/task/focus-chain/update-result"
 import type { ChecklistChange } from "@core/task/telemetry/ChecklistDiff"
 import type { TaskFileTracker } from "@integrations/checkpoints/TaskFileTracker"
 import type { DiffViewProvider } from "@integrations/editor/DiffViewProvider"
@@ -18,6 +19,7 @@ import type { BrowserSettings } from "@shared/BrowserSettings"
 import type { CommandStatus, UiAsk, UiSay } from "@shared/ExtensionMessage"
 import type { FocusChainSettings } from "@shared/FocusChainSettings"
 import type { SubmittedInputRow } from "@shared/input-semantics/submitted-input"
+import type { McpServer } from "@shared/mcp"
 import type { ClineContent, ClineToolResponseContent } from "@shared/messages/content"
 import type { Mode } from "@shared/storage/types"
 import type { TaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
@@ -40,6 +42,7 @@ import type {
 import type { MessageStateHandler } from "../../message-state"
 import type { HookExecution } from "../../types/HookExecution"
 import type { ToolHandlerState } from "../state/ToolHandlerState"
+import type { SubagentCapabilitySelection } from "../subagent/SubagentCapabilitySelection"
 import type { SubagentFanoutBudget } from "../subagent/SubagentFanoutBudget"
 import type { SubagentJobManager } from "../subagent/SubagentJobManager"
 import type { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
@@ -59,6 +62,8 @@ export interface SayPresentationRequest {
 
 /** Interaction and presentation boundary exposed to handlers. */
 export interface TaskInteractionPorts {
+    /** Final presentation without a manual wait, used by automatic interaction policy. */
+    present?(request: OpenInteractionRequest): Promise<void>
     open(request: OpenInteractionRequest): Promise<InteractionOutcome>
     complete(request: CompleteInteractionRequest): Promise<InteractionOutcome>
     /**
@@ -114,9 +119,16 @@ export interface TaskConfig {
     browserSettings: BrowserSettings
     focusChainSettings: FocusChainSettings
     capabilityToggles: TaskCapabilityToggles
+    /** One child run's frozen capability authority; absent on the main task. */
+    readonly subagentCapabilitySelection?: SubagentCapabilitySelection
+    /** Host-bound MCP visibility; the captured owner is not a task or workspace ID. */
+    getMcpServersForOwner?: () => readonly McpServer[]
 
     // Typed interaction boundary
     interactions: TaskInteractionPorts
+    /** Commit only progress in canonical block order; ordinary calls must not wait on unready predecessors. */
+    commitToolProgress?: (commit: () => Promise<void>, waitForPredecessors: boolean) => Promise<void>
+    settlePrecedingProgress?: () => Promise<void>
     /** Manual approval outcome delivered once to this handler invocation. */
     admissionOutcome?: ToolAdmissionOutcome
 
@@ -189,6 +201,14 @@ export interface TaskCallbacks {
          * host that drops it leaves the output orphaned and never rendered.
          */
         commandTs?: number,
+        /**
+         * The structured facts a `command` row states, when the caller has them.
+         *
+         * A command row's directory is a field, not a suffix of its text. The
+         * caller that knows the directory passes it here; a caller that does not
+         * still gets a row whose text is the command line alone.
+         */
+        commandFacts?: { commandLine: string; workingDirectory?: string },
     ) => Promise<number | undefined>
 
     /**
@@ -254,7 +274,7 @@ export interface TaskCallbacks {
      * execution: a task instantiated to generate a title, review a change, or
      * decide an approval presents none, and must not have to supply a stub.
      */
-    updateFCListFromToolResponse?: (taskProgress: string | undefined) => Promise<void>
+    updateFCListFromToolResponse?: (taskProgress: string | undefined) => Promise<FocusChainUpdateResult>
 
     /**
      * Report what changed in the checklist a call carried.

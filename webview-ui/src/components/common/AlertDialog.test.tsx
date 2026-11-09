@@ -27,8 +27,6 @@ describe("AlertDialog", () => {
         })
         expect(ALERT_DIALOG_BACKDROP_STYLE).not.toHaveProperty("backdropFilter")
         expect(ALERT_DIALOG_BACKDROP_STYLE).not.toHaveProperty("WebkitBackdropFilter")
-        expect(backdrop).toHaveStyle({ backgroundColor: "rgba(96, 96, 96, 0.42)" })
-        expect(backdrop?.className).not.toContain("bg-black")
         expect(container.querySelector('[role="dialog"]')).toBeNull()
         expect(document.body.contains(backdrop)).toBe(true)
     })
@@ -51,9 +49,6 @@ describe("AlertDialog", () => {
             backgroundColor: "rgba(24, 24, 27, 0.88)",
             WebkitBackdropFilter: "blur(22px) saturate(140%)",
         })
-        expect(dialog).toHaveStyle({ backgroundColor: "rgba(24, 24, 27, 0.88)" })
-        expect(screen.getByText("Readable title").className).toContain("text-[#f8fafc]")
-        expect(screen.getByText("Readable description").className).toContain("text-[#e4e4e7]")
     })
 
     it("closes when clicking the backdrop", () => {

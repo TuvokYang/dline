@@ -17,6 +17,7 @@ import {
 import { memo, useCallback, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 import { TaskServiceClient } from "@/services/grpc-client"
 import { formatLargeNumber, formatSize } from "@/utils/format"
@@ -41,13 +42,14 @@ const HistoryViewItem = ({
     handleHistorySelect,
     selectedItems,
 }: HistoryViewItemProps) => {
+    const { language, t } = useUiTranslation()
     const { historyTaskOpening, openHistoryTask } = useExtensionState()
     const [expanded, setExpanded] = useState(false)
     const isOpening = historyTaskOpening?.target.id === item.id
     const totalInputTokens = (item.tokensIn || 0) + (item.cacheWrites || 0) + (item.cacheReads || 0)
     // Cost and completion follow the same rules as the Recent list so the two
     // panels cannot disagree about the same task.
-    const usage = useMemo(() => getTaskUsageLabel(item, 4), [item])
+    const usage = useMemo(() => getTaskUsageLabel(item, 4, t), [item, t])
     const completed = isTaskCompleted(item)
 
     const isFavoritedItem = useMemo(
@@ -75,31 +77,37 @@ const HistoryViewItem = ({
         e.stopPropagation()
     }, [])
 
-    const formatDate = useCallback((timestamp: number) => {
-        const date = new Date(timestamp)
-        const today = new Date()
-        const isToday = today.toDateString() === date.toDateString()
+    const formatDate = useCallback(
+        (timestamp: number) => {
+            const date = new Date(timestamp)
+            const today = new Date()
+            const isToday = today.toDateString() === date.toDateString()
+            // The locale follows the display language; the timestamp values themselves
+            // are unchanged, so only the presentation of the same instant differs.
+            const locale = language === "zh-CN" ? "zh-CN" : "en-US"
 
-        return date
-            .toLocaleString(
-                "en-US",
-                isToday
-                    ? {
-                          hour: "numeric",
-                          minute: "2-digit",
-                          hour12: true,
-                      }
-                    : {
-                          month: "long",
-                          day: "numeric",
-                          hour: "numeric",
-                          minute: "2-digit",
-                          hour12: true,
-                      },
-            )
-            .replace(", ", " ")
-            .replace(" at", ",")
-    }, [])
+            return date
+                .toLocaleString(
+                    locale,
+                    isToday
+                        ? {
+                              hour: "numeric",
+                              minute: "2-digit",
+                              hour12: true,
+                          }
+                        : {
+                              month: "long",
+                              day: "numeric",
+                              hour: "numeric",
+                              minute: "2-digit",
+                              hour12: true,
+                          },
+                )
+                .replace(", ", " ")
+                .replace(" at", ",")
+        },
+        [language],
+    )
 
     return (
         <div className="history-item cursor-pointer flex group mb-1 hover:bg-list-hover border-b border-accent/10" key={item.id}>
@@ -117,7 +125,7 @@ const HistoryViewItem = ({
             <div
                 aria-busy={isOpening}
                 aria-disabled={isOpening}
-                aria-label="Open Task"
+                aria-label={t("shell.historyItem.openTask")}
                 className="flex flex-col gap-2 py-2 pl-2 pr-3 relative flex-grow min-w-0"
                 onClick={(e) => {
                     e.stopPropagation()
@@ -130,15 +138,17 @@ const HistoryViewItem = ({
                 }}
                 role="button"
                 tabIndex={0}
-                title="Open Task">
+                title={t("shell.historyItem.openTask")}>
                 <div className="flex items-center gap-2">
                     <div className="line-clamp-1 overflow-hidden break-words whitespace-pre-wrap flex-1 min-w-0">
                         <span className="ph-no-capture">{item.task}</span>
                     </div>
                     <div className="flex gap-2 flex-shrink-0">
-                        {isOpening && <LoaderCircle aria-label="Opening task" className="animate-spin" size={16} />}
+                        {isOpening && (
+                            <LoaderCircle aria-label={t("shell.historyItem.opening")} className="animate-spin" size={16} />
+                        )}
                         <Button
-                            aria-label="Open in New Window"
+                            aria-label={t("shell.historyItem.openInNewWindow")}
                             className="p-0 opacity-0 group-hover:opacity-100 transition-opacity"
                             onClick={(e) => {
                                 e.stopPropagation()
@@ -146,14 +156,14 @@ const HistoryViewItem = ({
                                     console.error("Failed to open task in new window:", err),
                                 )
                             }}
-                            title="Open in New Window"
+                            title={t("shell.historyItem.openInNewWindow")}
                             variant="ghost">
                             <span className="flex items-center gap-1 text-xs">
                                 <ExternalLinkIcon className="stroke-1" />
                             </span>
                         </Button>
                         <Button
-                            aria-label="Delete"
+                            aria-label={t("shell.historyItem.delete")}
                             className="p-0 opacity-0 group-hover:opacity-100 transition-opacity"
                             disabled={isFavoritedItem}
                             onClick={(e) => {
@@ -162,21 +172,21 @@ const HistoryViewItem = ({
                             }}
                             onMouseDown={stopHistoryOpen}
                             onPointerDown={stopHistoryOpen}
-                            title="Delete"
+                            title={t("shell.historyItem.delete")}
                             variant="ghost">
                             <span className="flex items-center gap-1 text-xs">
                                 <TrashIcon className="stroke-1" />
                             </span>
                         </Button>
                         <Button
-                            aria-label={isFavoritedItem ? "Remove from favorites" : "Add to favorites"}
+                            aria-label={t(isFavoritedItem ? "shell.historyItem.removeFavorite" : "shell.historyItem.addFavorite")}
                             className="p-0"
                             disabled={pendingFavoriteToggles[item.id] !== undefined}
                             onClick={(e) => {
                                 e.stopPropagation()
                                 toggleFavorite(item.id, isFavoritedItem)
                             }}
-                            title={isFavoritedItem ? "Remove from favorites" : "Add to favorites"}
+                            title={t(isFavoritedItem ? "shell.historyItem.removeFavorite" : "shell.historyItem.addFavorite")}
                             variant="icon">
                             <StarIcon
                                 className={cn("opacity-70", {
@@ -223,7 +233,7 @@ const HistoryViewItem = ({
                             <div className="flex items-center justify-between w-full">
                                 <div className="flex items-center gap-1 flex-wrap w-full">
                                     <div className="flex justify-between items-center w-full gap-1 text-xs">
-                                        <span className="font-medium text-description">Tokens:</span>
+                                        <span className="font-medium text-description">{t("shell.historyItem.tokens")}</span>
                                         <div className="flex items-center gap-1 text-description text-xs">
                                             <span className="flex items-center gap-1 text-description">
                                                 <ArrowUpIcon className="text-description !size-1" />
@@ -254,17 +264,17 @@ const HistoryViewItem = ({
 
                                     {item.modelId && (
                                         <div className="flex justify-between items-center w-full gap-1 text-xs">
-                                            <span className="font-medium text-description">Model:</span>
+                                            <span className="font-medium text-description">{t("shell.historyItem.model")}</span>
                                             <span className="text-description">{item.modelId}</span>
                                         </div>
                                     )}
 
                                     <div className="flex justify-between items-center w-full gap-1 text-xs">
-                                        <span className="font-medium text-description">Size:</span>
+                                        <span className="font-medium text-description">{t("shell.historyItem.size")}</span>
                                         <span className="items-center gap-2 flex text-description">
                                             {formatSize(item.size)}
                                             <Button
-                                                aria-label="Export"
+                                                aria-label={t("shell.historyItem.export")}
                                                 className="m-0 p-0"
                                                 onClick={(e) => {
                                                     e.stopPropagation()

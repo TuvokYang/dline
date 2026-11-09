@@ -17,7 +17,7 @@ export interface OwnedToolResources {
 export interface ToolDomainResourceOptions {
     readonly resources: OwnedToolResources
     /** Execute one admitted block; supplied by the assembling Task. */
-    readonly execute: (command: ToolRunCommand) => Promise<ToolDomainRunResult | void>
+    readonly execute: (command: ToolRunCommand) => Promise<ToolDomainRunResult | undefined>
     readonly onReleaseError?: (error: unknown, order: HaltOrder) => void
 }
 

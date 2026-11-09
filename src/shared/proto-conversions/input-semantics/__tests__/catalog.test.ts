@@ -2,6 +2,7 @@ import { BUILTIN_INPUT_SEMANTICS, type InputSemanticDescriptor } from "@shared/i
 import {
     InputSemanticCatalog as WireCatalog,
     InputSemanticDescriptor as WireDescriptor,
+    InputSemanticInputPolicy as WireInputPolicy,
     InputSemanticPayload as WirePayload,
 } from "@shared/proto/dline/slash"
 import { describe, expect, it } from "vitest"
@@ -12,6 +13,25 @@ describe("input semantic catalog proto conversion", () => {
         const wire = toProtoInputSemanticCatalog({ revision: 7, descriptors: BUILTIN_INPUT_SEMANTICS })
 
         expect(fromProtoInputSemanticCatalog(wire)).toEqual({ revision: 7, descriptors: BUILTIN_INPUT_SEMANTICS })
+    })
+
+    it.each([
+        WireInputPolicy.UNRECOGNIZED,
+        37 as WireInputPolicy,
+    ])("drops an unknown input policy %s rather than assuming a barrier exception", (inputPolicy) => {
+        const known = toProtoInputSemanticDescriptor(BUILTIN_INPUT_SEMANTICS.find((d) => d.id === "command.compact")!)
+        const unknown = { ...known, inputPolicy }
+        const wire = WireCatalog.decode(WireCatalog.encode(WireCatalog.create({ revision: 8, descriptors: [unknown] })).finish())
+        expect(fromProtoInputSemanticCatalog(wire)).toEqual({ revision: 8, descriptors: [] })
+    })
+
+    it("keeps an absent optional input policy absent across the actual binary transport", () => {
+        const compact = BUILTIN_INPUT_SEMANTICS.find((d) => d.id === "command.compact")!
+        const wire = WireCatalog.decode(
+            WireCatalog.encode(toProtoInputSemanticCatalog({ revision: 8, descriptors: [compact] })).finish(),
+        )
+        expect(wire.descriptors[0].inputPolicy).toBeUndefined()
+        expect(fromProtoInputSemanticCatalog(wire)).toEqual({ revision: 8, descriptors: [compact] })
     })
 
     it("round-trips a discovered capability descriptor", () => {

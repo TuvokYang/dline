@@ -1,6 +1,7 @@
 import type { Mode } from "@shared/storage/types"
 import { InfoIcon } from "lucide-react"
 import React from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import MarkdownBlock from "../common/MarkdownBlock"
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover"
 
@@ -20,6 +21,7 @@ interface NewTaskPreviewProps {
  * Each context entry is rendered in its own MarkdownBlock for independent readability.
  */
 const NewTaskPreview: React.FC<NewTaskPreviewProps> = ({ task, context, mode }) => {
+    const { t } = useUiTranslation()
     const hasContext = context && context.length > 0
     // Build a single-line preview from the first context entry
     const preview = hasContext ? context[0].replace(/\n/g, " ").substring(0, 80) + (context[0].length > 80 ? "…" : "") : ""
@@ -28,11 +30,11 @@ const NewTaskPreview: React.FC<NewTaskPreviewProps> = ({ task, context, mode }) 
         <div className="bg-(--vscode-badge-background) text-(--vscode-badge-foreground) rounded-[3px] p-[14px] pb-[6px]">
             {mode && (
                 <div className="mb-2 flex items-center gap-1.5 text-xs" data-testid="new-task-mode">
-                    <span className="font-bold">Mode</span>
+                    <span className="font-bold">{t("chatRows.newTask.mode")}</span>
                     <span>{mode.toUpperCase()}</span>
                 </div>
             )}
-            <span style={{ fontWeight: "bold" }}>Task</span>
+            <span style={{ fontWeight: "bold" }}>{t("chatRows.newTask.task")}</span>
             <MarkdownBlock markdown={task} />
             {hasContext && (
                 <Popover>
@@ -43,7 +45,9 @@ const NewTaskPreview: React.FC<NewTaskPreviewProps> = ({ task, context, mode }) 
                             type="button">
                             <InfoIcon className="size-3 shrink-0" />
                             <span className="truncate">
-                                {context.length > 1 ? `${context.length} contexts` : preview || "context"}
+                                {context.length > 1
+                                    ? t("chatRows.newTask.contexts", { count: context.length })
+                                    : preview || t("chatRows.newTask.context")}
                             </span>
                         </button>
                     </PopoverTrigger>
@@ -53,7 +57,7 @@ const NewTaskPreview: React.FC<NewTaskPreviewProps> = ({ task, context, mode }) 
                                 <div key={`ctx-${idx}`}>
                                     {context.length > 1 && (
                                         <div className="mb-1 text-xs font-semibold text-(--vscode-descriptionForeground)">
-                                            Context {idx + 1}
+                                            {t("chatRows.newTask.contextIndex", { index: idx + 1 })}
                                         </div>
                                     )}
                                     <MarkdownBlock markdown={ctx} />

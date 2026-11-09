@@ -66,8 +66,21 @@ tools:
   - list_files
   - search_files
   - list_code_definition_names
-skills: []
 maxOutputTokens: 0.05
+# 可选的能力选择，省略字段即不选择：
+# rules:
+#   - scope: workspace
+#     path: engineering-guide.md
+# skills:
+#   - use-vitest
+# workflows:
+#   - e2e-validation
+# mcp:
+#   - server: github
+#     tools:
+#       - search_issues
+#     resources:
+#       - repository://instructions
 ---
 Trace the requested code paths without changing files. Return findings with file paths, evidence, and open questions.
 ```
@@ -79,7 +92,6 @@ Trace the requested code paths without changing files. Return findings with file
 | 正文 | 是 | frontmatter 之后的内容就是子代理的提示词，不能为空 |
 | `profile` | 否 | 使用哪个 API Profile，见下文 |
 | `tools` | 否 | 允许的工具，数组或逗号分隔字符串。省略或为空时使用默认工具集 |
-| `skills` | 否 | 可见的技能。省略时可见全部可用技能，`[]` 表示不可见任何技能 |
 | `maxOutputTokens` | 否 | 最终结果的 token 预算，见下文 |
 
 缺少必填字段、frontmatter 格式错误、正文为空、出现未知或空白的工具名，或输出预算非法时，该文件会被跳过并记录日志。配置模型请使用 `profile`；`modelId` 等其他字段不会生效。
@@ -88,9 +100,35 @@ Trace the requested code paths without changing files. Return findings with file
 
 具名子代理可以通过 `tools` 显式申请写文件、执行命令、联网、MCP 或生成图片等工具；这些工具仍受底层功能开关和权限约束。
 
+## 选择 Rules、Skills、Workflows 与 MCP
+
+具名子代理独立选择 Rules、Skills、Workflows 与 MCP 条目。每个子代理从自己的全局与工作区能力目录中选择；主任务已选项、可见目录和工具白名单既不是上限，也不会自动成为子代理的选择。父任务未选而子代理已选的能力，子代理可以使用；父任务已选而子代理未选的，不会自动授予。
+
+省略的能力字段表示不选择：子代理既不会继承父任务的选择，也不会回退为全部可用。过去省略 `skills` 表示可见全部技能，现在省略 `skills` 表示不选择任何技能。旧式空数组（`skills: []`）也读取为未选。保存非空选择时写为块式列表；清空某一类时直接从 YAML 文件删除该字段，而不是写入空数组。旧空数组只在下次保存对应分类时归一化为删除，不会批量迁移已有文件。`tools` 字段保持原有语义：省略或为空的 `tools` 仍然表示默认工具集。
+
+每次运行的 system prompt 和有效选择在启动时冻结。修改配置后，下一次子代理运行或显式点击 **Retry** 时生效，没有热刷新。自动压缩沿用运行开始时冻结的 system prompt 与选择继续执行。
+
+### Rules
+
+已选规则会把完整正文直接注入子代理的 system prompt。规则不需要 loader 工具，Standard 与 Lite 提示词配置都可以使用。规则原有的 `paths` 条件只按子代理任务文本中出现的路径和子代理的工作目录求值，不借用父任务的全部消息或标签页。已选规则缺失、不可读或越出其根目录时，仅该子代理在请求 Provider 之前启动失败并给出可定位的原因，父任务和兄弟子代理不受影响；条件不匹配只是正常地不注入该规则。
+
+### Skills 与 Workflows
+
+Skills 与 Workflows 按需加载，需要 Standard 提示词配置和各自的 loader 工具：技能对应 `load_skill`，工作流对应 `load_workflow`。目录与加载消费同一份选择，猜测未选名称会被拒绝。已选技能或工作流消失或不可读时，选择会保留在界面中并标记为不可用，可以显式删除；Dline 不会改换同名资源。
+
+### MCP
+
+MCP 按 server 逐项选择：分别勾选工具与精确的资源 URI。在 Standard 提示词配置下，工具需要 `load_mcp` 与 `use_mcp_tool`；资源只需要 `access_mcp_resource`。选择按内部 server 名、原始工具名与精确 URI 匹配。不含 tools/resources 的 server 项表示不选择任何内容，保存时这些空子列表会被省略。
+
+真实权限仍然生效：系统权限、工作区所有权、资源本身的可用与连接状态，以及原有的审批与 hook 机制都不会因选择而放宽。选择能力并不代替审批。
+
+### 企业强制项
+
+标记为 **Required by policy**（`alwaysEnabled`）的条目在界面中单独列出，普通勾选框无法关闭。强制的规则、技能或工作流即使未被写进子代理配置，每次运行也会被选中。但强制并不豁免上文的条件：强制规则仍按 `paths` 条件求值；强制技能与工作流仍需要 Standard 提示词配置和各自的 `load_skill` 或 `load_workflow` 工具，loader 门禁未满足的运行不会加载它们。
+
 ### 在界面中管理
 
-在 **Manage Dline Rules & Workflows** 面板的 **Subagents** 标签页中，可以看到 **Global Subagents** 与 **Workspace Subagents** 两组，各有 **New subagent...** 按钮。每一行可以启用或停用、编辑或删除，选择 **Profile**，并逐个勾选允许的工具（必需的工具始终保持勾选）。
+在 **Manage Dline Rules & Workflows** 面板的 **Subagents** 标签页中，可以看到 **Global Subagents** 与 **Workspace Subagents** 两组，各有 **New subagent...** 按钮。每一行可以启用或停用、编辑或删除，并选择 **Profile**。展开一行后可以看到 **Tools**、**Rules**、**Skills**、**Workflows**、**MCP** 五个标签页。每个标签页显示生效与已选数量；缺少对应 loader 工具的选择会保留但不生效，重新启用工具后恢复，能力修改在下一次子代理运行时生效。
 
 ![能力面板的 Subagents 标签：Global Subagents 中的内置 default 与 Workspace Subagents 中的 code-researcher，两组各有 New subagent... 按钮](@docs-assets/ui/capabilities-subagents.png)
 
@@ -105,6 +143,14 @@ Trace the requested code paths without changing files. Return findings with file
 
 Profile 的创建与用途设置参见[模型配置](/zh-cn/getting-started/authorizing-with-dline/)。
 
+## 自动压缩上下文
+
+开启[自动压缩](/zh-cn/features/auto-compact/)后，子代理使用与主任务相同的触发、预留和 Maximum context 设置，按自己的模型上下文窗口计算。子代理会用自己的 Profile 汇总较早的上下文后继续工作。压缩沿用运行开始时冻结的 system prompt 与能力选择继续执行。压缩会产生额外的模型请求，并可能产生用量费用。
+
+摘要和压缩状态只保存在运行内存中，重启扩展不会恢复已压缩的子代理对话。取消会停止正在进行的压缩；超时或点击 **Finish** 仍会要求子代理交回已有结论。压缩失败时，运行会报告失败。
+
+关闭自动压缩时，子代理按 80% 的上下文用量阈值收尾。最终结果的输出预算独立设置，见下文。
+
 ## 最终结果的输出预算
 
 `maxOutputTokens` 限制子代理交回主任务的最终结果大小，单位是 token：
@@ -114,7 +160,7 @@ Profile 的创建与用途设置参见[模型配置](/zh-cn/getting-started/auth
 - 正整数表示固定 token 数，例如 `10240`；
 - 生效预算最低为 512 token，即使主任务剩余上下文更少。
 
-预算会写入子代理的提示词，交回结果时超出部分会被截断。它只限制最终结果，不限制子代理过程中的每次请求。
+交回结果时，超出预算的部分会被截断。该预算只限制最终结果大小。
 
 <span id="approval"></span>
 
@@ -136,4 +182,4 @@ Profile 的创建与用途设置参见[模型配置](/zh-cn/getting-started/auth
 
 ## 与 `spawn_task` 的区别
 
-`spawn_task` 是另一个工具，用于创建独立的新任务，不属于子代理功能。子代理自身不能再委派子代理。
+需要独立的对话和进度记录时，可以让 Dline 使用 `spawn_task` 创建新任务；需要在当前任务中汇总调查结论时，使用子代理。工具的可用条件见[工具参考](/zh-cn/tools-reference/all-dline-tools/)。

@@ -1,3 +1,4 @@
+import type { FoldUsage } from "@shared/chat/foldUsage"
 import type { UiMessage } from "@shared/ExtensionMessage"
 
 /**
@@ -80,10 +81,9 @@ export function isBrowserSession(item: UiMessage | UiMessage[]): item is Browser
 }
 
 /**
- * What a fold holds: the rows of one ended request round, or every ended round
- * of one turn, each folded on its own.
+ * What a fold holds: activity between messages, or the ended part of a user turn.
  */
-export type ActivityFoldKind = "round" | "turn"
+export type ActivityFoldKind = "segment" | "turn"
 
 /**
  * Finished rows folded into one collapsible block by the aggressive rendering
@@ -92,19 +92,36 @@ export type ActivityFoldKind = "round" | "turn"
  * Like the other groups, the array holds every member message in transcript
  * order, so a lookup by timestamp still finds a member. `_children` keeps the
  * member rows exactly as standard grouping produced them, so an expanded block
- * draws each of them the way the standard level does; a turn fold's children
- * are its round folds.
+ * returns those same rows to the top-level list when the block is opened.
  */
+/** The work categories whose failures a block can account for. */
+export type FoldFailureKind = "edit" | "read" | "command" | "subagent" | "web" | "browser"
+
 export type ActivityFold = UiMessage[] & {
     _isActivityFold: true
     _foldKind: ActivityFoldKind
     /**
-     * Stable identity: `fold:<ts of the first member>` for a round and
-     * `turn:<ts of the first member>` for a turn, which appended members never
-     * replace. The prefixes keep a turn apart from its first round.
+     * Stable identity: `segment:<first member ts>` or `turn:<first member ts>`.
+     * Appending members does not replace the identity.
      */
     _activityFoldId: string
     _children: readonly (UiMessage | UiMessage[])[]
+    _roundCount: number
+    /**
+     * The usage the folded rounds stand for, when the chat has it. Every figure
+     * comes from the request-round records the rate metrics read, so the header
+     * never states a number the reader cannot reconcile elsewhere.
+     */
+    _usage?: FoldUsage
+    /**
+     * Members that ended in failure, by work category, fixed when the block was
+     * built. Folding is what decides which failures belong to the block, so the
+     * count is recorded here instead of being re-derived by the renderer, which
+     * does not see the transcript-wide failure facts.
+     */
+    _failures?: ReadonlyMap<FoldFailureKind, number>
+    /** Timestamps of the members counted in `_failures`, so each is reported once. */
+    _failedMemberTs?: ReadonlySet<number>
 }
 
 export function isActivityFold(item: UiMessage | UiMessage[]): item is ActivityFold {

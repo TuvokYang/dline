@@ -282,6 +282,23 @@ const standaloneConfig = {
     external: ["vscode", "@grpc/reflection", "grpc-health-check", "better-sqlite3"],
 }
 
+/**
+ * The unified metrics writer.
+ *
+ * It runs on its own thread because `DatabaseSync` blocks whatever thread executes it;
+ * bundling it separately is what lets `new Worker(path)` load it from the extension
+ * directory without pulling the extension's module graph into the worker.
+ */
+const metricsWorkerConfig = {
+    ...baseConfig,
+    entryPoints: ["src/core/metrics/MetricsWorker.ts"],
+    outfile: `${destDir}/metrics-worker.js`,
+    external: ["vscode"],
+    // A worker entry must be self-contained: it cannot resolve the extension's aliases
+    // or lazily require sibling chunks at runtime.
+    splitting: false,
+}
+
 // E2E build script configuration
 const e2eBuildConfig = {
     ...baseConfig,
@@ -295,11 +312,19 @@ const e2eBuildConfig = {
 async function main() {
     const config = standalone ? standaloneConfig : e2eBuild ? e2eBuildConfig : extensionConfig
     const extensionCtx = await esbuild.context(config)
+    // Only the extension host loads the metrics writer; the standalone and E2E builds
+    // have no extension directory to load it from.
+    const workerCtx = standalone || e2eBuild ? undefined : await esbuild.context(metricsWorkerConfig)
     if (watch) {
         await extensionCtx.watch()
+        await workerCtx?.watch()
     } else {
         await extensionCtx.rebuild()
         await extensionCtx.dispose()
+        if (workerCtx) {
+            await workerCtx.rebuild()
+            await workerCtx.dispose()
+        }
     }
 }
 

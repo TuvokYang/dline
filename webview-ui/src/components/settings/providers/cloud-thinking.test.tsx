@@ -1,8 +1,17 @@
 // @vitest-environment jsdom
 import type { ModelInfo } from "@shared/proto/dline/models"
 import { ApiProfile } from "@shared/proto/dline/profile"
+import { flatMeteredPricing, readPriceSet } from "@shared/providers/pricing-shape"
 import { fireEvent, render, screen } from "@testing-library/react"
-import type { AnchorHTMLAttributes, ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react"
+import {
+    type AnchorHTMLAttributes,
+    type ButtonHTMLAttributes,
+    Children,
+    type InputHTMLAttributes,
+    isValidElement,
+    type ReactNode,
+    type SelectHTMLAttributes,
+} from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { AIhubmixProvider } from "./AihubmixProvider"
 import { AskSageProvider } from "./AskSageProvider"
@@ -123,7 +132,13 @@ vi.mock("@vscode/webview-ui-toolkit/react", () => ({
             {children}
         </label>
     ),
-    VSCodeDropdown: (props: SelectHTMLAttributes<HTMLSelectElement>) => <select {...props} />,
+    VSCodeDropdown: ({ children, ...props }: SelectHTMLAttributes<HTMLSelectElement>) => (
+        <select {...props}>
+            {Children.toArray(children).filter(
+                (child) => !isValidElement<{ slot?: string }>(child) || child.props.slot !== "selected-value",
+            )}
+        </select>
+    ),
     VSCodeOption: ({ children, value }: { children: ReactNode; value: string }) => <option value={value}>{children}</option>,
     VSCodeRadioGroup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
     VSCodeRadio: ({ children }: { children: ReactNode }) => <span>{children}</span>,
@@ -210,19 +225,22 @@ for (const [provider, configKey, Panel] of [
                 modelInfo: {
                     id: "opaque-ui",
                     capabilities: { supportsReasoning: false, thinking: { supported: false, effortLevels: [], maxBudget: 0 } },
-                    pricing: { inputPrice: 0 },
+                    pricing: flatMeteredPricing(0, 0),
                 },
             })
             render(<Panel onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
-            expect(JSON.parse(screen.getByTestId("model-info").textContent ?? "null")).toEqual({
+            const projected = JSON.parse(screen.getByTestId("model-info").textContent ?? "null")
+            expect(projected).toEqual({
                 id: "opaque-ui",
                 capabilities: {
                     supportsPromptCache: true,
                     supportsReasoning: false,
                     thinking: { supported: false, effortLevels: [], maxBudget: 0 },
                 },
-                pricing: { inputPrice: 0 },
+                pricing: flatMeteredPricing(0, 0),
             })
+            // The carried price set survives as a readable rate, not an empty shell.
+            expect(readPriceSet(projected.pricing.strategy.flat.prices).inputPrice).toBe(0)
             expect(screen.getByRole("textbox", { name: "Model" })).toHaveValue("opaque-ui")
             expect(onUpdate).not.toHaveBeenCalled()
         })
@@ -235,17 +253,24 @@ for (const [provider, configKey, Panel] of [
                 modelInfo: models["budget-alias"],
                 [configKey]: {
                     capabilities: { supportsReasoning: false, thinking: { supported: false, effortLevels: [], maxBudget: 0 } },
-                    pricing: { inputPrice: 0 },
+                    pricing: flatMeteredPricing(0, 0),
                 },
             })
             render(<Panel onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
-            expect(JSON.parse(screen.getByTestId("model-info").textContent ?? "null")).toMatchObject({
+            const catalogProjection = JSON.parse(screen.getByTestId("model-info").textContent ?? "null")
+            expect(catalogProjection).toMatchObject({
                 id: "effort-alias",
                 capabilities: {
                     supportsReasoning: false,
                     thinking: { supported: false, mode: "effort", effortLevels: [], defaultEffort: "low", maxBudget: 0 },
                 },
-                pricing: { inputPrice: 0 },
+            })
+            // The override's carried rates reach the projection as real prices.
+            expect(readPriceSet(catalogProjection.pricing.strategy.flat.prices)).toEqual({
+                inputPrice: 0,
+                outputPrice: 0,
+                cacheWritePrice: 0,
+                cacheReadPrice: 0,
             })
             expect(onUpdate).not.toHaveBeenCalled()
             fireEvent.change(screen.getByRole("textbox", { name: "Model" }), { target: { value: "budget-alias" } })

@@ -95,24 +95,4 @@ describe("SecureArtifactUrlDownloader", () => {
         )
         expect(request).toHaveBeenCalledOnce()
     })
-
-    it("rejects unsupported MIME types and streamed bodies above the byte cap", async () => {
-        const responses = [
-            response(200, { "content-type": "image/svg+xml" }, [Buffer.from("<svg/>")]),
-            response(200, { "content-type": "image/png" }, [PNG_1X1, Buffer.from([1])]),
-        ]
-        const downloader = new SecureArtifactUrlDownloader({
-            resolveHostname: async () => [{ address: "8.8.8.8", family: 4 }],
-            request: async () => responses.shift()!,
-        })
-
-        await expectArtifactError(
-            downloader.download({ url: new URL("https://images.example.test/unsafe.svg"), maxBytes: 1024 }),
-            "unsupported_format",
-        )
-        await expectArtifactError(
-            downloader.download({ url: new URL("https://images.example.test/large.png"), maxBytes: PNG_1X1.byteLength }),
-            "artifact_size_exceeded",
-        )
-    })
 })

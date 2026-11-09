@@ -5,7 +5,7 @@ type FlushPendingInput = () => Promise<void>
 
 const pendingInputFlushers = new Set<FlushPendingInput>()
 
-/** Flush every mounted Settings input before the Settings view is closed. */
+/** Commit mounted input drafts before an editor changes their underlying structure. */
 export async function flushPendingDebouncedInputs(): Promise<void> {
     const results = await Promise.allSettled([...pendingInputFlushers].map((flush) => flush()))
     const failures = results
@@ -51,12 +51,10 @@ export function useDebouncedInput<T>(
         pendingUserChangeRef.current = false
         const value = localValueRef.current
         const previous = inFlightRef.current ?? Promise.resolve()
-        const operation = previous.then(() => onChangeRef.current(value)).then(() => undefined)
-        const tracked = operation.catch((error: unknown) => {
-            // Keep the value dirty so an explicit Done/flush can retry the failed save.
-            pendingUserChangeRef.current = true
-            throw error
-        })
+        const tracked = previous
+            .catch(() => undefined)
+            .then(() => onChangeRef.current(value))
+            .then(() => undefined)
         inFlightRef.current = tracked
         try {
             await tracked
@@ -104,7 +102,7 @@ export function useDebouncedInput<T>(
         setLocalValue(initialValue)
     }, [initialValue])
 
-    // Register the flusher so SettingsView can commit every mounted input before Done.
+    // Structural editors flush mounted drafts; unmount submits only edits not yet attempted.
     useEffect(() => {
         pendingInputFlushers.add(flush)
         return () => {

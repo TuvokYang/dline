@@ -1,9 +1,10 @@
 import { ActivityIcon, CircleStopIcon, LoaderCircleIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { useTaskActivityNavigation } from "./activity/TaskActivityNavigationContext"
 import { useTaskActivities } from "./activity/useTaskActivities"
 import { TOOL_RESPONSE_SCROLL_CLASS } from "./constants"
-import { projectKillCommandOutcome } from "./killCommandOutcome"
+import { killCommandLabel, projectKillCommandOutcome } from "./killCommandOutcome"
 
 interface KillCommandRowProps {
     command: string
@@ -25,13 +26,14 @@ export function KillCommandRow({ taskId, taskInstanceId, ...props }: KillCommand
 }
 
 export function KillCommandRowView({ command, result, activityId, status }: KillCommandRowProps & { status?: string }) {
+    const { t } = useUiTranslation()
     const navigateToActivity = useTaskActivityNavigation()
     const outcome = projectKillCommandOutcome(activityId, status)
     return (
         <div data-phase={outcome.phase} data-testid="kill-command-result">
             <div className="flex items-center gap-2.5 mb-3">
                 {outcome.pending ? <LoaderCircleIcon className="size-3 animate-spin" /> : <CircleStopIcon className="size-2" />}
-                <span className="font-bold">{outcome.label}</span>
+                <span className="font-bold">{killCommandLabel(outcome, t)}</span>
             </div>
             <div
                 className={`bg-code border border-editor-group-border rounded-[3px] py-2 px-2.5 ${TOOL_RESPONSE_SCROLL_CLASS}`}
@@ -44,7 +46,7 @@ export function KillCommandRowView({ command, result, activityId, status }: Kill
                 {activityId ? (
                     <Button className="mt-2" onClick={() => navigateToActivity(activityId)} size="sm" variant="secondary">
                         <ActivityIcon className="size-3.5" />
-                        View command activity
+                        {t("chatRows.kill.viewActivity")}
                     </Button>
                 ) : null}
             </div>

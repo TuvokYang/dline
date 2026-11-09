@@ -409,6 +409,21 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
         })
     }
 
+    /** Resolve identity and patch under the same lock as ordered insertion. */
+    async stagePatchByTimestamp(timestamp: number, updates: Partial<TItem>): Promise<TItem | undefined> {
+        this.assertWritable()
+        return await this.mutex.withLock(() => {
+            const index = this.findLastTimestampIndex(timestamp)
+            if (index < 0) return undefined
+            const item = { ...this.items[index], ...updates }
+            this.items[index] = item
+            this.invalidateTimestampIndex()
+            this.addToL2(item.ts, item)
+            this.dirty = true
+            return item
+        })
+    }
+
     async stageUpsertByTimestamp(item: TItem): Promise<void> {
         this.assertWritable()
         await this.mutex.withLock(() => {

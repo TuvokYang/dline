@@ -4,6 +4,7 @@ import {
     TaskRateMetricsResolution as ProtoResolution,
 } from "@shared/proto/dline/task"
 import { useCallback, useEffect, useRef, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { TaskServiceClient } from "@/services/grpc-client"
 import {
     createTaskRateMetricsQueryWindow,
@@ -27,6 +28,13 @@ export interface TaskRateMetricsQueryState {
     refresh: () => void
 }
 
+interface TaskRateMetricsLoadState {
+    requestKey?: string
+    data?: GetTaskRateMetricsResponse
+    loading: boolean
+    failure?: { detail?: string }
+}
+
 const PROTO_RESOLUTIONS: Record<TaskRateMetricsResolution, ProtoResolution> = {
     minute: ProtoResolution.TASK_RATE_METRICS_RESOLUTION_MINUTE,
     hour: ProtoResolution.TASK_RATE_METRICS_RESOLUTION_HOUR,
@@ -40,11 +48,12 @@ export function useTaskRateMetrics({
     resolution,
     enabled,
 }: UseTaskRateMetricsOptions): TaskRateMetricsQueryState {
+    const { t } = useUiTranslation()
     const [refreshVersion, setRefreshVersion] = useState(0)
     const requestKey = JSON.stringify([taskId, taskInstanceId, resolution, enabled, refreshVersion])
     const latestRequestKey = useRef(requestKey)
     latestRequestKey.current = requestKey
-    const [state, setState] = useState<Omit<TaskRateMetricsQueryState, "refresh"> & { requestKey?: string }>({ loading: false })
+    const [state, setState] = useState<TaskRateMetricsLoadState>({ loading: false })
     const refresh = useCallback(() => setRefreshVersion((version) => version + 1), [])
 
     useEffect(() => {
@@ -85,7 +94,7 @@ export function useTaskRateMetrics({
                 setState({
                     requestKey,
                     loading: false,
-                    error: error instanceof Error ? error.message : "Failed to load API rate history",
+                    failure: { detail: error instanceof Error ? error.message : undefined },
                 })
             })
         return () => {
@@ -95,5 +104,10 @@ export function useTaskRateMetrics({
 
     // A new opening must not render old data even before the passive effect runs.
     if (state.requestKey !== requestKey) return { loading: Boolean(enabled && taskId && taskInstanceId), refresh }
-    return { data: state.data, loading: state.loading, error: state.error, refresh }
+    const error = state.failure
+        ? state.failure.detail
+            ? t("chatInput.metrics.errorDetail", { message: state.failure.detail })
+            : t("chatInput.metrics.error")
+        : undefined
+    return { data: state.data, loading: state.loading, error, refresh }
 }

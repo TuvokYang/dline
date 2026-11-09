@@ -14,6 +14,7 @@ import LatexBlock from "@/components/common/LatexBlock"
 import MermaidBlock from "@/components/common/MermaidBlock"
 import { Button } from "@/components/ui/button"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 import { FileServiceClient } from "@/services/grpc-client"
 import { parseSubmittedEntityLink } from "@/services/input-semantics/highlight"
@@ -186,6 +187,7 @@ const NO_DRAFT_COMPOSER: TransitionDraftComposer<ModeSwitchDraft> = { holds: () 
  * A component for Act Mode text that contains a clickable toggle and keyboard shortcut hint.
  */
 const ActModeHighlight: React.FC = () => {
+    const { t } = useUiTranslation()
     const { mode, modeSwitch, stateRevision } = useExtensionState()
     const modeSwitchFlow = useModeSwitch({
         mode,
@@ -218,13 +220,13 @@ const ActModeHighlight: React.FC = () => {
             }}
             role="button"
             tabIndex={canSwitchToAct ? 0 : -1}
-            title={canSwitchToAct ? "Click to toggle to Act Mode" : "Already in Act Mode"}>
+            title={canSwitchToAct ? t("shell.markdown.actMode.toggle") : t("shell.markdown.actMode.already")}>
             <span
                 aria-hidden="true"
                 className="p-1 rounded-md bg-code flex items-center justify-end w-7 border border-input-border">
                 <span className="rounded-full bg-link w-2 h-2" />
             </span>
-            Act Mode (⌘⇧A)
+            {t("shell.markdown.actMode.label")}
         </span>
     )
 }
@@ -409,6 +411,7 @@ const remarkPreventBoldFilenames = () => {
 }
 
 const PreWithCopyButton = ({ children, ...preProps }: React.HTMLAttributes<HTMLPreElement>) => {
+    const { t } = useUiTranslation()
     const preRef = useRef<HTMLPreElement>(null)
 
     const handleCopy = () => {
@@ -425,7 +428,7 @@ const PreWithCopyButton = ({ children, ...preProps }: React.HTMLAttributes<HTMLP
     }
 
     return (
-        <WithCopyButton ariaLabel="Copy code" onCopy={handleCopy} position="top-right">
+        <WithCopyButton ariaLabel={t("shell.markdown.copyCode")} onCopy={handleCopy} position="top-right">
             <pre {...preProps} ref={preRef}>
                 {children}
             </pre>
@@ -519,6 +522,7 @@ const remarkMarkPotentialFilePaths = () => {
  * Shows the code immediately, then adds the file link icon when confirmed
  */
 const InlineCodeWithFileCheck: React.FC<ComponentProps<"code"> & { [key: string]: any }> = (props) => {
+    const { t } = useUiTranslation()
     const [isFilePath, setIsFilePath] = useState<boolean | null>(null)
     const filePath = normalizeLocalPath(typeof props.children === "string" ? props.children : String(props.children || ""))
     const isPotentialFilePath = props["data-potential-file-path"] === "true"
@@ -556,7 +560,7 @@ const InlineCodeWithFileCheck: React.FC<ComponentProps<"code"> & { [key: string]
                 className="p-0 ml-0.5 leading-none align-middle transition-opacity text-preformat gap-0.5 inline text-left"
                 onClick={() => FileServiceClient.openFileRelativePath({ value: filePath })}
                 size="icon"
-                title={`Open ${filePath} in editor`}
+                title={t("shell.markdown.openInEditor", { path: filePath })}
                 type="button"
                 variant="icon">
                 <code {...props} />

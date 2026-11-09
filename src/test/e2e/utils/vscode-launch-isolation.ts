@@ -19,7 +19,7 @@ export interface VSCodeLaunchIsolation {
 }
 
 export const E2E_EXTENSIONS_ROOT = path.join(os.tmpdir(), "dline-e2e-extensions", E2E_RUN_ID)
-const DLINE_EXTENSION_DIRECTORY_PATTERN = /^tuvokyang\.dline-/i
+const DLINE_EXTENSION_DIRECTORY_PATTERN = /^tuvokyang(?:dline)?\.dline-/i
 export const E2E_VSIX_INSTALL_TIMEOUT_MS = 120_000
 const INSTALL_DIAGNOSTIC_LIMIT = 4_000
 const PACKAGED_E2E_LIFECYCLES = new Set(["test:e2e", "test:e2e:optimal", "test:e2e:pressure"])

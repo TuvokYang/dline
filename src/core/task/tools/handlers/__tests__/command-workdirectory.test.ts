@@ -2,8 +2,9 @@ import assert from "node:assert/strict"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
+import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
 import { afterEach, describe, it } from "vitest"
-import { resolveCommandWorkdirectory } from "../command-workdirectory"
+import { resolveCommandTarget, resolveCommandWorkdirectory } from "../command-workdirectory"
 
 const cleanupPaths: string[] = []
 
@@ -45,6 +46,36 @@ describe("resolveCommandWorkdirectory", () => {
 
         assert.equal(result.path, await fs.realpath(external))
         assert.equal(result.isWithinWorkspace, false)
+    })
+
+    it("resolves workspace hints and classifies a junction by its real target", async () => {
+        const workspace = await createTempDirectory("dline-command-workspace-")
+        const second = await createTempDirectory("dline-command-second-")
+        const external = await createTempDirectory("dline-command-external-")
+        const junction = path.join(workspace, "outside")
+        await fs.symlink(external, junction, process.platform === "win32" ? "junction" : "dir")
+        const roots = [
+            { name: "first", path: workspace },
+            { name: "second", path: second },
+        ]
+        const workspaceManager = {
+            getRoots: () => roots,
+            getPrimaryRoot: () => roots[0],
+            resolvePathToRoot: (candidate: string) => roots.find((root) => candidate === root.path),
+            getRootByName: (name: string) => roots.find((root) => root.name === name),
+        } as unknown as WorkspaceRootManager
+        const hinted = await resolveCommandTarget({
+            cwd: workspace,
+            command: "@second:echo hello",
+            isMultiRootEnabled: true,
+            workspaceManager,
+        })
+        assert.equal(hinted.actualCommand, "echo hello")
+        assert.equal(hinted.path, await fs.realpath(second))
+        assert.equal(hinted.isWithinWorkspace, true)
+        const escaped = await resolveCommandTarget({ cwd: workspace, command: "echo hello", workdirectory: "outside" })
+        assert.equal(escaped.path, await fs.realpath(external))
+        assert.equal(escaped.isWithinWorkspace, false)
     })
 
     it("rejects missing paths and regular files before execution", async () => {

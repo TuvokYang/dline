@@ -2,6 +2,7 @@ import { EmptyRequest } from "@shared/proto/dline/common"
 import { useMemo, useState } from "react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { CheckpointsServiceClient } from "@/services/grpc-client"
 
 interface CheckpointErrorProps {
@@ -12,6 +13,7 @@ export const CheckpointError: React.FC<CheckpointErrorProps> = ({
     checkpointManagerErrorMessage,
     handleCheckpointSettingsClick,
 }) => {
+    const { t } = useUiTranslation()
     const [isRetrying, setIsRetrying] = useState(false)
     const messages = useMemo(() => {
         const message = checkpointManagerErrorMessage?.replace(/disabling checkpoints\.$/, "")
@@ -39,19 +41,26 @@ export const CheckpointError: React.FC<CheckpointErrorProps> = ({
 
     return (
         <div className="flex items-center justify-center w-full">
-            <Alert title={messages.message} variant="danger">
+            <Alert title={t("chatInput.checkpoint.error", { message: messages.message ?? "" })} variant="danger">
                 <AlertDescription className="flex gap-2 justify-end">
-                    <Button aria-label="Retry Checkpoints" disabled={isRetrying} onClick={handleRetry} variant="ghost">
-                        {isRetrying ? "Retrying…" : "Retry Checkpoints"}
+                    <Button
+                        aria-label={t("chatInput.checkpoint.retry")}
+                        disabled={isRetrying}
+                        onClick={handleRetry}
+                        variant="ghost">
+                        {t(isRetrying ? "chatInput.checkpoint.retrying" : "chatInput.checkpoint.retry")}
                     </Button>
                     {messages.showDisableButton && (
-                        <Button aria-label="Disable Checkpoints" onClick={handleCheckpointSettingsClick} variant="ghost">
-                            Disable Checkpoints
+                        <Button
+                            aria-label={t("chatInput.checkpoint.disable")}
+                            onClick={handleCheckpointSettingsClick}
+                            variant="ghost">
+                            {t("chatInput.checkpoint.disable")}
                         </Button>
                     )}
                     {messages.showGitInstructions && (
                         <a className="text-link underline" href="https://docs.dline.cc/core-workflows/checkpoints/">
-                            See instructions
+                            {t("chatInput.checkpoint.instructions")}
                         </a>
                     )}
                 </AlertDescription>

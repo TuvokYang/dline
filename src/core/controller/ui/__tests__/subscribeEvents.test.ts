@@ -15,14 +15,14 @@ import { sendShowWebviewEvent, subscribeToShowWebview } from "../subscribeToShow
 import { sendWorktreesButtonClickedEvent, subscribeToWorktreesButtonClicked } from "../subscribeToWorktreesButtonClicked"
 
 /**
- * Creates a minimal mock Controller object that can serve as a unique Map key.
- * The subscription handlers only use controller as an identity key.
+ * Isolates subscription identity; these event-only fixtures have no committed message owner.
  */
 function createMockController(id: string): Controller & { opening: { taskId: string; taskInstanceId: string } } {
     const controller = {
         taskId: id,
         opening: { taskId: id, taskInstanceId: `open-${id}` },
         currentOpening: () => controller.opening,
+        projectCurrentTaskMessageSourceIndex: async () => undefined,
     }
     return controller as unknown as Controller & { opening: { taskId: string; taskInstanceId: string } }
 }

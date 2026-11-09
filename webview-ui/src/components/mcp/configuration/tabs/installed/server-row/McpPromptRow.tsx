@@ -1,4 +1,5 @@
 import { McpPrompt } from "@shared/mcp"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 
 type McpPromptRowProps = {
     prompt: McpPrompt
@@ -6,6 +7,7 @@ type McpPromptRowProps = {
 }
 
 const McpPromptRow = ({ prompt, serverName }: McpPromptRowProps) => {
+    const { t } = useUiTranslation()
     return (
         <div
             key={prompt.name}
@@ -50,7 +52,7 @@ const McpPromptRow = ({ prompt, serverName }: McpPromptRowProps) => {
                             fontSize: "11px",
                             textTransform: "uppercase",
                         }}>
-                        Arguments
+                        {t("capabilities.mcp.arguments")}
                     </div>
                     {prompt.arguments.map((arg) => (
                         <div
@@ -81,7 +83,7 @@ const McpPromptRow = ({ prompt, serverName }: McpPromptRowProps) => {
                                     overflowWrap: "break-word",
                                     wordBreak: "break-word",
                                 }}>
-                                {arg.description || "No description"}
+                                {arg.description || t("capabilities.mcp.noDescription")}
                             </span>
                         </div>
                     ))}

@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { WithCopyButton } from "./CopyButton"
 import { renderLatexToNode } from "./latex-engine"
 
@@ -25,6 +26,7 @@ type RenderOutcome = { source: string; failed: boolean }
  * retrieve the raw source.
  */
 const LatexBlock = memo(({ code }: LatexBlockProps) => {
+    const { t } = useUiTranslation()
     const containerRef = useRef<HTMLDivElement>(null)
     const [outcome, setOutcome] = useState<RenderOutcome | undefined>(undefined)
 
@@ -68,7 +70,7 @@ const LatexBlock = memo(({ code }: LatexBlockProps) => {
     const failed = outcome?.source === code && outcome.failed
 
     return (
-        <WithCopyButton ariaLabel="Copy LaTeX source" position="top-right" textToCopy={code}>
+        <WithCopyButton ariaLabel={t("shell.latex.copy")} position="top-right" textToCopy={code}>
             {failed ? (
                 <pre className="latex-block-error" data-testid="latex-block-error">
                     {code}

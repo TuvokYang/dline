@@ -40,7 +40,9 @@ export class ProductionApprovalPolicyAdapter implements ApprovalPolicyPort {
         if (typeof toolName !== "string" || toolName.length === 0) throw new Error("MissingPolicyToolName")
         const snapshot = await this.options.readSnapshot()
         if (input.signal.aborted) throw input.signal.reason
+        const awayCommand = input.riskFacts.awayCommand
         const context: PermissionScopeContext = {
+            ...(awayCommand === "workspace" || awayCommand === "external" ? { awayCommand } : {}),
             isExternalPath: booleanFact(input.riskFacts, "isExternalPath"),
             isSafeCommand: booleanFact(input.riskFacts, "isSafeCommand"),
             isToolAutoApproveEnabled: booleanFact(input.riskFacts, "isToolAutoApproveEnabled"),

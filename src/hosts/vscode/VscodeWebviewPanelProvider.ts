@@ -299,10 +299,12 @@ export class VscodeWebviewPanelProvider extends WebviewProvider {
 
     private registerPanelVisibilityListener(panel: vscode.WebviewPanel): void {
         this.controller.setAccountUsagePollingEnabled(panel.visible)
+        this.controller.setSurfaceVisible(panel.visible)
         panel.onDidChangeViewState(
             (event) => {
                 dlineEditorGroup.synchronize(event.webviewPanel)
                 this.controller.setAccountUsagePollingEnabled(event.webviewPanel.visible)
+                this.controller.setSurfaceVisible(event.webviewPanel.visible)
                 this.liveness?.visibilityChanged(event.webviewPanel.visible)
             },
             null,

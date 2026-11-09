@@ -7,6 +7,7 @@ import { MinimaxModelId, ModelInfo, minimaxDefaultModelId, minimaxModels } from 
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { ClineTool } from "@/shared/tools"
 import { ApiHandler, ApiHandlerContext } from "../ApiHandler"
+import type { BillingTokens } from "../billing/types"
 import { withRetry } from "../retry"
 import { sanitizeAnthropicMessages } from "../transform/anthropic-format"
 import { ApiStream } from "../transform/stream"
@@ -51,6 +52,7 @@ export class MinimaxHandler extends ApiHandler {
                             : "https://api.minimax.io/anthropic"),
                     defaultHeaders: externalHeaders,
                     fetch: providerFetch,
+                    maxRetries: 0,
                 })
             } catch (error) {
                 throw new Error(`Error creating MiniMax client: ${error.message}`)
@@ -71,6 +73,7 @@ export class MinimaxHandler extends ApiHandler {
         const reasoningOn = reasoning.enabled
 
         // MiniMax M2 uses Anthropic API format
+        const sentAtMs = Date.now()
         const stream: AnthropicStream<Anthropic.RawMessageStreamEvent> = await client.messages.create({
             model: model.id,
             max_tokens: model.info.capabilities?.maxTokens || 8192,
@@ -95,12 +98,19 @@ export class MinimaxHandler extends ApiHandler {
         })
 
         const lastStartedToolCall = { id: "", name: "", arguments: "" }
+        let responseTokens: BillingTokens | undefined
 
         for await (const chunk of stream) {
             switch (chunk?.type) {
                 case "message_start": {
                     // tells us cache reads/writes/input/output
                     const usage = chunk.message.usage
+                    responseTokens = {
+                        inputTokens: usage.input_tokens,
+                        outputTokens: usage.output_tokens,
+                        cacheWriteTokens: usage.cache_creation_input_tokens ?? undefined,
+                        cacheReadTokens: usage.cache_read_input_tokens ?? undefined,
+                    }
                     yield {
                         type: "usage",
                         inputTokens: usage.input_tokens || 0,
@@ -110,14 +120,27 @@ export class MinimaxHandler extends ApiHandler {
                     }
                     break
                 }
-                case "message_delta":
-                    // tells us stop_reason, stop_sequence, and output tokens along the way and at the end of the message
+                case "message_delta": {
+                    // Keep token projections unchanged; price only the complete response.
+                    const cost =
+                        responseTokens && chunk.delta?.stop_reason
+                            ? ApiHandler.calculateUsageCost(
+                                  model.info.pricing,
+                                  {
+                                      ...responseTokens,
+                                      outputTokens: Math.max(responseTokens.outputTokens, chunk.usage.output_tokens),
+                                  },
+                                  sentAtMs,
+                              )
+                            : undefined
                     yield {
                         type: "usage",
                         inputTokens: 0,
                         outputTokens: chunk.usage.output_tokens || 0,
+                        ...(cost?.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                     }
                     break
+                }
                 case "message_stop":
                     // no usage data, just an indicator that the message is done
                     break

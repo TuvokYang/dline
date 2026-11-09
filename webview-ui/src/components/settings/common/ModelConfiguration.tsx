@@ -1,13 +1,14 @@
 import type { ModelInfo } from "@shared/proto/dline/models"
 import { type ModelCapabilities, type ModelPricing, ServerTool } from "@shared/proto/dline/models/metadata"
+import type { PricingShapeKind } from "@shared/providers/pricing-shape"
 import { declaredServerTools, isServerToolEnabled, withServerToolSwitch } from "@shared/providers/server-tool-switches"
 import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import { useEffect, useId, useState } from "react"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { getCurrencySymbol, SUPPORTED_CURRENCY_CODES } from "@/utils/currency"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ProfileDisclosure, ProfileField, ProfileInlineGrid, ProfileSection, ProfileSectionTitle } from "../profile-ui"
 import { DebouncedTextField } from "./DebouncedTextField"
-import { ContextTierEditor, PricingTierEditor } from "./ModelTierEditor"
+import { ContextTierEditor } from "./ModelTierEditor"
+import { PricingEditor } from "./PricingEditor"
 
 const BUILT_IN_CONTEXT_WINDOW = 128_000
 const BUILT_IN_MAX_TOKENS = 8_192
@@ -44,6 +45,9 @@ interface ModelConfigurationProps {
 
     // Update callback for provider pricing.
     onPricingUpdate: (updates: Partial<ModelPricing>) => void
+    onPricingReset?: () => void
+    fixedPricingShape?: PricingShapeKind
+    peakOffPeakLabels?: boolean
 
     // Hosted server tools the user switched off for this profile. Absent means
     // "follow the model declaration", which is why an empty list is meaningful here
@@ -96,37 +100,31 @@ export const ModelConfiguration = ({
     pricing: pricingOverrides,
     onCapabilitiesUpdate,
     onPricingUpdate,
+    onPricingReset,
+    fixedPricingShape,
+    peakOffPeakLabels,
     disabledServerTools,
     onDisabledServerToolsUpdate,
     fields,
     defaults,
     tiersEditable = false,
-    pricingTiersEnabled = false,
     contextWindowValue: selectedContextWindowValue,
     onContextWindowUpdate,
 }: ModelConfigurationProps) => {
+    const { t } = useUiTranslation()
     const fieldId = useId()
     const temperatureId = `${fieldId}-temperature`
     const contextWindowId = `${fieldId}-context-window`
     const maxTokensId = `${fieldId}-max-tokens`
-    const currencyId = `${fieldId}-currency`
-    const inputPriceId = `${fieldId}-input-price`
-    const outputPriceId = `${fieldId}-output-price`
-    const cacheWritesPriceId = `${fieldId}-cache-writes-price`
-    const cacheReadsPriceId = `${fieldId}-cache-reads-price`
     const [draftChecks, setDraftChecks] = useState<Partial<Record<CapabilityCheckField, boolean>>>({})
-    const [pendingChecks, setPendingChecks] = useState<Partial<Record<CapabilityCheckField, boolean>>>({})
+    // Only the setter is used: the effect below reconciles against its own updater.
+    const [, setPendingChecks] = useState<Partial<Record<CapabilityCheckField, boolean>>>({})
     // Show registry defaults until the user edits them; edits persist as provider overrides.
     const [draftContextTiers, setDraftContextTiers] = useState(
         capabilityOverrides?.contextWindowTiers ?? defaults?.capabilities?.contextWindowTiers ?? [],
     )
-    const [draftPricingTiers, setDraftPricingTiers] = useState(
-        pricingTiersEnabled ? (pricingOverrides?.tiers ?? []) : (pricingOverrides?.tiers ?? defaults?.pricing?.tiers ?? []),
-    )
-
     // Extract current values from provider overrides
     const capabilities: ModelCapabilities = capabilityOverrides ?? ({} as ModelCapabilities)
-    const pricing: ModelPricing = pricingOverrides ?? ({} as ModelPricing)
     const temperature = capabilities.temperature
 
     useEffect(() => {
@@ -184,20 +182,6 @@ export const ModelConfiguration = ({
         setDraftContextTiers(capabilityOverrides?.contextWindowTiers ?? defaults?.capabilities?.contextWindowTiers ?? [])
     }, [capabilityOverrides?.contextWindowTiers, defaults?.capabilities?.contextWindowTiers])
 
-    useEffect(() => {
-        setDraftPricingTiers(
-            pricingTiersEnabled ? (pricingOverrides?.tiers ?? []) : (pricingOverrides?.tiers ?? defaults?.pricing?.tiers ?? []),
-        )
-    }, [pricingOverrides?.tiers, defaults?.pricing?.tiers, pricingTiersEnabled])
-
-    // Registry pricing remains visible until a profile override replaces one field.
-    const currency = pricing.currency || defaults?.pricing?.currency || "USD"
-    const currencySymbol = getCurrencySymbol(currency)
-    const inputPriceValue = pricing.inputPrice ?? defaults?.pricing?.inputPrice
-    const outputPriceValue = pricing.outputPrice ?? defaults?.pricing?.outputPrice
-    const cacheWritesPriceValue = pricing.cacheWritesPrice ?? defaults?.pricing?.cacheWritesPrice
-    const cacheReadsPriceValue = pricing.cacheReadsPrice ?? defaults?.pricing?.cacheReadsPrice
-
     // Update capability field
     const updateCapability = (field: keyof ModelCapabilities, value: ModelCapabilities[keyof ModelCapabilities]) => {
         onCapabilitiesUpdate({ [field]: value } as Partial<ModelCapabilities>)
@@ -229,23 +213,6 @@ export const ModelConfiguration = ({
         const nextTiers = tiers ?? []
         setDraftContextTiers(nextTiers)
         updateCapability("contextWindowTiers", nextTiers)
-    }
-
-    // Update pricing field
-    const updatePricing = (field: keyof ModelPricing, value: ModelPricing[keyof ModelPricing]) => {
-        onPricingUpdate({ [field]: value } as Partial<ModelPricing>)
-    }
-
-    /** Persist pricing tier changes while keeping the editor responsive before profile echo. */
-    const updatePricingTiers = (tiers: ModelPricing["tiers"]) => {
-        const nextTiers = tiers ?? []
-        setDraftPricingTiers(nextTiers)
-        updatePricing("tiers", nextTiers)
-    }
-
-    // Update currency (part of pricing)
-    const updateCurrency = (currency: string) => {
-        onPricingUpdate({ currency })
     }
 
     // Update temperature
@@ -290,22 +257,29 @@ export const ModelConfiguration = ({
         capabilityFields.includes("maxTokens") ||
         capabilityFields.includes("contextWindowTiers")
     const hasPricingFields = pricingFields.length > 0
-    const hasBasePricingFields = pricingFields.includes("inputPrice") || pricingFields.includes("outputPrice")
     const hasCachePricingFields =
         supportsPromptCache && (pricingFields.includes("cacheWritesPrice") || pricingFields.includes("cacheReadsPrice"))
     const defaultContextWindow = defaults?.capabilities?.contextWindow ?? BUILT_IN_CONTEXT_WINDOW
     const defaultMaxTokens = defaults?.capabilities?.maxTokens ?? BUILT_IN_MAX_TOKENS
-    const contextWindowValue = selectedContextWindowValue ?? capabilities.contextWindow ?? defaultContextWindow
-    const maxTokensValue = capabilities.maxTokens ?? defaultMaxTokens
+    // A limit may only be shown as a value when somebody actually declared it:
+    // the profile selection, the profile override, or the registry catalog. The
+    // built-in fallback stays out of the value chain because a real model whose
+    // limit is unpublished would otherwise read 128k, look exactly like a
+    // published 128k window, and make compaction trust a number nobody stated.
+    // The built-in size is offered in the placeholder only.
+    const declaredContextWindow =
+        selectedContextWindowValue ?? capabilities.contextWindow ?? defaults?.capabilities?.contextWindow
+    const declaredMaxTokens = capabilities.maxTokens ?? defaults?.capabilities?.maxTokens
+    const contextWindowValue = declaredContextWindow === undefined ? "" : String(declaredContextWindow)
+    const maxTokensValue = declaredMaxTokens === undefined ? "" : String(declaredMaxTokens)
     const contextTiers = draftContextTiers
-    const pricingTiers = draftPricingTiers
 
     return (
-        <ProfileDisclosure title="Model Configuration">
+        <ProfileDisclosure title={t("settings.ui.modelConfiguration")}>
             {hasOptionsFields ? (
                 <ProfileSection>
                     <ProfileSectionTitle className="text-xs uppercase tracking-wide text-description">
-                        Options
+                        {t("settings.ui.options")}
                     </ProfileSectionTitle>
                     <div className="flex flex-col gap-1.5 text-sm">
                         {capabilityFields.includes("supportsImages") ? (
@@ -314,7 +288,7 @@ export const ModelConfiguration = ({
                                 onChange={(e: Event | React.FormEvent<HTMLElement>) =>
                                     updateCheck("supportsImages", (e.target as HTMLInputElement | null)?.checked === true)
                                 }>
-                                Supports Images
+                                {t("settings.ui.supportsImages")}
                             </VSCodeCheckbox>
                         ) : null}
                         {capabilityFields.includes("hostedWebSearch") ? (
@@ -327,9 +301,7 @@ export const ModelConfiguration = ({
                                         (e.target as HTMLInputElement | null)?.checked === true,
                                     )
                                 }>
-                                {modelDeclaresHostedWebSearch
-                                    ? "Use hosted Web Search"
-                                    : "Use hosted Web Search (not offered by this model)"}
+                                {modelDeclaresHostedWebSearch ? t("settings.ui.hostedSearch") : t("settings.ui.noHostedSearch")}
                             </VSCodeCheckbox>
                         ) : null}
                         {capabilityFields.includes("hostedWebFetch") ? (
@@ -342,9 +314,7 @@ export const ModelConfiguration = ({
                                         (e.target as HTMLInputElement | null)?.checked === true,
                                     )
                                 }>
-                                {modelDeclaresHostedWebFetch
-                                    ? "Use hosted Web Fetch"
-                                    : "Use hosted Web Fetch (not offered by this model)"}
+                                {modelDeclaresHostedWebFetch ? t("settings.ui.hostedFetch") : t("settings.ui.noHostedFetch")}
                             </VSCodeCheckbox>
                         ) : null}
                         {capabilityFields.includes("supportsBrowserAction") ? (
@@ -353,7 +323,7 @@ export const ModelConfiguration = ({
                                 onChange={(e: Event | React.FormEvent<HTMLElement>) =>
                                     updateCheck("supportsBrowserAction", (e.target as HTMLInputElement | null)?.checked === true)
                                 }>
-                                Supports Browser Actions
+                                {t("settings.ui.supportsBrowser")}
                             </VSCodeCheckbox>
                         ) : null}
                         {capabilityFields.includes("supportsPromptCache") ? (
@@ -362,7 +332,7 @@ export const ModelConfiguration = ({
                                 onChange={(e: Event | React.FormEvent<HTMLElement>) =>
                                     updateCheck("supportsPromptCache", (e.target as HTMLInputElement | null)?.checked === true)
                                 }>
-                                Supports Prompt Cache
+                                {t("settings.ui.supportsCache")}
                             </VSCodeCheckbox>
                         ) : null}
                         {capabilityFields.includes("supportsTools") ? (
@@ -371,14 +341,14 @@ export const ModelConfiguration = ({
                                 onChange={(e: Event | React.FormEvent<HTMLElement>) =>
                                     updateCheck("supportsTools", (e.target as HTMLInputElement | null)?.checked === true)
                                 }>
-                                Supports Native Tool Calls
+                                {t("settings.ui.supportsTools")}
                             </VSCodeCheckbox>
                         ) : null}
                     </div>
                     {capabilityFields.includes("temperature") ? (
-                        <ProfileField htmlFor={temperatureId} label="Temperature">
+                        <ProfileField htmlFor={temperatureId} label={t("settings.ui.temperature")}>
                             <DebouncedTextField
-                                ariaLabel="Temperature"
+                                ariaLabel={t("settings.ui.temperature")}
                                 className={fieldControlClass}
                                 id={temperatureId}
                                 initialValue={temperature != null ? String(temperature) : ""}
@@ -399,34 +369,36 @@ export const ModelConfiguration = ({
             {hasCapabilityFields ? (
                 <ProfileSection>
                     <ProfileSectionTitle className="text-xs uppercase tracking-wide text-description">
-                        Capabilities
+                        {t("settings.ui.capabilities")}
                     </ProfileSectionTitle>
                     <ProfileInlineGrid>
                         {capabilityFields.includes("contextWindow") ? (
-                            <ProfileField htmlFor={contextWindowId} label="Context Window Size">
+                            <ProfileField htmlFor={contextWindowId} label={t("settings.ui.contextWindow")}>
                                 <DebouncedTextField
-                                    ariaLabel="Context Window Size"
+                                    ariaLabel={t("settings.ui.contextWindow")}
                                     className={fieldControlClass}
                                     id={contextWindowId}
-                                    initialValue={String(contextWindowValue)}
+                                    initialValue={contextWindowValue}
                                     onChange={(value) =>
                                         onContextWindowUpdate
                                             ? onContextWindowUpdate(Number(value) || 0)
                                             : updateCapability("contextWindow", Number(value) || 0)
                                     }
-                                    placeholder={String(defaultContextWindow)}
+                                    placeholder={t("settings.ui.unknownExample", {
+                                        value: defaultContextWindow.toLocaleString(),
+                                    })}
                                 />
                             </ProfileField>
                         ) : null}
                         {capabilityFields.includes("maxTokens") ? (
-                            <ProfileField htmlFor={maxTokensId} label="Max Output Tokens">
+                            <ProfileField htmlFor={maxTokensId} label={t("settings.ui.maxTokens")}>
                                 <DebouncedTextField
-                                    ariaLabel="Max Output Tokens"
+                                    ariaLabel={t("settings.ui.maxTokens")}
                                     className={fieldControlClass}
                                     id={maxTokensId}
-                                    initialValue={String(maxTokensValue)}
+                                    initialValue={maxTokensValue}
                                     onChange={(value) => updateCapability("maxTokens", Number(value) || 0)}
-                                    placeholder={String(defaultMaxTokens)}
+                                    placeholder={t("settings.ui.unknownExample", { value: defaultMaxTokens.toLocaleString() })}
                                 />
                             </ProfileField>
                         ) : null}
@@ -438,105 +410,17 @@ export const ModelConfiguration = ({
             ) : null}
 
             {hasPricingFields ? (
-                <ProfileSection>
-                    <ProfileSectionTitle className="text-xs uppercase tracking-wide text-description">
-                        Pricing
-                    </ProfileSectionTitle>
-                    <ProfileField htmlFor={currencyId} label="Currency">
-                        <Select onValueChange={updateCurrency} value={currency}>
-                            <SelectTrigger className={fieldControlClass} id={currencyId}>
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {SUPPORTED_CURRENCY_CODES.map((code) => (
-                                    <SelectItem key={code} value={code}>
-                                        {`${code} (${getCurrencySymbol(code)})`}
-                                    </SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                    </ProfileField>
-
-                    {hasBasePricingFields ? (
-                        <ProfileInlineGrid>
-                            {pricingFields.includes("inputPrice") ? (
-                                <ProfileField htmlFor={inputPriceId} label={`Input Price (${currencySymbol}/1M tokens)`}>
-                                    <DebouncedTextField
-                                        ariaLabel={`Input Price (${currencySymbol}/1M tokens)`}
-                                        className={fieldControlClass}
-                                        id={inputPriceId}
-                                        initialValue={inputPriceValue != null ? String(inputPriceValue) : ""}
-                                        onChange={(value) => updatePricing("inputPrice", parsePrice(value, 0))}
-                                        placeholder={
-                                            defaults?.pricing?.inputPrice != null ? String(defaults.pricing.inputPrice) : ""
-                                        }
-                                    />
-                                </ProfileField>
-                            ) : null}
-                            {pricingFields.includes("outputPrice") ? (
-                                <ProfileField htmlFor={outputPriceId} label={`Output Price (${currencySymbol}/1M tokens)`}>
-                                    <DebouncedTextField
-                                        ariaLabel={`Output Price (${currencySymbol}/1M tokens)`}
-                                        className={fieldControlClass}
-                                        id={outputPriceId}
-                                        initialValue={outputPriceValue != null ? String(outputPriceValue) : ""}
-                                        onChange={(value) => updatePricing("outputPrice", parsePrice(value, 0))}
-                                        placeholder={
-                                            defaults?.pricing?.outputPrice != null ? String(defaults.pricing.outputPrice) : ""
-                                        }
-                                    />
-                                </ProfileField>
-                            ) : null}
-                        </ProfileInlineGrid>
-                    ) : null}
-
-                    {hasCachePricingFields ? (
-                        <ProfileInlineGrid>
-                            {pricingFields.includes("cacheWritesPrice") ? (
-                                <ProfileField htmlFor={cacheWritesPriceId} label={`Cache Writes (${currencySymbol}/M)`}>
-                                    <DebouncedTextField
-                                        ariaLabel={`Cache Writes (${currencySymbol}/M)`}
-                                        className={fieldControlClass}
-                                        id={cacheWritesPriceId}
-                                        initialValue={cacheWritesPriceValue != null ? String(cacheWritesPriceValue) : ""}
-                                        onChange={(value) => updatePricing("cacheWritesPrice", parsePrice(value, 0))}
-                                        placeholder={
-                                            defaults?.pricing?.cacheWritesPrice != null
-                                                ? String(defaults.pricing.cacheWritesPrice)
-                                                : ""
-                                        }
-                                    />
-                                </ProfileField>
-                            ) : null}
-                            {pricingFields.includes("cacheReadsPrice") ? (
-                                <ProfileField htmlFor={cacheReadsPriceId} label={`Cache Reads (${currencySymbol}/M)`}>
-                                    <DebouncedTextField
-                                        ariaLabel={`Cache Reads (${currencySymbol}/M)`}
-                                        className={fieldControlClass}
-                                        id={cacheReadsPriceId}
-                                        initialValue={cacheReadsPriceValue != null ? String(cacheReadsPriceValue) : ""}
-                                        onChange={(value) => updatePricing("cacheReadsPrice", parsePrice(value, 0))}
-                                        placeholder={
-                                            defaults?.pricing?.cacheReadsPrice != null
-                                                ? String(defaults.pricing.cacheReadsPrice)
-                                                : ""
-                                        }
-                                    />
-                                </ProfileField>
-                            ) : null}
-                        </ProfileInlineGrid>
-                    ) : null}
-
-                    {pricingFields.includes("pricingTiers") ? (
-                        <PricingTierEditor
-                            currencySymbol={currencySymbol}
-                            editable={tiersEditable}
-                            onChange={updatePricingTiers}
-                            showCachePrices={supportsPromptCache}
-                            tiers={pricingTiers}
-                        />
-                    ) : null}
-                </ProfileSection>
+                <PricingEditor
+                    defaults={defaults?.pricing}
+                    fixedShape={fixedPricingShape}
+                    key={defaults?.id}
+                    onChange={onPricingUpdate}
+                    onReset={onPricingReset}
+                    peakOffPeakLabels={peakOffPeakLabels}
+                    pricing={pricingOverrides}
+                    showCachePrices={hasCachePricingFields}
+                    tiersEditable={tiersEditable}
+                />
             ) : null}
         </ProfileDisclosure>
     )

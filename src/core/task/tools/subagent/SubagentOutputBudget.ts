@@ -109,7 +109,7 @@ export function buildSubagentOutputBudgetPrompt(prompt: string): string {
         "Its token budget is stated in the Context Budget section at the end of the latest message, and it can shrink while you work.",
         "This is a hard output budget; prioritize the most useful findings and omit lower-value detail.",
     ].join("\n")
-    return prompt.trimEnd() + "\n\n" + budgetSection
+    return `${prompt.trimEnd()}\n\n${budgetSection}`
 }
 
 /**
@@ -123,7 +123,7 @@ export function truncateTextToSubagentOutputBudget(text: string, maxTokens: numb
     if (!text || maxTokens <= 0) return ""
     if (estimateSubagentOutputTokens(text) <= maxTokens) return text
 
-    const marker = "\n...[truncated to " + maxTokens.toLocaleString() + " tokens; findings exceeded the output budget]"
+    const marker = `\n...[truncated to ${maxTokens.toLocaleString()} tokens; findings exceeded the output budget]`
     const markerTokens = estimateSubagentOutputTokens(marker)
     if (markerTokens >= maxTokens) return sliceTextToTokenBudget(text, maxTokens)
 

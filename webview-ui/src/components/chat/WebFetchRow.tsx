@@ -2,6 +2,7 @@ import type { UiSayTool } from "@shared/ExtensionMessage"
 import { StringRequest } from "@shared/proto/dline/common"
 import { ChevronDownIcon, ChevronRightIcon, Link2Icon, TriangleAlertIcon } from "lucide-react"
 import { useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { UiServiceClient } from "@/services/grpc-client"
 import HostedCallDeferredNotice from "./HostedCallDeferredNotice"
 import ToolCardHeader from "./ToolCardHeader"
@@ -10,13 +11,6 @@ interface WebFetchRowProps {
     messageType: "ask" | "say"
     url?: string
     webFetch?: UiSayTool["webFetch"]
-}
-
-function sourceLabel(webFetch: UiSayTool["webFetch"]): string | undefined {
-    const source = webFetch?.source
-    if (!source) return undefined
-    const suffix = source.execution === "hosted" ? "Hosted" : "Dline"
-    return `${source.label} (${suffix})`
 }
 
 interface FetchedContentProps {
@@ -32,35 +26,44 @@ interface FetchedContentProps {
  * bar sits above that area, next to the card title that toggles the same state, so collapsing never
  * requires scrolling to the end of the page.
  */
-const FetchedContent = ({ content, expanded, onToggle }: FetchedContentProps) => (
-    <div className="border-t border-editor-widget-border/50 pt-1.5">
-        <button
-            aria-expanded={expanded}
-            aria-label={expanded ? "Collapse fetched web content" : "Expand fetched web content"}
-            className="flex w-full shrink-0 cursor-pointer items-center gap-1 border-0 bg-transparent text-left text-xs text-description"
-            data-testid="web-fetch-details-toggle"
-            onClick={onToggle}
-            type="button">
-            {expanded ? (
-                <ChevronDownIcon aria-hidden="true" className="size-3 shrink-0" />
-            ) : (
-                <ChevronRightIcon aria-hidden="true" className="size-3 shrink-0" />
+const FetchedContent = ({ content, expanded, onToggle }: FetchedContentProps) => {
+    const { t } = useUiTranslation()
+    return (
+        <div className="border-t border-editor-widget-border/50 pt-1.5">
+            <button
+                aria-expanded={expanded}
+                aria-label={expanded ? t("chatRows.webFetch.collapseContent") : t("chatRows.webFetch.expandContent")}
+                className="flex w-full shrink-0 cursor-pointer items-center gap-1 border-0 bg-transparent text-left text-xs text-description"
+                data-testid="web-fetch-details-toggle"
+                onClick={onToggle}
+                type="button">
+                {expanded ? (
+                    <ChevronDownIcon aria-hidden="true" className="size-3 shrink-0" />
+                ) : (
+                    <ChevronRightIcon aria-hidden="true" className="size-3 shrink-0" />
+                )}
+                <span>{expanded ? t("chatRows.webFetch.collapseLabel") : t("chatRows.webFetch.showLabel")}</span>
+            </button>
+            {expanded && (
+                <div
+                    className="mt-1 max-h-[40vh] overflow-y-auto overscroll-contain border-t border-editor-widget-border/50 pt-1.5 pr-1"
+                    data-testid="web-fetch-results">
+                    <div className="ph-no-capture break-words whitespace-pre-wrap text-xs">{content}</div>
+                </div>
             )}
-            <span>{expanded ? "Collapse fetched content" : "Show fetched content"}</span>
-        </button>
-        {expanded && (
-            <div
-                className="mt-1 max-h-[40vh] overflow-y-auto overscroll-contain border-t border-editor-widget-border/50 pt-1.5 pr-1"
-                data-testid="web-fetch-results">
-                <div className="ph-no-capture break-words whitespace-pre-wrap text-xs">{content}</div>
-            </div>
-        )}
-    </div>
-)
+        </div>
+    )
+}
 
 const WebFetchRow = ({ messageType, url, webFetch }: WebFetchRowProps) => {
+    const { t } = useUiTranslation()
     const resolvedUrl = webFetch?.url || url || ""
-    const label = sourceLabel(webFetch)
+    const source = webFetch?.source
+    const label = source
+        ? `${source.label} (${
+              source.execution === "hosted" ? t("chatRows.webSearch.execution.hosted") : t("chatRows.webSearch.execution.dline")
+          })`
+        : undefined
     const content = webFetch?.content
     const [contentExpanded, setContentExpanded] = useState(false)
     const toggleContent = () => setContentExpanded((expanded) => !expanded)
@@ -71,9 +74,7 @@ const WebFetchRow = ({ messageType, url, webFetch }: WebFetchRowProps) => {
                 expansion={content ? { expanded: contentExpanded, onToggle: toggleContent } : undefined}
                 icon={<Link2Icon className="size-2" />}
                 testId="web-fetch-header"
-                title={
-                    messageType === "ask" ? "Dline wants to fetch content from this URL:" : "Dline fetched content from this URL:"
-                }
+                title={t("chatRows.webFetch.title", { ask: messageType === "ask" })}
             />
             <div className="space-y-2 overflow-hidden rounded-xs border border-editor-group-border bg-code px-2.5 py-[9px] select-text">
                 {label && <div className="text-xs font-semibold text-description">{label}</div>}

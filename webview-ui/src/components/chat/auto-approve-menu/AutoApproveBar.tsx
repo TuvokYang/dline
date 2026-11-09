@@ -1,9 +1,11 @@
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import { forwardRef, useRef, useState } from "react"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { getAsVar, VSC_TITLEBAR_INACTIVE_FOREGROUND } from "@/utils/vscStyles"
+import { ChatUiText } from "../chat-view/components/ChatUiText"
 import AutoApproveModal from "./AutoApproveModal"
-import { ACTION_METADATA } from "./constants"
+import { ACTION_METADATA, autoApproveText } from "./constants"
 
 interface AutoApproveBarProps {
     style?: React.CSSProperties
@@ -11,6 +13,7 @@ interface AutoApproveBarProps {
 
 /** The ref reaches the bar's outer box. */
 const AutoApproveBar = forwardRef<HTMLDivElement, AutoApproveBarProps>(({ style }, ref) => {
+    const { t } = useUiTranslation()
     const { autoApprovalSettings, yoloModeToggled, navigateToSettings } = useExtensionState()
 
     const [isModalVisible, setIsModalVisible] = useState(false)
@@ -48,14 +51,14 @@ const AutoApproveBar = forwardRef<HTMLDivElement, AutoApproveBarProps>(({ style 
         })
 
         if (actionsToShow.length === 0) {
-            return <span className={baseClasses}>None</span>
+            return <span className={baseClasses}>{t("chatInput.auto.none")}</span>
         }
 
         return (
             <span className={baseClasses}>
                 {actionsToShow.map((action, index) => (
                     <span key={action?.id}>
-                        {action?.shortName}
+                        {action ? autoApproveText(action, "short", t) : undefined}
                         {index < actionsToShow.length - 1 && ", "}
                     </span>
                 ))}
@@ -102,13 +105,20 @@ const AutoApproveBar = forwardRef<HTMLDivElement, AutoApproveBarProps>(({ style 
                 />
 
                 <div className="pt-4 pb-3.5 px-3.5">
-                    <div className="text-sm mb-1">Auto-approve: YOLO</div>
+                    <div className="text-sm mb-1">{t("chatInput.auto.yolo")}</div>
                     <div className="text-muted-foreground text-xs">
-                        YOLO mode is enabled.{" "}
-                        <span className="underline cursor-pointer hover:text-foreground" onClick={handleNavigateToFeatures}>
-                            Disable it in Settings
-                        </span>
-                        .
+                        <ChatUiText
+                            slots={{
+                                settings: (
+                                    <span
+                                        className="underline cursor-pointer hover:text-foreground"
+                                        onClick={handleNavigateToFeatures}>
+                                        {t("chatInput.auto.disableSettings")}
+                                    </span>
+                                ),
+                            }}
+                            text={t("chatInput.auto.yoloEnabled", { settings: "{settings}" })}
+                        />
                     </div>
                 </div>
             </div>
@@ -147,7 +157,7 @@ const AutoApproveBar = forwardRef<HTMLDivElement, AutoApproveBarProps>(({ style 
             />
 
             <div
-                aria-label={isModalVisible ? "Close auto-approve settings" : "Open auto-approve settings"}
+                aria-label={t(isModalVisible ? "chatInput.auto.close" : "chatInput.auto.open")}
                 className="group cursor-pointer pt-3 pb-3.5 pr-2 px-3.5 flex items-center justify-between gap-0"
                 onClick={() => {
                     setIsModalVisible((prev) => !prev)
@@ -161,7 +171,7 @@ const AutoApproveBar = forwardRef<HTMLDivElement, AutoApproveBarProps>(({ style 
                 }}
                 ref={buttonRef}>
                 <div className="flex flex-nowrap items-center gap-1 min-w-0 flex-1">
-                    <span className="whitespace-nowrap">Auto-approve:</span>
+                    <span className="whitespace-nowrap">{t("chatInput.auto.title")}</span>
                     {getEnabledActionsText()}
                 </div>
                 {isModalVisible ? <ChevronDownIcon size={16} /> : <ChevronRightIcon size={16} />}

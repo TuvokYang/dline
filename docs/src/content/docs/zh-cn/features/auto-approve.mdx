@@ -39,7 +39,7 @@ import { Aside } from "@astrojs/starlight/components"
 
 ## “安全命令”如何判断
 
-Dline 执行命令时，模型需要为每个命令声明 `requires_approval`：可能产生影响的命令声明为 `true`，无破坏性的命令声明为 `false`。**Execute safe commands** 放行的是被声明为 `false` 的命令。
+**Execute safe commands** 放行的是模型在提出命令时标记为无破坏性的那些。
 
 这是模型给出的判断，Dline 不会另外解析命令文本来确认它是否安全。如果你需要硬性限制，可以使用下面的命令权限规则。
 

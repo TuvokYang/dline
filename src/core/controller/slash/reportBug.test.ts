@@ -14,7 +14,11 @@ const reporting = vi.hoisted(() => ({
     open: vi.fn(async () => undefined),
     recent: vi.fn((error: string | undefined) => error && `safe:${error}`),
 }))
-const support = vi.hoisted(() => ({ create: vi.fn(async () => undefined) }))
+const support = vi.hoisted(() => ({
+    issue: vi.fn(async () => "SUP-ABCD-1234"),
+    open: vi.fn(async () => undefined),
+    discard: vi.fn(async () => undefined),
+}))
 
 vi.mock("@core/reporting/ReportBugIssue", async () => {
     const actual = await vi.importActual<typeof import("@core/reporting/ReportBugIssue")>("@core/reporting/ReportBugIssue")
@@ -26,7 +30,11 @@ vi.mock("@core/reporting/ReportBugIssue", async () => {
     }
 })
 vi.mock("@/services/support/SupportTelemetryService", () => ({
-    getSupportTelemetryService: () => ({ createAuthorizationAndOpenIssue: support.create }),
+    getSupportTelemetryService: () => ({
+        issueAuthorization: support.issue,
+        openAuthorizedIssue: support.open,
+        discardAuthorization: support.discard,
+    }),
 }))
 
 function controller(error: string, consent = false) {
@@ -39,7 +47,7 @@ function controller(error: string, consent = false) {
             additionalContext: "Edited local context",
         },
         environment,
-        consent,
+        consent ? "SUP-ABCD-1234" : undefined,
     )
     const open = vi.fn(async (_request: { presentation: string }) => ({
         actionId: "approve",
@@ -60,7 +68,8 @@ function controller(error: string, consent = false) {
 describe("reportBug local fallback", () => {
     beforeEach(() => vi.clearAllMocks())
 
-    it("opens the durable preview before an ordinary local issue", async () => {
+    it("opens the durable preview and ordinary local issue even when authorization fails", async () => {
+        support.issue.mockRejectedValueOnce(new Error("production_token_stopped"))
         const test = controller("profile parse failed")
 
         await reportBug(test.value as never, StringRequest.create({ value: "cannot select profile" }))
@@ -73,7 +82,8 @@ describe("reportBug local fallback", () => {
             expect.objectContaining({ title: "Edited local title", whatHappened: "Edited local details" }),
             environment,
         )
-        expect(support.create).not.toHaveBeenCalled()
+        expect(support.issue).toHaveBeenCalledOnce()
+        expect(support.open).not.toHaveBeenCalled()
     })
 
     it("routes local consent through support without opening the ordinary issue path", async () => {
@@ -81,7 +91,10 @@ describe("reportBug local fallback", () => {
 
         await reportBug(test.value as never, StringRequest.create({ value: "provider failed" }))
 
-        expect(support.create).toHaveBeenCalledWith(expect.objectContaining({ temporaryTelemetryConsent: true }))
+        expect(support.issue).toHaveBeenCalledOnce()
+        expect(support.open).toHaveBeenCalledWith(
+            expect.objectContaining({ supportCode: "SUP-ABCD-1234", temporaryTelemetryConsent: true }),
+        )
         expect(reporting.open).not.toHaveBeenCalled()
     })
 
@@ -95,7 +108,6 @@ describe("reportBug local fallback", () => {
                 additionalContext: "Edited before confirmation",
             },
             environment,
-            false,
         )
         const open = vi.fn(async () => ({ actionId: "approve", selection: { values: reportBugDraftSelection(draft) } }))
         const value = {

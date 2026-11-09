@@ -42,9 +42,25 @@ See [Model configuration](/getting-started/authorizing-with-dline/) for the gene
 
 4. Search for or select a Claude model under **Model**.
 
-5. (Optional) To route requests through a gateway, check **Use custom base URL** and enter the address. The default is `https://api.anthropic.com`, and most users never change it.
+5. (Optional) To route requests through a gateway, set a custom base URL. See the next section.
 
 </Steps>
+
+### Custom base URL
+
+Keep **Use custom base URL** unchecked to send requests to Anthropic. Check it to send them to another address instead, for example a gateway or a proxy in front of the Anthropic API.
+
+<Steps>
+
+1. Check **Use custom base URL** and enter the address the gateway exposes, such as `https://gateway.example.com`. Enter the API address itself, not the gateway's dashboard page.
+
+2. Keep the **Anthropic API Key** field set to the key that gateway accepts. A gateway that authenticates with its own key needs that key here, not an Anthropic key.
+
+3. Select a model under **Model**. The model ID must be one the gateway accepts.
+
+</Steps>
+
+The default is `https://api.anthropic.com`, and most users never change it. Dline sends the key only to the address you typed, so the gateway must accept Anthropic's Messages API shape.
 
 ## Claude Code (subscription)
 

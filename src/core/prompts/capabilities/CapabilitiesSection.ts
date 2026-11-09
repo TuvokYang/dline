@@ -2,9 +2,9 @@ import { DlineDefaultTool } from "@shared/tools"
 import { getPrompt } from "../i18n"
 import { PromptProfile } from "../profiles/types"
 import { assemblePromptFragments } from "../system-prompt/assembly/prompt-fragment-assembler"
-import type { CapabilitiesSnapshot, CapabilityEntry, CapabilitySource } from "./types"
+import type { CapabilitiesSnapshot, CapabilityEntry, CapabilitySource, McpResourceCapabilityEntry } from "./types"
 
-const GROUPS: Array<{ readonly titleKey: string; readonly key: keyof CapabilitiesSnapshot }> = [
+const GROUPS: Array<{ readonly titleKey: string; readonly key: CapabilitySource }> = [
     { titleKey: "mcpTitle", key: "mcp" },
     { titleKey: "skillsTitle", key: "skills" },
     { titleKey: "workflowsTitle", key: "workflows" },
@@ -83,8 +83,37 @@ function renderEntries(entries: readonly CapabilityEntry[]): string {
     return lines.join("\n")
 }
 
+/** Render exact resource identities under their owning servers, without tool-loader metadata. */
+function renderMcpResources(resources: readonly McpResourceCapabilityEntry[]): string {
+    const byServer = new Map<string, McpResourceCapabilityEntry[]>()
+    for (const resource of resources) {
+        const entries = byServer.get(resource.server) ?? []
+        entries.push(resource)
+        byServer.set(resource.server, entries)
+    }
+    const lines: string[] = []
+    for (const [server, entries] of byServer) {
+        lines.push(
+            assemblePromptFragments(getPrompt("mcp", "resourceServerEntry"), {
+                NAME: escapeName(server),
+                COUNT: String(entries.length),
+            }),
+            ...entries.map((entry) =>
+                nest(
+                    assemblePromptFragments(getPrompt("mcp", "resourceEntry"), {
+                        URI: escapeName(entry.uri),
+                        NAME: escapeName(entry.name),
+                        DESCRIPTION: normalizeDescription(entry.description),
+                    }),
+                ),
+            ),
+        )
+    }
+    return assemblePromptFragments(getPrompt("mcp", "resourceCatalog"), { ENTRIES: lines.join("\n") })
+}
+
 /** Select model-facing purpose and usage guidance for one capability group. */
-function getGroupGuidance(group: keyof CapabilitiesSnapshot, profile: PromptProfile): string {
+function getGroupGuidance(group: CapabilitySource, profile: PromptProfile): string {
     switch (group) {
         case "mcp":
             return getPrompt("mcp", profile === PromptProfile.Lite ? "liteCatalogGuidance" : "standardCatalogGuidance")
@@ -98,7 +127,7 @@ function getGroupGuidance(group: keyof CapabilitiesSnapshot, profile: PromptProf
 }
 
 /** Select the sentence that introduces the available entries for one capability group. */
-function getGroupListIntroduction(group: keyof CapabilitiesSnapshot, profile: PromptProfile): string {
+function getGroupListIntroduction(group: CapabilitySource, profile: PromptProfile): string {
     switch (group) {
         case "mcp":
             return getPrompt(
@@ -124,7 +153,7 @@ export interface RenderedCapabilityGroup {
  * Render the task-level Capabilities system prompt section.
  *
  * @param snapshot Prompt-safe capabilities snapshot.
- * @returns Markdown section containing only capability names and descriptions.
+ * @returns Markdown catalog of capability identities, descriptions, and invocation guidance.
  */
 export function renderCapabilitiesSection(
     snapshot: CapabilitiesSnapshot,
@@ -150,18 +179,26 @@ export function renderCapabilityGroups(
             continue
         }
         const entries = snapshot[group.key]
-        if (entries.length === 0) {
+        const profile = options.profile ?? PromptProfile.Standard
+        const resources = group.key === "mcp" && profile !== PromptProfile.Lite ? (snapshot.mcpResources ?? []) : []
+        if (entries.length === 0 && resources.length === 0) {
             continue
         }
-        const profile = options.profile ?? PromptProfile.Standard
-        const guidance = getGroupGuidance(group.key, profile)
-        const renderedGroup = assemblePromptFragments(getPrompt("capabilityCatalog", "group"), {
-            TITLE: getPrompt("capabilityCatalog", group.titleKey),
-            GUIDANCE: guidance,
-            LIST_INTRODUCTION: getGroupListIntroduction(group.key, profile),
-            ENTRIES: renderEntries(entries),
-        })
-        groups.push({ source: group.key, text: renderedGroup })
+        const parts: string[] = []
+        if (entries.length > 0) {
+            parts.push(
+                assemblePromptFragments(getPrompt("capabilityCatalog", "group"), {
+                    TITLE: getPrompt("capabilityCatalog", group.titleKey),
+                    GUIDANCE: getGroupGuidance(group.key, profile),
+                    LIST_INTRODUCTION: getGroupListIntroduction(group.key, profile),
+                    ENTRIES: renderEntries(entries),
+                }),
+            )
+        } else {
+            parts.push(`## ${getPrompt("capabilityCatalog", group.titleKey)}`)
+        }
+        if (resources.length > 0) parts.push(renderMcpResources(resources))
+        groups.push({ source: group.key, text: parts.join("\n\n") })
     }
     return groups
 }
@@ -183,13 +220,12 @@ export function renderCapabilityGroupsForContext(
     context: CapabilityPromptContext,
 ): RenderedCapabilityGroup[] {
     const exclude: CapabilitySource[] = []
+    const disabled = new Set(context.disableTools ?? [])
     if (context.profile === PromptProfile.Lite) {
         exclude.push("skills", "subagents")
     } else {
-        const disabled = new Set(context.disableTools ?? [])
         if (disabled.has(DlineDefaultTool.LOAD_SKILL)) exclude.push("skills")
         if (disabled.has(DlineDefaultTool.LOAD_WORKFLOW)) exclude.push("workflows")
-        if (disabled.has(DlineDefaultTool.LOAD_MCP) || disabled.has(DlineDefaultTool.MCP_USE)) exclude.push("mcp")
         if (
             context.subagentsEnabled !== true ||
             disabled.has(DlineDefaultTool.USE_SUBAGENT) ||
@@ -198,5 +234,16 @@ export function renderCapabilityGroupsForContext(
             exclude.push("subagents")
         }
     }
-    return renderCapabilityGroups(snapshot, { exclude, profile: context.profile })
+    // Lite keeps its existing MCP tool awareness catalog; only resources require an executable access tool.
+    const mcpToolsDisabled =
+        context.profile !== PromptProfile.Lite &&
+        (disabled.has(DlineDefaultTool.LOAD_MCP) || disabled.has(DlineDefaultTool.MCP_USE))
+    return renderCapabilityGroups(
+        {
+            ...snapshot,
+            mcp: mcpToolsDisabled ? [] : snapshot.mcp,
+            mcpResources: disabled.has(DlineDefaultTool.MCP_ACCESS) ? [] : snapshot.mcpResources,
+        },
+        { exclude, profile: context.profile },
+    )
 }

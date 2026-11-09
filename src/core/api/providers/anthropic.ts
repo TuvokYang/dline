@@ -186,6 +186,7 @@ export class AnthropicHandler extends ApiHandler {
 
         yield* streamAnthropicMessagesEndpoint({
             messages: requestBody.messages,
+            pricing: model.info.pricing,
             openStream: (continuationMessages) =>
                 transport.open({ ...requestBody, messages: continuationMessages }, claudeCodeIdentity.headers),
         })

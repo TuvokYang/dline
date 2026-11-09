@@ -101,6 +101,16 @@ describe("sayFeedbackOnce", () => {
         expect(host.say).toHaveBeenCalledWith("user_feedback", "looks good", ["data:image/png;base64,AA"], ["/a.txt"])
     })
 
+    it("never presents an automatic timeout as user-authored feedback", async () => {
+        const host = config()
+        await sayFeedbackOnce(host.value, "messageResponse", "Continue autonomously", [], [], {
+            origin: "timeout",
+            draft: { text: "Continue autonomously", images: [], files: [] },
+        })
+        expect(host.say).not.toHaveBeenCalled()
+        expect(host.sayUserReply).not.toHaveBeenCalled()
+    })
+
     it("shows nothing when a presentation owner already showed the reply", async () => {
         const host = config()
 

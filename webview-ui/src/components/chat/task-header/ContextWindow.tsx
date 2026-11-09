@@ -4,6 +4,7 @@ import { AlertTriangle } from "lucide-react"
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
 import { Progress } from "@/components/ui/progress"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { formatLargeNumber as formatTokenNumber } from "@/utils/format"
 import {
     AlertDialog,
@@ -16,6 +17,7 @@ import {
     AlertDialogTitle,
 } from "../../common/AlertDialog"
 import { Input } from "../../ui/input"
+import { ChatUiText } from "../chat-view/components/ChatUiText"
 import CompactTaskButton from "./buttons/CompactTaskButton"
 import ForceTruncateTaskButton from "./buttons/ForceTruncateTaskButton"
 import { createContextWindowIndicatorViewModel } from "./ContextWindowIndicatorViewModel"
@@ -50,25 +52,26 @@ const ConfirmationDialog = memo<{
     onConfirm: (event: React.MouseEvent) => void
     onCancel: (event: React.MouseEvent) => void
 }>(({ onConfirm, onCancel }) => {
+    const { t } = useUiTranslation()
     return (
         <div className="text-sm my-2 flex items-center justify-between gap-0">
-            <span className="font-semibold text-sm">Compact the current task?</span>
+            <span className="font-semibold text-sm">{t("chatInput.context.compactQuestion")}</span>
             <span className="flex gap-1">
                 <VSCodeButton
                     appearance="secondary"
                     className="text-sm"
                     onClick={onCancel}
-                    title="No, keep the task as is"
+                    title={t("chatInput.context.keepTask")}
                     type="button">
-                    Cancel
+                    {t("chatInput.common.cancel")}
                 </VSCodeButton>
                 <VSCodeButton
                     appearance="primary"
                     className="text-sm"
                     onClick={onConfirm}
-                    title="Yes, compact the task"
+                    title={t("chatInput.context.confirmCompact")}
                     type="button">
-                    Yes
+                    {t("chatInput.common.yes")}
                 </VSCodeButton>
             </span>
         </div>
@@ -91,6 +94,7 @@ const ContextWindow: React.FC<ContextWindowProgressProps> = ({
     forceTruncateTaskDisabled,
     onForceTruncateTask,
 }) => {
+    const { t } = useUiTranslation()
     const [isOpened, setIsOpened] = useState(false)
     const [durableExpanded, setDurableExpanded] = useState(false)
     const [confirmationAction, setConfirmationAction] = useState<ConfirmationAction>()
@@ -99,8 +103,8 @@ const ContextWindow: React.FC<ContextWindowProgressProps> = ({
     const progressBarRef = useRef<HTMLDivElement>(null)
 
     const indicatorViewModel = useMemo(
-        () => (contextWindowIndicator ? createContextWindowIndicatorViewModel(contextWindowIndicator) : undefined),
-        [contextWindowIndicator],
+        () => (contextWindowIndicator ? createContextWindowIndicatorViewModel(contextWindowIndicator, {}, t) : undefined),
+        [contextWindowIndicator, t],
     )
     const tokenData = useMemo(() => {
         const max = indicatorViewModel?.contextWindow ?? contextWindow
@@ -216,7 +220,7 @@ const ContextWindow: React.FC<ContextWindowProgressProps> = ({
             onMouseLeave={handleMouseLeave}>
             <div className="flex min-w-0 w-full gap-1 flex-row @max-xs:flex-col @max-xs:items-start items-center text-sm">
                 <div className="grid min-w-0 w-full flex-1 grid-cols-[auto_minmax(2rem,1fr)_auto] items-center gap-1.5 whitespace-nowrap">
-                    <span className="cursor-pointer text-sm" title="Current tokens used in this request">
+                    <span className="cursor-pointer text-sm" title={t("chatInput.context.currentTokens")}>
                         {formatTokenNumber(tokenData.used)}
                     </span>
                     {/* Centered in the row so the bar sits on the same line as the token counts and the compact control. */}
@@ -258,7 +262,7 @@ const ContextWindow: React.FC<ContextWindowProgressProps> = ({
                                         />
                                     ) : (
                                         <Progress
-                                            aria-label="Context window usage progress"
+                                            aria-label={t("chatInput.context.progress")}
                                             indicatorStyle={{ backgroundColor: "var(--vscode-charts-green, #3fb950)" }}
                                             value={Math.min(100, Math.max(0, tokenData.percentage))}
                                         />
@@ -267,7 +271,7 @@ const ContextWindow: React.FC<ContextWindowProgressProps> = ({
                             </HoverCardTrigger>
                         </HoverCard>
                     </div>
-                    <span className="cursor-pointer text-sm" title="Maximum context window size for this model">
+                    <span className="cursor-pointer text-sm" title={t("chatInput.context.maximumTokens")}>
                         {formatTokenNumber(tokenData.max)}
                     </span>
                 </div>
@@ -282,19 +286,19 @@ const ContextWindow: React.FC<ContextWindowProgressProps> = ({
                     <AlertDialogHeader>
                         <AlertDialogTitle>
                             <AlertTriangle className="h-5 w-5 text-(--vscode-errorForeground)" />
-                            Force truncate conversation history?
+                            {t("chatInput.context.truncateQuestion")}
                         </AlertDialogTitle>
-                        <AlertDialogDescription>
-                            This permanently removes older conversation history from future requests. Use it only when automatic
-                            context compaction has failed and Retry cannot recover the task.
-                        </AlertDialogDescription>
+                        <AlertDialogDescription>{t("chatInput.context.truncateWarning")}</AlertDialogDescription>
                     </AlertDialogHeader>
                     <div className="mt-4 space-y-2">
                         <label className="text-sm" htmlFor="force-truncate-confirmation">
-                            Type <code>TRUNCATE</code> to confirm.
+                            <ChatUiText
+                                slots={{ confirmation: <code>TRUNCATE</code> }}
+                                text={t("chatInput.context.truncateConfirm", { confirmation: "{confirmation}" })}
+                            />
                         </label>
                         <Input
-                            aria-label="Type TRUNCATE to confirm"
+                            aria-label={t("chatInput.context.truncateAria")}
                             id="force-truncate-confirmation"
                             onChange={(event) => setForceTruncateConfirmation(event.target.value)}
                             value={forceTruncateConfirmation}
@@ -302,12 +306,12 @@ const ContextWindow: React.FC<ContextWindowProgressProps> = ({
                     </div>
                     <AlertDialogFooter>
                         <AlertDialogCancel autoFocus onClick={() => handleForceTruncateDialogChange(false)}>
-                            Cancel
+                            {t("chatInput.common.cancel")}
                         </AlertDialogCancel>
                         <AlertDialogAction
                             disabled={forceTruncateConfirmation !== "TRUNCATE"}
                             onClick={handleForceTruncateConfirm}>
-                            Force truncate conversation history
+                            {t("chatInput.context.truncateAction")}
                         </AlertDialogAction>
                     </AlertDialogFooter>
                 </AlertDialogContent>

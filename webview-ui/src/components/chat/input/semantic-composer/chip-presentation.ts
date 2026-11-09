@@ -1,6 +1,9 @@
 import type { ResourceInputNode, SemanticResourceRef } from "@shared/input-semantics/document"
 import { describeResourcePresentation, type ResourceVisualKind } from "@shared/input-semantics/presentation"
+import { translateUi, type UiTranslator } from "@/i18n/messages"
 import type { ComposerAtom, ResourceAtom } from "./model"
+
+const englishUi: UiTranslator = (key, ...args) => translateUi("en", key, ...args)
 
 /**
  * What one atom shows, independent of how it is drawn.
@@ -43,21 +46,10 @@ const ICON_BY_VISUAL_KIND: Readonly<Record<ResourceVisualKind, string>> = {
     file: "file",
 }
 
-/** Spoken kind of each visual family. */
-const KIND_NAME_BY_VISUAL_KIND: Readonly<Record<ResourceVisualKind, string>> = {
-    image: "Image",
-    pdf: "PDF document",
-    text: "Text file",
-    code: "Code file",
-    document: "Document",
-    spreadsheet: "Spreadsheet",
-    notebook: "Notebook",
-    data: "Data file",
-    file: "File",
+/** Spoken kinds are selected by semantic visual family, not a file's name or translated text. */
+function resourceKindName(kind: ResourceVisualKind, t: UiTranslator): string {
+    return t(`chatInput.chip.kind.${kind}`)
 }
-
-/** What a composer chip tells the user its keys do. */
-const COMPOSER_CHIP_HINT = "Press Enter to open, Backspace to remove."
 
 /**
  * A ready resource's chip, wherever an input names it: the composer, a queued
@@ -67,19 +59,28 @@ const COMPOSER_CHIP_HINT = "Press Enter to open, Backspace to remove."
  * surface that offers nothing passes none, so the tooltip never promises a key
  * or click that does not work there.
  */
-export function describeResourceChip(node: ResourceInputNode, resource?: SemanticResourceRef, hint?: string): ChipPresentation {
+export function describeResourceChip(
+    node: ResourceInputNode,
+    resource?: SemanticResourceRef,
+    hint?: string,
+    t: UiTranslator = englishUi,
+): ChipPresentation {
     const { visualKind, formatBadge } = describeResourcePresentation(node, resource)
     const lineCount = node.kind === "file" ? node.lineCount : undefined
-    const lines = lineCount === undefined ? "" : `, ${lineCount} lines`
-    const summary = `${node.displayName} (${formatBadge}${lines})`
+    const summary = t("chatInput.chip.summary", { name: node.displayName, format: formatBadge, lines: lineCount })
     return {
         icon: ICON_BY_VISUAL_KIND[visualKind],
         label: node.displayName,
         labelHidden: visualKind === "image",
         badge: formatBadge,
         tone: "resource",
-        ariaLabel: `${KIND_NAME_BY_VISUAL_KIND[visualKind]} ${node.displayName}, ${formatBadge}${lines}`,
-        tooltip: hint ? `${summary}. ${hint}` : summary,
+        ariaLabel: t("chatInput.chip.ready", {
+            kind: resourceKindName(visualKind, t),
+            name: node.displayName,
+            format: formatBadge,
+            lines: lineCount,
+        }),
+        tooltip: hint ? t("chatInput.chip.withHint", { summary, hint }) : summary,
         busy: false,
         plainText: "",
     }
@@ -103,21 +104,32 @@ function resourceNodeOf(atom: ResourceAtom): ResourceInputNode {
           }
 }
 
-function describeResource(atom: ResourceAtom): ChipPresentation {
+function resourceFailureReason(error: ResourceAtom["error"], t: UiTranslator): string {
+    switch (error?.code) {
+        case "semantic_input_resource_stage_failed":
+            return t("chatInput.chip.stageFailed")
+        case "semantic_input_resource_missing":
+            return t("chatInput.chip.missing")
+        default:
+            return error?.message ?? t("chatInput.chip.failedFallback")
+    }
+}
+
+function describeResource(atom: ResourceAtom, t: UiTranslator): ChipPresentation {
     const node = resourceNodeOf(atom)
-    if (atom.status === "ready") return describeResourceChip(node, atom.ref, COMPOSER_CHIP_HINT)
+    if (atom.status === "ready") return describeResourceChip(node, atom.ref, t("chatInput.chip.hint"), t)
     const { visualKind, formatBadge } = describeResourcePresentation(node, atom.ref)
-    const kindName = KIND_NAME_BY_VISUAL_KIND[visualKind]
+    const kindName = resourceKindName(visualKind, t)
     if (atom.status === "failed") {
-        const reason = atom.error?.message ?? "The attachment could not be added."
+        const reason = resourceFailureReason(atom.error, t)
         return {
             icon: "error",
             label: atom.displayName,
             labelHidden: visualKind === "image",
             badge: formatBadge,
             tone: "error",
-            ariaLabel: `${kindName} ${atom.displayName}, ${formatBadge}, failed: ${reason}`,
-            tooltip: `${atom.displayName}: ${reason}`,
+            ariaLabel: t("chatInput.chip.failed", { kind: kindName, name: atom.displayName, format: formatBadge, reason }),
+            tooltip: t("chatInput.chip.error", { name: atom.displayName, reason }),
             busy: false,
             plainText: "",
         }
@@ -128,8 +140,8 @@ function describeResource(atom: ResourceAtom): ChipPresentation {
         labelHidden: visualKind === "image",
         badge: formatBadge,
         tone: "warning",
-        ariaLabel: `${kindName} ${atom.displayName}, ${formatBadge}, attaching`,
-        tooltip: `Attaching ${atom.displayName}…`,
+        ariaLabel: t("chatInput.chip.stagingAria", { kind: kindName, name: atom.displayName, format: formatBadge }),
+        tooltip: t("chatInput.chip.staging", { name: atom.displayName }),
         busy: true,
         plainText: "",
     }
@@ -140,7 +152,7 @@ export function chipLabelClass(chip: ChipPresentation): string {
     return chip.labelHidden ? "composer-chip__label composer-chip__label--hidden" : "composer-chip__label"
 }
 
-export function describeChip(atom: ComposerAtom): ChipPresentation {
+export function describeChip(atom: ComposerAtom, t: UiTranslator = englishUi): ChipPresentation {
     switch (atom.kind) {
         case "command":
             return {
@@ -148,8 +160,8 @@ export function describeChip(atom: ComposerAtom): ChipPresentation {
                 label: atom.sourceText,
                 labelHidden: false,
                 tone: "command",
-                ariaLabel: `Command ${atom.sourceText}`,
-                tooltip: `Command ${atom.sourceText}`,
+                ariaLabel: t("chatInput.chip.command", { command: atom.sourceText }),
+                tooltip: t("chatInput.chip.command", { command: atom.sourceText }),
                 busy: false,
                 plainText: atom.sourceText,
             }
@@ -159,12 +171,12 @@ export function describeChip(atom: ComposerAtom): ChipPresentation {
                 label: atom.sourceText.slice(1),
                 labelHidden: false,
                 tone: "mention",
-                ariaLabel: `Mention ${atom.sourceText}`,
+                ariaLabel: t("chatInput.chip.mention", { mention: atom.sourceText }),
                 tooltip: atom.sourceText,
                 busy: false,
                 plainText: atom.sourceText,
             }
         case "resource":
-            return describeResource(atom)
+            return describeResource(atom, t)
     }
 }

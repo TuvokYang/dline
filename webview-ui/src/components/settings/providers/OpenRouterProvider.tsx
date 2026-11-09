@@ -1,6 +1,7 @@
 import { EmptyRequest } from "@shared/proto/dline/common"
 // Mode import removed — no longer needed in profile-driven architecture
 import { VSCodeButton, VSCodeLink } from "@vscode/webview-ui-toolkit/react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { AccountServiceClient } from "@/services/grpc-client"
 import { formatCurrencyAmount } from "@/utils/currency"
 import { useOpenRouterKeyInfo } from "../../ui/hooks/useOpenRouterKeyInfo"
@@ -15,10 +16,11 @@ const OPENROUTER_CREDIT_CURRENCY = "USD"
  * Component to display OpenRouter balance information
  */
 const OpenRouterBalanceDisplay = ({ apiKey }: { apiKey: string }) => {
+    const { t } = useUiTranslation()
     const { data: keyInfo, isLoading, error } = useOpenRouterKeyInfo(apiKey)
 
     if (isLoading) {
-        return <span style={{ fontSize: "12px", color: "var(--vscode-descriptionForeground)" }}>Loading...</span>
+        return <span style={{ fontSize: "12px", color: "var(--vscode-descriptionForeground)" }}>{t("settings.ui.loading")}</span>
     }
 
     if (error || !keyInfo || keyInfo.limit === null) {
@@ -40,8 +42,12 @@ const OpenRouterBalanceDisplay = ({ apiKey }: { apiKey: string }) => {
                 paddingLeft: 4,
                 cursor: "pointer",
             }}
-            title={`Remaining balance: ${formattedBalance}\nLimit: ${formatCredit(keyInfo.limit)}\nUsage: ${formatCredit(keyInfo.usage)}`}>
-            Balance: {formattedBalance}
+            title={t("settings.ui.openrouter.balanceTooltip", {
+                balance: formattedBalance,
+                limit: formatCredit(keyInfo.limit),
+                usage: formatCredit(keyInfo.usage),
+            })}>
+            {t("settings.ui.openrouter.balance", { balance: formattedBalance })}
         </VSCodeLink>
     )
 }
@@ -61,6 +67,7 @@ interface OpenRouterProviderProps {
  * All data sourced from ApiProfile.
  */
 export const OpenRouterProvider = ({ showModelOptions, isPopup, profile, onUpdate }: OpenRouterProviderProps) => {
+    const { t } = useUiTranslation()
     const apiKey = profile.apiKey
 
     return (
@@ -69,11 +76,11 @@ export const OpenRouterProvider = ({ showModelOptions, isPopup, profile, onUpdat
                 <DebouncedTextField
                     initialValue={apiKey}
                     onChange={(value) => onUpdate({ apiKey: value })}
-                    placeholder="Enter API Key..."
+                    placeholder={t("settings.ui.enterApiKey")}
                     style={{ width: "100%" }}
                     type="password">
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
-                        <span style={{ fontWeight: 500 }}>OpenRouter API Key</span>
+                        <span style={{ fontWeight: 500 }}>{t("settings.ui.apiKey", { provider: "OpenRouter" })}</span>
                         {apiKey && <OpenRouterBalanceDisplay apiKey={apiKey} />}
                     </div>
                 </DebouncedTextField>
@@ -88,7 +95,7 @@ export const OpenRouterProvider = ({ showModelOptions, isPopup, profile, onUpdat
                             }
                         }}
                         style={{ margin: "5px 0 0 0" }}>
-                        Get OpenRouter API Key
+                        {t("settings.ui.openrouter.getKey")}
                     </VSCodeButton>
                 )}
                 <p
@@ -97,7 +104,7 @@ export const OpenRouterProvider = ({ showModelOptions, isPopup, profile, onUpdat
                         marginTop: "5px",
                         color: "var(--vscode-descriptionForeground)",
                     }}>
-                    This key is stored locally and only used to make API requests from this extension.
+                    {t("settings.ui.keyHelp")}
                 </p>
             </div>
 

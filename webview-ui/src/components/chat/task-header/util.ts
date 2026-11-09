@@ -1,38 +1,7 @@
-import type { ModelPricing } from "@shared/api"
 import { UiMessage } from "@shared/ExtensionMessage"
 import { COLOR_BEIGE, COLOR_BLUE, COLOR_DARK_GRAY, COLOR_GRAY, COLOR_GREEN, COLOR_PURPLE, COLOR_WHITE } from "../colors"
 
 export { formatTokenMetric } from "@/utils/format"
-
-const isNonZeroPrice = (price: number | undefined): boolean => price !== undefined && price !== 0
-
-export const hasNonZeroModelPricing = (pricing: ModelPricing | undefined): boolean => {
-    if (!pricing) {
-        return false
-    }
-
-    if (
-        [
-            pricing.inputPrice,
-            pricing.outputPrice,
-            pricing.cacheWritesPrice,
-            pricing.cacheReadsPrice,
-            pricing.thinkingOutputPrice,
-        ].some(isNonZeroPrice)
-    ) {
-        return true
-    }
-
-    if (
-        (pricing.tiers ?? []).some((tier) =>
-            [tier.inputPrice, tier.outputPrice, tier.cacheWritesPrice, tier.cacheReadsPrice].some(isNonZeroPrice),
-        )
-    ) {
-        return true
-    }
-
-    return (pricing.thinkingOutputPriceTiers ?? []).some((tier) => isNonZeroPrice(tier.price))
-}
 
 /**
  *

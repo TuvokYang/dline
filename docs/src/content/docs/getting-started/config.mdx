@@ -11,36 +11,11 @@ Dline keeps durable state, runtime resources, user documents, and project capabi
 
 ### State and data root
 
-The default is `~/.dline/data/`. It holds canonical settings, workspace state, profile metadata, and secrets:
-
-```text
-~/.dline/data/
-├── globalState.json
-├── secrets.json
-├── settings/
-│   ├── settings.json
-│   └── api_profiles.json
-├── secrets/
-│   ├── api_keys.json
-│   └── provider_secrets.json
-└── workspaces/
-    └── <workspace-hash>/
-        ├── workspaceState.json
-        └── settings.json
-```
-
-Do not edit these files while Dline is running. Settings and profiles are updated through their owning repositories so that multiple VS Code windows do not overwrite one another with stale snapshots.
+The default is `~/.dline/data/`. It holds canonical settings, workspace state, profile metadata, and secrets. Do not edit these files while Dline is running: Dline maintains them itself, and a manual edit conflicts with the state the open window already holds.
 
 ### Resource home
 
-The default is `~/.dline/`. It holds resources such as provider metadata, caches, and Puppeteer data:
-
-```text
-~/.dline/
-├── providers/
-├── cache/
-└── puppeteer/
-```
+The default is `~/.dline/`. It holds resources such as provider metadata, caches, and Puppeteer data.
 
 ### Documents root
 
@@ -120,13 +95,11 @@ Rules:
 - [Skills](/customization/skills/)
 - [MCP](/mcp/mcp-overview/)
 - [.agentignore](/customization/agentignore/)
-- [Hooks roadmap](/customization/hooks/)
-- [Plugins roadmap](/customization/plugins/)
+- [Hooks](/customization/hooks/)
+- [Plugins](/customization/plugins/)
 
 ## Security notes
 
 <Aside type="caution">
 Never commit API keys, provider credentials, or MCP tokens. Review rules, skills, workflows, subagent profiles, and MCP descriptors from another repository before you enable them.
 </Aside>
-
-The current public extension surface does not provide a stable third-party plugin or lifecycle-hook installation API. The Hooks and Plugins pages linked above describe planned boundaries, not an installable contract.

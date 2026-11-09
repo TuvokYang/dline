@@ -1,9 +1,18 @@
 // @vitest-environment jsdom
 
 import type { McpServer } from "@shared/mcp"
-import { fireEvent, render, screen } from "@testing-library/react"
-import type { ButtonHTMLAttributes, HTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import {
+    type ButtonHTMLAttributes,
+    Children,
+    type HTMLAttributes,
+    type InputHTMLAttributes,
+    isValidElement,
+    type ReactNode,
+    type SelectHTMLAttributes,
+} from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { UiLanguageProvider } from "@/i18n/UiLanguageProvider"
 import ServerRow from "./ServerRow"
 
 const mocks = vi.hoisted(() => ({
@@ -13,6 +22,7 @@ const mocks = vi.hoisted(() => ({
     setMcpServers: vi.fn(),
     toggleMcpServer: vi.fn(),
     toggleToolAutoApprove: vi.fn(),
+    updateMcpTimeout: vi.fn(),
 }))
 
 vi.mock("@/context/ExtensionStateContext", () => ({
@@ -32,7 +42,7 @@ vi.mock("@/services/grpc-client", () => ({
         restartMcpServer: mocks.restartMcpServer,
         toggleMcpServer: mocks.toggleMcpServer,
         toggleToolAutoApprove: mocks.toggleToolAutoApprove,
-        updateMcpTimeout: vi.fn(),
+        updateMcpTimeout: mocks.updateMcpTimeout,
     },
 }))
 
@@ -55,8 +65,17 @@ vi.mock("@vscode/webview-ui-toolkit/react", () => ({
             {children}
         </label>
     ),
-    VSCodeDropdown: (props: SelectHTMLAttributes<HTMLSelectElement>) => <select {...props} />,
-    VSCodeOption: (props: React.OptionHTMLAttributes<HTMLOptionElement>) => <option {...props} />,
+    VSCodeDropdown: ({ children, ...props }: SelectHTMLAttributes<HTMLSelectElement>) => (
+        <select {...props}>
+            {Children.toArray(children).filter(
+                (child) => !isValidElement<{ slot?: string }>(child) || child.props.slot !== "selected-value",
+            )}
+        </select>
+    ),
+    VSCodeOption: ({
+        ariaLabel: _ariaLabel,
+        ...props
+    }: React.OptionHTMLAttributes<HTMLOptionElement> & { ariaLabel?: string }) => <option {...props} />,
     VSCodePanels: ({ children, ...props }: HTMLAttributes<HTMLDivElement>) => <div {...props}>{children}</div>,
     VSCodePanelTab: ({ children, ...props }: HTMLAttributes<HTMLDivElement>) => <div {...props}>{children}</div>,
     VSCodePanelView: ({ children, ...props }: HTMLAttributes<HTMLDivElement>) => <div {...props}>{children}</div>,
@@ -269,5 +288,125 @@ describe("ServerRow saved variables", () => {
 
         expect(screen.queryByTitle("Clear Saved Variables")).not.toBeInTheDocument()
         expect(screen.queryByRole("button", { name: "Clear Saved Variables" })).not.toBeInTheDocument()
+    })
+})
+
+describe("ServerRow live UI language and external contracts", () => {
+    beforeEach(() => vi.clearAllMocks())
+    it("keeps disclosure and numeric timeout, translates every table wrapper and sends exact original approval/toggle identity", async () => {
+        mocks.toggleToolAutoApprove.mockResolvedValue({ mcpServers: [] })
+        mocks.toggleMcpServer.mockResolvedValue({ mcpServers: [] })
+        mocks.updateMcpTimeout.mockResolvedValue({ mcpServers: [] })
+        let server: McpServer = {
+            ...workspaceServer,
+            source: "settings",
+            tools: [
+                {
+                    name: "Search_Original",
+                    description: "Do NOT translate this tool",
+                    autoApprove: false,
+                    inputSchema: { properties: { Query: { description: "User schema description" } }, required: ["Query"] },
+                },
+            ],
+            resources: [
+                {
+                    name: "Original Resource",
+                    uri: "repository://CaseSensitive/URI",
+                    description: "External resource body",
+                    mimeType: "text/plain",
+                },
+            ],
+            prompts: [
+                {
+                    name: "Prompt_Name",
+                    title: "Original Prompt",
+                    description: "Third-party prompt body",
+                    arguments: [{ name: "Input_Original", description: "Raw argument description", required: true }],
+                },
+            ],
+        }
+        const tree = (language: "en" | "zh-CN") => (
+            <UiLanguageProvider language={language}>
+                <ServerRow server={server} />
+            </UiLanguageProvider>
+        )
+        const view = render(tree("en"))
+        fireEvent.click(screen.getByText("docs"))
+        const timeout = screen.getByRole("combobox", { name: "Request Timeout" })
+        fireEvent.change(timeout, { target: { value: "300" } })
+        await waitFor(() => expect(mocks.updateMcpTimeout).toHaveBeenCalledWith({ serverName: "docs@a1b2c3d4", timeout: 300 }))
+        const approval = screen.getByRole("checkbox", { name: "Auto-approve" })
+        const toggle = screen.getByRole("switch", { name: "Enable docs" })
+        view.rerender(tree("zh-CN"))
+        expect(screen.getByRole("combobox", { name: "请求超时" })).toBe(timeout)
+        expect(timeout).toHaveValue("300")
+        expect(screen.getByRole("option", { name: "5 分钟" })).toHaveValue("300")
+        expect(screen.getByRole("checkbox", { name: "自动批准" })).toBe(approval)
+        expect(approval).not.toBeChecked()
+        expect(screen.getByText("参数")).toBeInTheDocument()
+        expect(screen.getByText("调用参数")).toBeInTheDocument()
+        for (const text of [
+            "Search_Original",
+            "Do NOT translate this tool",
+            "Query",
+            "User schema description",
+            "repository://CaseSensitive/URI",
+            "Original Resource: External resource body",
+            "text/plain",
+            "Original Prompt",
+            "Third-party prompt body",
+            "Input_Original",
+            "Raw argument description",
+        ]) {
+            expect(screen.getByText(text)).toBeInTheDocument()
+        }
+        fireEvent.click(approval)
+        expect(mocks.toggleToolAutoApprove).toHaveBeenLastCalledWith({
+            serverName: "docs@a1b2c3d4",
+            toolNames: ["Search_Original"],
+            autoApprove: true,
+        })
+        fireEvent.click(toggle)
+        expect(mocks.toggleMcpServer).toHaveBeenLastCalledWith({ serverName: "docs@a1b2c3d4", disabled: true })
+        server = { ...server, disabled: true, tools: server.tools?.map((tool) => ({ ...tool, autoApprove: true })) }
+        view.rerender(tree("en"))
+        expect(screen.getByRole("combobox", { name: "Request Timeout" })).toBe(timeout)
+        expect(timeout).toHaveValue("300")
+        expect(screen.getByRole("checkbox", { name: "Auto-approve" })).toBe(approval)
+        expect(approval).toBeChecked()
+        expect(screen.getByRole("switch", { name: "Enable docs" })).toBe(toggle)
+        expect(toggle).toHaveAttribute("aria-checked", "false")
+        expect(screen.getByText("Parameters")).toBeInTheDocument()
+        expect(mocks.updateMcpTimeout).toHaveBeenCalledTimes(1)
+        expect(mocks.toggleMcpServer).toHaveBeenCalledTimes(1)
+        expect(mocks.toggleToolAutoApprove).toHaveBeenCalledTimes(1)
+    })
+
+    it("retranslates connection and OAuth error wrappers but never interprets or rewrites diagnostics", () => {
+        mocks.authenticateMcpServer.mockResolvedValue({})
+        const server: McpServer = {
+            ...workspaceServer,
+            error: "401 原始 error: https://host/Exact",
+            oauthRequired: true,
+            oauthAuthStatus: "reauthentication-required",
+            status: "disconnected",
+        }
+        const tree = (language: "en" | "zh-CN") => (
+            <UiLanguageProvider language={language}>
+                <ServerRow server={server} />
+            </UiLanguageProvider>
+        )
+        const view = render(tree("en"))
+        const button = screen.getByRole("button", { name: "Reauthorize" })
+        view.rerender(tree("zh-CN"))
+        expect(screen.getByRole("alert")).toHaveTextContent("无法连接到 MCP 服务器")
+        expect(screen.getByRole("alert")).toHaveTextContent(server.error || "")
+        expect(screen.getByRole("button", { name: "重新授权" })).toBe(button)
+        fireEvent.click(button)
+        expect(mocks.authenticateMcpServer).toHaveBeenCalledWith({ value: "docs@a1b2c3d4" })
+        view.rerender(tree("en"))
+        expect(screen.getByRole("button", { name: "Reauthorize" })).toBe(button)
+        expect(screen.getByRole("alert")).toHaveTextContent("Could not connect to the MCP server.")
+        expect(screen.getByRole("alert")).toHaveTextContent(server.error || "")
     })
 })

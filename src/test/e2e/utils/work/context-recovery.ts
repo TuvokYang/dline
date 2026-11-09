@@ -272,12 +272,27 @@ export async function captureWorkScroller(sidebar: Frame): Promise<WorkScrollerS
  *
  * The pointer lands near the bottom of the list: the sticky user message covers its
  * top, and a wheel over that overlay never reaches the list.
+ *
+ * The list's own layout box is not proof that a point reaches it. The composer footer
+ * shares the sidebar column, and a short column lays that footer over the bottom of the
+ * list, so the last rows answer hit tests with the composer instead. Ask the document
+ * which element each candidate point actually reaches and keep climbing until the list
+ * itself answers, so the wheel never lands on an overlay.
  */
 export async function wheelWorkScroller(sidebar: Frame, deltaY: number): Promise<void> {
     const scroller = sidebar.locator('[data-virtuoso-scroller="true"]')
     const box = await scroller.boundingBox()
     if (!box) throw new Error("The Chat list has no layout box")
-    await scroller.hover({ position: { x: box.width / 2, y: Math.max(1, box.height - WORK_SCROLLER_WHEEL_INSET_PX) } })
+    const offsetY = await scroller.evaluate((element, inset) => {
+        const rect = element.getBoundingClientRect()
+        const x = rect.left + rect.width / 2
+        for (let offset = inset; offset < rect.height; offset += 8) {
+            const hit = document.elementFromPoint(x, rect.bottom - offset)
+            if (hit && (hit === element || element.contains(hit))) return rect.height - offset
+        }
+        return Math.max(1, rect.height - inset)
+    }, WORK_SCROLLER_WHEEL_INSET_PX)
+    await scroller.hover({ position: { x: box.width / 2, y: offsetY } })
     await sidebar.page().mouse.wheel(0, deltaY)
 }
 

@@ -111,13 +111,95 @@ describe("useTrajectory", () => {
         expect(streams).toHaveLength(1)
     })
 
-    it("hides the rail when the trajectory reports an error", () => {
+    it("shows only the current reset during empty error/building results and accepts later based updates", () => {
         const { result } = render()
         send(streams[0], reset(2, [turn(0)]))
 
         send(streams[0], reset(2, [], TrajectoryState.TRAJECTORY_STATE_ERROR))
-
         expect(result.current).toEqual([])
+        send(streams[0], reset(3, [], TrajectoryState.TRAJECTORY_STATE_BUILDING))
+        expect(result.current).toEqual([])
+        send(streams[0], delta(3, 4, 2, [turn(0), turn(1)]))
+        expect(anchors(result.current)).toEqual([[100, 101]])
+        send(streams[0], reset(5, []))
+        expect(result.current).toEqual([])
+        expect(streams).toHaveLength(1)
+    })
+
+    it("preserves every duplicate/reversed timestamp point, attempt and count through reset, replacement and append", () => {
+        const { result } = render()
+        const first = TrajectoryTurnSummary.create({
+            seq: 0,
+            anchorIndex: 0,
+            anchorTs: 200,
+            prompt: "task",
+            rounds: 2,
+            toolUsage: [{ tool: "read_file", count: 4 }],
+        })
+        const second = TrajectoryTurnSummary.create({
+            seq: 1,
+            anchorIndex: 19,
+            anchorTs: 200,
+            prompt: "equal identity",
+            rounds: 3,
+            endsAttempt: true,
+            toolUsage: [{ tool: "search_files", count: 2 }],
+        })
+        const third = TrajectoryTurnSummary.create({
+            seq: 2,
+            attemptSeq: 1,
+            anchorIndex: 28,
+            anchorTs: 80,
+            prompt: "earlier timestamp",
+            rounds: 5,
+        })
+        const projection = () =>
+            result.current.map((attempt) => ({
+                id: attempt.id,
+                completed: attempt.completed,
+                points: attempt.turns.map(({ seq, anchorIndex, anchorTs, rounds, toolUsage }) => ({
+                    seq,
+                    anchorIndex,
+                    anchorTs,
+                    rounds,
+                    toolUsage,
+                })),
+            }))
+        send(streams[0], reset(8, [first, second, third]))
+        expect(projection()).toEqual([
+            {
+                id: "attempt-0",
+                completed: true,
+                points: [
+                    { seq: 0, anchorIndex: 0, anchorTs: 200, rounds: 2, toolUsage: [{ tool: "read_file", count: 4 }] },
+                    { seq: 1, anchorIndex: 19, anchorTs: 200, rounds: 3, toolUsage: [{ tool: "search_files", count: 2 }] },
+                ],
+            },
+            {
+                id: "attempt-1",
+                completed: false,
+                points: [{ seq: 2, anchorIndex: 28, anchorTs: 80, rounds: 5, toolUsage: [] }],
+            },
+        ])
+        send(
+            streams[0],
+            delta(8, 9, 4, [
+                { ...second, rounds: 7, toolUsage: [{ tool: "search_files", count: 6 }] },
+                TrajectoryTurnSummary.create({ seq: 3, attemptSeq: 1, anchorTs: 70, rounds: 11 }),
+            ]),
+        )
+        const points = result.current.flatMap((attempt) => attempt.turns)
+        expect(points.map(({ seq, anchorIndex, rounds }) => [seq, anchorIndex, rounds])).toEqual([
+            [0, 0, 2],
+            [1, 19, 7],
+            [2, 28, 5],
+            [3, undefined, 11],
+        ])
+        expect(result.current[0].turns[1].toolUsage).toEqual([{ tool: "search_files", count: 6 }])
+        expect(result.current.flatMap((attempt) => attempt.turns).reduce((sum, point) => sum + point.rounds, 0)).toBe(25)
+        send(streams[0], delta(9, 10, 2, []))
+        expect(anchors(result.current)).toEqual([[200, 200]])
+        expect(streams).toHaveLength(1)
     })
 
     it("reopens an ended or failed stream with a doubling wait that stops at the cap", () => {

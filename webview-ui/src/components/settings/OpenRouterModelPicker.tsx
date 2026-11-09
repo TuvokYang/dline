@@ -11,6 +11,7 @@ import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react"
 import { useMount } from "react-use"
 import styled from "styled-components"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { StateServiceClient } from "@/services/grpc-client"
 import { highlight } from "../history/HistoryView"
 import { ContextWindowSwitcher } from "./common/ContextWindowSwitcher"
@@ -47,6 +48,7 @@ export interface OpenRouterModelPickerProps {
 }
 
 const OpenRouterModelPicker: React.FC<OpenRouterModelPickerProps> = ({ isPopup, onUpdate, profile, showProviderRouting }) => {
+    const { t } = useUiTranslation()
     const state = useExtensionState()
     const { favoritedModelIds } = state
     const isCline = profile.provider === "cline"
@@ -211,12 +213,12 @@ const OpenRouterModelPicker: React.FC<OpenRouterModelPickerProps> = ({ isPopup, 
             </style>
             <div style={{ display: "flex", flexDirection: "column" }}>
                 <label htmlFor="model-search">
-                    <span style={{ fontWeight: 500 }}>Model</span>
+                    <span style={{ fontWeight: 500 }}>{t("settings.ui.model")}</span>
                 </label>
 
                 <DropdownWrapper ref={dropdownRef}>
                     <VSCodeTextField
-                        aria-label="Model"
+                        aria-label={t("settings.ui.model")}
                         id="model-search"
                         onBlur={() => {
                             if (searchTerm !== selectedModelId) {
@@ -229,7 +231,7 @@ const OpenRouterModelPicker: React.FC<OpenRouterModelPickerProps> = ({ isPopup, 
                             setIsDropdownVisible(true)
                         }}
                         onKeyDown={handleKeyDown}
-                        placeholder="Search and select a model..."
+                        placeholder={t("settings.ui.searchSelectModel")}
                         role="combobox"
                         style={{
                             width: "100%",
@@ -239,7 +241,7 @@ const OpenRouterModelPicker: React.FC<OpenRouterModelPickerProps> = ({ isPopup, 
                         value={searchTerm}>
                         {searchTerm && (
                             <div
-                                aria-label="Clear search"
+                                aria-label={t("settings.ui.clearSearch")}
                                 className="input-icon-button codicon codicon-close"
                                 onClick={() => {
                                     setSearchTerm("")
@@ -374,17 +376,15 @@ const OpenRouterModelPicker: React.FC<OpenRouterModelPickerProps> = ({ isPopup, 
                         marginTop: 0,
                         color: "var(--vscode-descriptionForeground)",
                     }}>
-                    The extension automatically fetches the latest list of models available on{" "}
                     <VSCodeLink href="https://openrouter.ai/models" style={{ display: "inline", fontSize: "inherit" }}>
-                        OpenRouter.
-                    </VSCodeLink>
-                    If you're unsure which model to choose, Dline works best with{" "}
+                        {t("settings.ui.openrouter.catalogHelp")}
+                    </VSCodeLink>{" "}
                     <VSCodeLink
                         onClick={() => handleModelChange("anthropic/claude-sonnet-4.6")}
                         style={{ display: "inline", fontSize: "inherit" }}>
-                        anthropic/claude-sonnet-4.6.
-                    </VSCodeLink>
-                    You can also try searching "free" for no-cost options currently available.
+                        {t("settings.ui.openrouter.recommendHelp")}
+                    </VSCodeLink>{" "}
+                    {t("settings.ui.openrouter.freeHelp")}
                 </p>
             )}
         </div>

@@ -1,8 +1,9 @@
-import { exec } from "child_process"
+import { exec, execFile } from "child_process"
 import { promisify } from "util"
 import { Logger } from "@/shared/services/Logger"
 
 const execAsync = promisify(exec)
+const execFileAsync = promisify(execFile)
 const GIT_OUTPUT_LINE_LIMIT = 500
 
 export interface GitCommit {
@@ -266,11 +267,36 @@ export async function getLatestGitCommitHash(cwd: string): Promise<string | null
             return null
         }
 
-        const { stdout } = await execAsync("git rev-parse HEAD", { cwd })
-        return stdout.trim() || null
+        try {
+            const { stdout } = await execFileAsync("git", ["rev-parse", "--verify", "HEAD^{commit}"], { cwd })
+            return stdout.trim() || null
+        } catch (error) {
+            if (await hasUnbornHead(cwd)) return null
+            throw error
+        }
     } catch (error) {
         Logger.error("Error getting latest git commit hash:", error)
         return null
+    }
+}
+
+/** A missing local branch is normal before its first commit; broken refs and objects are not. */
+async function hasUnbornHead(cwd: string): Promise<boolean> {
+    let reference: string
+    try {
+        const { stdout } = await execFileAsync("git", ["symbolic-ref", "--quiet", "HEAD"], { cwd })
+        reference = stdout.trim()
+    } catch {
+        return false
+    }
+    if (!reference.startsWith("refs/heads/")) return false
+
+    try {
+        await execFileAsync("git", ["show-ref", "--verify", "--quiet", reference], { cwd })
+        return false
+    } catch (error) {
+        // show-ref uses 1 for an absent ref; corruption and execution failures use other codes.
+        return typeof error === "object" && error !== null && "code" in error && error.code === 1
     }
 }
 

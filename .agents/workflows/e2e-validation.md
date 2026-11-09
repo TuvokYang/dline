@@ -78,7 +78,7 @@ Distinguish startup, fixture, locator, provider-contract, and product failures. 
 
 After a fix, rerun the original failing file or project first. Then run only the nearest functional or work coverage required by the changed shared contract.
 
-For release evidence, the passing work gate must use the same packaged VSIX later consumed by the release job. Full functional runs only in production release validation, one shard per functional folder against the release VSIX, or when explicitly requested; no scheduled workflow runs it. Dev remains development-only.
+For release evidence, each registry publisher's passing work gate must use the same final VSIX later consumed by that registry, without rebuilding or rewriting its manifest. Full functional runs only in production release validation, one shard per functional folder and registry publisher against the corresponding release VSIX, or when explicitly requested; no scheduled workflow runs it. Dev remains development-only.
 
 ## 6. Report
 

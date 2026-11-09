@@ -6,11 +6,13 @@
  * userDefined, and models unknown to the current seed, are preserved.
  */
 import { allProviderModels } from "@shared/providers/model-infos"
+import { migrateModelPricing, modelPricingForWrite } from "@shared/providers/pricing-shape"
 import type { ProviderModelsConfig } from "@shared/providers/types"
 import { Logger } from "@shared/services/Logger"
 import fs from "fs"
 import fsPromises from "fs/promises"
 import * as path from "path"
+import { mapCatalogPricing } from "./model-pricing-migration"
 import { isDeferredProvider } from "./provider-catalog-policy"
 import { getLegacyProviderConfigFileNames, getProviderConfigFileName } from "./provider-config-file"
 import { markBuiltInModels, reconcileProviderModels } from "./provider-model-reconciliation"
@@ -55,8 +57,12 @@ export async function ensureSeedProviders(providersDir: string): Promise<number>
         if (existingFilePath) {
             try {
                 const stored = JSON.parse(await fsPromises.readFile(existingFilePath, "utf8")) as ProviderModelsConfig
-                const reconciled = reconcileProviderModels(config, stored, "refresh-built-ins")
-                if (existingFilePath !== filePath || serializeConfig(reconciled) !== serializeConfig(stored)) {
+                const reconciled = reconcileProviderModels(
+                    config,
+                    mapCatalogPricing(stored, migrateModelPricing),
+                    "refresh-built-ins",
+                )
+                if (existingFilePath !== filePath || serializeConfig(reconciled) !== `${JSON.stringify(stored, null, "\t")}\n`) {
                     await fsPromises.writeFile(filePath, serializeConfig(reconciled), "utf8")
                     Logger.log(`[seed-initializer] Refreshed built-in models: ${path.basename(filePath)}`)
                 }
@@ -88,5 +94,5 @@ export async function ensureSeedProviders(providersDir: string): Promise<number>
  * Serialize a ProviderModelsConfig to formatted JSON string.
  */
 function serializeConfig(config: ProviderModelsConfig): string {
-    return `${JSON.stringify(config, null, "\t")}\n`
+    return `${JSON.stringify(mapCatalogPricing(config, modelPricingForWrite), null, "\t")}\n`
 }

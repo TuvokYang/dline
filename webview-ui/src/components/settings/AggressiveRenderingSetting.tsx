@@ -1,11 +1,12 @@
 import {
-    AGGRESSIVE_RENDERING_LABELS,
     AGGRESSIVE_RENDERING_LEVELS,
     isAggressiveRenderingLevel,
     normalizeAggressiveRenderingLevel,
 } from "@shared/AggressiveRendering"
 import { VSCodeDropdown, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
+import { ProfileField } from "./profile-ui"
 import { updateSetting } from "./utils/settingsHandlers"
 
 /**
@@ -17,15 +18,20 @@ import { updateSetting } from "./utils/settingsHandlers"
  */
 const AggressiveRenderingSetting = () => {
     const { aggressiveRendering } = useExtensionState()
+    const { t } = useUiTranslation()
 
     if (!aggressiveRendering?.featureFlag) return null
 
     return (
-        <div className="mb-4">
-            <label className="block mb-1 text-base font-medium" htmlFor="aggressive-rendering">
-                Chat folding
-            </label>
+        <ProfileField
+            description={
+                <span id="aggressive-rendering-description">{t("settings.general.aggressiveRendering.description")}</span>
+            }
+            htmlFor="aggressive-rendering"
+            label={t("settings.general.aggressiveRendering.label")}>
             <VSCodeDropdown
+                aria-describedby="aggressive-rendering-description"
+                aria-label={t("settings.general.aggressiveRendering.label")}
                 className="w-full"
                 id="aggressive-rendering"
                 onChange={(event) => {
@@ -35,16 +41,16 @@ const AggressiveRenderingSetting = () => {
                     }
                 }}
                 value={normalizeAggressiveRenderingLevel(aggressiveRendering.user)}>
+                <span slot="selected-value">
+                    {t(`settings.general.aggressiveRendering.${normalizeAggressiveRenderingLevel(aggressiveRendering.user)}`)}
+                </span>
                 {AGGRESSIVE_RENDERING_LEVELS.map((level) => (
-                    <VSCodeOption key={level} value={level}>
-                        {AGGRESSIVE_RENDERING_LABELS[level]}
+                    <VSCodeOption aria-label={t(`settings.general.aggressiveRendering.${level}`)} key={level} value={level}>
+                        {t(`settings.general.aggressiveRendering.${level}`)}
                     </VSCodeOption>
                 ))}
             </VSCodeDropdown>
-            <p className="text-xs text-(--vscode-descriptionForeground) mt-1">
-                Folded blocks show a summary and expand on click. Rows that are still running or that failed always stay visible.
-            </p>
-        </div>
+        </ProfileField>
     )
 }
 

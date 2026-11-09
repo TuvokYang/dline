@@ -2,6 +2,7 @@ import type { UiSayTool } from "@shared/ExtensionMessage"
 import type { HostedWebSearchOperation } from "@shared/web-tools"
 import { ChevronDownIcon, ChevronRightIcon, SearchIcon, TriangleAlertIcon } from "lucide-react"
 import { useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import HostedCallDeferredNotice from "./HostedCallDeferredNotice"
 import ToolCardHeader from "./ToolCardHeader"
 
@@ -9,16 +10,6 @@ interface WebSearchRowProps {
     messageType: "ask" | "say"
     query?: string
     webSearch?: UiSayTool["webSearch"]
-}
-
-function operationTitle(messageType: "ask" | "say", operation: HostedWebSearchOperation | undefined): string {
-    if (operation?.type === "open_page") {
-        return messageType === "ask" ? "Dline wants to open a web page:" : "Dline opened a web page:"
-    }
-    if (operation?.type === "find_in_page") {
-        return messageType === "ask" ? "Dline wants to search within a web page:" : "Dline searched within a web page:"
-    }
-    return messageType === "ask" ? "Dline wants to search the web for:" : "Dline searched the web for:"
 }
 
 function operationLines(operation: HostedWebSearchOperation | undefined, fallback: string | undefined): string[] {
@@ -45,10 +36,22 @@ function resultTitle(title: string | undefined, url: string): string {
 }
 
 const WebSearchRow = ({ messageType, query, webSearch }: WebSearchRowProps) => {
+    const { t } = useUiTranslation()
     const source = webSearch?.source
-    const sourceSuffix = source?.execution === "hosted" ? "Hosted" : source?.execution === "dline" ? "Dline" : undefined
+    const sourceSuffix =
+        source?.execution === "hosted"
+            ? t("chatRows.webSearch.execution.hosted")
+            : source?.execution === "dline"
+              ? t("chatRows.webSearch.execution.dline")
+              : undefined
     const sourceLabel = source ? `${source.label}${sourceSuffix ? ` (${sourceSuffix})` : ""}` : undefined
     const operation = webSearch?.operation
+    const operationTitle =
+        operation?.type === "open_page"
+            ? t("chatRows.webSearch.title.openPage", { ask: messageType === "ask" })
+            : operation?.type === "find_in_page"
+              ? t("chatRows.webSearch.title.findInPage", { ask: messageType === "ask" })
+              : t("chatRows.webSearch.title.search", { ask: messageType === "ask" })
     const operationDetails = operationLines(operation, webSearch?.query || query)
     const items = webSearch?.items ?? []
     const [detailsExpanded, setDetailsExpanded] = useState(false)
@@ -60,7 +63,7 @@ const WebSearchRow = ({ messageType, query, webSearch }: WebSearchRowProps) => {
                 expansion={items.length > 0 ? { expanded: detailsExpanded, onToggle: toggleDetails } : undefined}
                 icon={<SearchIcon className="size-2 rotate-90" />}
                 testId="web-search-header"
-                title={operationTitle(messageType, operation)}
+                title={operationTitle}
             />
             <div className="flex min-h-0 flex-1 flex-col space-y-2 overflow-hidden rounded-xs border border-editor-group-border bg-code px-2.5 py-[9px] select-text">
                 {sourceLabel && <div className="text-xs font-semibold text-description">{sourceLabel}</div>}
@@ -88,7 +91,9 @@ const WebSearchRow = ({ messageType, query, webSearch }: WebSearchRowProps) => {
                     <>
                         <button
                             aria-expanded={detailsExpanded}
-                            aria-label={detailsExpanded ? "Collapse web search results" : "Expand web search results"}
+                            aria-label={
+                                detailsExpanded ? t("chatRows.webSearch.collapseResults") : t("chatRows.webSearch.expandResults")
+                            }
                             className="flex w-full cursor-pointer items-center gap-1 border-0 border-t border-editor-widget-border/50 bg-transparent pt-2 text-left text-xs text-description"
                             data-testid="web-search-details-toggle"
                             onClick={toggleDetails}
@@ -98,7 +103,11 @@ const WebSearchRow = ({ messageType, query, webSearch }: WebSearchRowProps) => {
                             ) : (
                                 <ChevronRightIcon aria-hidden="true" className="size-3 shrink-0" />
                             )}
-                            <span>{detailsExpanded ? "Hide results" : `Show results (${items.length})`}</span>
+                            <span>
+                                {detailsExpanded
+                                    ? t("chatRows.webSearch.hideResults")
+                                    : t("chatRows.webSearch.showResults", { count: items.length })}
+                            </span>
                         </button>
                         {detailsExpanded && (
                             <div

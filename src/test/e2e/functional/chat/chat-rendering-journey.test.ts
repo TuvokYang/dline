@@ -202,12 +202,14 @@ e2e(
                 scrollHeight: element.scrollHeight,
                 viewportHeight: window.innerHeight,
             }))
-            expect(collapsedMetrics.className).toContain("max-h-[120px]")
+            expect(Number.parseFloat(collapsedMetrics.maxHeight)).toBeCloseTo(120, 0)
             expect(collapsedMetrics.overflowY).toBe("auto")
             expect(collapsedMetrics.scrollHeight).toBeGreaterThan(collapsedMetrics.clientHeight)
 
             await expandedCommandRow.getByTestId("expand-handle").click()
-            await expect.poll(() => outputScroll.getAttribute("class")).toContain("max-h-[80vh]")
+            await expect
+                .poll(() => outputScroll.evaluate((element) => Number.parseFloat(getComputedStyle(element).maxHeight)))
+                .toBeGreaterThan(120)
             const expandedMetrics = await outputScroll.evaluate((element) => ({
                 className: element.className,
                 maxHeight: getComputedStyle(element).maxHeight,
@@ -216,7 +218,6 @@ e2e(
                 scrollHeight: element.scrollHeight,
                 viewportHeight: window.innerHeight,
             }))
-            expect(expandedMetrics.className).toContain("max-h-[80vh]")
             expect(expandedMetrics.overflowY).toBe("auto")
             expect(expandedMetrics.scrollHeight).toBeGreaterThan(expandedMetrics.clientHeight)
             expect(Number.parseFloat(expandedMetrics.maxHeight)).toBeCloseTo(expandedMetrics.viewportHeight * 0.8, 0)

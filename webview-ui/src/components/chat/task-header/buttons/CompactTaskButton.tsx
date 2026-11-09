@@ -1,6 +1,7 @@
 import { FoldVerticalIcon } from "lucide-react"
 import { buttonVariants } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 
 const CompactTaskButton: React.FC<{
@@ -8,12 +9,13 @@ const CompactTaskButton: React.FC<{
     disabled?: boolean
     onClick: (e: React.MouseEvent<HTMLButtonElement>) => void
 }> = ({ onClick, disabled, className }) => {
+    const { t } = useUiTranslation()
     return (
         <Tooltip>
-            <TooltipContent side="left">Compact Task</TooltipContent>
+            <TooltipContent side="left">{t("chatInput.button.compact")}</TooltipContent>
             <TooltipTrigger
                 aria-disabled={disabled}
-                aria-label="Compact task"
+                aria-label={t("chatInput.button.compactAria")}
                 className={cn(
                     buttonVariants({ variant: "icon", size: "icon" }),
                     "!overflow-visible !min-h-6",

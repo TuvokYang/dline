@@ -1,0 +1,12 @@
+{
+    "extends": "../../../../tsconfig.app.json",
+    "include": [
+        "./*.ts",
+        "../../../vite-env.d.ts",
+        "../../../components/agent-capabilities/**/*.test.ts",
+        "../../../components/agent-capabilities/**/*.test.tsx",
+        "../../../components/mcp/**/*.test.tsx",
+        "../../../components/browser/**/*.test.tsx"
+    ],
+    "exclude": []
+}

@@ -16,6 +16,10 @@ export interface StronglyTypedUIHelpers {
         files?: string[],
         partial?: boolean,
         existingTs?: number,
+        /** `ts` of the command row a `command_output` row belongs to. */
+        commandTs?: number,
+        /** The structured facts a `command` row states, when the caller has them. */
+        commandFacts?: { commandLine: string; workingDirectory?: string },
     ) => Promise<number | undefined>
 
     ask: (

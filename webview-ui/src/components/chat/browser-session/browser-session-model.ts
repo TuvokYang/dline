@@ -1,4 +1,5 @@
 import { type BrowserAction, browserActions, type UiMessage } from "@shared/ExtensionMessage"
+import { englishUiTranslator, type UiTranslator } from "@/i18n/messages"
 import type { BrowserSessionEnd } from "../chat-view/utils/chatRowKinds"
 import { isRoundStartCheckpoint, restoresSameFiles } from "../chat-view/utils/checkpointRows"
 
@@ -108,25 +109,29 @@ export function browserSessionAnchor(messages: readonly UiMessage[]): UiMessage 
 export function hasCancelledBrowserApiRequest(messages: UiMessage[]): boolean {
     const lastApiRequest = [...messages].reverse().find((message) => message.say === "api_req_started")
     const value = parseRecord(lastApiRequest?.text)
-    return value?.cancelReason !== undefined && value.cancelReason !== null
+    return value?.cancelReason !== undefined && value?.cancelReason !== null
 }
 
 /** The one-line description of a browser action, as the session card and its steps list it. */
-export function describeBrowserAction(action: Pick<BrowserSessionAction, "action" | "coordinate" | "text">): string {
+export function describeBrowserAction(
+    action: Pick<BrowserSessionAction, "action" | "coordinate" | "text">,
+    t: UiTranslator = englishUiTranslator,
+): string {
     switch (action.action) {
         case "launch":
-            return `Launch browser at ${action.text ?? ""}`
+            return t("chatRows.browser.action.launch", { url: action.text ?? "" })
         case "click":
-            return `Click (${action.coordinate?.replace(",", ", ") ?? ""})`
+            return t("chatRows.browser.action.click", { coordinate: action.coordinate?.replace(",", ", ") ?? "" })
         case "type":
-            return `Type "${action.text ?? ""}"`
+            return t("chatRows.browser.action.type", { text: action.text ?? "" })
         case "scroll_down":
-            return "Scroll down"
+            return t("chatRows.browser.action.scrollDown")
         case "scroll_up":
-            return "Scroll up"
+            return t("chatRows.browser.action.scrollUp")
         case "close":
-            return "Close browser"
+            return t("chatRows.browser.action.close")
         default:
+            // An action the product does not name is reported by its protocol name.
             return action.action
     }
 }
@@ -137,18 +142,18 @@ export function describeBrowserAction(action: Pick<BrowserSessionAction, "action
  * The result payload carries a full screenshot data URL, so only the fields a
  * reader needs are taken from it; the payload itself is never shown.
  */
-export function describeBrowserMessage(message: UiMessage): string {
-    if (isLaunch(message)) return describeBrowserAction({ action: "launch", text: message.text })
+export function describeBrowserMessage(message: UiMessage, t: UiTranslator = englishUiTranslator): string {
+    if (isLaunch(message)) return describeBrowserAction({ action: "launch", text: message.text }, t)
     if (message.say === "browser_action") {
         const action = parseAction(message)
-        return action ? describeBrowserAction(action) : "Browser action"
+        return action ? describeBrowserAction(action, t) : t("chatRows.browser.message.action")
     }
     if (message.say === "browser_action_result") {
-        if (!message.text) return "Opening the browser…"
+        if (!message.text) return t("chatRows.browser.message.opening")
         const url = parseResult(message).url
-        return url ? `Browser page: ${url}` : "Browser page captured"
+        return url ? t("chatRows.browser.message.page", { url }) : t("chatRows.browser.message.pageCaptured")
     }
-    return "Browser activity"
+    return t("chatRows.browser.message.activity")
 }
 
 interface StepDraft extends Omit<BrowserSessionStep, "pageIndex"> {
@@ -285,26 +290,36 @@ export function unfoldableCheckpoints(steps: readonly BrowserSessionStep[]): UiM
  * How the summary counts browser calls, in the order it lists them. Closing
  * the browser is how a session ends, which the header already reports.
  */
-const ACTION_TALLIES: readonly { readonly unit: string; readonly units: string; readonly actions: readonly BrowserAction[] }[] = [
-    { unit: "launch", units: "launches", actions: ["launch"] },
-    { unit: "click", units: "clicks", actions: ["click"] },
-    { unit: "input", units: "inputs", actions: ["type"] },
-    { unit: "scroll", units: "scrolls", actions: ["scroll_down", "scroll_up"] },
+const ACTION_TALLIES: readonly { readonly actions: readonly BrowserAction[] }[] = [
+    { actions: ["launch"] },
+    { actions: ["click"] },
+    { actions: ["type"] },
+    { actions: ["scroll_down", "scroll_up"] },
 ]
 
 /** "1 launch, 3 clicks, 2 scrolls · 2 thoughts · 6 rounds", counted the way an exploration run counts its calls. */
-export function summarizeBrowserSession(steps: readonly BrowserSessionStep[]): string {
+export function summarizeBrowserSession(steps: readonly BrowserSessionStep[], t: UiTranslator = englishUiTranslator): string {
     const actions = steps.flatMap((step) => step.actions)
-    const calls = ACTION_TALLIES.flatMap(({ unit, units, actions: kinds }) => {
+    const calls = ACTION_TALLIES.flatMap(({ actions: kinds }) => {
         const count = actions.filter((entry) => kinds.includes(entry.action)).length
-        return count > 0 ? [`${count} ${count === 1 ? unit : units}`] : []
+        if (count === 0) return []
+        switch (kinds[0]) {
+            case "launch":
+                return [t("chatRows.browser.summary.launch", { count })]
+            case "click":
+                return [t("chatRows.browser.summary.click", { count })]
+            case "type":
+                return [t("chatRows.browser.summary.input", { count })]
+            default:
+                return [t("chatRows.browser.summary.scroll", { count })]
+        }
     })
     const thoughts = steps.reduce((count, step) => count + step.thoughts.length, 0)
     const rounds = steps.filter((step) => step.actions.length > 0).length
     const parts: string[] = []
     if (calls.length > 0) parts.push(calls.join(", "))
-    if (thoughts > 0) parts.push(`${thoughts} thought${thoughts === 1 ? "" : "s"}`)
-    if (rounds > 1) parts.push(`${rounds} rounds`)
+    if (thoughts > 0) parts.push(t("chatRows.browser.summary.thought", { count: thoughts }))
+    if (rounds > 1) parts.push(t("chatRows.browser.summary.rounds", { count: rounds }))
     return parts.join(" · ")
 }
 
@@ -342,11 +357,17 @@ export function resolveBrowserSessionPhase(input: BrowserSessionPhaseInput): Bro
     return input.projection.hasPendingApproval ? "awaiting_approval" : "running"
 }
 
-export const BROWSER_SESSION_PHASE_LABELS: Record<BrowserSessionPhase, string> = {
-    awaiting_approval: "Dline wants to use the browser",
-    declined: "Browser launch not approved",
-    running: "Dline is using the browser",
-    completed: "Dline used the browser",
-    interrupted: "Browser session interrupted",
-    failed: "Browser session failed",
+/** Message keys for each phase, resolved where the card header renders. */
+const PHASE_LABEL_KEYS = {
+    awaiting_approval: "chatRows.browser.phase.awaitingApproval",
+    declined: "chatRows.browser.phase.declined",
+    running: "chatRows.browser.phase.running",
+    completed: "chatRows.browser.phase.completed",
+    interrupted: "chatRows.browser.phase.interrupted",
+    failed: "chatRows.browser.phase.failed",
+} as const
+
+/** The header sentence for a phase, in the rendering surface's language. */
+export function browserSessionPhaseLabel(phase: BrowserSessionPhase, t: UiTranslator = englishUiTranslator): string {
+    return t(PHASE_LABEL_KEYS[phase])
 }

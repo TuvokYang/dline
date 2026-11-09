@@ -91,8 +91,7 @@ describe("package topology safety", () => {
         expect(insidersWorkflow).toContain('remaining_drafts[0]}" != "$RELEASE_TAG"')
         expect(registryWorkflow).toContain('"$VSCE_BIN" publish --skip-duplicate "${track_args[@]}" --packagePath "$vsix_path"')
         expect(registryWorkflow).toContain('"$OVSX_BIN" publish "$vsix_path" --skip-duplicate')
-        // Marketplace publication is opt-in and reported as disabled, not as a failed registry.
-        expect(registryWorkflow).toMatch(/publish_marketplace:\r?\n(?: {8}.*\r?\n)*? {8}default: false\r?\n/)
+        // Either registry can remain available when publication to the other fails.
         expect(registryWorkflow).toContain("if: inputs.publish_marketplace && github.repository == 'TuvokYang/dline'")
         expect(registryWorkflow).toContain(
             "MARKETPLACE_STATUS: ${{ inputs.publish_marketplace && (needs.publish-marketplace.outputs.status || 'unreported') || 'disabled' }}",
@@ -100,8 +99,7 @@ describe("package topology safety", () => {
         // A version already held by the other Open VSX track must fail instead of being skipped as published.
         expect(registryWorkflow).toContain('"https://open-vsx.org/api/${namespace}/${extension}/${version}"')
         expect(registryWorkflow).toContain('if [[ "$existing_pre_release" != "$expected_pre_release" ]]; then')
-        // The source gate and both registry jobs independently download the same verified artifact.
-        expect(registryWorkflow.match(/name: \$\{\{ inputs\.artifact_name \}\}/g)).toHaveLength(3)
+        // Publisher-specific workflow bindings are exercised in marketplace-publishing.test.ts.
     })
 
     it("runs the required work gate against the exact VSIX packaged for the workflow", async () => {
@@ -119,13 +117,12 @@ describe("package topology safety", () => {
         expect(e2eWorkflow.match(/run: npm run protos/g)).toHaveLength(2)
         expect(e2eWorkflow.match(/uses: actions\/download-artifact@v8/g)).toHaveLength(2)
         expect(e2eWorkflow.match(/name: \$\{\{ inputs\.artifact_name \}\}/g)).toHaveLength(2)
-        expect(e2eWorkflow).toContain('$expectedArtifact = "dline-vsix-$env:COMMIT_SHA"')
+        expect(e2eWorkflow).toContain('$expectedArtifact = "$env:VSIX_ARTIFACT_PREFIX-vsix-$env:COMMIT_SHA"')
         expect(e2eWorkflow).toContain("Copy-Item -LiteralPath $assets[0].FullName -Destination dist/e2e.vsix -Force")
         expect(e2eWorkflow).toContain("npx playwright test -c playwright.work.config.ts")
         expect(e2eWorkflow).not.toContain("npm run e2e:smoke")
         expect(e2eWorkflow).not.toContain("npm run e2e:work")
 
-        expect(releaseWorkflow).toContain("name: dline-vsix-${{ needs.verify-tag.outputs.commit_sha }}")
         expect(releaseWorkflow).toContain('DLINE_E2E_INSTALL_VSIX: "1"')
         expect(releaseWorkflow).toContain("name: Build source E2E bundle for checkout-launched harness tests")
         expect(releaseWorkflow).toContain("run: npm run e2e:bundle")
@@ -156,7 +153,9 @@ describe("package topology safety", () => {
         expect(releaseWorkflow).toContain(
             'npx playwright test -c playwright.functional.config.ts "src/test/e2e/functional/${FUNCTIONAL_FOLDER}/" --project "functional e2e tests"',
         )
-        expect(releaseWorkflow).toContain("name: playwright-functional-production-${{ matrix.folder }}-ubuntu-${{ github.sha }}")
+        expect(releaseWorkflow).toContain(
+            "name: playwright-functional-production-${{ matrix.registry }}-${{ matrix.folder }}-ubuntu-${{ github.sha }}",
+        )
     })
 
     it("never places a positional test filter after the variadic Playwright --project option", async () => {

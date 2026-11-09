@@ -383,6 +383,17 @@ message ClineMessage {
   // One entry per input a user row shows; empty for a legacy row, which renders as plain text.
   repeated SubmittedInput submitted_inputs = 41;
   optional CheckpointSource checkpoint_source = 42;
+  // The command line, kept apart from the directory it ran in and its output.
+  // Absent on a row written before the split; such a row states everything in `text`.
+  optional string command = 43;
+  optional string command_working_directory = 44;
+  // Empty output and an output that was never recorded read alike; `command` is
+  // what tells a split row from a legacy one.
+  optional string command_output = 45;
+  // Absent on a row written before the split, which stated approval as a suffix.
+  optional bool command_asks_approval = 46;
+  // Projection-only committed source ordinal; absent on transient or unindexed rows.
+  optional int64 message_index = 47;
 }
 
 message ShowWebviewEvent {

@@ -1,5 +1,6 @@
 import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
+import { translateUi, type UiTranslator } from "@/i18n/messages"
 import { type ComposerSegment, resourceAtomsOf } from "./model"
 import { composeComposerSubmission } from "./projection"
 
@@ -89,19 +90,14 @@ export function captureComposerSend(segments: readonly ComposerSegment[], contex
 }
 
 /** The message shown while a send is refused. */
-export function describeSendBlock(refusal: ComposerSendRefusal, context: { readonly taskReadOnly?: boolean } = {}): string {
+export function describeSendBlock(
+    refusal: ComposerSendRefusal,
+    context: { readonly taskReadOnly?: boolean } = {},
+    t: UiTranslator = (key, ...args) => translateUi("en", key, ...args),
+): string {
     // A task another window holds never takes input here, so "not ready yet" would promise a wait that never ends.
     if (refusal === "input_not_ready" && context.taskReadOnly) {
-        return "This task is open in another Dline window and is read-only here. Your message was kept; continue the task in that window."
+        return t("chatInput.send.readOnly")
     }
-    switch (refusal) {
-        case "staging":
-            return "Attachments are still being added. Send again once they are ready."
-        case "failed":
-            return "An attachment could not be added. Retry or remove it before sending."
-        case "input_not_ready":
-            return "Dline cannot take input yet. Your message was kept; send it again once the input is ready."
-        case "submission_rejected":
-            return "Dline could not accept this message, possibly because an attachment is no longer available. Your message was kept; remove or re-add the attachment and send again."
-    }
+    return t(`chatInput.send.${refusal}`)
 }

@@ -1,6 +1,12 @@
-import type { AccountUsageData, AccountUsageQuotaData, AccountUsageResetCreditData } from "@shared/ExtensionMessage"
+import type {
+    AccountUsageData,
+    AccountUsageLocalData,
+    AccountUsageQuotaData,
+    AccountUsageResetCreditData,
+} from "@shared/ExtensionMessage"
 import type {
     AccountUsage as ProtoAccountUsage,
+    AccountUsageLocal as ProtoAccountUsageLocal,
     AccountUsageResetCredit as ProtoAccountUsageResetCredit,
     UsageQuota as ProtoUsageQuota,
 } from "@shared/proto/dline/state"
@@ -89,6 +95,50 @@ export function protoToAccountUsage(proto?: ProtoAccountUsage): AccountUsageData
         dailyOutputTokens: proto.dailyOutputTokens ?? undefined,
         dailyCacheHitTokens: proto.dailyCacheHitTokens ?? undefined,
         dailyCacheMissTokens: proto.dailyCacheMissTokens ?? undefined,
+        local: protoToLocalUsage(proto.local),
+    }
+}
+
+/**
+ * Decode locally measured usage, keeping "absent" distinct from "measured zero".
+ *
+ * `usageReported` already carries the difference for the token counts, and the optional
+ * fields stay undefined when the transport never carried them, so a surface can say
+ * "not reported" instead of drawing a zero.
+ */
+function protoToLocalUsage(proto?: ProtoAccountUsageLocal): AccountUsageLocalData | undefined {
+    if (!proto) return undefined
+    return {
+        inputTokens: proto.inputTokens,
+        outputTokens: proto.outputTokens,
+        thoughtsTokens: proto.thoughtsTokens ?? undefined,
+        cacheWriteTokens: proto.cacheWriteTokens ?? undefined,
+        cacheReadTokens: proto.cacheReadTokens ?? undefined,
+        cacheHitTokens: proto.cacheHitTokens ?? undefined,
+        cacheMissTokens: proto.cacheMissTokens ?? undefined,
+        usageReported: proto.usageReported,
+        legacyInputTokens: proto.legacyInputTokens ?? undefined,
+        legacyPartial: proto.legacyPartial || undefined,
+        degraded: proto.degraded || undefined,
+        retrievedAt: proto.retrievedAt || undefined,
+    }
+}
+
+function localUsageToProto(data?: AccountUsageLocalData): ProtoAccountUsageLocal | undefined {
+    if (!data) return undefined
+    return {
+        inputTokens: data.inputTokens,
+        outputTokens: data.outputTokens,
+        thoughtsTokens: data.thoughtsTokens,
+        cacheWriteTokens: data.cacheWriteTokens,
+        cacheReadTokens: data.cacheReadTokens,
+        cacheHitTokens: data.cacheHitTokens,
+        cacheMissTokens: data.cacheMissTokens,
+        usageReported: data.usageReported,
+        legacyInputTokens: data.legacyInputTokens,
+        legacyPartial: data.legacyPartial ?? false,
+        degraded: data.degraded ?? false,
+        retrievedAt: data.retrievedAt,
     }
 }
 
@@ -143,5 +193,6 @@ export function accountUsageToProto(data?: AccountUsageData): ProtoAccountUsage 
         dailyOutputTokens: data.dailyOutputTokens,
         dailyCacheHitTokens: data.dailyCacheHitTokens,
         dailyCacheMissTokens: data.dailyCacheMissTokens,
+        local: localUsageToProto(data.local),
     }
 }

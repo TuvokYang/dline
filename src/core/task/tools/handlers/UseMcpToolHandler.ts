@@ -7,6 +7,7 @@ import { boundToolText } from "@/shared/content-limits"
 import { Logger } from "@/shared/services/Logger"
 import { DlineDefaultTool } from "@/shared/tools"
 import type { ToolApprovalPresentation } from "../../executors/tool/ToolPreflight"
+import { isSubagentMcpTargetAvailable } from "../load-capabilities/LoadCapabilityService"
 import type { ToolHandlerResult } from "../ToolExecutionResult"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
@@ -91,7 +92,11 @@ export class UseMcpToolHandler implements IFullyManagedTool {
             )
         }
 
-        if (config.capabilityToggles.mcpServers[server_name] !== true) {
+        const isAvailable = () =>
+            config.capabilityToggles.mcpServers[server_name] === true &&
+            ((!config.isSubagentExecution && !config.subagentCapabilitySelection) ||
+                isSubagentMcpTargetAvailable(config, server_name, { tool: tool_name }))
+        const unavailable = () => {
             config.taskState.consecutiveMistakeCount++
             return failed(
                 formatResponse.toolError(`MCP server '${server_name}' is not enabled for this task.`),
@@ -99,6 +104,7 @@ export class UseMcpToolHandler implements IFullyManagedTool {
                 "server_disabled_for_task",
             )
         }
+        if (!isAvailable()) return unavailable()
 
         // Parse and validate arguments if provided
         let parsedArguments: Record<string, unknown> | undefined
@@ -155,6 +161,8 @@ export class UseMcpToolHandler implements IFullyManagedTool {
                 await config.callbacks.say("mcp_notification", `[${notification.serverName}] ${notification.message}`)
             }
 
+            // Hooks and notifications may yield while the owner's live connection changes.
+            if ((config.isSubagentExecution || config.subagentCapabilitySelection) && !isAvailable()) return unavailable()
             // Execute the MCP tool
             const toolResult = await config.services.mcpHub.callTool(server_name, tool_name, parsedArguments, config.ulid ?? "")
 

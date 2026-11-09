@@ -15,8 +15,10 @@ import type { ImageGenerationProfile } from "@shared/proto/dline/profile"
 import type { Mode } from "@shared/storage/types"
 import { CheckIcon, GripVerticalIcon, ListFilterIcon, PlusIcon, Trash2Icon } from "lucide-react"
 import { useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import type { ApiProfile } from "./ProviderProfile"
 import ApiProfileCard from "./ProviderProfileCard"
+import { profileDisplayName } from "./profileDisplayName"
 
 interface ApiProfileListProps {
     profiles: ApiProfile[]
@@ -58,10 +60,11 @@ function SortableProfileCard({
     selected,
     onToggleSelect,
 }: SortableProfileCardProps) {
+    const { t } = useUiTranslation()
     const { attributes, listeners, setActivatorNodeRef, setNodeRef, transform, transition, isDragging } = useSortable({
         id: profile.id,
     })
-    const name = profile.name || `${profile.provider}:${profile.modelId}` || "Unnamed profile"
+    const name = profileDisplayName(profile, t)
     return (
         <div
             className={isDragging ? "opacity-40" : undefined}
@@ -71,7 +74,7 @@ function SortableProfileCard({
                 currentMode={currentMode}
                 dragHandle={
                     <button
-                        aria-label={`Reorder ${name}`}
+                        aria-label={t("settings.ui.profiles.reorder", { name })}
                         className="inline-flex size-6 shrink-0 cursor-grab touch-none items-center justify-center rounded-xs border-0 bg-transparent text-description hover:bg-toolbar-hover hover:text-foreground active:cursor-grabbing"
                         ref={setActivatorNodeRef}
                         type="button"
@@ -114,6 +117,7 @@ const ApiProfileList: React.FC<ApiProfileListProps> = ({
     onReorderProfiles,
     onUpdateProfile,
 }) => {
+    const { t } = useUiTranslation()
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
     const [confirmDelete, setConfirmDelete] = useState(false)
     const [activeId, setActiveId] = useState<string | null>(null)
@@ -150,23 +154,23 @@ const ApiProfileList: React.FC<ApiProfileListProps> = ({
         if (over && active.id !== over.id) onReorderProfiles(String(active.id), String(over.id))
     }
     const activeProfile = activeId ? profiles.find((profile) => profile.id === activeId) : undefined
-    const profileCountLabel = `${profiles.length} ${profiles.length === 1 ? "profile" : "profiles"}`
+    const profileCountLabel = t("settings.ui.profiles.count", { count: profiles.length })
 
     return (
         <div className="mb-4 flex min-w-0 flex-col gap-2">
             <div className="flex flex-wrap items-center gap-2">
                 <span className="mr-auto text-xs text-description">{profileCountLabel}</span>
-                <button aria-label="Add profile" className={btnClass} onClick={onAddProfile} type="button">
+                <button aria-label={t("settings.ui.profiles.add")} className={btnClass} onClick={onAddProfile} type="button">
                     <PlusIcon size={14} />
-                    <span>Add profile</span>
+                    <span>{t("settings.ui.profiles.add")}</span>
                 </button>
                 <button
-                    aria-label={editMode ? "Done managing profiles" : "Manage profiles"}
+                    aria-label={editMode ? t("settings.ui.profiles.doneManaging") : t("settings.ui.profiles.manage")}
                     className={btnClass}
                     onClick={onToggleEditMode}
                     type="button">
                     {editMode ? <CheckIcon size={14} /> : <ListFilterIcon size={14} />}
-                    <span>{editMode ? "Done" : "Manage"}</span>
+                    <span>{editMode ? t("settings.done") : t("settings.ui.profiles.manageShort")}</span>
                 </button>
             </div>
 
@@ -199,7 +203,7 @@ const ApiProfileList: React.FC<ApiProfileListProps> = ({
                     {activeProfile ? (
                         <div className="rounded-xs border border-editor-widget-border bg-(--vscode-editor-background) px-3 py-2 shadow-lg">
                             <div className="truncate text-sm font-medium text-foreground">
-                                {activeProfile.name || "Unnamed profile"}
+                                {profileDisplayName(activeProfile, t)}
                             </div>
                             <div className="truncate text-xs text-description">
                                 {[activeProfile.provider, activeProfile.modelId].filter(Boolean).join(" · ")}
@@ -220,7 +224,9 @@ const ApiProfileList: React.FC<ApiProfileListProps> = ({
                         type="button">
                         <Trash2Icon size={14} />
                         <span>
-                            {confirmDelete ? `Confirm delete (${selectedIds.size})` : `Delete selected (${selectedIds.size})`}
+                            {confirmDelete
+                                ? t("settings.ui.profiles.confirmDelete", { count: selectedIds.size })
+                                : t("settings.ui.profiles.deleteSelected", { count: selectedIds.size })}
                         </span>
                     </button>
                 </div>
@@ -228,7 +234,7 @@ const ApiProfileList: React.FC<ApiProfileListProps> = ({
 
             {profiles.length === 0 ? (
                 <div className="rounded-xs border border-dashed border-editor-widget-border/50 px-3 py-4 text-center text-xs text-description">
-                    No profiles configured. Add a profile to connect a provider and model.
+                    {t("settings.ui.profiles.empty")}
                 </div>
             ) : null}
         </div>

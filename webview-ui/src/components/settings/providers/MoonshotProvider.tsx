@@ -1,6 +1,7 @@
 import { MoonshotProviderConfig } from "@shared/proto/dline/provider/moonshot"
 import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import { VSCodeDropdown, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { ModelInfoView } from "../common/ModelInfoView"
 import { DropdownContainer, ModelSelector } from "../common/ModelSelector"
@@ -16,6 +17,7 @@ interface MoonshotProviderProps {
 
 /** Moonshot AI provider �?all data from ApiProfile. moonshotVersion stored in providerConfig. */
 export const MoonshotProvider = ({ showModelOptions, isPopup, profile, onUpdate }: MoonshotProviderProps) => {
+    const { t } = useUiTranslation()
     const { models, defaultModelId } = useProviderModels("moonshot")
     const pc = profile.moonshot ?? MoonshotProviderConfig.create()
     const modelInfo = resolveProfileModelInfo(profile, { models, defaultModelId })
@@ -26,7 +28,7 @@ export const MoonshotProvider = ({ showModelOptions, isPopup, profile, onUpdate 
         <div>
             <DropdownContainer className="dropdown-container" style={{ position: "inherit" }}>
                 <label htmlFor="moonshot-version">
-                    <span style={{ fontWeight: 500, marginTop: 5 }}>API Version</span>
+                    <span style={{ fontWeight: 500, marginTop: 5 }}>{t("settings.ui.apiVersion")}</span>
                 </label>
                 <VSCodeDropdown
                     id="moonshot-version"
@@ -45,7 +47,6 @@ export const MoonshotProvider = ({ showModelOptions, isPopup, profile, onUpdate 
             {showModelOptions && (
                 <>
                     <ModelSelector
-                        label="Model"
                         models={models}
                         onChange={(e) =>
                             onUpdate({

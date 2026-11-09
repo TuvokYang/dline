@@ -1,6 +1,7 @@
 import { persistProviderCatalog } from "@core/model-registry/provider-catalog-storage"
 import { discoverProviderModels } from "@core/model-registry/remote/model-refresh"
 import { type ModelInfo, openRouterDefaultModelId } from "@shared/api"
+import { flatMeteredPricing, patchFlatPrices, readPriceSet, withBands } from "@shared/providers/pricing-shape"
 import { GEMINI_FLASH_MAX_OUTPUT_TOKENS, isGeminiFlashModel } from "@utils/model-utils"
 import cloneDeep from "clone-deep"
 import {
@@ -63,8 +64,7 @@ async function fetchAndCacheModels(controller: Controller): Promise<Record<strin
                         // NOTE: we artificially restrict the context window to 200k to keep costs low for users, and have a :1m model variant created below for users that want to use the full 1m.
                         modelInfo.capabilities!.contextWindow = 200_000
                         modelInfo.capabilities!.supportsPromptCache = true
-                        modelInfo.pricing!.cacheWritesPrice = 3.75
-                        modelInfo.pricing!.cacheReadsPrice = 0.3
+                        modelInfo.pricing = patchFlatPrices(modelInfo.pricing, { cacheWritePrice: 3.75, cacheReadPrice: 0.3 })
                         break
                     case "anthropic/claude-3-7-sonnet":
                     case "anthropic/claude-3-7-sonnet:beta":
@@ -75,32 +75,27 @@ async function fetchAndCacheModels(controller: Controller): Promise<Record<strin
                     case "anthropic/claude-3.5-sonnet:beta":
                         // NOTE: this needs to be synced with api.ts/openrouter default model info
                         modelInfo.capabilities!.supportsPromptCache = true
-                        modelInfo.pricing!.cacheWritesPrice = 3.75
-                        modelInfo.pricing!.cacheReadsPrice = 0.3
+                        modelInfo.pricing = patchFlatPrices(modelInfo.pricing, { cacheWritePrice: 3.75, cacheReadPrice: 0.3 })
                         break
                     case "anthropic/claude-opus-4.6":
                     case "anthropic/claude-opus-4.7":
                         modelInfo.capabilities!.contextWindow = 200_000 // restrict to 200k, 1m variant created below
                         modelInfo.capabilities!.supportsPromptCache = true
-                        modelInfo.pricing!.cacheWritesPrice = 6.25
-                        modelInfo.pricing!.cacheReadsPrice = 0.5
+                        modelInfo.pricing = patchFlatPrices(modelInfo.pricing, { cacheWritePrice: 6.25, cacheReadPrice: 0.5 })
                         break
                     case "anthropic/claude-opus-4.5":
                         modelInfo.capabilities!.supportsPromptCache = true
-                        modelInfo.pricing!.cacheWritesPrice = 6.25
-                        modelInfo.pricing!.cacheReadsPrice = 0.5
+                        modelInfo.pricing = patchFlatPrices(modelInfo.pricing, { cacheWritePrice: 6.25, cacheReadPrice: 0.5 })
                         break
                     case "anthropic/claude-opus-4.1":
                     case "anthropic/claude-opus-4":
                         modelInfo.capabilities!.supportsPromptCache = true
-                        modelInfo.pricing!.cacheWritesPrice = 18.75
-                        modelInfo.pricing!.cacheReadsPrice = 1.5
+                        modelInfo.pricing = patchFlatPrices(modelInfo.pricing, { cacheWritePrice: 18.75, cacheReadPrice: 1.5 })
                         break
                     case "anthropic/claude-3.5-sonnet-20240620":
                     case "anthropic/claude-3.5-sonnet-20240620:beta":
                         modelInfo.capabilities!.supportsPromptCache = true
-                        modelInfo.pricing!.cacheWritesPrice = 3.75
-                        modelInfo.pricing!.cacheReadsPrice = 0.3
+                        modelInfo.pricing = patchFlatPrices(modelInfo.pricing, { cacheWritePrice: 3.75, cacheReadPrice: 0.3 })
                         break
                     case "anthropic/claude-haiku-4.5":
                     case "anthropic/claude-4.5-haiku":
@@ -113,37 +108,31 @@ async function fetchAndCacheModels(controller: Controller): Promise<Record<strin
                     case "anthropic/claude-3.5-haiku-20241022":
                     case "anthropic/claude-3.5-haiku-20241022:beta":
                         modelInfo.capabilities!.supportsPromptCache = true
-                        modelInfo.pricing!.cacheWritesPrice = 1.25
-                        modelInfo.pricing!.cacheReadsPrice = 0.1
+                        modelInfo.pricing = patchFlatPrices(modelInfo.pricing, { cacheWritePrice: 1.25, cacheReadPrice: 0.1 })
                         break
                     case "anthropic/claude-3-opus":
                     case "anthropic/claude-3-opus:beta":
                         modelInfo.capabilities!.supportsPromptCache = true
-                        modelInfo.pricing!.cacheWritesPrice = 18.75
-                        modelInfo.pricing!.cacheReadsPrice = 1.5
+                        modelInfo.pricing = patchFlatPrices(modelInfo.pricing, { cacheWritePrice: 18.75, cacheReadPrice: 1.5 })
                         break
                     case "anthropic/claude-3-haiku":
                     case "anthropic/claude-3-haiku:beta":
                         modelInfo.capabilities!.supportsPromptCache = true
-                        modelInfo.pricing!.cacheWritesPrice = 0.3
-                        modelInfo.pricing!.cacheReadsPrice = 0.03
+                        modelInfo.pricing = patchFlatPrices(modelInfo.pricing, { cacheWritePrice: 0.3, cacheReadPrice: 0.03 })
                         break
                     case "deepseek/deepseek-chat":
                         modelInfo.capabilities!.supportsPromptCache = true
                         // see api.ts/deepSeekModels for more info
-                        modelInfo.pricing!.inputPrice = 0
-                        modelInfo.pricing!.cacheWritesPrice = 0.14
-                        modelInfo.pricing!.cacheReadsPrice = 0.014
+                        modelInfo.pricing = patchFlatPrices(modelInfo.pricing, { inputPrice: 0 })
+                        modelInfo.pricing = patchFlatPrices(modelInfo.pricing, { cacheWritePrice: 0.14, cacheReadPrice: 0.014 })
                         break
                     case "x-ai/grok-3-beta":
                         modelInfo.capabilities!.supportsPromptCache = true
-                        modelInfo.pricing!.cacheWritesPrice = 0.75
-                        modelInfo.pricing!.cacheReadsPrice = 0
+                        modelInfo.pricing = patchFlatPrices(modelInfo.pricing, { cacheWritePrice: 0.75, cacheReadPrice: 0 })
                         break
                     case "moonshotai/kimi-k2":
                         // forcing kimi-k2 to use the together provider for full context and best throughput
-                        modelInfo.pricing!.inputPrice = 1
-                        modelInfo.pricing!.outputPrice = 3
+                        modelInfo.pricing = patchFlatPrices(modelInfo.pricing, { inputPrice: 1, outputPrice: 3 })
                         modelInfo.capabilities!.contextWindow = 131_000
                         break
                     case "openai/gpt-5":
@@ -155,14 +144,14 @@ async function fetchAndCacheModels(controller: Controller): Promise<Record<strin
                         break
                     case "x-ai/grok-code-fast-1":
                         modelInfo.capabilities!.supportsPromptCache = true
-                        modelInfo.pricing!.cacheReadsPrice = 0.02
+                        modelInfo.pricing = patchFlatPrices(modelInfo.pricing, { cacheReadPrice: 0.02 })
                         break
                     default:
                         // OpenAI and Google publish their cache prices in the listing, so the
                         // prompt-cache flag follows from whether a cache read price came back.
                         // OpenRouter charges no cache write pricing for OpenAI models.
                         if (modelId.startsWith("openai/") || modelId.startsWith("google/")) {
-                            if (modelInfo.pricing?.cacheReadsPrice) {
+                            if (readPriceSet(modelInfo.pricing?.strategy?.flat?.prices).cacheReadPrice > 0) {
                                 modelInfo.capabilities!.supportsPromptCache = true
                             }
                         }
@@ -188,7 +177,7 @@ async function fetchAndCacheModels(controller: Controller): Promise<Record<strin
                 ) {
                     const claudeSonnet1mModelInfo = cloneDeep(modelInfo)
                     claudeSonnet1mModelInfo.capabilities!.contextWindow = 1_000_000 // limiting providers to those that support 1m context window
-                    claudeSonnet1mModelInfo.pricing!.tiers = CLAUDE_SONNET_1M_TIERS
+                    claudeSonnet1mModelInfo.pricing = withBands(claudeSonnet1mModelInfo.pricing, CLAUDE_SONNET_1M_TIERS)
                     // sonnet 4
                     if (modelId === "anthropic/claude-sonnet-4") {
                         models[openRouterClaudeSonnet41mModelId] = claudeSonnet1mModelInfo
@@ -207,7 +196,7 @@ async function fetchAndCacheModels(controller: Controller): Promise<Record<strin
                 if (modelId === "anthropic/claude-opus-4.6" || modelId === "anthropic/claude-opus-4.7") {
                     const claudeOpus1mModelInfo = cloneDeep(modelInfo)
                     claudeOpus1mModelInfo.capabilities!.contextWindow = 1_000_000
-                    claudeOpus1mModelInfo.pricing!.tiers = CLAUDE_OPUS_1M_TIERS
+                    claudeOpus1mModelInfo.pricing = withBands(claudeOpus1mModelInfo.pricing, CLAUDE_OPUS_1M_TIERS)
                     if (modelId === "anthropic/claude-opus-4.6") {
                         models[openRouterClaudeOpus461mModelId] = claudeOpus1mModelInfo
                     }
@@ -257,7 +246,7 @@ const CLINE_STEALTH_MODELS: Record<string, ModelInfo> = {
         name: "Giga Potato",
         description: "A stealth model for testing purposes. Not a real potato.",
         capabilities: { maxTokens: 8192, contextWindow: 224_000, supportsImages: true, supportsPromptCache: true },
-        pricing: { inputPrice: 0, outputPrice: 0 },
+        pricing: flatMeteredPricing(0, 0),
     },
 }
 

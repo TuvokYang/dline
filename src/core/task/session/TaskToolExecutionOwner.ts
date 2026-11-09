@@ -11,6 +11,7 @@ import type { TaskActivityStore } from "../activity/TaskActivityStore"
 import type { BackgroundResultDeliveryPort } from "../background/BackgroundResultDeliveryPort"
 import { approvalPolicySnapshotOf } from "../executors/policy/ProductionApprovalPolicyAdapter"
 import type { PeerTaskSpawnPort } from "../executors/spawn/PeerTaskSpawnPort"
+import { isAwayFeedbackTool } from "../executors/tool/production/AwayToolPolicy"
 import type {
     ProductionToolConfigFactory,
     ProductionToolConfigFactoryInput,
@@ -22,6 +23,7 @@ import type { ToolApprovalFeedbackLedger } from "../executors/tool/ToolApprovalF
 import type { ToolBlockStatePort } from "../executors/tool/ToolBlockStatePort"
 import { TurnToolScheduler } from "../executors/tool/TurnToolScheduler"
 import type { ExplicitInstructionConsumePort } from "../explicit-instructions/types"
+import { ToolProgressOrder } from "../focus-chain/ToolProgressOrder"
 import type { TaskState } from "../kernel"
 import type { MessageStateHandler } from "../message-state"
 import { createRequestApiScope, type NativeToolCallsPredicate } from "../RequestApiScope"
@@ -29,6 +31,7 @@ import type { TaskPayloadStore } from "../stores"
 import { decodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
 import type { ToolInvocationEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
 import type { TaskStateManager } from "../TaskStateManager"
+import { resolveCommandTarget } from "../tools/handlers/command-workdirectory"
 import type { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
 import { SubagentFanoutBudget, usableSubagentLimit } from "../tools/subagent/SubagentFanoutBudget"
 import { SubagentJobManager } from "../tools/subagent/SubagentJobManager"
@@ -53,7 +56,9 @@ export interface TaskToolExecutionOwnerOptions {
     readonly interactions: TaskInteractionPorts
     readonly callbacks: TaskCallbacks
     readonly readState: () => Readonly<TaskState>
+    readonly readAwayActive?: () => boolean
     readonly readCapabilityToggles: () => TaskCapabilityToggles
+    readonly getMcpServersForOwner?: TaskConfig["getMcpServersForOwner"]
     /** One-shot authority granted by the turn a block belongs to, if any. */
     readonly readTurnAuthority: (turnId: string | undefined) => ExplicitInstructionConsumePort | undefined
     readonly workspaceManager?: WorkspaceRootManager
@@ -87,8 +92,10 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
      * next task.
      */
     readonly turnScheduler: TurnToolScheduler
+    readonly progress: ToolProgressOrder
 
     constructor(private readonly options: TaskToolExecutionOwnerOptions) {
+        this.progress = new ToolProgressOrder(options.readState)
         this.turnScheduler = new TurnToolScheduler({
             readConfiguredLimit: () => this.options.stateManager.getGlobalSettingsKey("maxParallelToolCalls"),
         })
@@ -135,8 +142,15 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
 
     /** Route one provider-owned incomplete block through its existing presentation handler. */
     presentPartial(block: ToolUse): Promise<void> {
+        if (this.options.readAwayActive?.() && isAwayFeedbackTool(block.name)) return Promise.resolve()
         const runtime = this.options.toolRuntime
         return runtime.coordinator.presentPartial(block, createUIHelpers(this.create({ coordinator: runtime.coordinator })))
+    }
+
+    /** Withdraw a preview drawn before this call acquired its feedback-only disposition. */
+    async settleAwayFeedback(block: ToolUse): Promise<void> {
+        const row = this.options.messages.clineMessages.find((message) => message.ts === block.ts)
+        if (row?.partial) await this.options.messages.removeMessagesByTs([row.ts])
     }
 
     /** The result a manually rejected tool reports to the model, in its handler's own words. */
@@ -165,6 +179,17 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
     ): TaskConfig {
         const api = this.options.api.current()
         const mode = this.options.settings.mode
+        const turnId = input.command?.turnId
+        const blockId = input.invocation?.dlineTid
+        const progress =
+            turnId && blockId
+                ? {
+                      commitToolProgress: this.progress.bind(turnId, blockId),
+                      ...(this.options.readState().turn.blocks.find((block) => block.blockId === blockId)?.turnEnding
+                          ? { settlePrecedingProgress: () => this.progress.settleBefore(turnId, blockId) }
+                          : {}),
+                  }
+                : {}
         const requestScope = createRequestApiScope(
             api,
             mode,
@@ -199,6 +224,7 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
             browserSettings: this.options.stateManager.getGlobalSettingsKey("browserSettings"),
             focusChainSettings: this.options.stateManager.getGlobalSettingsKey("focusChainSettings"),
             capabilityToggles: this.options.readCapabilityToggles(),
+            getMcpServersForOwner: this.options.getMcpServersForOwner,
             // An explicit-only tool may run only with the authority of the turn that
             // admitted the command; a restored retry carries no command and no turn,
             // so it is denied instead of inheriting someone else's authorization.
@@ -208,6 +234,7 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
                 ? { admissionOutcome: this.options.approvalFeedback.takeOutcome(input.invocation.dlineTid) }
                 : {}),
             callbacks: this.options.callbacks,
+            ...progress,
             coordinator: input.coordinator,
             identityFactory: this.identities,
             activityStore: this.options.activities,
@@ -215,6 +242,25 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
             peerTaskSpawner: this.options.peerTaskSpawner,
             subagentJobManager: this.subagentJobManager,
             subagentFanoutBudget: this.subagentFanoutBudget,
+        }
+    }
+
+    async prepareAdmissionSnapshot(block: ToolUse): Promise<ToolAdmissionSnapshot> {
+        const snapshot = this.readAdmissionSnapshot(block)
+        if (!snapshot.awayActive || block.name !== DlineDefaultTool.BASH || !block.params.command) return snapshot
+        try {
+            const target = await resolveCommandTarget({
+                cwd: this.options.cwd,
+                command: block.params.command,
+                workdirectory: block.params.workdirectory,
+                workspaceManager: this.options.workspaceManager,
+                isMultiRootEnabled: snapshot.isMultiRootEnabled,
+            })
+            if (!this.options.readAwayActive?.()) return this.readAdmissionSnapshot(block)
+            return { ...snapshot, awayCommandScope: target.isWithinWorkspace ? "workspace" : "external" }
+        } catch {
+            // Invalid targets retain ordinary admission and the handler's existing error result.
+            return { ...snapshot, awayCommandScope: undefined }
         }
     }
 
@@ -243,6 +289,7 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
             settings: policy.settings,
             blanket: policy.blanket ?? {},
             mcpToolAutoApprove,
+            awayActive: this.options.readAwayActive?.() === true,
         }
     }
 

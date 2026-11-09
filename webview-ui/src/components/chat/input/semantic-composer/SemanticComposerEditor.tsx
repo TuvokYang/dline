@@ -1,5 +1,6 @@
 import type React from "react"
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { COMPOSER_FRAGMENT_MIME, parseFragment, plainTextOfFragment, serializeFragment } from "./clipboard"
 import {
     type ChipAction,
@@ -9,6 +10,7 @@ import {
     modelRangeOf,
     readModelSelection,
     renderComposerDom,
+    updateComposerPresentation,
     writeModelSelection,
 } from "./dom"
 import type { SemanticComposerEngine } from "./engine"
@@ -117,6 +119,9 @@ function revealSelection(root: HTMLElement): void {
 export const SemanticComposerEditor = forwardRef<SemanticComposerEditorHandle, SemanticComposerEditorProps>(
     function SemanticComposerEditor(props, ref) {
         const { engine, composerId, decorate, onHeightChange } = props
+        const { t } = useUiTranslation()
+        const translatorRef = useRef(t)
+        translatorRef.current = t
         const rootRef = useRef<HTMLDivElement>(null)
         const composingRef = useRef(false)
         const compositionRangeRef = useRef<ComposerRange | undefined>(undefined)
@@ -132,6 +137,7 @@ export const SemanticComposerEditor = forwardRef<SemanticComposerEditorHandle, S
                 const focused = root.ownerDocument.activeElement === root
                 if (force || renderedSegmentsRef.current !== next.segments) {
                     renderComposerDom(root, next.segments, {
+                        t: translatorRef.current,
                         decorations: decorate?.(next.segments),
                         selectedAtomIds: selectedAtomIds(next),
                     })
@@ -158,6 +164,9 @@ export const SemanticComposerEditor = forwardRef<SemanticComposerEditorHandle, S
         // The draft may also change from outside the editor: a menu pick, a staged resource, a restored draft.
         useLayoutEffect(() => render(state), [render, state])
         useLayoutEffect(() => render(engine.getState(), true), [engine, render])
+        useLayoutEffect(() => {
+            if (rootRef.current) updateComposerPresentation(rootRef.current, engine.getState().segments, t)
+        }, [engine, t])
 
         /** Adopt the browser's selection before an edit, so the edit applies where the user sees the caret. */
         const syncSelection = useCallback(() => {

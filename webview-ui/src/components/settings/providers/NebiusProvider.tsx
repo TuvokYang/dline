@@ -29,7 +29,6 @@ export const NebiusProvider = ({ showModelOptions, isPopup, profile, onUpdate }:
             {showModelOptions && (
                 <>
                     <ModelSelector
-                        label="Model"
                         models={models}
                         onChange={(e) =>
                             onUpdate({

@@ -1,6 +1,5 @@
 import { ModelInfo, requestyDefaultModelId, requestyDefaultModelInfo } from "@shared/api"
 import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
-import { calculateApiCostOpenAI } from "@utils/cost"
 import OpenAI from "openai"
 import { toRequestyServiceStringUrl } from "@/shared/clients/requesty"
 import { ClineStorageMessage } from "@/shared/messages/content"
@@ -89,6 +88,7 @@ export class RequestyHandler extends ApiHandler {
             ...(anthropicReasoning?.outputConfig ? { output_config: anthropicReasoning.outputConfig } : {}),
         }
 
+        const sentAtMs = Date.now()
         const stream = await client.chat.completions.create({
             model: model.id,
             max_tokens: model.info.capabilities?.maxTokens || undefined,
@@ -132,19 +132,32 @@ export class RequestyHandler extends ApiHandler {
                 cacheWriteTokens: usage.prompt_tokens_details?.caching_tokens,
                 cacheReadTokens: usage.prompt_tokens_details?.cached_tokens,
             })
-            const totalCost = calculateApiCostOpenAI(
-                model.info,
-                totalInputTokens,
-                outputTokens,
-                inputUsage.cacheWriteTokens,
-                inputUsage.cacheReadTokens,
-            )
+            const reportedCost =
+                typeof usage.total_cost === "number" && Number.isFinite(usage.total_cost) && usage.total_cost >= 0
+                    ? usage.total_cost
+                    : undefined
+            const cost =
+                reportedCost === undefined
+                    ? ApiHandler.calculateUsageCost(
+                          model.info.pricing,
+                          {
+                              ...inputUsage,
+                              outputTokens,
+                              thoughtsTokenCount: usage.completion_tokens_details?.reasoning_tokens,
+                          },
+                          sentAtMs,
+                      )
+                    : undefined
 
             yield {
                 type: "usage",
                 ...inputUsage,
                 outputTokens,
-                totalCost,
+                ...(reportedCost !== undefined
+                    ? { totalCost: reportedCost }
+                    : cost?.kind === "calculated"
+                      ? { totalCost: cost.amount, currency: cost.currency }
+                      : {}),
             }
         }
     }

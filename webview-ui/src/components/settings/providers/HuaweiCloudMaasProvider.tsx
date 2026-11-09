@@ -28,7 +28,6 @@ export const HuaweiCloudMaasProvider = ({ showModelOptions, isPopup, profile, on
             {showModelOptions && (
                 <>
                     <ModelSelector
-                        label="Model"
                         models={models}
                         onChange={(e) =>
                             onUpdate({

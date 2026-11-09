@@ -1,9 +1,11 @@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 
 export function RemotelyConfiguredInputWrapper({ hidden, children }: React.PropsWithChildren<{ hidden: boolean }>) {
+    const { t } = useUiTranslation()
     return (
         <Tooltip>
-            <TooltipContent hidden={hidden}>This setting is managed by your organization's remote configuration</TooltipContent>
+            <TooltipContent hidden={hidden}>{t("settings.ui.managed")}</TooltipContent>
             <TooltipTrigger>{children}</TooltipTrigger>
         </Tooltip>
     )

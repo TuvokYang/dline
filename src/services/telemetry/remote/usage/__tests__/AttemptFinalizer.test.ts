@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import type { PendingAttemptFinalization } from "@/core/storage/telemetry-remote/UsageAttemptFinalizationStore"
 import type {
     PendingUsageAttemptObservation,
@@ -77,9 +77,18 @@ function execution(): ApiResponseExecutionRecord {
     }
 }
 
-function harness(options: { readonly deadlineMs?: number; readonly persistDelayMs?: number } = {}) {
+function harness(
+    options: {
+        readonly deadlineMs?: number
+        readonly persistDelayMs?: number
+        readonly appendRetryDelayMs?: number
+        readonly appendObservation?: (observation: PendingUsageAttemptObservation) => Promise<void>
+    } = {},
+) {
     const observations: PendingUsageAttemptObservation[] = []
     const claims: PendingUsageLogicalClaim[] = []
+    /** Interleaved sink order, so a dependency between the two append kinds is observable. */
+    const order: string[] = []
     const saves: PendingAttemptFinalization[][] = []
     const logs: { level: string; message: string }[] = []
     const deadlines = new Map<string, { deadline: number; finalize: () => void }>()
@@ -99,10 +108,14 @@ function harness(options: { readonly deadlineMs?: number; readonly persistDelayM
         },
         sink: {
             appendObservation: async (observation) => {
+                const append = options.appendObservation
+                if (append) return append(observation)
                 observations.push(observation)
+                order.push(`observation:${observation.id}`)
             },
             appendLogicalClaim: async (claim) => {
                 claims.push(claim)
+                order.push(`claim:${claim.attemptObservationId}`)
             },
         },
         localSessionId: "finalizer-session",
@@ -111,11 +124,12 @@ function harness(options: { readonly deadlineMs?: number; readonly persistDelayM
         log,
         ...(options.deadlineMs === undefined ? {} : { tokenFinalizationDeadlineMs: options.deadlineMs }),
         persistDelayMs: options.persistDelayMs ?? 60_000,
+        ...(options.appendRetryDelayMs === undefined ? {} : { appendRetryDelayMs: options.appendRetryDelayMs }),
     })
     const fire = () => {
         for (const { finalize } of [...deadlines.values()]) finalize()
     }
-    return { finalizer, observations, claims, saves, logs, deadlines, fire }
+    return { finalizer, observations, claims, order, saves, logs, deadlines, fire }
 }
 
 describe("AttemptFinalizer", () => {
@@ -146,7 +160,7 @@ describe("AttemptFinalizer", () => {
     })
 
     it("finalizes at the bounded deadline with tokens unreported and keeps a later revision as loss evidence only", () => {
-        const { finalizer, observations, deadlines, fire, logs } = harness({ deadlineMs: 2_500 })
+        const { finalizer, observations, deadlines, fire } = harness({ deadlineMs: 2_500 })
 
         finalizer.record({ kind: "terminal", ...attempt() })
         expect(deadlines.get(ROUND)?.deadline).toBe(NOW + 2_500)
@@ -157,11 +171,10 @@ describe("AttemptFinalizer", () => {
         expect(observations).toHaveLength(1)
         expect(observations[0]).toMatchObject({ revision: 0, observation: { tokenUsageReported: false } })
         expect(deadlines.size).toBe(0)
-        expect(logs).toContainEqual({ level: "debug", message: expect.stringContaining("loss evidence") })
     })
 
     it("treats a repeated terminal as idempotent and keeps the first of two conflicting terminals", () => {
-        const { finalizer, observations, logs } = harness()
+        const { finalizer, observations } = harness()
 
         finalizer.record({ kind: "terminal", ...attempt() })
         finalizer.record({ kind: "terminal", ...attempt() })
@@ -170,12 +183,9 @@ describe("AttemptFinalizer", () => {
 
         expect(observations).toHaveLength(1)
         expect(observations[0]?.observation.outcome).toBe("completed")
-        expect(logs.filter((entry) => entry.level === "warn")).toEqual([
-            { level: "warn", message: expect.stringContaining("terminal conflict (completed then failed)") },
-        ])
     })
 
-    it("lets a logical execution settled inside the window ride on the final, and claims a later one separately", () => {
+    it("lets a logical execution settled inside the window ride on the final, and claims a later one separately", async () => {
         const inside = harness()
         inside.finalizer.record({ kind: "terminal", ...attempt() })
         inside.finalizer.record({ kind: "logical_execution", handle: attempt().handle, execution: execution() })
@@ -188,6 +198,7 @@ describe("AttemptFinalizer", () => {
         after.finalizer.record({ kind: "terminal", ...attempt() })
         after.finalizer.record({ kind: "tokens_final", roundId: ROUND })
         after.finalizer.record({ kind: "logical_execution", handle: attempt().handle, execution: execution() })
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         expect(after.observations[0]?.observation.logicalExecution).toBeUndefined()
         expect(after.claims).toEqual([
@@ -198,6 +209,35 @@ describe("AttemptFinalizer", () => {
                 execution: expect.objectContaining({ logicalRequests: { completed: 1, failed: 0, cancelled: 0, aborted: 0 } }),
             },
         ])
+        // The claim names an attempt checkpoint the fold can only find after that
+        // attempt's own observation reached the spool.
+        expect(after.order).toEqual([`observation:${ROUND}`, `claim:${ROUND}`])
+    })
+
+    it("writes no claim while the observation it names is still unsaved", async () => {
+        let release: (() => void) | undefined
+        const { finalizer, claims, order } = harness({
+            appendObservation: () =>
+                new Promise<void>((resolve) => {
+                    release = resolve
+                }),
+        })
+
+        finalizer.record({ kind: "terminal", ...attempt() })
+        finalizer.record({ kind: "tokens_final", roundId: ROUND })
+        finalizer.record({ kind: "logical_execution", handle: attempt().handle, execution: execution() })
+        await Promise.resolve()
+
+        // A fold that read the spool now would see a claim with no attempt checkpoint,
+        // skip it, and still discard that shard.
+        expect(claims).toEqual([])
+        expect(order).toEqual([])
+
+        release?.()
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        expect(claims.map((claim) => claim.attemptObservationId)).toEqual([ROUND])
+        expect(order).toEqual([`claim:${ROUND}`])
     })
 
     it("never claims for an attempt it did not admit", () => {
@@ -233,6 +273,79 @@ describe("AttemptFinalizer", () => {
         await slow.finalizer.dispose()
         expect(slow.saves.at(-1)).toEqual([])
         expect(slow.observations).toHaveLength(1)
+    })
+
+    it("keeps the attempt recoverable until the spool append succeeded, so a transient failure loses no token", async () => {
+        const stored: PendingUsageAttemptObservation[] = []
+        let fail = true
+        const { finalizer, saves } = harness({
+            appendRetryDelayMs: 5,
+            appendObservation: async (observation) => {
+                if (fail) {
+                    fail = false
+                    throw Object.assign(new Error("disk full"), { code: "ENOSPC" })
+                }
+                stored.push(observation)
+            },
+        })
+
+        finalizer.record({ kind: "terminal", ...attempt() })
+        finalizer.record({ kind: "tokens_final", roundId: ROUND })
+        expect(stored).toEqual([])
+
+        // The rejected append reopens the window, so a restart can still finish this attempt.
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        await finalizer.flush()
+        expect(saves.at(-1)?.map((entry) => entry.observationId)).toEqual([ROUND])
+
+        await new Promise((resolve) => setTimeout(resolve, 40))
+        expect(stored.map((entry) => entry.id)).toEqual([ROUND])
+        expect(stored[0]).toMatchObject({ revision: 0, observation: { outcome: "completed" } })
+
+        // The stored observation is now the only copy: the recovery record is cleared and no
+        // second revision of the same attempt is published.
+        await finalizer.flush()
+        expect(saves.at(-1)).toEqual([])
+        expect(stored).toHaveLength(1)
+    })
+
+    it.each([
+        "resolve",
+        "reject",
+    ] as const)("fences a pending append and its late claim when purge wins before %s", async (outcome) => {
+        vi.useFakeTimers()
+        try {
+            let resolve!: () => void
+            let reject!: (error: Error) => void
+            const { finalizer, claims, saves, deadlines } = harness({
+                appendObservation: () =>
+                    new Promise<void>((done, fail) => {
+                        resolve = done
+                        reject = fail
+                    }),
+            })
+            finalizer.record({ kind: "terminal", ...attempt() })
+            finalizer.record({ kind: "tokens_final", roundId: ROUND })
+            finalizer.record({ kind: "logical_execution", handle: attempt().handle, execution: execution() })
+
+            const purging = finalizer.purge()
+            if (outcome === "resolve") resolve()
+            else reject(new Error("disk full"))
+            await purging
+            await finalizer.flush()
+
+            expect(claims).toEqual([])
+            expect(deadlines.size).toBe(0)
+            expect(saves.flat()).toEqual([])
+            expect(vi.getTimerCount()).toBe(0)
+            // Purge is revocation, not permanent disposal: a new consent epoch may admit again.
+            finalizer.record({ kind: "terminal", ...attempt() })
+            await finalizer.flush()
+            expect(saves.at(-1)?.map((entry) => entry.observationId)).toEqual([ROUND])
+            await finalizer.purge()
+        } finally {
+            vi.useRealTimers()
+        }
     })
 
     it("drops open windows without emitting on purge", async () => {

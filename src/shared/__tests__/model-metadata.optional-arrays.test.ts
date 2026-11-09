@@ -117,11 +117,13 @@ describe("optional repeated model metadata", () => {
         ).toBeUndefined()
     })
 
-    it("preserves explicitly empty context and pricing tiers in JSON conversion", () => {
+    it("preserves an explicitly empty context-window band list in JSON conversion", () => {
         const capabilities = ModelCapabilities.create({ contextWindowTiers: [] })
-        const pricing = ModelPricing.create({ tiers: [] })
+        const pricing = ModelPricing.create({
+            metered: { currency: "USD", strategy: { contextWindow: { bands: [] } } },
+        })
 
         expect(ModelCapabilities.fromJSON(ModelCapabilities.toJSON(capabilities)).contextWindowTiers).toEqual([])
-        expect(ModelPricing.fromJSON(ModelPricing.toJSON(pricing)).tiers).toEqual([])
+        expect(ModelPricing.fromJSON(ModelPricing.toJSON(pricing)).metered?.strategy?.contextWindow?.bands).toEqual([])
     })
 })

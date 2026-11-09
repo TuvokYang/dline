@@ -1,20 +1,27 @@
 ---
 title: Dline Overview
-description: Dline is an AI coding agent that runs in VS Code. It reads and writes files, runs commands, uses a browser, and calls tools, with you approving the actions that matter.
+description: A comprehensive multi-task automated coding agent with task-scoped multi-model configuration, persistent tasks and checkpoints, layered capabilities, and fine-grained global approval controls.
 ---
 
-Welcome to the Dline documentation. Whether you are just getting started or want to explore advanced capabilities, you will find what you need here.
+**Comprehensive multi-task automated coding agent**
 
-## What is Dline?
+Dline runs multiple coding and code review tasks in parallel within the same workspace. It helps define architecture and coding tasks, write code, review and fix issues, and maintain project documentation. Each task retains its own context across planning, implementation, and verification, so several development goals can advance at once.
 
-Dline is an AI coding agent that lives in your editor. It can read and write files, run terminal commands, use a browser, and help you build features through natural-language conversation.
+## Core capabilities
 
-By default, Dline asks for your confirmation before it reads or writes files, runs commands, or calls external tools. You can enable auto-approval for low-risk operations in settings.
+- **[Multi-model configuration](/getting-started/authorizing-with-dline/)**: Connect cloud services or local models and choose models separately for each task's **Act**, **Plan**, and **Subagent** roles, rather than using one model for all work.
+- **[Parallel task execution](/core-workflows/task-management/)**: Advance feature development, issue resolution, refactoring, UI debugging, and documentation tasks concurrently, each with its own conversation, progress, and execution records. Within a task, delegate independent module investigations to multiple subagents, then bring their findings together to continue the work.
+- **[Layered configuration](/customization/capability-scopes/)**: Manage rules, skills, workflows, subagents, and MCP toggles at global, project, and task scope. Configure subagent roles, models, tools, and skills, along with project terminal environments and pre- and post-command actions.
+- **[Resumable long-running tasks](/features/auto-compact/)**: Use automatic compaction to manage model context while keeping original conversations and execution records locally. Reopen an interrupted task to inspect progress and continue.
+- **[Persistent task records](/core-workflows/task-management/#task-records)**: Automatically save conversations, execution records, and progress. Reopen a task from history and continue after closing its panel or restarting the editor.
+- **[Rich tool capabilities](/tools-reference/all-dline-tools/)**: Search the web, retrieve page content, and use a browser with screenshots to inspect pages and interactions. Generate images through a configured image service with reference-image support.
+- **[Scoped MCP integration](/mcp/mcp-overview/)**: Configure MCP servers globally or per project, invoke external tools and access resources, and authorize remote servers through OAuth. Store private values such as API keys separately on your machine and reference them through variables when connecting.
+- **[Fine-grained operation approvals](/features/auto-approve/)**: Configure approvals separately for reads and writes inside and outside the project, commands, browser actions, web access, MCP, and image generation. Distinguish safe commands from all commands; approval settings apply globally.
+- **[Persistent checkpoints](/core-workflows/checkpoints/)**: Use Git to create file checkpoints and persistent conversation storage to create conversation checkpoints. Roll back files and conversations to an existing checkpoint.
 
-## Install Dline
+## Coding tasks
 
-Dline ships as a VS Code extension and requires VS Code 1.134.0 or newer. After you obtain a `.vsix` file, load it with the VS Code "Install from VSIX" command, or run the following in a terminal:
-
-```bash
-code --install-extension <vsix-file>
-```
+- **Architecture design and coding task planning**: Review requirements and the current project, design architecture and interfaces, and break the work into coding tasks, an implementation sequence, and verification steps.
+- **Code implementation**: Implement features, refactor code, adjust the UI and configuration, add tests, and verify the results.
+- **Code review and issue resolution**: Review code logic, structure, and edge cases; use errors and logs to identify problems, then fix them and run regression checks.
+- **Documentation maintenance**: Write or update architecture documents, project descriptions, user guides, and change records to reflect the project.

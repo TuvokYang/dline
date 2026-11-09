@@ -1,5 +1,6 @@
 // Mode import removed — no longer needed in profile-driven architecture
 import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { DebouncedTextField } from "../common/DebouncedTextField"
 import { ModelInfoView } from "../common/ModelInfoView"
@@ -15,6 +16,7 @@ interface HicapProviderProps {
 }
 
 export const HicapProvider = ({ showModelOptions, isPopup, profile, onUpdate }: HicapProviderProps) => {
+    const { t } = useUiTranslation()
     const { models, defaultModelId } = useProviderModels("hicap")
     const modelInfo = resolveProfileModelInfo(profile, { models, defaultModelId })
     const modelId = modelInfo.id
@@ -29,15 +31,14 @@ export const HicapProvider = ({ showModelOptions, isPopup, profile, onUpdate }: 
             <DebouncedTextField
                 initialValue={profile.baseUrl || ""}
                 onChange={(v) => onUpdate({ baseUrl: v || undefined })}
-                placeholder="Enter base URL..."
+                placeholder={t("settings.ui.enterBaseUrl")}
                 style={{ width: "100%" }}
                 type="text">
-                <span style={{ fontWeight: 500 }}>Base URL (optional)</span>
+                <span style={{ fontWeight: 500 }}>{t("settings.ui.optionalBaseUrl")}</span>
             </DebouncedTextField>
             {showModelOptions && (
                 <>
                     <ModelSelector
-                        label="Model"
                         models={models}
                         onChange={(e) =>
                             onUpdate({

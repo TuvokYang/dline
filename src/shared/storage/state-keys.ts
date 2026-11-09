@@ -22,6 +22,7 @@ import { GlobalInstructionsFile } from "@shared/remote-config/schema"
 import { Mode } from "@shared/storage/types"
 import { TelemetrySetting } from "@shared/TelemetrySetting"
 import { DEFAULT_TERMINAL_COMMAND_HANDOFF_SECONDS, DEFAULT_TERMINAL_COMMAND_TIMEOUT_SECONDS } from "@shared/terminal-settings"
+import { DEFAULT_UI_LANGUAGE_PREFERENCE, normalizeUiLanguagePreference, type UiLanguagePreference } from "@shared/UiLanguage"
 import { UserInfo } from "@shared/UserInfo"
 import { DEFAULT_LOCAL_SEARCH_ENGINE, type LocalSearchEngineId } from "@shared/web-search"
 import { type BlobStoreSettings } from "./types"
@@ -207,6 +208,8 @@ const USER_SETTINGS_FIELDS = {
     strictPlanModeEnabled: { default: false as boolean },
     hooksEnabled: { default: true as boolean },
     yoloModeToggled: { default: false as boolean },
+    awayModeEnabled: { default: false as boolean },
+    autoAwayModeEnabled: { default: false as boolean },
     autoApproveAllToggled: { default: false as boolean },
     useAutoCondense: { default: true as boolean },
     autoCondenseTriggerPercent: {
@@ -241,6 +244,10 @@ const USER_SETTINGS_FIELDS = {
     // The user's opt-in to the account feature; effective only while its rollout flag is on.
     accountEnabled: { default: false as boolean },
     preferredLanguage: { default: "English" as string },
+    uiLanguage: {
+        default: DEFAULT_UI_LANGUAGE_PREFERENCE as UiLanguagePreference,
+        transform: normalizeUiLanguagePreference,
+    },
     chatInputSendShortcut: { default: DEFAULT_CHAT_INPUT_SEND_SHORTCUT as ChatInputSendShortcut },
     // The user's chat folding level; effective only while the aggressive_rendering rollout flag is on.
     aggressiveRendering: { default: DEFAULT_AGGRESSIVE_RENDERING as AggressiveRenderingLevel },
@@ -343,6 +350,7 @@ const SECRETS_KEYS = [
     "mcpOAuthSecrets",
     "searxngSearchToken",
     "wandbApiKey",
+    "opencodeApiKey",
 ] as const
 
 // WARNING, these are not ALL of the local state keys in practice. For example, FileContextTracker

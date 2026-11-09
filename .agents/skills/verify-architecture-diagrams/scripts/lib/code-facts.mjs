@@ -3,7 +3,7 @@
 import path from "node:path"
 
 import { readGeneratedProvenance } from "./generated-provenance.mjs"
-import { readProtoServiceFacts } from "./proto-facts.mjs"
+import { readProtoFacts } from "./proto-facts.mjs"
 
 function diagnostic(provider, error) {
     return Object.freeze({ provider, message: error?.message ?? String(error) })
@@ -13,10 +13,17 @@ export function createCodeFactSnapshot({ repoRoot = process.cwd(), protoRoot = "
     const absoluteRoot = path.resolve(repoRoot)
     const diagnostics = []
     let protoServices = []
+    let protoTypes = []
+    let protoFiles = []
     let generated = []
 
     try {
-        protoServices = readProtoServiceFacts({ repoRoot: absoluteRoot, protoRoot })
+        const proto = readProtoFacts({ repoRoot: absoluteRoot, protoRoot })
+        if (proto.diagnostics.length > 0)
+            throw new Error(proto.diagnostics.map((entry) => `${entry.file}:${entry.line} ${entry.message}`).join("; "))
+        protoServices = proto.services
+        protoTypes = proto.types
+        protoFiles = proto.files.map(({ path, package: packageName, imports }) => ({ path, package: packageName, imports }))
     } catch (error) {
         diagnostics.push(diagnostic("proto", error))
     }
@@ -30,6 +37,8 @@ export function createCodeFactSnapshot({ repoRoot = process.cwd(), protoRoot = "
     return Object.freeze({
         imports: Object.freeze([]),
         protoServices: Object.freeze(protoServices),
+        protoTypes: Object.freeze(protoTypes),
+        protoFiles: Object.freeze(protoFiles),
         generated: Object.freeze(generated),
         diagnostics: Object.freeze(diagnostics),
     })

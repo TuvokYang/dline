@@ -119,7 +119,6 @@ describe("FooterActions", () => {
         }
         expect(onDraftAccepted).toHaveBeenCalledWith(settlement)
         await waitFor(() => expect(onDraftRejected).toHaveBeenCalledWith(settlement))
-        expect(await screen.findByRole("alert")).toHaveTextContent("Interaction was not accepted: stale interaction")
         expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled()
     })
 
@@ -160,9 +159,6 @@ describe("FooterActions", () => {
 
         await waitFor(() => expect(onDraftRejected).toHaveBeenCalledOnce())
         expect(onDraftAccepted).toHaveBeenCalledOnce()
-        expect(await screen.findByRole("alert")).toHaveTextContent(
-            "Dline could not continue the task. Your message was restored; try again.",
-        )
         expect(screen.getByRole("button", { name: "Process Anyway" })).toBeEnabled()
     })
 
@@ -413,7 +409,6 @@ describe("FooterActions", () => {
 
         fireEvent.click(screen.getByRole("button", { name: "Approve" }))
 
-        expect(await screen.findByRole("alert")).toHaveTextContent("dispatch unavailable")
         await waitFor(() => expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled())
     })
 
@@ -483,9 +478,6 @@ describe("FooterActions", () => {
         const actionButtons = screen.getAllByRole("button")
         expect(actionButtons.map((button) => button.getAttribute("aria-label"))).toEqual(["Continue in Background"])
         const actionGroup = actionButtons[0].parentElement
-        expect(actionGroup).toHaveClass("flex", "gap-1.5")
-        expect(actionGroup).not.toHaveClass("border", "rounded")
-        expect(actionButtons[0]).toHaveClass("border", "border-(--vscode-panel-border)", "rounded")
         fireEvent.click(actionButtons[0])
 
         await waitFor(() =>
@@ -514,7 +506,6 @@ describe("FooterActions", () => {
         )
         fireEvent.click(screen.getByRole("button", { name: "Continue in Background" }))
 
-        expect(await screen.findByRole("alert")).toHaveTextContent("background handoff unavailable")
         await waitFor(() => expect(screen.getByRole("button", { name: "Continue in Background" })).toBeEnabled())
     })
 

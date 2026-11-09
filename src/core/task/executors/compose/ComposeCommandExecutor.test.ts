@@ -21,6 +21,14 @@ const queuedCommand: ComposeRoundCommand = {
     },
 }
 
+const queueAcceptance = {
+    type: "input_queue.delivery_accepted",
+    generation: 0,
+    commandId: "compose:1",
+    originRevision: 1,
+    deliveryId: "delivery-1",
+}
+
 function recorder() {
     const events: TaskEvent[] = []
     return {
@@ -39,7 +47,13 @@ describe("ComposeCommandExecutor", () => {
         const recorded = recorder()
         const compose = vi.fn(async () => ({ draftRef: "draft:1" }))
         await new ComposeCommandExecutor({ compose }, recorded.sink).execute(command)
-        expect(compose).toHaveBeenCalledWith({ turnId: "turn-1", admittedEntryIds: ["entry-1"], signal: expect.any(AbortSignal) })
+        expect(compose).toHaveBeenCalledWith({
+            turnId: "turn-1",
+            admittedEntryIds: ["entry-1"],
+            signal: expect.any(AbortSignal),
+            composeCommandId: "compose:1",
+            freezeMaterial: expect.any(Function),
+        })
         expect(recorded.events).toEqual([
             {
                 type: "compose.completed",
@@ -50,6 +64,47 @@ describe("ComposeCommandExecutor", () => {
                 draftRef: "draft:1",
             },
         ])
+    })
+
+    it.each(["accepted", "rejected"] as const)("publishes retained input only after %s durable completion", async (outcome) => {
+        const visibleInputs: string[] = []
+        const events: TaskEvent[] = []
+        let acknowledge!: () => void
+        let persist!: () => void
+        const acknowledged = new Promise<void>((resolve) => {
+            acknowledge = resolve
+        })
+        const durable = new Promise<void>((resolve) => {
+            persist = resolve
+        })
+        const executor = new ComposeCommandExecutor(
+            {
+                compose: async () => ({
+                    draftRef: "draft:retained",
+                    presentation: {
+                        commit: async () => {
+                            visibleInputs.push("steer")
+                        },
+                    },
+                }),
+                rollbackRetainedQueue: async () => "released",
+            },
+            {
+                submit: async (event) => {
+                    events.push(event)
+                    if (event.type !== "compose.completed") return { kind: "accepted" }
+                    acknowledge()
+                    return outcome === "accepted" ? { kind: "accepted", durable } : { kind: "rejected" }
+                },
+            },
+        )
+        const execution = executor.execute(queuedCommand)
+        await acknowledged
+        expect(visibleInputs).toEqual([])
+        persist()
+        await execution
+        expect(visibleInputs).toEqual(outcome === "accepted" ? ["steer"] : [])
+        expect(events.find((event) => event.type === "compose.completed")).not.toHaveProperty("presentation")
     })
 
     // The message enters the conversation and keeps only the failure kind; the
@@ -99,6 +154,7 @@ describe("ComposeCommandExecutor", () => {
 
         expect(rollbackRetainedQueue).toHaveBeenCalledTimes(1)
         expect(recorded.events).toEqual([
+            queueAcceptance,
             {
                 type: "compose.failed",
                 generation: 0,
@@ -131,18 +187,19 @@ describe("ComposeCommandExecutor", () => {
                 signal: expect.any(AbortSignal),
             }),
         )
-        expect(recorded.events).toEqual([expect.objectContaining({ type: "compose.failed", queueDisposition: "released" })])
+        expect(recorded.events).toEqual([
+            queueAcceptance,
+            expect.objectContaining({ type: "compose.failed", queueDisposition: "released" }),
+        ])
     })
 
     it("withdraws a stale completed draft after atomically retracting its retained batch", async () => {
         const events: TaskEvent[] = []
-        let submitted = 0
         const rollbackRetainedQueue = vi.fn(async () => "released" as const)
         const sink = {
             submit: vi.fn(async (event: TaskEvent) => {
                 events.push(event)
-                submitted += 1
-                return submitted === 1 ? { kind: "rejected" as const } : { kind: "accepted" as const }
+                return event.type === "compose.completed" ? { kind: "rejected" as const } : { kind: "accepted" as const }
             }),
         }
 
@@ -153,6 +210,7 @@ describe("ComposeCommandExecutor", () => {
 
         expect(rollbackRetainedQueue).toHaveBeenCalledTimes(1)
         expect(events).toEqual([
+            queueAcceptance,
             expect.objectContaining({ type: "compose.completed", draftRef: "draft:stale" }),
             expect.objectContaining({
                 type: "compose.withdrawn",
@@ -164,12 +222,10 @@ describe("ComposeCommandExecutor", () => {
 
     it("keeps a stale retained delivery uncertain when rollback cannot be proven", async () => {
         const events: TaskEvent[] = []
-        let submitted = 0
         const sink = {
             submit: vi.fn(async (event: TaskEvent) => {
                 events.push(event)
-                submitted += 1
-                return submitted === 1 ? { kind: "rejected" as const } : { kind: "accepted" as const }
+                return event.type === "compose.completed" ? { kind: "rejected" as const } : { kind: "accepted" as const }
             }),
         }
 
@@ -183,7 +239,54 @@ describe("ComposeCommandExecutor", () => {
             sink,
         ).execute(queuedCommand)
 
-        expect(events[1]).toMatchObject({ type: "compose.withdrawn", queueDisposition: "uncertain" })
+        expect(events[2]).toMatchObject({ type: "compose.withdrawn", queueDisposition: "uncertain" })
+    })
+
+    it("does not compose or freeze retained material before queue acceptance is durable", async () => {
+        let release!: () => void
+        const durable = new Promise<void>((resolve) => {
+            release = resolve
+        })
+        let submitted!: () => void
+        const accepted = new Promise<void>((resolve) => {
+            submitted = resolve
+        })
+        const compose = vi.fn(async () => ({ draftRef: "draft:accepted" }))
+        const executor = new ComposeCommandExecutor(
+            { compose },
+            {
+                submit: async (event) => {
+                    if (event.type === "input_queue.delivery_accepted") {
+                        submitted()
+                        return { kind: "accepted", durable }
+                    }
+                    return { kind: "accepted" }
+                },
+            },
+        )
+        const execution = executor.execute(queuedCommand)
+        await accepted
+        expect(compose).not.toHaveBeenCalled()
+        release()
+        await execution
+        expect(compose).toHaveBeenCalledOnce()
+    })
+
+    it.each(["rejected", "persist_failed"] as const)("does not compose after queue acceptance is %s", async (outcome) => {
+        const compose = vi.fn(async () => ({ draftRef: "unreachable" }))
+        const executor = new ComposeCommandExecutor(
+            { compose, rollbackRetainedQueue: async () => "released" },
+            {
+                submit: async (event) =>
+                    event.type !== "input_queue.delivery_accepted"
+                        ? { kind: "accepted" }
+                        : outcome === "rejected"
+                          ? { kind: "rejected" }
+                          : { kind: "accepted", durable: Promise.reject(new Error("Vault unavailable")) },
+            },
+        )
+        await executor.execute(queuedCommand)
+        expect(compose).not.toHaveBeenCalled()
     })
 
     it("cancels without emitting a business failure", async () => {

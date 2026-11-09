@@ -4,6 +4,7 @@ export type { ApiProfile } from "@shared/proto/dline/profile"
 
 import { type ApiProfile, ImageGenerationSource } from "@shared/proto/dline/profile"
 import { WebToolsMode } from "@shared/proto/dline/provider/common"
+import { OpenCodeMode, OpenCodeProviderConfig } from "@shared/proto/dline/provider/opencode"
 
 /**
  * Generate default profile name from provider and modelId.
@@ -82,5 +83,23 @@ export function createEmptyApiProfile(): ApiProfile {
         nousResearch: undefined,
         wandb: undefined,
         dify: undefined,
+        opencode: undefined,
     }
+}
+
+/**
+ * Provider config a freshly selected provider starts from.
+ *
+ * Most providers start with nothing and fall back to their declared defaults. A
+ * provider whose config decides which catalog it reads cannot: an absent mode is
+ * a stored value that reads as one plan, so leaving it unset would make "new
+ * Profile" and "explicitly pay-as-you-go" indistinguishable in the editor.
+ */
+export function defaultProviderConfig(provider: string): Partial<ApiProfile> | undefined {
+    if (provider === "opencode") {
+        return {
+            opencode: OpenCodeProviderConfig.create({ mode: OpenCodeMode.OPEN_CODE_MODE_CONSOLE }),
+        }
+    }
+    return undefined
 }

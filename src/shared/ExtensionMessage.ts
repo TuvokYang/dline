@@ -31,6 +31,7 @@ import { Mode } from "./storage/types"
 import type { TaskCapabilityToggles } from "./TaskCapabilityToggles"
 import { TelemetrySetting } from "./TelemetrySetting"
 import type { TransitionDraftProjection } from "./TransitionDraft"
+import type { UiLanguagePreference } from "./UiLanguage"
 import { UserInfo } from "./UserInfo"
 import type { LocalSearchEngineId } from "./web-search"
 import type { WebFetchPresentationV1, WebSearchPresentationV1 } from "./web-tools"
@@ -82,6 +83,10 @@ export interface ExtensionState {
     browserSettings: BrowserSettings
     remoteBrowserHost?: string
     preferredLanguage?: string
+    /** Committed global preference, not the resolved display language. */
+    uiLanguage: UiLanguagePreference
+    /** Raw, optional metadata from the host; never a persisted preference. */
+    hostDisplayLanguage?: string
     chatInputSendShortcut: ChatInputSendShortcut
     mode: Mode
     checkpointManagerErrorMessage?: string
@@ -169,6 +174,10 @@ export interface ExtensionState {
     aggressiveRendering?: AggressiveRenderingSetting
     /** Account sign-in and views: the rollout offers the setting, the user's setting turns the views on. */
     accountEnabled?: DlineFeatureSettings
+    awayModeEnabled?: boolean
+    autoAwayModeEnabled?: boolean
+    /** Rollout availability only; it never enables either user preference. */
+    awayModeGateEnabled?: boolean
     focusChainSettings: FocusChainSettings
     customPrompt?: string
     favoritedModelIds: string[]
@@ -269,6 +278,44 @@ export interface AccountUsageData {
     dailyOutputTokens?: number
     dailyCacheHitTokens?: number
     dailyCacheMissTokens?: number
+    /**
+     * Usage measured from this installation's own committed facts.
+     *
+     * It is separate from the remote balance above rather than merged into it: the
+     * balance is read from the provider, these numbers are this installation's own
+     * record, and a surface must be able to show one while the other is unavailable.
+     */
+    local?: AccountUsageLocalData
+}
+
+/**
+ * Today's usage derived from facts this installation already committed.
+ *
+ * Every field is a measured value. A missing number means the source did not report
+ * it, which is why `usageReported` exists instead of treating zero as absent, and why
+ * `degraded` accompanies numbers that may be incomplete.
+ */
+export interface AccountUsageLocalData {
+    /** Fresh input; cache reads and writes are reported separately and never overlap it. */
+    inputTokens: number
+    /** Generated output, already including thoughts tokens. */
+    outputTokens: number
+    thoughtsTokens?: number
+    cacheWriteTokens?: number
+    cacheReadTokens?: number
+    /** Input the provider reported as cache hits and misses, when it reports them. */
+    cacheHitTokens?: number
+    cacheMissTokens?: number
+    /** True when the provider reported usage at all; absence is not zero. */
+    usageReported: boolean
+    /** Inclusive legacy input folded in from the pre-migration day ledger. */
+    legacyInputTokens?: number
+    /** True when an older day total contributes and cannot be split by model or key. */
+    legacyPartial?: boolean
+    /** True when the source could not be read completely, so the numbers are incomplete. */
+    degraded?: boolean
+    /** ISO timestamp of the read that produced these numbers. */
+    retrievedAt?: string
 }
 
 /** Single provider-owned reset credit that can be consumed through the shared usage action. */
@@ -315,6 +362,8 @@ export type CheckpointSource =
 
 export interface UiMessage {
     ts: number
+    /** Projection-only committed source ordinal, never persisted in the message body. */
+    messageIndex?: number
     type: "ask" | "say"
     ask?: UiAsk
     say?: UiSay
@@ -324,6 +373,25 @@ export interface UiMessage {
     files?: string[]
     partial?: boolean
     commandStatus?: CommandStatus
+    /**
+     * The command line a `command` row runs, kept apart from its directory and output.
+     *
+     * A row that predates this field states everything in `text`; `readCommandRow`
+     * reads either shape. Writers set it through `writeCommandRowFacts` so no
+     * writer assembles the text itself.
+     */
+    command?: string
+    /** The directory a `command` row runs in, when the row states one. */
+    commandWorkingDirectory?: string
+    /** What a `command` row printed. Empty when the command produced no output. */
+    commandOutput?: string
+    /**
+     * Whether the row asks the user to approve the command.
+     *
+     * Only a legacy row encodes this as a `REQ_APP` suffix on its command line;
+     * reading it out of a command's own text would misread `echo REQ_APP`.
+     */
+    commandAsksApproval?: boolean
     /** Whether this command currently owns the foreground turn or is detached in the background. */
     commandExecutionMode?: CommandExecutionMode
     /** Legacy persisted handoff flag; current UI uses the backend-projected footer action. */
@@ -532,6 +600,7 @@ export type TaskViewActionType =
     | "confirm_utility"
     | "continue_in_background"
     | "cancel"
+    | "stop_away"
 
 /** Payload required when dispatching one projected action. */
 export type TaskViewPayloadPolicy = "none" | "draft" | "selection" | "draft_and_selection"
@@ -583,6 +652,8 @@ export interface ActiveInteractionView {
      * is never served as a chat row, so no page of the conversation contains it.
      */
     anchorSynthetic?: boolean
+    /** Absolute backend deadline. The Webview only displays it and never settles it. */
+    deadline?: { kind: "ask" | "command_approval" | "external_command"; deadlineAt: number }
 }
 
 /** Footer content owned exclusively by the backend task projection. */
@@ -613,6 +684,8 @@ export interface TaskViewState {
     phase: TaskViewPhase
     stateRevision: number
     activeInteraction?: ActiveInteractionView
+    /** Committed task-local mode, not a user setting or a Webview-owned toggle. */
+    away?: { source: "command" | "ask_timeout" }
     contextCompaction?: TaskContextCompactionViewState
     /** True only while terminal automatic-compaction recovery offers explicit history truncation. */
     forceTruncateAvailable?: boolean
@@ -1017,6 +1090,7 @@ export interface UiSubagentUsageInfo {
     cacheWrites: number
     cacheReads: number
     cost: number
+    currency?: string
 }
 
 export type UiApiReqCancelReason = "streaming_failed" | "user_cancelled" | "retries_exhausted"

@@ -74,11 +74,12 @@ export class OpenRouterHandler extends ApiHandler {
         const client = this.ensureClient()
         this.lastGenerationId = undefined
 
-        const stream = await createOpenRouterStream(
+        const model = this.getModel()
+        const { stream, sentAtMs } = await createOpenRouterStream(
             client,
             systemPrompt,
             messages,
-            this.getModel(),
+            model,
             this.reasoningEffort,
             this.thinkingBudgetTokens,
             this.config?.openRouterProviderSorting,
@@ -162,8 +163,7 @@ export class OpenRouterHandler extends ApiHandler {
 
             if (!didOutputUsage && chunk.usage) {
                 const cacheWriteTokens = chunk.usage.prompt_tokens_details?.cache_write_tokens || 0
-                yield {
-                    type: "usage",
+                const tokens = {
                     cacheWriteTokens,
                     cacheReadTokens: chunk.usage.prompt_tokens_details?.cached_tokens || 0,
                     inputTokens:
@@ -171,8 +171,30 @@ export class OpenRouterHandler extends ApiHandler {
                         (chunk.usage.prompt_tokens_details?.cached_tokens || 0) -
                         (cacheWriteTokens || 0),
                     outputTokens: chunk.usage.completion_tokens || 0,
-                    // @ts-expect-error-next-line
-                    totalCost: (chunk.usage.cost || 0) + (chunk.usage.cost_details?.upstream_inference_cost || 0),
+                }
+                const reported = (chunk.usage as OpenAI.CompletionUsage & { cost?: number }).cost
+                const hasReportedCost = typeof reported === "number" && Number.isFinite(reported) && reported >= 0
+                const cost = hasReportedCost
+                    ? undefined
+                    : ApiHandler.calculateUsageCost(
+                          model.info.pricing,
+                          {
+                              ...tokens,
+                              thoughtsTokenCount: chunk.usage.completion_tokens_details?.reasoning_tokens,
+                          },
+                          sentAtMs,
+                      )
+                // Account charge and upstream BYOK cost are separate amounts, not additive fields.
+                const reportedCurrency =
+                    !this.baseUrl || this.baseUrl.replace(/\/+$/, "") === "https://openrouter.ai/api/v1" ? "USD" : undefined
+                yield {
+                    type: "usage",
+                    ...tokens,
+                    ...(hasReportedCost
+                        ? { totalCost: reported, ...(reportedCurrency ? { currency: reportedCurrency } : {}) }
+                        : cost?.kind === "calculated"
+                          ? { totalCost: cost.amount, currency: cost.currency }
+                          : {}),
                 }
                 didOutputUsage = true
             }
@@ -182,7 +204,14 @@ export class OpenRouterHandler extends ApiHandler {
         if (!didOutputUsage) {
             const apiStreamUsage = await this.getApiStreamUsage()
             if (apiStreamUsage) {
-                yield apiStreamUsage
+                const cost =
+                    apiStreamUsage.totalCost === undefined
+                        ? ApiHandler.calculateUsageCost(model.info.pricing, apiStreamUsage, sentAtMs)
+                        : undefined
+                yield {
+                    ...apiStreamUsage,
+                    ...(cost?.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
+                }
             }
         }
     }
@@ -199,6 +228,8 @@ export class OpenRouterHandler extends ApiHandler {
                 // Logger.log("OpenRouter generation details:", generation)
                 const cacheWriteTokens = generation?.native_tokens_cache_write || 0
                 const cacheReadTokens = generation?.native_tokens_cached || 0
+                const reported = generation.total_cost
+                const hasReportedCost = typeof reported === "number" && Number.isFinite(reported) && reported >= 0
                 return {
                     type: "usage",
                     cacheWriteTokens,
@@ -206,7 +237,7 @@ export class OpenRouterHandler extends ApiHandler {
                     // openrouter generation endpoint fails often
                     inputTokens: Math.max(0, (generation?.native_tokens_prompt || 0) - cacheReadTokens - cacheWriteTokens),
                     outputTokens: generation?.native_tokens_completion || 0,
-                    totalCost: generation?.total_cost || 0,
+                    ...(hasReportedCost ? { totalCost: reported, currency: "USD" } : {}),
                 }
             } catch (error) {
                 // ignore if fails

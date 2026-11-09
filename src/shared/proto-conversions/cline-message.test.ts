@@ -1,5 +1,5 @@
 import type { UiMessage } from "@shared/ExtensionMessage"
-import { ClineAsk as ProtoAsk } from "@shared/proto/dline/ui"
+import { ClineMessage, ClineAsk as ProtoAsk } from "@shared/proto/dline/ui"
 import { describe, expect, it } from "vitest"
 import { convertClineMessageToProto, convertProtoToClineMessage } from "./cline-message"
 
@@ -303,5 +303,50 @@ describe("UiMessage image generation conversion", () => {
             artifacts: [{ id: artifactId, mimeType: "image/png" }],
         })
         expect(JSON.stringify(protoMessage)).not.toContain("base64")
+    })
+})
+
+describe("UiMessage source-index metadata conversion", () => {
+    it.each([undefined, 0, 47])("preserves source index %s through conversion and the real binary codec", (messageIndex) => {
+        const message: UiMessage = {
+            ts: 300,
+            type: "say",
+            say: "user_feedback",
+            text: "literal input",
+            userInputKind: "direct",
+            submittedInputs: [{ segments: [{ text: "literal input", role: "text", active: false }] }],
+            ...(messageIndex !== undefined ? { messageIndex } : {}),
+        }
+        const wire = convertClineMessageToProto(message)
+        expect(wire.messageIndex).toBe(messageIndex)
+        const decoded = ClineMessage.decode(ClineMessage.encode(wire).finish())
+        expect(decoded.messageIndex).toBe(messageIndex)
+        const restored = convertProtoToClineMessage(decoded)
+        expect(restored).toMatchObject({
+            ts: 300,
+            type: "say",
+            say: "user_feedback",
+            text: "literal input",
+            userInputKind: "direct",
+        })
+        expect(restored.submittedInputs).toEqual([{ segments: [{ text: "literal input", role: "text", active: false }] }])
+        expect(restored.messageIndex).toBe(messageIndex)
+        if (messageIndex === undefined) expect(restored).not.toHaveProperty("messageIndex")
+    })
+
+    it.each([
+        undefined,
+        0,
+        91,
+    ])("decodes optional source index %s from JSON without defaulting absence to task0", (messageIndex) => {
+        const wire = ClineMessage.create({
+            ...convertClineMessageToProto({ ts: 200, type: "say", say: "text", text: "unchanged" }),
+            messageIndex,
+        })
+        const restored = convertProtoToClineMessage(ClineMessage.fromJSON(ClineMessage.toJSON(wire)))
+        expect(restored).toMatchObject({ ts: 200, type: "say", say: "text", text: "unchanged" })
+        expect(restored.messageIndex).toBe(messageIndex)
+        expect(convertClineMessageToProto(restored).messageIndex).toBe(messageIndex)
+        if (messageIndex === undefined) expect(restored).not.toHaveProperty("messageIndex")
     })
 })

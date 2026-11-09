@@ -1,5 +1,6 @@
 import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
 import React, { useEffect, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { AccountServiceClient } from "@/services/grpc-client"
 
 const COOLDOWN_MS = 5 * 60 * 1000 // 5 minutes
@@ -37,8 +38,20 @@ interface SpendLimitErrorProps {
 }
 
 const SpendLimitError: React.FC<SpendLimitErrorProps> = ({ message, budgetPeriod, limitUsd, spentUsd, resetsAt }) => {
+    const { t } = useUiTranslation()
+    const periodKey =
+        budgetPeriod === "daily"
+            ? "chatRows.errors.budgetPeriod.daily"
+            : budgetPeriod === "monthly"
+              ? "chatRows.errors.budgetPeriod.monthly"
+              : undefined
+    // A period the product does not name stays as the backend sent it rather than
+    // being guessed from its English spelling.
+    const periodLabel = periodKey ? t(periodKey) : budgetPeriod
     const displayMessage =
-        limitUsd != null && budgetPeriod ? `$${limitUsd.toFixed(2)} ${budgetPeriod} limit has been reached.` : message
+        limitUsd != null && budgetPeriod
+            ? t("chatRows.errors.spendLimitMessage", { limit: limitUsd.toFixed(2), period: periodLabel ?? budgetPeriod })
+            : message
 
     const [buttonState, setButtonState] = useState<RequestButtonState>(() => {
         try {
@@ -83,7 +96,6 @@ const SpendLimitError: React.FC<SpendLimitErrorProps> = ({ message, budgetPeriod
         }
     }
 
-    const periodLabel = budgetPeriod ? budgetPeriod.charAt(0).toUpperCase() + budgetPeriod.slice(1) : ""
     const resetsAtFormatted = formatResetsAt(resetsAt)
 
     return (
@@ -96,7 +108,7 @@ const SpendLimitError: React.FC<SpendLimitErrorProps> = ({ message, budgetPeriod
                 <div className="mb-3">
                     {spentUsd != null && limitUsd != null && (
                         <div className="text-foreground" style={{ fontSize: "var(--vscode-font-size)", lineHeight: 1.3 }}>
-                            {periodLabel ? `${periodLabel} usage` : "Usage"}:{" "}
+                            {t("chatRows.errors.usage", { period: periodLabel ?? "" })}:{" "}
                             <span className="font-bold">
                                 ${spentUsd.toFixed(2)} / ${limitUsd.toFixed(2)}
                             </span>
@@ -105,13 +117,13 @@ const SpendLimitError: React.FC<SpendLimitErrorProps> = ({ message, budgetPeriod
 
                     {resetsAtFormatted && (
                         <div className="text-foreground" style={{ fontSize: "var(--vscode-font-size)", lineHeight: 1.3 }}>
-                            Resets: <span className="font-bold">{resetsAtFormatted}</span>
+                            {t("chatRows.errors.resets")} <span className="font-bold">{resetsAtFormatted}</span>
                         </div>
                     )}
 
                     <div className="text-(--vscode-descriptionForeground) mt-2 text-xs inline-flex items-center">
                         <span className="codicon codicon-organization mr-1" />
-                        Limits set by your organization.
+                        {t("chatRows.errors.organizationLimits")}
                     </div>
                 </div>
             </div>
@@ -124,17 +136,17 @@ const SpendLimitError: React.FC<SpendLimitErrorProps> = ({ message, budgetPeriod
                 {buttonState === "sending" ? (
                     <>
                         <span className="codicon codicon-loading codicon-modifier-spin mr-1.5" />
-                        Sending…
+                        {t("chatRows.errors.sending")}
                     </>
                 ) : buttonState === "sent" ? (
                     <>
                         <span className="codicon codicon-check mr-1.5" />
-                        Request Sent
+                        {t("chatRows.errors.requestSent")}
                     </>
                 ) : (
                     <>
                         <span className="codicon codicon-arrow-up mr-1.5" />
-                        Request Increase
+                        {t("chatRows.errors.requestIncrease")}
                     </>
                 )}
             </VSCodeButton>

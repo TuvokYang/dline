@@ -1,13 +1,14 @@
 import { geminiModels, ModelInfo } from "@shared/api"
-import type { PricingTier } from "@shared/providers/types"
-import { VSCodeDropdown, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
 import { CheckIcon, MinusIcon } from "lucide-react"
 import { useId } from "react"
 import styled from "styled-components"
-import { formatCurrencyAmount, getCurrencySymbol } from "@/utils/currency"
+import { LocalizedDropdown, LocalizedOption } from "@/components/common/LocalizedDropdown"
+import type { UiTranslator } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ModelDescriptionMarkdown } from "../ModelDescriptionMarkdown"
 import { ProfileField } from "../profile-ui"
-import { hasThinkingBudget, supportsBrowserUse, supportsImages, supportsPromptCache } from "../utils/pricingUtils"
+import { supportsBrowserUse, supportsImages, supportsPromptCache } from "../utils/pricingUtils"
+import { PricingEditor } from "./PricingEditor"
 
 // ========== Styled Components ==========
 
@@ -65,93 +66,36 @@ const UnsupportedIcon = styled(MinusIcon)`
 	color: var(--vscode-descriptionForeground);
 `
 
-/** One capability row: an icon carries the state, the text names it. */
-function CapabilityValue({ supported }: { supported: boolean }) {
+/**
+ * One capability row: an icon carries the state, the text names it.
+ *
+ * `undefined` is the third state: nobody declared the capability. Rendering it
+ * as "No" would turn an absent declaration into a claim the seller never made.
+ */
+function CapabilityValue({ supported }: { supported: boolean | undefined }) {
+    const { t } = useUiTranslation()
+    if (supported === undefined) {
+        return <AdvancedValue>{t("settings.ui.unknown")}</AdvancedValue>
+    }
     return (
         <AdvancedValue>
             {supported ? <SupportedIcon aria-hidden="true" /> : <UnsupportedIcon aria-hidden="true" />}
-            {supported ? "Yes" : "No"}
+            {supported ? t("settings.ui.yes") : t("settings.ui.no")}
         </AdvancedValue>
     )
 }
 
 // ========== Helper Functions ==========
 
-/**
- * Format price for compact display (e.g., "$5/M" for $5 per million tokens)
- * Price is already in per-million format from OpenRouter
- */
-const formatCompactPrice = (price: number | undefined, currency?: string): string => {
-    if (price === undefined) {
-        return "N/A"
-    }
-    if (price === 0) {
-        return "Free"
-    }
-    const symbol = getCurrencySymbol(currency)
-    if (price < 0.01) {
-        return `${symbol}${price.toFixed(4)}/M`
-    }
-    if (price < 1) {
-        return `${symbol}${price.toFixed(2)}/M`
-    }
-    return `${symbol}${price % 1 === 0 ? price : price.toFixed(2)}/M`
-}
-
-/**
- * Format context window for compact display (e.g., "200K")
- */
-const formatCompactContext = (contextWindow: number | undefined): string => {
+/** Format a declared context capacity, independently from pricing usage bands. */
+const formatCompactContext = (contextWindow: number | undefined, t: UiTranslator): string => {
     if (!contextWindow) {
-        return "N/A"
+        return t("settings.ui.notAvailable")
     }
     if (contextWindow >= 1_000_000) {
         return `${(contextWindow / 1_000_000).toFixed(contextWindow % 1_000_000 === 0 ? 0 : 1)}M`
     }
     return `${Math.round(contextWindow / 1000)}K`
-}
-
-/**
- * Format usage-based tiered pricing: each tier's threshold is the maximum
- * input-token usage for that price band. The threshold controls pricing only,
- * not the context window.
- */
-const formatTiers = (
-    tiers: PricingTier[],
-    priceType: "inputPrice" | "outputPrice" | "cacheReadsPrice" | "cacheWritesPrice",
-    currency?: string,
-): JSX.Element[] => {
-    if (!tiers || tiers.length === 0) {
-        return []
-    }
-
-    return tiers
-        .map((tier, index, arr) => {
-            const prevLimit = index > 0 ? arr[index - 1].contextWindow : 0
-            const price = tier[priceType]
-
-            if (price === undefined) {
-                return null
-            }
-
-            return (
-                <span key={`tier-${tier.contextWindow}`} style={{ paddingLeft: "15px" }}>
-                    {formatCurrencyAmount(price, currency)}/million tokens (
-                    {tier.contextWindow === Number.POSITIVE_INFINITY || tier.contextWindow >= Number.MAX_SAFE_INTEGER ? (
-                        <span>
-                            {">"} {prevLimit.toLocaleString()} input tokens
-                        </span>
-                    ) : (
-                        <span>
-                            {"<="} {tier.contextWindow?.toLocaleString()} input tokens
-                        </span>
-                    )}
-                    {")"}
-                    {index < arr.length - 1 && <br />}
-                </span>
-            )
-        })
-        .filter((element): element is JSX.Element => element !== null)
 }
 
 // ========== Props ==========
@@ -160,6 +104,7 @@ interface ModelInfoViewProps {
     selectedModelId: string
     modelInfo: ModelInfo
     isPopup?: boolean
+    peakOffPeakLabels?: boolean
     // Provider routing props (optional - only shown for Cline provider)
     providerSorting?: string
     onProviderSortingChange?: (value: string) => void
@@ -172,28 +117,31 @@ export const ModelInfoView = ({
     selectedModelId,
     modelInfo,
     isPopup,
+    peakOffPeakLabels,
     providerSorting,
     onProviderSortingChange,
     showProviderRouting,
 }: ModelInfoViewProps) => {
+    const { t } = useUiTranslation()
     const providerRoutingId = useId()
+    const routingOptions = [
+        { value: "", label: t("settings.ui.default") },
+        { value: "price", label: t("settings.ui.price") },
+        { value: "throughput", label: t("settings.ui.throughput") },
+        { value: "latency", label: t("settings.ui.latency") },
+    ]
     const isGemini = Object.keys(geminiModels).includes(selectedModelId)
-    const hasThinkingConfig = hasThinkingBudget(modelInfo)
-    const hasTiers = !!modelInfo.pricing?.tiers && modelInfo.pricing.tiers.length > 0
     const contextTiers = modelInfo.capabilities?.contextWindowTiers ?? []
-    const currency = modelInfo.pricing?.currency
 
     // Capability checks
     const hasImages = supportsImages(modelInfo)
     const hasBrowser = supportsBrowserUse(modelInfo)
-    const hasCaching = !isGemini && supportsPromptCache(modelInfo)
+    // `undefined` when the model never declared caching; Gemini hides the row
+    // entirely because this build carries no cache path for it.
+    const hasCaching = isGemini ? false : supportsPromptCache(modelInfo)
     const hasNativeTools = modelInfo.capabilities?.supportsTools === true
     const hasReasoning =
         modelInfo.capabilities?.supportsReasoning === true || modelInfo.capabilities?.thinking?.supported === true
-
-    // Check if we have cache pricing to show in Advanced section
-    const hasCachePricing =
-        modelInfo.capabilities?.supportsPromptCache && (modelInfo.pricing?.cacheWritesPrice || modelInfo.pricing?.cacheReadsPrice)
 
     return (
         <div className="min-w-0">
@@ -206,30 +154,14 @@ export const ModelInfoView = ({
             <InfoRow>
                 {modelInfo.capabilities?.contextWindow !== undefined && modelInfo.capabilities?.contextWindow > 0 && (
                     <InfoItem>
-                        <InfoLabel>Context: </InfoLabel>
-                        <InfoValue>{formatCompactContext(modelInfo.capabilities?.contextWindow)}</InfoValue>
+                        <InfoLabel>{t("settings.ui.contextLabel")}</InfoLabel>
+                        <InfoValue>{formatCompactContext(modelInfo.capabilities?.contextWindow, t)}</InfoValue>
                     </InfoItem>
                 )}
                 {modelInfo.capabilities?.maxTokens !== undefined && modelInfo.capabilities.maxTokens > 0 && (
                     <InfoItem>
-                        <InfoLabel>Max Output: </InfoLabel>
-                        <InfoValue>{formatCompactContext(modelInfo.capabilities.maxTokens)}</InfoValue>
-                    </InfoItem>
-                )}
-                {modelInfo.pricing?.inputPrice !== undefined && (
-                    <InfoItem>
-                        <InfoLabel>Input: </InfoLabel>
-                        <InfoValue>{formatCompactPrice(modelInfo.pricing.inputPrice, currency)}</InfoValue>
-                    </InfoItem>
-                )}
-                {modelInfo.pricing?.outputPrice !== undefined && (
-                    <InfoItem>
-                        <InfoLabel>Output: </InfoLabel>
-                        <InfoValue>
-                            {hasThinkingConfig && modelInfo.pricing?.thinkingOutputPrice !== undefined
-                                ? formatCompactPrice(modelInfo.pricing.thinkingOutputPrice, currency)
-                                : formatCompactPrice(modelInfo.pricing.outputPrice, currency)}
-                        </InfoValue>
+                        <InfoLabel>{t("settings.ui.maxOutputLabel")}</InfoLabel>
+                        <InfoValue>{formatCompactContext(modelInfo.capabilities.maxTokens, t)}</InfoValue>
                     </InfoItem>
                 )}
             </InfoRow>
@@ -238,86 +170,37 @@ export const ModelInfoView = ({
 			    disclosure made the model's actual limits easy to miss. */}
             <AdvancedSection>
                 <AdvancedRow>
-                    <AdvancedLabel>Images</AdvancedLabel>
+                    <AdvancedLabel>{t("settings.ui.images")}</AdvancedLabel>
                     <CapabilityValue supported={hasImages} />
                 </AdvancedRow>
                 <AdvancedRow>
-                    <AdvancedLabel>Browser</AdvancedLabel>
+                    <AdvancedLabel>{t("settings.ui.browser")}</AdvancedLabel>
                     <CapabilityValue supported={hasBrowser} />
                 </AdvancedRow>
                 <AdvancedRow>
-                    <AdvancedLabel>Native Tool Calls</AdvancedLabel>
+                    <AdvancedLabel>{t("settings.ui.nativeTools")}</AdvancedLabel>
                     <CapabilityValue supported={hasNativeTools} />
                 </AdvancedRow>
                 <AdvancedRow>
-                    <AdvancedLabel>Reasoning</AdvancedLabel>
+                    <AdvancedLabel>{t("settings.ui.reasoning")}</AdvancedLabel>
                     <CapabilityValue supported={hasReasoning} />
                 </AdvancedRow>
                 {!isGemini && (
                     <AdvancedRow>
-                        <AdvancedLabel>Prompt Caching</AdvancedLabel>
+                        <AdvancedLabel>{t("settings.ui.promptCache")}</AdvancedLabel>
                         <CapabilityValue supported={hasCaching} />
                     </AdvancedRow>
                 )}
 
                 {contextTiers.length > 0 && (
                     <div style={{ marginTop: 8 }}>
-                        <div style={{ fontWeight: 500, marginBottom: 4 }}>Context Window Tiers:</div>
+                        <div style={{ fontWeight: 500, marginBottom: 4 }}>{t("settings.ui.contextTiersLabel")}</div>
                         {contextTiers.map((tier) => (
                             <AdvancedRow key={tier.id}>
                                 <AdvancedLabel>{tier.label || tier.id}</AdvancedLabel>
-                                <AdvancedValue>{formatCompactContext(tier.contextWindow)}</AdvancedValue>
+                                <AdvancedValue>{formatCompactContext(tier.contextWindow, t)}</AdvancedValue>
                             </AdvancedRow>
                         ))}
-                    </div>
-                )}
-
-                {/* Cache Pricing */}
-                {hasCachePricing && (
-                    <>
-                        {modelInfo.pricing?.cacheReadsPrice !== undefined && (
-                            <AdvancedRow>
-                                <AdvancedLabel>Cache Reads</AdvancedLabel>
-                                <AdvancedValue>{formatCompactPrice(modelInfo.pricing?.cacheReadsPrice, currency)}</AdvancedValue>
-                            </AdvancedRow>
-                        )}
-                        {modelInfo.pricing?.cacheWritesPrice !== undefined && (
-                            <AdvancedRow>
-                                <AdvancedLabel>Cache Writes</AdvancedLabel>
-                                <AdvancedValue>{formatCompactPrice(modelInfo.pricing?.cacheWritesPrice, currency)}</AdvancedValue>
-                            </AdvancedRow>
-                        )}
-                    </>
-                )}
-
-                {/* Tiered Pricing */}
-                {hasTiers && modelInfo.pricing?.tiers && (
-                    <div style={{ marginTop: 8 }}>
-                        <div style={{ fontWeight: 500, marginBottom: 4 }}>Tiered Pricing:</div>
-                        <AdvancedRow>
-                            <AdvancedLabel>Input</AdvancedLabel>
-                            <AdvancedValue>{formatTiers(modelInfo.pricing.tiers, "inputPrice", currency)}</AdvancedValue>
-                        </AdvancedRow>
-                        <AdvancedRow>
-                            <AdvancedLabel>Output</AdvancedLabel>
-                            <AdvancedValue>{formatTiers(modelInfo.pricing.tiers, "outputPrice", currency)}</AdvancedValue>
-                        </AdvancedRow>
-                        {modelInfo.capabilities?.supportsPromptCache && (
-                            <>
-                                <AdvancedRow>
-                                    <AdvancedLabel>Cache Writes</AdvancedLabel>
-                                    <AdvancedValue>
-                                        {formatTiers(modelInfo.pricing.tiers, "cacheWritesPrice", currency)}
-                                    </AdvancedValue>
-                                </AdvancedRow>
-                                <AdvancedRow>
-                                    <AdvancedLabel>Cache Reads</AdvancedLabel>
-                                    <AdvancedValue>
-                                        {formatTiers(modelInfo.pricing.tiers, "cacheReadsPrice", currency)}
-                                    </AdvancedValue>
-                                </AdvancedRow>
-                            </>
-                        )}
                     </div>
                 )}
 
@@ -326,30 +209,34 @@ export const ModelInfoView = ({
                     <ProfileField
                         description={
                             <>
-                                {!providerSorting &&
-                                    "Load balance across providers (AWS, Google Vertex, etc.), prioritizing price while considering uptime"}
-                                {providerSorting === "price" && "Sort by price, prioritizing the lowest cost provider"}
-                                {providerSorting === "throughput" &&
-                                    "Sort by throughput, prioritizing highest throughput (may increase cost)"}
-                                {providerSorting === "latency" && "Sort by response time, prioritizing lowest latency"}
+                                {!providerSorting && t("settings.ui.routingDefaultHelp")}
+                                {providerSorting === "price" && t("settings.ui.routingPriceHelp")}
+                                {providerSorting === "throughput" && t("settings.ui.routingThroughputHelp")}
+                                {providerSorting === "latency" && t("settings.ui.routingLatencyHelp")}
                             </>
                         }
                         htmlFor={providerRoutingId}
-                        label="Provider Routing">
-                        <VSCodeDropdown
-                            aria-label="Provider Routing"
+                        label={t("settings.ui.providerRouting")}>
+                        <LocalizedDropdown
+                            aria-label={t("settings.ui.providerRouting")}
                             className="min-h-7 w-full"
                             id={providerRoutingId}
                             onChange={(e: any) => onProviderSortingChange(e.target.value)}
+                            selectedLabel={routingOptions.find((option) => option.value === (providerSorting || ""))?.label}
                             value={providerSorting || ""}>
-                            <VSCodeOption value="">Default</VSCodeOption>
-                            <VSCodeOption value="price">Price</VSCodeOption>
-                            <VSCodeOption value="throughput">Throughput</VSCodeOption>
-                            <VSCodeOption value="latency">Latency</VSCodeOption>
-                        </VSCodeDropdown>
+                            {routingOptions.map((option) => (
+                                <LocalizedOption key={option.value} label={option.label} value={option.value} />
+                            ))}
+                        </LocalizedDropdown>
                     </ProfileField>
                 ) : null}
             </AdvancedSection>
+            <PricingEditor
+                peakOffPeakLabels={peakOffPeakLabels}
+                pricing={modelInfo.pricing}
+                readOnly={true}
+                showCachePrices={modelInfo.capabilities?.supportsPromptCache === true}
+            />
         </div>
     )
 }

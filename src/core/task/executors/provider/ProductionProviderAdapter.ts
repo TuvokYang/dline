@@ -25,7 +25,7 @@ export type ProductionProviderChunk =
           readonly replyRows?: ProviderReplyPresentationRows
           readonly projection?: Readonly<Record<string, unknown>>
       }
-    | { readonly kind: "usage"; readonly usage: Readonly<Record<string, number>> }
+    | { readonly kind: "usage"; readonly usage: Readonly<Record<string, number>>; readonly currency?: string }
     /** How much the streaming response occupies so far. */
     | ({ readonly kind: "receiving" } & ProviderReceivingEstimate)
     /** The request failed before its first chunk and will be sent again. */
@@ -134,6 +134,7 @@ export class ProductionProviderAdapter implements ProviderExecutionPort {
                     index: block.index,
                     lanes: block.lanes,
                     turnEnding: block.turnEnding,
+                    ...(block.disposition ? { disposition: block.disposition } : {}),
                     invocationRef: await this.options.payloads.put(encodeTaskPayload(block.invocation)),
                     approval: block.approval,
                 })),

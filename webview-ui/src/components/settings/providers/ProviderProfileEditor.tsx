@@ -3,6 +3,8 @@ import {
     getModelInfoOverrideFields,
     pickModelInfoOverride,
 } from "@shared/providers/model-info-overrides"
+import { resolvePrimaryCatalogKey } from "@shared/providers/provider-catalog-key"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { AIhubmixProvider } from "./AihubmixProvider"
 import { AnthropicProvider } from "./AnthropicProvider"
 import { AskSageProvider } from "./AskSageProvider"
@@ -31,6 +33,7 @@ import { OcaProvider } from "./OcaProvider"
 import { OllamaProvider } from "./OllamaProvider"
 import { OpenAIProvider } from "./OpenAIProvider"
 import { OpenAiCodexProvider } from "./OpenAiCodexProvider"
+import { OpenCodeProvider } from "./OpenCodeProvider"
 import { OpenRouterProvider } from "./OpenRouterProvider"
 import type { ApiProfile } from "./ProviderProfile"
 import { QwenCodeProvider } from "./QwenCodeProvider"
@@ -59,8 +62,9 @@ interface ApiProfileEditorProps {
  * Does NOT know about profile list structure.
  */
 const ApiProfileEditor: React.FC<ApiProfileEditorProps> = ({ profile, isPopup, onUpdateProfile }) => {
+    const { t } = useUiTranslation()
     const showModelOptions = true
-    const { models } = useProviderModels(profile.provider || "")
+    const { models } = useProviderModels(profile.provider ? resolvePrimaryCatalogKey(profile.provider) : "")
 
     const onUpdate = (updates: Partial<ApiProfile>) => {
         const normalized = { ...updates }
@@ -226,8 +230,12 @@ const ApiProfileEditor: React.FC<ApiProfileEditorProps> = ({ profile, isPopup, o
             )
         case "wandb":
             return <WandbProvider isPopup={isPopup} onUpdate={onUpdate} profile={profile} showModelOptions={showModelOptions} />
+        case "opencode":
+            return (
+                <OpenCodeProvider isPopup={isPopup} onUpdate={onUpdate} profile={profile} showModelOptions={showModelOptions} />
+            )
         default:
-            return <div className="text-xs text-description">Select a provider to configure.</div>
+            return <div className="text-xs text-description">{t("settings.ui.configureProvider")}</div>
     }
 }
 

@@ -4,6 +4,8 @@
  * Writes ApiProfile configurations to ~/.dline/data/settings/api_profiles.json.
  */
 
+import { isDeepStrictEqual } from "node:util"
+import { validateModelPricing } from "@core/api/billing"
 import { ModelRegistry } from "@core/model-registry/ModelRegistry"
 import { OrchestratorController } from "@core/orchestrator/OrchestratorController"
 import { getProfileCatalogRepository } from "@core/profiles/profile-catalog-runtime"
@@ -16,6 +18,7 @@ import { type ApiKeyEntry, getAllApiKeys, setApiKeysBatch } from "@core/storage/
 import { Empty } from "@shared/proto/dline/common"
 import type { ApiProfile } from "@shared/proto/dline/profile"
 import { UpdateApiProfilesRequest } from "@shared/proto/dline/profile"
+import { resolveProfileOverrides } from "@shared/providers/profile-model-info"
 import { Logger } from "@shared/services/Logger"
 import type { Controller } from ".."
 import { applyRegistryModelDefaults, normalizeApiProfile } from "./getApiProfiles"
@@ -86,6 +89,17 @@ async function updateApiProfilesImpl(controller: Controller, request: UpdateApiP
 
     const repository = await getProfileCatalogRepository()
     const baseline = getProfileCatalogBaseline(controller) ?? (await repository.initialize())
+    // Validate only explicit edits. An untouched legacy declaration must not
+    // prevent an unrelated Profile change; removing an override inherits catalog pricing.
+    for (const profile of requested) {
+        const pricing = resolveProfileOverrides(profile).pricing
+        const before = baseline.find((entry) => entry.id === profile.id && entry.provider === profile.provider)
+        if (pricing === undefined || (before && isDeepStrictEqual(pricing, resolveProfileOverrides(before).pricing))) continue
+        const issues = validateModelPricing(pricing, { allowUnknown: false })
+        if (issues.length > 0) {
+            throw new Error(`Invalid pricing: ${issues.map((issue) => `${issue.path}: ${issue.message}`).join("; ")}`)
+        }
+    }
     let previous: ApiProfile[]
     let profiles: ApiProfile[]
     try {

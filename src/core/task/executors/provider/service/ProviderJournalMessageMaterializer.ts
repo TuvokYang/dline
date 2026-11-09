@@ -15,6 +15,8 @@ import type {
     EnvironmentDetailsEnvelope,
     ProviderFinalEnvelope,
     ProviderInterruptedEnvelope,
+    RoundMaterialInputEnvelope,
+    RoundNoticeEnvelope,
     TaskHandoffEnvelope,
     ToolResultEnvelope,
     ToolTerminalManifestEnvelope,
@@ -47,6 +49,8 @@ type JournalPayload =
     | ToolTerminalManifestEnvelope
     | TaskHandoffEnvelope
     | TurnContinuationEnvelope
+    | RoundMaterialInputEnvelope
+    | RoundNoticeEnvelope
     | ApiHistoryMessageEnvelope
     | { readonly kind: string; readonly [key: string]: unknown }
 
@@ -137,6 +141,9 @@ export class ProviderJournalMessageMaterializer {
         for (const payloadRef of payloadRefs) {
             const payload = decodeTaskPayload<JournalPayload>(await this.payloads.read(payloadRef))
             declarations.push(...declarationsOf(payload))
+            if (payload.kind === "dialog_draft" && (payload as DialogDraftEnvelope).admittedInputRef) {
+                declarations.push(...(await this.collectAuthority([(payload as DialogDraftEnvelope).admittedInputRef!])))
+            }
         }
         return declarations
     }
@@ -150,6 +157,14 @@ export class ProviderJournalMessageMaterializer {
     /** Read one payload once and render everything it contributes. */
     async materializeEntry(payloadRef: string): Promise<MaterializedPayload> {
         const payload = decodeTaskPayload<JournalPayload>(await this.payloads.read(payloadRef))
+        if (payload.kind === "round_material_input") {
+            const inputRef = (payload as RoundMaterialInputEnvelope).inputRef
+            const input = decodeTaskPayload<UserInputEnvelope | DialogDraftEnvelope>(await this.payloads.read(inputRef))
+            const source = await this.materializeEntry(
+                input.kind === "dialog_draft" && input.admittedInputRef ? input.admittedInputRef : inputRef,
+            )
+            return { ...source, kind: payload.kind }
+        }
         const messages: ClineStorageMessage[] = []
         const message = await this.materializePayload(payload)
         if (message) messages.push(message)
@@ -195,6 +210,7 @@ export class ProviderJournalMessageMaterializer {
         switch (payload.kind) {
             case "user_input": {
                 const input = payload as UserInputEnvelope
+                if (input.roundMaterialOwned) return undefined
                 if (input.admittedParts) {
                     const content = await buildAdmittedInputContent(
                         { parts: input.admittedParts, context: input.context, opensTask: input.opensTask === true },
@@ -270,6 +286,9 @@ export class ProviderJournalMessageMaterializer {
                 return this.materializeToolTerminalManifest(payload as ToolTerminalManifestEnvelope)
             case "task_handoff":
                 return textMessage((payload as TaskHandoffEnvelope).context)
+            case "round_notice":
+            case "round_active_away":
+                return textMessage((payload as RoundNoticeEnvelope).text)
             case "environment_details":
                 return textMessage((payload as EnvironmentDetailsEnvelope).text)
             case "background_results":
@@ -320,6 +339,7 @@ export class ProviderJournalMessageMaterializer {
         if (!result.feedbackRef) return { blocks: [], documents: [] }
         const feedback = decodeTaskPayload<DialogDraftEnvelope>(await this.payloads.read(result.feedbackRef))
         if (feedback.kind !== "dialog_draft") throw new Error(`InvalidToolApprovalFeedback:${result.blockId}`)
+        if (feedback.roundMaterialOwned) return { blocks: [], documents: [] }
         if (feedback.admittedParts) return buildAdmittedToolApprovalFeedbackContent(feedback.admittedParts, this.resources)
         return buildToolApprovalFeedbackContent(feedback.text, [...feedback.images], [...feedback.files])
     }

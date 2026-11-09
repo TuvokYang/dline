@@ -29,7 +29,6 @@ export const WandbProvider = ({ showModelOptions, isPopup, profile, onUpdate }: 
             {showModelOptions && (
                 <>
                     <ModelSelector
-                        label="Model"
                         models={models}
                         onChange={(e) =>
                             onUpdate({

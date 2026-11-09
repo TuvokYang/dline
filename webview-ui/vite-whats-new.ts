@@ -1,14 +1,15 @@
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import type { Plugin } from "vite"
-import type { WhatsNewInline, WhatsNewRelease } from "./src/config/whats-new-release"
+import type { WhatsNewEditions, WhatsNewInline, WhatsNewRelease } from "./src/config/whats-new-release"
 
 /** Import specifier the webview uses to read the parsed release. */
 export const WHATS_NEW_MODULE_ID = "virtual:dline-whats-new"
 const RESOLVED_MODULE_ID = `\0${WHATS_NEW_MODULE_ID}`
 
-/** English edition shown in the dialog; WHATS_NEW.md beside it is the Chinese counterpart. */
+/** Both editions share one release identity and acknowledgment boundary. */
 export const WHATS_NEW_SOURCE = resolve(__dirname, "../docs/whats-new/WHATS_NEW_en.md")
+export const WHATS_NEW_CHINESE_SOURCE = resolve(__dirname, "../docs/whats-new/WHATS_NEW.md")
 
 const RELEASE_HEADING = /^##\s+(\d+\.\d+\.\d+)\s*$/
 const LEVEL_TWO_HEADING = /^##\s/
@@ -59,8 +60,31 @@ export function parseWhatsNew(markdown: string, source: string): WhatsNewRelease
     return { version, items: items.map((item) => parseInline(item.text, item.location)) }
 }
 
-/** Serve {@link parseWhatsNew} of `sourcePath` as {@link WHATS_NEW_MODULE_ID}. */
-export function whatsNewPlugin(sourcePath: string = WHATS_NEW_SOURCE): Plugin {
+/** Parse the paired assets without allowing another release or missing highlights to be shown. */
+export function parseWhatsNewEditions(
+    english: { markdown: string; source: string },
+    chinese: { markdown: string; source: string },
+): WhatsNewEditions {
+    const en = parseWhatsNew(english.markdown, english.source)
+    const zhCN = parseWhatsNew(chinese.markdown, chinese.source)
+    if (en.version !== zhCN.version) {
+        throw new Error(
+            `What's New release versions differ: ${english.source} (${en.version}), ${chinese.source} (${zhCN.version}).`,
+        )
+    }
+    if (en.items.length !== zhCN.items.length) {
+        throw new Error(
+            `What's New item counts differ: ${english.source} (${en.items.length}), ${chinese.source} (${zhCN.items.length}).`,
+        )
+    }
+    return { en, "zh-CN": zhCN }
+}
+
+/** Serve both parsed editions; retain the English default for existing consumers. */
+export function whatsNewPlugin(
+    sourcePath: string = WHATS_NEW_SOURCE,
+    chineseSourcePath: string = WHATS_NEW_CHINESE_SOURCE,
+): Plugin {
     return {
         name: "dline-whats-new",
         resolveId(id) {
@@ -69,8 +93,12 @@ export function whatsNewPlugin(sourcePath: string = WHATS_NEW_SOURCE): Plugin {
         load(id) {
             if (id !== RESOLVED_MODULE_ID) return null
             this.addWatchFile(sourcePath)
-            const release = parseWhatsNew(readFileSync(sourcePath, "utf8"), sourcePath)
-            return `export default ${JSON.stringify(release)}`
+            this.addWatchFile(chineseSourcePath)
+            const releases = parseWhatsNewEditions(
+                { markdown: readFileSync(sourcePath, "utf8"), source: sourcePath },
+                { markdown: readFileSync(chineseSourcePath, "utf8"), source: chineseSourcePath },
+            )
+            return `export const localizedReleases = ${JSON.stringify(releases)}; export default localizedReleases.en;`
         },
     }
 }

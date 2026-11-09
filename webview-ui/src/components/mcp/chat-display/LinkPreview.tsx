@@ -2,6 +2,8 @@ import { StringRequest } from "@shared/proto/dline/common"
 import DOMPurify from "dompurify"
 import React from "react"
 import ChatErrorBoundary from "@/components/chat/ChatErrorBoundary"
+import type { UiTranslator } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { WebServiceClient } from "@/services/grpc-client"
 import { getSafeHostname, normalizeRelativeUrl } from "./utils/mcpRichUtil"
 
@@ -16,6 +18,10 @@ interface OpenGraphData {
 
 interface LinkPreviewProps {
     url: string
+}
+
+interface LocalizedLinkPreviewProps extends LinkPreviewProps {
+    t: UiTranslator
 }
 
 interface LinkPreviewState {
@@ -37,12 +43,12 @@ interface LinkPreviewState {
 type ErrorType = "timeout" | "network" | "general" | null
 
 // Use a class component to ensure complete isolation between instances
-class LinkPreview extends React.Component<LinkPreviewProps, LinkPreviewState> {
+class LinkPreview extends React.Component<LocalizedLinkPreviewProps, LinkPreviewState> {
     private messageListener: ((event: MessageEvent) => void) | null = null
     private timeoutId: NodeJS.Timeout | null = null
     private heartbeatId: NodeJS.Timeout | null = null
 
-    constructor(props: LinkPreviewProps) {
+    constructor(props: LocalizedLinkPreviewProps) {
         super(props)
         this.state = {
             loading: true,
@@ -66,9 +72,9 @@ class LinkPreview extends React.Component<LinkPreviewProps, LinkPreviewState> {
     }
 
     // Prevent updates if fetch has completed
-    shouldComponentUpdate(nextProps: LinkPreviewProps, nextState: LinkPreviewState) {
-        // If URL changes, allow update
-        if (nextProps.url !== this.props.url) {
+    shouldComponentUpdate(nextProps: LocalizedLinkPreviewProps, nextState: LinkPreviewState) {
+        // Translation changes update the existing instance, without fetching again.
+        if (nextProps.url !== this.props.url || nextProps.t !== this.props.t) {
             return true
         }
 
@@ -135,7 +141,7 @@ class LinkPreview extends React.Component<LinkPreviewProps, LinkPreviewState> {
             } else {
                 this.setState({
                     error: "network",
-                    errorMessage: "Failed to fetch Open Graph data",
+                    errorMessage: null,
                     loading: false,
                     hasCompletedFetch: true,
                 })
@@ -155,7 +161,7 @@ class LinkPreview extends React.Component<LinkPreviewProps, LinkPreviewState> {
         } catch (err) {
             this.setState({
                 error: "general",
-                errorMessage: err instanceof Error ? err.message : "Unknown error occurred",
+                errorMessage: err instanceof Error ? err.message : String(err),
                 loading: false,
                 hasCompletedFetch: true, // Mark as completed on error
             })
@@ -164,7 +170,7 @@ class LinkPreview extends React.Component<LinkPreviewProps, LinkPreviewState> {
     }
 
     render() {
-        const { url } = this.props
+        const { url, t } = this.props
         const { loading, error, errorMessage, ogData, fetchStartTime } = this.state
 
         // Calculate elapsed time for loading state
@@ -205,13 +211,16 @@ class LinkPreview extends React.Component<LinkPreviewProps, LinkPreviewState> {
 								}
 							`}
                         </style>
-                        Loading preview for {getSafeHostname(url)}...
+                        {t("capabilities.mcp.loadingPreview", { host: getSafeHostname(url) })}
                     </div>
                     {elapsedSeconds > 5 && (
                         <div style={{ fontSize: "11px", color: "var(--vscode-descriptionForeground)" }}>
                             {elapsedSeconds > 60
-                                ? `Waiting for ${Math.floor(elapsedSeconds / 60)}m ${elapsedSeconds % 60}s...`
-                                : `Waiting for ${elapsedSeconds}s...`}
+                                ? t("capabilities.mcp.waitingMinutes", {
+                                      minutes: Math.floor(elapsedSeconds / 60),
+                                      seconds: elapsedSeconds % 60,
+                                  })
+                                : t("capabilities.mcp.waitingSeconds", { seconds: elapsedSeconds })}
                         </div>
                     )}
                 </div>
@@ -220,12 +229,12 @@ class LinkPreview extends React.Component<LinkPreviewProps, LinkPreviewState> {
 
         // Handle different error states with specific messages
         if (error) {
-            let errorDisplay = "Unable to load preview"
+            let errorDisplay = t("capabilities.mcp.previewError")
 
             if (error === "timeout") {
-                errorDisplay = "Preview request timed out"
+                errorDisplay = t("capabilities.mcp.previewTimeout")
             } else if (error === "network") {
-                errorDisplay = "Network error loading preview"
+                errorDisplay = t("capabilities.mcp.previewNetwork")
             }
 
             return (
@@ -253,9 +262,14 @@ class LinkPreview extends React.Component<LinkPreviewProps, LinkPreviewState> {
                     }}>
                     <div style={{ fontWeight: "bold" }}>{errorDisplay}</div>
                     <div style={{ fontSize: "12px", marginTop: "4px" }}>{getSafeHostname(url)}</div>
-                    {errorMessage && <div style={{ fontSize: "11px", marginTop: "4px", opacity: 0.8 }}>{errorMessage}</div>}
+                    {errorMessage && (
+                        <details style={{ fontSize: "11px", marginTop: "4px", opacity: 0.8 }}>
+                            <summary>{t("capabilities.diagnostics")}</summary>
+                            {errorMessage}
+                        </details>
+                    )}
                     <div style={{ fontSize: "11px", marginTop: "8px", color: "var(--vscode-textLink-foreground)" }}>
-                        Click to open in browser
+                        {t("capabilities.mcp.openInBrowser")}
                     </div>
                 </div>
             )
@@ -264,7 +278,7 @@ class LinkPreview extends React.Component<LinkPreviewProps, LinkPreviewState> {
         // Create a fallback object if ogData is null
         const data = ogData || {
             title: getSafeHostname(url),
-            description: "No description available",
+            description: t("capabilities.mcp.noPreviewDescription"),
             siteName: getSafeHostname(url),
             url: url,
         }
@@ -348,7 +362,7 @@ class LinkPreview extends React.Component<LinkPreviewProps, LinkPreviewState> {
                                 overflow: "hidden",
                                 textOverflow: "ellipsis",
                             }}>
-                            {data.title || "No title"}
+                            {data.title || t("capabilities.mcp.noTitle")}
                         </div>
 
                         <div
@@ -385,7 +399,7 @@ class LinkPreview extends React.Component<LinkPreviewProps, LinkPreviewState> {
                                 WebkitBoxOrient: "vertical",
                                 textOverflow: "ellipsis",
                             }}>
-                            {data.description || "No description available"}
+                            {data.description || t("capabilities.mcp.noPreviewDescription")}
                         </div>
                     </div>
                 </div>
@@ -396,15 +410,16 @@ class LinkPreview extends React.Component<LinkPreviewProps, LinkPreviewState> {
 
 // Create a wrapper component that memoizes the LinkPreview to prevent unnecessary re-renders
 const MemoizedLinkPreview = React.memo(
-    (props: LinkPreviewProps) => <LinkPreview {...props} />,
-    (prevProps, nextProps) => prevProps.url === nextProps.url, // Only re-render if URL changes
+    (props: LocalizedLinkPreviewProps) => <LinkPreview {...props} />,
+    (prevProps, nextProps) => prevProps.url === nextProps.url && prevProps.t === nextProps.t,
 )
 
 // Wrap the LinkPreview component with an error boundary
 const LinkPreviewWithErrorBoundary: React.FC<LinkPreviewProps> = (props) => {
+    const { t } = useUiTranslation()
     return (
-        <ChatErrorBoundary errorTitle="Something went wrong displaying this link preview">
-            <MemoizedLinkPreview {...props} />
+        <ChatErrorBoundary errorBody={t("capabilities.mcp.boundaryBody")} errorTitle={t("capabilities.mcp.linkBoundary")}>
+            <MemoizedLinkPreview {...props} t={t} />
         </ChatErrorBoundary>
     )
 }

@@ -3,6 +3,7 @@ import { StringRequest } from "@shared/proto/dline/common"
 import { useEffect, useState } from "react"
 import { CopyButton } from "@/components/common/CopyButton"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { FileServiceClient, WebServiceClient } from "@/services/grpc-client"
 import type { ClaudeCodeOAuthDialogPhase } from "./useClaudeCodeOAuthFlow"
 
@@ -43,9 +44,10 @@ export function ClaudeCodeOAuthDialog({
     onRestart,
     onTimedOut,
 }: ClaudeCodeOAuthDialogProps) {
+    const { t } = useUiTranslation()
     const [pastedValue, setPastedValue] = useState("")
     const [nowMs, setNowMs] = useState(Date.now())
-    const [browserActionError, setBrowserActionError] = useState<string>()
+    const [browserActionError, setBrowserActionError] = useState<"settings.ui.auth.browserError">()
     const timedOut = phase === "timed-out"
     const active = phase === "active" || phase === "completing"
 
@@ -87,7 +89,7 @@ export function ClaudeCodeOAuthDialog({
         try {
             await WebServiceClient.openInBrowser(StringRequest.create({ value: url }))
         } catch {
-            setBrowserActionError("Could not open the browser. Copy the sign-in URL and open it manually.")
+            setBrowserActionError("settings.ui.auth.browserError")
         }
     }
 
@@ -101,34 +103,36 @@ export function ClaudeCodeOAuthDialog({
                 className="!top-1/2 flex max-h-[calc(100vh-2rem)] w-[calc(100%-1.5rem)] max-w-[440px] !translate-y-[-50%] flex-col gap-0 p-0"
                 onInteractOutside={(event) => event.preventDefault()}>
                 <DialogHeader className="shrink-0 px-4 pb-3 pt-4 pr-10 text-left">
-                    <DialogTitle>Sign in to Claude</DialogTitle>
+                    <DialogTitle>{t("settings.ui.auth.dialogTitle", { provider: "Claude" })}</DialogTitle>
                     <DialogDescription>
                         {phase === "starting"
-                            ? "Preparing the sign-in…"
+                            ? t("settings.ui.auth.preparing")
                             : timedOut
-                              ? "This sign-in timed out. Start again."
-                              : "Authorize in the browser. If it cannot return automatically, paste what Claude gives you."}
+                              ? t("settings.ui.auth.timeoutHelp")
+                              : t("settings.ui.auth.claudeAuthorize")}
                     </DialogDescription>
                 </DialogHeader>
 
                 <div className="min-h-0 flex-1 overflow-y-auto border-y border-input-border/60 px-4 py-3">
                     <div className="flex flex-col gap-4">
-                        {phase === "starting" ? <div className="text-sm">Generating the sign-in URL…</div> : null}
+                        {phase === "starting" ? <div className="text-sm">{t("settings.ui.auth.generating")}</div> : null}
                         {phase === "failed" && !flow ? (
-                            <div className="text-sm text-error-foreground">This sign-in failed. Try again.</div>
+                            <div className="text-sm text-error-foreground">{t("settings.ui.auth.failedHelp")}</div>
                         ) : null}
                         {flow ? (
                             <>
                                 <div className="flex items-center justify-between gap-2 text-sm">
                                     <span>
                                         {timedOut
-                                            ? "Sign-in timed out"
+                                            ? t("settings.ui.auth.timedOut")
                                             : phase === "completing"
-                                              ? "Completing sign-in…"
-                                              : "Waiting for authorization"}
+                                              ? t("settings.ui.auth.completing")
+                                              : t("settings.ui.auth.waiting")}
                                     </span>
                                     <span className="shrink-0 tabular-nums text-description">
-                                        {timedOut ? "00:00" : `${formatRemaining(flow.expiresAtMs, nowMs)} left`}
+                                        {timedOut
+                                            ? "00:00"
+                                            : t("settings.ui.auth.timeLeft", { time: formatRemaining(flow.expiresAtMs, nowMs) })}
                                     </span>
                                 </div>
 
@@ -137,18 +141,18 @@ export function ClaudeCodeOAuthDialog({
                                         <label
                                             className="text-sm font-medium"
                                             htmlFor={`claude-code-authorization-uri-${flow.profileId}`}>
-                                            Sign-in URL
+                                            {t("settings.ui.auth.url")}
                                         </label>
                                         <div className="flex min-w-0 items-center gap-1">
                                             <input
-                                                aria-label="Claude sign-in URL"
+                                                aria-label={t("settings.ui.auth.providerUrl", { provider: "Claude" })}
                                                 className="min-h-7 min-w-0 flex-1 truncate rounded-xs border border-input-border bg-input-background px-2 text-sm"
                                                 id={`claude-code-authorization-uri-${flow.profileId}`}
                                                 readOnly
                                                 value={flow.authorizationUrl}
                                             />
                                             <CopyButton
-                                                ariaLabel="Copy sign-in URL"
+                                                ariaLabel={t("settings.ui.auth.copyUrl")}
                                                 textToCopy={flow.authorizationUrl}
                                                 writeText={(value) =>
                                                     FileServiceClient.copyToClipboard(StringRequest.create({ value }))
@@ -159,30 +163,29 @@ export function ClaudeCodeOAuthDialog({
                                             className="self-start text-sm text-link underline"
                                             onClick={() => void openInBrowser(flow.authorizationUrl)}
                                             type="button">
-                                            Open in browser again
+                                            {t("settings.ui.auth.openBrowser")}
                                         </button>
                                         {!flow.loopbackListening ? (
                                             <div className="text-sm text-warning-foreground" role="status">
-                                                No local callback port was available, so this sign-in must be finished by pasting
-                                                the code Claude shows you.
+                                                {t("settings.ui.auth.noCallback")}
                                             </div>
                                         ) : flow.manualAuthorizationUrl ? (
                                             <button
                                                 className="self-start text-sm text-link underline"
                                                 onClick={() => void openInBrowser(flow.manualAuthorizationUrl as string)}
                                                 type="button">
-                                                Use the copy-a-code page instead
+                                                {t("settings.ui.auth.codePage")}
                                             </button>
                                         ) : null}
                                         {flow.browserOpenStatus ===
                                         OpenAiCodexBrowserOpenStatus.OPEN_AI_CODEX_BROWSER_OPEN_STATUS_FAILED ? (
                                             <div className="text-sm text-warning-foreground" role="status">
-                                                The browser did not open automatically. Copy the sign-in URL and open it manually.
+                                                {t("settings.ui.auth.browserNotOpened")}
                                             </div>
                                         ) : null}
                                         {browserActionError ? (
                                             <div className="text-sm text-error-foreground" role="alert">
-                                                {browserActionError}
+                                                {t(browserActionError)}
                                             </div>
                                         ) : null}
                                     </div>
@@ -190,22 +193,20 @@ export function ClaudeCodeOAuthDialog({
 
                                 <div className="flex flex-col gap-2">
                                     <label className="text-sm font-medium" htmlFor={`claude-code-callback-${flow.profileId}`}>
-                                        Paste the callback URL or authorization code
+                                        {t("settings.ui.auth.pasteCode")}
                                     </label>
                                     <textarea
-                                        aria-label="Callback URL or authorization code"
+                                        aria-label={t("settings.ui.auth.callbackCode")}
                                         autoComplete="off"
                                         className="h-14 w-full resize-none overflow-y-auto rounded-xs border border-input-border bg-input-background p-2 text-sm"
                                         disabled={busy || timedOut}
                                         id={`claude-code-callback-${flow.profileId}`}
                                         onChange={(event) => setPastedValue(event.target.value)}
-                                        placeholder="http://localhost:…/callback?code=… or code#state"
+                                        placeholder={t("settings.ui.auth.codePlaceholder")}
                                         spellCheck={false}
                                         value={pastedValue}
                                     />
-                                    <p className="text-xs text-description">
-                                        Either form works; Dline detects which one you pasted.
-                                    </p>
+                                    <p className="text-xs text-description">{t("settings.ui.auth.codeHelp")}</p>
                                 </div>
                             </>
                         ) : null}
@@ -223,14 +224,14 @@ export function ClaudeCodeOAuthDialog({
                         disabled={busy}
                         onClick={() => void cancel()}
                         type="button">
-                        Cancel
+                        {t("settings.ui.cancel")}
                     </button>
                     <button
                         className="min-h-7 rounded-xs bg-button px-3 text-sm text-button-foreground disabled:opacity-50"
                         disabled={busy || (active && pastedValue.trim().length === 0)}
                         onClick={() => void (timedOut || phase === "failed" ? onRestart() : complete())}
                         type="button">
-                        {timedOut || phase === "failed" ? "Try again" : "Finish sign-in"}
+                        {timedOut || phase === "failed" ? t("settings.ui.auth.tryAgain") : t("settings.ui.auth.finish")}
                     </button>
                 </DialogFooter>
             </DialogContent>

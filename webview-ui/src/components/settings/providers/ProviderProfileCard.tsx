@@ -4,22 +4,27 @@ import { type ImageGenerationProfile, ImageGenerationSource } from "@shared/prot
 import { AnthropicProviderConfig } from "@shared/proto/dline/provider/anthropic"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
 import { PROFILE_PROVIDER_KEYS, resolveProfileModelInfo } from "@shared/providers/profile-model-info"
+import { resolvePrimaryCatalogKey } from "@shared/providers/provider-catalog-key"
 import { clampThinkingBudget, resolveThinkingBudgetBounds } from "@shared/providers/thinking-budget"
 import type { Mode } from "@shared/storage/types"
 import { resolveProfileReasoningConfig, resolveTaskThinkingConfig } from "@shared/task-reasoning"
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import type { ReactNode } from "react"
+import type { UiTranslator } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { getCurrencySymbol } from "@/utils/currency"
 import { ProfileField, ProfileForm, ProfileSection } from "../profile-ui"
+import { formatReasoningEffort } from "../utils/uiLabels"
 import { formatDeepSeekThinkingSummary } from "./deepseek-thinking"
 import { ProfileCapabilityIcons } from "./ProfileCapabilityIcons"
 import { ProfileUsageBadges } from "./ProfileUsageBadges"
-import type { ApiProfile } from "./ProviderProfile"
+import { type ApiProfile, defaultProviderConfig } from "./ProviderProfile"
 import ApiProfileEditor from "./ProviderProfileEditor"
+import { profileDisplayName } from "./profileDisplayName"
 import { getCachedProviderDefaultImageModelId, getCachedProviderDefaultModelId, useProviderModels } from "./useProviderModels"
 import { WebToolsModeControl } from "./WebToolsModeControl"
 
-function formatThinkingSummary(reasoning: ReasoningConfig | undefined, thinking: ThinkingConfig | undefined) {
+function formatThinkingSummary(t: UiTranslator, reasoning: ReasoningConfig | undefined, thinking: ThinkingConfig | undefined) {
     if (thinking?.supported !== true || (thinking.mode !== "effort" && thinking.mode !== "budget")) return undefined
     const effort = reasoning?.effort?.trim()
     const required = thinking.canDisable === false
@@ -27,14 +32,16 @@ function formatThinkingSummary(reasoning: ReasoningConfig | undefined, thinking:
         reasoning?.enableThinking === false ||
         effort === "none" ||
         (thinking.mode === "budget" && reasoning?.thinkingBudget === 0)
-    if (disabled && !required) return "Thinking: Off"
+    if (disabled && !required) return t("settings.ui.thinkingOff")
 
     if (thinking.mode === "budget") {
         if (!resolveThinkingBudgetBounds(thinking)) return undefined
         const budget = disabled ? undefined : clampThinkingBudget(reasoning?.thinkingBudget ?? 0, thinking)
         const enabled = required || (reasoning?.enableThinking ?? (budget !== undefined || thinking.defaultEnabled === true))
         if (!enabled) return undefined
-        return budget !== undefined ? `Thinking: ${budget.toLocaleString()} tokens` : "Thinking: Budget"
+        return budget !== undefined
+            ? t("settings.ui.thinkingTokens", { count: budget.toLocaleString() })
+            : t("settings.ui.thinkingBudgetSummary")
     }
 
     const levels = thinking.effortLevels ?? []
@@ -44,7 +51,9 @@ function formatThinkingSummary(reasoning: ReasoningConfig | undefined, thinking:
     const defaultEffort =
         !disabled && thinking.defaultEffort && levels.includes(thinking.defaultEffort) ? thinking.defaultEffort : undefined
     const selectedEffort = legalEffort ?? defaultEffort
-    return selectedEffort ? `Thinking: ${selectedEffort.replace(/^./, (character) => character.toUpperCase())}` : "Thinking: On"
+    return selectedEffort
+        ? t("settings.ui.thinkingEffort", { effort: formatReasoningEffort(t, selectedEffort) })
+        : t("settings.ui.thinkingOn")
 }
 
 interface ApiProfileCardProps {
@@ -79,12 +88,12 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
     onToggleSelect,
     dragHandle,
 }) => {
+    const { t } = useUiTranslation()
     const hasProvider = !!profile.provider
-    const providerLabel = hasProvider ? profile.provider : "Select provider..."
-    const modelLabel = profile.modelId || (hasProvider ? "Select model..." : "")
-    const profileName =
-        profile.name || (hasProvider && profile.modelId ? `${profile.provider}:${profile.modelId}` : "Unnamed profile")
-    const currentCatalog = useProviderModels(profile.provider || "")
+    const providerLabel = hasProvider ? profile.provider : t("settings.ui.selectProvider")
+    const modelLabel = profile.modelId || (hasProvider ? t("settings.ui.selectModel") : "")
+    const profileName = profileDisplayName(profile, t)
+    const currentCatalog = useProviderModels(profile.provider ? resolvePrimaryCatalogKey(profile.provider) : "")
     const source =
         profile.imageSource === ImageGenerationSource.IMAGE_GENERATION_SOURCE_GPT_SUBSCRIPTION ||
         profile.imageSource === ImageGenerationSource.IMAGE_GENERATION_SOURCE_GPT_API ||
@@ -97,7 +106,7 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
         source === ImageGenerationSource.IMAGE_GENERATION_SOURCE_INDEPENDENT
             ? selectedImageProfile?.provider || ""
             : profile.provider || ""
-    const selectedCatalog = useProviderModels(imageProvider)
+    const selectedCatalog = useProviderModels(imageProvider ? resolvePrimaryCatalogKey(imageProvider) : "")
     const hasIndependent = imageProfiles.some((candidate) => candidate.enabled)
     const imageModels = Object.fromEntries(
         Object.entries(selectedCatalog.imageModels).filter(([modelId]) => modelId !== GPT_IMAGE_2_SUBSCRIPTION_MODEL_ID),
@@ -133,26 +142,34 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
     const thinking = resolveTaskThinkingConfig(info?.capabilities)
     const thinkingSummary =
         profile.provider === "deepseek"
-            ? formatDeepSeekThinkingSummary(reasoning, thinking)
-            : formatThinkingSummary(reasoning, thinking)
+            ? formatDeepSeekThinkingSummary(reasoning, thinking, t)
+            : formatThinkingSummary(t, reasoning, thinking)
     const subtitle = [providerLabel, modelLabel, thinkingSummary].filter(Boolean).join(" · ")
     const displayLine = [profileName, subtitle].filter(Boolean).join(" · ")
     const tooltipLines: string[] = [displayLine]
     if (info) {
         const mi = info
         if (mi.capabilities?.contextWindow)
-            tooltipLines.push(`Context: ${mi.capabilities?.contextWindow.toLocaleString()} tokens`)
-        if (mi.capabilities?.maxTokens) tooltipLines.push(`Max output: ${mi.capabilities.maxTokens.toLocaleString()} tokens`)
-        if (mi.pricing?.inputPrice != null) {
-            const currencySymbol = getCurrencySymbol(mi.pricing.currency)
-            tooltipLines.push(
-                `In: ${currencySymbol}${mi.pricing.inputPrice}/M | Out: ${currencySymbol}${mi.pricing.outputPrice ?? "?"}/M`,
-            )
+            tooltipLines.push(t("settings.ui.contextTokens", { count: mi.capabilities.contextWindow.toLocaleString() }))
+        if (mi.capabilities?.maxTokens)
+            tooltipLines.push(t("settings.ui.outputTokens", { count: mi.capabilities.maxTokens.toLocaleString() }))
+        if (mi.pricing?.strategy?.flat) {
+            const prices = mi.pricing.strategy.flat.prices
+            const symbol = mi.pricing.currency?.trim() ? getCurrencySymbol(mi.pricing.currency) : ""
+            const input = prices?.inputPrice === undefined ? "—" : `${symbol}${prices.inputPrice}`
+            const output = prices?.outputPrice === undefined ? "—" : `${symbol}${prices.outputPrice}`
+            tooltipLines.push(t("settings.ui.priceSummary", { input, output }))
         }
         if (mi.capabilities?.supportsReasoning)
-            tooltipLines.push(`Reasoning: ${mi.capabilities?.thinking?.effortLevels?.join(", ") || "supported"}`)
-        if (mi.capabilities?.supportsImages) tooltipLines.push("Images: supported")
-        if (mi.capabilities?.supportsPromptCache) tooltipLines.push("Prompt cache: supported")
+            tooltipLines.push(
+                t("settings.ui.reasoningSummary", {
+                    levels:
+                        mi.capabilities.thinking?.effortLevels?.map((effort) => formatReasoningEffort(t, effort)).join(", ") ||
+                        t("settings.ui.supported").toLowerCase(),
+                }),
+            )
+        if (mi.capabilities?.supportsImages) tooltipLines.push(t("settings.ui.imagesSupported"))
+        if (mi.capabilities?.supportsPromptCache) tooltipLines.push(t("settings.ui.cacheSupported"))
         if (mi.description) tooltipLines.push(mi.description)
     }
     const cardTooltip = tooltipLines.join("\n")
@@ -164,7 +181,7 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
                 title={cardTooltip}>
                 {editMode ? (
                     <input
-                        aria-label={`Select ${profileName}`}
+                        aria-label={t("settings.ui.selectProfile", { name: profileName })}
                         checked={selected ?? false}
                         className="size-4 shrink-0 cursor-pointer"
                         onChange={() => onToggleSelect?.()}
@@ -173,7 +190,11 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
                 ) : null}
                 {dragHandle}
                 <button
-                    aria-label={isExpanded ? `Collapse ${profileName}` : `Expand ${profileName}`}
+                    aria-label={
+                        isExpanded
+                            ? t("settings.ui.collapseProfile", { name: profileName })
+                            : t("settings.ui.expandProfile", { name: profileName })
+                    }
                     className="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-xs border-0 bg-transparent text-description hover:bg-toolbar-hover hover:text-foreground"
                     onClick={onToggleExpand}
                     type="button">
@@ -182,7 +203,7 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
                 <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-0.5 py-0.5">
                     {editMode || isExpanded ? (
                         <input
-                            aria-label="Profile name"
+                            aria-label={t("settings.ui.profileName")}
                             className="col-span-2 min-h-7 min-w-0 w-full max-w-80 justify-self-start bg-transparent px-1 text-sm font-medium text-foreground outline-none focus:bg-input-background focus:ring-1 focus:ring-border xs:col-span-1 xs:col-start-1 xs:row-start-1"
                             defaultValue={profile.name}
                             key={`${profile.id}:${profile.name}`}
@@ -211,9 +232,9 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
             {/* Expanded: delegate to ApiProfileEditor */}
             {isExpanded && (
                 <ProfileForm className="border-t border-editor-widget-border/30 px-3 pb-3 pt-3">
-                    <ProfileField htmlFor={`profile-provider-${profile.id}`} label="Provider">
+                    <ProfileField htmlFor={`profile-provider-${profile.id}`} label={t("settings.ui.provider")}>
                         <select
-                            aria-label="Provider"
+                            aria-label={t("settings.ui.provider")}
                             className="min-h-7 w-full rounded-xs border border-input-border bg-input-background px-2 text-sm"
                             id={`profile-provider-${profile.id}`}
                             onChange={(e) => {
@@ -243,7 +264,7 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
                                     provider,
                                     apiKey: "",
                                     baseUrl: undefined,
-                                    modelId: getCachedProviderDefaultModelId(provider),
+                                    modelId: getCachedProviderDefaultModelId(resolvePrimaryCatalogKey(provider)),
                                     imageSource,
                                     imageProfileId: keepsIndependentSource ? profile.imageProfileId : undefined,
                                     imageModelId: imageModelId || undefined,
@@ -257,10 +278,11 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
                                 if (e.target.value === "anthropic") {
                                     updates.anthropic = AnthropicProviderConfig.create({ enableLongContext: true })
                                 }
+                                Object.assign(updates, defaultProviderConfig(provider))
                                 onUpdate(updates)
                             }}
                             value={profile.provider}>
-                            <option value="">Select provider...</option>
+                            <option value="">{t("settings.ui.selectProvider")}</option>
                             {providerOptions.map((opt) => (
                                 <option key={opt.value} value={opt.value}>
                                     {opt.label}
@@ -276,7 +298,7 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
                         />
                     )}
 
-                    <ProfileSection aria-label="Profile usage">
+                    <ProfileSection aria-label={t("settings.ui.profileUsage")}>
                         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                             {(["act", "plan", "subagents"] as const).map((mode) => (
                                 <label className="flex cursor-pointer items-center gap-1 text-sm" key={mode}>
@@ -286,17 +308,23 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
                                         onChange={() => toggleUse(mode)}
                                         type="checkbox"
                                     />
-                                    <span>{mode === "act" ? "Act" : mode === "plan" ? "Plan" : "Subagents"}</span>
+                                    <span>
+                                        {mode === "act"
+                                            ? t("settings.ui.act")
+                                            : mode === "plan"
+                                              ? t("settings.ui.plan")
+                                              : t("settings.ui.subagents")}
+                                    </span>
                                 </label>
                             ))}
                         </div>
                     </ProfileSection>
 
                     {imageGenerationEnabled ? (
-                        <ProfileSection aria-label="Image source">
-                            <ProfileField label="Image source">
+                        <ProfileSection aria-label={t("settings.ui.imageSource")}>
+                            <ProfileField label={t("settings.ui.imageSource")}>
                                 <select
-                                    aria-label="Image source"
+                                    aria-label={t("settings.ui.imageSource")}
                                     className="min-h-7 w-full rounded-xs border border-input-border bg-input-background px-2 text-sm"
                                     onChange={(event) => {
                                         const nextSource = Number(event.target.value) as ImageGenerationSource
@@ -323,10 +351,12 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
                                         })
                                     }}
                                     value={source}>
-                                    <option value={ImageGenerationSource.IMAGE_GENERATION_SOURCE_UNSPECIFIED}>None</option>
+                                    <option value={ImageGenerationSource.IMAGE_GENERATION_SOURCE_UNSPECIFIED}>
+                                        {t("settings.ui.none")}
+                                    </option>
                                     {supportsGptSubscription ? (
                                         <option value={ImageGenerationSource.IMAGE_GENERATION_SOURCE_GPT_SUBSCRIPTION}>
-                                            GPT Subscription
+                                            {t("settings.ui.gptSubscription")}
                                         </option>
                                     ) : null}
                                     {supportsGptApi ? (
@@ -334,18 +364,20 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
                                     ) : null}
                                     {hasIndependent ? (
                                         <option value={ImageGenerationSource.IMAGE_GENERATION_SOURCE_INDEPENDENT}>
-                                            Independent
+                                            {t("settings.ui.independent")}
                                         </option>
                                     ) : null}
                                     {supportsHosted ? (
-                                        <option value={ImageGenerationSource.IMAGE_GENERATION_SOURCE_HOSTED}>Hosted</option>
+                                        <option value={ImageGenerationSource.IMAGE_GENERATION_SOURCE_HOSTED}>
+                                            {t("settings.ui.hosted")}
+                                        </option>
                                     ) : null}
                                 </select>
                             </ProfileField>
                             {source === ImageGenerationSource.IMAGE_GENERATION_SOURCE_INDEPENDENT ? (
-                                <ProfileField label="Image profile">
+                                <ProfileField label={t("settings.ui.imageProfile")}>
                                     <select
-                                        aria-label="Image profile"
+                                        aria-label={t("settings.ui.imageProfile")}
                                         className="min-h-7 w-full rounded-xs border border-input-border bg-input-background px-2 text-sm"
                                         onChange={(event) => {
                                             const selected = imageProfiles.find(
@@ -358,7 +390,7 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
                                             })
                                         }}
                                         value={selectedImageProfile?.id || ""}>
-                                        <option value="">Select image profile...</option>
+                                        <option value="">{t("settings.ui.selectImageProfile")}</option>
                                         {imageProfiles
                                             .filter((candidate) => candidate.enabled)
                                             .map((candidate) => (
@@ -372,15 +404,15 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
                             {source === ImageGenerationSource.IMAGE_GENERATION_SOURCE_HOSTED ? (
                                 <p className="m-0 text-xs text-description">
                                     {profile.provider === "openai-codex"
-                                        ? "Uses ChatGPT Codex Responses hosted image generation with the signed-in subscription."
-                                        : "Uses OpenAI Responses hosted image generation and separate API Platform billing. ChatGPT/GPT subscriptions are not used."}
+                                        ? t("settings.ui.hostedCodexHelp")
+                                        : t("settings.ui.hostedApiHelp")}
                                 </p>
                             ) : source === ImageGenerationSource.IMAGE_GENERATION_SOURCE_GPT_SUBSCRIPTION ||
                               source === ImageGenerationSource.IMAGE_GENERATION_SOURCE_GPT_API ||
                               source === ImageGenerationSource.IMAGE_GENERATION_SOURCE_INDEPENDENT ? (
-                                <ProfileField label="Image model">
+                                <ProfileField label={t("settings.ui.imageModel")}>
                                     <select
-                                        aria-label="Image model"
+                                        aria-label={t("settings.ui.imageModel")}
                                         className="min-h-7 w-full rounded-xs border border-input-border bg-input-background px-2 text-sm"
                                         onChange={(event) => onUpdate({ imageModelId: event.target.value })}
                                         value={effectiveImageModelId || ""}>

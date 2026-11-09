@@ -1,5 +1,6 @@
 import type { ContextWindowIndicatorPhase, ContextWindowIndicatorSnapshot } from "@shared/context-window-indicator"
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import {
     type ContextWindowDurablePartViewModel,
     type ContextWindowSegmentKind,
@@ -60,7 +61,7 @@ const SEGMENT_COLORS: Record<ContextWindowSegmentKind, string> = {
 }
 
 function getSegmentColor(segment: ContextWindowSegmentViewModel): string {
-    if (segment.kind === "active" && segment.label === "Receiving") return "var(--vscode-charts-yellow, #d29922)"
+    if (segment.kind === "active" && segment.activity === "receiving") return "var(--vscode-charts-yellow, #d29922)"
     return SEGMENT_COLORS[segment.kind]
 }
 
@@ -152,6 +153,7 @@ function quantizeWidthPercent(widthPercent: number): number {
 /** Render the authoritative context snapshot as four ordered, independently animated segments. */
 const ContextWindowSegmentedProgress = memo(
     ({ snapshot, onOccupiedMouseEnter, onDurableClick }: ContextWindowSegmentedProgressProps) => {
+        const { t } = useUiTranslation()
         const transition = useSegmentTransition(snapshot)
         const motion = transition.motion
         const previousTemporaryTokens = transition.previous
@@ -173,11 +175,15 @@ const ContextWindowSegmentedProgress = memo(
                 : (snapshot.stagedTokens ?? 0)
         const viewModel = useMemo(
             () =>
-                createContextWindowIndicatorViewModel(snapshot, {
-                    active: activeDisplayTokens,
-                    staged: stagedDisplayTokens,
-                }),
-            [activeDisplayTokens, stagedDisplayTokens, snapshot],
+                createContextWindowIndicatorViewModel(
+                    snapshot,
+                    {
+                        active: activeDisplayTokens,
+                        staged: stagedDisplayTokens,
+                    },
+                    t,
+                ),
+            [activeDisplayTokens, stagedDisplayTokens, snapshot, t],
         )
         const segments = useMemo<SegmentDefinition[]>(() => {
             const projected = viewModel.segments.map((segment) => ({
@@ -225,11 +231,15 @@ const ContextWindowSegmentedProgress = memo(
 
         return (
             <div
-                aria-label="Context window usage progress"
+                aria-label={t("chatInput.context.progress")}
                 aria-valuemax={snapshot.contextWindow}
                 aria-valuemin={0}
                 aria-valuenow={Math.min(viewModel.totalTokens, snapshot.contextWindow)}
-                aria-valuetext={`${viewModel.totalTokens} of ${snapshot.contextWindow} tokens; phase ${snapshot.phase}`}
+                aria-valuetext={t("chatInput.context.usage", {
+                    used: viewModel.totalTokens,
+                    total: snapshot.contextWindow,
+                    phase: t(`chatInput.context.phase.${snapshot.phase}`),
+                })}
                 className="relative h-3 w-full overflow-hidden rounded-full bg-code-foreground/20"
                 data-context-window={snapshot.contextWindow}
                 data-epoch={snapshot.epoch}
@@ -251,7 +261,10 @@ const ContextWindowSegmentedProgress = memo(
                         return (
                             <div
                                 aria-hidden={segment.displayTokens <= 0 ? "true" : undefined}
-                                aria-label={`${segment.label}: ${segment.authoritativeTokens} tokens`}
+                                aria-label={t("chatInput.context.segmentUsage", {
+                                    label: segment.label,
+                                    tokens: segment.authoritativeTokens,
+                                })}
                                 className={`h-full shrink transition-[width,opacity,transform,filter] duration-300 ease-out motion-reduce:transition-none motion-reduce:transform-none ${
                                     active ? "animate-pulse motion-reduce:animate-none" : ""
                                 }`}

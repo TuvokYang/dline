@@ -1,6 +1,7 @@
 import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import React, { useCallback, useState } from "react"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { updateSetting } from "./utils/settingsHandlers"
 
 interface CustomPromptCheckboxProps {
@@ -11,6 +12,7 @@ interface CustomPromptCheckboxProps {
  * Checkbox to enable or disable the use of a compact prompt for local models providers.
  */
 const UseCustomPromptCheckbox: React.FC<CustomPromptCheckboxProps> = ({ providerId }) => {
+    const { t } = useUiTranslation()
     const { customPrompt } = useExtensionState()
     const [isCompactPromptEnabled, setIsCompactPromptEnabled] = useState<boolean>(customPrompt === "compact")
 
@@ -22,13 +24,13 @@ const UseCustomPromptCheckbox: React.FC<CustomPromptCheckboxProps> = ({ provider
     return (
         <div id={providerId}>
             <VSCodeCheckbox checked={isCompactPromptEnabled} onChange={() => toggleCompactPrompt(!isCompactPromptEnabled)}>
-                Use compact prompt
+                {t("settings.ui.compactPrompt")}
             </VSCodeCheckbox>
             <div className="text-xs text-description">
-                A system prompt optimized for smaller context window (e.g. 8k or less).
+                {t("settings.ui.compactPromptHelp")}
                 <div className="text-error flex align-middle">
                     <i className="codicon codicon-x" />
-                    Does not support Mcp and Focus Chain
+                    {t("settings.ui.compactPromptWarning")}
                 </div>
             </div>
         </div>

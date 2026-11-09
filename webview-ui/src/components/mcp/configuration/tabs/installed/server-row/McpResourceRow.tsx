@@ -1,10 +1,13 @@
 import { McpResource, McpResourceTemplate } from "@shared/mcp"
+import { CapabilityRichText } from "@/components/agent-capabilities/CapabilityRichText"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 
 type McpResourceRowProps = {
     item: McpResource | McpResourceTemplate
 }
 
 const McpResourceRow = ({ item }: McpResourceRowProps) => {
+    const { t } = useUiTranslation()
     const hasUri = "uri" in item
     const uri = hasUri ? item.uri : item.uriTemplate
 
@@ -35,22 +38,31 @@ const McpResourceRow = ({ item }: McpResourceRowProps) => {
                       ? item.description
                       : !item.description && item.name
                         ? item.name
-                        : "No description"}
+                        : t("capabilities.mcp.noDescription")}
             </div>
             <div
                 style={{
                     fontSize: "12px",
                 }}>
-                <span style={{ opacity: 0.8 }}>Returns </span>
-                <code
-                    style={{
-                        color: "var(--vscode-textPreformat-foreground)",
-                        background: "var(--vscode-textPreformat-background)",
-                        padding: "1px 4px",
-                        borderRadius: "3px",
-                    }}>
-                    {item.mimeType || "Unknown"}
-                </code>
+                <CapabilityRichText
+                    parts={[
+                        {
+                            name: "type",
+                            node: (
+                                <code
+                                    style={{
+                                        color: "var(--vscode-textPreformat-foreground)",
+                                        background: "var(--vscode-textPreformat-background)",
+                                        padding: "1px 4px",
+                                        borderRadius: "3px",
+                                    }}>
+                                    {item.mimeType || t("capabilities.mcp.unknownType")}
+                                </code>
+                            ),
+                        },
+                    ]}
+                    render={(slot) => t("capabilities.mcp.returns", { type: slot("type") })}
+                />
             </div>
         </div>
     )

@@ -43,14 +43,14 @@ export function mergeCapabilities(base: ModelCapabilities | undefined, updates: 
 }
 
 /**
- * Merge provider pricing overrides without preserving undefined fields.
+ * Replace a complete pricing declaration without merging mode oneofs.
  *
  * @param base Existing provider pricing overrides.
  * @param updates Partial pricing updates.
  * @returns Merged pricing overrides.
  */
-export function mergePricing(base: ModelPricing | undefined, updates: Partial<ModelPricing>): ModelPricing {
-    return mergeDefined(base, updates) as ModelPricing
+export function mergePricing(_base: ModelPricing | undefined, updates: Partial<ModelPricing>): ModelPricing {
+    return { ...updates } as ModelPricing
 }
 
 /**
@@ -129,6 +129,15 @@ function withoutServerToolDeclaration(capabilities: ModelCapabilities): ModelCap
 }
 
 /**
+ * Select a complete model-owned pricing declaration. An absent override inherits
+ * the catalog; an explicit declaration replaces it without interpreting rates.
+ * Only an absent declaration inherits, regardless of the catalog pricing mode.
+ */
+function resolvePricingOverrides(base: ModelPricing | undefined, overrides: ProviderModelOverrides): ModelPricing | undefined {
+    return overrides.pricing ?? base
+}
+
+/**
  * Build effective model metadata from registry metadata and provider overrides.
  *
  * @param modelId Selected model id, if any.
@@ -155,19 +164,16 @@ export function buildEffectiveModelInfo(
         overrides.preferContextWindowTier === true || explicitContextWindow === undefined
             ? selectContextTier(mergedCapabilities, overrides.enableLongContext)
             : undefined
+    // This is the single place the product default lives. Every listing source
+    // reports only what the vendor declared, so a silence reaching here means the
+    // provider said nothing about caching; the catalog treats that as enabled
+    // rather than as a denial, and no source has to invent the value.
     const capabilities = {
         ...mergedCapabilities,
         ...(contextTier ? { contextWindow: contextTier.contextWindow } : {}),
         supportsPromptCache: mergedCapabilities?.supportsPromptCache ?? true,
     } as ModelCapabilities
-    const mergedPricing = overrides.pricing ? (mergeDefined(base.pricing, overrides.pricing) as ModelPricing) : base.pricing
-    const overrideTiers = overrides.pricing?.tiers ?? []
-    const selectedTiers = overrides.pricingTiersEnabled === true ? overrideTiers : base.pricing?.tiers
-    const pricing = mergedPricing
-        ? ({ ...mergedPricing, ...(selectedTiers !== undefined && { tiers: selectedTiers }) } as ModelPricing)
-        : selectedTiers !== undefined
-          ? ({ tiers: selectedTiers } as ModelPricing)
-          : undefined
+    const pricing = resolvePricingOverrides(base.pricing, overrides)
 
     return {
         ...base,

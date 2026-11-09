@@ -7,6 +7,7 @@ import { PROVIDER_API_KEY_MAP, readApiProfiles, readApiProfilesFresh } from "@co
 import { resolveProfileReference } from "@core/profiles/profile-binding"
 import type { ApiConfiguration } from "@shared/api"
 import type { ApiProfile } from "@shared/proto/dline/profile"
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import type { Mode } from "@shared/storage/types"
 import type { OpenAiCodexProfileAuthStatus } from "@/integrations/openai-codex/oauth"
 import { ProfileNotValidError } from "./profile-admission"
@@ -77,7 +78,7 @@ const PROVIDERS_WITH_NON_FLAT_CREDENTIALS = new Set(["bedrock", "cline", "oca", 
 function requiresFlatApiKey(profile: ApiProfile): boolean {
     if (PROVIDERS_WITH_NON_FLAT_CREDENTIALS.has(profile.provider)) return false
     if (profile.provider === "openai" && profile.openai?.azureIdentity) {
-        const baseUrl = profile.baseUrl?.toLowerCase() ?? ""
+        const _baseUrl = profile.baseUrl?.toLowerCase() ?? ""
         return false
     }
     if (profile.provider === "ollama" || profile.provider === "lmstudio") return false
@@ -244,7 +245,6 @@ export async function validateApiProfileCredentials(
                         "reauthentication_required",
                         `Profile not valid: "${profile.name}" must sign in to OpenAI Codex again.`,
                     )
-                case "missing":
                 default:
                     return invalidProfile(
                         profile,
@@ -308,7 +308,7 @@ export async function validateResolvedTaskApiProfile(resolution: ApiProfileRecov
 function invalidResult(
     configuration: ApiConfiguration,
     requestedProfile: string | undefined,
-    requestedProfileId: string | undefined,
+    _requestedProfileId: string | undefined,
     validity: ApiProfileValidity,
 ): ApiProfileRecoveryResult {
     return {
@@ -413,7 +413,7 @@ export function createUnavailableApiHandler(message: string): ApiHandler {
                 name: "Unavailable API profile",
                 description: message,
                 capabilities: { maxTokens: 0, contextWindow: 0 },
-                pricing: { inputPrice: 0, outputPrice: 0, cacheWritesPrice: 0, cacheReadsPrice: 0, currency: "USD" },
+                pricing: flatMeteredPricing(0, 0, 0, 0),
             },
         }),
         getProviderId: () => "unavailable",

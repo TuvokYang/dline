@@ -728,8 +728,6 @@ e2e(
             await expect(inputUsage).toBeVisible({ timeout: 30_000 })
             await expect(inputUsage).toHaveCount(1)
             await expect(inputUsage).toHaveText("5h: 20%")
-            await expect(inputUsage).toHaveClass(/text-foreground/)
-            await expect(inputUsage).not.toHaveClass(/text-success|text-editor-warning-foreground|text-error/)
             await expect(ready.sidebar.getByRole("button", { name: "OpenAI Codex usage" })).toHaveCount(0)
             const colors = await inputUsage.evaluate((element) => {
                 const successProbe = document.createElement("span")

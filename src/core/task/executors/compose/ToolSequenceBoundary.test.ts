@@ -21,7 +21,6 @@ function terminals(...phases: ToolTerminalManifestEntry["phase"][]): ComposeRoun
 function innerPort(): Required<ComposePort> {
     return {
         compose: vi.fn(async () => ({ draftRef: "draft-1" })),
-        preparePresentation: vi.fn(async () => undefined),
         rollbackRetainedQueue: vi.fn(async () => "released" as const),
     }
 }
@@ -98,17 +97,11 @@ describe("ToolSequenceBoundaryCompose", () => {
         expect(state.consecutiveIdenticalToolCount).toBe(2)
     })
 
-    it("delegates presentation and queue rollback without touching the sequence", async () => {
-        const inner = innerPort()
-        const interrupt = vi.fn()
-        const port = new ToolSequenceBoundaryCompose(inner, { interrupt })
-        const input = round({ admittedEntryIds: ["entry-1"] })
-
-        await port.preparePresentation(input)
-        await expect(port.rollbackRetainedQueue(input)).resolves.toBe("released")
-
-        expect(inner.preparePresentation).toHaveBeenCalledWith(input)
-        expect(inner.rollbackRetainedQueue).toHaveBeenCalledWith(input)
-        expect(interrupt).not.toHaveBeenCalled()
+    it("does not reset a tool sequence when rolling back a round that was never composed", async () => {
+        const state = stateAfterWorkingRespond()
+        const port = new ToolSequenceBoundaryCompose(innerPort(), { interrupt: () => state.interruptToolSequence() })
+        await port.rollbackRetainedQueue(round({ admittedEntryIds: ["entry-1"] }))
+        expect(state.lastToolName).toBe(DlineDefaultTool.WORKING_RESPOND)
+        expect(state.consecutiveIdenticalToolCount).toBe(2)
     })
 })

@@ -281,7 +281,10 @@ export const STANDARD_TOOL_SPECS: readonly Omit<ProfileToolSpec, "profile">[] = 
         getPrompt("webFetch", "standardDescription"),
         [
             param("url", true, getPrompt("webFetch", "urlInstruction")),
-            param("prompt", true, getPrompt("webFetch", "standardPromptInstruction")),
+            {
+                ...param("prompt", false, getPrompt("webFetch", "promptInstruction")),
+                contextRequirements: (context) => context.localWebToolCapabilities?.fetch.supportsPrompt === true,
+            },
             taskProgress,
         ],
         hasLocalWebFetch,
@@ -293,6 +296,10 @@ export const STANDARD_TOOL_SPECS: readonly Omit<ProfileToolSpec, "profile">[] = 
             param("query", true, getPrompt("webSearch", "queryInstruction")),
             param("allowed_domains", false, getPrompt("webSearch", "allowedDomainsInstruction")),
             param("blocked_domains", false, getPrompt("webSearch", "blockedDomainsInstruction")),
+            {
+                ...param("prompt", false, getPrompt("webSearch", "promptInstruction")),
+                contextRequirements: (context) => context.localWebToolCapabilities?.search.supportsPrompt === true,
+            },
             taskProgress,
         ],
         hasLocalWebSearch,

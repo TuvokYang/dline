@@ -98,6 +98,7 @@ function frameTurn(turn: TrajectoryTurn): TrajectoryFrameTurn {
         seq: turn.seq,
         attemptSeq: turn.attemptSeq,
         anchorTs: turn.anchorTs,
+        anchorIndex: turn.anchorOrdinal,
         prompt: turn.prompt,
         rounds: turn.rounds,
         toolUsage: turn.toolUsage,
@@ -124,6 +125,16 @@ function isClosed(error: unknown): boolean {
 /** Failures that are an expected state of the task rather than a fault worth a warning. */
 function isExpectedEnd(error: unknown): boolean {
     return isClosed(error) || error instanceof CommittedUiMessagesMissing
+}
+
+// The maintainer already reports the actual I/O failure at its owning boundary.
+// Translate its outcome without logging it again or reading an uncaught-up cache.
+const CATCH_UP_FAILED = new Error("Trajectory catch-up failed before snapshot")
+
+async function catchUpBeforeRead(lease: TrajectoryMaintainerLease, access: TrajectoryAccess): Promise<boolean> {
+    const outcome = await lease.maintainer.catchUp(access)
+    if (outcome === "failed") throw CATCH_UP_FAILED
+    return outcome === "ready"
 }
 
 /** A running trajectory stream; `close` stops it and releases its hold on the maintainer. */
@@ -157,8 +168,8 @@ export class TrajectorySource {
             throw error
         }
         try {
-            await lease.maintainer.catchUp(this.access)
-            if (!this.access.writable()) return UNAVAILABLE_TRAJECTORY_FRAME
+            const ready = await catchUpBeforeRead(lease, this.access)
+            if (!ready || !this.access.writable()) return UNAVAILABLE_TRAJECTORY_FRAME
             return resetFrame(await lease.maintainer.readSnapshot(-1))
         } finally {
             await lease.release()
@@ -217,7 +228,7 @@ class TrajectoryStreamRun implements TrajectoryStream {
 
     private async fail(error: unknown): Promise<void> {
         const open = !this.closed
-        if (open && !isExpectedEnd(error)) {
+        if (open && error !== CATCH_UP_FAILED && !isExpectedEnd(error)) {
             Logger.warn(`[trajectory] TrajectoryStreamFailed: ${error instanceof Error ? error.message : String(error)}`)
         }
         this.closed = true
@@ -240,6 +251,8 @@ class TrajectoryStreamRun implements TrajectoryStream {
         if (!this.lease) await this.hold()
         if (!this.lease || !(await this.stillWritable())) return
         if (!this.sent) {
+            const ready = await catchUpBeforeRead(this.lease, this.access)
+            if (this.closed || !(await this.stillWritable()) || !ready) return
             await this.sendSnapshot(this.lease)
         }
         while (this.dirty && this.lease && (await this.stillWritable())) {

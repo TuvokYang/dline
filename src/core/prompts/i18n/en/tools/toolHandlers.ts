@@ -2,6 +2,20 @@
 
 const prompts: Record<string, string> = {
     toolDenied: "The user denied this operation.",
+    awayActive:
+        "Away Mode is active for this task. The user is temporarily unavailable. Continue the requested work using your best judgment and available tools. Do not pause for a question, plan approval, or report acknowledgment. Keep the existing task scope, instructions, permissions, and verification requirements. Complete only when the entire requested outcome is verified.",
+    awaySubagents:
+        "Available subagents may help with independent research or review within their advertised capabilities and the task scope.",
+    awayExited:
+        "Away Mode has ended. Disregard the earlier Away Mode directions to proceed without user input. Follow the normal task rules and interaction requirements again, including asking the user when those rules require a decision.",
+    awayFeedback:
+        "The user is away. Continue with the best approach in your judgment, within the existing task scope and instructions.",
+    awayAskTimeout: "The user has not responded. Continue with the best approach in your judgment.",
+    awayCommandTimeout:
+        "No approval response was received before the deadline. This command was not approved and must not run. For operations inside the workspace that the user has already authorized, do not request approval again. This does not authorize new or unapproved operations.",
+    interruptedCommand:
+        "This command was interrupted while waiting for a decision and was not executed. Reassess the current task before proposing further work.",
+    interactionFeedbackRecorded: "The user response was received. Its content follows this tool result.",
     toolError: "The tool execution failed with the following error:\n<error>\n@ERROR@\n</error>",
     noToolsUsed: `[ERROR] You did not use a tool in your previous response! Please retry with a tool use.
 

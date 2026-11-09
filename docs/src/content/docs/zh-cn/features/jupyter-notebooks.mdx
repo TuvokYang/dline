@@ -1,11 +1,11 @@
 ---
-title: Jupyter Notebook
-description: 在 VS Code 的 Jupyter Notebook 中用 Dline 生成、解释和改进单元格，并了解它实际发送了哪些上下文。
+title: Jupyter 记事本
+description: 在 VS Code 的 Jupyter 记事本中用 Dline 生成、解释和改进单元格，并了解它实际发送了哪些上下文。
 ---
 
 import { Aside } from "@astrojs/starlight/components"
 
-在 VS Code 中打开 Jupyter Notebook（`.ipynb`）时，Dline 会在 Notebook 界面中提供三个命令。
+在 VS Code 中打开 Jupyter 记事本（`.ipynb`）时，Dline 会在记事本界面中提供三个命令。
 
 | 命令 | 位置 |
 |---|---|
@@ -44,4 +44,4 @@ Dline 会收到你的描述、在当前单元格上方或下方插入新单元�
 
 ## 查看改动
 
-Dline 修改 `.ipynb` 文件时，会按 JSON 结构进行文本替换。在安装了 Jupyter 扩展的 VS Code 中，改动可以在 Notebook 差异视图中查看。模型被要求精确匹配单元格的 JSON 字符串，但这不能保证每次都保持单元格的元数据、位置和输出不变；批准前请检查差异。
+Dline 通过编辑 `.ipynb` 的 JSON 文本修改记事本，可能影响单元格的内容、元数据、位置和输出。在安装了 Jupyter 扩展的 VS Code 中，先在 Notebook 差异视图中检查这些改动，确认无误后再批准。

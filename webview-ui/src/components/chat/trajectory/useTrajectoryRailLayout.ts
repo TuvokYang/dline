@@ -51,16 +51,16 @@ export function useCompressedBarGap(rail: HTMLElement | null, scroller: HTMLElem
  *
  * Only the rail scrolls: `scrollIntoView` would also move the chat behind it.
  */
-export function useFollowActiveTurn(scroller: HTMLElement | null, activeTurnTs: number | undefined, paused: boolean): void {
+export function useFollowActiveTurn(scroller: HTMLElement | null, activeTurnSeq: number | undefined, paused: boolean): void {
     useEffect(() => {
-        if (!scroller || paused || activeTurnTs === undefined) return
+        if (!scroller || paused || activeTurnSeq === undefined) return
         if (scroller.scrollHeight <= scroller.clientHeight) return
-        const bar = scroller.querySelector<HTMLElement>(`[data-turn-ts="${activeTurnTs}"]`)
+        const bar = scroller.querySelector<HTMLElement>(`[data-turn-seq="${activeTurnSeq}"]`)
         if (!bar) return
         const barBox = bar.getBoundingClientRect()
         const viewBox = scroller.getBoundingClientRect()
         scroller.scrollBy({ top: barBox.top - viewBox.top - (viewBox.height - barBox.height) / 2, behavior: "smooth" })
-    }, [scroller, activeTurnTs, paused])
+    }, [scroller, activeTurnSeq, paused])
 }
 
 /** Tracks which edges of the rail hide more bars, so each one can fade out. */

@@ -82,6 +82,7 @@ export class QwenCodeHandler extends ApiHandler {
                 baseURL: this.baseUrl || "https://dashscope.aliyuncs.com/compatible-mode/v1",
                 defaultHeaders: externalHeaders,
                 fetch: providerFetch,
+                maxRetries: 0,
             })
         }
         return this.client
@@ -215,7 +216,11 @@ export class QwenCodeHandler extends ApiHandler {
             ...getOpenAIToolParams(tools),
         }
 
-        const stream = await this.callApiWithRetry(() => client.chat.completions.create(requestOptions))
+        let sentAtMs = Number.NaN
+        const stream = await this.callApiWithRetry(() => {
+            sentAtMs = Date.now()
+            return client.chat.completions.create(requestOptions)
+        })
 
         const toolCallProcessor = new ToolCallProcessor()
         let fullContent = ""
@@ -274,10 +279,15 @@ export class QwenCodeHandler extends ApiHandler {
             }
 
             if (apiChunk.usage) {
-                yield {
-                    type: "usage",
+                const tokens = {
                     inputTokens: apiChunk.usage.prompt_tokens || 0,
                     outputTokens: apiChunk.usage.completion_tokens || 0,
+                }
+                const cost = ApiHandler.calculateUsageCost(model.info.pricing, tokens, sentAtMs)
+                yield {
+                    type: "usage",
+                    ...tokens,
+                    ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                 }
             }
         }

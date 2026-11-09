@@ -11,36 +11,11 @@ Dline 把持久状态、运行时资源、用户文档和项目能力放在不�
 
 ### 状态与数据根目录
 
-默认位于 `~/.dline/data/`，保存规范化设置、工作区状态、Profile 元数据和密钥：
-
-```text
-~/.dline/data/
-├── globalState.json
-├── secrets.json
-├── settings/
-│   ├── settings.json
-│   └── api_profiles.json
-├── secrets/
-│   ├── api_keys.json
-│   └── provider_secrets.json
-└── workspaces/
-    └── <workspace-hash>/
-        ├── workspaceState.json
-        └── settings.json
-```
-
-Dline 运行时不要手动编辑这些文件。设置和 Profile 通过各自的仓储接口更新，避免多个 VS Code 窗口用过期快照互相覆盖。
+默认位于 `~/.dline/data/`，保存规范化设置、工作区状态、Profile 元数据和密钥。不要在 Dline 运行时手动编辑这些文件：设置和 Profile 由 Dline 自己维护，手动修改会与当前窗口的状态冲突。
 
 ### 资源目录
 
-默认位于 `~/.dline/`，保存服务商元数据、缓存和 Puppeteer 数据等资源：
-
-```text
-~/.dline/
-├── providers/
-├── cache/
-└── puppeteer/
-```
+默认位于 `~/.dline/`，保存服务商元数据、缓存和 Puppeteer 数据等资源。
 
 ### 文档根目录
 
@@ -120,13 +95,11 @@ export DLINE_COMMAND_PERMISSIONS='{"allow": ["npm *", "git *"], "deny": ["rm -rf
 - [Skills](/zh-cn/customization/skills/)
 - [MCP](/zh-cn/mcp/mcp-overview/)
 - [.agentignore](/zh-cn/customization/agentignore/)
-- [Hooks 规划](/zh-cn/customization/hooks/)
-- [插件规划](/zh-cn/customization/plugins/)
+- [Hooks](/zh-cn/customization/hooks/)
+- [插件](/zh-cn/customization/plugins/)
 
 ## 安全提示
 
 <Aside type="caution">
 不要提交 API Key、服务商凭据或 MCP token。启用来自其他仓库的规则、Skills、Workflows、子代理 Profile 和 MCP 描述文件之前，先审查其内容。
 </Aside>
-
-当前公开的扩展能力不提供稳定的第三方插件或生命周期 Hook 安装接口。上面链接的 Hooks 和插件页面描述的是规划中的边界，不是可安装的合同。

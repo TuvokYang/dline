@@ -18,6 +18,15 @@ on:
       asset_name:
         type: string
         required: true
+      marketplace_artifact_name:
+        type: string
+        required: true
+      marketplace_asset_name:
+        type: string
+        required: true
+      marketplace_expected_sha256:
+        type: string
+        required: true
 
 permissions:
   actions: read
@@ -161,4 +170,7 @@ jobs:
       artifact_name: registry-vsix-${{ inputs.commit_sha }}
       asset_name: ${{ inputs.asset_name }}
       expected_sha256: ${{ needs.release.outputs.sha256 }}
+      marketplace_artifact_name: ${{ inputs.marketplace_artifact_name }}
+      marketplace_asset_name: ${{ inputs.marketplace_asset_name }}
+      marketplace_expected_sha256: ${{ inputs.marketplace_expected_sha256 }}
     secrets: inherit

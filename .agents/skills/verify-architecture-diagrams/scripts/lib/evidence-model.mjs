@@ -77,6 +77,12 @@ function normalizeArtifact(raw, context, problems, { requireId, artifactById }) 
     if (!artifactPath) problems.push(problem("artifact-path-missing", `${context.label} has no artifact path`, context.file))
     const canonicalSource = text(raw.canonical_source ?? raw.source) || null
     const provenance = text(raw.provenance) || null
+    const inspection = text(raw.inspection) || "subject"
+    if (!["subject", "support"].includes(inspection)) {
+        problems.push(
+            problem("artifact-inspection-unknown", `${context.label} uses unknown inspection mode "${inspection}"`, context.file),
+        )
+    }
     if (expectation === "generated" && (!canonicalSource || !provenance)) {
         problems.push(
             problem(
@@ -95,6 +101,7 @@ function normalizeArtifact(raw, context, problems, { requireId, artifactById }) 
         expectation,
         canonicalSource,
         provenance,
+        inspection,
     }
     if (id && !artifactById.has(id)) artifactById.set(id, artifact)
     return artifact
@@ -397,6 +404,26 @@ export function validateEvidenceAgainstDiagram(evidence, diagram) {
     for (const nodeId of evidence.nodes.keys()) {
         if (!diagram.nodes.has(nodeId))
             add("evidence-node-unknown", `evidence node ${nodeId} does not exist in diagram ${diagram.id ?? diagram.file}`)
+    }
+    const sameEdge = (left, right) =>
+        left.from === right.from &&
+        left.to === right.to &&
+        left.style === right.style &&
+        (left.label ?? "") === (right.label ?? "")
+    if (evidence.schemaVersion === EVIDENCE_SCHEMA_VERSION) {
+        for (const nodeId of diagram.nodes.keys()) {
+            if (!evidence.nodes.get(nodeId)?.artifacts.length) {
+                add("evidence-node-unmapped", `diagram node ${nodeId} has no implementation or interface mapping`)
+            }
+        }
+        for (const edge of diagram.edges) {
+            if (!evidence.edges.some((mapped) => sameEdge(mapped, edge))) {
+                add(
+                    "evidence-edge-unmapped",
+                    `diagram relationship ${edge.from}/${edge.label ?? ""}/${edge.to} (${edge.style}) has no code relationship mapping`,
+                )
+            }
+        }
     }
     for (const edge of evidence.edges) {
         const exact = diagram.edges.some(

@@ -6,6 +6,7 @@ import type {
     CanonicalTaskViewProjection,
 } from "@core/task/view/canonical/CanonicalTaskViewProjection"
 import type { TaskInputViewState, TaskViewAction, TaskViewPhase, TaskViewState, UiMessage } from "@shared/ExtensionMessage"
+import { awayTaskView } from "./awayTaskView"
 import { type BackgroundHandoffAvailabilityPort, projectBackgroundHandoffAction } from "./BackgroundHandoffAvailability"
 
 const DISABLED_INPUT: TaskInputViewState = {
@@ -163,17 +164,21 @@ export function adaptCanonicalTaskView(
                   askMessageTs: anchor.ts,
                   presentationText: anchor.text,
                   anchorVerified: true,
+                  ...(dialog.deadline ? { deadline: dialog.deadline } : {}),
               }
             : undefined
     const interactionActions = dialog && kind ? projectInteractionActions(dialog, kind) : []
-    const cancelActions: TaskViewAction[] = view.taskActions.map((action) => ({
-        type: "cancel",
-        label: "Cancel",
-        appearance: "danger",
-        enabled: action.enabled,
-        payloadPolicy: "none",
-        dispatchTarget: "task",
-    }))
+    const away = awayTaskView(view)
+    const cancelActions: TaskViewAction[] = view.taskActions
+        .filter((action) => action.actionId === "cancel")
+        .map((action) => ({
+            type: "cancel",
+            label: "Cancel",
+            appearance: "danger",
+            enabled: action.enabled,
+            payloadPolicy: "none",
+            dispatchTarget: "task",
+        }))
     // A synchronous command that outlived its handoff wait can be moved to the
     // background instead of cancelled, so that choice is offered before Cancel.
     // The affordance disappears again once the executor no longer owns it.
@@ -202,11 +207,12 @@ export function adaptCanonicalTaskView(
         phase: taskViewPhase(view),
         stateRevision: view.revision,
         activeInteraction,
+        ...(away.away ? { away: away.away } : {}),
         ...(view.compaction?.status === "scheduled" || view.compaction?.status === "running"
             ? { contextCompaction: { active: true as const, operationId: view.compaction.compactionId } }
             : {}),
         ...(forceTruncateAvailable ? { forceTruncateAvailable: true } : {}),
         input,
-        footer: { actions: anchored && interactionActions.length > 0 ? interactionActions : taskActions },
+        footer: { actions: [...(anchored && interactionActions.length > 0 ? interactionActions : taskActions), ...away.actions] },
     }
 }

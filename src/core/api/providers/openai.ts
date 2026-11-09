@@ -14,7 +14,6 @@ import { openAiEndpointToApiFormat, prioritizeApiFormat, resolveApiFormat } from
 import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
 import { normalizeOpenAIResponsesStreamIdleTimeoutSeconds } from "@shared/providers/openai-stream"
 import { normalizeOpenAiServiceTier } from "@shared/storage/types"
-import { calculateApiCostOpenAI } from "@utils/cost"
 import OpenAI from "openai"
 import type { ChatCompletionChunk, ChatCompletionFunctionTool, ChatCompletionTool } from "openai/resources/chat/completions"
 import type { DocumentInputLimits } from "@/shared/messages/attached-documents"
@@ -336,13 +335,17 @@ export class OpenAiHandler extends ApiHandler {
             return requestParams
         }
 
+        let sentAtMs = Number.NaN
         const stream = await this.createWithPromptCacheFallback<AsyncIterable<ChatCompletionChunk>>(
             this.promptCacheProjectionMode,
-            (mode) =>
-                (client.chat.completions as any).create(buildRequestParams(mode), {
+            (mode) => {
+                const params = buildRequestParams(mode)
+                sentAtMs = Date.now()
+                return (client.chat.completions as any).create(params, {
                     signal: requestController.signal,
                     ...(this.routingHeaders ? { headers: this.routingHeaders } : {}),
-                }),
+                })
+            },
         )
 
         const toolCallProcessor = new ToolCallProcessor()
@@ -391,20 +394,19 @@ export class OpenAiHandler extends ApiHandler {
                     usage.cache_creation_input_tokens ??
                     usage.prompt_cache_miss_tokens ??
                     getChatCacheWriteTokens(usage.prompt_tokens_details)
-                const modelInfo = this.getModel().info
-                // Yield inputTokens in Anthropic semantic (excluding cache) so
-                // ContextManager and updateApiReqMsg can accurately estimate
-                // context pressure. Cost calculation still uses OpenAI semantic
-                // (rawInputTokens includes cache) for correct provider billing.
                 const nonCachedInputTokens = Math.max(0, rawInputTokens - cacheReadTokens - cacheWriteTokens)
-                const totalCost = calculateApiCostOpenAI(
-                    modelInfo,
-                    rawInputTokens,
-                    outputTokens,
-                    cacheWriteTokens,
-                    cacheReadTokens,
-                )
                 const thoughtsTokenCount = chatReasoningTokens(usage)
+                const cost = ApiHandler.calculateUsageCost(
+                    model.info.pricing,
+                    {
+                        inputTokens: nonCachedInputTokens,
+                        outputTokens,
+                        cacheWriteTokens,
+                        cacheReadTokens,
+                        thoughtsTokenCount,
+                    },
+                    sentAtMs,
+                )
 
                 yield {
                     type: "usage",
@@ -413,7 +415,7 @@ export class OpenAiHandler extends ApiHandler {
                     cacheReadTokens,
                     cacheWriteTokens,
                     ...(thoughtsTokenCount === undefined ? {} : { thoughtsTokenCount }),
-                    totalCost,
+                    ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                     ...(stopReason ? { stopReason } : {}),
                 }
             }
@@ -432,11 +434,16 @@ export class OpenAiHandler extends ApiHandler {
         params: OpenAI.Responses.ResponseCreateParamsStreaming,
         signal?: AbortSignal,
     ) {
-        try {
-            return await client.responses.create(params, {
+        const send = async () => {
+            const sentAtMs = Date.now()
+            const stream = await client.responses.create(params, {
                 signal,
                 ...(this.routingHeaders ? { headers: this.routingHeaders } : {}),
             })
+            return { stream, sentAtMs }
+        }
+        try {
+            return await send()
         } catch (error) {
             const status =
                 typeof error === "object" && error !== null && "status" in error
@@ -449,10 +456,7 @@ export class OpenAiHandler extends ApiHandler {
             const retryDelay = 250
             this.ctx.onRetryAttempt?.(1, 2, retryDelay, error)
             await setTimeoutPromise(retryDelay, undefined, { signal })
-            return await client.responses.create(params, {
-                signal,
-                ...(this.routingHeaders ? { headers: this.routingHeaders } : {}),
-            })
+            return await send()
         }
     }
 
@@ -524,7 +528,7 @@ export class OpenAiHandler extends ApiHandler {
             }
         }
 
-        const stream = await this.createWithPromptCacheFallback(this.promptCacheProjectionMode, (mode) =>
+        const { stream, sentAtMs } = await this.createWithPromptCacheFallback(this.promptCacheProjectionMode, (mode) =>
             this.createResponsesStream(client, buildParams(mode), requestController.signal),
         )
         const idleTimeoutSeconds = normalizeOpenAIResponsesStreamIdleTimeoutSeconds(this.config?.streamIdleTimeoutSeconds)
@@ -535,12 +539,7 @@ export class OpenAiHandler extends ApiHandler {
             requestLabel: this.ctx.ulid ? `Task ${this.ctx.ulid}` : "OpenAI",
             onEstimatedTokens: this.ctx.onStreamEstimatedTokens,
         })
-        yield* handleResponsesApiStreamResponse(
-            monitor.observe(stream),
-            model.info,
-            async (info, inputTokens, outputTokens, cacheWrite, cacheRead) =>
-                calculateApiCostOpenAI(info, inputTokens, outputTokens, cacheWrite, cacheRead),
-        )
+        yield* handleResponsesApiStreamResponse(monitor.observe(stream), model.info, sentAtMs)
     }
 
     override abort(): void {

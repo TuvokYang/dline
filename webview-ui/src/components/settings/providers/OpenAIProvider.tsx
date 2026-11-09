@@ -1,12 +1,14 @@
 import { type ModelInfo, openAiModelInfoSaneDefaults } from "@shared/api"
 import { ApiFormat, type ModelCapabilities, type ModelPricing, ServerTool } from "@shared/proto/dline/models/metadata"
-import { OpenAiPromptCacheMode, OpenAiProviderConfig } from "@shared/proto/dline/provider/openai"
+import { OpenAiProviderConfig } from "@shared/proto/dline/provider/openai"
 import { openAiEndpointToApiFormat, resolveApiFormat } from "@shared/providers/api-format"
 import { buildEffectiveModelInfo, mergeCapabilities, mergePricing } from "@shared/providers/effective-model-info"
 import { DEFAULT_OPENAI_RESPONSES_STREAM_IDLE_TIMEOUT_SECONDS } from "@shared/providers/openai-stream"
+import { hasBands } from "@shared/providers/pricing-shape"
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import { VSCodeButton, VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
-import { useCallback, useId, useMemo } from "react"
+import { useCallback, useId, useMemo, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ApiFormatSelector } from "../common/ApiFormatSelector"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { BaseUrlField } from "../common/BaseUrlField"
@@ -38,6 +40,7 @@ function getOpenAiConfig(profile: ApiProfile): OpenAiProviderConfig {
 
 /** Unified OpenAI API-key provider for official and custom OpenAI-compatible models. */
 export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: onUpdateProfile }: OpenAIProviderProps) => {
+    const { t } = useUiTranslation()
     // Every field below rebuilds the whole config from `pc`. Debounced inputs
     // commit on independent timers, so without this the second commit would
     // rebuild from a prop that has not yet received the first one.
@@ -65,6 +68,8 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
     const fieldId = useId()
     const streamIdleTimeoutId = `${fieldId}-stream-idle-timeout`
     const customModelFieldId = `${fieldId}-custom-model-id`
+    const [customUrlToggle, setCustomUrlToggle] = useState<{ profileId: string; enabled: boolean }>()
+    const customUrlEnabled = customUrlToggle?.profileId === profile.id ? customUrlToggle.enabled : !!profile.baseUrl
     const {
         models,
         defaultModelId,
@@ -97,10 +102,13 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
     const compatibilityCapabilities = customModelEnabled
         ? mergeCapabilities(matchingModel?.capabilities, pc.capabilities ?? {})
         : modelInfo.capabilities
-    const compatibilityNotice = getModelCompatibilityNotice({
-        capabilities: compatibilityCapabilities,
-        requireCompleteMetadata: customModelEnabled,
-    })
+    const compatibilityNotice = getModelCompatibilityNotice(
+        {
+            capabilities: compatibilityCapabilities,
+            requireCompleteMetadata: customModelEnabled,
+        },
+        t,
+    )
     const apiFormats =
         registryModel?.apiFormats ??
         (customModelEnabled ? profile.modelInfo?.apiFormats : undefined) ??
@@ -155,7 +163,7 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
             openai: {
                 ...base,
                 pricing: mergePricing(base.pricing, updates),
-                ...(updates.tiers === undefined ? {} : { pricingTiersEnabled: true }),
+                ...(hasBands(updates) ? { pricingTiersEnabled: true } : {}),
             },
         })
     }
@@ -203,10 +211,11 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
     return (
         <div className="flex min-w-0 flex-col gap-3">
             <BaseUrlField
+                enabled={customUrlEnabled}
                 initialValue={profile.baseUrl}
-                label="Use custom base URL"
                 onChange={(value) => onUpdate({ baseUrl: value || undefined })}
-                placeholder="Enter base URL..."
+                onEnabledChange={(enabled) => setCustomUrlToggle({ profileId: profile.id, enabled })}
+                placeholder={t("settings.ui.enterBaseUrl")}
             />
 
             <ApiKeyField
@@ -223,27 +232,27 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
                         onChange={(event: Event | React.FormEvent<HTMLElement>) =>
                             handleToggleCustomModel((event.target as HTMLInputElement | null)?.checked === true)
                         }>
-                        Use custom model ID
+                        {t("settings.ui.customModelId")}
                     </VSCodeCheckbox>
 
                     {customModelEnabled ? (
-                        <ProfileField htmlFor={customModelFieldId} label="Model ID">
+                        <ProfileField htmlFor={customModelFieldId} label={t("settings.ui.modelId")}>
                             <DebouncedTextField
                                 className="w-full"
                                 id={customModelFieldId}
                                 initialValue={profile.modelId ?? ""}
                                 onChange={(value) => onUpdate({ modelId: value })}
-                                placeholder="Enter Model ID..."
+                                placeholder={t("settings.ui.enterModelId")}
                             />
                         </ProfileField>
                     ) : (
                         <ModelAutocomplete
-                            label="Model"
+                            label={t("settings.ui.model")}
                             models={modelOptions}
                             onChange={handleModelChange}
                             onOpen={refreshRemoteModels}
                             optionOrigins={optionOrigins}
-                            placeholder="Search or select a model..."
+                            placeholder={t("settings.ui.searchModel")}
                             selectedModelId={modelId}
                         />
                     )}
@@ -254,25 +263,6 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
                         onChange={(apiFormat) => onUpdate({ openai: { ...configToUpdate(), apiEndpoint: undefined, apiFormat } })}
                         selectedApiFormat={selectedApiFormat}
                     />
-
-                    <VSCodeCheckbox
-                        checked={pc.promptCacheMode === OpenAiPromptCacheMode.OPENAI_PROMPT_CACHE_MODE_EXPLICIT}
-                        onChange={(event: Event | React.FormEvent<HTMLElement>) =>
-                            onUpdate({
-                                openai: {
-                                    ...configToUpdate(),
-                                    promptCacheMode: (event.target as HTMLInputElement | null)?.checked
-                                        ? OpenAiPromptCacheMode.OPENAI_PROMPT_CACHE_MODE_EXPLICIT
-                                        : OpenAiPromptCacheMode.OPENAI_PROMPT_CACHE_MODE_AUTOMATIC,
-                                },
-                            })
-                        }>
-                        Use explicit prompt cache controls
-                    </VSCodeCheckbox>
-                    <p style={{ fontSize: 12, marginTop: 0, color: "var(--vscode-descriptionForeground)" }}>
-                        Enable only when the selected endpoint supports prompt_cache_breakpoint. Rejected controls fall back to
-                        automatic caching for the current task.
-                    </p>
 
                     <ProviderWebToolsSettings
                         hostedAvailable={hostedWebSearchAvailable}
@@ -321,10 +311,16 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
                                 "supportsTools",
                                 "temperature",
                             ],
-                            pricing: ["inputPrice", "outputPrice", "cacheWritesPrice", "cacheReadsPrice", "pricingTiers"],
+                            pricing: customUrlEnabled
+                                ? ["inputPrice", "outputPrice", "cacheWritesPrice", "cacheReadsPrice", "pricingTiers"]
+                                : [],
                         }}
+                        key={`${profile.id}:${modelId}`}
                         onCapabilitiesUpdate={handleCapabilitiesUpdate}
                         onDisabledServerToolsUpdate={handleDisabledServerToolsUpdate}
+                        onPricingReset={() =>
+                            onUpdate({ openai: { ...configToUpdate(), pricing: undefined, pricingTiersEnabled: undefined } })
+                        }
                         onPricingUpdate={handlePricingUpdate}
                         pricing={pc.pricing}
                         pricingTiersEnabled={pc.pricingTiersEnabled === true}
@@ -335,9 +331,9 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
 
             <ProfileSection>
                 <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-                    <ProfileSectionTitle>Custom Headers</ProfileSectionTitle>
+                    <ProfileSectionTitle>{t("settings.ui.openai.headers")}</ProfileSectionTitle>
                     <ProfileActionRow>
-                        <VSCodeButton onClick={addHeader}>Add Header</VSCodeButton>
+                        <VSCodeButton onClick={addHeader}>{t("settings.ui.openai.addHeader")}</VSCodeButton>
                     </ProfileActionRow>
                 </div>
                 {headerEntries.map(([key, value], index) => {
@@ -348,29 +344,29 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
                             className="grid min-w-0 grid-cols-1 gap-2 xs:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
                             data-testid="custom-header-row"
                             key={`${key}-${index}`}>
-                            <ProfileField htmlFor={nameId} label="Header name">
+                            <ProfileField htmlFor={nameId} label={t("settings.ui.openai.headerName")}>
                                 <DebouncedTextField
-                                    ariaLabel="Header name"
+                                    ariaLabel={t("settings.ui.openai.headerName")}
                                     className="min-h-7 w-full"
                                     id={nameId}
                                     initialValue={key}
                                     onChange={(newValue) => updateHeader(key, newValue, value)}
-                                    placeholder="Header name"
+                                    placeholder={t("settings.ui.openai.headerName")}
                                 />
                             </ProfileField>
-                            <ProfileField htmlFor={valueId} label="Header value">
+                            <ProfileField htmlFor={valueId} label={t("settings.ui.openai.headerValue")}>
                                 <DebouncedTextField
-                                    ariaLabel="Header value"
+                                    ariaLabel={t("settings.ui.openai.headerValue")}
                                     className="min-h-7 w-full"
                                     id={valueId}
                                     initialValue={value}
                                     onChange={(newValue) => updateHeader(key, key, newValue)}
-                                    placeholder="Header value"
+                                    placeholder={t("settings.ui.openai.headerValue")}
                                 />
                             </ProfileField>
                             <ProfileActionRow className="justify-end xs:self-end">
                                 <VSCodeButton appearance="secondary" onClick={() => removeHeader(key)}>
-                                    Remove
+                                    {t("settings.ui.remove")}
                                 </VSCodeButton>
                             </ProfileActionRow>
                         </div>
@@ -380,9 +376,9 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
 
             <BaseUrlField
                 initialValue={pc.azureApiVersion}
-                label="Set Azure API version"
+                label={t("settings.ui.openai.azureVersion")}
                 onChange={(value) => onUpdate({ openai: { ...configToUpdate(), azureApiVersion: value } })}
-                placeholder="Default: 2024-10-01-preview"
+                placeholder={t("settings.ui.defaultValue", { value: "2024-10-01-preview" })}
             />
 
             <VSCodeCheckbox
@@ -395,28 +391,15 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
                         },
                     })
                 }>
-                Use Azure Identity Authentication
-            </VSCodeCheckbox>
-
-            <VSCodeCheckbox
-                checked={pc.streamIncludeUsage ?? true}
-                onChange={(event: Event | React.FormEvent<HTMLElement>) =>
-                    onUpdate({
-                        openai: {
-                            ...configToUpdate(),
-                            streamIncludeUsage: (event.target as HTMLInputElement | null)?.checked === true,
-                        },
-                    })
-                }>
-                Include usage stats in stream responses
+                {t("settings.ui.openai.azureIdentity")}
             </VSCodeCheckbox>
 
             <ProfileField
-                description="Abort and retry when no Responses streaming event is received for this many seconds."
+                description={t("settings.ui.openai.idleHelp")}
                 htmlFor={streamIdleTimeoutId}
-                label="Responses stream idle timeout (seconds)">
+                label={t("settings.ui.openai.idleTimeout")}>
                 <DebouncedTextField
-                    ariaLabel="Responses stream idle timeout (seconds)"
+                    ariaLabel={t("settings.ui.openai.idleTimeout")}
                     className="min-h-7 w-full"
                     id={streamIdleTimeoutId}
                     initialValue={String(pc.streamIdleTimeoutSeconds ?? DEFAULT_OPENAI_RESPONSES_STREAM_IDLE_TIMEOUT_SECONDS)}

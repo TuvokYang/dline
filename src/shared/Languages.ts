@@ -39,6 +39,8 @@ export type LanguageDisplay =
     | "Turkish - Türkçe"
 
 export const DEFAULT_LANGUAGE_SETTINGS: LanguageKey = "en"
+/** Model response preference; independent of the interface's Auto setting. */
+export const AUTO_LANGUAGE_PREFERENCE = "auto"
 
 export const languageOptions: { key: LanguageKey; display: LanguageDisplay }[] = [
     { key: "en", display: "English" },
@@ -61,7 +63,7 @@ export const languageOptions: { key: LanguageKey; display: LanguageDisplay }[] =
     { key: "tr", display: "Turkish - Türkçe" },
 ]
 
-export function getLanguageKey(display: LanguageDisplay | undefined): LanguageKey {
+export function getLanguageKey(display: string | undefined): LanguageKey {
     if (!display) {
         return DEFAULT_LANGUAGE_SETTINGS
     }

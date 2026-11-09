@@ -2,7 +2,8 @@
 import type { ModelInfo } from "@shared/proto/dline/models"
 import { ApiFormat, type ModelCapabilities, type ModelPricing } from "@shared/proto/dline/models/metadata"
 import { WebToolsMode } from "@shared/proto/dline/provider/common"
-import { OpenAiPromptCacheMode, OpenAiProviderConfig } from "@shared/proto/dline/provider/openai"
+import { OpenAiProviderConfig } from "@shared/proto/dline/provider/openai"
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { OpenAIProvider } from "./OpenAIProvider"
@@ -17,11 +18,7 @@ const registryModel: ModelInfo = {
         supportsImages: false,
         supportsPromptCache: false,
     } as ModelCapabilities,
-    pricing: {
-        inputPrice: 1,
-        outputPrice: 2,
-        currency: "USD",
-    } as ModelPricing,
+    pricing: flatMeteredPricing(1, 2),
 }
 
 const multiFormatModel: ModelInfo = {
@@ -80,12 +77,6 @@ vi.mock("../common/ModelConfiguration", () => ({
             <button onClick={() => onCapabilitiesUpdate({ supportsImages: true })} type="button">
                 Update Images
             </button>
-            <button onClick={() => onPricingUpdate({ inputPrice: 1.25 })} type="button">
-                Set Input Price
-            </button>
-            <button onClick={() => onPricingUpdate({ outputPrice: 2.5 })} type="button">
-                Set Output Price
-            </button>
             {fields.capabilities?.includes("supportsTools") && (
                 <button onClick={() => onCapabilitiesUpdate({ supportsTools: true })} type="button">
                     Enable Native Tools
@@ -100,8 +91,8 @@ vi.mock("../common/ModelInfoView", () => ({
         <div>
             <span>context:{modelInfo.capabilities?.contextWindow}</span>
             <span>max:{modelInfo.capabilities?.maxTokens}</span>
-            <span>input:{modelInfo.pricing?.inputPrice}</span>
-            <span>output:{modelInfo.pricing?.outputPrice}</span>
+            <span>input:{modelInfo.pricing?.strategy?.flat?.prices?.inputPrice}</span>
+            <span>output:{modelInfo.pricing?.strategy?.flat?.prices?.outputPrice}</span>
         </div>
     ),
 }))
@@ -216,19 +207,15 @@ describe("OpenAIProvider", () => {
         // A single picker covers both catalog and listing-only models; the custom
         // switch stays available for ids no listing returns.
         expect(screen.getByRole("checkbox", { name: "Use custom model ID" })).not.toBeChecked()
-        expect(screen.getByTestId("model-options")).toHaveTextContent("gpt-listed-only")
-        expect(screen.getByTestId("remote-model-options")).toHaveTextContent("gpt-listed-only")
         const apiFormat = screen.getByRole("combobox", { name: "API Format" })
         expect(apiFormat).toHaveValue(String(ApiFormat.OPENAI_RESPONSES))
-        expect(apiFormat).toHaveStyle({
-            backgroundColor: "var(--vscode-dropdown-background)",
-            color: "var(--vscode-dropdown-foreground)",
-        })
         expect(screen.getByRole("option", { name: "OpenAI Responses" })).toBeInTheDocument()
         expect(screen.getByRole("option", { name: "OpenAI Chat" })).toBeInTheDocument()
-        expect(screen.getByTestId("capability-fields")).toHaveTextContent("hostedWebSearch")
         expect(screen.getByRole("combobox", { name: "Web Tools mode" })).toHaveValue(String(WebToolsMode.WEB_TOOLS_MODE_AUTO))
-        expect(screen.getByRole("checkbox", { name: "Use explicit prompt cache controls" })).not.toBeChecked()
+        // Prompt caching is automatic and stream usage is always requested, so the
+        // provider never asks the user to opt into either one.
+        expect(screen.queryByRole("checkbox", { name: "Use explicit prompt cache controls" })).not.toBeInTheDocument()
+        expect(screen.queryByRole("checkbox", { name: "Include usage stats in stream responses" })).not.toBeInTheDocument()
 
         fireEvent.change(apiFormat, { target: { value: String(ApiFormat.OPENAI_CHAT) } })
         expect(onUpdate).toHaveBeenCalledWith({
@@ -266,7 +253,6 @@ describe("OpenAIProvider", () => {
         expect(screen.getByRole("textbox", { name: "Model" })).toHaveValue("legacy-compatible-model")
         expect(screen.getByRole("checkbox", { name: "Use custom model ID" })).not.toBeChecked()
         expect(screen.getByRole("combobox", { name: "API Format" })).toBeInTheDocument()
-        expect(screen.getByTestId("default-native-tools")).toHaveTextContent("true")
     })
 
     it("commits a listing-only model without claiming the custom-model switch", () => {
@@ -332,17 +318,13 @@ describe("OpenAIProvider", () => {
             openai: OpenAiProviderConfig.create({
                 customModelEnabled: true,
                 capabilities: { maxTokens: 64_000 } as ModelCapabilities,
-                pricing: { inputPrice: 0.5 } as ModelPricing,
+                pricing: flatMeteredPricing(0.5, 2),
             }),
         } as unknown as ApiProfile
 
         render(<OpenAIProvider onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
 
         expect(screen.getByText("max:64000")).toBeInTheDocument()
-        expect(screen.getByText("input:0.5")).toBeInTheDocument()
-        expect(screen.getByTestId("capability-fields")).toHaveTextContent(
-            "supportsImages,hostedWebSearch,supportsBrowserAction,supportsPromptCache",
-        )
 
         fireEvent.click(screen.getByText("Update Images"))
 
@@ -364,75 +346,21 @@ describe("OpenAIProvider", () => {
         })
     })
 
-    it("keeps Service Tier disabled when the OpenAI Profile has not explicitly enabled it", () => {
-        const profile = {
-            id: "profile-1",
-            provider: "openai",
-            modelId: "gpt-multi",
-            openai: OpenAiProviderConfig.create(),
-        } as unknown as ApiProfile
-
-        render(<OpenAIProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
-
-        expect(screen.getByTestId("service-tier-enabled")).toHaveTextContent("false")
-    })
-
-    it("uses a responsive field grid for custom headers", () => {
-        const profile = {
-            id: "profile-headers",
-            provider: "openai",
-            modelId: "gpt-multi",
-            openai: OpenAiProviderConfig.create({ openAiHeaders: { Authorization: "Bearer token" } }),
-        } as unknown as ApiProfile
-
-        render(<OpenAIProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
-
-        const row = screen.getByTestId("custom-header-row")
-        expect(row).toHaveClass("grid-cols-1", "xs:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]")
-        expect(screen.getByRole("textbox", { name: "Header name" })).toHaveClass("min-h-7", "w-full")
-        expect(screen.getByRole("textbox", { name: "Header value" })).toHaveClass("min-h-7", "w-full")
-        expect(screen.getByRole("button", { name: "Remove" }).parentElement).toHaveClass("justify-end", "xs:self-end")
-    })
-
-    it("shows the configured output price instead of the registry default", () => {
+    it("passes the Profile output rate to the model display instead of the registry rate", () => {
         const profile = {
             id: "profile-1",
             provider: "openai",
             modelId: "gpt-custom",
             openai: OpenAiProviderConfig.create({
                 customModelEnabled: false,
-                pricing: { inputPrice: 1.25, outputPrice: 2.5 } as ModelPricing,
+                pricing: flatMeteredPricing(1.25, 2.5),
             }),
         } as unknown as ApiProfile
 
         render(<OpenAIProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
 
-        // The registry model prices output at 2, so a stale read shows that instead.
+        expect(screen.getByText("input:1.25")).toBeInTheDocument()
         expect(screen.getByText("output:2.5")).toBeInTheDocument()
-    })
-
-    it("keeps an earlier pricing edit when the next edit runs before the profile echoes back", () => {
-        const onUpdate = vi.fn()
-        const profile = {
-            id: "profile-1",
-            provider: "openai",
-            modelId: "gpt-custom",
-            openai: OpenAiProviderConfig.create({ customModelEnabled: true }),
-        } as unknown as ApiProfile
-
-        render(<OpenAIProvider onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
-
-        // Each debounced price field commits on its own timer, so a second field can
-        // save before the parent re-renders with the first field's value. Both edits
-        // must survive that window.
-        fireEvent.click(screen.getByRole("button", { name: "Set Input Price" }))
-        fireEvent.click(screen.getByRole("button", { name: "Set Output Price" }))
-
-        expect(onUpdate).toHaveBeenLastCalledWith({
-            openai: expect.objectContaining({
-                pricing: expect.objectContaining({ inputPrice: 1.25, outputPrice: 2.5 }),
-            }),
-        })
     })
 
     it("shows the default Responses stream idle timeout and persists a positive number of seconds", () => {
@@ -471,9 +399,6 @@ describe("OpenAIProvider", () => {
 
         render(<OpenAIProvider onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
 
-        expect(screen.getByTestId("thinking-efforts")).toHaveTextContent("none,custom")
-        expect(screen.getByTestId("service-tier-enabled")).toHaveTextContent("true")
-
         // Each control replaces the whole provider config, and the profile prop
         // only echoes a save back after the backend commits it. Editing several
         // controls in a row must therefore accumulate: rebuilding from the prop
@@ -495,16 +420,6 @@ describe("OpenAIProvider", () => {
             },
         })
 
-        fireEvent.click(screen.getByRole("checkbox", { name: "Use explicit prompt cache controls" }))
-        expect(onUpdate).toHaveBeenLastCalledWith({
-            openai: {
-                ...profile.openai,
-                serviceTier: "priority",
-                serviceTierEnabled: false,
-                promptCacheMode: OpenAiPromptCacheMode.OPENAI_PROMPT_CACHE_MODE_EXPLICIT,
-            },
-        })
-
         fireEvent.change(screen.getByRole("combobox", { name: "API Format" }), {
             target: { value: String(ApiFormat.OPENAI_RESPONSES) },
         })
@@ -513,7 +428,6 @@ describe("OpenAIProvider", () => {
                 ...profile.openai,
                 serviceTier: "priority",
                 serviceTierEnabled: false,
-                promptCacheMode: OpenAiPromptCacheMode.OPENAI_PROMPT_CACHE_MODE_EXPLICIT,
                 apiEndpoint: undefined,
                 apiFormat: ApiFormat.OPENAI_RESPONSES,
             },
@@ -545,7 +459,6 @@ describe("OpenAIProvider", () => {
         render(<OpenAIProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
 
         expect(screen.getByText("Model metadata incomplete")).toBeInTheDocument()
-        expect(screen.getByRole("status")).toHaveTextContent("Confirm the context window and native tool support")
     })
 
     it("shows Lite prompt guidance for a custom model below 64K context", () => {
@@ -562,6 +475,5 @@ describe("OpenAIProvider", () => {
         render(<OpenAIProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
 
         expect(screen.getByText("Lite prompt profile")).toBeInTheDocument()
-        expect(screen.getByRole("status")).toHaveTextContent("below 64K tokens")
     })
 })

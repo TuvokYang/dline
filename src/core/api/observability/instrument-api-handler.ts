@@ -93,6 +93,7 @@ function observeExactUsage(stream: ApiStream, task: TaskTraceSource | undefined,
         let cacheUsageReported = false
         let thoughtsTokens = 0
         let totalCost: number | undefined
+        let currency: string | undefined
         let completed = false
         try {
             for await (const chunk of stream) {
@@ -102,7 +103,10 @@ function observeExactUsage(stream: ApiStream, task: TaskTraceSource | undefined,
                     cacheUsageReported ||= chunk.cacheWriteTokens !== undefined || chunk.cacheReadTokens !== undefined
                     const thoughts = finiteCount(chunk.thoughtsTokenCount)
                     thoughtsTokens = chunk.usageMode === "delta" ? thoughtsTokens + thoughts : Math.max(thoughtsTokens, thoughts)
-                    if (Number.isFinite(chunk.totalCost)) totalCost = chunk.totalCost
+                    if (typeof chunk.totalCost === "number" && Number.isFinite(chunk.totalCost)) {
+                        totalCost = chunk.usageMode === "delta" ? (totalCost ?? 0) + chunk.totalCost : chunk.totalCost
+                        currency = chunk.currency
+                    }
                 }
                 yield chunk as ApiProviderStreamChunk
             }
@@ -116,7 +120,7 @@ function observeExactUsage(stream: ApiStream, task: TaskTraceSource | undefined,
                         ...usage,
                         ...(thoughtsTokens > 0 ? { thoughtsTokens } : {}),
                         cacheUsageReported,
-                        ...(totalCost === undefined ? {} : { totalCost }),
+                        ...(totalCost === undefined ? {} : { totalCost, currency }),
                     },
                 })
             }

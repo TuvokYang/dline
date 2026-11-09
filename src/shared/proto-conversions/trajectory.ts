@@ -8,6 +8,7 @@ export interface TrajectoryFrameTurn {
     readonly seq: number
     readonly attemptSeq: number
     readonly anchorTs: number
+    readonly anchorIndex: number
     readonly prompt: string
     readonly rounds: number
     readonly toolUsage: readonly { readonly tool: string; readonly count: number }[]
@@ -50,6 +51,7 @@ function turnToProto(turn: TrajectoryFrameTurn): TrajectoryTurnSummary {
         seq: turn.seq,
         attemptSeq: turn.attemptSeq,
         anchorTs: turn.anchorTs,
+        anchorIndex: turn.anchorIndex,
         prompt: turn.prompt,
         rounds: turn.rounds,
         toolUsage: turn.toolUsage.map((usage) => TrajectoryToolCount.create({ tool: usage.tool, count: usage.count })),

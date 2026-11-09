@@ -80,8 +80,9 @@ export function createGitHubIssueUrl(baseUrl: string, params: Map<string, string
  * @returns A promise that resolves when an attempt to open the URL has completed
  */
 export async function openUrlInBrowser(url: string): Promise<void> {
-    // For debugging
-    Logger.log(`Opening URL: ${url}`)
+    // For debugging. Only the origin and path are recorded: an issue or report
+    // URL carries the whole prefilled payload in its query string.
+    Logger.log(`Opening URL: ${redactUrlQuery(url)}`)
 
     if (shouldVisitLoopbackUrlDirectly(url, process.env)) {
         await openExternal(url)
@@ -201,6 +202,18 @@ export async function openUrlInBrowser(url: string): Promise<void> {
  */
 export interface GitHubIssueOpenOptions {
     readonly baseUrl?: string
+}
+
+/**
+ * The URL without its query string and fragment, for diagnostic logging.
+ *
+ * A prefilled issue or report URL carries the whole payload as query
+ * parameters, so logging the full URL writes user-authored text, environment
+ * details and anything else the caller put there into every log sink.
+ */
+function redactUrlQuery(url: string): string {
+    const cut = url.search(/[?#]/)
+    return cut === -1 ? url : `${url.slice(0, cut)} (query omitted)`
 }
 
 export async function createAndOpenGitHubIssue(

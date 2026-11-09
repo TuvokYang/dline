@@ -19,6 +19,7 @@ import type { TaskState } from "../kernel"
 import type { ApiRateSnapshot } from "../performance/api-rate-tracker"
 import type { ProviderAttemptUsageEvent } from "../performance/provider-request-round-port"
 import type { DurableTaskSnapshot, StateVault } from "../stores"
+import type { UsageToolCall } from "../telemetry/UsageToolCalls"
 import { taskUsageAccounting } from "./task-usage-accounting"
 
 const SEGMENT_EVENT_LIMIT = 96
@@ -61,6 +62,11 @@ export class TaskTurnTelemetry implements TaskTraceSource {
         private readonly observeCommittedState?: (state: Readonly<TaskState>) => void,
         private readonly observeProviderUsage?: (input: ProviderAttemptUsageInput) => void,
         private readonly completeProviderRequest?: (input: ProviderAttemptScopeInput) => void,
+        private readonly settleProviderLogicalTools?: (
+            input: ProviderAttemptUsageInput,
+            toolCalls: readonly UsageToolCall[],
+        ) => void,
+        private readonly releaseProviderLogicalTools?: (input: ProviderAttemptScopeInput) => void,
     ) {
         this.registerAlias(taskId)
     }
@@ -86,6 +92,16 @@ export class TaskTurnTelemetry implements TaskTraceSource {
     providerRequestCompleted(input: ProviderAttemptScopeInput): void {
         if (this.disposed) return
         this.safely(() => this.completeProviderRequest?.(input))
+    }
+
+    providerLogicalToolsSettled(input: ProviderAttemptUsageInput, toolCalls: readonly UsageToolCall[]): void {
+        if (this.disposed) return
+        this.safely(() => this.settleProviderLogicalTools?.(input, toolCalls))
+    }
+
+    providerLogicalToolsExpected(input: ProviderAttemptScopeInput): void {
+        if (this.disposed) return
+        this.safely(() => this.releaseProviderLogicalTools?.(input))
     }
 
     usagePolicyGeneration(): number | undefined {

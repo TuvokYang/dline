@@ -1,6 +1,7 @@
 // Mode import removed — no longer needed in profile-driven architecture
 import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import { useEffect, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { DebouncedTextField } from "../common/DebouncedTextField"
 import { ModelInfoView } from "../common/ModelInfoView"
@@ -17,6 +18,7 @@ interface AskSageProviderProps {
 
 /** AskSage provider �?all data from ApiProfile. baseUrl used for API URL. */
 export const AskSageProvider = ({ showModelOptions, isPopup, profile, onUpdate }: AskSageProviderProps) => {
+    const { t } = useUiTranslation()
     const { models: askSageModels, defaultModelId: asksageDefaultModelId } = useProviderModels("asksage")
 
     const baseUrl = profile.baseUrl || "https://api.asksage.ai/server"
@@ -44,16 +46,11 @@ export const AskSageProvider = ({ showModelOptions, isPopup, profile, onUpdate }
 
     return (
         <div>
-            <ApiKeyField
-                helpText="This key is stored locally and only used to make API requests from this extension."
-                initialValue={profile.apiKey}
-                onChange={(value) => onUpdate({ apiKey: value })}
-                providerName="AskSage"
-            />
+            <ApiKeyField initialValue={profile.apiKey} onChange={(value) => onUpdate({ apiKey: value })} providerName="AskSage" />
             <DebouncedTextField
                 initialValue={baseUrl}
                 onChange={(value) => onUpdate({ baseUrl: value })}
-                placeholder="Enter AskSage API URL..."
+                placeholder={t("settings.ui.asksage.enterUrl")}
                 style={{ width: "100%" }}
                 type="text">
                 <span style={{ fontWeight: 500 }}>AskSage API URL</span>
@@ -61,7 +58,6 @@ export const AskSageProvider = ({ showModelOptions, isPopup, profile, onUpdate }
             {showModelOptions && (
                 <>
                     <ModelSelector
-                        label="Model"
                         models={availableModels}
                         onChange={(e: any) =>
                             onUpdate({ modelId: e.target.value, modelInfo: availableModels[e.target.value] as any })

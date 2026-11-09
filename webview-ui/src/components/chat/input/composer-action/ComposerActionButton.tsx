@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
+import type { UiTranslator } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import type { ComposerShortcutLabels } from "@/utils/chat-input-shortcut"
 import { CancelIcon, QueueIcon, ResumeIcon, SendIcon } from "./ComposerActionIcons"
 import {
@@ -29,12 +31,12 @@ export interface ComposerActionButtonProps {
     readonly cancelRevealMs?: number
 }
 
-const ACTION_LABEL: Record<Exclude<ComposerAction, "unavailable">, string> = {
-    send: "Send message",
-    resume: "Resume task",
-    queue: "Queue message",
-    cancel: "Cancel task",
-}
+const ACTION_LABEL = {
+    send: "chatInput.action.send",
+    resume: "chatInput.action.resume",
+    queue: "chatInput.action.queue",
+    cancel: "chatInput.action.cancel",
+} as const
 
 interface TooltipContext {
     readonly shortcuts: ComposerShortcutLabels
@@ -43,34 +45,46 @@ interface TooltipContext {
     readonly outputTokensPerSecond?: number
 }
 
-function tooltipOf(action: ComposerAction, { shortcuts, state, revealsCancel, outputTokensPerSecond }: TooltipContext): string {
+function tooltipOf(
+    action: ComposerAction,
+    { shortcuts, state, revealsCancel, outputTokensPerSecond }: TooltipContext,
+    t: UiTranslator,
+): string {
     const lines: string[] = []
     switch (action) {
         case "send":
         case "resume":
-            lines.push(`${ACTION_LABEL[action]} (${shortcuts.send})`)
+            lines.push(
+                t(action === "send" ? "chatInput.action.sendShortcut" : "chatInput.action.resumeShortcut", {
+                    shortcut: shortcuts.send,
+                }),
+            )
             // With nothing running to steer, the steer shortcut just sends, so it is not offered.
-            if (state.canQueue) lines.push(`Queue as steering (${shortcuts.steer})`)
+            if (state.canQueue) lines.push(t("chatInput.action.steerShortcut", { shortcut: shortcuts.steer }))
             break
         case "queue":
-            lines.push(`Queue message (${shortcuts.send})`, `Queue as steering (${shortcuts.steer})`)
-            if (revealsCancel) lines.push("Keep hovering to cancel the task instead")
+            lines.push(
+                t("chatInput.action.queueShortcut", { shortcut: shortcuts.send }),
+                t("chatInput.action.steerShortcut", { shortcut: shortcuts.steer }),
+            )
+            if (revealsCancel) lines.push(t("chatInput.action.hoverCancel"))
             break
         case "cancel":
-            lines.push("Cancel task")
+            lines.push(t("chatInput.action.cancel"))
             break
         case "unavailable":
             lines.push(
-                state.submitKind === "resume" ? "The task cannot be resumed yet" : "The task does not accept input right now",
+                t(state.submitKind === "resume" ? "chatInput.action.resumeUnavailable" : "chatInput.action.inputUnavailable"),
             )
             break
     }
-    if (outputTokensPerSecond !== undefined) lines.push(`Model output: ${formatOutputSpeed(outputTokensPerSecond)}`)
+    if (outputTokensPerSecond !== undefined)
+        lines.push(t("chatInput.action.output", { speed: formatOutputSpeed(outputTokensPerSecond) }))
     return lines.join("\n")
 }
 
-function labelOf(action: ComposerAction, submitKind: ComposerSubmitKind): string {
-    return action === "unavailable" ? ACTION_LABEL[submitKind] : ACTION_LABEL[action]
+function labelOf(action: ComposerAction, submitKind: ComposerSubmitKind, t: UiTranslator): string {
+    return t(action === "unavailable" ? ACTION_LABEL[submitKind] : ACTION_LABEL[action])
 }
 
 /** The glyph for an action; an unavailable button keeps the glyph of what a send would do. */
@@ -109,6 +123,7 @@ export function ComposerActionButton({
     outputTokensPerSecond,
     cancelRevealMs = CANCEL_REVEAL_HOVER_MS,
 }: ComposerActionButtonProps) {
+    const { t } = useUiTranslation()
     const primary = resolveComposerAction(state)
     const submitKind = state.submitKind ?? "send"
     const revealable = onCancel ? hoverRevealedAction(primary, state) : undefined
@@ -154,7 +169,7 @@ export function ComposerActionButton({
         <button
             aria-busy={cancelPending || undefined}
             aria-disabled={disabled}
-            aria-label={labelOf(action, submitKind)}
+            aria-label={labelOf(action, submitKind, t)}
             className={[
                 "composer-action",
                 `composer-action--${action}`,
@@ -168,7 +183,7 @@ export function ComposerActionButton({
             onClick={handleClick}
             onPointerEnter={() => setHovering(true)}
             onPointerLeave={() => setHovering(false)}
-            title={tooltipOf(action, { shortcuts, state, revealsCancel: revealable !== undefined, outputTokensPerSecond })}
+            title={tooltipOf(action, { shortcuts, state, revealsCancel: revealable !== undefined, outputTokensPerSecond }, t)}
             type="button">
             {iconOf(action, submitKind)}
             {arming ? (

@@ -2,6 +2,7 @@ import { autoUpdate, flip, offset, shift, size, useFloating } from "@floating-ui
 import type { TaskRateMetricPoint } from "@shared/proto/dline/task"
 import { useLayoutEffect } from "react"
 import { createPortal } from "react-dom"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import {
     formatTaskMetricsSeriesValue,
     readTaskMetricsSeriesValue,
@@ -23,6 +24,7 @@ interface TaskMetricsTooltipProps {
 
 /** Position one aggregate time-bucket tooltip beside the active SVG point or bar. */
 export function TaskMetricsTooltip({ target, descriptors, enabledSeries, degraded }: TaskMetricsTooltipProps) {
+    const { t } = useUiTranslation()
     const boundary = target?.element.closest('[role="dialog"]') ?? undefined
     const { refs, floatingStyles } = useFloating({
         open: target !== undefined,
@@ -71,7 +73,7 @@ export function TaskMetricsTooltip({ target, descriptors, enabledSeries, degrade
                             </div>
                         )
                     })}
-                <div>History: {degraded ? "Degraded" : "Complete"}</div>
+                <div>{t(degraded ? "chatInput.metrics.historyDegraded" : "chatInput.metrics.historyComplete")}</div>
             </div>
         </div>,
         target.element.ownerDocument.body,

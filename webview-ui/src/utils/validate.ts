@@ -1,6 +1,7 @@
 import { ApiConfiguration } from "@shared/api"
 import { Mode } from "@shared/storage/types"
 import type { ApiProfile } from "@/components/settings/providers/ProviderProfile"
+import { englishUiTranslator, type UiTranslator } from "@/i18n/messages"
 
 /**
  * Validate that a profile is configured for the given mode.
@@ -10,6 +11,7 @@ export function validateApiConfiguration(
     currentMode: Mode,
     _apiConfiguration?: ApiConfiguration,
     profiles?: ApiProfile[],
+    t: UiTranslator = englishUiTranslator,
 ): string | undefined {
     if (!profiles || profiles.length === 0) {
         return undefined
@@ -17,11 +19,11 @@ export function validateApiConfiguration(
 
     const matchingProfile = profiles.find((p) => p.enabled && p.usedFor.includes(currentMode))
     if (!matchingProfile) {
-        return `No enabled profile found for ${currentMode} mode.`
+        return t("runtime.validation.noProfile", { mode: currentMode })
     }
 
     if (!matchingProfile.apiKey) {
-        return "You must provide a valid API key or choose a different provider."
+        return t("runtime.validation.apiKey")
     }
 
     return undefined

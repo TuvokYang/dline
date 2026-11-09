@@ -14,6 +14,8 @@ import {
     TriangleAlertIcon,
 } from "lucide-react"
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react"
+import { type UiMessageKey } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { FileServiceClient, UiServiceClient } from "@/services/grpc-client"
 import { TOOL_RESPONSE_SCROLL_CLASS } from "./constants"
 
@@ -26,7 +28,7 @@ interface ImageGenerationRowProps {
 
 interface ArtifactPreviewState {
     dataUrl?: string
-    error?: string
+    error?: string | { kind: "unavailable" }
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -38,26 +40,16 @@ function bytesToBase64(bytes: Uint8Array): string {
     return btoa(chunks.join(""))
 }
 
-function statusLabel(status: ImageGenerationPresentationV1["status"]): string {
-    switch (status) {
-        case "awaiting_approval":
-            return "Dline wants to generate an image"
-        case "queued":
-            return "Image generation queued"
-        case "started":
-            return "Generating image"
-        case "preview":
-            return "Image preview"
-        case "completed":
-            return "Image generation completed"
-        case "failed":
-            return "Image generation failed"
-        case "cancelled":
-            return "Image generation cancelled"
-        case "rejected":
-            return "Image generation rejected"
-    }
-}
+const STATUS_LABEL_KEYS = {
+    awaiting_approval: "chatRows.image.status.awaitingApproval",
+    queued: "chatRows.image.status.queued",
+    started: "chatRows.image.status.started",
+    preview: "chatRows.image.status.preview",
+    completed: "chatRows.image.status.completed",
+    failed: "chatRows.image.status.failed",
+    cancelled: "chatRows.image.status.cancelled",
+    rejected: "chatRows.image.status.rejected",
+} as const satisfies Record<ImageGenerationPresentationV1["status"], UiMessageKey>
 
 type ImageDisplayMode = "fit" | "fill"
 
@@ -65,13 +57,14 @@ interface ImageSurfaceProps {
     alt: string
     dataUrl?: string
     displayMode: ImageDisplayMode
-    error?: string
+    error?: ArtifactPreviewState["error"]
     height: number
     onActivate?: () => void
     width: number
 }
 
 function ImageSurface({ alt, dataUrl, displayMode, error, height, onActivate, width }: ImageSurfaceProps) {
+    const { t } = useUiTranslation()
     const activateFromKeyboard = (event: KeyboardEvent<HTMLImageElement>) => {
         if (!onActivate || (event.key !== "Enter" && event.key !== " ")) return
         event.preventDefault()
@@ -93,10 +86,15 @@ function ImageSurface({ alt, dataUrl, displayMode, error, height, onActivate, wi
                     tabIndex={onActivate ? 0 : undefined}
                 />
             ) : error ? (
-                <div className="flex h-full min-h-32 items-center justify-center p-3 text-xs text-error">{error}</div>
+                <div className="flex h-full min-h-32 items-center justify-center p-3 text-xs text-error">
+                    {typeof error === "string" ? error : t("chatRows.image.loadFailed")}
+                </div>
             ) : (
                 <div className="flex h-full min-h-32 items-center justify-center">
-                    <LoaderCircleIcon aria-label={`Loading ${alt.toLowerCase()}`} className="size-5 animate-spin" />
+                    <LoaderCircleIcon
+                        aria-label={t("chatRows.image.loadingPreview", { label: alt.toLowerCase() })}
+                        className="size-5 animate-spin"
+                    />
                 </div>
             )}
         </div>
@@ -104,6 +102,7 @@ function ImageSurface({ alt, dataUrl, displayMode, error, height, onActivate, wi
 }
 
 export default function ImageGenerationRow({ presentation, isExpanded, onAddToInput, onToggleExpand }: ImageGenerationRowProps) {
+    const { t } = useUiTranslation()
     const [previews, setPreviews] = useState<Record<string, ArtifactPreviewState>>({})
     const [displayMode, setDisplayMode] = useState<ImageDisplayMode>("fit")
     const artifacts = useMemo(() => presentation.artifacts ?? [], [presentation.artifacts])
@@ -139,7 +138,7 @@ export default function ImageGenerationRow({ presentation, isExpanded, onAddToIn
                     if (!active) return
                     setPreviews((current) => ({
                         ...current,
-                        [id]: { error: error instanceof Error ? error.message : "Failed to load image content." },
+                        [id]: { error: error instanceof Error ? error.message : { kind: "unavailable" } },
                     }))
                 })
         }
@@ -165,13 +164,13 @@ export default function ImageGenerationRow({ presentation, isExpanded, onAddToIn
 
     const isRunning = presentation.status === "queued" || presentation.status === "started" || presentation.status === "preview"
     const isFailed = presentation.status === "failed" || presentation.status === "rejected"
-    const fitActionLabel = displayMode === "fit" ? "Fill image preview" : "Keep image aspect ratio"
+    const fitActionLabel = displayMode === "fit" ? t("chatRows.image.fill") : t("chatRows.image.keepRatio")
 
     return (
         <div className="overflow-hidden rounded-md border border-editor-group-border bg-code">
             <div className={`flex items-center gap-2 px-3 py-2 ${isExpanded ? "border-b border-editor-group-border" : ""}`}>
                 <button
-                    aria-label={isExpanded ? "Collapse image generation" : "Expand image generation"}
+                    aria-label={isExpanded ? t("chatRows.image.collapse") : t("chatRows.image.expand")}
                     className="flex min-w-0 flex-1 items-center gap-2 text-left hover:text-foreground"
                     onClick={onToggleExpand}
                     type="button">
@@ -184,7 +183,7 @@ export default function ImageGenerationRow({ presentation, isExpanded, onAddToIn
                     ) : (
                         <ImageIcon className="size-4 shrink-0" />
                     )}
-                    <span className="min-w-0 flex-1 truncate font-semibold">{statusLabel(presentation.status)}</span>
+                    <span className="min-w-0 flex-1 truncate font-semibold">{t(STATUS_LABEL_KEYS[presentation.status])}</span>
                     {isExpanded ? (
                         <ChevronDownIcon className="size-4 shrink-0" />
                     ) : (
@@ -196,7 +195,7 @@ export default function ImageGenerationRow({ presentation, isExpanded, onAddToIn
                 <div className={`space-y-3 p-3 ${TOOL_RESPONSE_SCROLL_CLASS}`} data-testid="image-generation-scroll">
                     <div className="whitespace-pre-wrap break-words text-sm">{presentation.prompt}</div>
                     {presentation.count > 1 && (
-                        <div className="text-xs text-description">{presentation.count} images requested</div>
+                        <div className="text-xs text-description">{t("chatRows.image.count", { count: presentation.count })}</div>
                     )}
                     {presentation.modelId && (
                         <div className="text-xs text-description">
@@ -211,7 +210,13 @@ export default function ImageGenerationRow({ presentation, isExpanded, onAddToIn
                             data-preview-sequence={latestTransientPreview.sequence}
                             data-testid="image-generation-partial-preview">
                             <div className="flex items-center justify-between gap-2 border-b border-input-border px-2 py-1.5 text-xs text-description">
-                                <span>{`${latestTransientPreview.width}×${latestTransientPreview.height} · PARTIAL ${latestTransientPreview.sequence + 1}`}</span>
+                                <span>
+                                    {t("chatRows.image.partialMeta", {
+                                        width: latestTransientPreview.width,
+                                        height: latestTransientPreview.height,
+                                        sequence: latestTransientPreview.sequence + 1,
+                                    })}
+                                </span>
                                 <button
                                     aria-label={fitActionLabel}
                                     className="rounded p-1 hover:bg-toolbar-hover"
@@ -225,7 +230,7 @@ export default function ImageGenerationRow({ presentation, isExpanded, onAddToIn
                                 </button>
                             </div>
                             <ImageSurface
-                                alt={`Generated image partial ${latestTransientPreview.sequence + 1}`}
+                                alt={t("chatRows.image.partialAlt", { sequence: latestTransientPreview.sequence + 1 })}
                                 dataUrl={previews[latestTransientPreview.id]?.dataUrl}
                                 displayMode={displayMode}
                                 error={previews[latestTransientPreview.id]?.error}
@@ -242,7 +247,11 @@ export default function ImageGenerationRow({ presentation, isExpanded, onAddToIn
                                     <div className="overflow-hidden rounded border border-input-border" key={artifact.id}>
                                         <div className="flex items-center gap-1 border-b border-input-border px-2 py-1.5 text-xs text-description">
                                             <div className="min-w-0 flex-1">
-                                                {`${artifact.width}×${artifact.height} · ${artifact.format.toUpperCase()}`}
+                                                {t("chatRows.image.artifactMeta", {
+                                                    width: artifact.width,
+                                                    height: artifact.height,
+                                                    format: artifact.format.toUpperCase(),
+                                                })}
                                             </div>
                                             <button
                                                 aria-label={fitActionLabel}
@@ -256,7 +265,7 @@ export default function ImageGenerationRow({ presentation, isExpanded, onAddToIn
                                                 )}
                                             </button>
                                             <button
-                                                aria-label="Copy Artifact ID"
+                                                aria-label={t("chatRows.common.copyArtifactId")}
                                                 className="rounded p-1 hover:bg-toolbar-hover"
                                                 onClick={() =>
                                                     void FileServiceClient.copyToClipboard(
@@ -267,7 +276,7 @@ export default function ImageGenerationRow({ presentation, isExpanded, onAddToIn
                                                 <CopyIcon className="size-3.5" />
                                             </button>
                                             <button
-                                                aria-label="Use as Reference"
+                                                aria-label={t("chatRows.common.useAsReference")}
                                                 className="rounded p-1 hover:bg-toolbar-hover disabled:opacity-50"
                                                 disabled={!onAddToInput}
                                                 onClick={() =>
@@ -280,7 +289,7 @@ export default function ImageGenerationRow({ presentation, isExpanded, onAddToIn
                                             </button>
                                         </div>
                                         <ImageSurface
-                                            alt={`Generated image ${index + 1}`}
+                                            alt={t("chatRows.image.artifactAlt", { index: index + 1 })}
                                             dataUrl={preview?.dataUrl}
                                             displayMode={displayMode}
                                             error={preview?.error}

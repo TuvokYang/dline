@@ -134,10 +134,7 @@ export async function appendToFocusChainHistory(taskDir: string, taskId: string,
  */
 export function extractFocusChainItemsFromText(text: string): string[] {
     const lines = text.split("\n")
-    return lines.filter((line) => {
-        const trimmed = line.trim()
-        return isFocusChainItem(trimmed)
-    })
+    return lines.map((line) => line.trim()).filter(isFocusChainItem)
 }
 
 /** Return the exact unchecked item at a checklist item index, or null when the index is stale. */
@@ -453,20 +450,13 @@ export async function ensureFocusChainFile(taskId: string, initialFocusChainCont
     const taskDir = await ensureTaskDirectoryExists(taskId)
     const focusChainFilePath = getFocusChainFilePath(taskDir, taskId)
 
-    // Check if file exists
-    let fileExists = false
+    // Exclusive creation cannot replace an existing checklist, even if another
+    // startup path creates it concurrently or its contents cannot be read.
     try {
-        await fs.access(focusChainFilePath)
-        fileExists = true
-    } catch {
-        // File doesn't exist
-    }
-
-    // Create file if it doesn't exist
-    if (!fileExists) {
-        const focusChainContent = initialFocusChainContent || ""
-        const fileContent = createFocusChainMarkdownContent(taskId, focusChainContent)
-        await fs.writeFile(focusChainFilePath, fileContent, "utf8")
+        const fileContent = createFocusChainMarkdownContent(taskId, initialFocusChainContent || "")
+        await fs.writeFile(focusChainFilePath, fileContent, { encoding: "utf8", flag: "wx" })
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
     }
 
     return focusChainFilePath

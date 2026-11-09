@@ -243,6 +243,34 @@ export class HistoryDisplaySession {
         return { ...(await this.fetchMessages(start, count)), anchorFound: true }
     }
 
+    /** Resolve a source ordinal first; a stale index/identity pair ends only this request. */
+    async fetchSourceIndexedPage(
+        anchorIndex: number,
+        count: number,
+        anchorTs?: number,
+    ): Promise<UIMessageWindowPage & { anchorFound: boolean }> {
+        const reader = this.messageReader
+        const totalCount = this.getMessageCount()
+        const missing = { messages: [], totalCount, startIndex: 0, anchorFound: false }
+        const target = await reader?.getBySourceIndex(anchorIndex)
+        if (!target || target.messageIndex !== anchorIndex || (anchorTs !== undefined && target.ts !== anchorTs)) return missing
+
+        // Canonical reader positions include task0 and match its physical ordinals;
+        // the bounded loaded window and the Webview body offset are not used here.
+        const start = centredPageStart(anchorIndex, Math.max(0, Math.trunc(count)), totalCount)
+        const page = await this.fetchMessages(start, count)
+        if (!page.messages.some((message) => message.messageIndex === anchorIndex && message.ts === target.ts)) return missing
+        const current = await reader?.getBySourceIndex(anchorIndex)
+        if (current?.ts !== target.ts) return missing
+        return { ...page, anchorFound: true }
+    }
+
+    /** Metadata for a maintained partial row, including one outside the loaded history window. */
+    async projectMessageSourceIndex(ts: number): Promise<number | undefined> {
+        if (this.syntheticMessage?.ts === ts) return undefined
+        return (await this.messageReader?.getByTimestamp(ts))?.messageIndex
+    }
+
     async fetchMessages(referenceIndex: number, count: number): Promise<UIMessageWindowPage> {
         const reader = this.messageReader
         if (!reader) return { messages: [], totalCount: 0, startIndex: 0 }

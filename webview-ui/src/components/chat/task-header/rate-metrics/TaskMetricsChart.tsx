@@ -1,6 +1,7 @@
 import type { TaskRateMetricPoint } from "@shared/proto/dline/task"
 import { curveMonotoneX, line } from "d3-shape"
 import { useMemo, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import {
     createDefaultEnabledTaskMetricsSeries,
     createTaskMetricsChartLayout,
@@ -29,11 +30,19 @@ interface ActiveTaskMetricsTooltipTarget extends TaskMetricsTooltipTarget {
 
 /** Render the selected compact Task metrics view with locally toggleable series. */
 export function TaskMetricsChart({ points, view, chartType, degraded = false }: TaskMetricsChartProps) {
+    const { t } = useUiTranslation()
     const [enabledSeries, setEnabledSeries] = useState<Set<TaskMetricsSeriesKey>>(createDefaultEnabledTaskMetricsSeries)
     const [activeTarget, setActiveTarget] = useState<ActiveTaskMetricsTooltipTarget>()
     const chart = useMemo(() => createTaskMetricsChartLayout(points, view, enabledSeries), [enabledSeries, points, view])
-    const descriptors = useMemo(() => getVisibleTaskMetricsSeries(points, view), [points, view])
-    const axisTitles = getTaskMetricsAxisTitles(view)
+    const descriptors = useMemo(
+        () =>
+            getVisibleTaskMetricsSeries(points, view).map((descriptor) => ({
+                ...descriptor,
+                label: t(`chatInput.metrics.series.${descriptor.key}`),
+            })),
+        [points, view, t],
+    )
+    const axisTitles = getTaskMetricsAxisTitles(view, t)
     const rightTicks = chart.percentageTicks.length > 0 ? chart.percentageTicks : chart.secondaryTicks
     const currentTarget =
         activeTarget?.chartType === chartType &&
@@ -61,7 +70,7 @@ export function TaskMetricsChart({ points, view, chartType, degraded = false }: 
 
     return (
         <div className="relative min-w-0" data-testid="task-metrics-chart">
-            <div aria-label="Chart series" className="mb-1.5 flex flex-wrap gap-1" role="group">
+            <div aria-label={t("chatInput.metrics.chartSeries")} className="mb-1.5 flex flex-wrap gap-1" role="group">
                 {descriptors.map((descriptor) => {
                     const enabled = enabledSeries.has(descriptor.key)
                     return (
@@ -94,7 +103,7 @@ export function TaskMetricsChart({ points, view, chartType, degraded = false }: 
                 })}
             </div>
             <svg
-                aria-label="Task metrics history chart"
+                aria-label={t("chatInput.metrics.chart")}
                 className="h-auto w-full rounded-sm border border-input-placeholder/10 bg-(--vscode-editor-background)"
                 data-chart-type={chartType}
                 data-view={view}
@@ -228,7 +237,9 @@ export function TaskMetricsChart({ points, view, chartType, degraded = false }: 
                     )}
                 {chart.focusAnchors.map((focusAnchor) => (
                     <circle
-                        aria-label={`Show metrics at ${new Date(focusAnchor.point.bucketStartMs).toLocaleString()}`}
+                        aria-label={t("chatInput.metrics.showAt", {
+                            time: new Date(focusAnchor.point.bucketStartMs).toLocaleString(),
+                        })}
                         className="focus:outline-none focus:stroke-(--vscode-focusBorder)"
                         cx={focusAnchor.x}
                         cy={focusAnchor.y}

@@ -1,6 +1,7 @@
 import "should"
 import { openRouterDefaultModelId, openRouterDefaultModelInfo } from "@shared/api"
 import { ApiProfile } from "@shared/proto/dline/profile"
+import { flatMeteredPricing, readPriceSet } from "@shared/providers/pricing-shape"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { VercelAIGatewayHandler } from "../vercel-ai-gateway"
 
@@ -17,28 +18,35 @@ describe("VercelAIGatewayHandler", () => {
 
     describe("getModel", () => {
         it("should return configured model and info when both are provided", () => {
+            const selectedModelId = "google/gemini-3.1-pro-preview"
+            // The override only applies to the selected model, so the declared id
+            // has to match it; a distinct rate keeps the assertion below from
+            // passing by both sides defaulting to the same value.
             const customModelInfo = {
                 ...openRouterDefaultModelInfo,
+                id: selectedModelId,
                 capabilities: {
                     ...openRouterDefaultModelInfo.capabilities,
                     maxTokens: 123456,
                 },
+                pricing: flatMeteredPricing(1.25, 7.5),
             }
 
             const handler = new VercelAIGatewayHandler({
                 profile: ApiProfile.create({
                     provider: "vercel-ai-gateway",
-                    modelId: "google/gemini-3.1-pro-preview",
+                    modelId: selectedModelId,
                     modelInfo: customModelInfo as any,
                 }),
                 mode: "act",
             })
 
             const result = handler.getModel()
-            result.id.should.equal("google/gemini-3.1-pro-preview")
+            result.id.should.equal(selectedModelId)
             result.info.capabilities?.maxTokens?.should.equal(123456)
             result.info.description?.should.equal(customModelInfo.description)
-            result.info.pricing?.inputPrice?.should.equal(customModelInfo.pricing?.inputPrice)
+            readPriceSet(result.info.pricing?.strategy?.flat?.prices).inputPrice.should.equal(1.25)
+            readPriceSet(result.info.pricing?.strategy?.flat?.prices).outputPrice.should.equal(7.5)
         })
 
         it("should preserve configured model ID when model info is missing", () => {
@@ -99,6 +107,7 @@ describe("VercelAIGatewayHandler", () => {
                                     usage: {
                                         prompt_tokens: 11,
                                         completion_tokens: 7,
+                                        cost: 0,
                                     },
                                 },
                             ]),
@@ -140,6 +149,7 @@ describe("VercelAIGatewayHandler", () => {
                                     usage: {
                                         prompt_tokens: 1000,
                                         completion_tokens: 200,
+                                        cost: 0,
                                         prompt_tokens_details: {
                                             cached_tokens: 500,
                                         },

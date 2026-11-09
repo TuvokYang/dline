@@ -2,50 +2,71 @@ import { EmptyRequest } from "@shared/proto/dline/common"
 import type { SupportStatus } from "@shared/proto/dline/support"
 import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
 import { useCallback, useEffect, useState } from "react"
+import type { UiTranslator } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { SupportServiceClient } from "@/services/grpc-client"
 
 type SupportAction = "check" | "delete"
+type SupportActionError = { action: SupportAction; diagnostic: string }
 
-const STATE_LABELS: Record<string, string> = {
-    awaiting_issue: "Waiting for the GitHub issue",
-    pending_approval: "Waiting for support approval",
-    approved: "Approved and capturing temporary diagnostics",
-    revoked: "Revoked",
-    expired: "Expired",
-}
+const actionErrorKeys = {
+    check: "settings.ui.support.checkError",
+    delete: "settings.ui.support.deleteError",
+} as const
 
-const ISSUE_STATE_LABELS: Record<string, string> = {
-    unlinked: "Not linked yet",
-    open: "Open",
-    closed: "Closed",
-}
+const stateLabels = (t: UiTranslator): Record<string, string> => ({
+    awaiting_issue: t("settings.ui.support.awaitingIssue"),
+    pending_approval: t("settings.ui.support.pendingApproval"),
+    approved: t("settings.ui.support.approved"),
+    revoked: t("settings.ui.support.revoked"),
+    expired: t("settings.ui.support.expired"),
+})
+const issueStateLabels = (t: UiTranslator): Record<string, string> => ({
+    unlinked: t("settings.ui.support.unlinked"),
+    open: t("settings.ui.support.open"),
+    closed: t("settings.ui.support.closed"),
+})
+const refreshReasonLabels = (t: UiTranslator): Record<string, string> => ({
+    device_window: t("settings.ui.support.deviceWindow"),
+    device_day: t("settings.ui.support.deviceDay"),
+    global_query_day: t("settings.ui.support.globalDay"),
+    query_ingress: t("settings.ui.support.ingress"),
+    read_budget: t("settings.ui.support.readBudget"),
+})
+const resolutionLabels = (t: UiTranslator): Record<string, string> => ({
+    none: t("settings.ui.support.noResolution"),
+    investigating: t("settings.ui.support.investigating"),
+    fixed: t("settings.ui.support.fixed"),
+    wont_fix: t("settings.ui.support.wontFix"),
+    duplicate: t("settings.ui.support.duplicate"),
+    not_reproducible: t("settings.ui.support.notReproducible"),
+})
 
-const RESOLUTION_LABELS: Record<string, string> = {
-    none: "No resolution yet",
-    investigating: "Investigating",
-    fixed: "Fixed",
-    wont_fix: "Won't fix",
-    duplicate: "Duplicate",
-    not_reproducible: "Not reproducible",
-}
-
-function resolutionLabel(status: SupportStatus): string {
+function resolutionLabel(status: SupportStatus, t: UiTranslator): string {
     const resolution = status.resolution
-    if (!resolution) return RESOLUTION_LABELS.none
-    const label = RESOLUTION_LABELS[resolution.state] ?? (resolution.state || "Unknown")
-    return resolution.fixedInVersion ? `${label} in ${resolution.fixedInVersion}` : label
+    if (!resolution) return t("settings.ui.support.noResolution")
+    const label = resolutionLabels(t)[resolution.state] ?? (resolution.state || t("settings.ui.unknown"))
+    return resolution.fixedInVersion ? t("settings.ui.support.fixedIn", { label, version: resolution.fixedInVersion }) : label
 }
 
-function formatCountdown(expiresAt: number | undefined, now: number): string {
-    if (!expiresAt) return "Not available"
+/** Unknown service reasons remain raw diagnostics rather than guessed translations. */
+function refreshMessage(state: string, reason: string | undefined, t: UiTranslator): string {
+    const cause = reason ? refreshReasonLabels(t)[reason] : undefined
+    return t("settings.ui.support.refresh", {
+        lead: state === "stale" ? t("settings.ui.support.stale") : t("settings.ui.support.wait"),
+        cause: cause ?? "",
+    })
+}
+
+function formatCountdown(expiresAt: number | undefined, now: number, t: UiTranslator): string {
+    if (!expiresAt) return t("settings.ui.support.unavailable")
     const seconds = Math.max(0, Math.ceil((expiresAt - now) / 1_000))
-    if (seconds === 0) return "Expired"
-    const hours = Math.floor(seconds / 3_600)
-    const minutes = Math.floor((seconds % 3_600) / 60)
-    const remainder = seconds % 60
-    if (hours > 0) return `${hours}h ${minutes}m ${remainder}s`
-    if (minutes > 0) return `${minutes}m ${remainder}s`
-    return `${remainder}s`
+    if (seconds === 0) return t("settings.ui.support.expired")
+    return t("settings.ui.support.countdown", {
+        hours: Math.floor(seconds / 3_600),
+        minutes: Math.floor((seconds % 3_600) / 60),
+        seconds: seconds % 60,
+    })
 }
 
 function StatusRow({ label, value, testId }: { label: string; value: string; testId?: string }) {
@@ -61,11 +82,12 @@ function StatusRow({ label, value, testId }: { label: string; value: string; tes
 
 /** Safe Settings projection for a user-confirmed temporary support authorization. */
 export function SupportTelemetryStatus() {
+    const { t } = useUiTranslation()
     const [status, setStatus] = useState<SupportStatus>()
     const [loaded, setLoaded] = useState(false)
     const [now, setNow] = useState(Date.now())
     const [busy, setBusy] = useState<SupportAction>()
-    const [error, setError] = useState<string>()
+    const [error, setError] = useState<SupportActionError>()
     const [deleteArmed, setDeleteArmed] = useState(false)
 
     const readStatus = useCallback(async () => {
@@ -80,7 +102,7 @@ export function SupportTelemetryStatus() {
                 if (mounted) setStatus(next)
             })
             .catch((cause) => {
-                if (mounted) setError(cause instanceof Error ? cause.message : String(cause))
+                if (mounted) setError({ action: "check", diagnostic: cause instanceof Error ? cause.message : String(cause) })
             })
             .finally(() => {
                 if (mounted) setLoaded(true)
@@ -103,7 +125,7 @@ export function SupportTelemetryStatus() {
         try {
             await operation()
         } catch (cause) {
-            setError(cause instanceof Error ? cause.message : String(cause))
+            setError({ action, diagnostic: cause instanceof Error ? cause.message : String(cause) })
         } finally {
             setBusy(undefined)
         }
@@ -125,62 +147,69 @@ export function SupportTelemetryStatus() {
 
     if (!loaded || !status?.present) return null
 
-    const stateLabel = STATE_LABELS[status.state] ?? (status.state || "Unknown")
-    const issueLabel = ISSUE_STATE_LABELS[status.issueState] ?? (status.issueState || "Unknown")
+    const stateLabel = stateLabels(t)[status.state] ?? (status.state || t("settings.ui.unknown"))
+    const issueLabel = issueStateLabels(t)[status.issueState] ?? (status.issueState || t("settings.ui.unknown"))
     const summary = status.resolution?.summary
+    const refresh = status.refresh
 
     return (
         <div data-testid="support-telemetry-status">
-            <h3 className="text-md font-semibold">Temporary support telemetry</h3>
-            <p className="text-sm text-description">
-                This authorization exists only because temporary telemetry was explicitly confirmed in a bug report. Private
-                credentials remain in owner-only local storage and are never shown here.
-            </p>
+            <h3 className="text-md font-semibold">{t("settings.ui.support.title")}</h3>
+            <p className="text-sm text-description">{t("settings.ui.support.help")}</p>
             <div className="mt-2 rounded bg-vscode-textBlockQuote-background p-3">
-                <StatusRow label="Public support code" testId="support-public-code" value={status.publicCode} />
-                <StatusRow label="Security status" testId="support-state" value={stateLabel} />
-                <StatusRow label="GitHub issue" testId="support-issue" value={issueLabel} />
-                <StatusRow label="Resolution" testId="support-resolution" value={resolutionLabel(status)} />
-                {summary && <StatusRow label="Maintainer note" testId="support-resolution-summary" value={summary} />}
+                <StatusRow label={t("settings.ui.support.publicCode")} testId="support-public-code" value={status.publicCode} />
+                <StatusRow label={t("settings.ui.support.securityStatus")} testId="support-state" value={stateLabel} />
+                <StatusRow label={t("settings.ui.support.issue")} testId="support-issue" value={issueLabel} />
                 <StatusRow
-                    label="Authorization remaining"
+                    label={t("settings.ui.support.resolution")}
+                    testId="support-resolution"
+                    value={resolutionLabel(status, t)}
+                />
+                {summary && (
+                    <StatusRow label={t("settings.ui.support.note")} testId="support-resolution-summary" value={summary} />
+                )}
+                <StatusRow
+                    label={t("settings.ui.support.authorizationRemaining")}
                     testId="support-authorization-countdown"
-                    value={formatCountdown(status.authorizationExpiresAt, now)}
+                    value={formatCountdown(status.authorizationExpiresAt, now, t)}
                 />
                 <StatusRow
-                    label="Capture remaining"
+                    label={t("settings.ui.support.captureRemaining")}
                     testId="support-capture-countdown"
-                    value={formatCountdown(status.captureExpiresAt, now)}
+                    value={formatCountdown(status.captureExpiresAt, now, t)}
                 />
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
                 <VSCodeButton appearance="secondary" disabled={busy !== undefined} onClick={checkNow}>
-                    {busy === "check" ? "Checking…" : "Check now"}
+                    {busy === "check" ? t("settings.ui.support.checking") : t("settings.ui.support.checkNow")}
                 </VSCodeButton>
                 {!deleteArmed ? (
                     <VSCodeButton appearance="secondary" disabled={busy !== undefined} onClick={() => setDeleteArmed(true)}>
-                        Delete & Revoke
+                        {t("settings.ui.support.delete")}
                     </VSCodeButton>
                 ) : (
                     <>
                         <VSCodeButton appearance="secondary" disabled={busy !== undefined} onClick={deleteAndRevoke}>
-                            {busy === "delete" ? "Deleting…" : "Confirm delete & revoke"}
+                            {busy === "delete" ? t("settings.ui.support.deleting") : t("settings.ui.support.confirmDelete")}
                         </VSCodeButton>
                         <VSCodeButton appearance="secondary" disabled={busy !== undefined} onClick={() => setDeleteArmed(false)}>
-                            Cancel
+                            {t("settings.ui.cancel")}
                         </VSCodeButton>
                     </>
                 )}
             </div>
-            {deleteArmed && (
-                <p className="mt-[5px] text-sm text-description">
-                    Dline will stop local capture, clear issue-only access and delete the local authorization. Nothing is sent to
-                    the service or the issue; the server ends the authorization when the issue closes or it expires.
+            {deleteArmed && <p className="mt-[5px] text-sm text-description">{t("settings.ui.support.deleteHelp")}</p>}
+            {refresh && (
+                <p className="mt-[5px] text-sm text-description" data-testid="support-telemetry-refresh">
+                    {refreshMessage(refresh.state, refresh.reason, t)}
+                    {refresh.nextQueryAt ? (
+                        <> {t("settings.ui.support.nextQuery", { time: formatCountdown(refresh.nextQueryAt, now, t) })}</>
+                    ) : null}
                 </p>
             )}
             {error && (
                 <p className="mt-[5px] text-sm text-error" data-testid="support-telemetry-error">
-                    {error}
+                    {t(actionErrorKeys[error.action], { diagnostic: error.diagnostic })}
                 </p>
             )}
         </div>

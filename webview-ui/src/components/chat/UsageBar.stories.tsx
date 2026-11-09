@@ -7,6 +7,8 @@ import {
     claudeFableExhaustedUsageFixture,
     claudeUsageFixture,
     codexUsageFixture,
+    unreportedCacheUsageFixture,
+    zeroCacheHitUsageFixture,
 } from "../settings/providers/usageStoryFixtures"
 import { UsageBar } from "./UsageBar"
 
@@ -87,8 +89,33 @@ export const BalanceTooltip: Story = {
     play: hoverChip,
 }
 
-/** Balance details menu with the refresh button. */
+/** Balance details menu with local day totals and a measured 75% cache hit rate. */
 export const BalanceDetails: Story = {
     decorators: withUsage(balanceUsageFixture),
-    play: openDetails,
+    play: async (context) => {
+        await openDetails(context)
+        const details = within(document.body).getByRole("dialog", { name: "Provider usage details" })
+        await expect(within(details).getByText("Cache hit: 75%")).toBeVisible()
+    },
+}
+
+/** The same production details menu, with cache reported but no hits. */
+export const CacheHitZero: Story = {
+    decorators: withUsage(zeroCacheHitUsageFixture),
+    play: async (context) => {
+        await openDetails(context)
+        const details = within(document.body).getByRole("dialog", { name: "Provider usage details" })
+        await expect(within(details).getByText("Cache hit: 0%")).toBeVisible()
+    },
+}
+
+/** Local tokens without a cache split show no cache percentage. */
+export const CacheNotReported: Story = {
+    decorators: withUsage(unreportedCacheUsageFixture),
+    play: async (context) => {
+        await openDetails(context)
+        const details = within(within(document.body).getByRole("dialog", { name: "Provider usage details" }))
+        await expect(details.getByText(/^Today In:/)).toBeVisible()
+        await expect(details.queryByText(/^Cache hit:/)).not.toBeInTheDocument()
+    },
 }

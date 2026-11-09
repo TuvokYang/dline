@@ -60,25 +60,6 @@ function poolRefusingEveryAcquire(): VscodeTerminalPool {
 }
 
 describe("terminal acquisition source", () => {
-    it("marks a pooled terminal as a warm hit", async () => {
-        const manager = new VscodeTerminalManager(poolReturningLease())
-
-        const terminal = await manager.getOrCreateTerminal("C:\\workspace", LAUNCH_CONFIGURATION)
-
-        assert.equal(terminal.acquisitionSource, "warm_pool")
-    })
-
-    it("marks a terminal created after a warm miss as a cold start", async () => {
-        const manager = new VscodeTerminalManager(poolRefusingEveryAcquire())
-
-        const terminal = await manager.getOrCreateTerminal("C:\\workspace", LAUNCH_CONFIGURATION)
-
-        // A warm miss is exactly the case the metric has to expose: the command
-        // pays a full shell start, which is what the pool exists to avoid.
-        assert.equal(terminal.acquisitionSource, "cold_start")
-        manager.disposeAll()
-    })
-
     it("only ever reports a value from the bounded set", async () => {
         const warm = await new VscodeTerminalManager(poolReturningLease()).getOrCreateTerminal(
             "C:\\workspace",

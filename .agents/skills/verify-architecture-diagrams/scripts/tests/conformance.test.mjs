@@ -25,6 +25,31 @@ function diagram(source, file = "plan.md") {
     return parsed.diagram
 }
 
+test("an evidence subset cannot hide an unmapped node, dependency or result flow", () => {
+    const graph = diagram(`flowchart LR
+%% id: Coverage
+A[A] -->|submits| B[B]
+B -.->|committed fact| C[C]`)
+    const mapped = {
+        schemaVersion: 2,
+        diagramId: "Coverage",
+        file: "plan.md",
+        nodes: new Map([
+            ["A", { artifacts: [{ path: "a.ts" }] }],
+            ["B", { artifacts: [{ path: "b.ts" }] }],
+        ]),
+        artifactById: new Map(),
+        edges: [{ id: "send", from: "A", to: "B", style: "solid", label: "submits" }],
+    }
+    const missing = validateEvidenceAgainstDiagram(mapped, graph)
+    assert.deepEqual(missing.map((entry) => entry.rule).sort(), ["evidence-edge-unmapped", "evidence-node-unmapped"])
+    mapped.nodes.set("C", { artifacts: [{ path: "c.ts" }] })
+    mapped.edges.push({ id: "result", from: "B", to: "C", style: "dotted", label: "committed fact" })
+    assert.deepEqual(validateEvidenceAgainstDiagram(mapped, graph), [])
+    mapped.edges[1].style = "solid"
+    assert.ok(validateEvidenceAgainstDiagram(mapped, graph).some((entry) => entry.rule === "evidence-edge-unmapped"))
+})
+
 function importEdge(importer, target, { typeOnly = false } = {}) {
     return {
         importer,
@@ -135,7 +160,7 @@ flowchart LR
     parsed.evidence.edges[0].label = "writes"
     assert.deepEqual(
         validateEvidenceAgainstDiagram(parsed.evidence, targetDiagram).map((finding) => finding.rule),
-        ["evidence-edge-mismatch"],
+        ["evidence-edge-unmapped", "evidence-edge-mismatch"],
     )
 
     const legacy = parseArchitectureEvidence(
@@ -735,7 +760,7 @@ test("proves only observable wiring and marks semantic adapters unverifiable", (
     const expectedStatus = new Map([
         ["direct_import", "proven"],
         ["injected_port", "unverifiable"],
-        ["composition", "proven"],
+        ["composition", "unverifiable"],
         ["event", "unverifiable"],
         ["callback", "unverifiable"],
         ["rpc", "unverifiable"],
@@ -756,7 +781,28 @@ test("proves only observable wiring and marks semantic adapters unverifiable", (
         codeSnapshot,
         presentArtifacts,
     })
-    assert.equal(receiveAsCompositionRoot.proven, true, receiveAsCompositionRoot.reason)
+    assert.equal(receiveAsCompositionRoot.status, "unverifiable", receiveAsCompositionRoot.reason)
+    assert.equal(receiveAsCompositionRoot.proven, false)
+
+    for (const edge of cases.filter((edge) => ["injected_port", "composition", "event", "callback"].includes(edge.kind))) {
+        const indirect = proveEvidenceEdge({ edge, codeSnapshot: { ...codeSnapshot, imports: [] }, presentArtifacts })
+        assert.equal(
+            indirect.status,
+            "unverifiable",
+            `${edge.kind}: an unmodelled contextual binding is not a contradicted connection`,
+        )
+    }
+    const absentAssembly = proveEvidenceEdge({
+        edge: {
+            kind: "composition",
+            emit: endpoint("src/producer.ts"),
+            receive: endpoint("src/consumer.ts"),
+            assembly: endpoint("src/missing.ts"),
+        },
+        codeSnapshot,
+        presentArtifacts,
+    })
+    assert.equal(absentAssembly.status, "contradicted")
 
     const missing = proveEvidenceEdge({
         edge: { kind: "direct_import", emit: endpoint("src/producer.ts"), receive: endpoint("src/target.ts") },

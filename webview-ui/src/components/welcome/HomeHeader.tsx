@@ -1,6 +1,7 @@
 import { EmptyRequest } from "@shared/proto/dline/common"
 import DlineLogo from "@/assets/DlineLogo"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { UiServiceClient } from "@/services/grpc-client"
 
 interface HomeHeaderProps {
@@ -8,6 +9,7 @@ interface HomeHeaderProps {
 }
 
 const HomeHeader = ({ shouldShowQuickWins = false }: HomeHeaderProps) => {
+    const { t } = useUiTranslation()
     const { environment, lazyTeammateModeEnabled } = useExtensionState()
 
     const handleTakeATour = async () => {
@@ -20,7 +22,7 @@ const HomeHeader = ({ shouldShowQuickWins = false }: HomeHeaderProps) => {
 
     // Lazy Teammate Mode shows the sleepy face without the December hat.
     const isDecember = new Date().getMonth() === 11 // 11 = December (0-indexed)
-    const headingText = lazyTeammateModeEnabled ? "I guess I'm here to help" : "What can I do for you?"
+    const headingText = lazyTeammateModeEnabled ? t("shell.welcome.headingLazy") : t("shell.welcome.heading")
 
     return (
         <div className="flex flex-col items-center mb-5">
@@ -41,7 +43,7 @@ const HomeHeader = ({ shouldShowQuickWins = false }: HomeHeaderProps) => {
                         className="flex items-center gap-2 px-4 py-2 rounded-full border border-border-panel bg-white/2 hover:bg-list-background-hover transition-colors duration-150 ease-in-out text-code-foreground text-sm font-medium cursor-pointer"
                         onClick={handleTakeATour}
                         type="button">
-                        Take a Tour
+                        {t("shell.welcome.takeTour")}
                         <span className="codicon codicon-play scale-90" />
                     </button>
                 </div>

@@ -1,5 +1,6 @@
 import { type ModelCapabilities, ServerTool } from "@shared/proto/dline/models/metadata"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 
 function ThinkingIcon() {
@@ -97,37 +98,37 @@ function WebIcon() {
 const capabilityDefinitions = [
     {
         key: "thinking",
-        label: "Reasoning",
+        label: "settings.ui.reasoning",
         icon: ThinkingIcon,
         supported: (value: ModelCapabilities) => value.supportsReasoning === true,
     },
     {
         key: "image",
-        label: "Image input",
+        label: "settings.ui.capability.imageInput",
         icon: ImageIcon,
         supported: (value: ModelCapabilities) => value.supportsImages === true,
     },
     {
         key: "prompt-cache",
-        label: "Prompt cache",
+        label: "settings.ui.capability.promptCache",
         icon: PromptCacheIcon,
         supported: (value: ModelCapabilities) => value.supportsPromptCache === true,
     },
     {
         key: "browser",
-        label: "Browser actions",
+        label: "settings.ui.capability.browserActions",
         icon: BrowserIcon,
         supported: (value: ModelCapabilities) => value.supportsBrowserAction === true,
     },
     {
         key: "web",
-        label: "Web search",
+        label: "settings.ui.capability.webSearch",
         icon: WebIcon,
         supported: (value: ModelCapabilities) => value.tools?.includes(ServerTool.WEB_SEARCH) === true,
     },
     {
         key: "web-fetch",
-        label: "Web fetch",
+        label: "settings.ui.capability.webFetch",
         icon: WebIcon,
         supported: (value: ModelCapabilities) => value.tools?.includes(ServerTool.WEB_FETCH) === true,
     },
@@ -140,13 +141,16 @@ interface ProfileCapabilityIconsProps {
 }
 
 export function ProfileCapabilityIcons({ capabilities, className, showLabels = false }: ProfileCapabilityIconsProps) {
+    const { t } = useUiTranslation()
     if (!capabilities) return null
     const supported = capabilityDefinitions.filter((definition) => definition.supported(capabilities))
     if (supported.length === 0) return null
 
     if (showLabels) {
         return (
-            <ul aria-label="Model capabilities" className={cn("m-0 flex list-none flex-col gap-0.5 p-0", className)}>
+            <ul
+                aria-label={t("settings.ui.capability.title")}
+                className={cn("m-0 flex list-none flex-col gap-0.5 p-0", className)}>
                 {supported.map((definition) => {
                     const Icon = definition.icon
                     return (
@@ -154,7 +158,7 @@ export function ProfileCapabilityIcons({ capabilities, className, showLabels = f
                             <span className="inline-flex size-3 items-center justify-center [&_svg]:size-3">
                                 <Icon />
                             </span>
-                            <span>{definition.label}: supported</span>
+                            <span>{t("settings.ui.capability.supported", { label: t(definition.label) })}</span>
                         </li>
                     )
                 })}
@@ -164,19 +168,19 @@ export function ProfileCapabilityIcons({ capabilities, className, showLabels = f
 
     return (
         <ul
-            aria-label="Model capabilities"
+            aria-label={t("settings.ui.capability.title")}
             className={cn("m-0 flex shrink-0 list-none items-center justify-end gap-0.5 p-0", className)}>
             {supported.map((definition) => {
                 const Icon = definition.icon
                 return (
-                    <li aria-label={definition.label} key={definition.key}>
+                    <li aria-label={t(definition.label)} key={definition.key}>
                         <Tooltip>
                             <TooltipTrigger asChild>
                                 <span className="inline-flex size-5 items-center justify-center rounded-xs text-description hover:bg-toolbar-hover hover:text-foreground">
                                     <Icon />
                                 </span>
                             </TooltipTrigger>
-                            <TooltipContent side="top">{definition.label}</TooltipContent>
+                            <TooltipContent side="top">{t(definition.label)}</TooltipContent>
                         </Tooltip>
                     </li>
                 )

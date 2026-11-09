@@ -1,11 +1,14 @@
 // Stage 7: bounded comparison of diagram, task, evidence and canonical code facts.
-// The provider scans only explicit current-Workstream artifact/owns/reads files.
+// Diagram bindings define the inspected architectural boundary; Task reads are proof support.
 
 import fs from "node:fs"
 import path from "node:path"
 import { canonicalNodeKey, normalizeArchitectureIdentity } from "./architecture-identity.mjs"
 import { createCodeFactSnapshot } from "./code-facts.mjs"
+import { bindDiagramSources, expandDiagramSources } from "./diagram-sources.mjs"
 import { validateEvidenceAgainstDiagram } from "./evidence-model.mjs"
+import { importsInScriptRegions, resolveScriptRegion } from "./script-regions.mjs"
+import { proveScriptWiring } from "./script-wiring.mjs"
 import { buildDependencyClosure } from "./tree-sitter-dependencies.mjs"
 import { languageForPath } from "./tree-sitter-runtime.mjs"
 
@@ -43,22 +46,28 @@ function endpointPath(endpoint) {
     return canonicalPath(endpoint?.path)
 }
 
-function importTargets(edge, targetPath) {
+function importTargets(edge, targetPath, { runtime = false } = {}) {
     const wanted = canonicalPath(targetPath)
     if (edge.target?.kind === "workspace" && canonicalPath(edge.target.path) === wanted) return true
     return (
-        edge.bindings?.some((binding) =>
-            binding.provenance?.declarations?.some(
-                (declaration) => declaration.origin === "workspace" && canonicalPath(declaration.path) === wanted,
-            ),
-        ) ?? false
+        edge.bindings?.some((binding) => {
+            const provenance = runtime ? binding.valueProvenance : binding.provenance
+            return (
+                (!runtime || !binding.typeOnly) &&
+                provenance?.state === "resolved" &&
+                provenance.declarations.some(
+                    (declaration) => declaration.kind === "workspace" && canonicalPath(declaration.path) === wanted,
+                )
+            )
+        }) ?? false
     )
 }
 
 function hasImport(codeSnapshot, importer, target, { runtime = false } = {}) {
     const source = canonicalPath(importer)
     return codeSnapshot.imports.some(
-        (edge) => canonicalPath(edge.importer) === source && (!runtime || !edge.typeOnly) && importTargets(edge, target),
+        (edge) =>
+            canonicalPath(edge.importer) === source && (!runtime || !edge.typeOnly) && importTargets(edge, target, { runtime }),
     )
 }
 
@@ -80,59 +89,65 @@ export function proveEvidenceEdge({ edge, codeSnapshot, presentArtifacts }) {
         return contradicted("emit or receive artifact is absent")
     }
 
+    if (edge.contract && endpointPresent(edge.contract, presentArtifacts)) {
+        const scriptProof = proveScriptWiring(edge, codeSnapshot)
+        if (scriptProof) return scriptProof
+    }
     if (kind === "direct_import") {
-        return hasImport(codeSnapshot, edge.emit.path, edge.receive.path, { runtime: true })
-            ? proven("runtime import connects emit to receive")
-            : contradicted("no runtime import connects emit to receive")
+        let imports = codeSnapshot.imports
+        if (edge.emit.symbol) {
+            const entry = [...(codeSnapshot.scriptModels ?? [])].find(
+                ([file]) => canonicalPath(file) === canonicalPath(edge.emit.path),
+            )
+            const selected = resolveScriptRegion(entry?.[1], { symbol: edge.emit.symbol })
+            if (selected.state !== "resolved")
+                return unverifiable("the exact emitting function cannot be resolved for its structural dependency")
+            imports = importsInScriptRegions(codeSnapshot, entry[0], [selected])
+        }
+        return hasImport({ ...codeSnapshot, imports }, edge.emit.path, edge.receive.path, { runtime: true })
+            ? proven("runtime import used within the declared emitting boundary connects emit to receive")
+            : contradicted("no runtime import within the declared emitting boundary connects emit to receive")
     }
     if (kind === "injected_port") {
         if (!edge.contract || !endpointPresent(edge.contract, presentArtifacts))
             return contradicted("port contract artifact is absent")
-        if (
-            !hasImport(codeSnapshot, edge.emit.path, edge.contract.path) ||
-            !hasImport(codeSnapshot, edge.receive.path, edge.contract.path)
-        ) {
-            return contradicted("both endpoints do not reference the injected port contract")
-        }
         return unverifiable(
-            "contract references exist, but generic syntax facts cannot prove runtime dependency injection or assembly",
+            "the contract artifact exists, but bounded syntax facts do not prove the concrete injection path or receiver identity",
         )
     }
     if (kind === "composition") {
-        if (edge.assembly && endpointPresent(edge.assembly, presentArtifacts)) {
-            return hasImport(codeSnapshot, edge.assembly.path, edge.emit.path, { runtime: true }) &&
-                hasImport(codeSnapshot, edge.assembly.path, edge.receive.path, { runtime: true })
-                ? proven("composition artifact has runtime imports to both endpoints")
-                : contradicted("composition artifact does not have runtime imports to both endpoints")
-        }
-        // A receive endpoint may itself be the composition root when it owns
-        // construction. The observable runtime import is sufficient for this
-        // narrow structural adapter, but it does not generalize to DI semantics.
-        return hasImport(codeSnapshot, edge.receive.path, edge.emit.path, { runtime: true })
-            ? proven("receive endpoint has a runtime import to the emit endpoint")
-            : contradicted("no assembly artifact and receive does not import emit at runtime")
+        if (edge.assembly && !endpointPresent(edge.assembly, presentArtifacts))
+            return contradicted("composition artifact is absent")
+        // Importing both modules neither constructs them nor connects instances.
+        return unverifiable(
+            "runtime imports alone do not prove construction, injection or the identity of the composed instances",
+        )
     }
     if (kind === "event" || kind === "callback") {
         if (!edge.contract || !endpointPresent(edge.contract, presentArtifacts))
             return contradicted(`${kind} contract artifact is absent`)
-        if (
-            !hasImport(codeSnapshot, edge.emit.path, edge.contract.path) ||
-            !hasImport(codeSnapshot, edge.receive.path, edge.contract.path)
-        ) {
-            return contradicted(`both endpoints do not reference the ${kind} contract`)
-        }
         return unverifiable(
-            `contract references exist, but generic syntax facts cannot prove ${kind} registration, publication or delivery`,
+            `the contract artifact exists, but bounded syntax facts do not prove ${kind} registration, publication or delivery through direct or contextual bindings`,
         )
     }
     if (kind === "rpc") {
         if (!edge.rpc?.service || !edge.rpc?.method) return contradicted("rpc service and method are required")
-        const service = codeSnapshot.protoServices.find((candidate) => candidate.fullName === edge.rpc.service)
-        if (!service?.methods?.some((method) => method.name === edge.rpc.method)) {
-            return contradicted("canonical Proto service or method is absent")
+        const services = codeSnapshot.protoServices.filter((candidate) => candidate.fullName === edge.rpc.service)
+        if (services.length === 0) return contradicted("canonical Proto service is absent")
+        if (services.length !== 1) return unverifiable("canonical Proto service identity is ambiguous")
+        const service = services[0]
+        if (edge.contract?.path && canonicalPath(edge.contract.path) !== canonicalPath(service.file)) {
+            return contradicted("RPC contract artifact is not the canonical service declaration file")
+        }
+        const methods = service.methods.filter((method) => method.name === edge.rpc.method)
+        if (methods.length === 0) return contradicted("canonical Proto method is absent")
+        if (methods.length !== 1) return unverifiable("canonical Proto method identity is ambiguous")
+        const method = methods[0]
+        if (method.requestIdentity?.state !== "resolved" || method.responseIdentity?.state !== "resolved") {
+            return unverifiable("canonical RPC request/response message identity is unresolved or ambiguous")
         }
         return unverifiable(
-            "canonical Proto method exists, but endpoint-to-generated-client/server wiring is not proven by the available facts",
+            `canonical RPC ${service.fullName}.${method.name} resolves ${method.requestIdentity.fullName} -> ${method.responseIdentity.fullName}, but endpoint-to-generated-client/server delivery is not proven`,
         )
     }
     return unverifiable(`unsupported proof adapter ${kind || "missing"}`)
@@ -285,7 +300,7 @@ function treeSitterImport(edge) {
         kind: "tree_sitter_import",
         classification: edge.classification,
         typeOnly: !runtime,
-        bindings: Object.freeze([]),
+        bindings: edge.bindings ?? Object.freeze([]),
         line: edge.line,
         target:
             edge.target.kind === "workspace"
@@ -296,17 +311,21 @@ function treeSitterImport(edge) {
     })
 }
 
-async function buildBoundedSnapshot({ repoRoot, artifactPaths, generatedArtifacts }) {
+async function buildBoundedSnapshot({ repoRoot, artifactPaths, supportPaths, generatedArtifacts }) {
     const base = createCodeFactSnapshot({ repoRoot, sourceRoots: [], generatedArtifacts })
-    const seeds = [...artifactPaths.values()]
+    const seeds = [...new Set([...artifactPaths.values(), ...supportPaths])]
         .map((artifactPath) => path.resolve(repoRoot, artifactPath))
         .filter((absolute) => languageForPath(absolute) && fs.existsSync(absolute) && fs.statSync(absolute).isFile())
     if (seeds.length === 0) return base
-    const closure = await buildDependencyClosure({ repoRoot, seeds })
+    // The bounded import closure supplies binding identities and cycle-closing interfaces.
+    // Only bound subjects below become audit emitters; support files never do.
+    const closure = await buildDependencyClosure({ repoRoot, seeds, followImports: true })
     return Object.freeze({
         ...base,
         imports: Object.freeze(closure.imports.map(treeSitterImport)),
         treeSitterFacts: closure.facts,
+        scriptModels: closure.scriptModels,
+        scriptModules: closure.scriptModules,
         couplingSccs: closure.runtimeSccs,
         diagnostics: Object.freeze([
             ...base.diagnostics,
@@ -316,41 +335,44 @@ async function buildBoundedSnapshot({ repoRoot, artifactPaths, generatedArtifact
 }
 
 function declaredRelations(taskEntries) {
-    const relations = new Set()
+    const relations = new Map()
     for (const entry of taskEntries) {
+        const pairs = []
+        relations.set(entry.task.id, pairs)
+        const add = (from, to) => pairs.push({ from: canonicalPath(from), to: canonicalPath(to) })
+        const internal = (artifacts) => {
+            for (const from of artifacts) for (const to of artifacts) add(from.path, to.path)
+        }
         const evidence = entry.task.architectureEvidence
         if (evidence) {
+            for (const node of evidence.nodes.values()) internal(node.artifacts)
             for (const edge of evidence.edges) {
                 if (!edge.emit?.path || !edge.receive?.path) continue
                 if (edge.kind === "direct_import") {
-                    relations.add(`${canonicalPath(edge.emit.path)}->${canonicalPath(edge.receive.path)}`)
+                    add(edge.emit.path, edge.receive.path)
                 } else if (edge.kind === "composition") {
                     if (edge.assembly?.path) {
-                        relations.add(`${canonicalPath(edge.assembly.path)}->${canonicalPath(edge.emit.path)}`)
-                        relations.add(`${canonicalPath(edge.assembly.path)}->${canonicalPath(edge.receive.path)}`)
+                        add(edge.assembly.path, edge.emit.path)
+                        add(edge.assembly.path, edge.receive.path)
                     } else {
-                        relations.add(`${canonicalPath(edge.receive.path)}->${canonicalPath(edge.emit.path)}`)
+                        add(edge.receive.path, edge.emit.path)
                     }
                 } else if (["injected_port", "event", "callback"].includes(edge.kind) && edge.contract?.path) {
-                    relations.add(`${canonicalPath(edge.emit.path)}->${canonicalPath(edge.contract.path)}`)
-                    relations.add(`${canonicalPath(edge.receive.path)}->${canonicalPath(edge.contract.path)}`)
+                    add(edge.emit.path, edge.contract.path)
+                    add(edge.receive.path, edge.contract.path)
                 }
-            }
-        }
-        for (const owned of entry.task.owns) {
-            for (const read of entry.task.reads) {
-                relations.add(`${canonicalPath(owned.path)}->${canonicalPath(read.path)}`)
             }
         }
         for (const parsed of entry.task.diagrams) {
             if (parsed.problems.length > 0 || parsed.diagram.ignored) continue
             const diagram = parsed.diagram
+            for (const artifacts of diagram.artifacts.values()) internal(artifacts)
             for (const edge of diagram.edges) {
                 if (edge.style !== "solid") continue
                 const fromArtifacts = diagram.artifacts.get(edge.from) ?? []
                 const toArtifacts = diagram.artifacts.get(edge.to) ?? []
                 for (const from of fromArtifacts) {
-                    for (const to of toArtifacts) relations.add(`${canonicalPath(from.path)}->${canonicalPath(to.path)}`)
+                    for (const to of toArtifacts) add(from.path, to.path)
                 }
             }
         }
@@ -411,7 +433,14 @@ function runtimeComponents(outgoing) {
     return components
 }
 
-function runtimeContradictionFindings({ codeSnapshot, artifactPaths, tasksByPath, taskStatusById, contracts }) {
+function runtimeContradictionFindings({
+    codeSnapshot,
+    artifactPaths,
+    tasksByPath,
+    taskStatusById,
+    contracts,
+    auditImports = null,
+}) {
     const findings = []
     for (const contract of contracts) {
         const reverse = codeSnapshot.imports.find(
@@ -440,6 +469,17 @@ function runtimeContradictionFindings({ codeSnapshot, artifactPaths, tasksByPath
     }
     for (const component of runtimeComponents(outgoing)) {
         const members = new Set(component)
+        if (
+            auditImports &&
+            !auditImports.some(
+                (edge) =>
+                    !edge.typeOnly &&
+                    edge.target.kind === "workspace" &&
+                    members.has(canonicalPath(edge.importer)) &&
+                    members.has(canonicalPath(edge.target.path)),
+            )
+        )
+            continue
         const hasCycle = component.length > 1 || [...(outgoing.get(component[0]) ?? [])].some((target) => target === component[0])
         if (!hasCycle) continue
         const taskIds = [...new Set(component.map((member) => tasksByPath.get(member)).filter(Boolean))].sort()
@@ -456,7 +496,16 @@ function runtimeContradictionFindings({ codeSnapshot, artifactPaths, tasksByPath
     return findings
 }
 
-function actualEdgeFindings({ codeSnapshot, artifactPaths, declared, tasksByPath }) {
+function hasDeclaredTaskRead(task, importer, target) {
+    if (!task) return false
+    const contains = (file, boundary) => {
+        const root = canonicalPath(boundary.path).replace(/\/$/, "")
+        return root && (file === root || file.startsWith(`${root}/`))
+    }
+    return task.owns.some((owned) => contains(importer, owned)) && task.reads.some((read) => contains(target, read))
+}
+
+function actualEdgeFindings({ codeSnapshot, artifactPaths, declared, tasksByPath, tasks, requireResolved = false }) {
     const findings = []
     let externalCount = 0
     for (const edge of codeSnapshot.imports) {
@@ -466,10 +515,23 @@ function actualEdgeFindings({ codeSnapshot, artifactPaths, declared, tasksByPath
             externalCount += 1
             continue
         }
-        if (edge.target.kind !== "workspace") continue
+        if (edge.target.kind !== "workspace") {
+            if (requireResolved)
+                findings.push(
+                    finding(
+                        "unverifiable",
+                        "actual-edge-unresolved",
+                        `in-scope import ${edge.importer} -> ${edge.specifier} has no resolved dependency identity`,
+                        { task: edge.taskId ?? tasksByPath.get(importer), file: edge.importer, line: edge.line },
+                    ),
+                )
+            continue
+        }
         const target = canonicalPath(edge.target.path)
-        if (declared.has(`${importer}->${target}`)) continue
-        const task = tasksByPath.get(importer) ?? null
+        const task = edge.taskId ?? tasksByPath.get(importer) ?? null
+        const contains = (file, boundary) => file === boundary || file.startsWith(`${boundary.replace(/\/$/, "")}/`)
+        const declaredForTask = declared.get(task)?.some((pair) => contains(importer, pair.from) && contains(target, pair.to))
+        if (declaredForTask || hasDeclaredTaskRead(tasks.get(task), importer, target)) continue
         findings.push(
             finding(
                 "warning",
@@ -505,6 +567,7 @@ export async function checkCodeConformance(context) {
     const findings = []
     const taskEntries = [...context.tasks.values()].map((task) => ({ task, status: task.status ?? "unknown" }))
     const taskStatusById = new Map(taskEntries.map(({ task, status }) => [task.id, status]))
+    const supportPaths = new Set(taskEntries.flatMap(({ task }) => task.reads.map((read) => read.path)))
     const artifactRecords = []
     // Comparison keys are case-normalized, but filesystem reads retain the
     // declared spelling so Linux checkouts remain valid.
@@ -530,10 +593,6 @@ export async function checkCodeConformance(context) {
     }
 
     for (const { task, status } of taskEntries) {
-        for (const boundary of [...task.owns, ...task.reads]) {
-            addArtifactPath(boundary.path)
-            if (!tasksByPath.has(canonicalPath(boundary.path))) tasksByPath.set(canonicalPath(boundary.path), task.id)
-        }
         for (const evidenceProblem of task.evidenceProblems ?? []) {
             findings.push(
                 finding(classifyExpectationMismatch(status), evidenceProblem.rule, evidenceProblem.message, {
@@ -614,6 +673,24 @@ export async function checkCodeConformance(context) {
         }
     }
 
+    // A code-only caller may provide explicit module boundaries without Mermaid bindings.
+    // This compatibility path never interprets prose sections or changed-region records.
+    if (artifactRecords.length === 0) {
+        for (const { task, status } of taskEntries) {
+            for (const owned of task.owns.filter((owned) => ["module", "whole_file"].includes(owned.kind))) {
+                addArtifactPath(owned.path)
+                if (!tasksByPath.has(canonicalPath(owned.path))) tasksByPath.set(canonicalPath(owned.path), task.id)
+                artifactRecords.push({
+                    artifact: { path: owned.path, expectation: "present", role: "declaration", symbol: null },
+                    task,
+                    status,
+                    diagram: { file: task.planPath },
+                })
+            }
+        }
+    }
+    const sourceRecords = expandDiagramSources(artifactRecords, context.repoRoot)
+    for (const record of sourceRecords) addArtifactPath(record.artifact.path)
     const generatedArtifacts = artifactRecords
         .filter((record) => record.artifact.expectation === "generated" || record.artifact.role === "generated")
         .map((record) => ({
@@ -629,6 +706,7 @@ export async function checkCodeConformance(context) {
         (await buildBoundedSnapshot({
             repoRoot: context.repoRoot,
             artifactPaths,
+            supportPaths,
             generatedArtifacts,
         }))
     const presentArtifacts = new Set(
@@ -637,7 +715,11 @@ export async function checkCodeConformance(context) {
             .map(([canonical]) => canonical),
     )
 
+    const bound = bindDiagramSources(sourceRecords, codeSnapshot)
+    findings.push(...bound.findings)
     for (const diagnostic of codeSnapshot.diagnostics) {
+        if ((diagnostic.path || diagnostic.file) && !artifactPaths.has(canonicalPath(diagnostic.path ?? diagnostic.file)))
+            continue
         findings.push(
             finding("warning", "code-fact-diagnostic", `${diagnostic.provider}: ${diagnostic.message}`, {
                 file: diagnostic.file ?? null,
@@ -741,22 +823,44 @@ export async function checkCodeConformance(context) {
             taskEntries.map(({ task, status }) => ({
                 taskId: task.id,
                 status,
-                boundaries: task.owns,
+                boundaries: task.owns.filter((owned) =>
+                    [...artifactPaths.values()].some(
+                        (file) =>
+                            canonicalPath(file) === canonicalPath(owned.path) ||
+                            canonicalPath(file).startsWith(`${canonicalPath(owned.path).replace(/\/$/, "")}/`),
+                    ),
+                ),
                 file: task.goalsPath,
             })),
         ),
     )
 
+    const auditSnapshot = { ...codeSnapshot, imports: bound.imports }
+    const proofPaths = new Map(artifactPaths)
+    for (const edge of codeSnapshot.imports) {
+        proofPaths.set(canonicalPath(edge.importer), edge.importer)
+        if (edge.target.kind === "workspace") proofPaths.set(canonicalPath(edge.target.path), edge.target.path)
+    }
     findings.push(
         ...runtimeContradictionFindings({
             codeSnapshot,
-            artifactPaths,
+            artifactPaths: proofPaths,
             tasksByPath,
             taskStatusById,
             contracts: directRuntimeContracts(taskEntries),
+            auditImports: auditSnapshot.imports,
         }),
     )
     const declared = declaredRelations(taskEntries)
-    findings.push(...actualEdgeFindings({ codeSnapshot, artifactPaths, declared, tasksByPath }))
+    findings.push(
+        ...actualEdgeFindings({
+            codeSnapshot: auditSnapshot,
+            artifactPaths,
+            declared,
+            tasksByPath,
+            tasks: context.tasks,
+            requireResolved: true,
+        }),
+    )
     return dedupe(findings)
 }

@@ -81,6 +81,8 @@ $env:DLINE_E2E_RUN_ID = "concurrent-a"; node scripts/with-dist-lock.mjs --shared
 
 When a command is refused, the error names the holding PID, run ID, and command. Run `npm run e2e:lock:status` to inspect holders; entries left by a crashed run are pruned automatically on the next attempt, so never delete `dist/.e2e-lock/` while another run is active.
 
+Keep `demo/`, `fixtures/`, and `utils/` in their existing roles. Work journeys must not duplicate functional implementation geometry or state matrices. Preserve failed artifacts and diagnose the first unmet boundary before increasing timeouts or broadening scope.
+
 ## Test Domains
 
 - **Work gate**: `playwright.work.config.ts` and `src/test/e2e/work/`. It contains one 120-second smoke and four 600-second single-file, single-top-level-test daily workflows. This is the required CI and release E2E surface.

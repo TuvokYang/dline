@@ -29,8 +29,6 @@ export interface TaskProviderRequestReporterOptions {
     readonly pressure?: ContextPressureObserverPort
     /** Told the context occupancy a settled request reported; absent when nothing displays it. */
     readonly usage?: ContextUsageObserverPort
-    /** Told the tokens a settled request consumed, for the Profile's daily totals; absent when nothing counts them. */
-    readonly profileTokens?: ProfileTokenUsagePort
     /** Overrides the default local OTel projection, for tests or a future remote usage coordinator. */
     readonly usageTelemetry?: ProviderUsageTelemetryPort
     /**
@@ -65,25 +63,6 @@ export interface RetryCardView {
      * replaced before a dropped first attempt could be fetched again.
      */
     publishState(): Promise<void>
-}
-
-/**
- * Counts what each request consumed against the Profile that served it.
- *
- * Subscription endpoints report quota percentages only, so the daily token
- * figures the usage surfaces show come from Dline's own requests. A request is
- * settled exactly once however often it was retried, so counting at settlement
- * never counts a turn twice.
- */
-export interface ProfileTokenUsagePort {
-    /**
-     * The Profile a request that is about to start is sent under.
-     *
-     * Read when the request opens: a switch while it runs replaces the handler
-     * for the next request, but this one was served by the Profile it started on.
-     */
-    activeProfileId(): string | undefined
-    record(profileId: string, increment: { readonly inputTokens: number; readonly outputTokens: number }): void
 }
 
 /**
@@ -193,7 +172,6 @@ export class TaskProviderRequestReporter implements ProviderRequestReport.Provid
         const { contextWindow } = ContextWindowManagement.getContextWindowInfo(this.options.api())
         await this.options.usage?.started({ turnId: input.turnId, contextWindow, ...(opening ? { opening } : {}) })
         const retryCard = new RetryCard(this.options.messages, this.options.nextPresentationId, this.options.retryView)
-        const profileId = this.options.profileTokens?.activeProfileId()
         return {
             retrying: (notice) => retryCard.show(notice),
             recovered: () => retryCard.withdraw(),
@@ -207,17 +185,12 @@ export class TaskProviderRequestReporter implements ProviderRequestReport.Provid
                     await retryCard.markFailed()
                     this.failedCard = retryCard
                 } else await retryCard.withdraw()
-                await this.settle(ts, input.turnId, settlement, profileId)
+                await this.settle(ts, input.turnId, settlement)
             },
         }
     }
 
-    private async settle(
-        ts: number,
-        turnId: string,
-        settlement: ProviderRequestReport.ProviderRequestSettlement,
-        profileId: string | undefined,
-    ): Promise<void> {
+    private async settle(ts: number, turnId: string, settlement: ProviderRequestReport.ProviderRequestSettlement): Promise<void> {
         const index = this.options.messages.clineMessages.findIndex((message) => message.ts === ts)
         if (index < 0) return
         const api = this.options.api()
@@ -242,6 +215,7 @@ export class TaskProviderRequestReporter implements ProviderRequestReport.Provid
             contextInputTokens:
                 contextUsageTokens.inputTokens + contextUsageTokens.cacheWriteTokens + contextUsageTokens.cacheReadTokens,
             totalCost: tokens.totalCost,
+            currency: settlement.currency,
             api,
             cancelReason: cancelReasonFor(settlement.outcome),
         })
@@ -249,7 +223,6 @@ export class TaskProviderRequestReporter implements ProviderRequestReport.Provid
         // rebuild context usage; leaving it buffered would lose the turn's cost.
         await this.options.messages.flushMessageUpdate(index)
         this.recordUsageTelemetry(api, settlement, tokens)
-        this.recordProfileTokens(profileId, tokens)
         const { contextWindow } = ContextWindowManagement.getContextWindowInfo(api)
         const compactTriggerTokens = this.recordCacheSample(
             api,
@@ -316,24 +289,6 @@ export class TaskProviderRequestReporter implements ProviderRequestReport.Provid
             })
         } catch (error) {
             Logger.debug(`[provider] usage telemetry could not be recorded: ${String(error)}`)
-        }
-    }
-
-    /**
-     * Tokens are consumed whatever the outcome, so a cancelled or failed request
-     * counts too. Input matches the task header: fresh input plus cache reads and writes.
-     */
-    private recordProfileTokens(profileId: string | undefined, tokens: SettledUsageTokens): void {
-        if (!profileId) return
-        const increment = {
-            inputTokens: tokens.inputTokens + tokens.cacheWriteTokens + tokens.cacheReadTokens,
-            outputTokens: tokens.outputTokens,
-        }
-        if (increment.inputTokens <= 0 && increment.outputTokens <= 0) return
-        try {
-            this.options.profileTokens?.record(profileId, increment)
-        } catch {
-            // A usage surface must not change how the request settles.
         }
     }
 

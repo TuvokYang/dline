@@ -1,6 +1,6 @@
 import { parseMcpServerResponse } from "@shared/chat/mcpResponseRows"
-import { COMMAND_OUTPUT_STRING } from "@shared/combineCommandSequences"
 import { findApiFailurePresentedBy } from "@shared/combineErrorRetryMessages"
+import { readCommandRow } from "@shared/commandRow"
 import {
     COMPLETION_RESULT_CHANGES_FLAG,
     UiApiReqInfo,
@@ -44,6 +44,8 @@ import { WithCopyButton } from "@/components/common/CopyButton"
 import McpResponseDisplay from "@/components/mcp/chat-display/McpResponseDisplay"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { useWorkspaceDisplayPath } from "@/hooks/useWorkspaceDisplayPath"
+import { type UiMessageKey } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 import { FileServiceClient, UiServiceClient } from "@/services/grpc-client"
 import { getMcpServerDisplayName } from "@/utils/mcp"
@@ -56,8 +58,10 @@ import { BrowserMessageSummary } from "./browser-session/BrowserMessageSummary"
 import CodeExecutionRow from "./CodeExecutionRow"
 import { CommandOutputContent, CommandOutputRow } from "./CommandOutputRow"
 import { CompletionOutputRow } from "./CompletionOutputRow"
+import { ChatUiText } from "./chat-view/components/ChatUiText"
 import { CheckpointMarker } from "./chat-view/components/messages/CheckpointMarker"
 import type { RowExpansionOrigin } from "./chat-view/types/chatTypes"
+import { attemptElapsedMs, formatElapsedDuration } from "./chat-view/utils/attemptElapsed"
 import { collectMcpResponseTexts, resolveApiErrorMessage } from "./chat-view/utils/messageUtils"
 import { describeCompactionFailure } from "./compaction-failure-label"
 import { CHAT_ROW_HEADER_CLASSNAMES, TOOL_RESPONSE_SCROLL_CLASS } from "./constants"
@@ -88,6 +92,28 @@ import WebFetchRow from "./WebFetchRow"
 import WebSearchRow from "./WebSearchRow"
 
 const HEADER_CLASSNAMES = CHAT_ROW_HEADER_CLASSNAMES
+
+/**
+ * The compaction card titles, all of which take no arguments.
+ *
+ * The union is annotated with the shared key type so `t(titleKey)` reads as a
+ * message call without arguments, exactly as the settings presenters do. A
+ * hand-written literal union cannot be matched against the message argument
+ * types inside any one branch, because the other members still need arguments.
+ */
+type CompactionTitleKey = Extract<
+    UiMessageKey,
+    | "chatRows.compaction.preparingRefit"
+    | "chatRows.compaction.preparing"
+    | "chatRows.compaction.waitingRefit"
+    | "chatRows.compaction.waiting"
+    | "chatRows.compaction.retryingRefit"
+    | "chatRows.compaction.retrying"
+    | "chatRows.compaction.completedRefit"
+    | "chatRows.compaction.completed"
+    | "chatRows.compaction.receivingRefit"
+    | "chatRows.compaction.receiving"
+>
 
 /**
  * Read the workspace-change verdict and display text of a completion message.
@@ -147,6 +173,7 @@ interface AutoRetryInfo {
 }
 
 function AutoRetryErrorBox({ info, startedAt }: { info: AutoRetryInfo; startedAt: number }) {
+    const { t } = useUiTranslation()
     const delayMs = Math.max(0, Number(info.delaySeconds ?? 0) * 1000)
     const [remainingMs, setRemainingMs] = useState(() => Math.max(0, startedAt + delayMs - Date.now()))
 
@@ -170,27 +197,26 @@ function AutoRetryErrorBox({ info, startedAt }: { info: AutoRetryInfo; startedAt
                 <div className="min-w-0 flex-1">
                     <div className="font-medium text-foreground">
                         {isFailed
-                            ? "Automatic retry stopped"
+                            ? t("chatRows.autoRetry.stopped")
                             : isRetrying
-                              ? "Automatic retry in progress"
-                              : "Automatic retry scheduled"}
+                              ? t("chatRows.autoRetry.inProgress")
+                              : t("chatRows.autoRetry.scheduled")}
                     </div>
                     <div className="mt-1 text-description" data-testid="error-retry-countdown">
                         {isFailed ? (
-                            <span>All {info.maxAttempts} automatic attempts were used.</span>
+                            <span>{t("chatRows.autoRetry.exhausted", { maxAttempts: info.maxAttempts ?? 0 })}</span>
                         ) : (
                             <div className="flex flex-wrap gap-x-3 gap-y-1">
                                 <span>
-                                    Attempt <strong>{info.attempt}</strong> of <strong>{info.maxAttempts}</strong>
+                                    {t("chatRows.autoRetry.attemptOf", {
+                                        attempt: info.attempt ?? 0,
+                                        maxAttempts: info.maxAttempts ?? 0,
+                                    })}
                                 </span>{" "}
                                 <span>
-                                    {isRetrying ? (
-                                        "Retrying now"
-                                    ) : (
-                                        <>
-                                            Next retry in <strong>{remainingSeconds}s</strong>
-                                        </>
-                                    )}
+                                    {isRetrying
+                                        ? t("chatRows.autoRetry.retryingNow")
+                                        : t("chatRows.autoRetry.nextRetry", { seconds: remainingSeconds })}
                                 </span>
                             </div>
                         )}
@@ -237,6 +263,7 @@ export const ChatRowContent = memo(
             showFeatureTips,
             taskViewState,
         } = useExtensionState()
+        const { t } = useUiTranslation()
         const formatPath = useWorkspaceDisplayPath()
         const [seeNewChangesDisabled, setSeeNewChangesDisabled] = useState(false)
         const [explainChangesDisabled, setExplainChangesDisabled] = useState(false)
@@ -305,18 +332,20 @@ export const ChatRowContent = memo(
 
         const isCommandMessage = type === "command"
         // Check if command has output to determine if it's actually executing
-        const _commandHasOutput = message.text?.includes(COMMAND_OUTPUT_STRING) ?? false
+        const _commandHasOutput = (readCommandRow(message).output ?? "").length > 0
         // Use commandStatus to determine state; legacy messages without commandStatus are treated as completed
         const isCommandExecuting = isCommandMessage && message.commandStatus === "running"
-        const isCommandPending = isCommandMessage && message.commandStatus === "pending"
+        // A command row without a status has not reported any outcome yet. Reading
+        // that as "completed" made an unexecuted command render as Completed,
+        // which is the one direction a status may never guess: it claims work
+        // that never ran. The writers always seed `pending` (MessageChannel and
+        // createCanonicalAskRow), so a missing status is an unsettled row.
+        const isCommandPending = isCommandMessage && (message.commandStatus === "pending" || message.commandStatus === undefined)
         const isCommandSkipped = isCommandMessage && message.commandStatus === "skipped"
         const isCommandFailed = isCommandMessage && message.commandStatus === "failed"
         const isCommandCancelled = isCommandMessage && message.commandStatus === "cancelled"
         const isCommandInterrupted = isCommandMessage && message.commandStatus === "interrupted"
-        const isCommandCompleted =
-            isCommandMessage &&
-            (message.commandStatus === "completed" || message.commandStatus === undefined) &&
-            !isCommandSkipped
+        const isCommandCompleted = isCommandMessage && message.commandStatus === "completed"
 
         // The canonical task view names the running task; the history item can be
         // absent while a task runs, which used to hide the row's Cancel.
@@ -418,12 +447,12 @@ export const ChatRowContent = memo(
                 case "error":
                     return [
                         <span className="codicon codicon-error text-error mb-[-1.5px]" />,
-                        <span className="text-error font-bold">Error</span>,
+                        <span className="text-error font-bold">{t("chatRows.errors.error")}</span>,
                     ]
                 case "mistake_limit_reached":
                     return [
                         <CircleXIcon className="text-error size-2" />,
-                        <span className="text-error font-bold">Dline is having trouble...</span>,
+                        <span className="text-error font-bold">{t("chatRows.header.dlineTrouble")}</span>,
                     ]
                 case "command":
                     return [null, null]
@@ -438,19 +467,35 @@ export const ChatRowContent = memo(
                         ),
                         message.type === "ask" ? (
                             <span className="ph-no-capture font-bold text-foreground break-words">
-                                Dline wants to {mcpServerUse.type === "use_mcp_tool" ? "use a tool" : "access a resource"} on the{" "}
-                                <code className="break-all">{serverDisplayName}</code> MCP server:
+                                {mcpServerUse.type === "use_mcp_tool" ? (
+                                    <ChatUiText
+                                        slots={{
+                                            server: <code className="break-all">{serverDisplayName}</code>,
+                                        }}
+                                        text={t("chatRows.header.mcpUseTool", { server: "{server}" })}
+                                    />
+                                ) : (
+                                    <ChatUiText
+                                        slots={{
+                                            server: <code className="break-all">{serverDisplayName}</code>,
+                                        }}
+                                        text={t("chatRows.header.mcpAccessResource", { server: "{server}" })}
+                                    />
+                                )}
                             </span>
                         ) : (
                             <span className="ph-no-capture font-bold text-foreground break-words">
-                                Dline is using the <code className="break-all">{serverDisplayName}</code> MCP server:
+                                <ChatUiText
+                                    slots={{ server: <code className="break-all">{serverDisplayName}</code> }}
+                                    text={t("chatRows.header.mcpUsingServer", { server: "{server}" })}
+                                />
                             </span>
                         ),
                     ]
                 case "completion_result":
                     return [
                         <span className="codicon codicon-check text-success mb-[-1.5px]" />,
-                        <span className="text-success font-bold">Task Completed</span>,
+                        <span className="text-success font-bold">{t("chatRows.header.taskCompleted")}</span>,
                     ]
                 case "api_req_started":
                     // API request rows no longer render the request payload/cost accordion.
@@ -459,12 +504,20 @@ export const ChatRowContent = memo(
                 case "followup":
                     return [
                         <span className="codicon codicon-question text-foreground mb-[-1.5px]" />,
-                        <span className="font-bold text-foreground">Dline has a question:</span>,
+                        <span className="font-bold text-foreground">{t("chatRows.header.question")}</span>,
                     ]
                 default:
                     return [null, null]
             }
-        }, [type, isMcpServerResponding, message.text, mcpMarketplaceCatalog])
+        }, [type, isMcpServerResponding, message.type, message.text, mcpMarketplaceCatalog, t])
+
+        // Counted from the user input that started this attempt, so a later
+        // attempt in the same task measures its own turn instead of the task.
+        const attemptElapsedLabel = useMemo(() => {
+            if (message.ask !== "completion_result" && message.say !== "completion_result") return undefined
+            const elapsedMs = attemptElapsedMs(clineMessages, message.ts)
+            return elapsedMs === undefined ? undefined : formatElapsedDuration(elapsedMs)
+        }, [clineMessages, message.ask, message.say, message.ts])
 
         const tool = useMemo(() => {
             if (message.ask === "tool" || message.say === "tool") {
@@ -572,7 +625,7 @@ export const ChatRowContent = memo(
             const names = conditionalRulesInfo.rules.map((r: { name: string }) => r.name).join(", ")
             return (
                 <div className={HEADER_CLASSNAMES}>
-                    <span style={{ fontWeight: "bold" }}>Conditional rules applied:</span>
+                    <span style={{ fontWeight: "bold" }}>{t("chatRows.header.conditionalRules")}</span>
                     <span className="ph-no-capture break-words whitespace-pre-wrap">{names}</span>
                 </div>
             )
@@ -674,8 +727,8 @@ export const ChatRowContent = memo(
                             <div className={HEADER_CLASSNAMES}>
                                 {isImage ? <ImageUpIcon className="size-2" /> : <FileCode2Icon className="size-2" />}
                                 {tool.operationIsLocatedInWorkspace === false &&
-                                    toolIcon("sign-out", "yellow", -90, "This file is outside of your workspace")}
-                                <span className="font-bold">Dline wants to read this file:</span>
+                                    toolIcon("sign-out", "yellow", -90, t("chatRows.header.outsideWorkspace"))}
+                                <span className="font-bold">{t("chatRows.header.readFile")}</span>
                             </div>
                             <div className="bg-code rounded-sm overflow-hidden border border-editor-group-border">
                                 {/* Only a non-image path opens an editor, so only that case is
@@ -709,11 +762,9 @@ export const ChatRowContent = memo(
                             <div className={HEADER_CLASSNAMES}>
                                 {toolIcon("folder-opened")}
                                 {tool.operationIsLocatedInWorkspace === false &&
-                                    toolIcon("sign-out", "yellow", -90, "This is outside of your workspace")}
+                                    toolIcon("sign-out", "yellow", -90, t("chatRows.header.outsideWorkspaceDirectory"))}
                                 <span style={{ fontWeight: "bold" }}>
-                                    {message.type === "ask"
-                                        ? "Dline wants to view the top level files in this directory:"
-                                        : "Dline viewed the top level files in this directory:"}
+                                    {t("chatRows.header.listFilesTopLevel", { ask: message.type === "ask" })}
                                 </span>
                             </div>
                             <CodeAccordian
@@ -731,11 +782,9 @@ export const ChatRowContent = memo(
                             <div className={HEADER_CLASSNAMES}>
                                 {toolIcon("folder-opened")}
                                 {tool.operationIsLocatedInWorkspace === false &&
-                                    toolIcon("sign-out", "yellow", -90, "This is outside of your workspace")}
+                                    toolIcon("sign-out", "yellow", -90, t("chatRows.header.outsideWorkspaceDirectory"))}
                                 <span style={{ fontWeight: "bold" }}>
-                                    {message.type === "ask"
-                                        ? "Dline wants to recursively view all files in this directory:"
-                                        : "Dline recursively viewed all files in this directory:"}
+                                    {t("chatRows.header.listFilesRecursive", { ask: message.type === "ask" })}
                                 </span>
                             </div>
                             <CodeAccordian
@@ -753,11 +802,9 @@ export const ChatRowContent = memo(
                             <div className={HEADER_CLASSNAMES}>
                                 {toolIcon("file-code")}
                                 {tool.operationIsLocatedInWorkspace === false &&
-                                    toolIcon("sign-out", "yellow", -90, "This file is outside of your workspace")}
+                                    toolIcon("sign-out", "yellow", -90, t("chatRows.header.outsideWorkspace"))}
                                 <span style={{ fontWeight: "bold" }}>
-                                    {message.type === "ask"
-                                        ? "Dline wants to view source code definition names used in this directory:"
-                                        : "Dline viewed source code definition names used in this directory:"}
+                                    {t("chatRows.header.listCodeDefinitions", { ask: message.type === "ask" })}
                                 </span>
                             </div>
                             <CodeAccordian
@@ -774,9 +821,12 @@ export const ChatRowContent = memo(
                             <div className={HEADER_CLASSNAMES}>
                                 {toolIcon("search")}
                                 {tool.operationIsLocatedInWorkspace === false &&
-                                    toolIcon("sign-out", "yellow", -90, "This is outside of your workspace")}
+                                    toolIcon("sign-out", "yellow", -90, t("chatRows.header.outsideWorkspaceDirectory"))}
                                 <span className="font-bold">
-                                    Dline wants to search this directory for <code className="break-all">{tool.regex}</code>:
+                                    <ChatUiText
+                                        slots={{ regex: <code className="break-all">{tool.regex}</code> }}
+                                        text={t("chatRows.header.searchFiles", { regex: "{regex}" })}
+                                    />
                                 </span>
                             </div>
                             <SearchResultsDisplay
@@ -793,7 +843,7 @@ export const ChatRowContent = memo(
                     const content = typeof tool.content === "string" ? tool.content : ""
                     if (status === "running" && !content) return null
                     const isSummaryRefit = tool.compactionUnitKind === "summary_refit"
-                    const failureReason = describeCompactionFailure(tool.compactionFailureKind)
+                    const failureReason = describeCompactionFailure(tool.compactionFailureKind, t)
                     // A failed compaction produced no summary, so it carries none of the card
                     // chrome that presents one. It renders as an API failure like every other
                     // failed request; the chat stops drawing it once a retry supersedes it
@@ -815,42 +865,44 @@ export const ChatRowContent = memo(
                                     error={
                                         failureReason
                                             ? `${failureReason}\n\n${tool.error ?? ""}`.trim()
-                                            : (tool.error ?? "Conversation compaction failed before completion.")
+                                            : (tool.error ?? t("chatRows.errors.compactionFailedFallback"))
                                     }
                                     testId="compaction-error-box"
-                                    title="Conversation Compaction Failed"
+                                    title={t("chatRows.errors.compactionFailedTitle")}
                                 />
                             </div>
                         )
                     }
-                    const title =
+                    // Named as a union of no-argument keys so the call needs no arguments.
+                    const titleKey: CompactionTitleKey =
                         status === "preparing"
                             ? isSummaryRefit
-                                ? "Preparing the cumulative summary for refit:"
-                                : "Preparing a context-safe summary:"
+                                ? "chatRows.compaction.preparingRefit"
+                                : "chatRows.compaction.preparing"
                             : status === "waiting"
                               ? isSummaryRefit
-                                  ? "Waiting for the model to refit the summary:"
-                                  : "Waiting for the model to begin compaction:"
+                                  ? "chatRows.compaction.waitingRefit"
+                                  : "chatRows.compaction.waiting"
                               : status === "retrying"
                                 ? isSummaryRefit
-                                    ? "Summary refit was interrupted; retrying:"
-                                    : "Compaction was interrupted; retrying:"
+                                    ? "chatRows.compaction.retryingRefit"
+                                    : "chatRows.compaction.retrying"
                                 : status === "completed"
                                   ? isSummaryRefit
-                                      ? "Cumulative summary refit completed:"
-                                      : "Dline condensed the conversation:"
+                                      ? "chatRows.compaction.completedRefit"
+                                      : "chatRows.compaction.completed"
                                   : status === "receiving" && isSummaryRefit
-                                    ? "Dline is refitting the cumulative summary:"
-                                    : "Dline is condensing the conversation:"
+                                    ? "chatRows.compaction.receivingRefit"
+                                    : "chatRows.compaction.receiving"
+                    const title = t(titleKey)
                     const contentLabel =
                         status === "completed"
                             ? isSummaryRefit
-                                ? "Refitted summary:"
-                                : "Summary:"
+                                ? t("chatRows.compaction.labelRefit")
+                                : t("chatRows.compaction.label")
                             : status === "retrying"
-                              ? "Partial summary (not applied):"
-                              : "Partial summary:"
+                              ? t("chatRows.compaction.labelPartialRetry")
+                              : t("chatRows.compaction.labelPartial")
                     return (
                         <div
                             data-compaction-attempt-id={tool.compactionAttemptId}
@@ -878,7 +930,10 @@ export const ChatRowContent = memo(
                                     tool.retryAttempt !== undefined &&
                                     tool.maxRetryAttempts !== undefined && (
                                         <div className="shrink-0 px-2.5 pb-2 text-description">
-                                            Attempt {tool.retryAttempt} of {tool.maxRetryAttempts}
+                                            {t("chatRows.compaction.attempt", {
+                                                attempt: tool.retryAttempt,
+                                                maxAttempts: tool.maxRetryAttempts,
+                                            })}
                                         </div>
                                     )}
                                 {status === "retrying" && failureReason && (
@@ -892,7 +947,9 @@ export const ChatRowContent = memo(
                                         data-testid="compaction-summary-content">
                                         <button
                                             aria-expanded={isExpanded}
-                                            aria-label={isExpanded ? "Collapse summary" : "Expand summary"}
+                                            aria-label={
+                                                isExpanded ? t("chatRows.summary.collapse") : t("chatRows.summary.expand")
+                                            }
                                             className={cn(
                                                 "text-description cursor-pointer select-none w-full bg-transparent border-0 p-0 text-inherit font-inherit text-left",
                                                 isExpanded && "flex h-full min-h-0 flex-col",
@@ -960,7 +1017,7 @@ export const ChatRowContent = memo(
                         <div>
                             <div className={HEADER_CLASSNAMES}>
                                 <LightbulbIcon className="size-2" />
-                                <span className="font-bold">Dline loaded the skill:</span>
+                                <span className="font-bold">{t("chatRows.header.loadedSkill")}</span>
                             </div>
                             <div className="bg-code border border-editor-group-border overflow-hidden rounded-xs py-[9px] px-2.5">
                                 <span className="ph-no-capture font-medium">{tool.path}</span>
@@ -1118,7 +1175,7 @@ export const ChatRowContent = memo(
                                 data-testid="mcp-notification-card">
                                 <BellIcon className="mt-0.5 size-2 text-notification-foreground shrink-0" />
                                 <div className="break-words flex-1">
-                                    <span className="font-medium">MCP Notification: </span>
+                                    <span className="font-medium">{t("chatRows.header.mcpNotification")} </span>
                                     <span className="ph-no-capture">{message.text}</span>
                                 </div>
                             </div>
@@ -1175,7 +1232,11 @@ export const ChatRowContent = memo(
                                     reasoningContent={message.text}
                                     showChevron={!isActiveReasoning || hasReasoningText}
                                     showTitle={true}
-                                    title={isActiveReasoning ? (hasReasoningText ? "Thinking..." : "Thinking") : "Thinking"}
+                                    title={
+                                        isActiveReasoning && hasReasoningText
+                                            ? t("chatRows.thinking.streamingTitle")
+                                            : t("chatRows.thinking.title")
+                                    }
                                 />
                                 {isActiveReasoning && showFeatureTips !== false && <FeatureTip />}
                             </div>
@@ -1218,12 +1279,12 @@ export const ChatRowContent = memo(
                         return (
                             <div className="text-foreground flex items-center opacity-70 text-[12px] py-1 px-0">
                                 <i className="codicon codicon-book mr-1.5" />
-                                Loading MCP documentation
+                                {t("chatRows.header.loadingMcpDocs")}
                             </div>
                         )
                     case "generate_explanation": {
                         let explanationInfo: UiSayGenerateExplanation = {
-                            title: "code changes",
+                            title: t("chatRows.explanation.defaultTitle"),
                             fromRef: "",
                             toRef: "",
                             status: "generating",
@@ -1264,12 +1325,12 @@ export const ChatRowContent = memo(
                                     )}
                                     <span className="font-semibold">
                                         {isGenerating
-                                            ? "Generating explanation"
+                                            ? t("chatRows.explanation.generating")
                                             : isError
-                                              ? "Failed to generate explanation"
+                                              ? t("chatRows.explanation.failed")
                                               : wasCancelled
-                                                ? "Explanation cancelled"
-                                                : "Generated explanation"}
+                                                ? t("chatRows.explanation.cancelled")
+                                                : t("chatRows.explanation.generated")}
                                     </span>
                                 </div>
                                 {isError && explanationInfo.error && (
@@ -1285,7 +1346,7 @@ export const ChatRowContent = memo(
                                                 </code>
                                                 <ArrowRightIcon className="inline size-2 mx-1" />
                                                 <code className="bg-quote rounded-sm py-0.5 px-1.5">
-                                                    {explanationInfo.toRef || "working directory"}
+                                                    {explanationInfo.toRef || t("chatRows.explanation.workingDirectory")}
                                                 </code>
                                             </div>
                                         )}
@@ -1299,6 +1360,7 @@ export const ChatRowContent = memo(
 
                         return (
                             <CompletionOutputRow
+                                elapsedLabel={attemptElapsedLabel}
                                 explainChangesDisabled={explainChangesDisabled}
                                 handleQuoteClick={handleQuoteClick}
                                 headClassNames={HEADER_CLASSNAMES}
@@ -1316,17 +1378,25 @@ export const ChatRowContent = memo(
                             <div className="flex flex-col bg-warning/20 p-2 rounded-xs border border-error">
                                 <div className="flex items-center mb-1">
                                     <TriangleAlertIcon className="mr-2 size-2 stroke-3 text-error" />
-                                    <span className="font-medium text-foreground">Shell Integration Unavailable</span>
+                                    <span className="font-medium text-foreground">
+                                        {t("chatRows.header.shellIntegrationUnavailable")}
+                                    </span>
                                 </div>
                                 <div className="text-foreground opacity-80">
-                                    Dline may have trouble viewing the command's output. Please update VSCode (
-                                    <code>CMD/CTRL + Shift + P</code> → "Update") and make sure you're using a supported shell:
-                                    zsh, bash, fish, or PowerShell (<code>CMD/CTRL + Shift + P</code> → "Terminal: Select Default
-                                    Profile").
+                                    <ChatUiText
+                                        slots={{
+                                            profile: <code>{t("chatRows.shellIntegration.terminalProfile")}</code>,
+                                            shortcut: <code>CMD/CTRL + Shift + P</code>,
+                                        }}
+                                        text={t("chatRows.shellIntegration.warning", {
+                                            profile: "{profile}",
+                                            shortcut: "{shortcut}",
+                                        })}
+                                    />{" "}
                                     <a
                                         className="px-1"
                                         href="https://github.com/cline/cline/wiki/Troubleshooting-%E2%80%90-Shell-Integration-Unavailable">
-                                        Still having trouble?
+                                        {t("chatRows.shellIntegration.stillTrouble")}
                                     </a>
                                 </div>
                             </div>
@@ -1355,11 +1425,12 @@ export const ChatRowContent = memo(
                             <div className="p-2 bg-link/10 border border-link/30 rounded-xs">
                                 <div className="flex items-center mb-1">
                                     <LightbulbIcon className="mr-1.5 size-2 text-link" />
-                                    <span className="font-medium text-foreground">Shell integration issues</span>
+                                    <span className="font-medium text-foreground">
+                                        {t("chatRows.header.shellIntegrationIssues")}
+                                    </span>
                                 </div>
                                 <div className="text-foreground opacity-90 mb-2">
-                                    Since you're experiencing repeated shell integration issues, we recommend switching to
-                                    Background Terminal mode for better reliability.
+                                    {t("chatRows.shellIntegration.repeatedIssues")}
                                 </div>
                                 <button
                                     className={cn(
@@ -1380,8 +1451,8 @@ export const ChatRowContent = memo(
                                     type="button">
                                     <SettingsIcon className="size-2" />
                                     {isBackgroundModeEnabled
-                                        ? "Background Terminal Enabled"
-                                        : "Enable Background Terminal (Recommended)"}
+                                        ? t("chatRows.shellIntegration.backgroundEnabled")
+                                        : t("chatRows.shellIntegration.enableBackground")}
                                 </button>
                             </div>
                         )
@@ -1426,6 +1497,7 @@ export const ChatRowContent = memo(
                             const { hasChanges, text } = readCompletionChanges(message)
                             return (
                                 <CompletionOutputRow
+                                    elapsedLabel={attemptElapsedLabel}
                                     explainChangesDisabled={explainChangesDisabled}
                                     handleQuoteClick={handleQuoteClick}
                                     headClassNames={HEADER_CLASSNAMES}
@@ -1505,7 +1577,7 @@ export const ChatRowContent = memo(
                             <div>
                                 <div className={HEADER_CLASSNAMES}>
                                     <FilePlus2Icon className="size-2" />
-                                    <span className="text-foreground font-bold">Dline wants to start a new task:</span>
+                                    <span className="text-foreground font-bold">{t("chatRows.header.newTask")}</span>
                                 </div>
                                 <NewTaskPreview context={newTask.context ? [newTask.context] : undefined} task={newTask.task} />
                             </div>
@@ -1527,7 +1599,7 @@ export const ChatRowContent = memo(
                             <div>
                                 <div className={HEADER_CLASSNAMES}>
                                     <FilePlus2Icon className="size-2" />
-                                    <span className="text-foreground font-bold">Dline wants to spawn an independent task:</span>
+                                    <span className="text-foreground font-bold">{t("chatRows.header.spawnTask")}</span>
                                 </div>
                                 <NewTaskPreview
                                     context={spawnContext ? [spawnContext] : undefined}
@@ -1542,7 +1614,7 @@ export const ChatRowContent = memo(
                             <div>
                                 <div className={HEADER_CLASSNAMES}>
                                     <FilePlus2Icon className="size-2" />
-                                    <span className="text-foreground font-bold">Dline wants to condense your conversation:</span>
+                                    <span className="text-foreground font-bold">{t("chatRows.header.condense")}</span>
                                 </div>
                                 <SummaryScrollContainer>
                                     <NewTaskPreview task={message.text || ""} />

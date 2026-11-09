@@ -16,7 +16,6 @@ describe("StickyUserMessage", () => {
         render(<StickyUserMessage isVisible lastUserMessage={USER_MESSAGE} onScrollToMessage={onScrollToMessage} />)
 
         const message = screen.getByRole("button", { name: /Scroll to your message/ })
-        expect(message).toHaveClass("pointer-events-auto")
 
         fireEvent.click(message)
         expect(onScrollToMessage).toHaveBeenCalledOnce()

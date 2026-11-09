@@ -34,8 +34,11 @@ describe("MessageStateHandler Mutex Protection", () => {
                 truncateByLineNum: async (count: number) => {
                     data = data.slice(0, count)
                 },
-                updateMessage: async (index: number, update: any) => {
+                updateMessageByTs: async (ts: number, update: any) => {
+                    const index = data.findIndex((item) => item.ts === ts)
+                    if (index < 0) return undefined
                     data[index] = { ...data[index], ...update }
+                    return data[index]
                 },
                 deleteMessage: async (index: number) => {
                     data.splice(index, 1)

@@ -1,12 +1,9 @@
 import { createHash, randomUUID } from "node:crypto"
 import { accountUsageCoordinator } from "@core/account-usage/AccountUsageCoordinator"
-import { addDailyTokens, readDailyTokens, type TokenIncrement } from "@core/account-usage/daily-token-ledger"
 import {
     allowsAccountUsagePolling,
-    applyLocalDailyTokens,
     decideAccountUsageRead,
     decorateProviderAccountUsage,
-    isSubscriptionUsage,
 } from "@core/account-usage/provider-usage"
 import {
     type AccountUsage,
@@ -84,7 +81,7 @@ import { readHistoryContextWindowIndicator } from "@/core/task/HistoryContextWin
 import { resolveTaskPanelTitle } from "@/core/task/TaskPanelTitle"
 import { TaskStateManager } from "@/core/task/TaskStateManager"
 import { HostProvider } from "@/hosts/host-provider"
-import { ExtensionRegistryInfo } from "@/registry"
+import { ExtensionRegistryInfo, HostRegistryInfo } from "@/registry"
 import { readAccountFeatureSetting } from "@/services/account/accountFeatureGate"
 import { AuthService } from "@/services/auth/AuthService"
 import { OcaAuthService } from "@/services/auth/oca/OcaAuthService"
@@ -118,7 +115,7 @@ import { clearRemoteConfig } from "../storage/remote-config/utils"
 import { type PersistenceErrorEvent, StateManager } from "../storage/StateManager"
 import { pruneTaskCommandLogs } from "../storage/task-temp"
 import { UIMessage } from "../storage/UIMessage"
-import { anchoredPage } from "../storage/UIMessageWindowReader"
+import { anchoredPage, centredPageStart, lastIndexOfTimestamp } from "../storage/UIMessageWindowReader"
 import type { ActiveTaskDescriptor } from "../task/active-tasks/ActiveTaskContextProvider"
 import type { TaskActivityStore } from "../task/activity/TaskActivityStore"
 import { TaskSessionCompositionService } from "../task/composition/TaskSessionCompositionService"
@@ -142,6 +139,7 @@ import { getClineOnboardingModels } from "./models/getClineOnboardingModels"
 import { appendClineStealthModels } from "./models/refreshOpenRouterModels"
 import { ProfileSwitchCoordinator } from "./profile-switch/ProfileSwitchCoordinator"
 import type { ProfileSwitchOperation, ResolvedProfileTarget } from "./profile-switch/types"
+import { awaySettingsProjection } from "./state/awaySettingsProjection"
 import { planExternalStateChange } from "./state/externalStateChangePlan"
 import { projectFocusChainHistory } from "./state/focusChainHistoryProjection"
 import { cleanupStateSubscriptions, sendAccountUsageUpdate, sendStatePatch, sendStateUpdate } from "./state/subscribeToState"
@@ -175,6 +173,17 @@ import { sendPartialMessageEvent } from "./ui/subscribeToPartialMessage"
  * of the build keeps the user-visible latency ceiling unchanged.
  */
 const STATE_POST_COALESCE_MS = 50
+
+/**
+ * Minimum gap between transient Task view patches.
+ *
+ * A transient patch carries streaming text the next patch will replace, so
+ * delivering each one buys nothing the following one would not show. The gap is
+ * deliberately far below a frame's perceptible delay: interactive states never
+ * wait here, because committed state, approvals, dialogs, cancellation and
+ * terminal states call `postTaskViewPatchToWebview` directly.
+ */
+const TASK_VIEW_PATCH_THROTTLE_MS = 50
 
 /** Why a write is refused while another window owns the task this window shows. */
 const READ_ONLY_TASK_ERROR = "Task is read-only in this window."
@@ -222,6 +231,7 @@ type InitTaskOptions = {
 
 type PostStateOptions = {
     immediate?: boolean
+    projection?: "full" | "ui-language"
 }
 
 export type ControllerCloseReason =
@@ -501,6 +511,14 @@ export class Controller {
     private accountUsagePollingEnabled = true
     private disposed = false
     private uiDetached = false
+    /** Whether this controller's surface can currently be seen. Defaults to visible. */
+    private surfaceVisible = true
+    /** Set when a publication was skipped because the surface was hidden. */
+    private deferredStatePostWhileHidden = false
+    /** Trailing timer that bounds how often a transient Task view patch is sent. */
+    private taskViewPatchThrottleTimer: NodeJS.Timeout | undefined = undefined
+    /** Start of the current patch throttle window; 0 means no window is open. */
+    private taskViewPatchScheduledAt = 0
     private stateBuildsAfterDetach = 0
     private suppressedStatePostsAfterDetach = 0
     private workspaceMcpRegistration: Promise<void> = Promise.resolve()
@@ -566,33 +584,6 @@ export class Controller {
         return resolution.status === "resolved" && resolution.profile.id === profileId
     }
 
-    /** Today's locally counted tokens for one Profile. */
-    private readLocalDailyTokens(profileId: string): TokenIncrement {
-        return readDailyTokens(this.stateManager.getGlobalStateKey("profileDailyTokenUsage"), profileId, new Date())
-    }
-
-    /**
-     * Count one completed request against its Profile's daily totals.
-     *
-     * Subscription endpoints report percentages only, so this is where today's
-     * token counts come from. The published snapshot is refreshed from the
-     * ledger without reading the provider again, so the counts stay current
-     * while the quota windows keep their last-read values.
-     */
-    async recordProfileTokenUsage(profileId: string, increment: TokenIncrement): Promise<void> {
-        if (!profileId || (increment.inputTokens <= 0 && increment.outputTokens <= 0)) return
-        const ledger = this.stateManager.getGlobalStateKey("profileDailyTokenUsage")
-        this.stateManager.setGlobalState("profileDailyTokenUsage", addDailyTokens(ledger, profileId, increment, new Date()))
-        const published = this._accountUsage
-        // Balance providers report their own daily counts; only a subscription
-        // snapshot carries counts that came from this ledger.
-        if (!published || published.profileId !== profileId || !isSubscriptionUsage(published)) return
-        const { dailyInputTokens: _input, dailyOutputTokens: _output, ...withoutLocalCounts } = published
-        const refreshed = applyLocalDailyTokens(withoutLocalCounts, this.readLocalDailyTokens(profileId))
-        this._accountUsage = refreshed
-        await sendAccountUsageUpdate(this, refreshed)
-    }
-
     /** Publish a shared snapshot only when its Profile is still active for the current mode. */
     async publishAccountUsageSnapshot(profileId: string, usage: AccountUsage): Promise<void> {
         if (!this.isActiveProviderUsageProfile(profileId)) return
@@ -619,7 +610,6 @@ export class Controller {
             const usage = decorateProviderAccountUsage(
                 target.profile,
                 target.handler.getAccountUsage ? await target.handler.getAccountUsage() : undefined,
-                this.readLocalDailyTokens(target.profile.id),
             ) ?? {
                 profileId: target.profile.id,
                 providerId: target.profile.provider,
@@ -648,7 +638,6 @@ export class Controller {
             const usage = decorateProviderAccountUsage(
                 target.profile,
                 target.handler.getAccountUsage ? await target.handler.getAccountUsage() : undefined,
-                this.readLocalDailyTokens(target.profile.id),
             ) ?? {
                 profileId: target.profile.id,
                 providerId: target.profile.provider,
@@ -735,6 +724,9 @@ export class Controller {
                 // once, in one place, instead of being re-derived inline.
                 const plan = planExternalStateChange(event.source, changedKeys)
                 if (!plan.reconfigureComponents && !plan.publishState) return
+                if (changedKeys.includes("uiLanguage")) {
+                    await this.postStateToWebview({ projection: "ui-language" })
+                }
                 if (plan.reconfigureComponents) {
                     await this.configureGlobalComponents()
                 }
@@ -958,9 +950,11 @@ export class Controller {
      * Make `taskId` this Controller's runtime so an activity control can act on
      * it; false when the surface changed or the task belongs to another window.
      */
-    async promoteHistoryDisplayForActivityControl(taskId: string): Promise<boolean> {
+    async promoteHistoryDisplayForActivityControl(taskId: string, expectedOpening?: TaskOpening): Promise<boolean> {
+        if (expectedOpening && this.currentOpening() !== expectedOpening) return false
         if (this.task?.taskId === taskId) return true
         return this.runTaskLifecycleOperation(async () => {
+            if (expectedOpening && this.currentOpening() !== expectedOpening) return false
             if (this.task?.taskId === taskId) return true
             const display = this.historyDisplaySession
             if (!display || !this.canPromoteHistoryDisplay(taskId)) return false
@@ -988,37 +982,108 @@ export class Controller {
         return this.task?.owners.messages.clineMessages ?? this.historyDisplaySession?.getMessages() ?? []
     }
 
+    /** Project only rows actually being sent, without changing the raw window or its coordinate space. */
+    async readCurrentTaskMessageProjection(messages: readonly UiMessage[]): Promise<UiMessage[]> {
+        const owner = this.task?.owners.messages
+        if (owner?.uiMessage) return await owner.readClineMessageProjection(messages)
+        const history = owner ? undefined : this.historyDisplaySession
+        return await Promise.all(
+            messages.map(async (message) => {
+                const projected = { ...message }
+                delete projected.messageIndex
+                const sourceIndex = await history?.projectMessageSourceIndex(message.ts)
+                if (sourceIndex !== undefined) projected.messageIndex = sourceIndex
+                return projected
+            }),
+        )
+    }
+
+    /** Resolve metadata through the current message owner, never by a window/buffer offset. */
+    async projectCurrentTaskMessageSourceIndex(ts: number): Promise<number | undefined> {
+        const owner = this.task?.owners.messages
+        if (owner) return owner.uiMessage ? await owner.projectMessageSourceIndex(ts) : undefined
+        return await this.historyDisplaySession?.projectMessageSourceIndex(ts)
+    }
+
     /** Durable message count, which exceeds the loaded window for a history display. */
     getCurrentTaskMessageCount(): number {
         return this.task?.owners.messages.clineMessages.length ?? this.historyDisplaySession?.getMessageCount() ?? 0
     }
 
     /**
-     * A page of the message sequence the current surface serves. With `anchorTs`,
-     * `referenceIndex` is ignored and the page is centred on the message with that
-     * ts, located in the same sequence; an absent anchor yields an empty page.
+     * Read the visible message window once and derive its index space from it.
+     *
+     * The window length and the durable message count are different quantities. A
+     * history display holds only its latest page while `getMessageCount()` reports
+     * the whole conversation, so `firstItemIndex` is the gap between them. A runtime
+     * task's window *is* the conversation, so its count is the window length and no
+     * second pass over the sequence is needed.
+     *
+     * `getCurrentTaskMessages()` merges and sorts transient entries on every access,
+     * so state projection must reach this helper exactly once per build.
+     */
+    materializeMessageWindow(): {
+        messages: UiMessage[]
+        totalCount: number
+        firstItemIndex: number
+        titleMessage: UiMessage | undefined
+    } {
+        const messages = [...this.getCurrentTaskMessages()]
+        const titleMessage =
+            this.historyDisplaySession?.getTaskTitleMessage() ?? messages.find((m) => m.say === "task") ?? messages.at(0)
+        const totalCount = this.task ? messages.length : (this.historyDisplaySession?.getMessageCount() ?? 0)
+        return { messages, totalCount, firstItemIndex: Math.max(0, totalCount - messages.length), titleMessage }
+    }
+
+    /**
+     * A page of the sequence this opening serves. A source index is resolved in the
+     * committed owner first, then located in that presentation sequence. Without an
+     * index, the existing reference/ts entry points keep their coordinate semantics.
      */
     async fetchCurrentTaskMessages(
         referenceIndex: number,
         count: number,
         anchorTs?: number,
+        anchorIndex?: number,
     ): Promise<{ messages: UiMessage[]; totalCount: number; startIndex: number; anchorFound: boolean }> {
         const pageSize = Math.max(0, Math.trunc(count))
         const historyDisplay = this.historyDisplaySession
         if (historyDisplay) {
+            if (anchorIndex !== undefined) return historyDisplay.fetchSourceIndexedPage(anchorIndex, count, anchorTs)
             if (anchorTs !== undefined) return historyDisplay.fetchAnchoredPage(anchorTs, count)
             return { ...(await historyDisplay.fetchMessages(referenceIndex, count)), anchorFound: false }
         }
 
-        const messages = [...(this.task?.owners.messages.clineMessages ?? [])]
+        const owner = this.task?.owners.messages
+        // An index request must resolve this physical row before consulting the live
+        // view. A ts mismatch must never fall through to the old timestamp jump.
+        const target = anchorIndex === undefined ? undefined : await owner?.readClineMessageAtSourceIndex(anchorIndex)
+        const messages = [...(owner?.clineMessages ?? [])]
         const totalCount = messages.length
-        if (anchorTs !== undefined) return anchoredPage(messages, anchorTs, count)
+        if (anchorIndex !== undefined) {
+            const missing = { messages: [], totalCount, startIndex: 0, anchorFound: false }
+            if (!target || (anchorTs !== undefined && target.ts !== anchorTs)) return missing
+            const anchor = lastIndexOfTimestamp(messages, target.ts)
+            if (anchor === undefined || !owner) return missing
+            const startIndex = centredPageStart(anchor, pageSize, totalCount)
+            const projected = await owner.readClineMessageProjection(messages.slice(startIndex, startIndex + pageSize))
+            if (!projected.some((message) => message.messageIndex === anchorIndex && message.ts === target.ts)) return missing
+            const current = await owner.readClineMessageAtSourceIndex(anchorIndex)
+            if (current?.ts !== target.ts) return missing
+            return { messages: projected, totalCount, startIndex, anchorFound: true }
+        }
+
+        if (anchorTs !== undefined) {
+            const page = anchoredPage(messages, anchorTs, count)
+            return { ...page, messages: owner ? await owner.readClineMessageProjection(page.messages) : [] }
+        }
         const startIndex =
             referenceIndex === -1
                 ? Math.max(0, totalCount - pageSize)
                 : Math.max(0, Math.min(Math.trunc(referenceIndex), totalCount))
+        const pageMessages = messages.slice(startIndex, Math.min(startIndex + pageSize, totalCount))
         return {
-            messages: messages.slice(startIndex, Math.min(startIndex + pageSize, totalCount)),
+            messages: owner ? await owner.readClineMessageProjection(pageMessages) : [],
             totalCount,
             startIndex,
             anchorFound: false,
@@ -2822,6 +2887,29 @@ export class Controller {
             this.suppressedStatePostsAfterDetach++
             return
         }
+        // A hidden surface pays for delivery and a full build it cannot show. The
+        // deferred flag survives so returning to sight publishes once, from current
+        // state, instead of replaying every skipped revision.
+        if (this.isSurfaceHidden()) {
+            this.deferredStatePostWhileHidden = true
+            return
+        }
+        // A committed presentation preference must not wait behind full builds
+        // that an active Task's newer patches can repeatedly make stale.
+        if (options?.projection === "ui-language") {
+            const stateRevision = ++this.nextStateRevision
+            this.latestStateRevision = Math.max(this.latestStateRevision, stateRevision)
+            await sendStatePatch(
+                this,
+                {
+                    stateRevision,
+                    uiLanguage: this.stateManager.getUiLanguagePreference(),
+                    hostDisplayLanguage: HostRegistryInfo.get()?.displayLanguage,
+                },
+                this._accountUsage,
+            )
+            return
+        }
         // Coalescing downstream of the build only saved delivery: every caller in
         // a burst still paid for a full state build whose result was then
         // discarded. Merging first makes the build itself happen once per window.
@@ -2838,23 +2926,75 @@ export class Controller {
         await this.publishState(options)
     }
 
-    /** Queue one latest-wins patch for a burst of transient Task view changes. */
+    /**
+     * Queue one latest-wins patch for a burst of transient Task view changes.
+     *
+     * Microtask merging only collapses one event loop turn; a streaming round
+     * still produced a patch per token batch. The trailing timer additionally
+     * bounds the patch rate while keeping the first patch of a burst immediate.
+     * Interactive publications never come through here, so a commit, approval,
+     * dialog, cancellation or terminal state is not delayed by this window.
+     */
     private scheduleTaskViewPatch(): void {
-        if (this.taskViewPatchScheduled) return
-        this.taskViewPatchScheduled = true
-        queueMicrotask(() => {
-            this.taskViewPatchScheduled = false
+        // An armed timer already owns the delivery of the newest projection, so a
+        // burst costs one patch per window instead of one per event loop turn.
+        if (this.taskViewPatchThrottleTimer) return
+        this.taskViewPatchScheduled = false
+        const deliver = () => {
+            this.taskViewPatchThrottleTimer = undefined
             if (!this.isUiAttached()) return
             this.postTaskViewPatchToWebview().catch((error: unknown) => {
                 Logger.error("[Controller] Transient Task view publication failed:", error)
             })
-        })
+        }
+        // The leading patch is immediate; only the trailing one waits. Zero means no
+        // patch has been delivered yet, which must not read as "inside a window".
+        const sinceLastPatch = this.taskViewPatchScheduledAt
+            ? Date.now() - this.taskViewPatchScheduledAt
+            : Number.POSITIVE_INFINITY
+        if (sinceLastPatch >= TASK_VIEW_PATCH_THROTTLE_MS) {
+            this.taskViewPatchScheduledAt = Date.now()
+            deliver()
+            return
+        }
+        this.taskViewPatchThrottleTimer = setTimeout(() => {
+            this.taskViewPatchScheduledAt = Date.now()
+            deliver()
+        }, TASK_VIEW_PATCH_THROTTLE_MS - sinceLastPatch)
+    }
+
+    /**
+     * Drop any pending transient patch so an interactive publication is not
+     * ordered behind it.
+     *
+     * The patch the timer would send carries only transient streaming text that
+     * the interactive publication re-projects in full, so cancelling it loses
+     * nothing and avoids reordering the approval or dialog behind stale text.
+     */
+    private cancelPendingTaskViewPatch(): void {
+        this.taskViewPatchScheduled = false
+        if (!this.taskViewPatchThrottleTimer) return
+        clearTimeout(this.taskViewPatchThrottleTimer)
+        this.taskViewPatchThrottleTimer = undefined
+        // The cancelled delivery still counts as the window's patch: the interactive
+        // publication showed newer state, and throttling the next transient patch
+        // keeps a streaming round from immediately re-sending what it replaced.
+        this.taskViewPatchScheduledAt = Date.now()
     }
 
     /** Publish the interaction-critical Task view without paying for a full ExtensionState build. */
     async postTaskViewPatchToWebview(): Promise<void> {
         if (this.uiDetached || this.disposed || !this.getCurrentTaskId()) {
             this.suppressedStatePostsAfterDetach++
+            return
+        }
+        // This call is the interactive path, so anything the transient timer still
+        // holds is superseded here and must not be delivered afterwards.
+        this.cancelPendingTaskViewPatch()
+        // A patch only advances a rendered row. While hidden there is no rendered
+        // row, and the recovery publication rebuilds the whole view anyway.
+        if (this.isSurfaceHidden()) {
+            this.deferredStatePostWhileHidden = true
             return
         }
         this.stateManager.setActiveTaskId(this.getCurrentTaskId())
@@ -3047,6 +3187,8 @@ export class Controller {
         const browserSettings = this.stateManager.getGlobalSettingsKey("browserSettings")
         const focusChainSettings = this.stateManager.getGlobalSettingsKey("focusChainSettings")
         const preferredLanguage = this.stateManager.getGlobalSettingsKey("preferredLanguage")
+        const uiLanguage = this.stateManager.getUiLanguagePreference()
+        const hostDisplayLanguage = HostRegistryInfo.get()?.displayLanguage
         const chatInputSendShortcut = this.stateManager.getGlobalSettingsKey("chatInputSendShortcut")
         const mode =
             this.task?.owners.settings.mode ??
@@ -3108,24 +3250,26 @@ export class Controller {
         // Read the message list once. The getter merges and sorts transient
         // entries on every access, so a second read costs another full pass over
         // a conversation that can hold tens of thousands of messages.
-        const rawMessages = [...this.getCurrentTaskMessages()]
-        // The title is presentation metadata, never a Task identity.
-        // A history display retains only the latest message window, so its first
-        // durable message is read separately rather than forcing a full history load.
-        const taskTitleMessage =
-            this.historyDisplaySession?.getTaskTitleMessage() ?? rawMessages.find((m) => m.say === "task") ?? rawMessages.at(0)
+        // Title, window and index space come from one read: the getter merges and
+        // sorts transient entries on every access.
+        const {
+            messages: rawMessages,
+            totalCount: totalMessageCount,
+            firstItemIndex,
+            titleMessage: rawTitleMessage,
+        } = this.materializeMessageWindow()
+        // Only the title travels in full state; do not map the whole raw history.
+        const [taskTitleMessage] = rawTitleMessage ? await this.readCurrentTaskMessageProjection([rawTitleMessage]) : []
         // Separate task header message from body messages. Read the header from the
         // in-memory message list instead of re-reading ui_messages.jsonl on every
         // state push: getTaskHeaderText() bypasses the jsonl cache and performs a
         // full fs.readFile + per-line JSON.parse, which dominated buildState() time
         // in long conversations (900-2500ms per push in field logs).
         const _taskHeaderText = taskTitleMessage?.text ?? ""
-        // totalMessageCount now includes the task message (matching fetchMessage behavior)
-        // so the frontend can detect when scrolled to the absolute top (index 0)
-        const totalMessageCount = this.getCurrentTaskMessageCount()
-        // firstItemIndex is managed by fetchMessage; the history display already
-        // holds the latest bounded window rather than the complete file.
-        const firstItemIndex = Math.max(0, totalMessageCount - rawMessages.length)
+        // totalMessageCount includes the task message (matching fetchMessage behavior)
+        // so the frontend can detect when scrolled to the absolute top (index 0).
+        // firstItemIndex comes from the same window read: a history display holds the
+        // latest bounded page while its durable total spans the whole conversation.
         const checkpointManagerErrorMessage = this.historyDisplaySession?.historyItem.checkpointManagerErrorMessage
         // The entry cap below bounds how many tasks are sent but not how many
         // bytes: HistoryItem.task holds the verbatim task text, so a workspace
@@ -3181,11 +3325,10 @@ export class Controller {
         const apiMetrics = {
             ...usageTotals,
             ...rateSnapshot,
-            // The rows price every request, including the ones a provider did not
-            // price, and add subagent usage; the provider-round store only holds
-            // reported cost. Cost therefore stays with the rows, as in task history.
+            // Amount and currency share the row aggregate's source; a rate
+            // snapshot must not label an amount whose unit was not reported.
             totalCost: usageTotals.totalCost,
-            currency: usageTotals.currency ?? rateSnapshot.currency,
+            currency: usageTotals.currency,
         }
         const contextWindowIndicator = shownContextWindowIndicator(this.task, this.historyDisplaySession)
         const lastApiReqTotalTokens = contextWindowIndicator
@@ -3227,6 +3370,8 @@ export class Controller {
             browserSettings,
             focusChainSettings,
             preferredLanguage,
+            uiLanguage,
+            hostDisplayLanguage,
             chatInputSendShortcut,
             mode,
             strictPlanModeEnabled,
@@ -3304,6 +3449,7 @@ export class Controller {
                 featureFlagsService.getAggressiveRenderingEnabled(),
             ),
             accountEnabled: readAccountFeatureSetting(this.stateManager),
+            ...awaySettingsProjection(this.stateManager),
             hooksEnabled: getHooksEnabledSafe(this.stateManager.getGlobalSettingsKey("hooksEnabled")),
             remoteConfigSettings: this.stateManager.getRemoteConfigSettings(),
             nativeToolCallSetting: this.stateManager.getGlobalStateKey("nativeToolCallEnabled"),
@@ -3435,14 +3581,10 @@ export class Controller {
             const loadAccountUsage = handler.getAccountUsage?.bind(handler)
             if (!loadAccountUsage || decideAccountUsageRead(handler, profileKey, this.accountUsageSingleReadKey) === "skip") {
                 handler.abort?.()
-                // Only a provider that cannot report usage at all invalidates the
-                // published snapshot; a skipped repeat must keep showing the one
-                // reading this Profile already produced.
                 if (!loadAccountUsage) await clearStaleUsage()
                 return
             }
-            const getAccountUsage = async () =>
-                decorateProviderAccountUsage(profile, await loadAccountUsage(), this.readLocalDailyTokens(profile.id))
+            const getAccountUsage = async () => decorateProviderAccountUsage(profile, await loadAccountUsage())
             this.accountUsageHandler = handler
             let usage: AccountUsage | undefined
             try {
@@ -3502,6 +3644,46 @@ export class Controller {
         this.startAccountUsagePolling()
     }
 
+    /**
+     * Record whether this controller's surface can currently be seen.
+     *
+     * A hidden panel still owns its task and keeps running it; only presentation is
+     * suspended. State is therefore not built while hidden, and the recovery
+     * publication on the way back is what guarantees the webview never keeps a stale
+     * revision. This is a separate fact from `uiDetached`: a detached ui has no
+     * surface at all, while a hidden one has a surface that is merely out of sight.
+     */
+    public setSurfaceVisible(visible: boolean): void {
+        const wasVisible = this.surfaceVisible !== false
+        if (wasVisible === visible) {
+            this.surfaceVisible = visible
+            return
+        }
+        this.surfaceVisible = visible
+        if (visible && this.deferredStatePostWhileHidden) {
+            // The hidden window absorbed every publication since the last one the
+            // webview saw, so exactly one full build restores it.
+            this.deferredStatePostWhileHidden = false
+            void this.postStateToWebview({ immediate: true })
+        }
+    }
+
+    /** Whether this controller's surface is currently visible, defaulting to true. */
+    public isSurfaceVisible(): boolean {
+        return this.surfaceVisible
+    }
+
+    /**
+     * Whether presentation must be suppressed because no surface can show it.
+     *
+     * Only an explicit `false` counts. A controller that was never told about its
+     * visibility publishes as before, so a host without a visibility signal keeps
+     * its current behaviour instead of silently going dark.
+     */
+    private isSurfaceHidden(): boolean {
+        return this.surfaceVisible === false
+    }
+
     /** Pause background balance requests while this controller's webview is hidden. */
     public setAccountUsagePollingEnabled(enabled: boolean): void {
         this.accountUsagePollingEnabled = enabled
@@ -3522,12 +3704,21 @@ export class Controller {
     private startLockPoll(taskId: string) {
         this.stopLockPoll()
         const generation = this.lockPollGeneration
-        // Bound to the opening that started polling, so a close or reopen in
-        // between can never be taken over by a stale round.
-        const owner = this.currentOpening()
+        /**
+         * The opening this poll may take over.
+         *
+         * Polling starts while a read-only open is still being prepared, before
+         * the session exists, so the opening at that moment can be absent. The
+         * session it installs is the one this poll was started for; requiring
+         * the exact opening captured here therefore rejected that very session
+         * forever, and a task another window held could never become writable in
+         * this window again. Any opening of the same task that this generation
+         * installs is accepted; a close or a different task still stops it.
+         */
         this.lockPollTimer = setInterval(() => {
             void this.runTaskLifecycleOperation(async (scope) => {
-                if (generation !== this.lockPollGeneration || this.currentOpening() !== owner || this.disposed) return
+                if (generation !== this.lockPollGeneration || this.disposed) return
+                const owner = this.currentOpening()
                 if (!owner || owner.taskId !== taskId || this.taskLockAcquired) return
                 // Only a released or stale lock is worth a takeover attempt.
                 const status = await this.lockService.checkTaskLock(taskId)
@@ -3711,6 +3902,7 @@ export class Controller {
                     Logger.warn(`[Lock] Ownership lost for task ${taskId}`)
                     // Before close is even queued: it may wait behind other lifecycle work.
                     this.trajectoryAdmission.revoke()
+                    this.task?.assembly.runtime.ownershipLost()
                     void this.clearTask({ expectedOpening: opening, closeReason: "lock_lost" }).catch((error) =>
                         Logger.error("[Lock] Failed to close lock-lost task:", error),
                     )

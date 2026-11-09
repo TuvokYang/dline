@@ -1,7 +1,10 @@
 import { BUILTIN_INPUT_SEMANTICS, type InputSemanticCatalog } from "@shared/input-semantics/catalog"
+import type { GitCommit } from "@shared/proto/dline/file"
+import type { UiLanguage } from "@shared/UiLanguage"
 import { act, renderHook, waitFor } from "@testing-library/react"
 import type React from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { UiLanguageProvider } from "@/i18n/UiLanguageProvider"
 import { ContextMenuOptionType } from "@/utils/context-mentions"
 import type { SlashMenuEntry } from "@/utils/slash-commands"
 import { SemanticComposerEngine } from "./semantic-composer/engine"
@@ -46,10 +49,10 @@ vi.mock("@/hooks/useTaskCapabilityToggles", () => ({
 
 const CATALOG = { revision: 1, descriptors: BUILTIN_INPUT_SEMANTICS } as unknown as InputSemanticCatalog
 
-function setup(initial = "") {
+function setup(initial = "", wrapper?: React.ComponentType<{ children: React.ReactNode }>) {
     const engine = new SemanticComposerEngine({ initial: stateFromText(initial) })
     const onPicked = vi.fn()
-    const view = renderHook(() => useComposerMenus({ engine, catalog: CATALOG, onPicked }))
+    const view = renderHook(() => useComposerMenus({ engine, catalog: CATALOG, onPicked }), { wrapper })
     const type = (text: string) => act(() => engine.apply({ type: "insert_text", text, source: "typed" }))
     const key = (name: string) => {
         const event = { key: name, preventDefault: vi.fn(), shiftKey: false, ctrlKey: false, metaKey: false, altKey: false }
@@ -253,6 +256,89 @@ describe("useComposerMenus mention menu", () => {
             expect(view.result.current.mention.results).toEqual([expect.objectContaining({ path: "/src/app.ts" })]),
         )
         expect(view.result.current.mention.loading).toBe(false)
+    })
+
+    it("retranslates commit descriptions without searching again or changing the selected commit", async () => {
+        const commit: GitCommit = {
+            hash: "abcdef1234567890abcdef1234567890abcdef12",
+            shortHash: "abcdef1",
+            subject: "Keep 原始 commit subject",
+            author: "Alice 张",
+            date: "2026-08-21 19:39:51 +0800",
+        }
+        services.file.searchCommits.mockResolvedValue({ commits: [commit] })
+        let language: UiLanguage = "en"
+        const wrapper = ({ children }: { children: React.ReactNode }) => (
+            <UiLanguageProvider language={language}>{children}</UiLanguageProvider>
+        )
+        const { engine, view, type, key, atoms } = setup("", wrapper)
+        type("@")
+        act(() => view.result.current.mention.select(ContextMenuOptionType.Git))
+        await waitFor(() => expect(view.result.current.mention.queryItems).toHaveLength(3))
+        act(() => view.result.current.mention.setSelectedIndex(1)) // working changes precede the commit
+        const draft = engine.getState()
+        const expectCommit = (description: string) => {
+            expect(view.result.current.mention.queryItems[2]).toEqual({
+                type: ContextMenuOptionType.Git,
+                value: commit.hash,
+                label: commit.subject,
+                description,
+            })
+            expect(view.result.current.mention.open).toBe(true)
+            expect(view.result.current.mention.selectedType).toBe(ContextMenuOptionType.Git)
+            expect(view.result.current.mention.selectedIndex).toBe(1)
+            expect(engine.getState()).toBe(draft)
+            expect(services.file.searchCommits).toHaveBeenCalledTimes(1)
+        }
+        const english = "abcdef1 by Alice 张 on 2026-08-21 19:39:51 +0800"
+        expectCommit(english)
+
+        language = "zh-CN"
+        view.rerender()
+        expectCommit("abcdef1 由 Alice 张 提交于 2026-08-21 19:39:51 +0800")
+        language = "en"
+        view.rerender()
+        expectCommit(english)
+
+        expect(key("Enter")).toBe(true)
+        expect(atoms()).toEqual([
+            expect.objectContaining({ kind: "mention", canonicalRef: commit.hash, sourceText: `@${commit.hash}` }),
+        ])
+        expect(view.result.current.mention.open).toBe(false)
+    })
+
+    it("uses the current language when a commit search resolves after a language switch", async () => {
+        const commit: GitCommit = {
+            hash: "abcdef1234567890abcdef1234567890abcdef12",
+            shortHash: "abcdef1",
+            subject: "Untranslated model content",
+            author: "Bob",
+            date: "2026-08-20 10:20:30 -0500",
+        }
+        let resolve!: (response: { commits: GitCommit[] }) => void
+        services.file.searchCommits.mockReturnValue(
+            new Promise<{ commits: GitCommit[] }>((done) => {
+                resolve = done
+            }),
+        )
+        let language: UiLanguage = "en"
+        const wrapper = ({ children }: { children: React.ReactNode }) => (
+            <UiLanguageProvider language={language}>{children}</UiLanguageProvider>
+        )
+        const { view, type } = setup("", wrapper)
+        type("@abcdef1")
+        expect(services.file.searchCommits).toHaveBeenCalledTimes(1)
+
+        language = "zh-CN"
+        view.rerender()
+        await act(async () => resolve({ commits: [commit] }))
+        expect(view.result.current.mention.queryItems[2]).toEqual({
+            type: ContextMenuOptionType.Git,
+            value: commit.hash,
+            label: commit.subject,
+            description: "abcdef1 由 Bob 提交于 2026-08-20 10:20:30 -0500",
+        })
+        expect(services.file.searchCommits).toHaveBeenCalledTimes(1)
     })
 
     it("closes when an edit moves the caret off the trigger", () => {

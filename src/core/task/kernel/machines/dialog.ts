@@ -73,6 +73,8 @@ function updateInteraction(
             receiverGeneration: event.receiverGeneration,
             draftRef: event.draftRef,
             selectionRef: event.selectionRef,
+            ...(event.roundFeedbackRef === undefined ? {} : { roundFeedbackRef: event.roundFeedbackRef }),
+            ...(event.retryPreparedRound ? { retryPreparedRound: true as const } : {}),
             ...(event.queueDeliveryId && event.queueDeliveryEntries && event.queueDeliveryMode
                 ? {
                       queuedInput: {
@@ -120,7 +122,7 @@ export function reduceDialog(state: DialogSlice, event: TaskEvent, nextRevision:
     if (
         (event.type === "tool.completed" || event.type === "tool.failed") &&
         state.primary?.interactionId === event.blockId &&
-        state.primary.acceptedResponse?.queuedInput
+        (state.primary.acceptedResponse?.queuedInput || state.primary.acceptedResponse?.origin === "timeout")
     ) {
         // The tool runner journals its result before terminal feedback. Keep the
         // accepted owner recoverable until that durable boundary, not just delivery.
@@ -139,6 +141,9 @@ export function reduceDialog(state: DialogSlice, event: TaskEvent, nextRevision:
                 presentationRef: block.approval.presentationRef,
                 ...(block.approval.presentationAsk === undefined ? {} : { presentationAsk: block.approval.presentationAsk }),
                 ...(block.approval.presentationRow === undefined ? {} : { presentationRow: block.approval.presentationRow }),
+                ...(block.approval.presentationWorkingDirectory === undefined
+                    ? {}
+                    : { presentationWorkingDirectory: block.approval.presentationWorkingDirectory }),
                 actionRules: block.approval.actionRules,
                 blockId: block.blockId,
                 prepareKey: `dialog.prepare:${block.approval.interactionId}`,

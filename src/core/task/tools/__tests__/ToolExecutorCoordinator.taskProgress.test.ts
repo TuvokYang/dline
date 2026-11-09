@@ -34,7 +34,7 @@ function harness(name: DlineDefaultTool) {
     const coordinator = new ToolExecutorCoordinator()
     coordinator.register(orderedHandler(name, log))
     const config = {
-        callbacks: { updateFCListFromToolResponse, saveCheckpoint, beginWorkspaceMutation },
+        callbacks: { updateFCListFromToolResponse, saveCheckpoint, beginWorkspaceMutation, say: vi.fn(async () => undefined) },
     } as unknown as TaskConfig
     return {
         coordinator,
@@ -56,13 +56,8 @@ describe("ToolExecutorCoordinator task_progress", () => {
         expect(updateFCListFromToolResponse).toHaveBeenCalledWith("- [ ] Inspect the tree")
     })
 
-    // The parameter rides on every tool, so the central path must not be tied to
-    // one family of tools.
-    it.each([
-        DlineDefaultTool.FILE_EDIT,
-        DlineDefaultTool.MCP_USE,
-        DlineDefaultTool.ATTEMPT,
-    ])("applies it for %s as well", async (tool) => {
+    // Only tools whose contract supports progress consume the parameter.
+    it.each([DlineDefaultTool.FILE_EDIT, DlineDefaultTool.MCP_USE])("applies it for %s as well", async (tool) => {
         const { coordinator, config, updateFCListFromToolResponse } = harness(tool)
 
         await coordinator.execute(config, block(tool, { task_progress: "- [x] Done" }))
@@ -99,6 +94,7 @@ describe("ToolExecutorCoordinator task_progress", () => {
         coordinator.register(orderedHandler(DlineDefaultTool.LIST_FILES, log))
         const config = {
             callbacks: {
+                say: vi.fn(async () => undefined),
                 updateFCListFromToolResponse: vi.fn(async () => {
                     throw new Error("focus chain unavailable")
                 }),
@@ -110,7 +106,12 @@ describe("ToolExecutorCoordinator task_progress", () => {
         // into a refused tool.
         await expect(
             coordinator.execute(config, block(DlineDefaultTool.LIST_FILES, { task_progress: "- [ ] First" })),
-        ).resolves.toBe("done")
+        ).resolves.toEqual({
+            response: [
+                { type: "text", text: "done" },
+                { type: "text", text: expect.any(String) },
+            ],
+        })
         expect(log).toEqual(["handler"])
     })
 })

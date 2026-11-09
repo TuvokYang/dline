@@ -1,8 +1,10 @@
 import type { TaskViewState, UiMessage } from "@shared/ExtensionMessage"
+import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { AcceptedInteractionSettlement, InteractionDraft } from "@/task-interaction/types"
+import type { ChatState, MessageHandlers } from "../chat-view/types/chatTypes"
 
 const mocks = vi.hoisted(() => {
     type TypedText = { kind: "text"; text: string; source: "typed" }
@@ -60,6 +62,7 @@ const mocks = vi.hoisted(() => {
         setDraft,
         extensionState: {} as Record<string, unknown>,
         askResponse: vi.fn(async () => ({})),
+        newTask: vi.fn(async () => ({})),
         dispatchInteraction: vi.fn(async () => ({ accepted: true, result: "accepted" })),
         compactTask: vi.fn(async () => ({ accepted: true, result: "accepted" })),
         mutateInputQueue: vi.fn(async () => ({ accepted: true, result: "command_performed" })),
@@ -90,7 +93,12 @@ vi.mock("@/services/grpc-client", () => ({
     },
     TaskServiceClient: {
         askResponse: mocks.askResponse,
+        newTask: mocks.newTask,
+        clearTask: mocks.closeTask,
         compactTask: mocks.compactTask,
+        // The fold header asks for round figures when it renders; this harness
+        // draws chat rows, so it needs the call to resolve to no figures.
+        getTaskRateMetrics: vi.fn(async () => ({ points: [] })),
         dispatchInteraction: mocks.dispatchInteraction,
         mutateInputQueue: mocks.mutateInputQueue,
     },
@@ -100,9 +108,15 @@ vi.mock("@/services/grpc-client", () => ({
     },
 }))
 vi.mock("@/task-interaction/InteractionHost", () => ({
-    InteractionHost: ({ onDraftRejected }: { onDraftRejected: (settlement: AcceptedInteractionSettlement) => void }) => {
+    InteractionHost: ({
+        onDraftRejected,
+        view,
+    }: {
+        onDraftRejected: (settlement: AcceptedInteractionSettlement) => void
+        view: TaskViewState
+    }) => {
         mocks.footerRejected = onDraftRejected
-        return null
+        return <div data-task-id={view.taskId} data-testid="interaction-host" />
     },
 }))
 vi.mock("../activity/TaskActivityPanel", () => ({
@@ -117,7 +131,8 @@ vi.mock("../chat-view/utils/profileUtils", () => ({
     resolveActiveProfile: () => undefined,
     resolveTaskCurrency: (currency: string | undefined) => currency ?? "USD",
 }))
-vi.mock("../chat-view", () => {
+vi.mock("../chat-view", async () => {
+    const { useMessageHandlers } = await import("../chat-view/hooks/useMessageHandlers")
     return {
         CHAT_CONSTANTS: { MAX_IMAGES_AND_FILES_PER_MESSAGE: 20 },
         ChatLayout: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -126,30 +141,50 @@ vi.mock("../chat-view", () => {
             chatState,
             draft,
             enabled,
+            messageHandlers,
             onDraftAccepted,
             onSubmit,
+            placeholderText,
+            semanticCatalog,
+            submissionScope,
         }: {
             canQueueInput?: boolean
-            chatState: { inputValue: string }
+            chatState: Pick<ChatState, "inputValue" | "sendingDisabled" | "composer">
             draft: InteractionDraft
             enabled?: boolean
+            messageHandlers: MessageHandlers
             onDraftAccepted: (settlement: AcceptedInteractionSettlement) => void
             onSubmit?: (draft: InteractionDraft) => Promise<AcceptedInteractionSettlement | undefined>
+            placeholderText: string
+            semanticCatalog: InputSemanticCatalog
+            submissionScope?: string
         }) => (
             <div>
                 <textarea
                     aria-label="Task input"
                     data-can-queue={String(canQueueInput)}
-                    disabled={!enabled}
+                    data-route={onSubmit ? "task" : "new-task"}
+                    data-submission-scope={submissionScope ?? "home"}
+                    disabled={enabled === undefined ? chatState.sendingDisabled : !enabled}
+                    placeholder={placeholderText}
                     readOnly
                     value={chatState.inputValue}
                 />
                 <button
                     aria-label="Invoke Enter"
                     onClick={() => {
-                        void onSubmit?.(draft).then((settlement) => {
-                            if (settlement) onDraftAccepted(settlement)
-                        })
+                        // Match InputSection's routing while keeping the DOM event
+                        // independent of ChatView's own surface-presence calculation.
+                        if (onSubmit) {
+                            void onSubmit(draft).then((settlement) => {
+                                if (settlement) onDraftAccepted(settlement)
+                            })
+                        } else {
+                            void messageHandlers.handleSendMessage({
+                                segments: chatState.composer.state.segments,
+                                catalog: semanticCatalog,
+                            })
+                        }
                     }}
                     type="button">
                     Enter
@@ -194,11 +229,7 @@ vi.mock("../chat-view", () => {
         filterVisibleMessages: (messages: UiMessage[]) => messages,
         groupChatRows: (_messages: UiMessage[], visibleMessages: UiMessage[]) => visibleMessages,
         useChatState: mocks.useChatState,
-        useMessageHandlers: () => ({
-            handleSendMessage: vi.fn(async () => undefined),
-            handleTaskCloseButtonClick: mocks.closeTask,
-            startNewTask: vi.fn(async () => undefined),
-        }),
+        useMessageHandlers,
         useStoppedReasoningExpansion: () => undefined,
         useScrollBehavior: () => ({
             disableAutoScrollRef: { current: false },
@@ -254,6 +285,7 @@ function renderChat(
     messages: UiMessage[],
     view: TaskViewState = taskView(),
     includeHistoryItem = true,
+    includeTitle = true,
 ): ReturnType<typeof render> {
     mocks.extensionState = {
         version: "test",
@@ -270,7 +302,7 @@ function renderChat(
         lastApiReqTotalTokens: 0,
         taskViewState: view,
         currentTaskItem: includeHistoryItem ? { id: "task-1", task: "Task", ts: 1 } : undefined,
-        taskTitleMessage: { ts: 1, type: "say", say: "task", text: "Task" },
+        taskTitleMessage: includeTitle ? { ts: 1, type: "say", say: "task", text: "Task" } : undefined,
         dismissHistoryTaskOpening: vi.fn(),
         navigateToHistory: vi.fn(),
         openHistoryTask: vi.fn(),
@@ -301,6 +333,8 @@ describe("ChatView interaction anchor synchronization", () => {
     beforeEach(() => {
         mocks.askResponse.mockReset()
         mocks.askResponse.mockResolvedValue({})
+        mocks.newTask.mockReset()
+        mocks.newTask.mockResolvedValue({})
         mocks.compactTask.mockReset()
         mocks.compactTask.mockResolvedValue({ accepted: true, result: "accepted" })
         mocks.dispatchInteraction.mockReset()
@@ -329,10 +363,183 @@ describe("ChatView interaction anchor synchronization", () => {
         rendered.rerender(chatView())
 
         expect(mocks.useChatState).toHaveBeenLastCalledWith([ASK], '["task-1","task-instance-1"]')
+        expect(screen.queryByText("Welcome")).not.toBeInTheDocument()
+        expect(screen.getByRole("status")).toHaveTextContent("Loading task...")
+        expect(screen.getByRole("button", { name: "Close Task" })).toBeInTheDocument()
+        expect(screen.getByTestId("interaction-host")).toHaveAttribute("data-task-id", "task-1")
+        expect(screen.getByRole("textbox", { name: "Task input" })).toBeEnabled()
+        expect(screen.getByRole("textbox", { name: "Task input" })).toHaveAttribute("placeholder", "Type a message...")
+        expect(screen.getByRole("textbox", { name: "Task input" })).toHaveAttribute("data-route", "task")
+
+        mocks.extensionState = {
+            ...mocks.extensionState,
+            taskTitleMessage: { ts: 1, type: "say", say: "task", text: "Task" },
+        }
+        rendered.rerender(chatView())
+        expect(screen.queryByRole("status")).not.toBeInTheDocument()
+        expect(screen.getByTestId("task-section")).toBeInTheDocument()
+        expect(screen.getByRole("textbox", { name: "Task input" })).toHaveValue("draft")
+        expect(mocks.useChatState).toHaveBeenLastCalledWith([ASK], '["task-1","task-instance-1"]')
+        expect(mocks.newTask).not.toHaveBeenCalled()
     })
 
-    it("does not replace a canonical Task surface with local history loading feedback", () => {
+    it("submits a titleless canonical Task reply through its interaction instead of new Task", async () => {
+        renderChat([ASK], taskView(), false, false)
+
+        expect(screen.queryByText("Welcome")).not.toBeInTheDocument()
+        expect(screen.queryByTestId("task-section")).not.toBeInTheDocument()
+        expect(screen.getByRole("button", { name: "Close Task" })).toBeInTheDocument()
+        expect(screen.getByTestId("interaction-host")).toHaveAttribute("data-task-id", "task-1")
+        const input = screen.getByRole("textbox", { name: "Task input" })
+        expect(input).toBeEnabled()
+        expect(input).toHaveAttribute("data-submission-scope", "task-1")
+        expect(input).toHaveAttribute("placeholder", "Type a message...")
+        fireEvent.click(screen.getByRole("button", { name: "Invoke Enter" }))
+
+        await waitFor(() => expect(mocks.dispatchInteraction).toHaveBeenCalledOnce())
+        expect(mocks.dispatchInteraction).toHaveBeenCalledWith(
+            expect.objectContaining({ taskId: "task-1", interactionId: "interaction-1", stateRevision: 8 }),
+        )
+        expect(mocks.askResponse).not.toHaveBeenCalled()
+        expect(mocks.newTask).not.toHaveBeenCalled()
+    })
+
+    it("routes ordinary titleless Task input to the existing Task", async () => {
+        const view = taskView()
+        view.phase = "between_turns"
+        view.activeInteraction = undefined
+        renderChat([], view, true, false)
+
+        expect(screen.queryByText("Welcome")).not.toBeInTheDocument()
+        expect(screen.getByRole("textbox", { name: "Task input" })).toHaveAttribute("data-route", "task")
+        fireEvent.click(screen.getByRole("button", { name: "Invoke Enter" }))
+
+        await waitFor(() => expect(mocks.askResponse).toHaveBeenCalledOnce())
+        expect(mocks.askResponse).toHaveBeenCalledWith(
+            expect.objectContaining({ responseType: "messageResponse", text: "draft" }),
+        )
+        expect(mocks.dispatchInteraction).not.toHaveBeenCalled()
+        expect(mocks.newTask).not.toHaveBeenCalled()
+    })
+
+    it("keeps a titleless working Task on its blocked input and durable queue route", async () => {
+        const view = taskView()
+        view.phase = "streaming"
+        view.activeInteraction = undefined
+        view.input = { ...view.input, enabled: false, enterAction: undefined, queueable: true }
+        renderChat([], view, false, false)
+
+        const input = screen.getByRole("textbox", { name: "Task input" })
+        expect(input).toBeDisabled()
+        expect(input).toHaveAttribute("data-can-queue", "true")
+        expect(input).toHaveAttribute("data-route", "task")
+        expect(input).toHaveAttribute("placeholder", "Type a message...")
+        expect(screen.queryByText("Welcome")).not.toBeInTheDocument()
+        await act(async () => {
+            fireEvent.click(screen.getByRole("button", { name: "Invoke Enter" }))
+        })
+        expect(mocks.newTask).not.toHaveBeenCalled()
+        expect(mocks.askResponse).not.toHaveBeenCalled()
+        expect(mocks.dispatchInteraction).not.toHaveBeenCalled()
+    })
+
+    it("closes a titleless Task and routes home input to a new Task only after canonical detach", async () => {
+        const rendered = renderChat([], taskView(), true, false)
+        const dismiss = mocks.extensionState.dismissHistoryTaskOpening
+        mocks.closeTask.mockImplementationOnce(async () => {
+            expect(dismiss).toHaveBeenCalledOnce()
+        })
+
+        fireEvent.click(screen.getByRole("button", { name: "Close Task" }))
+        await waitFor(() => expect(mocks.closeTask).toHaveBeenCalledOnce())
+        expect(screen.queryByText("Welcome")).not.toBeInTheDocument()
+        expect(screen.getByRole("textbox", { name: "Task input" })).toHaveAttribute("data-route", "task")
+
+        mocks.setDraft("Next task")
+        mocks.extensionState = {
+            ...mocks.extensionState,
+            clineMessages: [],
+            taskViewState: undefined,
+            taskTitleMessage: undefined,
+            // A closed Task's history entry is not evidence of an open Task.
+            currentTaskItem: { id: "task-1", task: "Task", ts: 1 },
+        }
+        rendered.rerender(chatView())
+        expect(screen.getByText("Welcome")).toBeInTheDocument()
+        expect(screen.queryByRole("status")).not.toBeInTheDocument()
+        expect(screen.queryByRole("button", { name: "Close Task" })).not.toBeInTheDocument()
+        expect(screen.queryByTestId("interaction-host")).not.toBeInTheDocument()
+        const input = screen.getByRole("textbox", { name: "Task input" })
+        expect(input).toBeEnabled()
+        expect(input).toHaveAttribute("placeholder", "Type your task here...")
+        expect(input).toHaveAttribute("data-route", "new-task")
+        expect(input).toHaveAttribute("data-submission-scope", "home")
+        fireEvent.click(screen.getByRole("button", { name: "Invoke Enter" }))
+
+        await waitFor(() => expect(mocks.newTask).toHaveBeenCalledOnce())
+        expect(mocks.newTask).toHaveBeenCalledWith(expect.objectContaining({ text: "Next task" }))
+        expect(mocks.askResponse).not.toHaveBeenCalled()
+        expect(mocks.dispatchInteraction).not.toHaveBeenCalled()
+    })
+
+    it("keeps the titleless Close action recoverable after its RPC fails", async () => {
+        mocks.closeTask.mockRejectedValueOnce(new Error("close failed"))
+        renderChat([], taskView(), false, false)
+
+        fireEvent.click(screen.getByRole("button", { name: "Close Task" }))
+        await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Could not close this task. Try again."))
+        expect(screen.queryByText("Welcome")).not.toBeInTheDocument()
+        expect(screen.getByRole("button", { name: "Close Task" })).toBeEnabled()
+
+        fireEvent.click(screen.getByRole("button", { name: "Close Task" }))
+        await waitFor(() => expect(mocks.closeTask).toHaveBeenCalledTimes(2))
+        await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument())
+        expect(mocks.newTask).not.toHaveBeenCalled()
+    })
+
+    it("preserves the title-only legacy Task surface without inventing canonical interaction state", async () => {
+        const rendered = renderChat([])
+        mocks.extensionState = { ...mocks.extensionState, taskViewState: undefined }
+        rendered.rerender(chatView())
+
+        expect(screen.getByTestId("task-section")).toBeInTheDocument()
+        expect(screen.queryByText("Welcome")).not.toBeInTheDocument()
+        expect(screen.getByRole("alert")).toHaveTextContent("Task interaction state is unavailable")
+        expect(screen.getByRole("textbox", { name: "Task input" })).toBeDisabled()
+        expect(screen.getByRole("textbox", { name: "Task input" })).toHaveAttribute("data-route", "task")
+        await act(async () => {
+            fireEvent.click(screen.getByRole("button", { name: "Invoke Enter" }))
+        })
+        expect(mocks.newTask).not.toHaveBeenCalled()
+        expect(mocks.askResponse).not.toHaveBeenCalled()
+        expect(mocks.dispatchInteraction).not.toHaveBeenCalled()
+    })
+
+    it("keeps the local deletion fence when the title disappears and releases it for a different opening", () => {
         const rendered = renderChat([ASK])
+        fireEvent.click(screen.getByRole("button", { name: "Confirm task deletion" }))
+        mocks.extensionState = { ...mocks.extensionState, taskTitleMessage: undefined }
+        rendered.rerender(chatView())
+
+        expect(screen.getByText("Welcome")).toBeInTheDocument()
+        expect(screen.queryByRole("button", { name: "Close Task" })).not.toBeInTheDocument()
+        expect(screen.queryByTestId("interaction-host")).not.toBeInTheDocument()
+
+        mocks.extensionState = {
+            ...mocks.extensionState,
+            taskViewState: { ...taskView(), taskInstanceId: "task-instance-2" },
+        }
+        rendered.rerender(chatView())
+        expect(screen.queryByText("Welcome")).not.toBeInTheDocument()
+        expect(screen.getByRole("button", { name: "Close Task" })).toBeInTheDocument()
+        expect(screen.getByRole("textbox", { name: "Task input" })).toHaveAttribute("data-route", "task")
+    })
+
+    it.each([
+        true,
+        false,
+    ])("does not replace a canonical Task surface with history loading feedback (title=%s)", (includeTitle) => {
+        const rendered = renderChat([ASK], taskView(), true, includeTitle)
         expect(screen.getByRole("textbox", { name: "Task input" })).toBeEnabled()
         mocks.extensionState = {
             ...mocks.extensionState,
@@ -341,12 +548,14 @@ describe("ChatView interaction anchor synchronization", () => {
         rendered.rerender(chatView())
         expect(screen.queryByText("Opening task")).not.toBeInTheDocument()
         expect(screen.getByRole("textbox", { name: "Task input" })).toBeEnabled()
-        expect(screen.getByRole("button", { name: "Compact task" })).toBeInTheDocument()
+        expect(screen.queryByText("Welcome")).not.toBeInTheDocument()
+        expect(screen.getByRole("button", { name: includeTitle ? "Compact task" : "Close Task" })).toBeInTheDocument()
         expect(mocks.askResponse).not.toHaveBeenCalled()
         expect(mocks.dispatchInteraction).not.toHaveBeenCalled()
+        expect(mocks.newTask).not.toHaveBeenCalled()
     })
 
-    it("closes the current Task presentation immediately when deletion is confirmed", () => {
+    it("closes the current Task presentation immediately when deletion is confirmed without bypassing the new-task guard", async () => {
         renderChat([ASK])
         expect(screen.getByTestId("task-section")).toBeInTheDocument()
 
@@ -354,7 +563,15 @@ describe("ChatView interaction anchor synchronization", () => {
 
         expect(screen.queryByTestId("task-section")).not.toBeInTheDocument()
         expect(screen.getByText("Welcome")).toBeInTheDocument()
-        expect(screen.getByRole("textbox", { name: "Task input" })).toBeDisabled()
+        expect(screen.getByRole("textbox", { name: "Task input" })).toHaveAttribute("data-route", "new-task")
+        // The presentation fence may show home before the backend detaches, but
+        // the canonical Task id must still guard against creating another Task.
+        await act(async () => {
+            fireEvent.click(screen.getByRole("button", { name: "Invoke Enter" }))
+        })
+        expect(mocks.newTask).not.toHaveBeenCalled()
+        expect(mocks.dispatchInteraction).not.toHaveBeenCalled()
+        expect(mocks.askResponse).not.toHaveBeenCalled()
         expect(mocks.closeTask).not.toHaveBeenCalled()
     })
 

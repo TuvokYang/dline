@@ -34,7 +34,7 @@ describe("AggressiveRenderingSetting", () => {
     })
 
     it("is absent while the rollout flag is off, even with a stored non-standard choice", () => {
-        mocks.aggressiveRendering = { user: "turn", featureFlag: false }
+        mocks.aggressiveRendering = { user: "user_turn", featureFlag: false }
         const { container } = render(<AggressiveRenderingSetting />)
 
         expect(container.querySelector("#aggressive-rendering")).toBeNull()
@@ -46,22 +46,18 @@ describe("AggressiveRenderingSetting", () => {
         expect(container.querySelector("#aggressive-rendering")).toBeNull()
     })
 
-    it("offers the three levels while the flag is on and writes the chosen level", () => {
-        mocks.aggressiveRendering = { user: "standard", featureFlag: true }
+    it("writes the level the user chooses", () => {
+        mocks.aggressiveRendering = { user: "none", featureFlag: true }
         const { container } = render(<AggressiveRenderingSetting />)
-        const dropdown = renderedDropdown(container)
 
-        const offered = Array.from(dropdown.querySelectorAll("vscode-option")).map((option) => option.getAttribute("value"))
-        expect(offered).toEqual(["standard", "activity", "turn"])
-
-        chooseLevel(dropdown, "turn")
+        chooseLevel(renderedDropdown(container), "user_turn")
 
         expect(mocks.updateSetting).toHaveBeenCalledTimes(1)
-        expect(mocks.updateSetting).toHaveBeenCalledWith("aggressiveRendering", "turn")
+        expect(mocks.updateSetting).toHaveBeenCalledWith("aggressiveRendering", "user_turn")
     })
 
     it("ignores a value that is not a known level", () => {
-        mocks.aggressiveRendering = { user: "activity", featureFlag: true }
+        mocks.aggressiveRendering = { user: "message_segment", featureFlag: true }
         const { container } = render(<AggressiveRenderingSetting />)
 
         chooseLevel(renderedDropdown(container), "everything")

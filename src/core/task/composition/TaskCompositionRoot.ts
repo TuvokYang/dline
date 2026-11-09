@@ -53,6 +53,7 @@ import type { ToolDomainSurface } from "../executors/tool/ToolDomainSurface"
 import type { TurnToolScheduler } from "../executors/tool/TurnToolScheduler"
 import type { PostCommitPublisher } from "../new-task/successor-handoff"
 import type { RuntimeDiagnosticSink, TaskRuntime } from "../runtime"
+import type { AutomaticDialogDeliveryPort } from "../runtime/AutomaticDialogDelivery"
 import { Task } from "../shell/Task"
 import type { TaskExecutorAssembly } from "../shell/TaskExecutorAssembly"
 import type { TaskCheckpointRestoreSuspensionPort } from "../shell/TaskShell"
@@ -73,6 +74,7 @@ export interface TaskCompositionServices {
     readonly environment?: ComposeEnvironmentPort
     /** Explains a round the kernel opened; absent in headless assemblies. */
     readonly continuation?: ComposeContinuationPort
+    readonly subagentsAvailable?: (signal: AbortSignal) => Promise<boolean>
 }
 
 export interface TaskCompositionOptions {
@@ -89,6 +91,8 @@ export interface TaskCompositionOptions {
     /** Learns when a round carries user input or an unfinished call; see ToolSequencePort. */
     readonly toolSequence?: ToolSequencePort
     readonly deferRestoredCommands?: OpenTaskShellOptions["deferRestoredCommands"]
+    readonly awayConfiguration?: OpenTaskShellOptions["awayConfiguration"]
+    readonly automaticResponses?: AutomaticDialogDeliveryPort
     /** The chat rows restored dialogs anchor to; see OpenTaskShellOptions. */
     readonly readAnchorRows?: OpenTaskShellOptions["readAnchorRows"]
     /** Condenses the conversation before a round is drafted; see ComposeCompactionBarrierPort. */
@@ -193,6 +197,7 @@ export async function composeTask(options: TaskCompositionOptions): Promise<Task
                 )
             conversation = new JournalCompactionConversation(persistence.ports.journal, persistence.payloads, conversationView)
             return {
+                automaticResponses: options.automaticResponses,
                 provider: {
                     execution: new ProductionProviderAdapter({
                         payloads: persistence.payloads,
@@ -215,6 +220,7 @@ export async function composeTask(options: TaskCompositionOptions): Promise<Task
                         retainedInputPresentation: options.retainedInputPresentation,
                         conversation: conversationView,
                         toolDenial: options.toolDenial,
+                        subagentsAvailable: options.services.subagentsAvailable,
                     }),
                     options.toolSequence,
                 ),

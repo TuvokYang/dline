@@ -2,8 +2,10 @@ import { InMemoryToolApprovalFeedbackLedger } from "@core/task/executors/tool/To
 import type { DraftAttachmentPort } from "@core/task/interaction/DraftAttachments"
 import { createInitialTaskState, type TaskState } from "@core/task/kernel"
 import { SemanticInputRejectedError } from "@core/task/session/TaskInputAdmission"
+import type { TaskUiAction } from "@core/task/shell/TaskUiAction"
 import { decodeTaskPayload } from "@core/task/stores/payload/TaskPayloadCodec"
 import type { DialogDraftEnvelope } from "@core/task/stores/payload/TaskPayloadEnvelopes"
+import type { UserInputControl } from "@shared/away"
 import type { AdmittedInputPart } from "@shared/input-semantics/admitted-parts"
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import { SemanticInputDocument as WireDocument, SemanticInputNode as WireNode } from "@shared/proto/dline/input"
@@ -38,6 +40,9 @@ function state(kind = "followup", actionId = "reply"): TaskState {
 }
 
 interface ReviewedReplyFixture {
+    readonly userControl?: UserInputControl
+    readonly modelText?: string
+    readonly admittedInputRef?: string
     readonly text: string
     readonly document?: SemanticInputDocument
     readonly parts?: readonly AdmittedInputPart[]
@@ -83,7 +88,7 @@ function controller(taskState: TaskState = state(), options: ControllerOptions =
     const responseWritten = new Promise<void>((release) => {
         releaseResponseWrite = release
     })
-    const respond = vi.fn(async () =>
+    const respond = vi.fn(async (_action: TaskUiAction) =>
         options.rejected
             ? { kind: "rejected" as const, reason: "stale_attempt" }
             : {
@@ -217,6 +222,30 @@ function compactReply(text = "/compact keep the API notes") {
 }
 
 describe("dispatchInteraction", () => {
+    it("accepts an approval's trusted control with its consumed body and first admission reference", async () => {
+        const host = controller(approvalState(), {
+            reviewed: {
+                text: "/cmd:away check the header",
+                modelText: " check the header",
+                admittedInputRef: "admitted:note",
+                userControl: { kind: "enter_away" },
+                commit: () => {},
+            },
+        })
+        const result = await dispatchInteraction(host.value as never, approveWith("/away check the header"))
+        expect(result.accepted).toBe(true)
+        expect(host.respond.mock.calls[0][0]).toMatchObject({ type: "approval.respond", userControl: { kind: "enter_away" } })
+        const draft = decodeTaskPayload<DialogDraftEnvelope>(host.put.mock.calls[0][0])
+        expect(draft).toMatchObject({ text: " check the header", admittedInputRef: "admitted:note" })
+        expect(host.approvalFeedback.take("block-1")).toMatchObject({ text: " check the header" })
+        expect(host.resolve).not.toHaveBeenCalled()
+    })
+
+    it("does not mistake a pure approval for user-authored return content", async () => {
+        const host = controller(approvalState())
+        await dispatchInteraction(host.value as never, approveWith(""))
+        expect(host.respond.mock.calls[0][0]).not.toHaveProperty("userControl")
+    })
     it("reports a rejected continuation instead of acknowledging a Process Anyway no-op", async () => {
         const host = controller(state("mistake_limit", "process_anyway"), { continuationAccepted: false })
 
@@ -290,10 +319,12 @@ describe("dispatchInteraction", () => {
             receiverGeneration: 3,
             actionId: "reply",
             draftRef: "payload-1",
+            roundFeedbackRef: "payload-1",
             selectionRef: "payload-2",
         })
         expect(host.resolve).toHaveBeenCalledWith("interaction-1", {
             actionId: "reply",
+            roundMaterialOwned: true,
             draft: { text: "next turn", images: [], files: [] },
             selection: { values: ["item-1"] },
         })

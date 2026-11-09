@@ -1,6 +1,8 @@
 import { memo } from "react"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
+import { formatReasoningEffort } from "./utils/uiLabels"
 
 interface ReasoningEffortSelectorProps {
     label?: string
@@ -13,13 +15,16 @@ interface ReasoningEffortSelectorProps {
 
 /** Display only caller-declared levels; an omitted default leaves the provider field unset. */
 const ReasoningEffortSelector = ({
-    label = "Reasoning Effort",
-    description = "Higher effort improves depth, but uses more tokens.",
+    label: customLabel,
+    description: customDescription,
     allowedEfforts,
     defaultEffort,
     reasoningEffort,
     onReasoningEffortChange,
 }: ReasoningEffortSelectorProps) => {
+    const { t } = useUiTranslation()
+    const label = customLabel ?? t("settings.ui.reasoningEffort")
+    const description = customDescription ?? t("settings.ui.effortHelp")
     const efforts = allowedEfforts.filter((value) => value.length > 0)
     const selectedEffort =
         reasoningEffort && efforts.includes(reasoningEffort)
@@ -37,12 +42,12 @@ const ReasoningEffortSelector = ({
             <Label className="text-xs font-medium">{label}</Label>
             <Select onValueChange={handleEffortChange} value={selectedEffort}>
                 <SelectTrigger className="w-full mt-1">
-                    <SelectValue placeholder="Provider default" />
+                    <SelectValue placeholder={t("settings.ui.providerDefault")} />
                 </SelectTrigger>
                 <SelectContent>
                     {efforts.map((effort) => (
                         <SelectItem key={effort} value={effort}>
-                            {effort.charAt(0).toUpperCase() + effort.slice(1)}
+                            {formatReasoningEffort(t, effort)}
                         </SelectItem>
                     ))}
                 </SelectContent>

@@ -1,0 +1,103 @@
+---
+title: Billing 与模型价格
+description: 纯计费边界、有效 ModelInfo 价格、Profile 覆盖，以及 Provider 共用的只读和可编辑价格组件。
+---
+
+修改 token 金额计算或 Provider 价格配置时，先确认本页的职责边界。Billing 是无状态计算，不是请求生命周期、用量采集器、账本或 Metrics 服务。
+
+## 所有权与数据流
+
+| 边界 | 所有者 | 职责 |
+|---|---|---|
+| 配置合同 | `proto/dline/models/metadata.proto` | `ModelPricing`、单价组、输入档位、时段和 schedule |
+| 有效模型信息 | `src/shared/providers/profile-model-info.ts`、`effective-model-info.ts` | 组合目录信息和当前 Profile 的完整价格覆盖 |
+| 金额计算 | `src/core/api/ApiHandler.ts` | `ApiHandler.calculateUsageCost` 承载完整的一次发送计费，返回金额／币种 |
+| 领域校验与选价 | `src/core/api/billing/` | 校验声明与 token，选择输入档位和卖家时段 |
+| Profile 持久化 | `src/core/controller/file/updateApiProfiles.ts` | 在既有目录仓库 mutation 前校验发生变更的显式价格 |
+| 设置展示 | `webview-ui/src/components/settings/common/PricingEditor.tsx` | 编辑同一声明，或通过 `readOnly={true}` 只读渲染 |
+
+模型目录提供基础声明。provider-owned `pricing` 缺失时继承目录；存在覆盖时替换完整 `ModelPricing`，包括 `currency` 和 `strategy`。Reset 删除覆盖。不要浅合并 oneof 分支，也不要把 Profile 编辑写回全局模型目录。`pricingTiersEnabled` 是历史编辑标记，不是改变有效价格声明的开关。
+
+旧 `metered`／`subscription`／`free` envelope 与 RPC 旧价格字段保留 wire 编号并标记废弃。读取边界一次性升级旧数据，新字段优先，写入只保留 `currency`／`strategy`。订阅或免费账户身份不阻止计算；已公布的零价必须是显式数值，不能用缺失声明代替。
+
+`PriceSet.input_price` 与 `output_price` 保留字段编号 1、2，并显式保留 presence。JSON 和 binary 解码保留缺价，不制造零价；合法计费仍要求两个基础价都完整。编辑器草稿和结构变更让未公布槽位保持空白。历史 payload 若早已省略零字段，无法获知其原始 presence，读取时不猜回零。
+
+价格沿现有 Profile／模型信息链传递。不存在独立价格仓库、价格查询 RPC、预览 DTO 或 token 金额试算 API。Shared helper 只组合结构，不选价、不解释假日、不计算金额。
+
+## 一轮一次计算
+
+调用 `ApiHandler.calculateUsageCost`，交入一次发送的标准 token、有效价格和 API 发送时间。Billing 模块导出校验及输入／结果类型，不另外导出 calculator：
+
+```ts
+import { ApiHandler } from "@core/api/ApiHandler"
+import type { ModelPricing } from "@shared/proto/dline/models/metadata"
+
+const pricing: ModelPricing = {
+    currency: "USD",
+    strategy: { flat: { prices: { inputPrice: 2, outputPrice: 8 } } },
+}
+const result = ApiHandler.calculateUsageCost(
+    pricing,
+    { inputTokens: 125_000, outputTokens: 10_000 },
+    Date.parse("2026-11-03T01:30:00Z"),
+)
+// { kind: "calculated", amount: 0.33, currency: "USD" }
+```
+
+普通输入、缓存写入、缓存读取的 token 数互斥；选输入档位时使用三者之和。`outputTokens` 已含 `thoughtsTokenCount`，思考量是子集，不是额外输出。声明独立思考输出价时，该子集使用独立价；否则使用普通输出价。单价单位为每一百万 token。
+
+Billing 没有时钟、请求身份、存储、重试、累计或用量归一化。分时策略必须得到有效的显式发送时刻。Flat／context 选价不依赖时间，旧适配器只有在这两种策略下才可以传不可用时间。
+
+| 结果 | 含义 |
+|---|---|
+| `calculated` | 本次计算的 `amount` 与 `currency`，包括合法的零金额 |
+| `unavailable` | 没有价格声明，不能凭空补零金额 |
+| `invalid` | 字段级问题，不能替换为成功的零金额 |
+
+缺失的 optional 缓存价在配置和展示中仍保持缺失。计算保留旧规则：缺失缓存价对金额贡献为零，但不会据此公布零费率。负数、非安全整数或非有限 token、思考量超过总输出，以及金额溢出均为非法输入。
+
+## 策略与边界
+
+- **Flat**：完整一组单价，不凭空生成分段。
+- **Context window**：输入上界严格递增且 inclusive，唯一无界末档省略 `maxInputTokens`。按整轮选一组价，不做累进计费，也不是模型的上下文容量。不要用零或 `Number.MAX_SAFE_INTEGER` 表示无穷。
+- **Time of day**：固定卖家 UTC offset、适用日、默认 rate 和不重叠窗口。窗口采用日内分钟 `[startMinute, endMinute)`，满足 `0 ≤ start < end ≤ 1440`。相邻与空档合法；跨午夜拆成两个窗口。空档及非适用日使用默认价。
+- **Time × context**：默认或任一窗口都可以使用 bands，而不只是一组单价。先选时段 rate，再选其输入档位。展示和保存必须保留所有档位。
+
+`ModelPricing.strategy` 恰好选择 `flat`、`contextWindow` 或 `timeOfDay` 一个分支。每个时段 rate 使用 prices 或 bands，不能同时存在。输入／输出单价必须有限且非负，缓存和思考输出价可选。币种为三位大写代码。领域校验检查完整声明，而不只检查当前命中分支。Proto 时窗类型为 `PricingTimeWindow`。
+
+本地公共假日日历目前覆盖中国 2025 和 2026 年，来源与日期记录在 `src/core/api/billing/calendars.ts`。需要假日判断却超出覆盖时返回问题，不猜价。DeepSeek 的峰价和默认价分别显式声明在 `src/core/api/providers/models/deepseek.ts`，不通过倍率互相推导。
+
+## Provider 渲染与编辑
+
+`ModelConfiguration` 使用可编辑的 `PricingEditor`，`ModelInfoView` 与 Storybook 使用同一组件的 `readOnly={true}`。`PriceSetFields`、`PricingTierEditor`、`TimeWindowEditor` 共用结构；只读模式移除输入和修改控件，不另外建立 view。
+
+| 入口 | 编辑合同 |
+|---|---|
+| DeepSeek | 固定分时策略，可编辑显式默认价／窗口价，已公布窗口几何固定。真实设置底部渲染同一有效价格和比例配置色条。保留历史 flat 覆盖，直到显式 Reset，不猜折扣转换。 |
+| OpenAI／Anthropic | custom base URL **开关**开启后开放价格模式和结构编辑，即使尚未输入 URL；与 custom model ID 无关。Flat 也显示 Add Pricing Tier，点击后成为合法档位声明。 |
+| 其他 `ModelInfoView` 消费者 | 只读价格摘要；共用组件不等于为这些 Provider 新增编辑入口。 |
+
+关闭 custom URL 保留既有清空 URL 行为，但不删除价格。开启而 URL 为空的开关状态只在编辑器本地，不新增持久 setting。Profile／model key 隔离本地价格草稿。
+
+横向时段图是配置几何：窗口宽度为其分钟时长占 1440 的比例，空档显示底层默认价。标签说明卖家时间、适用日及已配置假日条件。它**不是**今天的实际日历、当前费率、下一边界或倒计时；前端不实现这些计费判断。
+
+## 保存与失败路径
+
+编辑发布完整价格声明。最新草稿引用保证相邻 debounce 输入不互相覆盖，滞后回声不能回退草稿。结构操作与 Reset 前排空输入，防止迟到值修改其他行或重新建立已清除的覆盖。排空失败则保留结构并显示 alert。
+
+既有 Profile 保存链在 mutation 前校验新增或实际改动的显式价格。Reset／缺失可通过；未编辑的非法 legacy 声明不阻塞无关重命名，但修改该声明需要提交合法替代值。不新增迁移或持久化权威。仓库一致性见[存储所有权](/zh-cn/developer-guide/storage/)。
+
+Provider 适配器在既有标准响应 usage 可用的位置调用基类方法。Messages 先组合该响应的输入和最终输出再算金额；`pause_turn` 续发使用自己的发送时间和响应 usage。内部重试、传输 fallback 同样传入真实发送时间，不以外层 `createMessage` 的进入时间代替。不改变 token 采集或 snapshot／delta 语义。
+
+Provider 有效实报金额（含零）优先于本地计算，币种随实报字段或该协议明确单位传递；币种未知时不借 Profile 默认值补标签。既有消费者只接收已解析的金额和币种，不选价、不对累计 token 重算。金额沿现有规则累计，currency 随最新金额更新；不引入换汇或多币种结算层。
+
+## 验证入口
+
+从仓库根运行以下聚焦计算／配置用例：
+
+```sh
+npm run test:run -- src/core/api/billing/__tests__ src/shared/providers/__tests__/model-info-overrides.test.ts src/shared/providers/__tests__/effective-model-info.test.ts src/core/controller/file/__tests__/profile-pricing.integration.test.ts
+npm run test:run -- webview-ui/src/components/settings/common/PricingEditor.test.tsx webview-ui/src/components/settings/common/ModelConfiguration.test.tsx webview-ui/src/components/settings/providers/ProviderPricing.integration.test.tsx webview-ui/src/components/settings/providers/OpenAIProvider.pricing.test.tsx
+```
+
+覆盖独立金额 oracle、边界、发送时刻选价、完整覆盖／Reset／磁盘重开、optional 价格 presence、嵌套档位、custom URL 门控、迟到输入排空，以及真实 Provider 组合。Storybook 演示同一展示，但不作为 Profile 持久化或 Provider 运行接线的证据。更广验证见[测试](/zh-cn/developer-guide/testing/)。

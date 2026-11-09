@@ -43,7 +43,9 @@ export function planExternalStateChange(
         // changed keys, so one arriving here is a replay of a fact the caller
         // has seen. Reconfiguring and republishing for it would make an empty
         // commit cost the same as a real one.
-        return changedKeys.length === 0 ? DO_NOTHING : RECONFIGURE_AND_PUBLISH
+        if (changedKeys.length === 0) return DO_NOTHING
+        // UI language changes presentation only, including commits from this process.
+        return changedKeys.every((key) => key === "uiLanguage") ? PUBLISH_ONLY : RECONFIGURE_AND_PUBLISH
     }
     // Task history and account usage change what the Webview renders, so the
     // state still has to be rebuilt and published; neither is part of the

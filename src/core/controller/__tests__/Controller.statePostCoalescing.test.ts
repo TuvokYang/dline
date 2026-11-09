@@ -1,6 +1,7 @@
 import { createInitialTaskState } from "@core/task/kernel"
 import { projectCanonicalTaskView } from "@core/task/view/canonical/projectCanonicalTaskView"
 import type { TaskViewState } from "@shared/ExtensionMessage"
+import type { UiLanguagePreference } from "@shared/UiLanguage"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { Controller } from "../index"
 import { OpeningHandoff } from "../task/OpeningHandoff"
@@ -57,6 +58,24 @@ function createController(taskId?: string): { controller: Controller; buildState
     )
 
     return { controller, buildState, setActiveTaskId }
+}
+
+/**
+ * Let a real `postTaskViewPatchToWebview` reach `sendStatePatch`.
+ *
+ * The patch path is what owns the throttle bookkeeping, so replacing the method
+ * itself would leave those steps unexecuted and make the assertions vacuous.
+ */
+function stubTaskView(controller: Controller): void {
+    Object.assign(controller, {
+        taskViewPatchScheduled: false,
+        taskViewPatchScheduledAt: 0,
+        taskViewPatchThrottleTimer: undefined,
+    })
+    vi.spyOn(
+        controller as unknown as { projectCurrentTaskViewState(): TaskViewState | undefined },
+        "projectCurrentTaskViewState",
+    ).mockReturnValue({ taskId: "task-a" } as TaskViewState)
 }
 
 describe("Controller state publication coalescing", () => {
@@ -305,6 +324,60 @@ describe("Controller state publication coalescing", () => {
         }
     })
 
+    it.each([
+        "zh-CN",
+        "auto",
+    ] as const)("delivers committed %s while streaming Task patches keep full snapshots stale", async (preference) => {
+        vi.useFakeTimers()
+        const releases: (() => void)[] = []
+        let publication: Promise<void> | undefined
+        let languagePublication: Promise<void> | undefined
+        const { controller } = createController("task-a")
+        try {
+            stubTaskView(controller)
+            let committed: UiLanguagePreference = "en"
+            Object.assign(controller.stateManager, { getUiLanguagePreference: () => committed })
+            vi.spyOn(controller as Controller & { buildState(r: number): Promise<never> }, "buildState").mockImplementation(
+                async (stateRevision: number) => {
+                    const snapshot = { stateRevision, uiLanguage: committed }
+                    await new Promise<void>((release) => releases.push(release))
+                    return snapshot as never
+                },
+            )
+            publication = controller.postStateToWebview({ immediate: true })
+            await settle()
+
+            committed = preference
+            const languageOnly = { immediate: true, projection: "ui-language" as const }
+            languagePublication = controller.postStateToWebview(languageOnly)
+            await settle()
+            for (let round = 0; round < 3; round++) {
+                await controller.postTaskViewPatchToWebview()
+                releases.shift()?.()
+                await settle()
+                await vi.advanceTimersByTimeAsync(50)
+            }
+
+            // A real publication must carry the committed preference before
+            // any full build becomes deliverable. Merely retrying a full
+            // snapshot can be starved forever by a streaming Task.
+            const languagePatches = vi.mocked(sendStatePatch).mock.calls.map((call) => call[1])
+            expect(languagePatches.find((patch) => patch.uiLanguage === preference)).toMatchObject({
+                uiLanguage: preference,
+            })
+            expect(sendStateUpdate).not.toHaveBeenCalled()
+            expect(languagePatches.at(-1)?.stateRevision).toBeGreaterThan(languagePatches[0].stateRevision)
+            await languagePublication
+        } finally {
+            Object.assign(controller, { disposed: true })
+            for (const release of releases) release()
+            await Promise.all([publication, languagePublication])
+            await settle()
+            vi.clearAllTimers()
+            vi.useRealTimers()
+        }
+    })
+
     it("does not publish again when a newer publication overtook the dropped build", async () => {
         vi.useFakeTimers()
         try {
@@ -325,5 +398,120 @@ describe("Controller state publication coalescing", () => {
         } finally {
             vi.useRealTimers()
         }
+    })
+
+    // A hidden panel still owns and runs its task; only presentation stops. The
+    // cost that made parallel panels expensive was paying for a build and a
+    // delivery that no surface could show.
+    it("skips the build and the delivery while the surface is hidden", async () => {
+        const { controller, buildState } = createController("task-a")
+        controller.setSurfaceVisible(false)
+
+        await controller.postStateToWebview({ immediate: true })
+
+        expect(buildState).not.toHaveBeenCalled()
+        expect(sendStateUpdate).not.toHaveBeenCalled()
+    })
+
+    it("publishes once from current state when the surface becomes visible again", async () => {
+        const { controller, buildState } = createController("task-a")
+        controller.setSurfaceVisible(false)
+        await controller.postStateToWebview({ immediate: true })
+        await controller.postStateToWebview({ immediate: true })
+        expect(buildState).not.toHaveBeenCalled()
+
+        controller.setSurfaceVisible(true)
+        await settle()
+
+        // Replaying every skipped revision would rebuild once per hidden update;
+        // the webview only needs the newest state, so exactly one build runs.
+        expect(buildState).toHaveBeenCalledTimes(1)
+        expect(sendStateUpdate).toHaveBeenCalledTimes(1)
+        expect(vi.mocked(sendStateUpdate).mock.calls[0]?.[3]).toEqual({ immediate: true })
+    })
+
+    it("does not rebuild on return to sight when nothing was skipped", async () => {
+        const { controller, buildState } = createController("task-a")
+
+        controller.setSurfaceVisible(false)
+        controller.setSurfaceVisible(true)
+        await settle()
+
+        expect(buildState).not.toHaveBeenCalled()
+        expect(sendStateUpdate).not.toHaveBeenCalled()
+    })
+
+    it("throttles a stream of transient patches to one per window", async () => {
+        vi.useFakeTimers()
+        try {
+            const { controller } = createController("task-a")
+            stubTaskView(controller)
+            const transient = controller as unknown as { scheduleTaskViewPatch(): void }
+
+            // The first patch of a burst is immediate so streaming stays live;
+            // every later patch inside the window is merged into one delivery.
+            transient.scheduleTaskViewPatch()
+            transient.scheduleTaskViewPatch()
+            transient.scheduleTaskViewPatch()
+            await Promise.resolve()
+            expect(sendStatePatch).toHaveBeenCalledTimes(1)
+
+            await vi.advanceTimersByTimeAsync(200)
+            expect(sendStatePatch).toHaveBeenCalledTimes(2)
+
+            // A patch after the quiet gap is delivered immediately again.
+            transient.scheduleTaskViewPatch()
+            await Promise.resolve()
+            expect(sendStatePatch).toHaveBeenCalledTimes(3)
+        } finally {
+            vi.useRealTimers()
+        }
+    })
+
+    it("delivers an interactive patch at once and drops the queued transient one", async () => {
+        vi.useFakeTimers()
+        try {
+            const { controller } = createController("task-a")
+            stubTaskView(controller)
+            const transient = controller as unknown as { scheduleTaskViewPatch(): void }
+
+            transient.scheduleTaskViewPatch()
+            await Promise.resolve()
+            expect(sendStatePatch).toHaveBeenCalledTimes(1)
+
+            // Inside the window a transient patch is only queued. An approval must
+            // not wait behind it, and the queued text is superseded by this call.
+            transient.scheduleTaskViewPatch()
+            await controller.postTaskViewPatchToWebview()
+            expect(sendStatePatch).toHaveBeenCalledTimes(2)
+
+            // The superseded projection must never be delivered afterwards: that
+            // would move the view back to text the approval already replaced.
+            await vi.advanceTimersByTimeAsync(200)
+            expect(sendStatePatch).toHaveBeenCalledTimes(2)
+        } finally {
+            vi.useRealTimers()
+        }
+    })
+
+    it("skips a transient Task view patch while hidden and repairs it on return", async () => {
+        const { controller } = createController("task-a")
+        const publishPatch = vi.spyOn(controller, "postTaskViewPatchToWebview")
+        const projectView = vi.spyOn(
+            controller as unknown as { projectCurrentTaskViewState(): TaskViewState | undefined },
+            "projectCurrentTaskViewState",
+        )
+        controller.setSurfaceVisible(false)
+
+        await controller.postTaskViewPatchToWebview()
+
+        expect(projectView).not.toHaveBeenCalled()
+        expect(sendStatePatch).not.toHaveBeenCalled()
+        // The deferred flag belongs to the surface, so returning to sight runs
+        // the full publication that replaces the patch the panel never saw.
+        publishPatch.mockRestore()
+        controller.setSurfaceVisible(true)
+        await settle()
+        expect(sendStateUpdate).toHaveBeenCalledTimes(1)
     })
 })

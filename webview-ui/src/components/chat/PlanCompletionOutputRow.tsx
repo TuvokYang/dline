@@ -2,6 +2,7 @@ import { NotepadTextIcon } from "lucide-react"
 import { memo } from "react"
 import { CopyButton } from "@/components/common/CopyButton"
 import MarkdownBlock from "@/components/common/MarkdownBlock"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 
 interface PlanCompletionOutputProps {
@@ -15,6 +16,7 @@ interface PlanCompletionOutputProps {
  * Uses grayscale colors to distinguish from Act Mode's green success theme
  */
 const PlanCompletionOutputRow = memo(({ text, headClassNames }: PlanCompletionOutputProps) => {
+    const { t } = useUiTranslation()
     return (
         <div
             className="relative flex max-h-[80vh] flex-col overflow-hidden rounded-sm border border-teal-300/30 bg-teal-100/20 p-2 pt-3 dark:border-teal-700/30 dark:bg-teal-900/10"
@@ -23,7 +25,7 @@ const PlanCompletionOutputRow = memo(({ text, headClassNames }: PlanCompletionOu
             <div className={cn(headClassNames, "shrink-0 justify-between px-1")}>
                 <div className="flex gap-2 items-center">
                     <NotepadTextIcon className="size-2 text-teal-500 dark:text-teal-400" />
-                    <span className="text-teal-600 dark:text-teal-400 font-semibold">Plan Created</span>
+                    <span className="text-teal-600 dark:text-teal-400 font-semibold">{t("chatRows.plan.created")}</span>
                 </div>
                 <CopyButton textToCopy={text || ""} />
             </div>

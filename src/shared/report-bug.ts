@@ -22,11 +22,23 @@ export interface ReportBugDraft {
     readonly schemaVersion: typeof REPORT_BUG_DRAFT_SCHEMA_VERSION
     readonly content: ReportBugContent
     readonly environment: ReportBugEnvironment
+    /**
+     * Public support code of the temporary telemetry authorization issued before
+     * the preview was rendered. Absent when no authorization exists, in which case
+     * the preview offers no telemetry choice at all.
+     */
+    readonly supportCode?: string
+    /** The user's choice to attach `supportCode`; always false without one. */
     readonly temporaryTelemetryConsent: boolean
 }
 
 function stringField(value: unknown): string | undefined {
     return typeof value === "string" ? value : undefined
+}
+
+function nonEmptyField(value: unknown): string | undefined {
+    const text = stringField(value)?.trim()
+    return text ? text : undefined
 }
 
 function parseCanonical(value: Record<string, unknown>): ReportBugDraft | undefined {
@@ -52,9 +64,17 @@ function parseCanonical(value: Record<string, unknown>): ReportBugDraft | undefi
             systemInfo: stringField(parsedEnvironment.systemInfo) ?? "",
             dlineVersion: stringField(parsedEnvironment.dlineVersion) ?? "",
         },
-        temporaryTelemetryConsent: value.temporaryTelemetryConsent === true,
+        ...supportFields(nonEmptyField(value.supportCode), value.temporaryTelemetryConsent === true),
     }
     return draft
+}
+
+/** Consent only exists beside an issued authorization; a draft without a code never consents. */
+function supportFields(
+    supportCode: string | undefined,
+    consent: boolean,
+): Pick<ReportBugDraft, "supportCode" | "temporaryTelemetryConsent"> {
+    return supportCode ? { supportCode, temporaryTelemetryConsent: consent } : { temporaryTelemetryConsent: false }
 }
 
 /** Read current drafts and the legacy snake_case presentation used by older tasks. */
@@ -103,16 +123,21 @@ export function parseReportBugDraft(value: unknown): ReportBugDraft | undefined 
     }
 }
 
+/**
+ * A new draft. With an issued `supportCode` the telemetry choice starts checked,
+ * because the authorization was obtained for this report; without one there is
+ * no choice to make.
+ */
 export function createReportBugDraft(
     content: ReportBugContent,
     environment: ReportBugEnvironment,
-    temporaryTelemetryConsent = false,
+    supportCode?: string,
 ): ReportBugDraft {
     return {
         schemaVersion: REPORT_BUG_DRAFT_SCHEMA_VERSION,
         content: { ...content },
         environment: { ...environment },
-        temporaryTelemetryConsent,
+        ...supportFields(supportCode?.trim() || undefined, true),
     }
 }
 

@@ -11,7 +11,7 @@ import { type ToolHandlerResult, withToolDocuments } from "../ToolExecutionResul
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
 import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { attachToolFeedbackFiles, sayFeedbackOnce } from "../utils/UserFeedbackUtils"
+import { attachToolFeedbackFiles, sayFeedbackOnce, separateRoundFeedback } from "../utils/UserFeedbackUtils"
 
 export class AskFollowupQuestionToolHandler implements IToolHandler, IPartialBlockHandler {
     readonly name = DlineDefaultTool.ASK
@@ -55,7 +55,7 @@ export class AskFollowupQuestionToolHandler implements IToolHandler, IPartialBlo
             options: parsePartialArrayString(optionsRaw || "[]"),
         } satisfies UiAskQuestion
 
-        const options = parsePartialArrayString(optionsRaw || "[]")
+        const _options = parsePartialArrayString(optionsRaw || "[]")
 
         const outcome = await config.interactions.open({
             turnId: interactionTurnId(block),
@@ -97,6 +97,8 @@ export class AskFollowupQuestionToolHandler implements IToolHandler, IPartialBlo
         } else {
             telemetryService.captureOptionsIgnored(config.ulid ?? "", options.length, "act")
         }
+        const separated = await separateRoundFeedback(config, outcome)
+        if (separated) return separated
         await sayFeedbackOnce(config, "messageResponse", text, images, followupFiles, outcome)
 
         const attachments = await attachToolFeedbackFiles(followupFiles)

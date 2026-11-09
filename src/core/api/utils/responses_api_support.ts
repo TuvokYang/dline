@@ -2,11 +2,13 @@ import OpenAI from "openai"
 import { ModelInfo } from "@/shared/api"
 import { ServerTool } from "@/shared/proto/dline/models/metadata"
 import { Logger } from "@/shared/services/Logger"
+import { ApiHandler } from "../ApiHandler"
 import { OutputLimitExceededError } from "../stream/OutputLimitExceededError"
 import { createResponsesWebSearchReplay } from "../transform/openai-response-format"
 import { createResponsesRegistry, createResponsesToolChunk } from "../transform/responses-identity-registry"
+import { ResponsesSummaryText } from "../transform/responses-summary-text"
 import { normalizeResponsesStopReason } from "../transform/stop-reason"
-import type { ApiRawStreamServerToolChunk, ApiServerToolPhase } from "../transform/stream"
+import type { ApiRawStreamServerToolChunk, ApiServerToolPhase, ApiStreamUsageChunk } from "../transform/stream"
 
 interface ResponsesInputTokenDetails {
     readonly cache_write_tokens?: number | null
@@ -140,15 +142,18 @@ export function mapResponsesWebSearchEvent(event: any): ApiRawStreamServerToolCh
 export async function* handleResponsesApiStreamResponse(
     stream: AsyncIterable<OpenAI.Responses.ResponseStreamEvent> & { _request_id?: string | null },
     modelInfo: ModelInfo,
-    calculateCost: (
-        modelInfo: ModelInfo,
-        inputTokens: number,
-        outputTokens: number,
-        cacheWriteTokens: number,
-        cacheReadTokens: number,
-    ) => Promise<number>,
+    sentAtMs: number,
+    /**
+     * Read the amount the gateway itself charged from the raw usage event.
+     *
+     * A gateway that reports its own charge is authoritative: a price table
+     * cannot see peak-hour, long-context, or discount pricing. An absent amount
+     * falls back to the model declaration. Currency must belong to that amount.
+     */
+    readReportedCost?: (usage: unknown) => Pick<ApiStreamUsageChunk, "totalCost" | "currency"> | undefined,
 ) {
     const identityRegistry = createResponsesRegistry("responses-api-support")
+    const summaryText = new ResponsesSummaryText()
     const streamedArgumentItems = new Set<string>()
     const emittedArgumentSnapshots = new Set<string>()
     const completedArgumentItems = new Set<string>()
@@ -241,14 +246,14 @@ export async function* handleResponsesApiStreamResponse(
                 yield {
                     type: "reasoning",
                     provider_metadata: { response_id: chunk.item_id },
-                    reasoning: part.text,
+                    reasoning: summaryText.append(part.text, chunk.item_id, chunk.summary_index),
                 } as const
             }
             if (chunk.type === "response.reasoning_summary_text.delta") {
                 yield {
                     type: "reasoning",
                     provider_metadata: { response_id: chunk.item_id },
-                    reasoning: chunk.delta,
+                    reasoning: summaryText.append(chunk.delta, chunk.item_id, chunk.summary_index),
                 } as const
             }
             if (chunk.type === "response.reasoning_summary_part.done") {
@@ -357,9 +362,29 @@ export async function* handleResponsesApiStreamResponse(
                 const reasoningTokens = usage.output_tokens_details?.reasoning_tokens || 0
                 const totalTokens = usage.total_tokens || 0
                 // Responses `output_tokens` already includes `reasoning_tokens`.
-                const totalCost = await calculateCost(modelInfo, inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens)
-                Logger.log(`Total tokens from Responses API usage: ${totalTokens}`)
+                const reportedCost = readReportedCost?.(usage)
                 const nonCachedInputTokens = Math.max(0, inputTokens - cacheReadTokens - cacheWriteTokens)
+                const cost =
+                    reportedCost?.totalCost !== undefined
+                        ? undefined
+                        : ApiHandler.calculateUsageCost(
+                              modelInfo.pricing,
+                              {
+                                  inputTokens: nonCachedInputTokens,
+                                  outputTokens,
+                                  cacheWriteTokens,
+                                  cacheReadTokens,
+                                  thoughtsTokenCount: reasoningTokens,
+                              },
+                              sentAtMs,
+                          )
+                const amount =
+                    reportedCost?.totalCost !== undefined
+                        ? reportedCost
+                        : cost?.kind === "calculated"
+                          ? { totalCost: cost.amount, currency: cost.currency }
+                          : undefined
+                Logger.log(`Total tokens from Responses API usage: ${totalTokens}`)
                 const stopReason = normalizeResponsesStopReason(chunk.response.status)
                 yield {
                     type: "usage",
@@ -368,7 +393,7 @@ export async function* handleResponsesApiStreamResponse(
                     cacheWriteTokens: cacheWriteTokens,
                     cacheReadTokens: cacheReadTokens,
                     thoughtsTokenCount: reasoningTokens,
-                    totalCost: totalCost,
+                    ...amount,
                     provider_metadata: { response_id: chunk.response.id },
                     ...(stopReason ? { stopReason } : {}),
                 } as const

@@ -3,6 +3,8 @@ import type { Mode } from "@shared/storage/types"
 import type React from "react"
 import { useMemo } from "react"
 import { useWorkspaceDisplayPath } from "@/hooks/useWorkspaceDisplayPath"
+import type { UiTranslator } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import type { WorkspacePathFormatter } from "@/utils/workspaceDisplayPath"
 import { getIconByToolName } from "./chat-view"
 import { isApiReqAbsorbable, isLowStakesTool } from "./chat-view/utils/messageUtils"
@@ -35,27 +37,35 @@ interface RequestStartRowProps {
 type ApiReqState = "pre" | "error" | "final"
 
 // Helper to format search regex for display - show all terms separated by |
-const formatSearchRegex = (regex: string, shownPath: string, filePattern?: string): string => {
+const formatSearchRegex = (regex: string, shownPath: string, filePattern: string | undefined, t: UiTranslator): string => {
     const terms = regex
+        // The pipeline strips word boundaries and optional-whitespace escapes; the
+        // translated frame is applied after, never to the regex source itself.
         .split("|")
-        .map((t) => t.trim().replace(/\\b/g, "").replace(/\\s\?/g, " "))
+        .map((term) => term.trim().replace(/\\b/g, "").replace(/\\s\?/g, " "))
         .filter(Boolean)
         .join(" | ")
-    return filePattern && filePattern !== "*" ? `"${terms}" in ${shownPath}/ (${filePattern})` : `"${terms}" in ${shownPath}/`
+    return filePattern && filePattern !== "*"
+        ? t("chatRows.requestStart.regexPatternIn", { pattern: filePattern, path: shownPath, terms })
+        : t("chatRows.requestStart.regexPattern", { path: shownPath, terms })
 }
 // Format activity text based on tool type
-const getActivityText = (tool: UiSayTool, formatPath: WorkspacePathFormatter): string | null => {
+const getActivityText = (tool: UiSayTool, formatPath: WorkspacePathFormatter, t: UiTranslator): string | null => {
     const cleanedPath = formatPath(tool.path || "")
     switch (tool.tool) {
         case "readFile":
-            return tool.path ? `Reading ${cleanedPath}...` : null
+            return tool.path ? t("chatRows.requestStart.reading", { path: cleanedPath }) : null
         case "listFilesTopLevel":
         case "listFilesRecursive":
-            return tool.path ? `Exploring ${cleanedPath}/...` : null
+            return tool.path ? t("chatRows.requestStart.exploring", { path: cleanedPath }) : null
         case "searchFiles":
-            return tool.regex && tool.path ? `Searching ${formatSearchRegex(tool.regex, cleanedPath, tool.filePattern)}...` : null
+            return tool.regex && tool.path
+                ? t("chatRows.requestStart.searching", {
+                      query: formatSearchRegex(tool.regex, cleanedPath, tool.filePattern, t),
+                  })
+                : null
         case "listCodeDefinitionNames":
-            return tool.path ? `Analyzing ${cleanedPath}/...` : null
+            return tool.path ? t("chatRows.requestStart.analyzing", { path: cleanedPath }) : null
         default:
             return null
     }
@@ -67,6 +77,7 @@ const collectToolsInRange = (
     startIdx: number,
     endIdx: number,
     formatPath: WorkspacePathFormatter,
+    t: UiTranslator,
     stopCondition?: (msg: UiMessage) => boolean,
 ): { icon: React.ElementType; text: string }[] => {
     const activities: { icon: React.ElementType; text: string }[] = []
@@ -86,7 +97,7 @@ const collectToolsInRange = (
 
         try {
             const tool = JSON.parse(msg.text || "{}") as UiSayTool
-            const activityText = getActivityText(tool, formatPath)
+            const activityText = getActivityText(tool, formatPath, t)
             if (activityText) {
                 const toolIcon = getIconByToolName(tool.tool)
                 activities.push({ icon: toolIcon, text: activityText })
@@ -161,6 +172,7 @@ export const RequestStartRow: React.FC<RequestStartRowProps> = ({
         return isApiReqAbsorbable(message.ts, clineMessages)
     }, [message.ts, clineMessages])
 
+    const { t } = useUiTranslation()
     const formatPath = useWorkspaceDisplayPath()
 
     // Find all exploratory tool activities that are currently in flight.
@@ -174,11 +186,11 @@ export const RequestStartRow: React.FC<RequestStartRowProps> = ({
         if (!currentApiReq.hasCost) {
             // CASE A: Current api_req is INCOMPLETE
             // Look for ask === "tool" messages AFTER the current api_req_started
-            return collectToolsInRange(clineMessages, currentApiReq.index + 1, clineMessages.length, formatPath)
+            return collectToolsInRange(clineMessages, currentApiReq.index + 1, clineMessages.length, formatPath, t)
         }
         // CASE B: Current api_req is COMPLETE - no activities to show
         return []
-    }, [clineMessages, formatPath])
+    }, [clineMessages, formatPath, t])
 
     // Check if there are any completed tools in the tool group
     const hasCompletedTools = useMemo(() => {

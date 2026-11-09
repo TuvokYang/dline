@@ -39,9 +39,7 @@ In the menu, options marked └ belong to the row above: checking one also check
 
 ## How "safe commands" are decided
 
-When Dline runs a command, the model must declare `requires_approval` for it: `true` for commands that can have an effect and `false` for non-destructive ones. **Execute safe commands** allows the commands declared `false`.
-
-That is the model's judgement; Dline does not parse the command text to confirm it is safe. For hard limits, use the command permission rules below.
+**Execute safe commands** allows commands the model marked as non-destructive when it proposed them. That is the model's judgement: Dline does not parse the command text to confirm it is safe. For hard limits, use the command permission rules below.
 
 ### Command permission rules
 

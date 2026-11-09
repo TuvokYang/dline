@@ -1,5 +1,5 @@
 import { Anthropic, APIError as AnthropicAPIError } from "@anthropic-ai/sdk"
-import { liteLlmDefaultModelId, ModelInfo } from "@shared/api"
+import { liteLlmDefaultModelId } from "@shared/api"
 import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import OpenAI, { APIError as OpenAIAPIError, OpenAIError } from "openai"
@@ -15,7 +15,7 @@ import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { OcaModelInfo } from "@/shared/api"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { fetch, providerFetch } from "@/shared/net"
-import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
+import { ApiFormat, type ModelPricing, ServerTool } from "@/shared/proto/dline/models/metadata"
 import { Logger } from "@/shared/services/Logger"
 import { ApiHandler, type ApiHandlerContext, type ApiRequestOptions } from "../ApiHandler"
 import { withRetry } from "../retry"
@@ -35,7 +35,7 @@ export class OcaHandler extends ApiHandler {
     protected openAIClient: OpenAI | undefined
     protected anthropicClient: Anthropic | undefined
     protected externalHeaders: Record<string, string> = {}
-    private costRatesPromise: Promise<{ inputCostPerMillion: number; outputCostPerMillion: number }> | undefined
+    private costRatesPromise: Promise<ModelPricing | undefined> | undefined
 
     constructor(private ctx: ApiHandlerContext) {
         super()
@@ -107,6 +107,7 @@ export class OcaHandler extends ApiHandler {
                 (this.config?.ocaMode === "internal" ? DEFAULT_INTERNAL_OCA_BASE_URL : DEFAULT_EXTERNAL_OCA_BASE_URL),
             apiKey: "noop",
             fetch: providerFetch,
+            maxRetries: 0,
         })
     }
 
@@ -160,6 +161,7 @@ export class OcaHandler extends ApiHandler {
                 (this.config?.ocaMode === "internal" ? DEFAULT_INTERNAL_OCA_BASE_URL : DEFAULT_EXTERNAL_OCA_BASE_URL),
             apiKey: "noop",
             fetch: providerFetch,
+            maxRetries: 0,
         })
     }
 
@@ -229,23 +231,16 @@ export class OcaHandler extends ApiHandler {
         }
     }
 
-    async calculateCost(
-        _modelInfo: ModelInfo,
-        inputTokens: number,
-        outputTokens: number,
-        _cacheWriteTokens?: number,
-        _cacheReadTokens?: number,
-    ) {
-        const { inputCostPerMillion, outputCostPerMillion } = await this.getCostRates()
-        return (inputCostPerMillion * inputTokens) / 1e6 + (outputCostPerMillion * outputTokens) / 1e6
-    }
-
-    private getCostRates(): Promise<{ inputCostPerMillion: number; outputCostPerMillion: number }> {
+    private getCostRates(): Promise<ModelPricing | undefined> {
         this.costRatesPromise ??= Promise.all([this.getApiCosts(1e6, 0), this.getApiCosts(0, 1e6)]).then(
-            ([inputCost, outputCost]) => ({
-                inputCostPerMillion: inputCost ?? 0,
-                outputCostPerMillion: outputCost ?? 0,
-            }),
+            ([inputPrice, outputPrice]) =>
+                inputPrice === undefined || outputPrice === undefined
+                    ? undefined
+                    : {
+                          // LiteLLM management-plane spend values are USD, not generation charges.
+                          currency: "USD",
+                          strategy: { flat: { prices: { inputPrice, outputPrice } } },
+                      },
         )
         return this.costRatesPromise
     }
@@ -360,8 +355,16 @@ export class OcaHandler extends ApiHandler {
 
         if (effort !== undefined) chatCompletionsParams.reasoning_effort = effort
 
-        await this.getCostRates()
-        const stream = await client.chat.completions.create(chatCompletionsParams)
+        const pricing = this.getModel().info.pricing ?? (await this.getCostRates())
+        let sentAtMs = Number.NaN
+        const stream = await client
+            .withOptions({
+                fetch: (...args) => {
+                    sentAtMs = Date.now()
+                    return providerFetch(...args)
+                },
+            })
+            .chat.completions.create(chatCompletionsParams)
 
         for await (const chunk of stream) {
             const delta = chunk.choices?.[0]?.delta
@@ -393,12 +396,6 @@ export class OcaHandler extends ApiHandler {
 
             // Handle token usage information
             if (chunk.usage) {
-                const totalCost = await this.calculateCost(
-                    this.modelInfo!,
-                    chunk.usage.prompt_tokens,
-                    chunk.usage.completion_tokens,
-                )
-
                 // Extract cache-related information if available
                 // Need to use type assertion since these properties are not in the standard OpenAI types
                 const usage = chunk.usage as {
@@ -418,13 +415,21 @@ export class OcaHandler extends ApiHandler {
                     cacheReadTokens,
                 })
 
+                const cost = ApiHandler.calculateUsageCost(
+                    pricing,
+                    {
+                        ...normalizedInput,
+                        outputTokens: usage.completion_tokens || 0,
+                    },
+                    sentAtMs,
+                )
                 yield {
                     type: "usage",
                     inputTokens: normalizedInput.inputTokens,
                     outputTokens: usage.completion_tokens || 0,
                     cacheWriteTokens: normalizedInput.cacheWriteTokens > 0 ? normalizedInput.cacheWriteTokens : undefined,
                     cacheReadTokens: normalizedInput.cacheReadTokens > 0 ? normalizedInput.cacheReadTokens : undefined,
-                    totalCost,
+                    ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                 }
             }
 
@@ -494,10 +499,18 @@ export class OcaHandler extends ApiHandler {
         if (reasoning !== undefined) responsesParams.reasoning = reasoning
 
         // Resolve management-plane pricing before the observed model send begins.
-        await this.getCostRates()
-        const stream = await client.responses.create(responsesParams)
+        const pricing = this.getModel().info.pricing ?? (await this.getCostRates())
+        let sentAtMs = Number.NaN
+        const stream = await client
+            .withOptions({
+                fetch: (...args) => {
+                    sentAtMs = Date.now()
+                    return providerFetch(...args)
+                },
+            })
+            .responses.create(responsesParams)
 
-        yield* handleResponsesApiStreamResponse(stream, ocaModelInfo, this.calculateCost.bind(this))
+        yield* handleResponsesApiStreamResponse(stream, { ...ocaModelInfo, pricing }, sentAtMs)
     }
 
     async *createMessageMessagesApi(
@@ -526,25 +539,34 @@ export class OcaHandler extends ApiHandler {
         const anthropicTools = convertOpenAIToolsToAnthropicTools(tools, options?.serverTools)
         const anthropicMessages = sanitizeAnthropicMessages(messages, this.modelInfo?.capabilities?.supportsPromptCache ?? false)
 
-        const stream = await client.messages.create({
-            model: modelId,
-            max_tokens: maxTokens,
-            temperature: reasoningOn ? undefined : temperature,
-            system: [
-                {
-                    text: systemPrompt,
-                    type: "text",
-                    cache_control: this.modelInfo?.capabilities?.supportsPromptCache ? { type: "ephemeral" } : undefined,
+        const pricing = this.getModel().info.pricing ?? (await this.getCostRates())
+        let sentAtMs = Number.NaN
+        const stream = await client
+            .withOptions({
+                fetch: (...args) => {
+                    sentAtMs = Date.now()
+                    return providerFetch(...args)
                 },
-            ],
-            messages: anthropicMessages,
-            stream: true,
-            tools: anthropicTools,
-            thinking: reasoning.thinking,
-            ...(reasoning.outputConfig ? { output_config: reasoning.outputConfig } : {}),
-        })
+            })
+            .messages.create({
+                model: modelId,
+                max_tokens: maxTokens,
+                temperature: reasoningOn ? undefined : temperature,
+                system: [
+                    {
+                        text: systemPrompt,
+                        type: "text",
+                        cache_control: this.modelInfo?.capabilities?.supportsPromptCache ? { type: "ephemeral" } : undefined,
+                    },
+                ],
+                messages: anthropicMessages,
+                stream: true,
+                tools: anthropicTools,
+                thinking: reasoning.thinking,
+                ...(reasoning.outputConfig ? { output_config: reasoning.outputConfig } : {}),
+            })
 
-        yield* handleAnthropicMessagesApiStreamResponse(stream)
+        yield* handleAnthropicMessagesApiStreamResponse(stream, undefined, { pricing, sentAtMs })
     }
 
     getModel() {

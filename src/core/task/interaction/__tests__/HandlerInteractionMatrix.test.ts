@@ -96,7 +96,7 @@ describe("handler interaction matrix", () => {
 
     it("leaves working_respond task_progress updates to the central executor", async () => {
         const taskConfig = config()
-        taskConfig.callbacks.updateFCListFromToolResponse = vi.fn(async () => undefined)
+        taskConfig.callbacks.updateFCListFromToolResponse = vi.fn(async () => ({ kind: "ignored" as const }))
 
         await new WorkingRespondHandler().execute(
             taskConfig,

@@ -12,9 +12,10 @@ import {
 import { approvalInteractionId } from "../../../tools/approval-interaction"
 import type { ToolExecutorCoordinator } from "../../../tools/ToolExecutorCoordinator"
 import type { ToolAdmissionSnapshot } from "../ToolAdmissionRegistry"
+import { isAwayFeedbackTool } from "./AwayToolPolicy"
 
 /** The block plan fields a tool decides before admission, named on the kernel contract both executors share. */
-type PlannedTool = Pick<ProviderTurnBlockPlan, "attempt" | "lanes" | "turnEnding" | "approval">
+type PlannedTool = Pick<ProviderTurnBlockPlan, "attempt" | "lanes" | "turnEnding" | "approval" | "disposition">
 
 function riskFacts(
     block: ToolUse,
@@ -23,6 +24,7 @@ function riskFacts(
     const facts: Record<string, string | number | boolean> = { toolName: block.name }
     const scope = admission.scope
     if (scope?.isExternalPath !== undefined) facts.isExternalPath = scope.isExternalPath
+    if (scope?.awayCommand !== undefined) facts.awayCommand = scope.awayCommand
     if (scope?.isSafeCommand !== undefined) facts.isSafeCommand = scope.isSafeCommand
     if (scope?.isToolAutoApproveEnabled !== undefined) facts.isToolAutoApproveEnabled = scope.isToolAutoApproveEnabled
     if (admission.inheritsApproval !== undefined) facts.inheritsApproval = admission.inheritsApproval
@@ -51,7 +53,9 @@ function approval(
     aiApproverAvailable: boolean,
     ownsInteractionConfirmation: boolean,
 ): ProviderTurnApproval {
-    if (result.outcome === "rejected" || result.decision.kind === "none" || ownsInteractionConfirmation) return { kind: "none" }
+    if (result.outcome === "rejected" || ownsInteractionConfirmation) return { kind: "none" }
+    if (result.decision.kind === "none")
+        return { kind: "none", ...(result.scope?.awayCommand === "workspace" ? { awayCommand: true as const } : {}) }
     const interactionId = approvalInteractionId(block.dline_tid)
     if (result.decision.kind === "automatic" || (result.decision.kind === "ai_approver" && aiApproverAvailable)) {
         return {
@@ -67,7 +71,11 @@ function approval(
         presentationRef: result.presentation?.body ?? JSON.stringify(block.params),
         ...(result.presentation?.ask === undefined ? {} : { presentationAsk: result.presentation.ask }),
         ...(typeof block.ts === "number" ? { presentationRow: block.ts } : {}),
+        ...(result.presentation?.commandWorkingDirectory === undefined
+            ? {}
+            : { presentationWorkingDirectory: result.presentation.commandWorkingDirectory }),
         actionRules: approvalActionRules(result.presentation?.ask),
+        ...(result.scope?.awayCommand === "external" ? { externalCommand: true as const } : {}),
     }
 }
 
@@ -78,6 +86,14 @@ export function planProductionTool(
     snapshot: ToolAdmissionSnapshot,
     options: { readonly aiApproverAvailable?: boolean } = {},
 ): PlannedTool {
+    if (snapshot.awayActive && isAwayFeedbackTool(block.name))
+        return {
+            attempt: randomUUID(),
+            lanes: [],
+            turnEnding: true,
+            approval: { kind: "none" },
+            disposition: "away_feedback_only",
+        }
     const preflight = coordinator.prepareAdmission(block, snapshot, async () => undefined)
     return {
         attempt: randomUUID(),

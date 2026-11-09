@@ -1,5 +1,6 @@
 import { AlertTriangle } from "lucide-react"
 import { useEffect, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import {
     AlertDialog,
     AlertDialogAction,
@@ -35,14 +36,16 @@ interface ContextTransitionDialogProps {
     onRetry: (operationId: string) => void
 }
 
-/** Format a context-window or token count for readable transaction details. */
-function formatCount(value?: number): string {
-    return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value).toLocaleString("en-US") : "Unavailable"
-}
-
 /** Render one consistent confirmation or terminal failure for Profile and Mode transitions. */
 export function ContextTransitionDialog({ state, onCancel, onConfirm, onRetry }: ContextTransitionDialogProps) {
+    const { t } = useUiTranslation()
     const [dismissedFailureId, setDismissedFailureId] = useState<string>()
+
+    /** Format a context-window or token count for readable transaction details. */
+    const formatCount = (value?: number): string =>
+        typeof value === "number" && Number.isFinite(value)
+            ? Math.max(0, value).toLocaleString("en-US")
+            : t("chatRows.transition.available")
 
     useEffect(() => {
         if (state?.phase !== "failed" || state.operationId !== dismissedFailureId) {
@@ -55,8 +58,8 @@ export function ContextTransitionDialog({ state, onCancel, onConfirm, onRetry }:
     const isFailure = state.phase === "failed"
     const isProfile = state.kind === "profile"
     const operationId = state.operationId
-    const sourceLabel = state.sourceLabel ?? "source settings"
-    const targetLabel = state.targetLabel ?? "target settings"
+    const sourceLabel = state.sourceLabel ?? t("chatRows.transition.sourceDefault")
+    const targetLabel = state.targetLabel ?? t("chatRows.transition.targetDefault")
 
     const handleOpenChange = (open: boolean): void => {
         if (open) return
@@ -71,59 +74,58 @@ export function ContextTransitionDialog({ state, onCancel, onConfirm, onRetry }:
                     <AlertDialogTitle>
                         <AlertTriangle className="h-5 w-5 text-(--vscode-errorForeground)" />
                         {isFailure
-                            ? "Switch not completed"
+                            ? t("chatRows.transition.switchNotCompleted")
                             : isProfile
-                              ? "Switch to a smaller context window?"
-                              : "Compact context before switching?"}
+                              ? t("chatRows.transition.smallerWindowTitle")
+                              : t("chatRows.transition.compactTitle")}
                     </AlertDialogTitle>
                     <AlertDialogDescription>
                         {isFailure ? (
                             isProfile && state.targetAdopted ? (
-                                <>{targetLabel} remains active.</>
+                                <>{t("chatRows.transition.targetAdopted", { target: targetLabel })}</>
                             ) : (
-                                <>{sourceLabel} remains active. The target settings were not adopted.</>
+                                <>{t("chatRows.transition.sourceRetained", { source: sourceLabel })}</>
                             )
                         ) : isProfile ? (
-                            <>
-                                The context already in use does not fit inside the {targetLabel} context window. Switching only
-                                rebinds the handler; nothing is compacted now, and ordinary compaction still runs later while the
-                                task continues.
-                            </>
+                            <>{t("chatRows.transition.profileBody", { target: targetLabel })}</>
                         ) : (
-                            <>
-                                The target context window cannot safely hold the complete candidate. Compaction will run with{" "}
-                                {targetLabel}, the target Profile, before the switch is committed.
-                            </>
+                            <>{t("chatRows.transition.compactBody", { target: targetLabel })}</>
                         )}
                     </AlertDialogDescription>
                 </AlertDialogHeader>
 
                 <div className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 rounded-xs border border-[rgba(255,255,255,0.12)] bg-[rgba(0,0,0,0.18)] p-3 text-sm">
-                    <span className="text-[#a1a1aa]">Source</span>
+                    <span className="text-[#a1a1aa]">{t("chatRows.common.source")}</span>
                     <span>
                         {sourceLabel}
-                        {state.sourceContextWindow !== undefined ? ` · ${formatCount(state.sourceContextWindow)} tokens` : ""}
+                        {state.sourceContextWindow !== undefined
+                            ? ` · ${t("chatRows.common.tokens", { count: formatCount(state.sourceContextWindow) })}`
+                            : ""}
                     </span>
-                    <span className="text-[#a1a1aa]">Target</span>
+                    <span className="text-[#a1a1aa]">{t("chatRows.common.target")}</span>
                     <span>
                         {targetLabel}
-                        {state.targetContextWindow !== undefined ? ` · ${formatCount(state.targetContextWindow)} tokens` : ""}
+                        {state.targetContextWindow !== undefined
+                            ? ` · ${t("chatRows.common.tokens", { count: formatCount(state.targetContextWindow) })}`
+                            : ""}
                     </span>
                     {state.currentTokens !== undefined && (
                         <>
-                            <span className="text-[#a1a1aa]">{isProfile ? "Context in use" : "Complete candidate"}</span>
-                            <span>{formatCount(state.currentTokens)} tokens</span>
+                            <span className="text-[#a1a1aa]">
+                                {isProfile ? t("chatRows.transition.contextInUse") : t("chatRows.transition.completeCandidate")}
+                            </span>
+                            <span>{t("chatRows.common.tokens", { count: formatCount(state.currentTokens) })}</span>
                         </>
                     )}
                     {state.fittingExitTarget !== undefined && (
                         <>
-                            <span className="text-[#a1a1aa]">Must fit below</span>
-                            <span>{formatCount(state.fittingExitTarget)} tokens</span>
+                            <span className="text-[#a1a1aa]">{t("chatRows.transition.mustFitBelow")}</span>
+                            <span>{t("chatRows.common.tokens", { count: formatCount(state.fittingExitTarget) })}</span>
                         </>
                     )}
                     {state.compactionModel && (
                         <>
-                            <span className="text-[#a1a1aa]">Compaction model</span>
+                            <span className="text-[#a1a1aa]">{t("chatRows.transition.compactionModel")}</span>
                             <span className="break-all">{state.compactionModel}</span>
                         </>
                     )}
@@ -138,14 +140,20 @@ export function ContextTransitionDialog({ state, onCancel, onConfirm, onRetry }:
                 <AlertDialogFooter>
                     {isFailure ? (
                         <>
-                            <AlertDialogCancel onClick={() => setDismissedFailureId(operationId)}>Dismiss</AlertDialogCancel>
-                            <AlertDialogAction onClick={() => onRetry(operationId)}>Retry</AlertDialogAction>
+                            <AlertDialogCancel onClick={() => setDismissedFailureId(operationId)}>
+                                {t("chatRows.common.dismiss")}
+                            </AlertDialogCancel>
+                            <AlertDialogAction onClick={() => onRetry(operationId)}>
+                                {t("chatRows.common.retry")}
+                            </AlertDialogAction>
                         </>
                     ) : (
                         <>
-                            <AlertDialogCancel onClick={() => onCancel(operationId)}>Cancel</AlertDialogCancel>
+                            <AlertDialogCancel onClick={() => onCancel(operationId)}>
+                                {t("chatRows.common.cancel")}
+                            </AlertDialogCancel>
                             <AlertDialogAction onClick={() => onConfirm(operationId)}>
-                                {isProfile ? "Switch" : "Compact & Switch"}
+                                {isProfile ? t("chatRows.transition.switch") : t("chatRows.transition.compactAndSwitch")}
                             </AlertDialogAction>
                         </>
                     )}

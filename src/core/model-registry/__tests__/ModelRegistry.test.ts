@@ -4,7 +4,11 @@
 
 import { resolveOpenRouterReasoning } from "@core/api/providers/openrouter/reasoning"
 import { resolveVercelReasoning } from "@core/api/providers/vercel-ai-gateway/reasoning"
+import type { Controller } from "@core/controller"
+import { getAvailableModels } from "@core/controller/models/getAvailableModels"
+import { refreshProviderModels } from "@core/controller/models/refreshProviderModels"
 import { mockFetchForTesting } from "@shared/net"
+import type { ProviderModelsRequest } from "@shared/proto/dline/models"
 import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
 import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
 import { expect } from "chai"
@@ -12,7 +16,24 @@ import fsPromises from "fs/promises"
 import * as path from "path"
 import { afterEach, beforeEach, describe, it, vi } from "vitest"
 import { ModelRegistry } from "../ModelRegistry"
+import { persistProviderCatalog } from "../provider-catalog-storage"
 import { discoverProviderModels } from "../remote/model-refresh"
+
+/**
+ * Wait for a watcher-driven effect the test cannot await directly.
+ *
+ * The registry debounces watcher notifications, so a persistence call returns
+ * before the reload and callback it triggers. The bound keeps a regression from
+ * hanging the suite instead of failing it.
+ */
+async function waitFor(predicate: () => boolean, timeoutMs = 3_000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+        if (predicate()) return true
+        await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+    return predicate()
+}
 
 describe("ModelRegistry", () => {
     let registry: ModelRegistry
@@ -158,7 +179,132 @@ describe("ModelRegistry", () => {
         })
     })
 
+    describe("leftover alternative catalog files", () => {
+        it("ignores a stored file whose id became another provider's catalog", async () => {
+            await fsPromises.writeFile(
+                path.join(tempDir, "opencode.json"),
+                JSON.stringify({
+                    provider: "opencode",
+                    providerName: "OpenCode",
+                    baseUrl: "https://opencode.ai/inference",
+                    billingMode: "console",
+                    models: { "claude-sonnet-5-5": { id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5" } },
+                }),
+            )
+            // Written by the build that registered the Go catalog as its own
+            // provider. Loading it would offer a second, selectable OpenCode.
+            await fsPromises.writeFile(
+                path.join(tempDir, "opencode-go.json"),
+                JSON.stringify({
+                    provider: "opencode-go",
+                    providerName: "OpenCode Go (leftover)",
+                    baseUrl: "https://leftover.invalid",
+                    billingMode: "console",
+                    models: { "go-only-model": { id: "go-only-model", name: "Go Only" } },
+                }),
+            )
+
+            await registry.initialize()
+            await registry.waitForDeferredProviders()
+
+            const providerIds = registry.getAllProviders().map((provider) => provider.provider)
+            expect(providerIds).to.include("opencode")
+            expect(providerIds).to.not.include("opencode-go")
+
+            // The leftover file must not shadow the entry that owns identity,
+            // base URL and billing for the Go catalog.
+            const resolved = registry.getProviderModels("opencode-go")
+            expect(resolved?.provider).to.equal("opencode")
+            expect(resolved?.baseUrl).to.equal("https://opencode.ai/inference")
+        })
+
+        it("leaves another provider's leftover catalog file on disk", async () => {
+            await fsPromises.writeFile(
+                path.join(tempDir, "qwen.json"),
+                JSON.stringify({ provider: "qwen", providerName: "Alibaba Qwen", models: { m: { id: "m" } } }),
+            )
+            await fsPromises.writeFile(
+                path.join(tempDir, "qwen-cn.json"),
+                JSON.stringify({ provider: "qwen-cn", providerName: "Leftover", models: { m: { id: "m" } } }),
+            )
+
+            await registry.initialize()
+
+            // The registry ignores this file at load time, but it is not this
+            // bugfix's file to delete: it still holds a configuration a person may
+            // want to read or restore. Only OpenCode's own leftover is cleaned up.
+            const remaining = await fsPromises.readdir(tempDir)
+            expect(remaining).to.include("qwen-cn.json")
+            expect(remaining).to.include("qwen.json")
+        })
+
+        it("ignores leftover mainland catalogs of Qwen and Z AI", async () => {
+            await fsPromises.writeFile(
+                path.join(tempDir, "qwen.json"),
+                JSON.stringify({
+                    provider: "qwen",
+                    providerName: "Alibaba Qwen",
+                    models: { "qwen-intl-model": { id: "qwen-intl-model", name: "Qwen Intl" } },
+                }),
+            )
+            await fsPromises.writeFile(
+                path.join(tempDir, "qwen-cn.json"),
+                JSON.stringify({
+                    provider: "qwen-cn",
+                    providerName: "Qwen Mainland (leftover)",
+                    models: { "qwen-cn-model": { id: "qwen-cn-model", name: "Qwen CN" } },
+                }),
+            )
+            await fsPromises.writeFile(
+                path.join(tempDir, "zai.json"),
+                JSON.stringify({
+                    provider: "zai",
+                    providerName: "Z AI",
+                    models: { "zai-intl-model": { id: "zai-intl-model", name: "Z AI Intl" } },
+                }),
+            )
+            await fsPromises.writeFile(
+                path.join(tempDir, "zai-cn.json"),
+                JSON.stringify({
+                    provider: "zai-cn",
+                    providerName: "Z AI Mainland (leftover)",
+                    models: { "zai-cn-model": { id: "zai-cn-model", name: "Z AI CN" } },
+                }),
+            )
+
+            await registry.initialize()
+
+            const providerIds = registry.getAllProviders().map((provider) => provider.provider)
+            expect(providerIds).to.include("qwen")
+            expect(providerIds).to.include("zai")
+            expect(providerIds).to.not.include("qwen-cn")
+            expect(providerIds).to.not.include("zai-cn")
+        })
+    })
+
     describe("getAllModels", () => {
+        it("projects an alternative catalog through the models RPC without creating a selectable provider", async () => {
+            await fsPromises.writeFile(
+                path.join(tempDir, "opencode.json"),
+                JSON.stringify({
+                    provider: "opencode",
+                    providerName: "OpenCode",
+                    billingMode: "console",
+                    models: { "console-only": { id: "console-only" } },
+                }),
+            )
+            await registry.initialize()
+            await registry.waitForDeferredProviders()
+
+            const response = await getAvailableModels({} as never)
+            expect(registry.getAllProviders().map((provider) => provider.provider)).to.deep.equal(["opencode"])
+            expect(response.providers.map((group) => group.provider)).to.deep.equal(["opencode-console", "opencode-go"])
+            expect(response.providers[0].models.map((model) => model.id)).to.deep.equal(["console-only"])
+            // The Go catalog declares no model of its own; it is populated by
+            // discovery, so an empty stored catalog reads back empty.
+            expect(response.providers[1].models).to.deep.equal([])
+        })
+
         it("loads vercel.json under the Vercel provider ID and ignores the legacy duplicate", async () => {
             const legacyConfig = {
                 provider: "vercel-ai-gateway",
@@ -600,6 +746,642 @@ describe("ModelRegistry", () => {
             await registry.initialize()
 
             expect(registry.hasProvider("empty")).to.be.false
+        })
+    })
+
+    describe("publish after a persisted listing", () => {
+        it("publishes a persisted catalog the settings page did not refresh itself", async () => {
+            await fsPromises.writeFile(
+                path.join(tempDir, "baseten.json"),
+                JSON.stringify({
+                    provider: "baseten",
+                    providerName: "Baseten",
+                    billingMode: "token",
+                    models: { "old-model": { id: "old-model" } },
+                }),
+            )
+            await registry.initialize()
+
+            // Baseten persists from its RPC and returns, without posting state.
+            // The watcher notification is the only thing that publishes the new
+            // catalog, so treating a file this process wrote as "already
+            // published" would leave every consumer on the pre-refresh list until
+            // an unrelated update arrived.
+            //
+            // The startup deferred load publishes on its own; wait it out first so
+            // the count below can only come from the notification this case sends.
+            await registry.waitForDeferredProviders()
+            const published: string[][] = []
+            registry.onChange(() => published.push(Object.keys(registry.getProviderModels("baseten")?.models ?? {})))
+            await persistProviderCatalog({
+                providerId: "baseten",
+                providerName: "Baseten",
+                billingMode: "token",
+                models: { "new-model": { id: "new-model", name: "New Model" } },
+            })
+            expect(registry.getProviderModels("baseten")?.models).to.have.property("new-model")
+            // The writer refreshes the cache silently; publishing belongs to the
+            // watcher notification, so nothing may have been announced yet.
+            expect(published).to.have.lengthOf(0)
+
+            // The watcher is stubbed out in this suite, so deliver the notification
+            // it would have produced for the file the writer just changed.
+            ;(registry as unknown as { noteChangedFile: (fileName: string) => void }).noteChangedFile("baseten.json")
+            // The reload is debounced, so the callback follows asynchronously.
+            const notified = await waitFor(() => published.length > 0)
+            expect(notified).to.be.true
+            // Consumers re-read the catalog on publication, so the callback must
+            // observe the model that was just written, not the pre-write list.
+            expect(published[0]).to.deep.equal(["new-model"])
+        })
+
+        it("keeps a committed primary catalog the cache has not seen yet", async () => {
+            await fsPromises.writeFile(
+                path.join(tempDir, "opencode.json"),
+                JSON.stringify({
+                    provider: "opencode",
+                    providerName: "OpenCode",
+                    billingMode: "console",
+                    models: { old: { id: "old" } },
+                }),
+            )
+            await registry.initialize()
+            await registry.waitForDeferredProviders()
+
+            // Another window commits a newer primary catalog. This window's
+            // watcher has not reloaded it yet, which is the normal state for the
+            // duration of its debounce.
+            await fsPromises.writeFile(
+                path.join(tempDir, "opencode.json"),
+                JSON.stringify({
+                    provider: "opencode",
+                    providerName: "OpenCode",
+                    billingMode: "console",
+                    models: { committed: { id: "committed" } },
+                }),
+            )
+
+            // A Go refresh must compose with what is on disk. Building from the
+            // cached entry instead replaces the whole owner entry and writes the
+            // older primary list back, losing the other window's work.
+            await persistProviderCatalog({
+                providerId: "opencode-go",
+                providerName: "OpenCode",
+                billingMode: "console",
+                models: { "new-go": { id: "new-go", name: "New Go" } },
+            })
+
+            const written = JSON.parse(await fsPromises.readFile(path.join(tempDir, "opencode.json"), "utf8"))
+            expect(written.models).to.have.property("committed")
+            expect(written.models).to.not.have.property("old")
+            expect(written.catalogs?.["opencode-go"]?.models).to.have.property("new-go")
+        })
+
+        it("does not let an older watcher reload roll back a completed write", async () => {
+            await fsPromises.writeFile(
+                path.join(tempDir, "opencode.json"),
+                JSON.stringify({
+                    provider: "opencode",
+                    providerName: "OpenCode",
+                    billingMode: "console",
+                    models: { old: { id: "old" } },
+                }),
+            )
+            await registry.initialize()
+            await registry.waitForDeferredProviders()
+
+            // A watcher pass can already be under way when a write lands. Hold the
+            // content the first pass read so the second pass can be started while
+            // the first has not finished applying its snapshot.
+            const readFile = fsPromises.readFile.bind(fsPromises)
+            let releaseOlderPass: (() => void) | undefined
+            const olderPassRead = new Promise<void>((resolve) => {
+                releaseOlderPass = resolve
+            })
+            let reads = 0
+            const readFileSpy = vi.spyOn(fsPromises, "readFile").mockImplementation((async (
+                ...args: Parameters<typeof fsPromises.readFile>
+            ) => {
+                reads++
+                const contents = await (readFile as (...rest: unknown[]) => Promise<unknown>)(...args)
+                if (reads === 1) await olderPassRead
+                return contents
+            }) as unknown as typeof fsPromises.readFile)
+            try {
+                const olderPass = registry.reload()
+                expect(await waitFor(() => reads === 1)).to.be.true
+                await fsPromises.writeFile(
+                    path.join(tempDir, "opencode.json"),
+                    JSON.stringify({
+                        provider: "opencode",
+                        providerName: "OpenCode",
+                        billingMode: "console",
+                        models: { fresh: { id: "fresh" } },
+                    }),
+                )
+                const newerPass = registry.reload()
+                // Passes read the directory and then publish what they read, so an
+                // unordered second pass would already be reading here and could
+                // land its older snapshot after the newer one.
+                await new Promise((resolve) => setTimeout(resolve, 50))
+                expect(reads).to.equal(1)
+                releaseOlderPass?.()
+                await Promise.all([olderPass, newerPass])
+            } finally {
+                readFileSpy.mockRestore()
+            }
+
+            // The older pass read `old`, so applying it after the newer pass would
+            // resurrect a model that no longer exists on disk.
+            expect(registry.getProviderModels("opencode")?.models).to.have.property("fresh")
+            expect(registry.getProviderModels("opencode")?.models).to.not.have.property("old")
+        })
+
+        it.each(["opencode-console", "opencode-go"])("posts the state after persisting %s", async (providerId) => {
+            const postStateToWebview = vi.fn(async () => undefined)
+            await mockFetchForTesting(
+                (async () =>
+                    new Response(
+                        JSON.stringify({
+                            data: [
+                                {
+                                    id: "deepseek-v4.1-flash",
+                                    name: "DeepSeek V4.1 Flash",
+                                    limit: { context: 1_000_000, output: 384_000 },
+                                    capabilities: { cache: { implicit: true } },
+                                    api: { "chat-completions": { base_url: "https://opencode.ai/inference/openai/v1" } },
+                                },
+                            ],
+                        }),
+                        { status: 200 },
+                    )) as typeof fetch,
+                () =>
+                    refreshProviderModels(
+                        { postStateToWebview } as unknown as Controller,
+                        {
+                            providerId,
+                        } as ProviderModelsRequest,
+                    ),
+            )
+
+            // The registry applies its own write silently, so without this post the
+            // open settings page keeps showing pre-refresh limits and cache flags.
+            expect((postStateToWebview as unknown as { mock: { calls: unknown[] } }).mock.calls).to.have.lengthOf(1)
+            expect(registry.getProviderCatalog(providerId)?.models["deepseek-v4.1-flash"]?.capabilities).to.include({
+                contextWindow: 1_000_000,
+                supportsPromptCache: true,
+            })
+        })
+    })
+
+    describe("alternative catalog metadata", () => {
+        /**
+         * The Go catalog is a constant projection, so a vendor listing that only
+         * previews leaves its limits and cache flag unreachable. These cases pin
+         * what a stored catalog contributes, and what the plan keeps owning.
+         */
+        it("keeps a model only the listing knows instead of dropping it", async () => {
+            await fsPromises.writeFile(
+                path.join(tempDir, "opencode.json"),
+                JSON.stringify({
+                    provider: "opencode",
+                    providerName: "OpenCode",
+                    billingMode: "console",
+                    models: { "console-only": { id: "console-only" } },
+                    catalogs: {
+                        "opencode-go": {
+                            models: {
+                                "released-after-build": {
+                                    id: "released-after-build",
+                                    name: "Released After Build",
+                                    apiFormats: [ApiFormat.OPENAI_RESPONSES, ApiFormat.OPENAI_CHAT],
+                                    capabilities: { contextWindow: 200_000, supportsPromptCache: true },
+                                },
+                            },
+                        },
+                    },
+                }),
+            )
+            await registry.initialize()
+
+            // The seed cannot enumerate a model released after this build, so the
+            // stored listing is the only place that knows it exists. Dropping it
+            // would put the settings page back to "no such model".
+            const model = registry.getProviderCatalog("opencode-go")?.models["released-after-build"]
+            expect(model).to.exist
+            expect(model?.capabilities?.contextWindow).to.equal(200_000)
+            expect(model?.apiFormats).to.deep.equal([ApiFormat.OPENAI_RESPONSES, ApiFormat.OPENAI_CHAT])
+        })
+
+        it("does not let a seed default survive beside a published effort list", async () => {
+            await fsPromises.writeFile(
+                path.join(tempDir, "opencode.json"),
+                JSON.stringify({
+                    provider: "opencode",
+                    providerName: "OpenCode",
+                    billingMode: "console",
+                    models: { "console-only": { id: "console-only" } },
+                    catalogs: {
+                        "opencode-go": {
+                            models: {
+                                "deepseek-v4.1-flash": {
+                                    id: "deepseek-v4.1-flash",
+                                    capabilities: {
+                                        thinking: { supported: true, mode: "effort", effortLevels: ["low", "high", "max"] },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                }),
+            )
+            await registry.initialize()
+
+            // The listing never published a default level or a disable rule. A seed
+            // `defaultEffort` surviving here would show a level nobody chose and a
+            // `canDisable: false` would lock a toggle the gateway allows.
+            const thinking = registry.getProviderCatalog("opencode-go")?.models["deepseek-v4.1-flash"]?.capabilities?.thinking
+            expect(thinking).to.deep.equal({ supported: true, mode: "effort", effortLevels: ["low", "high", "max"] })
+        })
+
+        it("keeps a published effort list authoritative for the primary catalog too", async () => {
+            await fsPromises.writeFile(
+                path.join(tempDir, "opencode.json"),
+                JSON.stringify({
+                    provider: "opencode",
+                    providerName: "OpenCode",
+                    billingMode: "console",
+                    models: {
+                        // A model the Console seed also describes, so a seed default
+                        // and disable rule exist and could reappear.
+                        "claude-sonnet-5-5": {
+                            id: "claude-sonnet-5-5",
+                            capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["low", "high"] } },
+                        },
+                    },
+                }),
+            )
+            await registry.initialize()
+
+            // The listing publishes levels but no default and no disable rule. A
+            // seed value reappearing here would show a level nobody picked and
+            // lock a toggle the gateway allows.
+            const thinking = registry.getProviderCatalog("opencode")?.models["claude-sonnet-5-5"]?.capabilities?.thinking
+            expect(thinking).to.deep.equal({ supported: true, mode: "effort", effortLevels: ["low", "high"] })
+        })
+
+        it("keeps a flag-only declaration from inheriting a seed level and switch", async () => {
+            await fsPromises.writeFile(
+                path.join(tempDir, "opencode.json"),
+                JSON.stringify({
+                    provider: "opencode",
+                    providerName: "OpenCode",
+                    billingMode: "console",
+                    models: {
+                        "claude-sonnet-5-5": {
+                            id: "claude-sonnet-5-5",
+                            capabilities: { thinking: { supported: true } },
+                        },
+                    },
+                    catalogs: {
+                        "opencode-go": {
+                            models: {
+                                "deepseek-v4.1-flash": {
+                                    id: "deepseek-v4.1-flash",
+                                    capabilities: { thinking: { supported: true } },
+                                },
+                            },
+                        },
+                    },
+                }),
+            )
+            await registry.initialize()
+
+            // A support flag is the whole statement the listing makes. The Go seed
+            // for this model declares a level, a default and a forced-on switch, so
+            // inheriting any of them would offer and send a level nobody published.
+            const primary = registry.getProviderCatalog("opencode")?.models["claude-sonnet-5-5"]?.capabilities?.thinking
+            const go = registry.getProviderCatalog("opencode-go")?.models["deepseek-v4.1-flash"]?.capabilities?.thinking
+            expect(primary).to.deep.equal({ supported: true })
+            expect(go).to.deep.equal({ supported: true })
+        })
+
+        it("preserves declared pricing independently of a subscription catalog", async () => {
+            await fsPromises.writeFile(
+                path.join(tempDir, "opencode.json"),
+                JSON.stringify({
+                    provider: "opencode",
+                    providerName: "OpenCode",
+                    billingMode: "console",
+                    models: { "console-only": { id: "console-only" } },
+                    catalogs: {
+                        "opencode-go": {
+                            models: {
+                                "released-after-build": {
+                                    id: "released-after-build",
+                                    capabilities: { contextWindow: 200_000 },
+                                    pricing: {
+                                        metered: {
+                                            currency: "USD",
+                                            strategy: { flat: { prices: { inputPrice: 3, outputPrice: 15 } } },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                }),
+            )
+            await registry.initialize()
+
+            // Account identity does not erase a model's published price declaration.
+            const model = registry.getProviderCatalog("opencode-go")?.models["released-after-build"]
+            expect(model?.capabilities?.contextWindow).to.equal(200_000)
+            expect(model?.pricing?.strategy?.flat?.prices?.inputPrice).to.equal(3)
+            expect(model?.pricing?.strategy?.flat?.prices?.outputPrice).to.equal(15)
+            expect(model?.pricing?.metered).to.equal(undefined)
+        })
+
+        it("leaves a user-defined model with exactly what the user declared", async () => {
+            await fsPromises.writeFile(
+                path.join(tempDir, "opencode.json"),
+                JSON.stringify({
+                    provider: "opencode",
+                    providerName: "OpenCode",
+                    billingMode: "console",
+                    models: {
+                        "claude-sonnet-5-5": {
+                            id: "claude-sonnet-5-5",
+                            userDefined: true,
+                            capabilities: { supportsTools: false },
+                        },
+                    },
+                }),
+            )
+            await registry.initialize()
+
+            // A model a person added is not described by the listing, so the seed
+            // must not re-supply limits, tools or reasoning for it.
+            const capabilities = registry.getProviderCatalog("opencode")?.models["claude-sonnet-5-5"]?.capabilities
+            expect(capabilities).to.deep.equal({ supportsTools: false })
+        })
+
+        it("keeps a listing-only model's price in a catalog the plan does not bill", async () => {
+            await fsPromises.writeFile(
+                path.join(tempDir, "qwen.json"),
+                JSON.stringify({
+                    provider: "qwen",
+                    providerName: "Alibaba Qwen",
+                    billingMode: "token",
+                    models: { "qwen3-235b-a22b": { id: "qwen3-235b-a22b" } },
+                    catalogs: {
+                        "qwen-cn": {
+                            models: {
+                                "qwen-listing-only": {
+                                    id: "qwen-listing-only",
+                                    capabilities: { contextWindow: 262_144 },
+                                    pricing: {
+                                        metered: {
+                                            currency: "USD",
+                                            strategy: { flat: { prices: { inputPrice: 0.4, outputPrice: 1.2 } } },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                }),
+            )
+            await registry.initialize()
+
+            // Read migration preserves the published rates without retaining the old envelope.
+            const model = registry.getProviderCatalog("qwen-cn")?.models["qwen-listing-only"]
+            expect(model?.capabilities?.contextWindow).to.equal(262_144)
+            expect(model?.pricing?.strategy?.flat?.prices?.inputPrice).to.equal(0.4)
+        })
+
+        it("does not put a seed model back into a catalog the listing replaced", async () => {
+            await fsPromises.writeFile(
+                path.join(tempDir, "opencode.json"),
+                JSON.stringify({
+                    provider: "opencode",
+                    providerName: "OpenCode",
+                    billingMode: "console",
+                    models: { "console-only": { id: "console-only" } },
+                    catalogs: {
+                        "opencode-go": {
+                            defaultModelId: "released-after-build",
+                            models: { "released-after-build": { id: "released-after-build" } },
+                        },
+                    },
+                }),
+            )
+            await registry.initialize()
+
+            // The plan may have dropped a model since this build. Re-adding it from
+            // the seed would offer a model the plan no longer serves, and keeping the
+            // seed default would select a model that is not in the catalog at all.
+            const catalog = registry.getProviderCatalog("opencode-go")
+            expect(catalog?.models).to.not.have.property("deepseek-v4-pro")
+            expect(catalog?.defaultModelId).to.equal("released-after-build")
+        })
+
+        it("leaves a user-defined model in an alternative catalog alone", async () => {
+            await fsPromises.writeFile(
+                path.join(tempDir, "opencode.json"),
+                JSON.stringify({
+                    provider: "opencode",
+                    providerName: "OpenCode",
+                    billingMode: "console",
+                    models: { "console-only": { id: "console-only" } },
+                    catalogs: {
+                        "opencode-go": {
+                            models: {
+                                "deepseek-v4-pro": {
+                                    id: "deepseek-v4-pro",
+                                    userDefined: true,
+                                    capabilities: { supportsTools: false },
+                                },
+                            },
+                        },
+                    },
+                }),
+            )
+            await registry.initialize()
+
+            // The seed describes the model the plan publishes, not the entry a person
+            // wrote under the same id, so the stored declaration must stand as written.
+            const capabilities = registry.getProviderCatalog("opencode-go")?.models["deepseek-v4-pro"]?.capabilities
+            expect(capabilities).to.deep.equal({ supportsTools: false })
+        })
+
+        it("composes concurrent primary and alternative writes instead of overwriting one", async () => {
+            await fsPromises.writeFile(
+                path.join(tempDir, "opencode.json"),
+                JSON.stringify({
+                    provider: "opencode",
+                    providerName: "OpenCode",
+                    billingMode: "console",
+                    models: { "console-only": { id: "console-only" } },
+                }),
+            )
+            await registry.initialize()
+
+            // Both catalogs live in one file, so a primary refresh landing while a
+            // Go refresh is mid-write must not roll the other region back.
+            await mockFetchForTesting(
+                (async () =>
+                    new Response(
+                        JSON.stringify({
+                            data: [
+                                {
+                                    id: "deepseek-v4.1-flash",
+                                    name: "DeepSeek V4.1 Flash",
+                                    limit: { context: 1_000_000, output: 384_000 },
+                                    capabilities: { cache: { implicit: true } },
+                                    api: { "chat-completions": { base_url: "https://opencode.ai/inference/openai/v1" } },
+                                },
+                            ],
+                        }),
+                        { status: 200 },
+                    )) as typeof fetch,
+                () =>
+                    Promise.all([
+                        discoverProviderModels("opencode", {}, { persist: true, throwOnError: true }),
+                        discoverProviderModels("opencode-go", {}, { persist: true, throwOnError: true }),
+                    ]),
+            )
+
+            // A lost update shows up as one region still carrying the pre-write
+            // document: the primary catalog would keep its old models, or the Go
+            // region would be missing entirely.
+            const written = JSON.parse(await fsPromises.readFile(path.join(tempDir, "opencode.json"), "utf8"))
+            expect(written.models).to.have.property("deepseek-v4.1-flash")
+            expect(written.catalogs?.["opencode-go"]?.models).to.have.property("deepseek-v4.1-flash")
+        })
+
+        it("refreshes the canonical Console catalog from its disk owner and keeps Go across a restart", async () => {
+            const ownerPath = path.join(tempDir, "opencode.json")
+            const original = {
+                provider: "opencode",
+                providerName: "OpenCode",
+                billingMode: "console",
+                models: { "saved-custom": { id: "saved-custom", userDefined: true } },
+                catalogs: { "opencode-go": { models: { "go-kept": { id: "go-kept" } } } },
+            }
+            await fsPromises.writeFile(ownerPath, JSON.stringify(original))
+            await registry.initialize()
+            await registry.waitForDeferredProviders()
+            // A write reads the current owner document, including edits not yet
+            // published by the watcher, rather than a stale registry baseline.
+            await fsPromises.writeFile(
+                ownerPath,
+                JSON.stringify({
+                    ...original,
+                    defaultModelId: "disk-custom",
+                    models: { ...original.models, "disk-custom": { id: "disk-custom", userDefined: true } },
+                }),
+            )
+            const requestedUrls: string[] = []
+            await mockFetchForTesting(
+                (async (input) => {
+                    requestedUrls.push(String(input))
+                    return new Response(
+                        JSON.stringify({
+                            data: [
+                                {
+                                    id: "listed-console",
+                                    limit: { input: 32768, output: 4096 },
+                                    api: { "chat-completions": { base_url: "https://opencode.ai/inference/openai/v1" } },
+                                },
+                            ],
+                        }),
+                        { status: 200 },
+                    )
+                }) as typeof fetch,
+                async () => {
+                    const models = await discoverProviderModels("opencode-console", {}, { persist: true, throwOnError: true })
+                    expect(Object.keys(models)).to.deep.equal(["listed-console"])
+                },
+            )
+            expect(requestedUrls).to.deep.equal(["https://opencode.ai/inference/v1/models"])
+            const written = JSON.parse(await fsPromises.readFile(ownerPath, "utf8"))
+            expect(written.provider).to.equal("opencode")
+            expect(written.models).to.have.keys("saved-custom", "disk-custom", "listed-console")
+            expect(written.defaultModelId).to.equal("disk-custom")
+            expect(written.catalogs["opencode-go"].models).to.have.property("go-kept")
+            expect(written.catalogs).not.to.have.property("opencode-console")
+            expect(await fsPromises.readdir(tempDir)).to.deep.equal(["opencode.json"])
+
+            await registry.dispose()
+            Reflect.set(ModelRegistry, "instance", undefined)
+            registry = ModelRegistry.getInstance()
+            Object.defineProperty(registry, "providersDir", { get: () => tempDir, configurable: true })
+            Object.defineProperty(registry, "startWatch", { value: vi.fn(), configurable: true })
+            await registry.initialize()
+            await registry.waitForDeferredProviders()
+            const response = await getAvailableModels({} as Controller)
+            const consoleModels = response.providers.find((group) => group.provider === "opencode-console")
+            expect(consoleModels?.defaultModelId).to.equal("disk-custom")
+            expect(consoleModels?.models.find((model) => model.id === "listed-console")?.capabilities?.contextWindow).to.equal(
+                32768,
+            )
+            expect(
+                response.providers.find((group) => group.provider === "opencode-go")?.models.map((model) => model.id),
+            ).to.include("go-kept")
+        })
+
+        it("writes a Go listing into its own catalog and keeps it across a restart", async () => {
+            await fsPromises.writeFile(
+                path.join(tempDir, "opencode.json"),
+                JSON.stringify({
+                    provider: "opencode",
+                    providerName: "OpenCode",
+                    billingMode: "console",
+                    models: { "console-only": { id: "console-only", name: "Console Only" } },
+                }),
+            )
+            await registry.initialize()
+
+            const listing = {
+                data: [
+                    {
+                        id: "deepseek-v4.1-flash",
+                        name: "DeepSeek V4.1 Flash",
+                        limit: { context: 1_000_000, output: 384_000 },
+                        modalities: { input: ["text", "image/png", "application/pdf"], output: ["text"] },
+                        capabilities: {
+                            tools: { supported: true },
+                            reasoning: { supported: true, effort: ["low", "high", "max"] },
+                            cache: { implicit: true },
+                        },
+                        api: { "chat-completions": { base_url: "https://opencode.ai/inference/go/openai/v1" } },
+                    },
+                ],
+            }
+            await mockFetchForTesting((async () => new Response(JSON.stringify(listing), { status: 200 })) as typeof fetch, () =>
+                discoverProviderModels("opencode-go", {}, { persist: true, throwOnError: true }),
+            )
+
+            // One file owns the provider, so the Go result lives in its catalog
+            // region instead of a second selectable entry or a separate file.
+            expect(await fsPromises.readdir(tempDir)).to.deep.equal(["opencode.json"])
+            const written = JSON.parse(await fsPromises.readFile(path.join(tempDir, "opencode.json"), "utf8"))
+            expect(written.models).to.include.keys("console-only")
+            expect(written.catalogs["opencode-go"].models["deepseek-v4.1-flash"].capabilities).to.include({
+                contextWindow: 1_000_000,
+                maxTokens: 384_000,
+                supportsPromptCache: true,
+            })
+
+            // The original defect was that a reload dropped what the listing
+            // declared, so the projection has to survive re-reading the file.
+            await registry.dispose()
+            await registry.initialize()
+            const restored = registry.getProviderCatalog("opencode-go")?.models["deepseek-v4.1-flash"]
+            expect(restored?.capabilities?.contextWindow).to.equal(1_000_000)
+            expect(restored?.capabilities?.supportsPromptCache).to.equal(true)
+            expect(restored?.apiFormats).to.deep.equal([ApiFormat.OPENAI_RESPONSES, ApiFormat.OPENAI_CHAT])
         })
     })
 

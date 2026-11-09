@@ -1,4 +1,5 @@
 import React, { useId, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { type ContextWindowIndicatorViewModel, DURABLE_PART_COLORS } from "./ContextWindowIndicatorViewModel"
 
 interface TokenUsageInfoProps {
@@ -56,11 +57,12 @@ function formatSummaryTokenNumber(tokens: number): string {
 }
 
 function getSegmentColor(segment: ContextWindowIndicatorViewModel["segments"][number]): string {
-    if (segment.kind === "active" && segment.label === "Receiving") return "var(--vscode-charts-yellow, #d29922)"
+    if (segment.kind === "active" && segment.activity === "receiving") return "var(--vscode-charts-yellow, #d29922)"
     return SEGMENT_COLORS[segment.kind]
 }
 
 function DurableBreakdown({ id, viewModel }: { id: string; viewModel: ContextWindowIndicatorViewModel }) {
+    const { t } = useUiTranslation()
     const parts = viewModel.durableBreakdown
     return (
         <div
@@ -84,7 +86,7 @@ function DurableBreakdown({ id, viewModel }: { id: string; viewModel: ContextWin
                     </div>
                 ))
             ) : (
-                <div className="text-muted-foreground">Breakdown unavailable until the next request is measured.</div>
+                <div className="text-muted-foreground">{t("chatInput.context.breakdownUnavailable")}</div>
             )}
         </div>
     )
@@ -98,6 +100,7 @@ export const ContextWindowSummary: React.FC<TaskContextWindowButtonsProps> = ({
     durableExpanded,
     onDurableExpandedChange,
 }) => {
+    const { t } = useUiTranslation()
     const [ownExpanded, setOwnExpanded] = useState(false)
     const breakdownId = useId()
     const expanded = durableExpanded ?? ownExpanded
@@ -110,7 +113,7 @@ export const ContextWindowSummary: React.FC<TaskContextWindowButtonsProps> = ({
     return (
         <div className="context-window-tooltip-content flex w-full flex-col gap-2" data-testid="context-window-summary">
             <div className="flex items-center justify-between gap-3">
-                <span className="font-semibold">Context Window</span>
+                <span className="font-semibold">{t("chatInput.context.title")}</span>
                 <span className="font-mono text-muted-foreground">{percentage.toFixed(1)}%</span>
             </div>
             <div className="grid grid-cols-3 gap-2 text-xs">
@@ -118,22 +121,22 @@ export const ContextWindowSummary: React.FC<TaskContextWindowButtonsProps> = ({
                     className="min-w-0 text-center"
                     data-context-summary-metric="used"
                     style={!indicatorViewModel ? { color: SEGMENT_COLORS.durable } : undefined}>
-                    <div className="text-muted-foreground">Used</div>
+                    <div className="text-muted-foreground">{t("chatInput.context.used")}</div>
                     <div className="font-mono">{formatSummaryTokenNumber(tokenUsed)}</div>
                 </div>
                 <div className="min-w-0 text-center" data-context-summary-metric="remaining">
-                    <div className="text-muted-foreground">Remaining</div>
+                    <div className="text-muted-foreground">{t("chatInput.context.remaining")}</div>
                     <div className="font-mono">
                         {formatSummaryTokenNumber(indicatorViewModel?.remainingTokens ?? Math.max(0, contextWindow - tokenUsed))}
                     </div>
                 </div>
                 <div className="min-w-0 text-center" data-context-summary-metric="total">
-                    <div className="text-muted-foreground">Total</div>
+                    <div className="text-muted-foreground">{t("chatInput.context.total")}</div>
                     <div className="font-mono">{formatSummaryTokenNumber(contextWindow)}</div>
                 </div>
             </div>
             {!indicatorViewModel && (
-                <div className="text-xs text-muted-foreground">Segment details unavailable for this saved task.</div>
+                <div className="text-xs text-muted-foreground">{t("chatInput.context.segmentsUnavailable")}</div>
             )}
             {indicatorViewModel && (
                 <div
@@ -160,7 +163,7 @@ export const ContextWindowSummary: React.FC<TaskContextWindowButtonsProps> = ({
                                 key={segment.kind}
                                 onClick={toggleDurable}
                                 style={{ backgroundColor: getSegmentColor(segment) }}
-                                title="Show what the durable context is made of"
+                                title={t("chatInput.context.showBreakdown")}
                                 type="button">
                                 {content}
                             </button>

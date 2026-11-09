@@ -180,7 +180,6 @@ e2e(
                 viewportHeight: window.innerHeight,
             }
         })
-        expect(layout.className).toContain("focus-chain-scrollable")
         expect(layout.overflowY).toBe("auto")
         expect(layout.scrollHeight).toBeGreaterThan(layout.clientHeight)
         expect(layout.clientHeight).toBeLessThanOrEqual(layout.viewportHeight * 0.4 + 1)

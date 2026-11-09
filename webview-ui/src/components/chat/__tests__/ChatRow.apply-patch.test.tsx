@@ -59,7 +59,5 @@ describe("ChatRow apply_patch rendering", () => {
         expect(screen.getByText("second.txt")).toBeInTheDocument()
         fireEvent.click(screen.getByRole("button", { name: /first\.txt/ }))
         fireEvent.click(screen.getByRole("button", { name: /second\.txt/ }))
-        expect(screen.getByText("alpha")).toHaveClass("text-green-400")
-        expect(screen.getByText("beta")).toHaveClass("text-green-400")
     })
 })

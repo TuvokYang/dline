@@ -1,6 +1,7 @@
 import { UiMessage } from "@shared/ExtensionMessage"
 import { EmptyRequest } from "@shared/proto/dline/common"
 import { memo, useMemo, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { TaskServiceClient } from "@/services/grpc-client"
 import { CHAT_ROW_EXPANDED_BG_COLOR } from "../common/CodeBlock"
 import { HOOK_OUTPUT_STRING } from "./constants"
@@ -46,7 +47,7 @@ interface HookMessageProps {
 }
 
 interface HookMetadata {
-    hookName: string
+    hookName?: string
     toolName?: string
     status: string
     exitCode?: number
@@ -81,6 +82,7 @@ interface HookMetadata {
  * - Running hooks: Always shows pending tool info
  */
 const HookMessage = memo(({ message, CommandOutput }: HookMessageProps) => {
+    const { t } = useUiTranslation()
     // Parse hook metadata and output
     const { metadata, output } = useMemo(() => {
         const splitMessage = (text: string) => {
@@ -118,7 +120,7 @@ const HookMessage = memo(({ message, CommandOutput }: HookMessageProps) => {
         try {
             hookMetadata = JSON.parse(metadataStr)
         } catch {
-            hookMetadata = { hookName: "Unknown", status: "unknown" }
+            hookMetadata = { status: "unknown" }
         }
 
         return { metadata: hookMetadata, output }
@@ -131,6 +133,16 @@ const HookMessage = memo(({ message, CommandOutput }: HookMessageProps) => {
     const isCompleted = metadata.status === "completed"
     const isFailed = metadata.status === "failed"
     const isCancelled = metadata.status === "cancelled"
+
+    const statusLabel = isRunning
+        ? t("chatRows.hook.status.running")
+        : isFailed
+          ? t("chatRows.hook.status.failed")
+          : isCancelled
+            ? t("chatRows.hook.status.aborted")
+            : isCompleted
+              ? t("chatRows.hook.status.completed")
+              : t("chatRows.hook.status.unknown")
 
     const headerStyle: React.CSSProperties = {
         display: "flex",
@@ -149,8 +161,8 @@ const HookMessage = memo(({ message, CommandOutput }: HookMessageProps) => {
                         marginBottom: "-1.5px",
                     }}
                 />
-                <span style={{ color: normalColor, fontWeight: "bold" }}>Hook:</span>
-                <span style={{ color: normalColor }}>{metadata.hookName}</span>
+                <span style={{ color: normalColor, fontWeight: "bold" }}>{t("chatRows.hook.header")}</span>
+                <span style={{ color: normalColor }}>{metadata.hookName ?? t("chatRows.hook.status.unknown")}</span>
                 {metadata.toolName && (
                     <span style={{ color: "var(--vscode-descriptionForeground)", fontSize: "0.9em" }}>({metadata.toolName})</span>
                 )}
@@ -200,15 +212,7 @@ const HookMessage = memo(({ message, CommandOutput }: HookMessageProps) => {
                                 fontSize: "13px",
                                 flexShrink: 0,
                             }}>
-                            {isRunning
-                                ? "Running"
-                                : isFailed
-                                  ? "Failed"
-                                  : isCancelled
-                                    ? "Aborted"
-                                    : isCompleted
-                                      ? "Completed"
-                                      : "Unknown"}
+                            {statusLabel}
                         </span>
                         {metadata.exitCode !== undefined && metadata.exitCode !== 0 && (
                             <span
@@ -216,7 +220,7 @@ const HookMessage = memo(({ message, CommandOutput }: HookMessageProps) => {
                                     color: "var(--vscode-descriptionForeground)",
                                     fontSize: "12px",
                                 }}>
-                                (exit: {metadata.exitCode})
+                                {t("chatRows.hook.exitCode", { code: metadata.exitCode })}
                             </span>
                         )}
                     </div>
@@ -245,7 +249,7 @@ const HookMessage = memo(({ message, CommandOutput }: HookMessageProps) => {
                                 cursor: "pointer",
                                 fontFamily: "inherit",
                             }}>
-                            Abort
+                            {t("chatRows.hook.abort")}
                         </button>
                     )}
                 </div>
@@ -259,7 +263,7 @@ const HookMessage = memo(({ message, CommandOutput }: HookMessageProps) => {
                             fontSize: "13px",
                             color: "var(--vscode-descriptionForeground)",
                         }}>
-                        Took longer than 30 seconds. Check for infinite loops or add timeouts to network requests.
+                        {t("chatRows.hook.timeout")}
                     </div>
                 )}
 
@@ -271,7 +275,7 @@ const HookMessage = memo(({ message, CommandOutput }: HookMessageProps) => {
                             fontSize: "13px",
                             color: "var(--vscode-descriptionForeground)",
                         }}>
-                        Hook returned invalid JSON. See error details below for more information.
+                        {t("chatRows.hook.invalidJson")}
                     </div>
                 )}
 

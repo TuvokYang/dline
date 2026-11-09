@@ -17,7 +17,20 @@ tools:
   - search_files
   - list_files
   - list_code_definition_names
-skills: []
+# Optional capabilities select nothing when omitted; uncomment only existing entries.
+# rules:
+#   - scope: workspace
+#     path: your-rule.md
+# skills:
+#   - your-skill
+# workflows:
+#   - your-workflow
+# mcp:
+#   - server: your-server
+#     tools:
+#       - your-tool
+#     resources:
+#       - scheme://your-resource
 # maxOutputTokens is measured in tokens. Omit it for the dynamic 5% default,
 # use 0.05 for a ratio, or use a positive integer such as 10240 for an absolute budget.
 ---

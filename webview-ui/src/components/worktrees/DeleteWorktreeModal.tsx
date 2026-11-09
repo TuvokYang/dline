@@ -1,7 +1,10 @@
 import { VSCodeButton, VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import { AlertTriangle, Loader2, X } from "lucide-react"
-import { memo, useCallback, useState } from "react"
+import { memo, type ReactNode, useCallback, useState } from "react"
 import { Button } from "@/components/ui/button"
+import type { UiMessageArgs } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
+import { UiText } from "@/i18n/UiText"
 
 interface DeleteWorktreeModalProps {
     open: boolean
@@ -12,6 +15,7 @@ interface DeleteWorktreeModalProps {
 }
 
 const DeleteWorktreeModal = ({ open, onClose, onConfirm, worktreePath, branchName }: DeleteWorktreeModalProps) => {
+    const { t } = useUiTranslation()
     const [isDeleting, setIsDeleting] = useState(false)
     const [deleteBranch, setDeleteBranch] = useState(false)
 
@@ -41,6 +45,7 @@ const DeleteWorktreeModal = ({ open, onClose, onConfirm, worktreePath, branchNam
             <div className="bg-[var(--vscode-editor-background)] border border-[var(--vscode-panel-border)] rounded-lg p-5 w-[400px] max-w-[90vw] relative">
                 {/* Close button */}
                 <button
+                    aria-label={t("shell.chrome.close")}
                     className="absolute top-3 right-3 p-1 rounded hover:bg-[var(--vscode-toolbar-hoverBackground)] text-[var(--vscode-descriptionForeground)] hover:text-[var(--vscode-foreground)] cursor-pointer disabled:opacity-50"
                     disabled={isDeleting}
                     onClick={onClose}
@@ -51,13 +56,23 @@ const DeleteWorktreeModal = ({ open, onClose, onConfirm, worktreePath, branchNam
                 {/* Title row with icon */}
                 <div className="flex items-center gap-2 mb-3 pr-6">
                     <AlertTriangle className="w-5 h-5 text-[var(--vscode-errorForeground)]" />
-                    <h4 className="m-0">Delete Worktree</h4>
+                    <h4 className="m-0">{t("shell.worktrees.delete.title")}</h4>
                 </div>
 
                 {/* Content */}
                 <p className="text-sm text-[var(--vscode-descriptionForeground)] mt-0 mb-3">
-                    This will delete the worktree directory at{" "}
-                    <span className="font-semibold text-[var(--vscode-foreground)] break-all">{worktreePath}</span>
+                    <UiText
+                        slots={
+                            {
+                                path: (
+                                    <span className="font-semibold text-[var(--vscode-foreground)] break-all">
+                                        {worktreePath}
+                                    </span>
+                                ),
+                            } satisfies Record<keyof UiMessageArgs<"shell.worktrees.delete.description">[0], ReactNode>
+                        }
+                        text={t("shell.worktrees.delete.description", { path: "{path}" })}
+                    />
                 </p>
 
                 <label className="flex items-center gap-2 cursor-pointer mb-3">
@@ -66,29 +81,36 @@ const DeleteWorktreeModal = ({ open, onClose, onConfirm, worktreePath, branchNam
                         onChange={(e) => setDeleteBranch((e.target as HTMLInputElement).checked)}
                     />
                     <span className="text-sm">
-                        Also delete branch <span className="font-semibold">{branchName}</span>
+                        <UiText
+                            slots={
+                                {
+                                    branch: <span className="font-semibold">{branchName}</span>,
+                                } satisfies Record<keyof UiMessageArgs<"shell.worktrees.delete.alsoBranch">[0], ReactNode>
+                            }
+                            text={t("shell.worktrees.delete.alsoBranch", { branch: "{branch}" })}
+                        />
                     </span>
                 </label>
 
                 {deleteBranch && (
                     <p className="text-sm text-[var(--vscode-inputValidation-warningForeground)] mt-0 mb-3">
-                        Warning: Unpushed commits on this branch will be lost.
+                        {t("shell.worktrees.delete.warning")}
                     </p>
                 )}
 
                 {/* Buttons */}
                 <div className="flex justify-end gap-2">
                     <VSCodeButton appearance="secondary" disabled={isDeleting} onClick={onClose}>
-                        Cancel
+                        {t("shell.worktrees.delete.cancel")}
                     </VSCodeButton>
                     <Button disabled={isDeleting} onClick={handleDelete} variant="danger">
                         {isDeleting ? (
                             <>
                                 <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                                Deleting...
+                                {t("shell.worktrees.delete.deleting")}
                             </>
                         ) : (
-                            "Delete"
+                            t("shell.worktrees.delete.confirm")
                         )}
                     </Button>
                 </div>

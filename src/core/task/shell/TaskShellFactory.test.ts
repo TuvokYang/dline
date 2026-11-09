@@ -10,6 +10,7 @@ import {
     type TransitionResult,
     transition,
 } from "../kernel"
+import { TaskAwayConfigurationBinding } from "../session/TaskAwayConfigurationBinding"
 import {
     InMemoryCommandPublicationStore,
     InMemoryConversationJournal,
@@ -430,6 +431,62 @@ describe("openTaskShell", () => {
             { state: "released", delivery: undefined },
         ])
         expect((await fixture.journal.project()).visibleMessages).toEqual([])
+    })
+
+    it.each([
+        { readonly: false, configured: false },
+        { readonly: true, configured: false },
+        { readonly: false, configured: true },
+        { readonly: true, configured: true },
+    ])("keeps legacy retained input consumed when its Provider finished before restore (%j)", async ({
+        readonly,
+        configured,
+    }) => {
+        const fixture = await retainedCrashFixture()
+        const baseline: TaskState = {
+            ...fixture.state,
+            flow: { ...fixture.state.flow, provider: { commandId: "legacy-provider", originRevision: 5, status: "running" } },
+        }
+        await fixture.persistence.ports.vault.save({ state: baseline, outbox: [] })
+        await fixture.journal.append({
+            operationId: "provider.final:legacy-provider",
+            source: "provider",
+            payloadRef: await fixture.payloads.put(encodeTaskPayload({ kind: "provider_final", text: "Done" })),
+            causation: { commandId: "legacy-provider", originRevision: 5, generation: 0 },
+        })
+        const configuration = {
+            available: true,
+            gateEnabled: true,
+            awayModeEnabled: false,
+            autoAwayModeEnabled: false,
+            revocations: { mode: 0, automatic: 0 },
+        }
+        const binding = configured
+            ? new TaskAwayConfigurationBinding(
+                  { read: () => configuration, subscribe: () => () => {}, reconcile: async () => configuration },
+                  (error) => {
+                      throw error
+                  },
+              )
+            : undefined
+        const opened = await openTaskShell({
+            taskId: "task-1",
+            openReason: "crash_recovery",
+            execution: execution(() => undefined),
+            taskView: new InMemoryTaskViewPort(),
+            persistence: fixture.persistence,
+            deferRestoredCommands: readonly,
+            awayConfiguration: binding,
+        })
+        await opened.shell.open()
+        await opened.runtime.waitForQuiescence()
+        expect(opened.runtime.getState().intake.queued.map((entry) => [entry.state, entry.queue?.delivery])).toEqual([
+            ["consumed", undefined],
+            ["consumed", undefined],
+        ])
+        expect((await fixture.journal.project()).visibleMessages).toHaveLength(2)
+        await binding?.release()
+        await opened.runtime.disposeDeadlines()
     })
 
     it("does not replay a provider command when its final journal entry is ahead of the snapshot", async () => {

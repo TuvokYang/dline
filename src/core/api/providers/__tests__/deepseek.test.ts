@@ -2,6 +2,7 @@ import { ModelRegistry } from "@core/model-registry/ModelRegistry"
 import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import { BaseProviderConfig, type ReasoningConfig } from "@shared/proto/dline/provider/common"
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import { expect } from "chai"
 import type OpenAI from "openai"
 import { afterEach, describe, it, vi } from "vitest"
@@ -733,6 +734,8 @@ describe("DeepSeekHandler", () => {
                     provider: "deepseek",
                     apiKey: "test-api-key",
                     modelId: "deepseek-v4-pro",
+                    // This tests token allocation, not the seed catalog's changing seller schedule.
+                    modelInfo: { id: "deepseek-v4-pro", pricing: flatMeteredPricing(3, 6, 3, 0.025) },
                     deepseek: BaseProviderConfig.create({ apiFormat: ApiFormat.OPENAI_CHAT }),
                 }),
                 mode: "act",
@@ -760,16 +763,28 @@ describe("DeepSeekHandler", () => {
 
             const chunks = await collectChunks(handler)
 
-            expect(chunks).to.deep.equal([
-                {
-                    type: "usage",
-                    inputTokens: 50,
-                    outputTokens: 25,
-                    cacheWriteTokens: 50,
-                    cacheReadTokens: 900,
-                    totalCost: 0.00047250000000000005,
-                },
-            ])
+            expect(chunks).to.have.length(1)
+            const chunk = chunks[0]
+            if (
+                typeof chunk !== "object" ||
+                chunk === null ||
+                !("type" in chunk) ||
+                chunk.type !== "usage" ||
+                !("totalCost" in chunk) ||
+                !("currency" in chunk)
+            ) {
+                throw new Error("Expected the terminal usage chunk with a calculated cost")
+            }
+            const { totalCost, currency, ...counts } = chunk
+            expect(counts).to.deep.equal({
+                type: "usage",
+                inputTokens: 50,
+                outputTokens: 25,
+                cacheWriteTokens: 50,
+                cacheReadTokens: 900,
+            })
+            expect(totalCost).to.be.closeTo(0.0004725, 1e-12)
+            expect(currency).to.equal("USD")
         })
 
         it("passes an AbortSignal to the SDK and aborts an in-flight request", async () => {
@@ -809,7 +824,7 @@ describe("DeepSeekHandler", () => {
 
     it("consumes a saved context override through the production runtime factory", () => {
         vi.spyOn(ModelRegistry, "getInstance").mockReturnValue({
-            getProviderModels: () => ({
+            getProviderCatalog: () => ({
                 provider: "deepseek",
                 providerName: "DeepSeek",
                 billingMode: "token",

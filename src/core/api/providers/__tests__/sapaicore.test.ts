@@ -4,6 +4,7 @@ import { ApiHandler, type ProviderAttemptTerminalStatus } from "@core/api"
 import type { ModelCapabilities } from "@shared/proto/dline/models/metadata"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import axios from "axios"
 import { afterEach, expect, vi } from "vitest"
 import { SapAiCoreHandler } from "../sapaicore"
@@ -145,10 +146,11 @@ describe("SapAiCoreHandler", () => {
                 streamCompletionGPT(
                     source: AsyncIterable<Buffer>,
                     model: ReturnType<SapAiCoreHandler["getModel"]>,
+                    sentAtMs: number,
                 ): AsyncIterable<unknown>
             }
 
-            for await (const chunk of privateHandler.streamCompletionGPT(stream, handler.getModel())) chunks.push(chunk)
+            for await (const chunk of privateHandler.streamCompletionGPT(stream, handler.getModel(), 0)) chunks.push(chunk)
 
             tailConsumed.should.equal(true)
             chunks.should.deepEqual([{ type: "usage", inputTokens: 0, outputTokens: 0 }])
@@ -251,7 +253,7 @@ describe("SAP OpenAI metadata authority", () => {
         const profile = ApiProfile.create({
             provider: "sapaicore",
             modelId,
-            modelInfo: { id: modelId, capabilities, pricing: { inputPrice: 0 }, userDefined: true },
+            modelInfo: { id: modelId, capabilities, pricing: flatMeteredPricing(0, 0), userDefined: true },
             baseUrl: "https://test.api.sap.invalid",
             sapaicore: { resourceGroup: "test-group", reasoning },
         })

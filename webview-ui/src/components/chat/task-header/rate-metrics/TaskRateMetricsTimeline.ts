@@ -2,6 +2,15 @@ import { type TaskRateMetricPoint, TaskRateRpmBasis, TaskRateUsageQuality } from
 
 export type TaskRateMetricsResolution = "minute" | "hour" | "day"
 
+/**
+ * The time-bucketed resolutions.
+ *
+ * `round` is deliberately absent: it returns one point per Provider send rather
+ * than one per interval, so it has no bucket size and no fill behaviour. Callers
+ * that ask for rounds address `TaskRateMetricPoint.roundId` directly.
+ */
+export type TaskRateMetricsBucketResolution = TaskRateMetricsResolution
+
 interface TaskRateMetricsResolutionConfig {
     readonly bucketMs: number
     readonly maxPoints: number

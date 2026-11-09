@@ -22,6 +22,8 @@ export enum ExperimentalFeatureFlag {
     EXTERNAL_FILE_CHECKPOINTS = "checkpoint-external-files",
     // Folding a turn's activity rows in the chat; the rollout offers the setting, the user picks the level
     AGGRESSIVE_RENDERING = "aggressive_rendering",
+    // Offers Away settings without enabling either user preference.
+    AWAY_MODE = "away-mode",
 }
 
 export const ExperimentalFeatureFlagDefaultValue: Partial<Record<ExperimentalFeatureFlag, FeatureFlagPayload>> = {
@@ -29,19 +31,19 @@ export const ExperimentalFeatureFlagDefaultValue: Partial<Record<ExperimentalFea
     [ExperimentalFeatureFlag.ACCOUNT]: false,
     [ExperimentalFeatureFlag.EXTERNAL_FILE_CHECKPOINTS]: false,
     [ExperimentalFeatureFlag.AGGRESSIVE_RENDERING]: false,
+    [ExperimentalFeatureFlag.AWAY_MODE]: false,
 }
 
 /**
- * Switches a development build turns on by default.
+ * Flags selected exclusively by the remote service, for mutually exclusive rollouts.
  *
- * Kept per switch rather than applied to all: turning every switch on in
- * development bundles would also change what the E2E runs, which use those
- * bundles, exercise.
+ * No current flag is mutually exclusive. Local overrides and development defaults
+ * must never decide these flags; an absent remote answer is always off.
  */
-export const ExperimentalFeatureFlagDevelopmentDefault: Partial<Record<ExperimentalFeatureFlag, boolean>> = {
-    [ExperimentalFeatureFlag.ACCOUNT]: true,
-    // Only offers the setting; the effective level stays the user's choice, which defaults to standard.
-    [ExperimentalFeatureFlag.AGGRESSIVE_RENDERING]: true,
+export const REMOTE_ONLY_EXPERIMENTAL_FEATURE_FLAGS: ReadonlySet<ExperimentalFeatureFlag> = new Set()
+
+export function experimentalFeatureFlagDefault(flag: ExperimentalFeatureFlag): FeatureFlagPayload {
+    return REMOTE_ONLY_EXPERIMENTAL_FEATURE_FLAGS.has(flag) ? false : (ExperimentalFeatureFlagDefaultValue[flag] ?? false)
 }
 
 /**
@@ -56,6 +58,7 @@ export const REMOTE_ROLLOUT_FEATURE_FLAGS: readonly ExperimentalFeatureFlag[] = 
     ExperimentalFeatureFlag.WORKTREES,
     ExperimentalFeatureFlag.EXTERNAL_FILE_CHECKPOINTS,
     ExperimentalFeatureFlag.AGGRESSIVE_RENDERING,
+    ExperimentalFeatureFlag.AWAY_MODE,
 ]
 
 export const EXPERIMENTAL_FEATURE_FLAGS = Object.values(ExperimentalFeatureFlag)

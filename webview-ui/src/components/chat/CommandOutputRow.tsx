@@ -1,11 +1,13 @@
-import { COMMAND_OUTPUT_STRING, COMMAND_REQ_APP_STRING } from "@shared/combineCommandSequences"
-import { COMMAND_LOG_NOTICE_LABEL, findCommandLogNotice } from "@shared/command-log-notice"
+import { findCommandLogNotice } from "@shared/command-log-notice"
+import { readCommandRow } from "@shared/commandRow"
 import { UiMessage } from "@shared/ExtensionMessage"
 import AnsiUp from "ansi-to-html"
 import DOMPurify from "dompurify"
 import { BringToFrontIcon, CircleSlashIcon, FolderRootIcon, SendToBackIcon, TerminalIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
+import { type UiMessageKey } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 import CodeBlock from "../common/CodeBlock"
 import { CopyButton } from "../common/CopyButton"
@@ -104,6 +106,7 @@ export const CommandOutputContent = memo(
         logPath?: string
         presentation?: "default" | "activity"
     }) => {
+        const { t } = useUiTranslation()
         const displayOutput = sanitizeCommandOutput(stripCommandPromptArtifacts(output))
         const outputLines = displayOutput.split("\n")
         const lineCount = outputLines.length
@@ -176,7 +179,7 @@ export const CommandOutputContent = memo(
                 <div className={outputGroupClassName}>
                     {beforeLogPath && renderSegment(beforeLogPath)}
                     <div className={logRowClassName} data-testid={presentation === "activity" ? "activity-log-row" : undefined}>
-                        <OpenFilePathLink filePath={logFilePath} label={COMMAND_LOG_NOTICE_LABEL} />
+                        <OpenFilePathLink filePath={logFilePath} label={t("chatRows.command.logNotice")} />
                     </div>
                     {afterLogPath && renderSegment(afterLogPath)}
                 </div>
@@ -257,16 +260,19 @@ export const CommandOutputRow = memo(
         isCollapsed: boolean
         onToggleCollapsed: () => void
     }) => {
+        const { t } = useUiTranslation()
         const exitCode = message.exitCode
         const colors = getStatusColor(isCommandExecuting, isCommandPending, isCommandCompleted, isCommandFailed, exitCode)
-        const statusText = getCommandStatusText(
-            isCommandExecuting,
-            isCommandPending,
-            isCommandCompleted,
-            isCommandFailed,
-            isCommandCancelled,
-            isCommandInterrupted,
-            exitCode,
+        const statusText = t(
+            getCommandStatusKey(
+                isCommandExecuting,
+                isCommandPending,
+                isCommandCompleted,
+                isCommandFailed,
+                isCommandCancelled,
+                isCommandInterrupted,
+                exitCode,
+            ),
         )
         const isActive = isCommandExecuting || isCommandPending
         const isNeutralStop = isCommandCancelled || isCommandInterrupted || isCommandSkipped
@@ -279,36 +285,21 @@ export const CommandOutputRow = memo(
             />
         )
 
-        const splitMessage = (text: string) => {
-            const outputIndex = text.indexOf(COMMAND_OUTPUT_STRING)
-            if (outputIndex === -1) {
-                return { command: text, output: "" }
-            }
-            return {
-                command: text.slice(0, outputIndex).trim(),
-                output: sanitizeCommandOutput(text.slice(outputIndex + COMMAND_OUTPUT_STRING.length).trim()),
-            }
-        }
-
-        const { command: rawCommand, output } = splitMessage(message.text || "")
+        // The row's own fields are the authority; a row written before they
+        // existed states everything in its text, which the reader still splits.
+        const row = readCommandRow(message)
+        const output = sanitizeCommandOutput(row.output)
         const outputSummary = getCommandOutputSummary(output)
 
-        const requestsApproval = rawCommand.endsWith(COMMAND_REQ_APP_STRING)
-        const commandPresentation = requestsApproval ? rawCommand.slice(0, -COMMAND_REQ_APP_STRING.length) : rawCommand
-        const workingDirectoryMarker = "\n\nWorking directory: "
-        const workingDirectoryIndex = commandPresentation.lastIndexOf(workingDirectoryMarker)
-        const command =
-            workingDirectoryIndex === -1 ? commandPresentation : commandPresentation.slice(0, workingDirectoryIndex).trimEnd()
-        const workdirectory =
-            workingDirectoryIndex === -1
-                ? undefined
-                : commandPresentation.slice(workingDirectoryIndex + workingDirectoryMarker.length).trim()
+        const command = row.command
+        const workdirectory = row.workingDirectory
+        const requestsApproval = row.requestsApproval
         const showCancelButton = isActive && typeof onCancelCommand === "function"
         const ExecutionModeIcon = isBackgroundExec ? SendToBackIcon : BringToFrontIcon
-        const executionModeLabel = isBackgroundExec ? "Background" : "Foreground"
+        const executionModeLabel = isBackgroundExec ? t("chatRows.common.background") : t("chatRows.common.foreground")
         const executionModeIndicator = (
             <div
-                aria-label={`Execution mode: ${executionModeLabel}`}
+                aria-label={t("chatRows.common.executionMode", { mode: executionModeLabel })}
                 className={cn(
                     "flex min-w-[88px] shrink-0 items-center justify-center gap-1 border px-1.5 py-0.5 text-[11px] font-medium rounded-xs",
                     isBackgroundExec
@@ -360,14 +351,14 @@ export const CommandOutputRow = memo(
                             </span>
                         </button>
                         {executionModeIndicator}
-                        <CopyButton ariaLabel="Copy command" className="h-5" textToCopy={command} />
+                        <CopyButton ariaLabel={t("chatRows.common.copyCommand")} className="h-5" textToCopy={command} />
                         {showCancelButton && (
                             <Button
                                 className="h-6 border px-2 py-0 text-[11px] leading-none"
                                 onClick={onCancelCommand}
                                 size="sm"
                                 variant="danger">
-                                Cancel
+                                {t("chatRows.common.cancel")}
                             </Button>
                         )}
                     </div>
@@ -398,7 +389,11 @@ export const CommandOutputRow = memo(
                             <div className="flex items-center gap-2 shrink-0">
                                 {executionModeIndicator}
                                 <div className="flex items-center" onClick={(event) => event.stopPropagation()}>
-                                    <CopyButton ariaLabel="Copy command" className="h-5" textToCopy={command} />
+                                    <CopyButton
+                                        ariaLabel={t("chatRows.common.copyCommand")}
+                                        className="h-5"
+                                        textToCopy={command}
+                                    />
                                 </div>
                                 {showCancelButton && (
                                     <Button
@@ -409,7 +404,7 @@ export const CommandOutputRow = memo(
                                         }}
                                         size="sm"
                                         variant="danger">
-                                        Cancel
+                                        {t("chatRows.common.cancel")}
                                     </Button>
                                 )}
                             </div>
@@ -440,7 +435,7 @@ export const CommandOutputRow = memo(
                     {requestsApproval && (
                         <div className="flex items-center gap-2.5 border-t border-editor-group-border p-2 text-[12px] text-editor-warning-foreground">
                             <i className="codicon codicon-warning" />
-                            <span>The model has determined this command requires explicit approval.</span>
+                            <span>{t("chatRows.command.requestsApproval")}</span>
                         </div>
                     )}
 
@@ -448,7 +443,10 @@ export const CommandOutputRow = memo(
                         <div
                             className="flex min-w-0 items-center gap-2 border-t border-editor-group-border px-3 py-2 text-xs text-description"
                             data-testid="command-workdirectory">
-                            <span aria-label="Working directory" className="shrink-0" title="Working directory">
+                            <span
+                                aria-label={t("chatRows.common.workingDirectory")}
+                                className="shrink-0"
+                                title={t("chatRows.common.workingDirectory")}>
                                 <FolderRootIcon aria-hidden="true" className="size-3" />
                             </span>
                             <span className="min-w-0 break-all font-mono text-foreground" title={workdirectory}>
@@ -464,18 +462,22 @@ export const CommandOutputRow = memo(
 
 CommandOutputRow.displayName = "CommandOutputRow"
 
-const CommandStatusMap = {
-    running: "Running",
-    pending: "Pending",
-    success: "Success",
-    failed: "Failed",
-    cancelled: "Cancelled",
-    interrupted: "Interrupted",
-    completed: "Completed",
-    skipped: "Skipped",
-}
+const CommandStatusKeys = {
+    running: "chatRows.command.status.running",
+    pending: "chatRows.command.status.pending",
+    success: "chatRows.command.status.success",
+    failed: "chatRows.command.status.failed",
+    cancelled: "chatRows.command.status.cancelled",
+    interrupted: "chatRows.command.status.interrupted",
+    completed: "chatRows.command.status.completed",
+    skipped: "chatRows.command.status.skipped",
+} as const satisfies Record<string, UiMessageKey>
 
-function getCommandStatusText(
+/**
+ * Select the semantic status of a command without freezing its wording, so a
+ * language switch retranslates the row instead of keeping the old sentence.
+ */
+export function getCommandStatusKey(
     isExecuting: boolean,
     isPending: boolean,
     isCompleted: boolean,
@@ -483,18 +485,18 @@ function getCommandStatusText(
     isCancelled: boolean,
     isInterrupted: boolean,
     exitCode?: number | null,
-): string {
-    if (isExecuting) return CommandStatusMap.running
-    if (isPending) return CommandStatusMap.pending
-    if (isFailed) return CommandStatusMap.failed
-    if (isCancelled) return CommandStatusMap.cancelled
-    if (isInterrupted) return CommandStatusMap.interrupted
+): (typeof CommandStatusKeys)[keyof typeof CommandStatusKeys] {
+    if (isExecuting) return CommandStatusKeys.running
+    if (isPending) return CommandStatusKeys.pending
+    if (isFailed) return CommandStatusKeys.failed
+    if (isCancelled) return CommandStatusKeys.cancelled
+    if (isInterrupted) return CommandStatusKeys.interrupted
     if (isCompleted) {
-        if (exitCode === 0) return CommandStatusMap.success
-        if (exitCode != null) return CommandStatusMap.failed
-        return CommandStatusMap.completed
+        if (exitCode === 0) return CommandStatusKeys.success
+        if (exitCode != null) return CommandStatusKeys.failed
+        return CommandStatusKeys.completed
     }
-    return CommandStatusMap.skipped
+    return CommandStatusKeys.skipped
 }
 
 function getStatusColor(

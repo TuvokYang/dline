@@ -190,6 +190,7 @@ describe("API and Task turn trace correlation", () => {
                     cacheReadTokens: 5,
                     thoughtsTokenCount: 2,
                     totalCost: 0.1,
+                    currency: "CNY",
                 }
                 yield {
                     type: "usage",
@@ -198,6 +199,7 @@ describe("API and Task turn trace correlation", () => {
                     outputTokens: 4,
                     thoughtsTokenCount: 3,
                     totalCost: 0.12,
+                    currency: "CNY",
                 }
                 throw failure
             }
@@ -243,7 +245,8 @@ describe("API and Task turn trace correlation", () => {
                 cacheReadTokens: 5,
                 thoughtsTokens: 5,
                 cacheUsageReported: true,
-                totalCost: 0.12,
+                totalCost: 0.22,
+                currency: "CNY",
             },
         })
         expect(completed).not.toHaveBeenCalled()
@@ -259,7 +262,8 @@ describe("API and Task turn trace correlation", () => {
                 cacheReadTokens: 0,
                 thoughtsTokens: 6,
                 cacheUsageReported: true,
-                totalCost: 0.25,
+                totalCost: 0.45,
+                currency: undefined,
             },
         })
         expect(completed).toHaveBeenCalledOnce()

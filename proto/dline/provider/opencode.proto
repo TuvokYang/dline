@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package dline.provider;
+
+import "dline/models/metadata.proto";
+import "dline/provider/common.proto";
+
+// Billing mode of one OpenCode Profile.
+//
+// The mode selects the model catalog and the endpoint base URL. It is a fact the
+// user picks, never something inferred from a base URL: a custom endpoint is an
+// advanced override, not a mode declaration.
+enum OpenCodeMode {
+  // Stored value of a Profile written before the mode existed. Read as Console.
+  OPEN_CODE_MODE_UNSPECIFIED = 0;
+  // Pay-as-you-go Console catalog at https://opencode.ai/inference.
+  OPEN_CODE_MODE_CONSOLE = 1;
+  // OpenCode Go subscription catalog at https://opencode.ai/inference/go.
+  OPEN_CODE_MODE_GO = 2;
+  // Go Plus reads the same catalog as Go; only the monthly included usage differs.
+  OPEN_CODE_MODE_GO_PLUS = 3;
+  // Go Teams reads the same catalog as Go; each member carries their own limits.
+  OPEN_CODE_MODE_GO_TEAMS = 4;
+}
+
+// The pre-flattening shape of the shared base fields.
+//
+// It is byte-compatible with the `model` message of an older Profile: the field
+// numbers and types below match `BaseProviderConfig` as it existed then, so a
+// stored document still decodes into this message. Nothing writes it any more.
+message OpenCodeLegacyBase {
+  ReasoningConfig reasoning = 1;
+  bool custom_model_enabled = 2;
+  dline.models.ModelCapabilities capabilities = 3;
+  dline.models.ModelPricing pricing = 4;
+  optional bool enable_long_context = 5;
+  optional bool pricing_tiers_enabled = 6;
+  optional string service_tier = 7;
+  optional dline.models.ApiFormat api_format = 8;
+  repeated dline.models.ServerTool disabled_server_tools = 9;
+}
+
+// OpenCode reuses the shared base fields directly, like every other provider
+// that stores them. They used to live one level down under `model`, which made
+// this the only provider whose shared field had two possible home addresses:
+// a writer deciding between them could leave the same field in both places, and
+// a reader that preferred one address then returned the stale copy.
+message OpenCodeProviderConfig {
+  OpenCodeMode mode = 1;
+
+  // Deprecated nested carrier, kept only so a Profile written before the
+  // flattening still decodes. Readers fall back to it; every write goes to the
+  // flat fields below, so the next save stores nothing here.
+  OpenCodeLegacyBase model = 2;
+
+  ReasoningConfig reasoning = 10;
+  bool custom_model_enabled = 11;
+  dline.models.ModelCapabilities capabilities = 12;
+  dline.models.ModelPricing pricing = 13;
+  optional bool enable_long_context = 14;
+  optional bool pricing_tiers_enabled = 15;
+  optional string service_tier = 16;
+  optional dline.models.ApiFormat api_format = 17;
+  repeated dline.models.ServerTool disabled_server_tools = 18;
+}

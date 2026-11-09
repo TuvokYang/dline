@@ -3,6 +3,7 @@ import { AccountUsageResetCreditRequest, type AccountUsageResetResult, ProviderU
 import { protoToAccountUsage } from "@shared/proto-conversions/account-usage-conversion"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { AccountServiceClient } from "@/services/grpc-client"
 
 export const USAGE_POLL_INTERVAL_MS = 60_000
@@ -44,6 +45,7 @@ interface LocalUsageRead {
 
 /** Profile-scoped client for the shared provider usage capability. */
 export function useProviderUsage(profileId: string, enabled: boolean, options: ProviderUsageOptions = {}): ProviderUsageState {
+    const { t } = useUiTranslation()
     const pollIntervalMs = options.pollIntervalMs === undefined ? USAGE_POLL_INTERVAL_MS : options.pollIntervalMs
     const readsOnDemand = pollIntervalMs === null
     const { accountUsage } = useExtensionState()
@@ -61,8 +63,8 @@ export function useProviderUsage(profileId: string, enabled: boolean, options: P
     const [loading, setLoading] = useState(false)
     const [refreshing, setRefreshing] = useState(false)
     const [resetting, setResetting] = useState(false)
-    const [error, setError] = useState<string>()
-    const [resetError, setResetError] = useState<string>()
+    const [error, setError] = useState<"settings.ui.usage.loadError">()
+    const [resetError, setResetError] = useState<"settings.ui.usage.resetError">()
     const [pollingStopped, setPollingStopped] = useState(false)
     const profileRef = useRef(profileId)
     const usageRef = useRef<AccountUsageData>()
@@ -101,7 +103,7 @@ export function useProviderUsage(profileId: string, enabled: boolean, options: P
             return nextUsage
         } catch {
             if (mounted.current && sequence === requestSequence.current && profileRef.current === requestProfileId) {
-                setError("Provider usage could not be loaded.")
+                setError("settings.ui.usage.loadError")
                 // A failed read is most often a rejected credential, which a timer
                 // cannot resolve. Repeating it would spend the account's own
                 // request budget on an outcome that only signing in again fixes,
@@ -159,7 +161,7 @@ export function useProviderUsage(profileId: string, enabled: boolean, options: P
                 return result
             } catch {
                 if (mounted.current && profileRef.current === requestProfileId) {
-                    setResetError("The Provider rate-limit reset could not be completed.")
+                    setResetError("settings.ui.usage.resetError")
                 }
                 return undefined
             } finally {
@@ -169,5 +171,14 @@ export function useProviderUsage(profileId: string, enabled: boolean, options: P
         [enabled, profileId, resetting, setUsage],
     )
 
-    return { usage, loading, refreshing, resetting, error, resetError, refresh, consumeResetCredit }
+    return {
+        usage,
+        loading,
+        refreshing,
+        resetting,
+        error: error ? t(error) : undefined,
+        resetError: resetError ? t(resetError) : undefined,
+        refresh,
+        consumeResetCredit,
+    }
 }

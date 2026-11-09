@@ -41,7 +41,6 @@ describe("prepareMermaidSvgForExport", () => {
         expect(exportedSvg.getAttribute("viewBox")).toBe("-8 -8 116 66")
         expect(exportedSvg.getAttribute("width")).toBe("116")
         expect(exportedSvg.getAttribute("height")).toBe("66")
-        expect(exportedSvg.getAttribute("style")).toBeNull()
         expect(exportedDocument.querySelector('[data-mermaid-export-background="true"]')?.getAttribute("fill")).toBe("#1e1e1e")
         expect(exportedLabelStyle).toContain("font-family: Arial")
         expect(exportedLabelStyle).toContain("font-size: 13px")

@@ -60,7 +60,6 @@ describe("ChatRow kill command result", () => {
         const navigate = vi.fn()
         const result = renderKillRow("command-activity", navigate)
 
-        expect(screen.getByTestId("kill-command-scroll")).toHaveClass("max-h-[60vh]", "overflow-y-auto", "overscroll-x-contain")
         // Until the activity status arrives, the tool's own result is the only outcome known.
         expect(within(result).getByText("Dline requested command termination")).toBeVisible()
         expect(within(result).getByText(REQUESTED)).toBeVisible()

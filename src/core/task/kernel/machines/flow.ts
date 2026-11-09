@@ -188,6 +188,7 @@ export function reduceFlow(state: FlowState, event: TaskEvent): FlowReduction {
                     compose: state.compose && {
                         ...state.compose,
                         status: "completed",
+                        draftRef: event.draftRef,
                         ...(event.queueJournalReceipt === undefined ? {} : { queueJournalReceipt: event.queueJournalReceipt }),
                     },
                 },

@@ -28,7 +28,6 @@ export const HuggingFaceProvider = ({ showModelOptions, isPopup, profile, onUpda
             {showModelOptions && (
                 <>
                     <ModelSelector
-                        label="Model"
                         models={models}
                         onChange={(e) =>
                             onUpdate({

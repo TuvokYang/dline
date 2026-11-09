@@ -180,7 +180,6 @@ async function expectSummaryScrollLayout(container: Locator): Promise<void> {
         scrollHeight: element.scrollHeight,
         viewportHeight: window.innerHeight,
     }))
-    expect(metrics.className).toContain("max-h-[60vh]")
     expect(metrics.overflowY).toBe("auto")
     expect(metrics.clientHeight).toBeLessThanOrEqual(metrics.viewportHeight * 0.6 + 1)
     expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight)

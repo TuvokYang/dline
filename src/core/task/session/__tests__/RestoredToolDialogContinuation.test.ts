@@ -1,5 +1,5 @@
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
-import { createReportBugDraft, reportBugDraftSelection } from "@shared/report-bug"
+import { createReportBugDraft, reportBugDraftSelection, serializeReportBugDraft } from "@shared/report-bug"
 import { describe, expect, it, vi } from "vitest"
 import { createInitialTaskState, type TaskState } from "../../kernel"
 import { NEW_TASK_FEEDBACK_CONTINUATION_MARKER } from "../../new-task/new-task-continuation"
@@ -13,7 +13,7 @@ import {
     type RestoredToolDialogPorts,
     selectedFollowupOption,
 } from "../RestoredToolDialogContinuation"
-import type { UnownedDialogContinuationPort } from "../UnownedDialogContinuation"
+import type { UnownedDialogContinuationPort, UnownedDialogResolution } from "../UnownedDialogContinuation"
 
 const TID = "tid-restored"
 
@@ -134,6 +134,25 @@ function harness(options: {
 }
 
 describe("RestoredToolDialogContinuation", () => {
+    it("records automatic feedback as the paired answer, without admission or a user-authored row", async () => {
+        const h = harness({ toolName: "ask_followup_question" })
+        const resolution: UnownedDialogResolution = {
+            interactionId: TID,
+            kind: "followup",
+            outcome: {
+                actionId: "reply",
+                origin: "timeout",
+                draft: { text: "Continue autonomously", images: [], files: [] },
+            },
+        }
+        expect(await h.continuation.continue(resolution)).toBe("continued")
+        expect(h.journal.append).toHaveBeenCalledOnce()
+        expect(h.admitReply).not.toHaveBeenCalled()
+        expect(h.messages.addToClineMessages).not.toHaveBeenCalled()
+        expect(h.journaledResult().blockId).toBe(TID)
+        expect(h.journaledResult().failed).toBeUndefined()
+        expect(h.resumption.materialize).toHaveBeenCalledWith({})
+    })
     it("runs a restored ReportBug effect only before its first durable result", async () => {
         const reportBug = vi.fn(async () => true)
         const h = harness({
@@ -156,7 +175,6 @@ describe("RestoredToolDialogContinuation", () => {
                 additionalContext: "context",
             },
             { providerAndModel: "test", operatingSystem: "test", systemInfo: "test", dlineVersion: "1.2.3" },
-            false,
         )
         const resolution = {
             interactionId: TID,
@@ -170,6 +188,38 @@ describe("RestoredToolDialogContinuation", () => {
         expect(reportBug).toHaveBeenCalledTimes(1)
         expect(h.journal.append).toHaveBeenCalledTimes(1)
         expect(h.resumption.submit).toHaveBeenCalledTimes(2)
+    })
+
+    it("passes the exact persisted ReportBug presentation to a restored cancellation", async () => {
+        const reportBug = vi.fn(async () => true)
+        const presentation = serializeReportBugDraft(
+            createReportBugDraft(
+                {
+                    title: "Bug",
+                    whatHappened: "Failed",
+                    stepsToReproduce: "Send",
+                    apiRequestOutput: "safe",
+                    additionalContext: "",
+                },
+                { providerAndModel: "test", operatingSystem: "test", systemInfo: "test", dlineVersion: "1.2.3" },
+                "SUP-ABCD-1234",
+            ),
+        )
+        const h = harness({ toolName: "report_bug", reportBug })
+        h.messages.clineMessages[0] = { ts: 1, type: "ask", ask: "report_bug", interactionId: TID, text: presentation }
+        // A newer, unrelated report must not supply the ticket to discard.
+        h.messages.clineMessages.push({ ts: 2, type: "ask", ask: "report_bug", interactionId: "other-report", text: "other" })
+        const resolution = {
+            interactionId: TID,
+            kind: "report_bug",
+            outcome: { actionId: "reject" as const },
+        }
+
+        await expect(h.continuation.continue(resolution)).resolves.toBe("continued")
+        await expect(h.continuation.continue(resolution)).resolves.toBe("continued")
+
+        expect(reportBug.mock.calls).toEqual([[resolution.outcome, presentation]])
+        expect(h.journal.append).toHaveBeenCalledOnce()
     })
 
     it("records a restored follow-up answer as the tool's result and resumes once", async () => {
@@ -358,6 +408,25 @@ describe("RestoredToolDialogContinuation", () => {
         expect(h.journal.append).not.toHaveBeenCalled()
         expect(h.messages.addToClineMessages).not.toHaveBeenCalled()
         expect(h.resumption.materialize).not.toHaveBeenCalled()
+    })
+
+    it("does not submit plan-owned restored feedback a second time through generic intake", async () => {
+        const h = harness({ toolName: "qna_respond", interrupted: true, fallbackAccepts: true })
+        const resolution: UnownedDialogResolution = {
+            interactionId: TID,
+            kind: "qna_response",
+            outcome: {
+                actionId: "reply",
+                roundMaterialOwned: true,
+                draft: { text: "ADMITTED_BODY", images: ["image"], files: [], admittedInputRef: "first-admission" },
+            },
+        }
+        await expect(h.continuation.continue(resolution)).resolves.toBe("continued")
+        expect(h.fallback.continue).not.toHaveBeenCalled()
+        expect(h.resumption.materialize).toHaveBeenCalledWith({})
+        expect(h.resumption.submit).toHaveBeenCalledOnce()
+        expect(h.messages.addToClineMessages).toHaveBeenCalledOnce()
+        expect(h.journal.append).not.toHaveBeenCalled()
     })
 
     // Termination keeps a shown completion answerable, so the failure it wrote

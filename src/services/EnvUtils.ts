@@ -15,9 +15,40 @@ export const ClineHeaders = {
 } as const
 export type ClineHeaderName = (typeof ClineHeaders)[keyof typeof ClineHeaders]
 
+/**
+ * Version characters every Dline service accepts: letters, digits, dots, plus
+ * and hyphen, at most 32. The telemetry contract checks `client.version` with
+ * this same alphabet, so a version announced here is one the service accepts.
+ */
+export const DLINE_VERSION_PATTERN = /^[0-9A-Za-z.+-]{1,32}$/u
+/** A complete Dline agent: `Dline/<version>` with no trailing detail. */
+export const DLINE_USER_AGENT_PATTERN = /^Dline\/[0-9A-Za-z.+-]{1,32}$/u
+
+/**
+ * The one place this build states its identity as `Dline/<version>`.
+ *
+ * Every Dline service reads it: the OpenAI-compatible clients and providers via
+ * {@link buildExternalBasicHeaders}, and the telemetry transport, the usage
+ * replay manifest and its read-back check via the explicit `version` argument.
+ * The telemetry service compares the agent's version against `client.version`
+ * of the body and fingerprints a replay on the exact string, so a second
+ * formatter is how those two drift into `client-version-mismatch`.
+ *
+ * Pass `version` when the caller already resolved the version it reports in a
+ * body; omit it to announce this extension's own version.
+ */
+export function dlineUserAgent(version: string = ExtensionRegistryInfo.version): string {
+    return `Dline/${version}`
+}
+
+/** Whether a persisted agent is one this build would accept back. */
+export function isDlineUserAgent(value: string): boolean {
+    return DLINE_USER_AGENT_PATTERN.test(value)
+}
+
 export function buildExternalBasicHeaders(): Record<string, string> {
     return {
-        "User-Agent": `Dline/${ExtensionRegistryInfo.version}`,
+        "User-Agent": dlineUserAgent(),
     }
 }
 

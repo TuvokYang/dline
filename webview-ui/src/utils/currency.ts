@@ -58,10 +58,11 @@ function getAmountFormatter(fractionDigits: number): Intl.NumberFormat {
  * Format an amount in the given billing currency, e.g. `¥1,234.50` or `-$0.25`.
  *
  * @param amount Amount expressed in `currency`.
- * @param currency ISO 4217 code, normally `ModelInfo.pricing.currency`; defaults to USD.
+ * @param currency Same-source ISO 4217 code. Missing currency leaves the amount unlabelled.
  * @param fractionDigits Exact number of fraction digits to show.
  */
 export function formatCurrencyAmount(amount: number, currency?: string, fractionDigits = 2): string {
     const sign = amount < 0 ? "-" : ""
-    return `${sign}${getCurrencySymbol(currency)}${getAmountFormatter(fractionDigits).format(Math.abs(amount))}`
+    const symbol = currency?.trim() ? getCurrencySymbol(currency) : ""
+    return `${sign}${symbol}${getAmountFormatter(fractionDigits).format(Math.abs(amount))}`
 }

@@ -158,8 +158,9 @@ export async function createOpenRouterStream(
         ...getOpenAIToolParams(tools, !!enableParallelToolCalling),
     }
 
+    const sentAtMs = Date.now()
     // @ts-expect-error-next-line
     const stream = await client.chat.completions.create(requestPayload)
 
-    return stream
+    return { stream, sentAtMs }
 }

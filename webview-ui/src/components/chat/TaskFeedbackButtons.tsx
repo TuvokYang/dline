@@ -3,6 +3,7 @@ import { TaskFeedbackType } from "@shared/WebviewMessage"
 import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
 import React, { useEffect, useState } from "react"
 import styled from "styled-components"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 import { TaskServiceClient } from "@/services/grpc-client"
 
@@ -21,6 +22,7 @@ const ButtonWrapper = styled.div`
 `
 
 const TaskFeedbackButtons: React.FC<TaskFeedbackButtonsProps> = ({ messageTs, isFromHistory = false, classNames }) => {
+    const { t } = useUiTranslation()
     const [feedback, setFeedback] = useState<TaskFeedbackType | null>(null)
     const [shouldShow, setShouldShow] = useState<boolean>(true)
 
@@ -71,16 +73,19 @@ const TaskFeedbackButtons: React.FC<TaskFeedbackButtonsProps> = ({ messageTs, is
         }
     }
 
+    const helpfulLabel = t("chatRows.feedback.helpful")
+    const notHelpfulLabel = t("chatRows.feedback.notHelpful")
+
     return (
         <div className={cn("flex items-center justify-end shrink-0", classNames)}>
             <ButtonsContainer>
                 <ButtonWrapper>
                     <VSCodeButton
                         appearance="icon"
-                        aria-label="This was helpful"
+                        aria-label={helpfulLabel}
                         disabled={feedback !== null}
                         onClick={() => handleFeedback("thumbs_up")}
-                        title="This was helpful">
+                        title={helpfulLabel}>
                         <IconWrapper>
                             <span
                                 className={`codicon ${feedback === "thumbs_up" ? "codicon-thumbsup-filled" : "codicon-thumbsup"}`}
@@ -91,10 +96,10 @@ const TaskFeedbackButtons: React.FC<TaskFeedbackButtonsProps> = ({ messageTs, is
                 <ButtonWrapper>
                     <VSCodeButton
                         appearance="icon"
-                        aria-label="This wasn't helpful"
+                        aria-label={notHelpfulLabel}
                         disabled={feedback !== null && feedback !== "thumbs_down"}
                         onClick={() => handleFeedback("thumbs_down")}
-                        title="This wasn't helpful">
+                        title={notHelpfulLabel}>
                         <IconWrapper>
                             <span
                                 className={`codicon ${feedback === "thumbs_down" ? "codicon-thumbsdown-filled" : "codicon-thumbsdown"}`}

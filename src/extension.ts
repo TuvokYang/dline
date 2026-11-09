@@ -5,6 +5,7 @@ import { DIFF_VIEW_URI_SCHEME } from "@hosts/vscode/VscodeDiffViewProvider"
 import { envFlagEnabled } from "@shared/env"
 import * as vscode from "vscode"
 import { Logger } from "@/shared/services/Logger"
+import { type AwaySettings, getAwaySettings } from "./core/controller/state/awaySettings"
 import { sendAccountButtonClickedEvent } from "./core/controller/ui/subscribeToAccountButtonClicked"
 import { sendChatButtonClickedEvent } from "./core/controller/ui/subscribeToChatButtonClicked"
 import { sendHistoryButtonClickedEvent } from "./core/controller/ui/subscribeToHistoryButtonClicked"
@@ -13,7 +14,7 @@ import { sendSettingsButtonClickedEvent } from "./core/controller/ui/subscribeTo
 import { sendWorktreesButtonClickedEvent } from "./core/controller/ui/subscribeToWorktreesButtonClicked"
 import { WebviewProvider } from "./core/webview"
 import { registerExtensionReloadWatcher } from "./dev/ExtensionReloadWatcher"
-import { createClineAPI } from "./exports"
+import { createDlineAPI } from "./exports"
 import { accountFeatureGate, isAccountFeatureActive } from "./services/account/accountFeatureGate"
 import { initializeTestMode } from "./services/test/TestMode"
 // Necessary to have access to String.prototype.toPosix.
@@ -33,6 +34,7 @@ import { improveWithCline } from "./core/controller/commands/improveWithCline"
 import { sendAddToInputEvent } from "./core/controller/ui/subscribeToAddToInput"
 import { sendShowWebviewEvent } from "./core/controller/ui/subscribeToShowWebview"
 import { HookDiscoveryCache } from "./core/hooks/HookDiscoveryCache"
+import { currentGlobalMetricsRuntime } from "./core/metrics/GlobalMetricsRuntime"
 import { OrchestratorController } from "./core/orchestrator/OrchestratorController"
 import {
     cleanupMcpMarketplaceCatalogFromGlobalState,
@@ -44,7 +46,7 @@ import {
 import { workspaceResolver } from "./core/workspace"
 import { findMatchingNotebookCell, getContextForCommand, showWebview } from "./hosts/vscode/commandUtils"
 import { abortCommitGeneration, generateCommitMsg } from "./hosts/vscode/commit-message-generator"
-import { registerClineOutputChannel } from "./hosts/vscode/hostbridge/env/debugLog"
+import { registerClineOutputChannel } from "./hosts/vscode/hostbridge/environment/debugLog"
 import {
     disposeVscodeCommentReviewController,
     getVscodeCommentReviewController,
@@ -68,6 +70,7 @@ import { SharedUriHandler, TASK_URI_PATH } from "./services/uri/SharedUriHandler
 import { ShowMessageType } from "./shared/proto/dline/host/window"
 import { fileExistsAtPath } from "./utils/fs"
 
+let awaySettings: AwaySettings | undefined
 const RELOAD_WINDOW_ACTION = "Reload Window"
 const RELOAD_WINDOW_PROMPT_VERSION_KEY = "dlineReloadWindowPromptVersion"
 
@@ -158,6 +161,9 @@ export async function activate(context: vscode.ExtensionContext) {
         Logger.error("[Dline] Activation stopped because core storage initialization failed")
         return
     }
+    awaySettings = getAwaySettings(webview.controller.stateManager)
+    await awaySettings.reconcile()
+    context.subscriptions.push({ dispose: () => awaySettings?.beginClose() })
     void showReloadWindowPromptIfNeeded(context)
 
     // 5. Register WebviewPanelSerializer for Editor Tab panel restoration
@@ -744,7 +750,7 @@ ${ctx.cellJson || "{}"}
 
     Logger.log(`[Dline] extension activated in ${performance.now() - activationStartTime} ms`)
 
-    return createClineAPI(webview.controller)
+    return createDlineAPI(webview.controller)
 }
 
 async function showReloadWindowPromptIfNeeded(context: vscode.ExtensionContext) {
@@ -950,6 +956,16 @@ async function getBinaryLocation(name: string): Promise<string> {
 
 // This method is called when your extension is deactivated
 export async function deactivate() {
+    await awaySettings?.dispose()
+    awaySettings = undefined
+    // The global metrics writer is process-level and no Task owns it, so nothing else
+    // would write what is still buffered. `release` drains under its own budget; calling
+    // `flush` first would wait on the worker's request deadline with no time bound at
+    // all, and a wedged writer must never hold the window open.
+    const globalMetrics = currentGlobalMetricsRuntime()
+    if (globalMetrics) {
+        await globalMetrics.release().catch(() => undefined)
+    }
     // Dispose Non-VSCode-specific services
     await tearDown()
 

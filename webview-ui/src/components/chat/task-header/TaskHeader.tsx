@@ -1,9 +1,11 @@
 import type { ModelPricing } from "@shared/api"
 import { UiMessage } from "@shared/ExtensionMessage"
+import type { ApiCostSegment } from "@shared/getApiMetrics"
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import React, { useCallback, useLayoutEffect, useState } from "react"
 import Thumbnails from "@/components/common/Thumbnails"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 import { getEnvironmentColor } from "@/utils/environmentColors"
 import CopyTaskButton from "./buttons/CopyTaskButton"
@@ -19,7 +21,6 @@ import { PromptCacheHealthBanner } from "./PromptCacheHealthBanner"
 import { TaskRateMetrics } from "./rate-metrics/TaskRateMetrics"
 import SpawnedTasksBar from "./SpawnedTasksBar"
 import { TaskLockBanner } from "./TaskLockBanner"
-import { hasNonZeroModelPricing } from "./util"
 
 const IS_DEV = process.env.IS_DEV === '"true"'
 interface TaskHeaderProps {
@@ -33,6 +34,8 @@ interface TaskHeaderProps {
     totalCost: number
     cacheHitRate?: number
     currency?: string
+    /** Per-currency cost runs, newest last. The capsule shows the newest labelled one. */
+    costSegments?: ApiCostSegment[]
     taskId?: string
     lastApiReqTotalTokens?: number
     lastProgressMessageText?: string
@@ -61,6 +64,7 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
     totalCost,
     cacheHitRate,
     currency,
+    costSegments,
     taskId,
     lastApiReqTotalTokens,
     lastProgressMessageText,
@@ -76,6 +80,7 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
     onCompactTask,
     onForceTruncateTask,
 }) => {
+    const { t } = useUiTranslation()
     const {
         currentTaskItem,
         taskViewState,
@@ -126,7 +131,7 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 
     const totalInputTokens = tokensIn + (cacheWrites ?? 0) + (cacheReads ?? 0)
     const currentContextTokens = lastApiReqTotalTokens ?? totalInputTokens
-    const isCostAvailable = totalCost != null && hasNonZeroModelPricing(pricing)
+    const isCostAvailable = totalCost != null
     const hasMetrics = isCostAvailable || totalInputTokens > 0 || tokensOut > 0 || cacheHitRate !== undefined
     const hasRateMetrics = (requestsPerMinute ?? 0) > 0 || (tokensPerMinute ?? 0) > 0
     const hasUnifiedMetrics = hasMetrics || hasRateMetrics
@@ -164,7 +169,7 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
                 }}>
                 {/* Task Title */}
                 <div
-                    aria-label={isTaskExpanded ? "Collapse task header" : "Expand task header"}
+                    aria-label={t(isTaskExpanded ? "chatInput.header.collapse" : "chatInput.header.expand")}
                     className="flex justify-between items-center cursor-pointer"
                     onClick={(event) => {
                         if (!event.currentTarget.contains(event.target as Node)) return
@@ -185,9 +190,9 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
                                 <CopyTaskButton className={BUTTON_CLASS} taskText={task.text} />
                                 <RefreshPromptButton
                                     className={BUTTON_CLASS}
-                                    currency={currency}
+                                    currency={pricing?.currency}
                                     estimatedInputTokens={currentContextTokens}
-                                    inputPrice={pricing?.inputPrice}
+                                    inputPrice={pricing?.strategy?.flat?.prices?.inputPrice}
                                     promptFreshness={promptFreshness}
                                     taskId={taskId}
                                 />
@@ -215,6 +220,7 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
                                 cacheHitRate={cacheHitRate}
                                 cacheReads={cacheReads}
                                 cacheWrites={cacheWrites}
+                                costSegments={costSegments}
                                 currency={currency}
                                 isCostAvailable={isCostAvailable}
                                 requestsPerMinute={requestsPerMinute ?? 0}

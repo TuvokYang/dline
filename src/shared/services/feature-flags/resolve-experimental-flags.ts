@@ -2,8 +2,8 @@ import { envFlagEnabled } from "@/shared/env"
 import {
     EXPERIMENTAL_FEATURE_FLAGS,
     ExperimentalFeatureFlag,
-    ExperimentalFeatureFlagDefaultValue,
-    ExperimentalFeatureFlagDevelopmentDefault,
+    experimentalFeatureFlagDefault,
+    REMOTE_ONLY_EXPERIMENTAL_FEATURE_FLAGS,
 } from "./feature-flags"
 
 /**
@@ -12,12 +12,12 @@ import {
  * In order of precedence:
  *
  *   1. `DLINE_EXPERIMENTAL_<FLAG>` when set to a recognised value
- *   2. `IS_DEV` in the runtime environment, which turns every switch on
- *   3. the switch's development default, in a development build
+ *   2. runtime `IS_DEV` or a development build, which offer every ordinary flag
+ *   3. the remote service
  *   4. the static default
  *
- * The Dline feature service answers between 3 and 4, so the local sources here
- * are reported separately from the static default.
+ * Remote-only flags bypass all local sources and default to off. Local sources
+ * are reported separately so the layered provider can consult the remote service.
  *
  * This module is deliberately free of IO so the precedence can be tested by
  * passing an environment object rather than mutating `process.env`.
@@ -61,16 +61,13 @@ export function resolveLocalExperimentalFlag(
     env: EnvironmentSource,
     developmentBuild = false,
 ): boolean | undefined {
+    if (REMOTE_ONLY_EXPERIMENTAL_FEATURE_FLAGS.has(flag)) return undefined
     const explicit = readBooleanEnv(env[environmentVariableNameFor(flag)])
     if (explicit !== undefined) {
         return explicit
     }
 
-    if (envFlagEnabled(env[DEV_ENV_VAR])) {
-        return true
-    }
-
-    return developmentBuild ? ExperimentalFeatureFlagDevelopmentDefault[flag] : undefined
+    return envFlagEnabled(env[DEV_ENV_VAR]) || developmentBuild ? true : undefined
 }
 
 /** Reads one switch from the local sources, falling back to its static default. */
@@ -79,7 +76,7 @@ export function resolveExperimentalFlag(
     env: EnvironmentSource,
     developmentBuild = false,
 ): boolean {
-    return resolveLocalExperimentalFlag(flag, env, developmentBuild) ?? ExperimentalFeatureFlagDefaultValue[flag] === true
+    return resolveLocalExperimentalFlag(flag, env, developmentBuild) ?? experimentalFeatureFlagDefault(flag) === true
 }
 
 export function resolveExperimentalFlags(

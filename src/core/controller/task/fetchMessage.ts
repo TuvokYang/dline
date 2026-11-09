@@ -12,7 +12,15 @@ export async function fetchMessage(controller: Controller, request: FetchMessage
     const opening = currentOpening(controller, request)
     if (!opening) throw new Error("Message query requires the matching opened Task instance")
     const anchorTs = request.anchorTs === undefined ? undefined : Number(request.anchorTs)
-    const page = await controller.fetchCurrentTaskMessages(Number(request.referenceIndex), Number(request.count), anchorTs)
+    const page =
+        request.anchorIndex === undefined
+            ? await controller.fetchCurrentTaskMessages(Number(request.referenceIndex), Number(request.count), anchorTs)
+            : await controller.fetchCurrentTaskMessages(
+                  Number(request.referenceIndex),
+                  Number(request.count),
+                  anchorTs,
+                  Number(request.anchorIndex),
+              )
     // A page read across a reopen belongs to the surface that is gone.
     if (controller.currentOpening() !== opening) throw new Error("Message query Task instance was closed")
     return {

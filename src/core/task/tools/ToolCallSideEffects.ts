@@ -1,90 +1,111 @@
 import type { ToolUse } from "@core/assistant-message"
+import { STANDARD_TOOL_SPECS } from "@core/prompts/tools/tool-specs"
+import { DlineDefaultTool } from "@shared/tools"
 import { Logger } from "@/shared/services/Logger"
-import { type ChecklistChange, type ChecklistReport, diffChecklist, parseChecklist } from "../telemetry/ChecklistDiff"
-import type { TaskConfig } from "./types/TaskConfig"
+import { FocusChainPrompts } from "../focus-chain/prompts"
+import type { FocusChainUpdateResult } from "../focus-chain/update-result"
+import { normalizeToolExecutionResult, type ToolHandlerResult } from "./ToolExecutionResult"
+import type { TaskConfig, TaskInteractionPorts } from "./types/TaskConfig"
 
-/**
- * Effects that accompany a tool call without belonging to any tool.
- *
- * `task_progress` rides on every tool rather than being one. It has no owning
- * handler, so it is applied once around the call instead of being repeated in
- * every handler.
- *
- * Every member is optional because these are capabilities of the surface a task
- * runs on, not of tool execution. A task driven by a person has a checklist to
- * update and a workspace to restore; a task instantiated to generate a title,
- * review a change, or decide an approval has neither, and must be able to run
- * the same tools without supplying stubs for effects it does not have.
- */
+/** The checklist owner alone validates, commits, publishes, and observes accepted updates. */
 export interface ToolCallSideEffectPort {
-    /** Publish the checklist a call carried, for a surface that presents one. */
-    readonly reportProgress?: (progress: string) => Promise<void>
-    /**
-     * Report what changed in the checklist, for the usage fact of the turn.
-     *
-     * The change is computed here because this is the only place that sees both
-     * reports. A surface without a checklist never supplies the callback, so an
-     * absent callback means "this task has no checklist", not "nothing changed".
-     */
-    readonly observeChecklist?: (changes: readonly ChecklistChange[]) => void
+    readonly reportProgress?: (progress: string) => Promise<FocusChainUpdateResult | undefined>
 }
 
-/**
- * Read the effects the given task surface actually supports.
- *
- * A capability the surface does not provide stays undefined rather than
- * becoming a no-op function, so "this task has no checklist" is visible to the
- * caller instead of being indistinguishable from "the checklist was empty".
- */
 export function resolveToolCallSideEffects(config: TaskConfig): ToolCallSideEffectPort {
-    const callbacks = config.callbacks as Partial<TaskConfig["callbacks"]> | undefined
-    return {
-        ...(callbacks?.updateFCListFromToolResponse === undefined
-            ? {}
-            : { reportProgress: (progress: string) => callbacks.updateFCListFromToolResponse!(progress) }),
-        ...(callbacks?.observeChecklist === undefined
-            ? {}
-            : { observeChecklist: (changes: readonly ChecklistChange[]) => callbacks.observeChecklist!(changes) }),
-    }
+    const report = config.callbacks?.updateFCListFromToolResponse
+    return report ? { reportProgress: (progress) => report(progress) } : {}
 }
 
-/**
- * Apply the checklist a call carried, after the call.
- *
- * It runs after the handler because chat rows are ordered by a presentation
- * id: the tool's own row was numbered when the call was planned, while a row
- * appended here takes a fresh, higher id. Reporting first would emit an id
- * below the row that follows it, and the list would render no further.
- *
- * Failures are contained: the checklist is bookkeeping beside the call, not a
- * precondition for it.
- */
-export async function applyToolCallSideEffects(port: ToolCallSideEffectPort, block: ToolUse): Promise<void> {
-    const progress = block.params.task_progress
-    if (!progress?.trim()) return
-    observeChecklist(port, progress)
-    if (port.reportProgress) {
+const progressTools = new Set(
+    STANDARD_TOOL_SPECS.filter((spec) => spec.parameters?.some((parameter) => parameter.name === "task_progress")).map(
+        (spec) => spec.id,
+    ),
+)
+
+/** A call-local, once-only lifecycle. Feedback never replays the original progress. */
+export class ToolCallProgress {
+    private committed?: Promise<void>
+    private diagnostic?: string
+
+    constructor(
+        private readonly config: TaskConfig,
+        private readonly block: ToolUse,
+        private readonly tool: DlineDefaultTool,
+    ) {}
+
+    commit = (presented = false): Promise<void> => {
+        this.committed ??= this.config.commitToolProgress
+            ? this.config.commitToolProgress(() => this.apply(), presented)
+            : this.apply()
+        return this.committed
+    }
+
+    private async apply(): Promise<void> {
+        if (this.tool === DlineDefaultTool.ATTEMPT) {
+            if (Object.hasOwn(this.block.params, "task_progress")) {
+                this.diagnostic = FocusChainPrompts.ignoredCompletionProgress
+                await this.config.callbacks.say("error", this.diagnostic)
+            }
+            return
+        }
+        if (!progressTools.has(this.tool)) return
+        const progress = this.block.params.task_progress
+        if (!progress?.trim()) return
         try {
-            await port.reportProgress(progress)
+            const result = await resolveToolCallSideEffects(this.config).reportProgress?.(progress)
+            if (result?.kind === "failed" || result?.kind === "rejected") this.diagnostic = result.message
         } catch (error) {
-            Logger.error(`Failed to apply task_progress from ${block.name}`, error instanceof Error ? error : undefined)
+            Logger.error(`Failed to apply task_progress from ${this.block.name}`, error instanceof Error ? error : undefined)
+            this.diagnostic = FocusChainPrompts.persistenceFailed
+            await this.config.callbacks.say("error", this.diagnostic)
         }
     }
-}
 
-/** The last checklist this task saw, so the next report can be compared against it. */
-const lastChecklist = new WeakMap<ToolCallSideEffectPort, ChecklistReport>()
+    /** Decorate presentation, not outcomes: the hook runs before the dialog can accept feedback. */
+    interactions(port: TaskInteractionPorts): TaskInteractionPorts {
+        const present = port.present?.bind(port)
+        return {
+            open: (request) =>
+                port.open({
+                    ...request,
+                    afterPresented: async () => {
+                        await request.afterPresented?.()
+                        await this.commit(true)
+                    },
+                }),
+            complete: (request) =>
+                port.complete({
+                    ...request,
+                    afterPresented: async () => {
+                        await request.afterPresented?.()
+                        await this.commit(true)
+                    },
+                }),
+            ...(present
+                ? {
+                      present: (request: Parameters<NonNullable<TaskInteractionPorts["present"]>>[0]) =>
+                          present({
+                              ...request,
+                              afterPresented: async () => {
+                                  await request.afterPresented?.()
+                                  await this.commit(true)
+                              },
+                          }),
+                  }
+                : {}),
+            ...(port.stageCompletion ? { stageCompletion: port.stageCompletion.bind(port) } : {}),
+            say: port.say.bind(port),
+        }
+    }
 
-/** Bookkeeping beside the call: a checklist usage cannot read is not a failed call. */
-function observeChecklist(port: ToolCallSideEffectPort, markdown: string): void {
-    if (!port.observeChecklist) return
-    try {
-        const previous = lastChecklist.get(port)
-        const report = parseChecklist(markdown)
-        const changes = diffChecklist(previous, report)
-        lastChecklist.set(port, report)
-        if (changes.length > 0) port.observeChecklist(changes)
-    } catch (error) {
-        Logger.error("Failed to observe task_progress checklist", error instanceof Error ? error : undefined)
+    async finish(result: ToolHandlerResult): Promise<ToolHandlerResult> {
+        await this.commit()
+        if (!this.diagnostic) return result
+        const normalized = normalizeToolExecutionResult(result)
+        const content =
+            typeof normalized.response === "string" ? [{ type: "text" as const, text: normalized.response }] : normalized.response
+        const response = [...content, { type: "text" as const, text: this.diagnostic }]
+        return { ...normalized, response }
     }
 }

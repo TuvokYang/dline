@@ -54,7 +54,8 @@ export class TogetherHandler extends ApiHandler {
     @withRetry()
     async *createMessage(systemPrompt: string, messages: ClineStorageMessage[], tools?: OpenAITool[]): ApiStream {
         const client = this.ensureClient()
-        const modelId = this.getModel().id
+        const model = this.getModel()
+        const modelId = model.id
         const isDeepseekReasoner = modelId.includes("deepseek-reasoner")
 
         let openAiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
@@ -66,6 +67,7 @@ export class TogetherHandler extends ApiHandler {
             openAiMessages = convertToR1Format([{ role: "user", content: systemPrompt }, ...messages])
         }
 
+        const sentAtMs = Date.now()
         const stream = await client.chat.completions.create({
             model: modelId,
             messages: openAiMessages,
@@ -96,10 +98,19 @@ export class TogetherHandler extends ApiHandler {
             }
 
             if (chunk.usage) {
+                const cost = ApiHandler.calculateUsageCost(
+                    model.info.pricing,
+                    {
+                        inputTokens: chunk.usage.prompt_tokens || 0,
+                        outputTokens: chunk.usage.completion_tokens || 0,
+                    },
+                    sentAtMs,
+                )
                 yield {
                     type: "usage",
                     inputTokens: chunk.usage.prompt_tokens || 0,
                     outputTokens: chunk.usage.completion_tokens || 0,
+                    ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                 }
             }
         }

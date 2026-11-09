@@ -309,6 +309,9 @@ export class SystemPromptCacheService {
      */
     private buildPromptInfo(context: SystemPromptContext, tools: readonly ClineTool[] | undefined): FrozenPromptBuilderInfo {
         const webSearchRoutingPlan = context.webSearchRoutingPlan
+        // The request-level format is the fact; the routing plan only echoes it.
+        // Keying on the plan alone made the cache depend on Web tools being on.
+        const selectedApiFormat = context.selectedApiFormat ?? webSearchRoutingPlan?.serverToolPlan.apiFormat
         return {
             contractVersion: SYSTEM_PROMPT_CONTRACT_VERSION,
             providerId: context.providerInfo.providerId,
@@ -317,9 +320,7 @@ export class SystemPromptCacheService {
             nativeTools: (tools?.length ?? 0) > 0,
             focusChainEnabled: context.focusChainSettings?.enabled === true,
             subagentsEnabled: context.promptProfile === PromptProfile.Standard && context.subagentsEnabled === true,
-            ...(webSearchRoutingPlan?.serverToolPlan.apiFormat === undefined
-                ? {}
-                : { apiFormat: webSearchRoutingPlan.serverToolPlan.apiFormat }),
+            ...(selectedApiFormat === undefined ? {} : { apiFormat: selectedApiFormat }),
             webToolsEnabled: context.clineWebToolsEnabled === true,
             ...(webSearchRoutingPlan === undefined
                 ? {}

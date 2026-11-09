@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import type { ToolUse } from "@core/assistant-message"
 import { collectContextWindowRequestPressures } from "@core/context/context-management/context-pressure"
 import { getContextWindowInfo } from "@core/context/context-management/context-window-utils"
+import { getAwaySettings } from "@core/controller/state/awaySettings"
 import type { IgnoreController } from "@core/ignore/IgnoreController"
 import type { InputResourceStore } from "@core/input-semantics/InputResourceStore"
 import { LegacyInputAdapter } from "@core/input-semantics/LegacyInputAdapter"
@@ -11,6 +12,7 @@ import { StoreResourceVerifier } from "@core/input-semantics/StoreResourceVerifi
 import { TaskCommandExpander, TaskMentionResolver } from "@core/input-semantics/TaskEntityResolvers"
 import { openTaskInputResources } from "@core/input-semantics/TaskInputResourceStore"
 import { TaskSemanticInputAdmission } from "@core/input-semantics/TaskSemanticInputAdmission"
+import { openGlobalMetricsRuntime } from "@core/metrics/GlobalMetricsRuntime"
 import { formatResponse } from "@core/prompts/responses"
 import { executeReportBugOutcome } from "@core/reporting/ReportBugWorkflow"
 import type { StateManager } from "@core/storage/StateManager"
@@ -22,6 +24,7 @@ import { Logger } from "@shared/services/Logger"
 import type { TaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
 import type { ApiConversation } from "../../storage/ApiConversation"
 import type { UIMessage } from "../../storage/UIMessage"
+import { resolveTaskApiProfile } from "../ApiProfileRecovery"
 import { type CommandRowSurface, settleInterruptedCommandRows } from "../activity/interruptedCommandRows"
 import { TaskActivityPersistence } from "../activity/TaskActivityPersistence"
 import { TaskActivityStore } from "../activity/TaskActivityStore"
@@ -54,8 +57,10 @@ import { MessageStateHandler } from "../message-state"
 import { createSuccessorHandoffPublisher, type TaskSuccessorPort } from "../new-task/successor-handoff"
 import { observeTaskStateVault, TaskTurnTelemetry } from "../observability/task-turn-telemetry"
 import { formatApiRequestTiming } from "../performance/api-request-timing"
+import type { FrozenMetricsIdentity } from "../performance/metrics-emitter"
 import { TaskPerformanceOwner } from "../performance/TaskPerformanceOwner"
 import { TaskPerformanceRequestReporter } from "../performance/TaskPerformanceRequestReporter"
+import { metricsWorkerPath, openTaskMetricsRuntime, reportMetricsUnavailable } from "../performance/task-metrics-runtime"
 import { TaskPromptContextOwner } from "../prompt/TaskPromptContextOwner"
 import { TaskPromptLifecycle } from "../prompt/TaskPromptLifecycle"
 import { PromptCacheHealthTracker } from "../prompt-cache/PromptCacheHealthTracker"
@@ -71,6 +76,7 @@ import { RestoredToolDialogContinuation } from "../session/RestoredToolDialogCon
 import { RetainedInputPresenter } from "../session/RetainedInputPresenter"
 import { SessionResourceScope } from "../session/SessionResourceScope"
 import { TaskApiHandlerOwner } from "../session/TaskApiHandlerOwner"
+import { TaskAwayConfigurationBinding } from "../session/TaskAwayConfigurationBinding"
 import { TaskBackgroundIngressOwner } from "../session/TaskBackgroundIngressOwner"
 import { TaskCollaborationSessionOwner } from "../session/TaskCollaborationSessionOwner"
 import { createTaskContextBudget } from "../session/TaskContextBudget"
@@ -99,6 +105,55 @@ import { ToolValidator } from "../tools/ToolValidator"
 import type { TaskSessionHostFactory } from "./TaskSessionHostFactory"
 import type { TaskSessionPorts } from "./TaskSessionPorts"
 import { importTaskUpgrade, taskUpgradeImportPending } from "./TaskUpgradeImport"
+
+/**
+ * Freeze the identity a Task's unified metrics belong to, then wire the writer.
+ *
+ * The identity comes from the handler actually serving this session and from the
+ * task's own configuration, so a later Profile or Mode switch cannot restate who a
+ * historical number belonged to. `workspaceId` is the host's workspace identity, not a
+ * metrics level: usage is accounted per Profile and per Task.
+ */
+async function openTaskMetricsFor(
+    options: OpenTaskSessionCompositionOptions,
+    api: TaskApiHandlerOwner,
+    taskIncarnationId: string,
+): Promise<Awaited<ReturnType<typeof openTaskMetricsRuntime>>> {
+    // The global level exists once for the process, so opening it here is safe and
+    // idempotent: the first Task that records a fact creates it, and every later Task
+    // offers to that same queue instead of opening a writer of its own. Opening also
+    // starts the writer, so a settlement never pays worker startup on the hot path.
+    const global = openGlobalMetricsRuntime({ workerPath: metricsWorkerPath(__dirname) })
+    void global.start().catch((error: unknown) => {
+        // A global write path that cannot start degrades the global level only. This is
+        // deliberately not reported through the Task's own metrics path: that path is
+        // healthy here, and telling the user a Task's numbers are unavailable would be
+        // wrong. The global writer records its own health when a pass fails.
+        Logger.warn(`[Metrics] Global metrics writer failed to start: ${error instanceof Error ? error.message : String(error)}`)
+    })
+    const configuration = options.stateManager.getApiConfigurationForTask(options.taskId)
+    // The task's own mode, never the global one. `TaskStateManager.mode` is deliberately
+    // per-task ("never fall back to global state"), and the session builds its handler
+    // from it, so resolving here with the global mode would label the first requests with
+    // a Profile the handler never used whenever the two modes select different Profiles.
+    const resolution = resolveTaskApiProfile(configuration, options.stateManager.getSettingsKeyForTask("mode", options.taskId))
+    const profile = resolution.resolvedApiProfile
+    const handler = api.current()
+    const identity: FrozenMetricsIdentity = {
+        workspaceId: configuration.workspaceId ?? "",
+        taskId: options.taskId,
+        profileId: profile?.id ?? "",
+        providerId: profile?.provider ?? handler.getProviderId?.() ?? "",
+        modelId: profile?.modelId || profile?.modelInfo?.id || handler.getModel().id,
+        // Only the fingerprint is kept; the key never leaves the Profile store.
+        ...(profile?.apiKey ? { apiKey: profile.apiKey } : {}),
+    }
+    void taskIncarnationId
+    // The writer must be started here: `emit` only buffers, and a Task that never
+    // starts its host would accumulate neutral events it never writes. Nothing else
+    // in the composition path starts it, so this is the owner's one start.
+    return await openTaskMetricsRuntime({ identity, workerPath: metricsWorkerPath(__dirname), startImmediately: true })
+}
 
 /**
  * Message stores the caller opened for this incarnation.
@@ -207,6 +262,10 @@ export class TaskSessionCompositionService {
         if (options.deferRestoredCommands) upgradeImportPending = await taskUpgradeImportPending(upgrade)
         else await importTaskUpgrade(upgrade)
         const settings = new TaskStateManager(options.taskId, options.stateManager)
+        const awayConfiguration = new TaskAwayConfigurationBinding(getAwaySettings(options.stateManager), (error) =>
+            Logger.error(`[Task ${options.taskId}] Away configuration failed`, error),
+        )
+        resources.add(awayConfiguration)
         const toolState = new DefaultToolHandlerState()
         // One view per task: requests, compaction and every conversation reader
         // share it, and each journal payload is rendered once rather than once per round.
@@ -372,7 +431,8 @@ export class TaskSessionCompositionService {
                     nextPresentationId: () => nextPresentationId(),
                     publishRow: (row) => options.prompt.ports.presentation.publish(row),
                     publishPostCommit: postCommit,
-                    reportBug: async (outcome) => (await executeReportBugOutcome(outcome)) !== "invalid",
+                    reportBug: async (outcome, presentation) =>
+                        (await executeReportBugOutcome(outcome, presentation)) !== "invalid",
                     admitReply: (reply) => this.requireSession(session).inputs.admitReply(reply),
                 },
                 resumption,
@@ -402,9 +462,32 @@ export class TaskSessionCompositionService {
             (state) => performance?.committed(state, isRunAtRest(state)),
             (input) => performance?.providerAttemptUsage(input),
             (input) => performance?.providerRequestCompleted(input),
+            (input, toolCalls) => performance?.providerLogicalToolsSettled(input, toolCalls),
+            (input) => performance?.providerLogicalToolsExpected(input),
         )
         taskTelemetry.registerAlias(taskIncarnationId)
         resources.add({ release: async () => taskTelemetry.dispose() })
+        // Unified metrics are wired from the Profile this Task actually runs under,
+        // frozen now: a later Profile switch must not restate who a historical number
+        // belonged to. A failure here degrades the feature, never the Task.
+        const metricsRuntime = await openTaskMetricsFor(options, api, taskIncarnationId).catch((error: unknown) => {
+            reportMetricsUnavailable(options.taskId, error)
+            return undefined
+        })
+        if (metricsRuntime) {
+            resources.add({
+                release: async () => {
+                    // A writer that could not confirm it stopped is reported, not
+                    // assumed safe: a deletion path must not remove a file it still holds.
+                    const stopped = await metricsRuntime.attachment.release()
+                    if (!stopped.released) {
+                        Logger.warn(
+                            `[Task ${options.taskId}] Unified metrics writer did not stop: ${stopped.reason ?? "unknown"}`,
+                        )
+                    }
+                },
+            })
+        }
         performance = await TaskPerformanceOwner.open({
             taskId: options.taskId,
             readState,
@@ -412,6 +495,39 @@ export class TaskSessionCompositionService {
             onChanged: () => void options.publishState().catch(() => undefined),
             attemptUsage: taskTelemetry,
             readUsagePolicyGeneration: () => taskTelemetry.usagePolicyGeneration(),
+            // Read at admission, so a Profile switched between sends attributes each
+            // request's tokens to the Profile that actually served it.
+            readServingIdentity: () => {
+                // This runs on the send path, so it must never be able to fail a request:
+                // an unreadable Profile list degrades attribution to the opening identity,
+                // which is still a real Profile this Task was opened with.
+                try {
+                    const configuration = options.stateManager.getApiConfigurationForTask(options.taskId)
+                    // The task's own mode, then the Profiles: `settings` here is the task's
+                    // settings override, so the reference it yields is the one the handler
+                    // was built from.
+                    const mode = options.stateManager.getSettingsKeyForTask("mode", options.taskId)
+                    const serving = resolveTaskApiProfile(configuration, mode).resolvedApiProfile
+                    if (!serving) return undefined
+                    const handler = api.current()
+                    return {
+                        profileId: serving.id,
+                        providerId: serving.provider || handler.getProviderId?.() || "",
+                        modelId: serving.modelId || serving.modelInfo?.id || handler.getModel().id,
+                        ...(serving.apiKey ? { apiKey: serving.apiKey } : {}),
+                    }
+                } catch (error) {
+                    Logger.debug(`[Task ${options.taskId}] Serving Profile could not be read: ${String(error)}`)
+                    return undefined
+                }
+            },
+            ...(metricsRuntime
+                ? {
+                      metrics: metricsRuntime.attachment,
+                      metricsQuery: metricsRuntime.reader,
+                      metricsScope: metricsRuntime.scope,
+                  }
+                : {}),
             // Usage reports which tool each settled call ran. The kernel keeps the
             // call, not its tool, so the name comes from the stored invocation.
             resolveInvocationToolName: async (invocationRef) => {
@@ -462,7 +578,12 @@ export class TaskSessionCompositionService {
                 options.stateManager.getCanonicalSettingsKey("imageGenerationEnabled") === true,
                 options.prompt.shouldUseNativeToolCalls,
             )
-            return promptContext.build(scope.providerInfo, scope.webToolsEnabled, scope.webSearchRoutingPlan)
+            return promptContext.build(
+                scope.providerInfo,
+                scope.webToolsEnabled,
+                scope.webSearchRoutingPlan,
+                scope.selectedApiFormat,
+            )
         }
         const usesNativeToolCalls = () =>
             options.prompt.shouldUseNativeToolCalls(
@@ -625,7 +746,9 @@ export class TaskSessionCompositionService {
             interactions,
             callbacks: tool.callbacks,
             readState,
+            readAwayActive: () => awayConfiguration.isActive(),
             readCapabilityToggles: options.prompt.readCapabilityToggles,
+            getMcpServersForOwner: options.prompt.ports.promptContext.getTaskMcpServers,
             readTurnAuthority: (turnId) => turnAuthority.read(turnId),
             workspaceManager: options.prompt.workspaceManager,
             peerTaskSpawner: tool.peerTaskSpawner,
@@ -650,6 +773,7 @@ export class TaskSessionCompositionService {
                   subagents: toolExecution,
                   readState,
                   focusChain: tool.focusChain,
+                  beforeRequest: () => toolExecution.progress.flush(),
               })
             : undefined
         const providerRequests = new TaskProviderRequestFactory({
@@ -663,7 +787,7 @@ export class TaskSessionCompositionService {
             messages: journalMessages,
             authority: turnAuthority,
             tools: toolRuntime,
-            readAdmissionSnapshot: (block) => toolExecution.readAdmissionSnapshot(block),
+            readAdmissionSnapshot: (block) => toolExecution.prepareAdmissionSnapshot(block),
             usesNativeToolCalls: options.prompt.shouldUseNativeToolCalls,
         })
         const realtimeMessages: RealtimeMessagePublisher = {
@@ -796,6 +920,8 @@ export class TaskSessionCompositionService {
         })
         const opened = await openActiveTaskSession({
             taskId: options.taskId,
+            awayConfiguration,
+            automaticResponses: { deliver: (command) => interactions.deliverAutomatic(command) },
             approvalFeedback,
             openReason: options.openReason,
             deferRestoredCommands: options.deferRestoredCommands,
@@ -811,6 +937,8 @@ export class TaskSessionCompositionService {
                     // Applied first and synchronously, so the view it informs never
                     // delays the figure and a failing view cannot skip it.
                     contextUsage.committed(state)
+                    // Opening may commit before the session is returned. Later notifications use its latest state.
+                    toolExecution.progress.synchronize(session?.state() ?? state)
                     compaction.committed(state)
                     collaboration?.committed(state)
                     // The verdict reaches History before the view reads it back.
@@ -840,12 +968,9 @@ export class TaskSessionCompositionService {
             // A round that would overflow the window waits for the summary first,
             // so the request it sends is the one that fits. It guards compose
             // rather than submission because the kernel also opens rounds on its
-            // own, and those must not skip the barrier. The tail the round adds is
-            // handed to the header first, so a compaction it schedules is shown
-            // carrying what it condenses.
+            // own, and those must not skip the barrier.
             compactionBarrier: {
                 settleBeforeRound: (input) => {
-                    contextUsage.staged({ pendingContextTokens: input.pendingContextTokens ?? 0 })
                     // The round carries every result produced so far. They stay
                     // counted until its request opens or a summary replaces them,
                     // since compose or compaction may still stop before either.
@@ -937,20 +1062,6 @@ export class TaskSessionCompositionService {
                         showRow: (row) => options.prompt.ports.presentation.publish(row),
                         publishState: () => options.publishState({ immediate: true }),
                     },
-                    // Subscriptions report no token counts, so today's figures on the
-                    // usage surfaces are counted here, against the Profile that served the request.
-                    profileTokens: {
-                        activeProfileId: () => activeProfile().profileId,
-                        record: (profileId, increment) => {
-                            void options.prompt.ports.profileUsage
-                                .record(profileId, increment)
-                                .catch((error) =>
-                                    Logger.debug(
-                                        `[Task ${options.taskId}] Failed to record daily Profile tokens: ${String(error)}`,
-                                    ),
-                                )
-                        },
-                    },
                 }),
                 performance,
             ),
@@ -997,7 +1108,10 @@ export class TaskSessionCompositionService {
                     },
                 },
                 toolOperationCancellation: {
-                    cancel: (reason) => toolState.cancelOperations(reason),
+                    cancel: (reason) => {
+                        toolExecution.progress.cancel()
+                        toolState.cancelOperations(reason)
+                    },
                     reset: () => toolState.resetOperationCancellation(),
                 },
                 toolSurface: tool.surface,
@@ -1006,6 +1120,7 @@ export class TaskSessionCompositionService {
                 // A continued round has to say why it exists, and the wording
                 // depends on how tools were offered for the current provider.
                 continuation: new TurnContinuationRenderer({ usesNativeToolCalls }),
+                subagentsAvailable: async (signal) => (await providerRequests.frame(signal)).delegationAvailable === true,
                 // Compaction shares the ordinary request's frame, so the summary is
                 // requested against the prefix the provider already cached.
                 compaction: new ProviderCompactionService({
@@ -1066,6 +1181,8 @@ export class TaskSessionCompositionService {
         })
         if (options.collaboration.writable) collaboration.activate()
         interactions.bind(session)
+        opened.bindAwayConfiguration(awayConfiguration)
+        await awayConfiguration.activate()
         return session
     }
 

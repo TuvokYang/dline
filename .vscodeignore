@@ -46,10 +46,11 @@ cli/**
 # sdk (separate monorepo with its own build/release pipeline)
 sdk/**
 
-# Source-of-truth for the marketplace README (the .vsix only ever sees the
-# README.md that scripts/marketplace-readme.mjs swaps into place). The backup
-# only exists if a publish aborts mid-swap; neither should ship in the .vsix.
+# Sources for the Marketplace listing and its GitHub-hosted Chinese edition.
+# The VSIX only contains README.md, swapped by scripts/marketplace-readme.mjs.
+# The sources and a backup left by an aborted swap must not ship in the VSIX.
 README.marketplace.md
+marketplace.zh-cn.md
 .README.github.bak
 
 # Custom

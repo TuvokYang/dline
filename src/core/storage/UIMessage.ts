@@ -9,7 +9,12 @@ import { dedupeClineMessagesByTs } from "./disk"
 import { ensureInstanceLayout, InstanceDatabase, resolveInstanceLayout } from "./instance"
 import { importLegacyUiMessages } from "./messages/importLegacyUiMessages"
 import { openStoredUiMessageRows, openUiMessageRows, UI_MESSAGE_WRITER } from "./messages/openUiMessageRows"
-import { subscribeUiMessageCommits, UI_MESSAGE_ORDINAL, UI_MESSAGE_TIMESTAMP } from "./messages/UiMessageRowStore"
+import {
+    subscribeUiMessageCommits,
+    UI_MESSAGE_ORDINAL,
+    UI_MESSAGE_TIMESTAMP,
+    type UiMessageRowStore,
+} from "./messages/UiMessageRowStore"
 import type { UiMessageRecord } from "./messages/UiMessageRows"
 import { UIMessageWindowReader } from "./UIMessageWindowReader"
 
@@ -27,7 +32,11 @@ function subscriptionKey(databasePath: string): string {
 export class UIMessage {
     private store: BufferedUnifyStore<UiMessage>
 
-    private constructor(store: BufferedUnifyStore<UiMessage>) {
+    private constructor(
+        store: BufferedUnifyStore<UiMessage>,
+        // The buffered store still owns closing these rows; this is only its committed read port.
+        private readonly rows: Pick<UiMessageRowStore, "readRange" | "findLastByTimestamp">,
+    ) {
         this.store = store
     }
 
@@ -73,7 +82,7 @@ export class UIMessage {
         if (duplicateTimestamps > 0 || hasLegacyCheckpointHash) {
             await store.mutate((current) => dedupeClineMessagesByTs(current).map(normalizeStoredCheckpointMessage))
         }
-        return new UIMessage(store)
+        return new UIMessage(store, rows)
     }
 
     /**
@@ -143,6 +152,30 @@ export class UIMessage {
     }
     get count(): number {
         return this.store.count
+    }
+
+    /** A physical committed ordinal, never a position in the staged buffer. */
+    async readCommittedMessageAt(sourceIndex: number): Promise<UiMessageRecord | undefined> {
+        if (!Number.isSafeInteger(sourceIndex) || sourceIndex < 0) return undefined
+        return (await this.rows.readRange(sourceIndex, sourceIndex + 1)).find((record) => record.ordinal === sourceIndex)
+    }
+
+    /** The committed position of an existing message identity, for presentation metadata only. */
+    async sourceIndexOfTimestamp(ts: number): Promise<number | undefined> {
+        return (await this.rows.findLastByTimestamp(ts))?.ordinal
+    }
+
+    /** Clone only the outgoing rows, keeping their order and body, without staging or flushing anything. */
+    async projectMessageSourceIndexes(messages: readonly UiMessage[]): Promise<UiMessage[]> {
+        return await Promise.all(
+            messages.map(async (message) => {
+                const projected = { ...message }
+                delete projected.messageIndex
+                const sourceIndex = await this.sourceIndexOfTimestamp(message.ts)
+                if (sourceIndex !== undefined) projected.messageIndex = sourceIndex
+                return projected
+            }),
+        )
     }
 
     // ── Low-level Write (delegated) ──
@@ -255,6 +288,11 @@ export class UIMessage {
      */
     async updateMessage(index: number, updates: Partial<UiMessage>): Promise<UiMessage> {
         return await this.store.stagePatchAt(index, updates)
+    }
+
+    /** Patch a stable message identity even when a queued insertion moves its ordinal. */
+    async updateMessageByTs(ts: number, updates: Partial<UiMessage>): Promise<UiMessage | undefined> {
+        return await this.store.stagePatchByTimestamp(ts, updates)
     }
 
     /**

@@ -1,0 +1,112 @@
+---
+title: OpenCode
+description: 在 Dline 中接入 OpenCode 推理网关，用量可走预付费余额或 Go 订阅。
+---
+
+import { Steps } from "@astrojs/starlight/components"
+
+OpenCode 提供一个推理网关，转售多家厂商的付费文本模型。Dline 直接与该网关通信，因此一个 Profile 就能覆盖网关提供的全部模型。
+
+**官网：** [opencode.ai](https://opencode.ai/)｜**模型与价格参考：** [opencode.ai/docs/zen](https://opencode.ai/docs/zen/)
+
+一个 Profile 由两个彼此独立的选择组成：
+
+- **Plan** 决定由哪份订阅付费，以及 Dline 读取哪一份模型目录。
+- **API Format** 决定发送请求所用的线上协议。
+
+两者独立，是因为同一份模型可以通过多种协议由网关提供。
+
+## 获取 API Key
+
+<Steps>
+
+1. 登录持有余额或订阅的那个 OpenCode 控制台工作区。
+
+2. 创建 API Key。
+
+3. 立即复制并妥善保存 Key。Dline 只在本地保存该 Key，并仅用于调用网关。
+
+</Steps>
+
+## 在 Dline 中配置
+
+通用步骤见[模型配置](/zh-cn/getting-started/authorizing-with-dline/)。
+
+<Steps>
+
+1. 点击 Dline 面板标题栏的 **Settings** 按钮。
+
+2. 在 **Provider** 中选择 **OpenCode**。
+
+3. 在 **Plan** 中选择该 Profile 计费所依据的订阅。下拉框下方的说明会写明所选 Plan 消耗的是什么。
+
+4. 把 Key 粘贴到 **OpenCode API Key** 输入框。
+
+5. 在 **Model** 中选择模型。
+
+6. 在 **API Format** 中选择协议。付费文本模型三种协议都可用，网关会在其间做转换。
+
+</Steps>
+
+## 模型
+
+打开 **Model** 列表会获取网关当前提供的模型，新模型无需等待 Dline 版本更新就会出现在列表中。列表包含上下文档位、最大输出、能力与价格。
+
+## Plan
+
+| Plan | 消耗的是什么 |
+| --- | --- |
+| Pay-as-you-go | OpenCode 控制台工作区上的预付费余额。 |
+| OpenCode Go | Go 订阅。超出额度后的请求需要开启 Extra Usage。 |
+| OpenCode Go Plus | Go Plus 订阅，它提高了每个模型的月度额度。 |
+| OpenCode Go Teams | 工作区的 Go Teams 订阅，每位成员各自拥有独立额度。 |
+
+请按实际使用的订阅套餐或按量付费方式选择 **Plan**。所选 Plan 决定模型列表与价格；如果预期模型不在列表中，请先检查 **Plan**。
+
+## 协议
+
+在 **API Format** 中可以选择 **OpenAI Chat Completions**、**OpenAI Responses** 或 **Anthropic Messages**。可以调整默认选择；使用非原生协议时，网关会转换请求。
+
+| API Format | 实际端点 |
+| --- | --- |
+| OpenAI Chat Completions | `https://opencode.ai/inference/openai/v1` |
+| OpenAI Responses | `https://opencode.ai/inference/openai/v1` |
+| Anthropic Messages | `https://opencode.ai/inference/anthropic/v1` |
+
+Go 订阅的 Profile 使用 `https://opencode.ai/inference/go/openai/v1` 连接 OpenAI 格式，使用 `https://opencode.ai/inference/go/anthropic/v1` 连接 Anthropic Messages。
+
+选择模型原生协议之外的协议时，卡片会在 **API Format** 下方提示 Console 会转换所选协议。
+
+如果 Profile 中保存的是上述三种之外的协议，请求会在发送前报错。请在 **API Format** 中重新选择上述三种格式之一。
+
+## 思考控制
+
+可用的思考控件取决于所选模型：
+
+- 对于支持强度等级的模型，可使用 **Enable Thinking**，并在模型支持的等级中选择 **Thinking Level**。
+- 对于支持思考 token 预算的模型，可使用 **Enable Thinking**，并在模型的最小值与最大值之间按 1024 token 步长选择 **Thinking Budget**。
+- 有些模型的思考始终开启，无法取消 **Enable Thinking**。
+- 不支持思考的模型没有思考控件。
+
+## 用量与余额
+
+Go 计划的 Profile 每 60 秒刷新一次用量。用量限额是按模型不同的月度美元额度，三个窗口都是这个额度的比例：5 小时窗口是 **20%**，每周窗口是 **50%**，每月窗口是 **100%**。
+
+用量区域显示每个窗口的**已用**百分比，而不是剩余额度或美元余额。开启 **Extra Usage** 后，达到限额会继续从按量付费余额扣费，因此已用百分比可能超过 **100%**。
+
+按量付费的 Console Profile 请到 OpenCode 控制台查看当前余额。Dline 的用量区域会说明该值不可用，不会将其显示为零。
+
+### 每次请求花了多少
+
+Dline 显示的单次请求费用来自网关的实际计费，已计入高峰时段、长上下文与折扣定价。
+
+这是单次请求的费用，与上面的账户额度使用百分比不同。费用为 `0` 表示这次请求本身没有花钱，涵盖免费模型与 Go 在限额内的请求。
+
+## 故障排查
+
+| 问题 | 处理方式 |
+| --- | --- |
+| 提示 `This model is only available inside the OpenCode client` | 网关返回 403。该模型仅限厂商自家客户端使用。请改选付费模型，或改用 Go 计划。 |
+| 提示 `The selected model is not available in this OpenCode mode` | 网关返回 404。所选 Plan 的目录中没有该模型。请换模型或切换 **Plan**。 |
+| 切换 **Plan** 后请求立即开始失败 | 模型列表和价格都来自所选 Plan 的目录。请在新列表里重新选择模型。 |
+| 协议选择被拒绝 | Profile 里存的协议不属于本服务商承载的三种之一。请从提示中列出的一项里选。 |

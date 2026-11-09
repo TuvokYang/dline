@@ -1,5 +1,6 @@
 import { SapAiCoreProviderConfig } from "@shared/proto/dline/provider/sapaicore"
 import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 // Mode import removed — no longer needed in profile-driven architecture
 import { ApiKeyField } from "../common/ApiKeyField"
 import { DebouncedTextField } from "../common/DebouncedTextField"
@@ -16,6 +17,7 @@ interface SapAiCoreProviderProps {
 }
 
 export const SapAiCoreProvider = ({ showModelOptions, isPopup, profile, onUpdate }: SapAiCoreProviderProps) => {
+    const { t } = useUiTranslation()
     const pc = profile.sapaicore ?? SapAiCoreProviderConfig.create()
     const { models, defaultModelId } = useProviderModels("sapaicore")
     const modelInfo = resolveProfileModelInfo(profile, { models, defaultModelId })
@@ -30,35 +32,35 @@ export const SapAiCoreProvider = ({ showModelOptions, isPopup, profile, onUpdate
                 onChange={(value) => onUpdate({ baseUrl: value || undefined })}
                 placeholder="https://api.ai.prod.us-east-1.aws.ml.hana.ondemand.com/v2"
                 style={{ width: "100%" }}>
-                <span style={{ fontWeight: 500 }}>Base URL</span>
+                <span style={{ fontWeight: 500 }}>{t("settings.ui.baseUrl")}</span>
             </DebouncedTextField>
 
             <DebouncedTextField
-                ariaLabel="Client ID"
+                ariaLabel={t("settings.ui.sap.clientId")}
                 initialValue={(pc.clientId as string) ?? ""}
                 onChange={(value) => persistConfig("clientId", value)}
-                placeholder="Enter Client ID"
+                placeholder={t("settings.ui.sap.enterClientId")}
                 style={{ width: "100%" }}>
-                <span style={{ fontWeight: 500 }}>Client ID</span>
+                <span style={{ fontWeight: 500 }}>{t("settings.ui.sap.clientId")}</span>
             </DebouncedTextField>
 
             <DebouncedTextField
-                ariaLabel="Client Secret"
+                ariaLabel={t("settings.ui.sap.clientSecret")}
                 initialValue={(pc.clientSecret as string) ?? ""}
                 onChange={(value) => persistConfig("clientSecret", value)}
-                placeholder="Enter Client Secret"
+                placeholder={t("settings.ui.sap.enterClientSecret")}
                 style={{ width: "100%" }}
                 type="password">
-                <span style={{ fontWeight: 500 }}>Client Secret</span>
+                <span style={{ fontWeight: 500 }}>{t("settings.ui.sap.clientSecret")}</span>
             </DebouncedTextField>
 
             <DebouncedTextField
-                ariaLabel="Token URL"
+                ariaLabel={t("settings.ui.sap.tokenUrl")}
                 initialValue={(pc.tokenUrl as string) ?? ""}
                 onChange={(value) => persistConfig("tokenUrl", value)}
-                placeholder="Enter Token URL"
+                placeholder={t("settings.ui.sap.enterTokenUrl")}
                 style={{ width: "100%" }}>
-                <span style={{ fontWeight: 500 }}>Token URL</span>
+                <span style={{ fontWeight: 500 }}>{t("settings.ui.sap.tokenUrl")}</span>
             </DebouncedTextField>
 
             <ApiKeyField
@@ -71,7 +73,6 @@ export const SapAiCoreProvider = ({ showModelOptions, isPopup, profile, onUpdate
             {showModelOptions && (
                 <>
                     <ModelSelector
-                        label="Model"
                         models={models}
                         onChange={(e) =>
                             onUpdate({

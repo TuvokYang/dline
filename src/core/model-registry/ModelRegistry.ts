@@ -6,13 +6,16 @@
  */
 import { getDlineHomePath } from "@core/storage/disk"
 import { ServerTool, serverToolFromJSON } from "@shared/proto/dline/models/metadata"
-import { getProviderSeedConfig } from "@shared/providers/model-infos"
+import { getProviderCatalog, getProviderCatalogKeys, getProviderSeedConfig } from "@shared/providers/model-infos"
+import { migrateModelPricing } from "@shared/providers/pricing-shape"
+import { resolvePrimaryCatalogKey } from "@shared/providers/provider-catalog-key"
 import type { ImageModelInfo, ModelInfo, ProviderModelsConfig } from "@shared/providers/types"
 import { Logger } from "@shared/services/Logger"
 import chokidar, { type FSWatcher } from "chokidar"
 import fs from "fs/promises"
 import * as path from "path"
-import { DEFERRED_PROVIDER_IDS } from "./provider-catalog-policy"
+import { mapCatalogPricing } from "./model-pricing-migration"
+import { DEFERRED_PROVIDER_IDS, isAlternativeCatalogKey, isListingDerivedModel } from "./provider-catalog-policy"
 import { getProviderConfigFileName, getProviderIdFromConfigFile } from "./provider-config-file"
 import { reconcileProviderModels } from "./provider-model-reconciliation"
 
@@ -53,7 +56,7 @@ function parseProviderModelsConfig(providerId: string, raw: string): ProviderMod
             .map((tool) => (typeof tool === "string" ? serverToolFromJSON(tool) : tool))
             .filter((tool) => tool !== ServerTool.UNRECOGNIZED)
     }
-    return enrichMissingSeedMetadata(config.provider || providerId, config)
+    return enrichMissingSeedMetadata(config.provider || providerId, mapCatalogPricing(config, migrateModelPricing))
 }
 
 export class ModelRegistry {
@@ -63,6 +66,8 @@ export class ModelRegistry {
     private initialized = false
     private onChangeCallbacks: Array<() => void> = []
     private deferredProvidersPromise: Promise<void> | null = null
+    /** Tail of the reload passes, so a newer snapshot never lands before an older one. */
+    private reloadQueue: Promise<void> = Promise.resolve()
     private _version = 0
 
     /** Monotonically increasing version number, incremented on each reload. */
@@ -127,11 +132,35 @@ export class ModelRegistry {
     }
 
     /**
-     * Reload all provider configs from disk.
+     * Reload from disk, one pass at a time.
+     *
+     * A pass reads the directory and then publishes what it read, so two
+     * overlapping passes can apply their snapshots out of order: a watcher pass
+     * that started before a write would land its older snapshot after the
+     * writer's own reload and roll the cache back. Serializing the passes makes
+     * every snapshot be applied in the order it was read.
      */
     async reload(options?: {
         includeProviderIds?: ReadonlySet<string>
         excludeProviderIds?: ReadonlySet<string>
+        /** Apply the change without bumping {@link version} or publishing it. */
+        silent?: boolean
+    }): Promise<void> {
+        const pass = this.reloadQueue.then(
+            () => this.applyReload(options),
+            () => this.applyReload(options),
+        )
+        this.reloadQueue = pass.then(
+            () => undefined,
+            () => undefined,
+        )
+        return pass
+    }
+
+    private async applyReload(options?: {
+        includeProviderIds?: ReadonlySet<string>
+        excludeProviderIds?: ReadonlySet<string>
+        silent?: boolean
     }): Promise<void> {
         try {
             const entries = await fs.readdir(this.providersDir)
@@ -145,10 +174,18 @@ export class ModelRegistry {
             if (jsonFiles.length === 0 && options?.includeProviderIds) {
                 return
             }
-            const loadedConfigs = new Map<string, { config: ProviderModelsConfig; fileName: string }>()
+            const loadedConfigs = new Map()
 
             for (const fileName of jsonFiles) {
                 const fileProviderId = getProviderIdFromConfigFile(fileName)
+                // A file left over from a build that registered an alternative
+                // catalog as its own provider must not resurrect it: the catalog
+                // now belongs to a parent entry, and loading it here would put a
+                // second selectable provider back into the registry.
+                if (isAlternativeCatalogKey(fileProviderId)) {
+                    Logger.warn(`[ModelRegistry] Ignoring ${fileName}: "${fileProviderId}" is now a catalog of another provider.`)
+                    continue
+                }
                 try {
                     const filePath = path.join(this.providersDir, fileName)
                     const raw = await fs.readFile(filePath, "utf8")
@@ -178,8 +215,15 @@ export class ModelRegistry {
                 }
             }
 
-            this._version++
-            Logger.debug(`[ModelRegistry] Reloaded ${this.cache.size} provider(s)`)
+            if (options?.silent !== true) {
+                this._version++
+            }
+            // `cache.size` is the total catalogue count and says nothing about this
+            // pass, which can be scoped to a single provider. Report what the pass
+            // actually read so the line reflects real work.
+            Logger.debug(
+                `[ModelRegistry] Reloaded ${loadedConfigs.size} of ${jsonFiles.length} config file(s); ${this.cache.size} provider(s) cached`,
+            )
         } catch (err) {
             if ((err as NodeJS.ErrnoException).code === "ENOENT") {
                 // Directory doesn't exist yet, that's fine
@@ -199,9 +243,9 @@ export class ModelRegistry {
                 ignoreInitial: true,
                 awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 },
             })
-            this.watcher.on("add", () => this.debouncedReload())
-            this.watcher.on("change", () => this.debouncedReload())
-            this.watcher.on("unlink", () => this.debouncedReload())
+            this.watcher.on("add", (filePath) => this.noteChangedFile(filePath))
+            this.watcher.on("change", (filePath) => this.noteChangedFile(filePath))
+            this.watcher.on("unlink", (filePath) => this.noteChangedFile(filePath))
             this.watcher.on("error", (err) => {
                 Logger.warn("[ModelRegistry] Watcher error:", err)
             })
@@ -217,10 +261,19 @@ export class ModelRegistry {
 
     private reloadTimer: NodeJS.Timeout | null = null
 
-    private debouncedReload(): void {
+    private noteChangedFile(_fileName: string): void {
+        this.scheduleReload()
+    }
+
+    private scheduleReload(): void {
         if (this.reloadTimer) clearTimeout(this.reloadTimer)
         this.reloadTimer = setTimeout(async () => {
             this.reloadTimer = null
+            // Every persisted catalog must still reach `onChange`:
+            // itself only refreshes that registry entry, so the watcher notification
+            // is what publishes the new model list to the open settings page. The
+            // comparable-content check in the writer already prevents an unchanged
+            // listing from producing a notification at all.
             await this.reload().catch((err) => Logger.error("[ModelRegistry] Debounced reload failed:", err))
             // Notify all registered callbacks
             this.onChangeCallbacks.forEach((cb) => cb())
@@ -244,13 +297,90 @@ export class ModelRegistry {
     }
 
     /**
-     * Get models for a specific provider.
+     * Get the configuration of a selectable provider.
+     *
+     * A catalog key that belongs to another provider's alternative catalog is
+     * resolved to that provider, so a caller holding only a key still reaches the
+     * entry that owns base URL, billing and display identity.
      */
     getProviderModels(providerId: string): ProviderModelsConfig | undefined {
         if (providerId === "openai") {
             return this.getUnifiedOpenAiConfig()
         }
-        return this.cache.get(providerId)
+        const direct = this.cache.get(providerId)
+        if (direct) return direct
+        // An alternative catalog key resolves to its owner, but only when that
+        // owner is already loaded: answering from the seed would let a deferred
+        // catalog look available before startup finished loading it. A primary
+        // catalog key that is not the provider id resolves back to that id first,
+        // because the cached entry is always stored under the provider identity.
+        const ownerId = getProviderCatalog(providerId)?.provider.provider
+        return ownerId ? this.cache.get(ownerId) : undefined
+    }
+
+    /**
+     * Get the model catalog a catalog key selects.
+     *
+     * Unlike {@link getProviderModels} this answers with the catalog the key
+     * names, which for an alternative catalog is not the provider's primary one.
+     */
+    getProviderCatalog(catalogKey: string): ProviderModelsConfig | undefined {
+        const provider = this.getProviderModels(catalogKey)
+        if (!provider) return undefined
+        const selection = getProviderCatalog(catalogKey)
+        if (!selection) return provider
+        const catalog = selection.catalog
+        if (catalog === selection.provider) {
+            return provider
+        }
+        // The stored lookups below address the catalog the key actually names, not
+        // the caller's argument: a provider id resolves to its primary catalog,
+        // which may carry a different key.
+        const storedKey = selection.provider.provider === catalogKey ? catalogKey : resolvePrimaryCatalogKey(catalogKey)
+        // The stored catalog is the authority for this projection: discovery
+        // writes the vendor's own statement into it, marked `userDefined: false`,
+        // and the seed only fills fields that entry leaves absent. A catalog whose
+        // seed states nothing therefore reads back exactly what discovery wrote.
+        const storedModels = provider.catalogs?.[storedKey]?.models
+        const models = storedModels
+            ? {
+                  ...catalog.models,
+                  ...Object.fromEntries(
+                      Object.entries(storedModels).map(([modelId, storedModel]) => {
+                          const seedModel = catalog.models[modelId]
+                          // A model a person added is described by nothing but its
+                          // own declaration, so the seed must not complete it.
+                          if (!isListingDerivedModel(storedModel)) {
+                              return [modelId, storedModel]
+                          }
+                          if (!seedModel) {
+                              return [modelId, { ...storedModel, id: modelId }]
+                          }
+                          return [
+                              modelId,
+                              {
+                                  ...seedModel,
+                                  ...(storedModel.apiFormats ? { apiFormats: [...storedModel.apiFormats] } : {}),
+                                  // The stored entry states this model whole,
+                                  // including a declaration that only publishes a
+                                  // support flag.
+                                  capabilities: storedModel.capabilities ?? seedModel.capabilities,
+                                  pricing: storedModel.pricing ?? seedModel.pricing,
+                              },
+                          ]
+                      }),
+                  ),
+              }
+            : catalog.models
+        return {
+            ...provider,
+            models,
+            // The stored catalog's default is a decision the listing wrote; the
+            // seed default may name a model this catalog no longer contains.
+            defaultModelId: provider.catalogs?.[storedKey]?.defaultModelId ?? catalog.defaultModelId ?? provider.defaultModelId,
+            imageModels: catalog.imageModels ?? provider.imageModels,
+            defaultImageModelId: catalog.defaultImageModelId ?? provider.defaultImageModelId,
+        }
     }
 
     /** Resolve the canonical OpenAI provider config from memory, using the seed catalog only as a field fallback. */
@@ -299,7 +429,7 @@ export class ModelRegistry {
     }
 
     /**
-     * Get all models across all providers, grouped by provider.
+     * Get all loaded model catalogs, keyed by the primary or alternative catalog ID.
      */
     getAllModels(): Array<{
         provider: string
@@ -319,14 +449,22 @@ export class ModelRegistry {
         }> = []
 
         for (const config of this.getAllProviders()) {
-            result.push({
-                provider: config.provider,
-                providerName: config.providerName,
-                models: Object.values(config.models),
-                defaultModelId: config.defaultModelId,
-                imageModels: Object.values(config.imageModels ?? {}),
-                defaultImageModelId: config.defaultImageModelId,
-            })
+            const catalogKeys = getProviderCatalogKeys(getProviderSeedConfig(config.provider) ?? config)
+            for (const catalogKey of catalogKeys) {
+                // Every catalog goes through `getProviderCatalog`, including the
+                // primary one: the RPC it feeds and the runtime both read the same
+                // projection, so a listing statement cannot differ between them.
+                const catalog = this.getProviderCatalog(catalogKey)
+                if (!catalog) continue
+                result.push({
+                    provider: catalogKey,
+                    providerName: config.providerName,
+                    models: Object.values(catalog.models),
+                    defaultModelId: catalog.defaultModelId,
+                    imageModels: Object.values(catalog.imageModels ?? {}),
+                    defaultImageModelId: catalog.defaultImageModelId,
+                })
+            }
         }
 
         return result

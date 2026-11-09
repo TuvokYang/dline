@@ -1,6 +1,7 @@
 import type { ClaudeCodeIdentityConfig } from "@shared/proto/dline/provider/common"
 import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import styled from "styled-components"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 
 const StyledCheckbox = styled(VSCodeCheckbox)`
 	margin-bottom: 4px;
@@ -26,6 +27,7 @@ export interface ClaudeCodeIdentitySectionProps {
  * belong to whichever provider declares a full client identity.
  */
 export const ClaudeCodeIdentitySection = ({ config, onChange }: ClaudeCodeIdentitySectionProps) => {
+    const { t } = useUiTranslation()
     const enabled = config?.enabled === true
 
     return (
@@ -38,13 +40,9 @@ export const ClaudeCodeIdentitySection = ({ config, onChange }: ClaudeCodeIdenti
                         enabled: (event.target as HTMLInputElement | null)?.checked === true,
                     })
                 }>
-                Send Claude Code billing header
+                {t("settings.ui.claudeIdentity.enable")}
             </StyledCheckbox>
-            <Description>
-                Adds the Claude Code billing attribution block to each request. Anthropic uses several signals to attribute a
-                request, so this alone does not guarantee your subscription quota applies. Leave it off unless you know you need
-                it.
-            </Description>
+            <Description>{t("settings.ui.claudeIdentity.help")}</Description>
         </div>
     )
 }

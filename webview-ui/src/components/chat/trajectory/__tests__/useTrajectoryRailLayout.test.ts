@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { useCompressedBarGap, useScrollEdges } from "../useTrajectoryRailLayout"
+import { useCompressedBarGap, useFollowActiveTurn, useScrollEdges } from "../useTrajectoryRailLayout"
 
 /** Layout values jsdom does not compute, set the way a browser would report them. */
 function setMetrics(element: HTMLElement, metrics: Record<string, number>): void {
@@ -89,5 +89,32 @@ describe("rail layout hooks on elements that mount after the first render", () =
 
         // 80% of 100px leaves 120px too little for a 200px rail, so the gap drops to its floor.
         expect(result.current).toBe(2)
+    })
+
+    it("follows the exact seq, including zero, when two bars share a timestamp", () => {
+        const scroller = document.createElement("div")
+        setMetrics(scroller, { clientHeight: 100, scrollHeight: 500 })
+        scroller.getBoundingClientRect = () => ({ top: 100, height: 100 }) as DOMRect
+        const scrollBy = vi.fn()
+        scroller.scrollBy = scrollBy
+        const locations = [
+            [0, 300],
+            [1, 360],
+        ]
+        for (const [seq, top] of locations) {
+            const bar = document.createElement("button")
+            bar.dataset.turnSeq = String(seq)
+            bar.dataset.turnTs = "500"
+            bar.getBoundingClientRect = () => ({ top, height: 8 }) as DOMRect
+            scroller.appendChild(bar)
+        }
+        const { rerender } = renderHook(({ seq, paused }) => useFollowActiveTurn(scroller, seq, paused), {
+            initialProps: { seq: 1, paused: false },
+        })
+        expect(scrollBy).toHaveBeenLastCalledWith({ top: 214, behavior: "smooth" })
+        rerender({ seq: 0, paused: false })
+        expect(scrollBy).toHaveBeenLastCalledWith({ top: 154, behavior: "smooth" })
+        rerender({ seq: 1, paused: true })
+        expect(scrollBy).toHaveBeenCalledTimes(2)
     })
 })

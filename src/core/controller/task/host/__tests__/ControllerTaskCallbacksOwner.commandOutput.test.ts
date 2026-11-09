@@ -1,3 +1,4 @@
+import type { Controller } from "@core/controller"
 import { registerPartialMessageCallback, subscribeToPartialMessage } from "@core/controller/ui/subscribeToPartialMessage"
 import type { MessageStateHandler } from "@core/task/message-state"
 import { createPresentationIdSequence } from "@core/task/session/PresentationIdSequence"
@@ -25,6 +26,7 @@ function messageStore(): { handler: MessageStateHandler; written: UiMessage[] } 
         },
         finalizeClineMessage: async (message: UiMessage) => {
             written.push(message)
+            return message
         },
     } as unknown as MessageStateHandler
     return { handler, written }
@@ -33,8 +35,14 @@ function messageStore(): { handler: MessageStateHandler; written: UiMessage[] } 
 const OPENING = { taskId: "task-1", taskInstanceId: "open-1" }
 
 /** A Controller that currently shows the opening these callbacks serve. */
-function showingOpening(opening: { taskId: string; taskInstanceId: string } = OPENING): object {
-    return { currentOpening: () => opening }
+function showingOpening(
+    opening: { taskId: string; taskInstanceId: string } = OPENING,
+): Pick<Controller, "currentOpening" | "projectCurrentTaskMessageSourceIndex"> {
+    return {
+        currentOpening: () => opening,
+        // This event-only fixture has no durable message owner to project an index from.
+        projectCurrentTaskMessageSourceIndex: async () => undefined,
+    }
 }
 
 function owner(
@@ -130,6 +138,37 @@ describe("ControllerTaskCallbacksOwner say", () => {
         await owner(handler).callbacks.say("command", "npm test", undefined, undefined, false, 77)
 
         expect(written.at(-1)).toMatchObject({ ts: 77, say: "command", partial: false, commandStatus: "pending" })
+    })
+
+    // The directory is a field, not a suffix of the command line. Losing it here
+    // is what made every new command look like it ran inside the workspace.
+    it("states a command row's directory as a field when the caller knows it", async () => {
+        const { handler, written } = messageStore()
+
+        await owner(handler).callbacks.say("command", "npm test", undefined, undefined, false, 55, undefined, {
+            commandLine: "npm test",
+            workingDirectory: "/elsewhere",
+        })
+
+        expect(written.at(-1)).toMatchObject({
+            ts: 55,
+            text: "npm test",
+            command: "npm test",
+            commandWorkingDirectory: "/elsewhere",
+            commandOutput: "",
+            commandAsksApproval: false,
+        })
+    })
+
+    // A caller that has no directory still gets a row whose text is the command
+    // line alone, so a reader never has to split it to find one.
+    it("writes a command row without a directory when the caller states none", async () => {
+        const { handler, written } = messageStore()
+
+        await owner(handler).callbacks.say("command", "npm test", undefined, undefined, false, 56)
+
+        expect(written.at(-1)).toMatchObject({ ts: 56, text: "npm test", command: "npm test" })
+        expect(written.at(-1)?.commandWorkingDirectory).toBeUndefined()
     })
 
     it("keeps the status a command row already reached when it is finalized again", async () => {
@@ -254,6 +293,48 @@ describe("ControllerTaskCallbacksOwner say", () => {
 
         expect(interactions.open).not.toHaveBeenCalled()
         expect(written).toContainEqual(expect.objectContaining({ ts: 99, type: "ask", ask: "qna_respond", partial: true }))
+    })
+
+    // A rejected call never ran, so its streamed preview must not stay partial:
+    // the chat draws a partial command as still working, and folding therefore
+    // never counts it as the failure the model was told about.
+    it("settles the streamed command preview as failed when a required parameter is missing", async () => {
+        const { handler, written } = messageStore()
+        written.push({ ts: 4242, type: "say", say: "command", text: "npm test", partial: true })
+        const delivered: Array<{ ts: number; partial: boolean; commandStatus?: string }> = []
+        const unsubscribe = registerPartialMessageCallback((message) => {
+            delivered.push({ ts: Number(message.ts), partial: message.partial, commandStatus: message.commandStatus })
+        })
+
+        try {
+            await owner(handler).callbacks.sayAndCreateMissingParamError(
+                "execute_command" as never,
+                "requires_approval",
+                undefined,
+                4242,
+            )
+        } finally {
+            unsubscribe()
+        }
+
+        expect(written).toContainEqual(
+            expect.objectContaining({ ts: 4242, say: "command", partial: false, commandStatus: "failed" }),
+        )
+        expect(delivered).toEqual([{ ts: 4242, partial: false, commandStatus: "failed" }])
+    })
+
+    it("leaves a row that already ended untouched when a required parameter is missing", async () => {
+        const { handler, written } = messageStore()
+        written.push({ ts: 4243, type: "say", say: "command", text: "npm test", partial: false, commandStatus: "completed" })
+
+        await owner(handler).callbacks.sayAndCreateMissingParamError(
+            "execute_command" as never,
+            "requires_approval",
+            undefined,
+            4243,
+        )
+
+        expect(written).toEqual([expect.objectContaining({ ts: 4243, commandStatus: "completed" })])
     })
 
     // A late row from a replaced opening must not land in the view that now shows another one.

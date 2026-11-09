@@ -2,7 +2,14 @@
 import type { ModelInfo } from "@shared/proto/dline/models"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import { fireEvent, render, screen } from "@testing-library/react"
-import type { AnchorHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react"
+import {
+    type AnchorHTMLAttributes,
+    Children,
+    type InputHTMLAttributes,
+    isValidElement,
+    type ReactNode,
+    type SelectHTMLAttributes,
+} from "react"
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import OpenRouterModelPicker from "./OpenRouterModelPicker"
 import { ClineProvider } from "./providers/ClineProvider"
@@ -38,7 +45,13 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@vscode/webview-ui-toolkit/react", () => ({
     VSCodeLink: (props: AnchorHTMLAttributes<HTMLAnchorElement>) => <a {...props} />,
-    VSCodeDropdown: (props: SelectHTMLAttributes<HTMLSelectElement>) => <select {...props} />,
+    VSCodeDropdown: ({ children, ...props }: SelectHTMLAttributes<HTMLSelectElement>) => (
+        <select {...props}>
+            {Children.toArray(children).filter(
+                (child) => !isValidElement<{ slot?: string }>(child) || child.props.slot !== "selected-value",
+            )}
+        </select>
+    ),
     VSCodeOption: ({ value, children }: { value: string; children: ReactNode }) => <option value={value}>{children}</option>,
     VSCodeTextField: ({ children: _children, ...props }: InputHTMLAttributes<HTMLInputElement>) => <input {...props} />,
     VSCodeCheckbox: ({ checked, disabled, onChange, children }: InputHTMLAttributes<HTMLInputElement>) => (

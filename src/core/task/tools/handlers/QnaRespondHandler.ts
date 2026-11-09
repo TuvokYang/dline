@@ -8,7 +8,7 @@ import { type ToolHandlerResult, withToolDocuments } from "../ToolExecutionResul
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
 import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { attachToolFeedbackFiles, sayFeedbackOnce } from "../utils/UserFeedbackUtils"
+import { attachToolFeedbackFiles, sayFeedbackOnce, separateRoundFeedback } from "../utils/UserFeedbackUtils"
 
 /**
  * QnaRespondHandler — handles the qna_respond tool.
@@ -63,6 +63,8 @@ export class QnaRespondHandler implements IToolHandler, IPartialBlockHandler {
     /** Consume a Q&A response without replaying presentation or other pre-response work. */
     async continueInteraction(config: TaskConfig, _block: ToolUse, outcome: InteractionOutcome): Promise<ToolHandlerResult> {
         config.taskState.isAwaitingPlanResponse = false
+        const separated = await separateRoundFeedback(config, outcome)
+        if (separated) return separated
         const text = outcome.draft?.text
         const images = outcome.draft?.images
         const files = outcome.draft?.files

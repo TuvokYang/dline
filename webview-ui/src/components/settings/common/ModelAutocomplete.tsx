@@ -4,6 +4,7 @@ import Fuse, { type FuseResultMatch } from "fuse.js"
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react"
 import { type KeyboardEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import styled from "styled-components"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ProfileField } from "../profile-ui"
 import type { ModelOptionOrigin } from "../providers/useProviderModelOptions"
 import { type MatchSegment, toMatchSegments } from "./modelMatchSegments"
@@ -37,9 +38,6 @@ interface Suggestion {
     badge?: "new" | "custom"
 }
 
-const NEW_BADGE_TITLE = "Listed by the provider but missing from the local model catalog"
-const CUSTOM_BADGE_TITLE = "Not listed by the provider; sent as a custom model id"
-
 /**
  * Searchable model picker over the merged catalog and provider listing.
  *
@@ -55,10 +53,13 @@ export const ModelAutocomplete = ({
     optionOrigins,
     allowCustomModelId = true,
     zIndex = AUTOCOMPLETE_Z_INDEX,
-    label = "Model",
-    placeholder = "Search and select a model...",
+    label: customLabel,
+    placeholder: customPlaceholder,
     onOpen,
 }: ModelAutocompleteProps) => {
+    const { t } = useUiTranslation()
+    const label = customLabel ?? t("settings.ui.model")
+    const placeholder = customPlaceholder ?? t("settings.ui.searchSelectModel")
     const [searchTerm, setSearchTerm] = useState("")
     const [isDropdownVisible, setIsDropdownVisible] = useState(false)
     const [selectedIndex, setSelectedIndex] = useState(-1)
@@ -228,7 +229,9 @@ export const ModelAutocomplete = ({
                     style={{ zIndex, position: "relative" }}
                     value={displayValue}>
                     <button
-                        aria-label={isDropdownVisible ? `Close ${label} options` : `Open ${label} options`}
+                        aria-label={
+                            isDropdownVisible ? t("settings.ui.closeOptions", { label }) : t("settings.ui.openOptions", { label })
+                        }
                         className="flex h-full cursor-pointer items-center justify-center border-0 bg-transparent p-0 text-description hover:text-foreground"
                         onMouseDown={(event) => {
                             // Keeping focus on the field means the toggle reads the
@@ -249,7 +252,7 @@ export const ModelAutocomplete = ({
                 </VSCodeTextField>
                 {isDropdownVisible && suggestions.length > 0 && (
                     <DropdownList
-                        aria-label={`${label} suggestions`}
+                        aria-label={t("settings.ui.suggestions", { label })}
                         id={listboxId}
                         ref={dropdownListRef}
                         role="listbox"
@@ -277,8 +280,13 @@ export const ModelAutocomplete = ({
                                     )}
                                 </span>
                                 {item.badge ? (
-                                    <Badge title={item.badge === "new" ? NEW_BADGE_TITLE : CUSTOM_BADGE_TITLE}>
-                                        {item.badge === "new" ? "New" : "Custom"}
+                                    <Badge
+                                        title={
+                                            item.badge === "new"
+                                                ? t("settings.ui.newBadgeHelp")
+                                                : t("settings.ui.customBadgeHelp")
+                                        }>
+                                        {item.badge === "new" ? t("settings.ui.newBadge") : t("settings.ui.customBadge")}
                                     </Badge>
                                 ) : null}
                             </DropdownItem>

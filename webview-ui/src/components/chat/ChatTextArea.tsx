@@ -15,6 +15,7 @@ import ModelSwitcher from "@/components/chat/task-header/ModelSwitcher"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { usePlatform } from "@/context/PlatformContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 import { composerShortcutLabels, isSteerShortcut, shouldSendChatInput } from "@/utils/chat-input-shortcut"
 import { useMetaKeyDetection, useShortcut } from "@/utils/hooks"
@@ -26,6 +27,7 @@ import {
     CHAT_INPUT_MIN_ROWS,
     CHAT_INPUT_PADDING_Y_PX,
 } from "./chat-input-height"
+import { ChatUiText } from "./chat-view/components/ChatUiText"
 import { ChatInputRuntimeControls } from "./input/ChatInputRuntimeControls"
 import { ComposerActionButton } from "./input/composer-action/ComposerActionButton"
 import type { ComposerSubmitKind } from "./input/composer-action/composer-action"
@@ -71,12 +73,11 @@ const PLAN_MODE_COLOR = "var(--vscode-activityWarningBadge-background)"
 
 type TransientNotice = "rejected_files" | "oversized_images" | "refused_text" | "attachment_limit"
 
-const TRANSIENT_NOTICE_TEXT: Record<TransientNotice, string> = {
-    rejected_files: "File too large: PDF up to 50MB, other files up to 20MB",
-    oversized_images: "Image dimensions exceed 7500px",
-    refused_text: "Text this long is attached as a file, but no attachment can be added here",
-    attachment_limit: `A message can carry up to ${MAX_IMAGES_AND_FILES_PER_MESSAGE} attachments; the rest were left out`,
-}
+const TRANSIENT_NOTICE_KEYS = {
+    rejected_files: "chatInput.composer.rejectedFiles",
+    oversized_images: "chatInput.composer.oversizedImages",
+    refused_text: "chatInput.composer.refusedText",
+} as const
 
 interface ChatTextAreaProps {
     /** The draft this composer edits; the chat view owns it. */
@@ -204,6 +205,7 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
         },
         ref,
     ) => {
+        const { t } = useUiTranslation()
         const {
             mode,
             modeSwitch,
@@ -435,12 +437,12 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
         const notice: { testId: string; text: string } | undefined = sendRefusal
             ? {
                   testId: "composer-send-blocked-notice",
-                  text: describeSendBlock(sendRefusal, { taskReadOnly: taskLockStatus?.isLocked === true }),
+                  text: describeSendBlock(sendRefusal, { taskReadOnly: taskLockStatus?.isLocked === true }, t),
               }
             : heldCandidates.length > 0
               ? {
                     testId: "pasted-candidate-notice",
-                    text: `Pasted ${heldCandidates.join(", ")} will be sent as plain text. Pick it from the menu to run it.`,
+                    text: t("chatInput.composer.pastedCandidate", { candidates: heldCandidates.join(", ") }),
                 }
               : undefined
 
@@ -472,7 +474,9 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
                     {transientNotice && (
                         <div className="absolute inset-2.5 bg-[rgba(var(--vscode-errorForeground-rgb),0.1)] border-2 border-error rounded-xs flex items-center justify-center z-10 pointer-events-none">
                             <span className="text-error font-bold text-xs text-center">
-                                {TRANSIENT_NOTICE_TEXT[transientNotice]}
+                                {transientNotice === "attachment_limit"
+                                    ? t("chatInput.composer.attachmentLimit", { limit: MAX_IMAGES_AND_FILES_PER_MESSAGE })
+                                    : t(TRANSIENT_NOTICE_KEYS[transientNotice])}
                             </span>
                         </div>
                     )}
@@ -503,7 +507,7 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
                         </div>
                     )}
                     <SemanticComposerEditor
-                        ariaLabel="Message input"
+                        ariaLabel={t("chatInput.composer.input")}
                         className={cn("rounded-xs bg-input-background", !isFocused && "border border-input-border")}
                         composerId={draftId}
                         decorate={decorate}
@@ -556,7 +560,7 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
                     />
                     {segments.length === 0 && (
                         <div className="text-xs absolute bottom-5 left-6.5 right-16 text-(--vscode-input-placeholderForeground)/50 whitespace-nowrap overflow-hidden text-ellipsis pointer-events-none z-1">
-                            Type @ for context, / for slash commands & workflows, hold shift to drag in files/images
+                            {t("chatInput.composer.hint")}
                         </div>
                     )}
                     <div
@@ -580,10 +584,10 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
                 <div className="flex items-center -mt-0.5 px-3 pb-2 gap-2">
                     <ButtonGroup className="ease-in-out h-5 z-10 flex items-center min-w-0">
                         <Tooltip>
-                            <TooltipContent>Add Context</TooltipContent>
+                            <TooltipContent>{t("chatInput.composer.addContext")}</TooltipContent>
                             <TooltipTrigger asChild>
                                 <button
-                                    aria-label="Add Context"
+                                    aria-label={t("chatInput.composer.addContext")}
                                     className="chat-input-control-outline inline-flex size-[18.5px] shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 text-foreground shadow-none transition-colors duration-150 hover:bg-toolbar-hover focus-visible:bg-toolbar-hover"
                                     data-testid="context-button"
                                     onClick={handleContextButtonClick}
@@ -598,10 +602,10 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
                         </Tooltip>
 
                         <Tooltip>
-                            <TooltipContent>Add Files & Images</TooltipContent>
+                            <TooltipContent>{t("chatInput.composer.addFiles")}</TooltipContent>
                             <TooltipTrigger asChild>
                                 <button
-                                    aria-label="Add Files & Images"
+                                    aria-label={t("chatInput.composer.addFiles")}
                                     className="chat-input-control-outline inline-flex size-[18.5px] shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 text-foreground shadow-none transition-colors duration-150 hover:bg-toolbar-hover focus-visible:bg-toolbar-hover disabled:cursor-not-allowed disabled:opacity-50"
                                     data-testid="files-button"
                                     disabled={!attachmentsEnabled}
@@ -645,9 +649,18 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
                                 className="text-xs px-2 flex flex-col gap-1"
                                 hidden={shownTooltipMode === null}
                                 side="top">
-                                {`In ${shownTooltipMode === "act" ? "Act" : "Plan"}  mode, Dline will ${shownTooltipMode === "act" ? "complete the task immediately" : "gather information to architect a plan"}`}
+                                {t(
+                                    shownTooltipMode === "act"
+                                        ? "chatInput.mode.actDescription"
+                                        : "chatInput.mode.planDescription",
+                                )}
                                 <p className="text-description/80 text-xs mb-0">
-                                    Toggle w/ <kbd className="text-muted-foreground mx-1">{togglePlanActKeys}</kbd>
+                                    <ChatUiText
+                                        slots={{
+                                            shortcut: <kbd className="text-muted-foreground mx-1">{togglePlanActKeys}</kbd>,
+                                        }}
+                                        text={t("chatInput.mode.toggleShortcut", { shortcut: "{shortcut}" })}
+                                    />
                                 </p>
                             </TooltipContent>
                             <TooltipTrigger>
@@ -659,22 +672,20 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
                                         isAct={modeSwitchFlow.displayMode === "act"}
                                         isPlan={modeSwitchFlow.displayMode === "plan"}
                                     />
-                                    {["Plan", "Act"].map((m) => (
+                                    {(["plan", "act"] as const).map((m) => (
                                         <div
-                                            aria-checked={modeSwitchFlow.displayMode === m.toLowerCase()}
+                                            aria-checked={modeSwitchFlow.displayMode === m}
                                             className={cn(
                                                 "pt-0.5 pb-px px-2 z-10 text-xs w-1/2 text-center bg-transparent",
-                                                modeSwitchFlow.displayMode === m.toLowerCase()
-                                                    ? "text-white"
-                                                    : "text-input-foreground",
+                                                modeSwitchFlow.displayMode === m ? "text-white" : "text-input-foreground",
                                             )}
                                             key={m}
                                             onMouseLeave={() => setShownTooltipMode(null)}
-                                            onMouseOver={() => setShownTooltipMode(m.toLowerCase() === "plan" ? "plan" : "act")}
+                                            onMouseOver={() => setShownTooltipMode(m)}
                                             role="switch">
-                                            {modeSwitchFlow.statusText && m.toLowerCase() === modeSwitchFlow.displayMode
+                                            {modeSwitchFlow.statusText && m === modeSwitchFlow.displayMode
                                                 ? modeSwitchFlow.statusText
-                                                : m}
+                                                : t(m === "plan" ? "chatInput.mode.plan" : "chatInput.mode.act")}
                                         </div>
                                     ))}
                                 </SwitchContainer>

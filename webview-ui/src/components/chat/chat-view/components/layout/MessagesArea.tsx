@@ -1,19 +1,23 @@
+import { effectiveAggressiveRendering } from "@shared/AggressiveRendering"
 import type { UiMessage } from "@shared/ExtensionMessage"
 import { convertProtoToClineMessage } from "@shared/proto-conversions/cline-message"
 import type React from "react"
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { Virtuoso } from "react-virtuoso"
+import { FLOATING_CONTROL_VISIBILITY } from "@/components/chat/floating-control-styles"
 import { StickyUserMessage } from "@/components/chat/task-header/StickyUserMessage"
 import { TrajectoryRailOverlay } from "@/components/chat/trajectory/TrajectoryRailOverlay"
+import type { TrajectoryTurn } from "@/components/chat/trajectory/trajectory-model"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { preferHeldCopies } from "@/context/messageWindowSync"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 import { fetchAnchoredTaskMessages, fetchTaskMessages, getTaskViewKey } from "@/services/task-messages"
 import { isApiReqActive } from "@/utils/streaming"
 
 import { useBrowsingScrollAnchor } from "../../hooks/useBrowsingScrollAnchor"
 import type { ChatState, FoldExpansion, MessageHandlers, ScrollBehavior } from "../../types/chatTypes"
-import { isToolActivityRow } from "../../utils/chatRowKinds"
+import { isActivityFold, isToolActivityRow } from "../../utils/chatRowKinds"
 import { createMessageWindowGeneration } from "../../utils/messageWindowGeneration"
 import {
     DEFAULT_MESSAGE_WINDOW_LIMITS,
@@ -29,10 +33,18 @@ import { buildMessageRowKey, getBottomFollowIntent, mergeMessageWindow } from ".
 import { advanceRowCoordinate, ROW_INDEX_BASE, type RowCoordinate } from "../../utils/rowCoordinate"
 import { LAYOUT_SETTLE_RETRY_MS } from "../../utils/scrollArbiter"
 import { nestedScrollerConsumesWheel } from "../../utils/scrollUtils"
-import { findFirstVisibleMessage } from "../../utils/viewportRowAnchor"
+import { findFirstVisibleMessage, ROW_SOURCE_INDEX_ATTRIBUTE } from "../../utils/viewportRowAnchor"
 import { decideWindowGrowth, SCROLL_SETTLE_MS } from "../../utils/windowGrowthTiming"
-import { createMessageRenderer } from "../messages/MessageRenderer"
-import { type AnchoredPage, type JumpAlign, type JumpToMessagePort, useJumpToMessage } from "./useJumpToMessage"
+import { createMessageRenderer, rowSourceIndex } from "../messages/MessageRenderer"
+import floatingControls from "./FloatingControls.module.css"
+import {
+    type AnchoredPage,
+    type JumpAlign,
+    type JumpToMessagePort,
+    type MessageJumpTarget,
+    matchesMessageTarget,
+    useJumpToMessage,
+} from "./useJumpToMessage"
 
 const LOAD_COUNT = DEFAULT_MESSAGE_WINDOW_LIMITS.loadCount
 /**
@@ -43,6 +55,16 @@ const LOAD_COUNT = DEFAULT_MESSAGE_WINDOW_LIMITS.loadCount
  */
 const ROW_LOAD_THRESHOLD = 8
 const USER_SCROLL_INTENT_TTL_MS = 750
+
+/**
+ * The one surface every floating control in the message column is drawn on.
+ *
+ * The fold control and the scroll control sit in the same column, so they must
+ * share a background, a border treatment and a size; declaring it once keeps a
+ * later edit from re-splitting them.
+ */
+const FLOATING_CONTROL =
+    "w-10 h-10 rounded-full bg-background/65 backdrop-blur-sm shadow-md border-0 text-foreground flex items-center justify-center cursor-pointer"
 
 /** Sentinel value to prevent Virtuoso zero-sized-element warnings when data is empty */
 // @ts-expect-error — Virtuoso sentinel; only ts/type needed, full UiMessage shape not required
@@ -110,8 +132,24 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
     messageHandlers,
     onFollowupOptionSelect,
 }) => {
-    const { clineMessages, setClineMessages, totalMessageCount, firstItemIndex, setFirstItemIndex, taskViewState } =
-        useExtensionState()
+    const { t } = useUiTranslation()
+    const {
+        clineMessages,
+        setClineMessages,
+        totalMessageCount,
+        firstItemIndex,
+        setFirstItemIndex,
+        taskViewState,
+        aggressiveRendering,
+    } = useExtensionState()
+    // A fold keeps its row while open, so "closed" is a state of the block, not its absence.
+    const folds = useMemo(() => groupedMessages.filter(isActivityFold), [groupedMessages])
+    const foldingEnabled = effectiveAggressiveRendering(aggressiveRendering) !== "none"
+    const closedFolds = useMemo(
+        () => folds.filter((fold) => chatState.expandedFolds[fold._activityFoldId] !== true),
+        [folds, chatState.expandedFolds],
+    )
+    const hasOpenFolds = folds.some((fold) => chatState.expandedFolds[fold._activityFoldId] === true)
     const taskKey = getTaskViewKey(taskViewState)
     const taskKeyRef = useRef(taskKey)
     taskKeyRef.current = taskKey
@@ -148,12 +186,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
     const [windowGeneration] = useState(createMessageWindowGeneration)
     const edgeJumpInFlightRef = useRef<ScrollEdge | null>(null)
 
-    // Floating scroll-to-bottom/top button state
-    const [floatingBtnVisible, setFloatingBtnVisible] = useState(false)
     const [floatingBtnDir, setFloatingBtnDir] = useState<"bottom" | "top">("bottom")
-    const hideBtnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-    const wasBtnShownRef = useRef(false)
-    const showScrollToBottomRef = useRef(false)
     // Track webview visibility so we can pause Virtuoso updates when hidden
     const [isWebviewHidden, setIsWebviewHidden] = useState(() => document.visibilityState === "hidden")
     const isWebviewHiddenRef = useRef(isWebviewHidden)
@@ -205,10 +238,6 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
         absoluteBottomLoadedRef,
         showScrollToBottom,
     } = scrollBehavior
-
-    useEffect(() => {
-        showScrollToBottomRef.current = showScrollToBottom
-    }, [showScrollToBottom])
 
     // Pause range processing while the webview is hidden. Restoring the bottom
     // is owned by useScrollBehavior so only one visibility listener can issue a
@@ -334,6 +363,18 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
             })
         },
         [renderRows],
+    )
+
+    // Source ordinals are not the page coordinates used by window growth above.
+    // Groups, including activity folds, expose all real members for exact identity lookup.
+    const findRowOffsetByTarget = useCallback(
+        (target: MessageJumpTarget) =>
+            typeof target === "number"
+                ? findRowOffsetByMessageTs(target)
+                : renderRows.findIndex(({ row }) =>
+                      (Array.isArray(row) ? row : [row]).some((message) => matchesMessageTarget(message, target)),
+                  ),
+        [findRowOffsetByMessageTs, renderRows],
     )
 
     const scrollToRowOffset = useCallback(
@@ -800,20 +841,34 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 
     /** Replace the loaded window with a page that is not adjacent to it. */
     const replaceMessageWindow = useCallback(
-        (messages: UiMessage[], startIndex: number) => {
+        (messages: UiMessage[], startIndex: number, sourceIndexed = false) => {
             const nextFirstItemIndex = Math.max(0, startIndex)
             firstItemIndexRef.current = nextFirstItemIndex
             clineMessagesLengthRef.current = messages.length
             // The page is a snapshot older than its arrival: a row the stream
-            // already moved past keeps that copy.
-            setClineMessages((prev) => preferHeldCopies(prev, messages))
+            // already moved past keeps its content. Preserve the page's actual source
+            // metadata for source navigation when that held copy was transient, but never
+            // reuse a different committed row just because it shares the timestamp.
+            // Ordinary edges and timestamp-only jumps keep their original copy semantics.
+            setClineMessages((prev) => {
+                const copies = preferHeldCopies(prev, messages)
+                if (!sourceIndexed) return copies
+                return copies.map((message, offset) => {
+                    const fetched = messages[offset]
+                    if (message === fetched || fetched.messageIndex === undefined) return message
+                    if (message.messageIndex !== undefined && message.messageIndex !== fetched.messageIndex) return fetched
+                    return message.messageIndex === fetched.messageIndex
+                        ? message
+                        : { ...message, messageIndex: fetched.messageIndex }
+                })
+            })
             setFirstItemIndex(nextFirstItemIndex)
         },
         [setClineMessages, setFirstItemIndex],
     )
 
     const jumpToEdge = useCallback(
-        async (edge: ScrollEdge) => {
+        async (edge: ScrollEdge, target?: Exclude<MessageJumpTarget, number>) => {
             if (edgeJumpInFlightRef.current === edge) return
 
             edgeJumpInFlightRef.current = edge
@@ -825,11 +880,24 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
             pendingEdgeScrollRef.current = edge
 
             try {
+                if (target !== undefined) {
+                    // The task header is outside the list. Resolve its source identity
+                    // before taking the original top path: source zero need not be on page zero.
+                    const located = await fetchAnchoredTaskMessages(taskViewState, target.anchorTs, 1, target.anchorIndex)
+                    if (taskKeyRef.current !== taskKey || !windowGeneration.isCurrent(requestVersion)) return
+                    if (
+                        !located.anchorFound ||
+                        !located.messages.some((message) => matchesMessageTarget(convertProtoToClineMessage(message), target))
+                    ) {
+                        pendingEdgeScrollRef.current = null
+                        return
+                    }
+                }
                 const resp = await fetchTaskMessages(taskViewState, edge === "top" ? 0 : -1, LOAD_COUNT)
                 if (taskKeyRef.current !== taskKey || !windowGeneration.isCurrent(requestVersion)) return
 
                 const converted = resp.messages.map((message) => convertProtoToClineMessage(message))
-                replaceMessageWindow(converted, resp.startIndex)
+                replaceMessageWindow(converted, resp.startIndex, target !== undefined)
 
                 if (converted.length === 0) {
                     pendingEdgeScrollRef.current = null
@@ -868,18 +936,25 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
     }, [cancelProgrammaticScroll, disableAutoScrollRef, releaseBrowsingViewportAnchor])
 
     // Read when a scroll retry runs, which can be after the rows have changed again.
-    const findRowOffsetByMessageTsRef = useRef(findRowOffsetByMessageTs)
-    findRowOffsetByMessageTsRef.current = findRowOffsetByMessageTs
+    const findRowOffsetByTargetRef = useRef(findRowOffsetByTarget)
+    findRowOffsetByTargetRef.current = findRowOffsetByTarget
 
     const scrollToMessage = useCallback(
-        (ts: number, behavior: "auto" | "smooth", align: JumpAlign, isStillWanted: () => boolean) => {
+        (target: MessageJumpTarget, behavior: "auto" | "smooth", align: JumpAlign, isStillWanted: () => boolean) => {
             // Only a row the list has laid out has a measured position. A smooth scroll towards
             // any other row travels through estimated heights and can stop short, so it jumps
             // and keeps re-targeting while the rows it passes are measured, as a replaced window does.
-            const smooth = behavior === "smooth" && scroller?.querySelector(`[data-message-ts="${ts}"]`) != null
+            const row = renderRows[findRowOffsetByTarget(target)]?.row
+            const selector =
+                typeof target === "number"
+                    ? `[data-message-ts="${target}"]`
+                    : row === undefined
+                      ? undefined
+                      : `[${ROW_SOURCE_INDEX_ATTRIBUTE}="${rowSourceIndex(row)}"]`
+            const smooth = behavior === "smooth" && selector !== undefined && scroller?.querySelector(selector) != null
             requestProgrammaticScroll({
                 run: () => {
-                    const rowOffset = findRowOffsetByMessageTsRef.current(ts)
+                    const rowOffset = findRowOffsetByTargetRef.current(target)
                     if (rowOffset >= 0) scrollToRowOffset(rowOffset, align, smooth ? "smooth" : "auto")
                 },
                 priority: smooth ? "user" : "layout",
@@ -887,14 +962,22 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                 isStillWanted,
             })
         },
-        [requestProgrammaticScroll, scrollToRowOffset, scroller],
+        [findRowOffsetByTarget, renderRows, requestProgrammaticScroll, scrollToRowOffset, scroller],
     )
 
-    const isMessageLoaded = useCallback((ts: number) => findRowOffsetByMessageTs(ts) >= 0, [findRowOffsetByMessageTs])
+    const isMessageLoaded = useCallback(
+        (target: MessageJumpTarget) => findRowOffsetByTarget(target) >= 0,
+        [findRowOffsetByTarget],
+    )
 
     const fetchAnchoredPage = useCallback(
-        async (anchorTs: number): Promise<AnchoredPage> => {
-            const resp = await fetchAnchoredTaskMessages(taskViewState, anchorTs, LOAD_COUNT)
+        async (target: MessageJumpTarget): Promise<AnchoredPage> => {
+            const resp = await fetchAnchoredTaskMessages(
+                taskViewState,
+                typeof target === "number" ? target : target.anchorTs,
+                LOAD_COUNT,
+                typeof target === "number" ? undefined : target.anchorIndex,
+            )
             return {
                 messages: resp.messages.map((message) => convertProtoToClineMessage(message)),
                 startIndex: resp.startIndex,
@@ -911,7 +994,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
             isLoaded: isMessageLoaded,
             scrollToMessage,
             fetchAnchoredPage,
-            replaceWindow: (page) => replaceMessageWindow(page.messages, page.startIndex),
+            replaceWindow: (page, target) => replaceMessageWindow(page.messages, page.startIndex, typeof target === "object"),
             enterBrowsing: enterBrowsingForJump,
         }),
         [
@@ -926,7 +1009,21 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
     )
     const jumpToMessage = useJumpToMessage(jumpPort)
 
-    const selectTrajectoryTurn = useCallback((anchorTs: number) => void jumpToMessage(anchorTs), [jumpToMessage])
+    const selectTrajectoryTurn = useCallback(
+        (turn: TrajectoryTurn) => {
+            if (turn.anchorIndex === undefined) return
+            const target = { anchorIndex: turn.anchorIndex, anchorTs: turn.anchorTs }
+            // The fixed task title can be outside the indexed message window. The
+            // explicit source-zero target supplies the position; the header only checks identity.
+            if (turn.anchorIndex === 0 && task.ts === turn.anchorTs) {
+                enterBrowsingForJump()
+                void jumpToEdge("top", target)
+                return
+            }
+            void jumpToMessage(target)
+        },
+        [enterBrowsingForJump, jumpToEdge, jumpToMessage, task],
+    )
 
     // A jump like the rail's, so a rail jump still fetching is superseded instead of replacing the window afterwards.
     const handleScrollToUserMessage = useCallback(() => {
@@ -1027,23 +1124,12 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 
     const virtuosoInstanceKey = `${taskKey}:${clineMessages.length === 0 ? "empty" : "loaded"}`
 
-    // Floating button: scroll listener for visibility + wheel listener for direction.
+    // Scrolling schedules window growth; wheel input also selects the navigation direction.
     // Attached to Virtuoso inner scroller, not the outer scrollContainerRef.
     useEffect(() => {
         void virtuosoInstanceKey
         const container = scrollContainerRef.current
         if (!container) return
-
-        const showButton = () => {
-            if (hideBtnTimerRef.current) clearTimeout(hideBtnTimerRef.current)
-            if (!isAtBottomRef.current || showScrollToBottomRef.current) {
-                setFloatingBtnVisible(true)
-                wasBtnShownRef.current = true
-                hideBtnTimerRef.current = setTimeout(() => {
-                    setFloatingBtnVisible(false)
-                }, 5000)
-            }
-        }
 
         const onScroll = () => {
             // Stamped here rather than in the range handler: a range change is a
@@ -1051,7 +1137,6 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
             // cannot say whether the reader is currently moving the viewport.
             lastScrollAtRef.current = Date.now()
             scheduleDeferredWindowGrowth()
-            showButton()
         }
 
         const el = container.querySelector('[data-virtuoso-scroller="true"]') as HTMLElement | null
@@ -1070,7 +1155,6 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                 cancelProgrammaticScroll()
             }
             setFloatingBtnDir(direction === "up" ? "top" : "bottom")
-            showButton()
         }
 
         if (el) {
@@ -1083,7 +1167,6 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                 el.removeEventListener("scroll", onScroll)
                 el.removeEventListener("wheel", onWheel)
             }
-            if (hideBtnTimerRef.current) clearTimeout(hideBtnTimerRef.current)
         }
     }, [
         cancelProgrammaticScroll,
@@ -1094,8 +1177,12 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
         scheduleDeferredWindowGrowth,
     ])
 
+    // The bulk fold control only exists while there is something to fold or unfold.
+    const foldControlVisible = foldingEnabled && (closedFolds.length > 0 || hasOpenFolds)
+    const allFoldsOpen = closedFolds.length === 0
+
     return (
-        <div className="overflow-hidden flex flex-col h-full relative">
+        <div className="group/messages overflow-hidden flex flex-col h-full relative">
             <div
                 className={cn(
                     "pointer-events-none absolute top-0 left-0 right-0 z-10 pl-[15px] pr-[14px] bg-background",
@@ -1108,7 +1195,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                 />
             </div>
 
-            <div className="grow flex relative" ref={scrollContainerRef}>
+            <div className="grow flex relative [container-type:size] [container-name:chat-messages]" ref={scrollContainerRef}>
                 <Virtuoso
                     atBottomStateChange={(atBottom) => {
                         setIsAtBottom(atBottom)
@@ -1133,7 +1220,6 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 
                         if (atBottom && !absoluteBottomLoaded) {
                             setFloatingBtnDir("bottom")
-                            setFloatingBtnVisible(true)
                         }
                     }}
                     atBottomThreshold={10}
@@ -1173,77 +1259,98 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                     totalListHeightChanged={handleMeasuredLayoutChange}
                 />
 
-                <TrajectoryRailOverlay
-                    onSelectTurn={selectTrajectoryTurn}
-                    scroller={scroller}
-                    taskId={taskViewState?.taskId}
-                    taskInstanceId={taskViewState?.taskInstanceId}
-                />
-
-                {/* Floating scroll direction button — dims after 5s idle, stays armed */}
-                {showScrollToBottom && (
-                    <div
-                        className={cn(
-                            "absolute bottom-4 right-4 z-20 pointer-events-auto transition-opacity duration-300 ease-out",
-                            // The wrapper exists only while the reader is away from the
-                            // live bottom, so the affordance is warranted for as long as
-                            // it is rendered and must remain clickable. The idle timer is
-                            // presentation only: it may lower prominence, never remove
-                            // interactivity. Tying pointer events to it produced a
-                            // control that hit-testing and assistive technology both
-                            // still reported as a button while the row underneath
-                            // silently swallowed every click.
-                            floatingBtnVisible ? "opacity-100" : "opacity-40 hover:opacity-100",
-                        )}>
-                        <button
-                            aria-label={floatingBtnDir === "bottom" ? "Scroll to bottom" : "Scroll to top"}
-                            className={cn(
-                                "w-10 h-10 rounded-full bg-background/65 backdrop-blur-sm shadow-md",
-                                "flex items-center justify-center cursor-pointer border-0",
-                                "hover:bg-background/90 hover:shadow-xl hover:scale-105",
-                                "active:scale-95 transition-all duration-200",
-                            )}
-                            onClick={() => {
-                                if (floatingBtnDir === "bottom") {
-                                    userScrollIntentRef.current = null
-                                    disableAutoScrollRef.current = false
-                                    void jumpToEdge("bottom")
-                                } else {
-                                    userScrollIntentRef.current = { direction: "up", recordedAt: Date.now() }
-                                    disableAutoScrollRef.current = true
-                                    void jumpToEdge("top")
-                                }
-                                if (hideBtnTimerRef.current) clearTimeout(hideBtnTimerRef.current)
-                                setFloatingBtnVisible(false)
-                            }}
-                            style={{
-                                animation: !wasBtnShownRef.current
-                                    ? undefined
-                                    : floatingBtnVisible
-                                      ? "btnAppear 400ms cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards"
-                                      : undefined,
-                            }}
-                            type="button">
-                            <span
-                                className={cn(
-                                    "codicon text-base",
-                                    floatingBtnDir === "bottom" ? "codicon-chevron-down" : "codicon-chevron-up",
-                                )}
-                            />
-                        </button>
+                {/* Separate layout rows keep the rail out of the controls' painted and clickable area. */}
+                <div
+                    className={cn(
+                        "group/floating pointer-events-none absolute inset-0 z-10 grid grid-rows-[minmax(0,1fr)_auto]",
+                        (foldControlVisible || showScrollToBottom) && "gap-2 pb-4",
+                    )}>
+                    <div className="relative min-h-0">
+                        <TrajectoryRailOverlay
+                            onSelectTurn={selectTrajectoryTurn}
+                            scroller={scroller}
+                            taskId={taskViewState?.taskId}
+                            taskInstanceId={taskViewState?.taskInstanceId}
+                        />
                     </div>
-                )}
+                    {(foldControlVisible || showScrollToBottom) && (
+                        <div className={cn(floatingControls.buttons, "mr-4 flex items-end justify-end gap-2")}>
+                            {foldControlVisible && (
+                                <div
+                                    className={cn(FLOATING_CONTROL_VISIBILITY, "transition-opacity duration-300 ease-out")}
+                                    data-testid="folding-controls">
+                                    <button
+                                        aria-label={t(
+                                            allFoldsOpen ? "chatInput.timeline.collapseAll" : "chatInput.timeline.expandAll",
+                                        )}
+                                        className={cn(
+                                            FLOATING_CONTROL,
+                                            "hover:bg-background/90 hover:shadow-xl hover:scale-105",
+                                            "active:scale-95 transition-all duration-200",
+                                        )}
+                                        onClick={() =>
+                                            scrollBehavior.replaceFoldExpansion(
+                                                allFoldsOpen
+                                                    ? {}
+                                                    : {
+                                                          ...chatState.expandedFolds,
+                                                          ...Object.fromEntries(
+                                                              closedFolds.map((fold) => [fold._activityFoldId, true]),
+                                                          ),
+                                                      },
+                                            )
+                                        }
+                                        title={t(
+                                            allFoldsOpen ? "chatInput.timeline.collapseAll" : "chatInput.timeline.expandAll",
+                                        )}
+                                        type="button">
+                                        <span
+                                            className={cn(
+                                                "codicon text-base",
+                                                allFoldsOpen ? "codicon-list-flat" : "codicon-list-tree",
+                                            )}
+                                            style={allFoldsOpen ? { transform: "scaleX(0.86)" } : undefined}
+                                        />
+                                    </button>
+                                </div>
+                            )}
+                            {/* Keep the fold action in its original slot when bottom-following needs no scroll button. */}
+                            <div className={cn(FLOATING_CONTROL_VISIBILITY, "h-10 transition-opacity duration-300 ease-out")}>
+                                {showScrollToBottom && (
+                                    <button
+                                        aria-label={t(
+                                            floatingBtnDir === "bottom" ? "chatInput.timeline.bottom" : "chatInput.timeline.top",
+                                        )}
+                                        className={cn(
+                                            FLOATING_CONTROL,
+                                            "hover:bg-background/90 hover:shadow-xl hover:scale-105",
+                                            "active:scale-95 transition-all duration-200",
+                                        )}
+                                        onClick={() => {
+                                            if (floatingBtnDir === "bottom") {
+                                                userScrollIntentRef.current = null
+                                                disableAutoScrollRef.current = false
+                                                void jumpToEdge("bottom")
+                                            } else {
+                                                userScrollIntentRef.current = { direction: "up", recordedAt: Date.now() }
+                                                disableAutoScrollRef.current = true
+                                                void jumpToEdge("top")
+                                            }
+                                        }}
+                                        type="button">
+                                        <span
+                                            className={cn(
+                                                "codicon text-base",
+                                                floatingBtnDir === "bottom" ? "codicon-chevron-down" : "codicon-chevron-up",
+                                            )}
+                                        />
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
             </div>
-
-            {/* Button appear animation */}
-            <style>{`
-				@keyframes btnAppear {
-					0% { transform: scale(0); opacity: 0; box-shadow: 0 0 0 0 rgba(0,0,0,0); }
-					40% { transform: scale(1.4); opacity: 1; box-shadow: 0 0 16px 2px rgba(0,0,0,0.25); }
-					70% { transform: scale(0.85); box-shadow: 0 0 8px 1px rgba(0,0,0,0.12); }
-					100% { transform: scale(1); box-shadow: 0 1px 3px 1px rgba(0,0,0,0.08); }
-				}
-			`}</style>
         </div>
     )
 }

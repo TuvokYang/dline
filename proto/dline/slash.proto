@@ -53,6 +53,12 @@ enum InputSemanticLifecycle {
   INPUT_SEMANTIC_LIFECYCLE_TASK = 1;
 }
 
+// How a recognized control command uses the rest of the submitted content.
+// Absence on a descriptor preserves its existing lifecycle-barrier behavior.
+enum InputSemanticInputPolicy {
+  INPUT_SEMANTIC_INPUT_POLICY_CONSUME_TOKEN_KEEP_CONTENT = 0;
+}
+
 // One addressable chat input node.
 message InputSemanticDescriptor {
   string id = 1; // Stable identity, e.g. "command.compact" or "mention.file"
@@ -64,6 +70,7 @@ message InputSemanticDescriptor {
   InputSemanticLifecycle lifecycle = 7;
   string authorizes = 8; // Tool this node authorizes; empty when it authorizes nothing
   bool dynamic = 9; // True for a discovered skill, workflow or MCP prompt
+  optional InputSemanticInputPolicy input_policy = 10;
 }
 
 // The catalog revision advances only when the descriptor set actually changed.

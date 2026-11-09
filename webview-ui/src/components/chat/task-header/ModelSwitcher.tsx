@@ -7,7 +7,10 @@ import { useApiProfiles } from "@/components/settings/providers/useApiProfiles"
 import { updateSetting } from "@/components/settings/utils/settingsHandlers"
 import { Switch } from "@/components/ui/switch"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
+import { getCurrencySymbol } from "@/utils/currency"
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip"
+import { thinkingEffortLabel } from "../input/runtime-presentation"
 import type { TransitionDraftComposer, TransitionDraftContent } from "../mode-switch/transitionDraft"
 import { ProfileSwitchDialog } from "../profile-switch/ProfileSwitchDialog"
 import { useProfileSwitch } from "../profile-switch/useProfileSwitch"
@@ -30,6 +33,7 @@ type ModeTab = "act" | "plan"
  * planActSeparateModelsSetting is enabled.
  */
 const ModelSwitcher: React.FC<ModelSwitcherProps> = ({ onOpenSettings, draft, draftComposer }) => {
+    const { t } = useUiTranslation()
     const {
         apiConfiguration,
         mode,
@@ -90,13 +94,16 @@ const ModelSwitcher: React.FC<ModelSwitcherProps> = ({ onOpenSettings, draft, dr
     // Stable identity remains valid across rename; name is legacy fallback only.
     const currentProfileId = mode === "plan" ? planProfileId : actProfileId
     const currentProfileName = mode === "plan" ? planProfileName : actProfileName
-    const displayState = resolveProfileDisplayState({
-        profiles,
-        loaded,
-        error,
-        profileId: currentProfileId,
-        profileName: currentProfileName,
-    })
+    const displayState = resolveProfileDisplayState(
+        {
+            profiles,
+            loaded,
+            error,
+            profileId: currentProfileId,
+            profileName: currentProfileName,
+        },
+        t,
+    )
     const currentProfile = displayState.kind === "selected" ? displayState.profile : undefined
     const displayLine = displayState.text
 
@@ -106,9 +113,14 @@ const ModelSwitcher: React.FC<ModelSwitcherProps> = ({ onOpenSettings, draft, dr
     const info = currentProfile?.modelInfo
     if (info) {
         if (info.capabilities?.contextWindow)
-            tooltipLines.push(`Context: ${info.capabilities.contextWindow.toLocaleString()} tokens`)
-        if ((info.pricing?.inputPrice ?? 0) > 0 || (info.pricing?.outputPrice ?? 0) > 0)
-            tooltipLines.push(`In: $${info.pricing?.inputPrice ?? 0}/M | Out: $${info.pricing?.outputPrice ?? 0}/M`)
+            tooltipLines.push(t("chatInput.profile.context", { tokens: info.capabilities.contextWindow.toLocaleString() }))
+        if (info.pricing?.strategy?.flat) {
+            const prices = info.pricing.strategy.flat.prices
+            const symbol = info.pricing.currency?.trim() ? getCurrencySymbol(info.pricing.currency) : ""
+            const input = prices?.inputPrice === undefined ? "—" : `${symbol}${prices.inputPrice}`
+            const output = prices?.outputPrice === undefined ? "—" : `${symbol}${prices.outputPrice}`
+            tooltipLines.push(t("chatInput.profile.prices", { input, output }))
+        }
     }
     const tooltip = tooltipLines.join("\n")
 
@@ -204,7 +216,7 @@ const ModelSwitcher: React.FC<ModelSwitcherProps> = ({ onOpenSettings, draft, dr
                 )}
                 <TooltipTrigger asChild>
                     <button
-                        aria-label="Select model"
+                        aria-label={t("chatInput.profile.selectModel")}
                         className="chat-input-control-outline inline-flex h-[18.5px] w-full min-w-0 cursor-pointer items-center overflow-hidden rounded-sm border-0 bg-toolbar-hover px-1 py-0 text-left text-xs font-medium leading-[18px] text-foreground shadow-none transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-60"
                         onClick={() => {
                             if (displayState.kind === "create") {
@@ -223,7 +235,9 @@ const ModelSwitcher: React.FC<ModelSwitcherProps> = ({ onOpenSettings, draft, dr
                         <span
                             className="inline-flex h-full min-w-0 flex-1 items-center truncate text-center"
                             data-chat-input-profile-text>
-                            {profileSwitchFlow.statusText ? `${displayLine} · ${profileSwitchFlow.statusText}` : displayLine}
+                            {profileSwitchFlow.statusText
+                                ? t("chatInput.profile.status", { profile: displayLine, status: profileSwitchFlow.statusText })
+                                : displayLine}
                         </span>
                     </button>
                 </TooltipTrigger>
@@ -243,28 +257,31 @@ const ModelSwitcher: React.FC<ModelSwitcherProps> = ({ onOpenSettings, draft, dr
                         {/* Title row with separation toggle */}
                         <div className="flex shrink-0 items-center justify-between border-b border-editor-group-border px-3 py-2">
                             <span className="text-xs font-medium" style={{ color: "var(--vscode-foreground)" }}>
-                                Available Models
+                                {t("chatInput.profile.available")}
                             </span>
                             <div className="flex items-center gap-1.5">
                                 <span className="text-[10px]" style={{ color: "var(--vscode-descriptionForeground)" }}>
-                                    Split Model
+                                    {t("chatInput.profile.split")}
                                 </span>
                                 <Switch
                                     checked={planActSeparateModelsSetting}
                                     className="scale-75"
                                     onClick={toggleSeparation}
-                                    title={
-                                        planActSeparateModelsSetting ? "Disable per-mode models" : "Use different models per mode"
-                                    }
+                                    title={t(
+                                        planActSeparateModelsSetting
+                                            ? "chatInput.profile.disableSplit"
+                                            : "chatInput.profile.enableSplit",
+                                    )}
                                 />
                                 <button
+                                    aria-label={t("chatInput.profile.settings")}
                                     className="cursor-pointer bg-transparent border-0 p-0"
                                     onClick={() => {
                                         setOpen(false)
                                         onOpenSettings()
                                     }}
                                     style={{ color: "var(--vscode-foreground)", opacity: 0.6 }}
-                                    title="Open API Configuration"
+                                    title={t("chatInput.profile.settings")}
                                     type="button">
                                     <SettingsIcon size={14} />
                                 </button>
@@ -290,7 +307,7 @@ const ModelSwitcher: React.FC<ModelSwitcherProps> = ({ onOpenSettings, draft, dr
                                                     : "2px solid transparent",
                                         }}
                                         type="button">
-                                        {tab === "act" ? "Act" : "Plan"}
+                                        {t(tab === "act" ? "chatInput.mode.act" : "chatInput.mode.plan")}
                                     </button>
                                 ))}
                             </div>
@@ -304,16 +321,17 @@ const ModelSwitcher: React.FC<ModelSwitcherProps> = ({ onOpenSettings, draft, dr
                                         className="w-full cursor-pointer border-0 bg-transparent px-3 py-2 text-left text-xs text-foreground hover:bg-list-hover"
                                         onClick={handleCreateProfile}
                                         type="button">
-                                        Create profile
+                                        {t("chatInput.profile.create")}
                                     </button>
                                 ) : (
                                     <div className="px-3 py-2 text-xs" style={{ color: "var(--vscode-descriptionForeground)" }}>
-                                        No profiles for this mode.
+                                        {t("chatInput.profile.emptyMode")}
                                     </div>
                                 )
                             ) : (
                                 visibleProfiles.map((profile) => {
-                                    const name = profile.name || `${profile.provider}:${profile.modelId}` || "Unnamed"
+                                    const name =
+                                        profile.name || `${profile.provider}:${profile.modelId}` || t("chatInput.profile.unnamed")
                                     const selected = isSelected(profile)
                                     const isHovered = hoveredId === profile.id
 
@@ -322,17 +340,32 @@ const ModelSwitcher: React.FC<ModelSwitcherProps> = ({ onOpenSettings, draft, dr
                                     const mi = profile.modelInfo
                                     if (mi) {
                                         if (mi.capabilities?.contextWindow)
-                                            capLines.push(`Context: ${mi.capabilities.contextWindow.toLocaleString()} tokens`)
-                                        if (mi.pricing?.inputPrice != null)
                                             capLines.push(
-                                                `In: $${mi.pricing.inputPrice}/M | Out: $${mi.pricing.outputPrice ?? "?"}/M`,
+                                                t("chatInput.profile.context", {
+                                                    tokens: mi.capabilities.contextWindow.toLocaleString(),
+                                                }),
                                             )
+                                        if (mi.pricing?.strategy?.flat) {
+                                            const prices = mi.pricing.strategy.flat.prices
+                                            const symbol = mi.pricing.currency?.trim()
+                                                ? getCurrencySymbol(mi.pricing.currency)
+                                                : ""
+                                            const input = prices?.inputPrice === undefined ? "—" : `${symbol}${prices.inputPrice}`
+                                            const output =
+                                                prices?.outputPrice === undefined ? "—" : `${symbol}${prices.outputPrice}`
+                                            capLines.push(t("chatInput.profile.prices", { input, output }))
+                                        }
                                         if (mi.capabilities?.supportsReasoning)
                                             capLines.push(
-                                                `Reasoning: ${mi.capabilities?.thinking?.effortLevels?.join(", ") || "yes"}`,
+                                                t("chatInput.profile.reasoning", {
+                                                    levels:
+                                                        mi.capabilities?.thinking?.effortLevels
+                                                            ?.map((effort) => thinkingEffortLabel(effort, t))
+                                                            .join(", ") || t("chatInput.common.yes"),
+                                                }),
                                             )
-                                        if (mi.capabilities?.supportsImages) capLines.push("Images: yes")
-                                        if (mi.capabilities?.supportsPromptCache) capLines.push("Prompt Cache: yes")
+                                        if (mi.capabilities?.supportsImages) capLines.push(t("chatInput.profile.images"))
+                                        if (mi.capabilities?.supportsPromptCache) capLines.push(t("chatInput.profile.cache"))
                                     }
                                     const capTooltip = capLines.join("\n")
 
@@ -381,7 +414,17 @@ const ModelSwitcher: React.FC<ModelSwitcherProps> = ({ onOpenSettings, draft, dr
                                                 <span
                                                     className="text-[10px] block"
                                                     style={{ color: "var(--vscode-descriptionForeground)" }}>
-                                                    {profile.usedFor.length > 0 ? profile.usedFor.join(", ") : "all modes"}
+                                                    {profile.usedFor.length > 0
+                                                        ? profile.usedFor
+                                                              .map((usage) => {
+                                                                  if (usage === "act" || usage === "plan")
+                                                                      return t(`chatInput.mode.${usage}`)
+                                                                  if (usage === "subagents" || usage === "image")
+                                                                      return t(`chatInput.profile.usage.${usage}`)
+                                                                  return usage
+                                                              })
+                                                              .join(", ")
+                                                        : t("chatInput.profile.allModes")}
                                                 </span>
                                             </div>
                                         </div>

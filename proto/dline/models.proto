@@ -159,20 +159,20 @@ message OpenRouterModelInfo {
   optional int64 context_window = 2;
   optional bool supports_images = 3;
   bool supports_prompt_cache = 4;
-  optional double input_price = 5;
-  optional double output_price = 6;
-  optional double cache_writes_price = 7;
-  optional double cache_reads_price = 8;
+  optional double input_price = 5 [deprecated = true];
+  optional double output_price = 6 [deprecated = true];
+  optional double cache_writes_price = 7 [deprecated = true];
+  optional double cache_reads_price = 8 [deprecated = true];
   optional string description = 9;
   optional dline.models.ThinkingConfig thinking_config = 10;
   optional bool supports_global_endpoint = 11;
-  repeated ModelTier tiers = 12;
+  repeated ModelTier tiers = 12 [deprecated = true];
   optional string name = 13;
   optional double temperature = 14;
   optional bool supports_reasoning = 15;
   optional dline.models.ApiFormat api_format = 16;
-  optional string currency = 17;
-  // Complete declaration for current clients; legacy scalars above are compatibility projections.
+  optional string currency = 17 [deprecated = true];
+  // Current producers write pricing only through model_info.pricing. Legacy prices are read-only.
   optional ModelInfo model_info = 18;
 }
 
@@ -519,6 +519,7 @@ enum ApiProvider {
   NOUSRESEARCH = 39;
   OPENAI_CODEX = 40;
   WANDB = 41;
+  OPENCODE = 42;
 }
 
 // Model info for OpenAI-compatible models

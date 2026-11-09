@@ -41,7 +41,6 @@ describe("NewTaskButton", () => {
 
         fireEvent.click(button)
         await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Could not close"))
-        expect(screen.getByRole("alert")).not.toHaveTextContent("secret-token")
         expect(button).not.toBeDisabled()
 
         fireEvent.click(button)

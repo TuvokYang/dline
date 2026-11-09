@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 
 interface UseMenuAnnouncementOptions<T> {
     /** The list of items in the menu */
@@ -16,6 +17,8 @@ interface UseMenuAnnouncementResult {
     announcement: string
 }
 
+const isSelectableByDefault = () => true
+
 /**
  * Hook to manage screen reader announcements for menu components.
  * Automatically announces the currently selected item when the selection changes.
@@ -25,8 +28,9 @@ export function useMenuAnnouncement<T>({
     items,
     selectedIndex,
     getItemLabel,
-    isItemSelectable = () => true,
+    isItemSelectable = isSelectableByDefault,
 }: UseMenuAnnouncementOptions<T>): UseMenuAnnouncementResult {
+    const { t } = useUiTranslation()
     const [announcement, setAnnouncement] = useState("")
     const clearTimeoutRef = useRef<NodeJS.Timeout | null>(null)
     const hasNavigatedRef = useRef(false)
@@ -57,7 +61,7 @@ export function useMenuAnnouncement<T>({
             const selectedItem = items[selectedIndex]
             if (isItemSelectable(selectedItem)) {
                 const label = getItemLabel(selectedItem)
-                setAnnouncement(`${label}, ${selectedIndex + 1} of ${items.length}`)
+                setAnnouncement(t("runtime.menu.position", { label, position: selectedIndex + 1, count: items.length }))
 
                 // Clear announcement after screen reader has time to read it
                 clearTimeoutRef.current = setTimeout(() => {
@@ -72,7 +76,7 @@ export function useMenuAnnouncement<T>({
                 clearTimeoutRef.current = null
             }
         }
-    }, [selectedIndex, items, getItemLabel, isItemSelectable])
+    }, [selectedIndex, items, getItemLabel, isItemSelectable, t])
 
     return {
         announcement,

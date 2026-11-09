@@ -1,3 +1,4 @@
+import { validAwaySnapshot } from "./away"
 import { withoutAbandonedReview } from "./machines/dialog"
 import { expireAbandonedCompaction } from "./machines/flow"
 import { withoutClosedTransitionDraft } from "./machines/transition-draft"
@@ -39,6 +40,49 @@ function interactions(state: TaskState): readonly DialogInteraction[] {
 /** A block in one of these phases never reads its invocation again. */
 const SETTLED_BLOCK_PHASES: ReadonlySet<BlockPhase> = new Set(["completed", "failed", "rejected", "skipped", "cancelled"])
 
+/** Only disk ingress needs these checks; transitions use typed round values. */
+function validRoundState(state: TaskState): boolean {
+    const revision = (value: number) => Number.isSafeInteger(value) && value >= 0
+    const notices = (items: unknown) =>
+        Array.isArray(items) &&
+        items.every(
+            (item) =>
+                item &&
+                typeof item.id === "string" &&
+                item.kind === "away_exited" &&
+                revision(item.revision) &&
+                ["stopped", "user_returned", "configuration_revoked"].includes(item.reason),
+        )
+    const inputs = (items: unknown) =>
+        Array.isArray(items) &&
+        items.every(
+            (item) =>
+                item &&
+                typeof item.payloadRef === "string" &&
+                revision(item.revision) &&
+                ["intake", "approval", "dialog"].includes(item.source),
+        )
+    const material = state.roundMaterial
+    if (material !== undefined && (!material || !notices(material.notices) || !inputs(material.feedback))) return false
+    const plan = state.flow.compose?.materialPlan
+    if (
+        plan !== undefined &&
+        (!plan || typeof plan.id !== "string" || !revision(plan.frozenRevision) || !notices(plan.notices) || !inputs(plan.inputs))
+    )
+        return false
+    return interactions(state).every((interaction) => {
+        const deadline = interaction?.deadline
+        return (
+            deadline === undefined ||
+            (deadline !== null &&
+                ["ask", "command_approval", "external_command"].includes(deadline.kind) &&
+                Number.isFinite(deadline.deadlineAt) &&
+                revision(deadline.modeRevocation) &&
+                revision(deadline.automaticRevocation))
+        )
+    })
+}
+
 /**
  * Whether `state` has the structure every later check dereferences.
  *
@@ -78,7 +122,7 @@ function isShaped(state: TaskState): boolean {
  * the middle of a round.
  */
 export function requiredPayloadRefs(state: TaskState): readonly string[] {
-    if (!isShaped(state)) return []
+    if (!isShaped(state) || !validRoundState(state)) return []
     const refs = new Set<string>()
     const intake = state.intake
     for (const entry of [...(intake?.queued ?? []), ...(intake?.background ?? []), ...(intake?.coTask ?? [])]) {
@@ -98,6 +142,10 @@ export function requiredPayloadRefs(state: TaskState): readonly string[] {
         }
     }
     for (const entry of state.flow.pendingQueueResponse?.entries ?? []) refs.add(entry.payloadRef)
+    for (const input of state.roundMaterial?.feedback ?? []) refs.add(input.payloadRef)
+    for (const input of state.flow.compose?.materialPlan?.inputs ?? []) refs.add(input.payloadRef)
+    // A planned round reconstructs this derived document from its durable journal checkpoint.
+    if (state.flow.compose?.draftRef && !state.flow.compose.materialPlan) refs.add(state.flow.compose.draftRef)
     return [...refs]
 }
 
@@ -105,6 +153,8 @@ export function requiredPayloadRefs(state: TaskState): readonly string[] {
 function validateSnapshot(input: HydrateInput, snapshot: TaskState): readonly Diagnostic[] | undefined {
     if (!isShaped(snapshot)) return invalid("malformed_snapshot", "Snapshot does not have the structure of a task state")
     if (snapshot.taskId !== input.taskId) return invalid("task_identity_mismatch", "Snapshot belongs to another task")
+    if (!validAwaySnapshot(snapshot.away)) return invalid("invalid_away_state", "Snapshot has an invalid Away state")
+    if (!validRoundState(snapshot)) return invalid("invalid_round_state", "Snapshot has invalid round materials or deadlines")
     if (!Number.isInteger(snapshot.revision) || snapshot.revision < 0)
         return invalid("invalid_revision", "Snapshot revision is invalid")
     if (!Number.isInteger(snapshot.generation) || snapshot.generation < 0 || snapshot.halt.generation !== snapshot.generation)
@@ -227,6 +277,7 @@ function normalizeInteraction(
         prepare: undefined,
         reveal: undefined,
     }
+    if (interaction.acceptedResponse?.origin === "timeout") return { ...normalized, status: "resolving", deadline: undefined }
     if (interaction.acceptedResponse?.queuedInput && interaction.journalRef) {
         // Re-reveal the durable answer's owner so the new session can continue it;
         // the queue was already consumed and must not be claimed a second time.
@@ -318,6 +369,17 @@ function normalizeState(
                       // the same explicit recovery choices it rendered before open.
                       ...terminalCompactionFailure,
                       ...(snapshot.flow.pendingQueueResponse ? { pendingQueueResponse: snapshot.flow.pendingQueueResponse } : {}),
+                      ...(snapshot.flow.compose?.materialPlan
+                          ? {
+                                compose: {
+                                    ...snapshot.flow.compose,
+                                    status:
+                                        snapshot.flow.compose.status === "running"
+                                            ? ("cancelled" as const)
+                                            : snapshot.flow.compose.status,
+                                },
+                            }
+                          : {}),
                   }
                 : { ...snapshot.flow, compaction: expireAbandonedCompaction(snapshot.flow.compaction, "compaction_interrupted") },
         turn: {
@@ -348,6 +410,12 @@ function normalizeState(
         }
         return { state: withoutClosedTransitionDraft(state), diagnostics: [] }
     }
+    if (form === "interrupted" && state.dialog.primary?.acceptedResponse?.origin === "timeout") {
+        state = {
+            ...state,
+            dialog: { ...state.dialog, interrupted: state.dialog.primary, primary: recoveryInteraction(state, form) },
+        }
+    }
     const approvals = restorableApprovals(state)
     const hasRestorableApproval = Object.keys(approvals).length > 0
     if (hasRestorableApproval) {
@@ -374,7 +442,11 @@ function dialogCommandInput(interaction: DialogInteraction) {
         kind: interaction.kind,
         presentationRef: interaction.presentationRef,
         ...(interaction.presentationAsk === undefined ? {} : { presentationAsk: interaction.presentationAsk }),
+
         ...(interaction.presentationRow === undefined ? {} : { presentationRow: interaction.presentationRow }),
+        ...(interaction.presentationWorkingDirectory === undefined
+            ? {}
+            : { presentationWorkingDirectory: interaction.presentationWorkingDirectory }),
         actionRules: interaction.actionRules,
         blockId: interaction.blockId,
         prepareKey: interaction.prepareKey ?? `dialog.prepare:${interaction.interactionId}`,
@@ -393,6 +465,16 @@ function initialCommands(state: TaskState): readonly Command[] {
                 originRevision: state.revision,
                 generation: state.generation,
             }
+            if (interaction.acceptedResponse?.origin === "timeout" && interaction.acceptedResponse.deadlineKind)
+                return [
+                    {
+                        ...base,
+                        type: "dialog.deliver_automatic",
+                        interactionId: interaction.interactionId,
+                        turnId: interaction.turnId,
+                        deadlineKind: interaction.acceptedResponse.deadlineKind,
+                    },
+                ]
             if (interaction.status === "planned") return [{ ...base, type: "dialog.prepare", ...dialogCommandInput(interaction) }]
             if (interaction.status === "prepared" && interaction.journalRef && interaction.receiverGeneration !== undefined)
                 return [

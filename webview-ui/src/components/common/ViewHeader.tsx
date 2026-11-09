@@ -1,15 +1,19 @@
 import { Button } from "@/components/ui/button"
+import type { UiMessageKey } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { getEnvironmentColor } from "@/utils/environmentColors"
 import type { Environment } from "../../../../src/shared/config-types"
 
-const ENV_DISPLAY_NAMES: Record<Environment, string> = {
-    production: "Production",
-    staging: "Staging",
-    local: "Local",
-    selfHosted: "Self-hosted",
+/** Environment names are product display text; the environment value itself is unchanged. */
+const ENV_NAME_KEYS: Record<Environment, Extract<UiMessageKey, `shell.chrome.environment.${string}`>> = {
+    production: "shell.chrome.environment.production",
+    staging: "shell.chrome.environment.staging",
+    local: "shell.chrome.environment.local",
+    selfHosted: "shell.chrome.environment.selfHosted",
 }
 
 type ViewHeaderProps = {
+    /** Already-translated view title. Callers own the text so each view keeps its own keys. */
     title: string
     onDone: () => void | Promise<void>
     doneDisabled?: boolean
@@ -18,16 +22,10 @@ type ViewHeaderProps = {
     environment?: Environment
 }
 
-const ViewHeader = ({
-    title,
-    onDone,
-    doneDisabled = false,
-    doneLabel = "Done",
-    showEnvironmentSuffix,
-    environment,
-}: ViewHeaderProps) => {
+const ViewHeader = ({ title, onDone, doneDisabled = false, doneLabel, showEnvironmentSuffix, environment }: ViewHeaderProps) => {
+    const { t } = useUiTranslation()
     const showSubtext = showEnvironmentSuffix && environment && environment !== "production"
-    const capitalizedEnv = environment ? ENV_DISPLAY_NAMES[environment] : ""
+    const environmentName = environment ? t(ENV_NAME_KEYS[environment]) : ""
     const titleColor = getEnvironmentColor(environment)
 
     return (
@@ -38,12 +36,12 @@ const ViewHeader = ({
                 </h3>
                 {showSubtext && (
                     <span className="absolute left-0 top-8 -translate-y-1 text-xs text-description whitespace-nowrap">
-                        {capitalizedEnv} environment
+                        {t("shell.chrome.environmentSuffix", { environment: environmentName })}
                     </span>
                 )}
             </div>
             <Button disabled={doneDisabled} onClick={() => void onDone()} size="header">
-                {doneLabel}
+                {doneLabel ?? t("shell.chrome.done")}
             </Button>
         </div>
     )

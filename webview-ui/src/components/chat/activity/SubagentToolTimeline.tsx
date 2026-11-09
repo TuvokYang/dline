@@ -1,6 +1,7 @@
 import type { TaskActivityEvent } from "@shared/proto/dline/task"
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, CircleXIcon, LoaderCircleIcon } from "lucide-react"
 import { useMemo, useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 import { buildSubagentToolSteps, type SubagentToolStep } from "./subagent-activity-model"
 
@@ -8,12 +9,6 @@ function ToolStatusIcon({ status }: { status: SubagentToolStep["status"] }) {
     if (status === "started") return <LoaderCircleIcon className="size-3 shrink-0 animate-spin text-link" />
     if (status === "failed") return <CircleXIcon className="size-3 shrink-0 text-error" />
     return <CheckIcon className="size-3 shrink-0 text-success" />
-}
-
-function statusLabel(status: SubagentToolStep["status"]): string {
-    if (status === "started") return "Running"
-    if (status === "failed") return "Failed"
-    return "Done"
 }
 
 type SubagentToolDetailsMode = "none" | "inline"
@@ -29,7 +24,14 @@ function ToolStep({
     compact: boolean
     detailsMode: SubagentToolDetailsMode
 }) {
+    const { t } = useUiTranslation()
     const [expanded, setExpanded] = useState(false)
+    const statusLabel =
+        step.status === "started"
+            ? t("chatRows.common.status.running")
+            : step.status === "failed"
+              ? t("chatRows.common.status.failed")
+              : t("chatRows.common.status.done")
     const canExpandDetails = detailsMode === "inline" && Boolean(step.resultText || step.error)
     const summary = step.summary || ""
 
@@ -62,7 +64,7 @@ function ToolStep({
                     className="ml-auto flex shrink-0 items-center gap-1 text-[10px] text-description"
                     data-testid="subagent-tool-step-status">
                     {step.durationMs !== undefined && <span>{step.durationMs}ms</span>}
-                    <span>{statusLabel(step.status)}</span>
+                    <span>{statusLabel}</span>
                     {canExpandDetails &&
                         (expanded ? <ChevronDownIcon className="size-3" /> : <ChevronRightIcon className="size-3" />)}
                 </span>
@@ -100,6 +102,7 @@ export function SubagentToolTimeline({
     detailsMode?: SubagentToolDetailsMode
     showHeader?: boolean
 }) {
+    const { t } = useUiTranslation()
     const projectedSteps = useMemo(() => steps ?? buildSubagentToolSteps(events, currentAttempt), [steps, events, currentAttempt])
     if (projectedSteps.length === 0) return null
 
@@ -107,8 +110,7 @@ export function SubagentToolTimeline({
         <div className={cn("min-w-0", className)} data-testid="subagent-tool-timeline">
             {showHeader && (
                 <div className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-description">
-                    <span>Tools</span>
-                    <span className="font-normal normal-case">({projectedSteps.length})</span>
+                    <span>{t("chatRows.common.tools", { count: projectedSteps.length })}</span>
                 </div>
             )}
             <ol className={cn("m-0 list-none p-0", !compact && "space-y-0.5")}>

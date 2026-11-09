@@ -12,6 +12,16 @@ export interface AnchoredPage {
 /** Where the target row lands in the viewport. */
 export type JumpAlign = "start" | "center"
 
+/** Numeric targets retain the existing timestamp-only navigation semantics. */
+export type MessageJumpTarget = number | { anchorIndex: number; anchorTs?: number }
+
+/** Match a real source member, never an inherited viewport context or a page offset. */
+export function matchesMessageTarget(message: UiMessage, target: MessageJumpTarget): boolean {
+    return typeof target === "number"
+        ? message.ts === target
+        : message.messageIndex === target.anchorIndex && (target.anchorTs === undefined || message.ts === target.anchorTs)
+}
+
 /** What a jump needs from the message list that owns the loaded window. */
 export interface JumpToMessagePort {
     /** Identifies the opening; a jump started for another one never lands. */
@@ -23,17 +33,22 @@ export interface JumpToMessagePort {
      * Its identity must change whenever the rendered rows do: a jump that
      * replaced the window scrolls once the new rows are committed.
      */
-    isLoaded: (ts: number) => boolean
+    isLoaded: (target: MessageJumpTarget) => boolean
     /** Bring the message's row to `align` in the viewport, for as long as `isStillWanted` holds. */
-    scrollToMessage: (ts: number, behavior: "auto" | "smooth", align: JumpAlign, isStillWanted: () => boolean) => void
-    fetchAnchoredPage: (anchorTs: number) => Promise<AnchoredPage>
+    scrollToMessage: (
+        target: MessageJumpTarget,
+        behavior: "auto" | "smooth",
+        align: JumpAlign,
+        isStillWanted: () => boolean,
+    ) => void
+    fetchAnchoredPage: (target: MessageJumpTarget) => Promise<AnchoredPage>
     /** Replace the loaded window with the page, keeping copies the stream has already moved past. */
-    replaceWindow: (page: AnchoredPage) => void
+    replaceWindow: (page: AnchoredPage, target: MessageJumpTarget) => void
     /** Leave auto-follow and drop work that belongs to the window being left. */
     enterBrowsing: () => void
 }
 
-type PendingScroll = { ts: number; generation: number; align: JumpAlign }
+type PendingScroll = { target: MessageJumpTarget; generation: number; align: JumpAlign }
 
 /**
  * Jump the chat to a message anywhere in the task's history.
@@ -45,7 +60,7 @@ type PendingScroll = { ts: number; generation: number; align: JumpAlign }
  * directly; any other one replaces the window with a page centred on it and is
  * scrolled to once that page is laid out.
  */
-export function useJumpToMessage(port: JumpToMessagePort): (anchorTs: number, align?: JumpAlign) => Promise<void> {
+export function useJumpToMessage(port: JumpToMessagePort): (target: MessageJumpTarget, align?: JumpAlign) => Promise<void> {
     const portRef = useRef(port)
     portRef.current = port
     const pendingScrollRef = useRef<PendingScroll | null>(null)
@@ -59,20 +74,20 @@ export function useJumpToMessage(port: JumpToMessagePort): (anchorTs: number, al
             return
         }
         // React may run this against the rows of the window being replaced.
-        if (!isLoaded(pending.ts)) return
+        if (!isLoaded(pending.target)) return
         pendingScrollRef.current = null
         // Row heights are estimates until the new window is measured, so the scroll keeps re-targeting.
-        scrollToMessage(pending.ts, "auto", pending.align, () => portRef.current.generation.isCurrent(pending.generation))
+        scrollToMessage(pending.target, "auto", pending.align, () => portRef.current.generation.isCurrent(pending.generation))
     }, [port])
 
-    return useCallback(async (anchorTs: number, align: JumpAlign = "start") => {
+    return useCallback(async (target: MessageJumpTarget, align: JumpAlign = "start") => {
         const current = portRef.current
         current.enterBrowsing()
         pendingScrollRef.current = null
 
-        if (current.isLoaded(anchorTs)) {
+        if (current.isLoaded(target)) {
             const generation = current.generation.advance()
-            current.scrollToMessage(anchorTs, "smooth", align, () => portRef.current.generation.isCurrent(generation))
+            current.scrollToMessage(target, "smooth", align, () => portRef.current.generation.isCurrent(generation))
             return
         }
 
@@ -80,11 +95,13 @@ export function useJumpToMessage(port: JumpToMessagePort): (anchorTs: number, al
         const generation = current.generation.replace()
         const stillWanted = () => portRef.current.taskKey === taskKey && portRef.current.generation.isCurrent(generation)
         try {
-            const page = await current.fetchAnchoredPage(anchorTs)
-            // A missing anchor was removed by a restore since the rail was drawn; the reader stays put.
-            if (!stillWanted() || !page.anchorFound || page.messages.length === 0) return
-            pendingScrollRef.current = { ts: anchorTs, generation, align }
-            portRef.current.replaceWindow(page)
+            const page = await current.fetchAnchoredPage(target)
+            // A missing or shifted source target ends only this click, without replacing the window.
+            if (!stillWanted() || !page.anchorFound || !page.messages.some((message) => matchesMessageTarget(message, target))) {
+                return
+            }
+            pendingScrollRef.current = { target, generation, align }
+            portRef.current.replaceWindow(page, target)
         } catch (error) {
             if (stillWanted()) console.error("fetchMessage:", error)
         } finally {

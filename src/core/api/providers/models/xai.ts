@@ -3,6 +3,7 @@
  * Extracted from api.ts xaiModels (lines 3690-3886).
  */
 import type { ModelInfo } from "@shared/api"
+import { flatPricing } from "./pricing"
 
 export const xaiModels: Record<string, ModelInfo> = {
     "grok-4-1-fast-reasoning": {
@@ -15,11 +16,7 @@ export const xaiModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0.2,
-            cacheReadsPrice: 0.05,
-            outputPrice: 0.5,
-        },
+        pricing: flatPricing(0.2, 0.5, undefined, 0.05),
     },
     "grok-4-1-fast-non-reasoning": {
         id: "grok-4-1-fast-non-reasoning",
@@ -31,11 +28,7 @@ export const xaiModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0.2,
-            cacheReadsPrice: 0.05,
-            outputPrice: 0.5,
-        },
+        pricing: flatPricing(0.2, 0.5, undefined, 0.05),
     },
     "grok-code-fast-1": {
         id: "grok-code-fast-1",
@@ -47,11 +40,7 @@ export const xaiModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0.2,
-            cacheReadsPrice: 0.02,
-            outputPrice: 1.5,
-        },
+        pricing: flatPricing(0.2, 1.5, undefined, 0.02),
     },
     "grok-4-fast-reasoning": {
         id: "grok-4-fast-reasoning",
@@ -63,11 +52,7 @@ export const xaiModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.2,
-            cacheReadsPrice: 0.05,
-            outputPrice: 0.5,
-        },
+        pricing: flatPricing(0.2, 0.5, undefined, 0.05),
     },
     "grok-4": {
         id: "grok-4",
@@ -78,11 +63,7 @@ export const xaiModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 3.0,
-            cacheReadsPrice: 0.75,
-            outputPrice: 15.0,
-        },
+        pricing: flatPricing(3.0, 15.0, undefined, 0.75),
     },
     "grok-3-beta": {
         id: "grok-3-beta",
@@ -94,10 +75,7 @@ export const xaiModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 3.0,
-            outputPrice: 15.0,
-        },
+        pricing: flatPricing(3.0, 15.0),
     },
     "grok-3-fast-beta": {
         id: "grok-3-fast-beta",
@@ -109,10 +87,7 @@ export const xaiModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 5.0,
-            outputPrice: 25.0,
-        },
+        pricing: flatPricing(5.0, 25.0),
     },
     "grok-3-mini-beta": {
         id: "grok-3-mini-beta",
@@ -124,10 +99,7 @@ export const xaiModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0.3,
-            outputPrice: 0.5,
-        },
+        pricing: flatPricing(0.3, 0.5),
     },
     "grok-3-mini-fast-beta": {
         id: "grok-3-mini-fast-beta",
@@ -139,10 +111,7 @@ export const xaiModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0.6,
-            outputPrice: 4.0,
-        },
+        pricing: flatPricing(0.6, 4.0),
     },
     "grok-3": {
         id: "grok-3",
@@ -154,10 +123,7 @@ export const xaiModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 3.0,
-            outputPrice: 15.0,
-        },
+        pricing: flatPricing(3.0, 15.0),
     },
     "grok-3-fast": {
         id: "grok-3-fast",
@@ -169,10 +135,7 @@ export const xaiModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 5.0,
-            outputPrice: 25.0,
-        },
+        pricing: flatPricing(5.0, 25.0),
     },
     "grok-3-mini": {
         id: "grok-3-mini",
@@ -184,10 +147,7 @@ export const xaiModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0.3,
-            outputPrice: 0.5,
-        },
+        pricing: flatPricing(0.3, 0.5),
     },
     "grok-3-mini-fast": {
         id: "grok-3-mini-fast",
@@ -199,10 +159,7 @@ export const xaiModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: true,
         },
-        pricing: {
-            inputPrice: 0.6,
-            outputPrice: 4.0,
-        },
+        pricing: flatPricing(0.6, 4.0),
     },
     "grok-2-latest": {
         id: "grok-2-latest",
@@ -214,10 +171,7 @@ export const xaiModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 2.0,
-            outputPrice: 10.0,
-        },
+        pricing: flatPricing(2.0, 10.0),
     },
     "grok-2": {
         id: "grok-2",
@@ -229,10 +183,7 @@ export const xaiModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 2.0,
-            outputPrice: 10.0,
-        },
+        pricing: flatPricing(2.0, 10.0),
     },
     "grok-2-1212": {
         id: "grok-2-1212",
@@ -244,10 +195,7 @@ export const xaiModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 2.0,
-            outputPrice: 10.0,
-        },
+        pricing: flatPricing(2.0, 10.0),
     },
     "grok-2-vision-latest": {
         id: "grok-2-vision-latest",
@@ -259,10 +207,7 @@ export const xaiModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 2.0,
-            outputPrice: 10.0,
-        },
+        pricing: flatPricing(2.0, 10.0),
     },
     "grok-2-vision": {
         id: "grok-2-vision",
@@ -274,10 +219,7 @@ export const xaiModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 2.0,
-            outputPrice: 10.0,
-        },
+        pricing: flatPricing(2.0, 10.0),
     },
     "grok-2-vision-1212": {
         id: "grok-2-vision-1212",
@@ -289,10 +231,7 @@ export const xaiModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 2.0,
-            outputPrice: 10.0,
-        },
+        pricing: flatPricing(2.0, 10.0),
     },
     "grok-vision-beta": {
         id: "grok-vision-beta",
@@ -304,10 +243,7 @@ export const xaiModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 5.0,
-            outputPrice: 15.0,
-        },
+        pricing: flatPricing(5.0, 15.0),
     },
     "grok-beta": {
         id: "grok-beta",
@@ -319,10 +255,7 @@ export const xaiModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 5.0,
-            outputPrice: 15.0,
-        },
+        pricing: flatPricing(5.0, 15.0),
     },
 }
 

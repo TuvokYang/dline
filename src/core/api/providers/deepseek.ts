@@ -1,7 +1,7 @@
 import { Anthropic } from "@anthropic-ai/sdk"
+import { readLocalUsageSnapshot } from "@core/metrics/LocalUsageSnapshot"
 import { deepSeekDefaultModelId, deepSeekModels, ModelInfo } from "@shared/api"
 import { providerFetch } from "@shared/net"
-import { calculateApiCostOpenAI } from "@utils/cost"
 import OpenAI from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
@@ -111,7 +111,11 @@ export class DeepSeekHandler extends ApiHandler {
         return resolveDeepSeekReasoning(model.info.capabilities, this.config?.reasoning)
     }
 
-    private async *yieldUsage(info: ModelInfo, usage: OpenAI.Completions.CompletionUsage | undefined): ApiStream {
+    private async *yieldUsage(
+        info: ModelInfo,
+        usage: OpenAI.Completions.CompletionUsage | undefined,
+        sentAtMs: number,
+    ): ApiStream {
         // Deepseek reports total input AND cache reads/writes,
         // see context caching: https://api-docs.deepseek.com/guides/kv_cache)
         // where the input tokens is the sum of the cache hits/misses, just like OpenAI.
@@ -132,8 +136,18 @@ export class DeepSeekHandler extends ApiHandler {
         const cacheReadTokens = deepUsage?.prompt_cache_hit_tokens || 0
         const cacheWriteTokens = deepUsage?.prompt_cache_miss_tokens || 0
         const inputTokens = Math.max(0, rawInputTokens - cacheReadTokens - cacheWriteTokens)
-        const totalCost = calculateApiCostOpenAI(info, rawInputTokens, outputTokens, cacheWriteTokens, cacheReadTokens)
         const thoughtsTokenCount = chatReasoningTokens(deepUsage)
+        const cost = ApiHandler.calculateUsageCost(
+            info.pricing,
+            {
+                inputTokens,
+                outputTokens,
+                cacheWriteTokens,
+                cacheReadTokens,
+                thoughtsTokenCount,
+            },
+            sentAtMs,
+        )
         yield {
             type: "usage",
             inputTokens: inputTokens,
@@ -141,7 +155,7 @@ export class DeepSeekHandler extends ApiHandler {
             cacheWriteTokens: cacheWriteTokens,
             cacheReadTokens: cacheReadTokens,
             ...(thoughtsTokenCount === undefined ? {} : { thoughtsTokenCount }),
-            totalCost: totalCost,
+            ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
         }
     }
 
@@ -197,6 +211,7 @@ export class DeepSeekHandler extends ApiHandler {
         const openAiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = thinking.enabled
             ? convertDeepSeekMessages(messages, systemPrompt)
             : [{ role: "system", content: systemPrompt }, ...convertDeepseekToOpenAiMessages(messages)]
+        const sentAtMs = Date.now()
         const stream = await client.chat.completions.create(
             {
                 model: model.id,
@@ -245,7 +260,7 @@ export class DeepSeekHandler extends ApiHandler {
             }
 
             if (chunk.usage) {
-                yield* this.yieldUsage(model.info, chunk.usage)
+                yield* this.yieldUsage(model.info, chunk.usage, sentAtMs)
             }
 
             const outputLimitError = getOpenAIChatOutputLimitError(chunk.choices?.[0]?.finish_reason)
@@ -289,13 +304,9 @@ export class DeepSeekHandler extends ApiHandler {
             ...(thinking.enabled ? { reasoning: { effort: thinking.effort, summary: "auto" } } : {}),
             ...(typeof maxOutputTokens === "number" && maxOutputTokens > 0 ? { max_output_tokens: maxOutputTokens } : {}),
         }
+        const sentAtMs = Date.now()
         const stream = await client.responses.create(params, { signal })
-        yield* handleResponsesApiStreamResponse(
-            stream,
-            model.info,
-            async (info, inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens) =>
-                calculateApiCostOpenAI(info, inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens),
-        )
+        yield* handleResponsesApiStreamResponse(stream, model.info, sentAtMs)
     }
 
     private async *createAnthropicMessage(
@@ -333,8 +344,9 @@ export class DeepSeekHandler extends ApiHandler {
                   }
                 : { temperature: 0 }),
         }
+        const sentAtMs = Date.now()
         const stream = await client.messages.create(request as Anthropic.MessageCreateParamsStreaming, { signal })
-        yield* handleAnthropicMessagesApiStreamResponse(stream)
+        yield* handleAnthropicMessagesApiStreamResponse(stream, undefined, { pricing: model.info.pricing, sentAtMs })
     }
 
     private getBaseModel(): { id: string; info: ModelInfo } {
@@ -351,12 +363,7 @@ export class DeepSeekHandler extends ApiHandler {
         }
     }
 
-    /**
-     * Query DeepSeek account balance + daily usage.
-     * Calls /user/balance for balance and /api/v0/usage/amount for daily tokens.
-     * Returns AccountUsage with balance breakdown and today's usage for the current model.
-     * @see https://api-docs.deepseek.com/zh-cn/api/get-user-balance
-     */
+    /** Read the account balance and this Profile's committed daily usage. */
     override async getAccountUsage(): Promise<AccountUsage | undefined> {
         if (!this.apiKey) {
             return undefined
@@ -395,83 +402,13 @@ export class DeepSeekHandler extends ApiHandler {
                 return undefined
             }
 
-            // Fetch daily usage
-            const now = new Date()
-            const month = now.getMonth() + 1
-            const year = now.getFullYear()
-            const todayStr = `${year}-${String(month).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`
-
-            let dailyInputTokens = 0
-            let dailyOutputTokens = 0
-            let dailyCacheHitTokens = 0
-            let dailyCacheMissTokens = 0
-
-            try {
-                const usageResp = await fetch(`https://platform.deepseek.com/api/v0/usage/amount?month=${month}&year=${year}`, {
-                    headers,
-                    signal: accountUsageController.signal,
-                })
-                if (usageResp.ok) {
-                    const usageData = (await usageResp.json()) as {
-                        code: number
-                        data?: {
-                            biz_data?: {
-                                days?: Array<{
-                                    date: string
-                                    data?: Array<{
-                                        model: string
-                                        usage?: Array<{ type: string; amount: string }>
-                                    }>
-                                }>
-                            }
-                        }
-                    }
-                    // Find today's data and match current model
-                    const today = usageData?.data?.biz_data?.days?.find((d) => d.date === todayStr)
-                    if (today?.data) {
-                        // The usage endpoint reports the provider's own model names,
-                        // which need not equal the id Dline displays. Matching the exact
-                        // id plus one hardcoded family left any renamed model reporting a
-                        // silent zero, so a day with no exact match now falls back to
-                        // every model of that day instead of reporting nothing.
-                        const model = this.getModel()
-                        const modelData = today.data.find((d) => d.model === model.id)
-                        const rows = modelData ? [modelData] : today.data
-                        for (const row of rows) {
-                            for (const u of row.usage ?? []) {
-                                const amt = Number.parseInt(u.amount, 10) || 0
-                                switch (u.type) {
-                                    case "PROMPT_CACHE_HIT_TOKEN":
-                                        dailyCacheHitTokens += amt
-                                        break
-                                    case "PROMPT_CACHE_MISS_TOKEN":
-                                        dailyCacheMissTokens += amt
-                                        break
-                                    case "RESPONSE_TOKEN":
-                                        dailyOutputTokens += amt
-                                        break
-                                }
-                            }
-                        }
-                        dailyInputTokens = dailyCacheHitTokens + dailyCacheMissTokens
-                    }
-                } else {
-                    Logger.warn(`[DeepSeek] Usage API failed: ${usageResp.status}`)
-                }
-            } catch (e) {
-                Logger.warn(`[DeepSeek] Usage API error: ${e}`)
-            }
-
             return {
                 currency: firstBalance.currency,
                 remainingBalance: Number.parseFloat(firstBalance.total_balance),
                 toppedUpBalance: Number.parseFloat(firstBalance.topped_up_balance),
                 grantedBalance: Number.parseFloat(firstBalance.granted_balance),
                 isAvailable: balanceData.is_available,
-                dailyInputTokens,
-                dailyOutputTokens,
-                dailyCacheHitTokens,
-                dailyCacheMissTokens,
+                local: await readLocalUsageSnapshot(this.ctx.profile.id),
             }
         } catch (e) {
             Logger.warn(`[DeepSeek] getAccountUsage error: ${e}`)

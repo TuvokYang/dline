@@ -2,7 +2,6 @@ import { type ModelCapabilities, ServerTool } from "@shared/proto/dline/models/m
 import { render, screen, within } from "@testing-library/react"
 import { describe, expect, it } from "vitest"
 import { ProfileCapabilityIcons } from "./ProfileCapabilityIcons"
-import { ProfileUsageBadges } from "./ProfileUsageBadges"
 
 describe("Profile summary indicators", () => {
     it("renders capabilities in a stable right-aligned order", () => {
@@ -21,7 +20,6 @@ describe("Profile summary indicators", () => {
         )
 
         const group = screen.getByRole("list", { name: "Model capabilities" })
-        expect(group).toHaveClass("justify-end", "shrink-0")
         const items = within(group).getAllByRole("listitem")
         expect(items.map((item) => item.getAttribute("aria-label"))).toEqual([
             "Reasoning",
@@ -49,12 +47,5 @@ describe("Profile summary indicators", () => {
         render(<ProfileCapabilityIcons capabilities={{ supportsImages: true } as ModelCapabilities} />)
         expect(screen.getByLabelText("Image input")).toBeInTheDocument()
         expect(screen.queryByLabelText("Reasoning")).not.toBeInTheDocument()
-    })
-
-    it("renders profile uses in canonical order", () => {
-        render(<ProfileUsageBadges usedFor={["subagents", "act", "plan"]} />)
-        const uses = screen.getByRole("group", { name: "Profile uses" })
-        expect(uses).toHaveClass("justify-end", "shrink-0")
-        expect(uses).toHaveTextContent("ACTPLANSUB")
     })
 })

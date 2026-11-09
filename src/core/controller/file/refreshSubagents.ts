@@ -68,7 +68,14 @@ async function scanSubagentsDirectory(dirPath: string): Promise<CapabilityScanRe
                             builtInDefault: isDefaultSubagentName(config.name),
                             explicitlyNarrowed: config.toolsExplicitlyNarrowed === true,
                         }),
-                        skills: config.skills || [],
+                        skills: config.skills ?? [],
+                        rules: config.rules ?? [],
+                        workflows: config.workflows ?? [],
+                        mcp: (config.mcp ?? []).map((selection) => ({
+                            server: selection.server,
+                            tools: selection.tools ?? [],
+                            resources: selection.resources ?? [],
+                        })),
                         profile: config.profile ?? undefined,
                     }),
                 )

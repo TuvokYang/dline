@@ -1,14 +1,18 @@
 import { memo } from "react"
 import { CopyButton } from "@/components/common/CopyButton"
 import MarkdownBlock from "@/components/common/MarkdownBlock"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 
 /** The two non-turn-ending updates the model posts while it keeps working. */
 export type AgentUpdateKind = "reply" | "phase_report"
 
-const UPDATE_PRESENTATION: Record<AgentUpdateKind, { icon: string; label: string; testId: string }> = {
-    reply: { icon: "comment", label: "Reply", testId: "working-respond-row" },
-    phase_report: { icon: "milestone", label: "Phase report", testId: "phase-report-row" },
+const UPDATE_PRESENTATION: Record<
+    AgentUpdateKind,
+    { icon: string; labelKey: "chatRows.agentUpdate.reply" | "chatRows.agentUpdate.phaseReport"; testId: string }
+> = {
+    reply: { icon: "comment", labelKey: "chatRows.agentUpdate.reply", testId: "working-respond-row" },
+    phase_report: { icon: "milestone", labelKey: "chatRows.agentUpdate.phaseReport", testId: "phase-report-row" },
 }
 
 /**
@@ -32,6 +36,7 @@ interface AgentUpdateRowProps {
  * apart with a divider, which is what tells it apart from a reply at a glance.
  */
 const AgentUpdateRow = memo(({ kind, text }: AgentUpdateRowProps) => {
+    const { t } = useUiTranslation()
     const presentation = UPDATE_PRESENTATION[kind]
     return (
         <div
@@ -42,7 +47,7 @@ const AgentUpdateRow = memo(({ kind, text }: AgentUpdateRowProps) => {
             </div>
             <div className="flex h-4 items-center gap-1.5 text-[12px] leading-4 text-description">
                 <span aria-hidden="true" className={`codicon codicon-${presentation.icon} text-[14px]! leading-none!`} />
-                <span className="font-medium">{presentation.label}</span>
+                <span className="font-medium">{t(presentation.labelKey)}</span>
             </div>
             <div
                 className={cn(

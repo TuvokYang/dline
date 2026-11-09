@@ -53,8 +53,29 @@ body::before {
     opacity: var(--dline-raden-opacity);
 }
 
+.sl-markdown-content a {
+    text-decoration: none;
+}
+
+/* Back only the reading column; text and media keep their original opacity. */
+.content-panel .sl-container {
+    position: relative;
+    isolation: isolate;
+}
+
+.content-panel .sl-container::before {
+    content: "";
+    position: absolute;
+    inset: -0.75rem;
+    z-index: -1;
+    border-radius: 0.75rem;
+    background-color: color-mix(in srgb, var(--sl-color-bg) 80%, transparent);
+    pointer-events: none;
+}
+
 @media print {
-    body::before {
+    body::before,
+    .content-panel .sl-container::before {
         display: none;
     }
 }
@@ -82,5 +103,49 @@ body::before {
 @media (min-width: 72rem) {
     :root {
         --sl-content-width: min(100vw - 2 * var(--sl-sidebar-width) - 2 * var(--sl-content-pad-x), var(--dline-content-max));
+    }
+}
+
+/* Keep the splash demo and entry points together without clipping short screens. */
+:root[data-has-hero]:not([data-has-sidebar]) {
+    --dline-mascot-size: 16rem;
+    --sl-main-pad: 0 0 1rem;
+}
+
+:root[data-has-hero]:not([data-has-sidebar]) .content-panel {
+    padding-block: 1rem;
+}
+
+:root[data-has-hero]:not([data-has-sidebar]) .sl-container > * + * {
+    margin-top: 1rem;
+}
+
+:root[data-has-hero]:not([data-has-sidebar]) .sl-markdown-content > p:first-child {
+    text-align: center;
+}
+
+:root[data-has-hero]:not([data-has-sidebar]) .sl-markdown-content > p:first-child img {
+    width: 53.25rem;
+    height: auto;
+    max-width: 100%;
+    margin-inline: auto;
+}
+
+:root[data-has-hero]:not([data-has-sidebar]) .sl-markdown-content > .sl-heading-wrapper {
+    margin-top: 1rem;
+    font-size: var(--sl-text-2xl);
+}
+
+:root[data-has-hero]:not([data-has-sidebar]) footer {
+    gap: 0.75rem;
+}
+
+:root[data-has-hero]:not([data-has-sidebar]) footer .meta {
+    margin-top: 0;
+}
+
+@media (min-width: 72rem) {
+    :root[data-has-hero]:not([data-has-sidebar]) .sl-container {
+        max-width: min(var(--sl-content-width), 100vw - 2 * var(--dline-mascot-size) - 2rem);
     }
 }

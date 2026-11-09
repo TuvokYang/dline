@@ -5,6 +5,7 @@ import type { UiMessage } from "@shared/ExtensionMessage"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { writeJsonl } from "@/core/storage/backend/jsonl/jsonl-utils"
 import { ensureTaskDirectoryExists, GlobalFileNames } from "@/core/storage/disk"
+import { UiMessageRowStore } from "@/core/storage/messages/UiMessageRowStore"
 import { UIMessage } from "@/core/storage/UIMessage"
 
 describe("UIMessage history windows", () => {
@@ -16,6 +17,7 @@ describe("UIMessage history windows", () => {
     })
 
     afterEach(async () => {
+        vi.restoreAllMocks()
         vi.unstubAllEnvs()
         await fs.rm(dlineDocsDir, { recursive: true, force: true })
     })
@@ -189,6 +191,101 @@ describe("UIMessage history windows", () => {
         // Reading is not the import: the file keeps its name and no database appears.
         await expect(fs.access(legacyFile)).resolves.toBeUndefined()
         expect((await fs.readdir(taskDirectory)).filter((name) => name.startsWith("messages.db"))).toEqual([])
+    })
+
+    describe("committed source-index metadata", () => {
+        it("keeps task0 and source metadata on latest, reference, timestamp and interaction reads", async () => {
+            const writer = await UIMessage.open("source-index-window")
+            await writer.overwrite(
+                Array.from(
+                    { length: 260 },
+                    (_, index): UiMessage => ({
+                        ts: index === 20 ? 900 : index + 1,
+                        type: index === 20 ? "ask" : "say",
+                        ...(index === 20
+                            ? { ask: "tool", interactionId: "outside-window" }
+                            : { say: index === 0 ? "task" : "text" }),
+                        text: `source-${index}`,
+                    }),
+                ),
+            )
+            await writer.close()
+            const reader = await UIMessage.openWindow("source-index-window")
+            const read = vi.spyOn(UiMessageRowStore.prototype, "readRange")
+            const timestamp = vi.spyOn(UiMessageRowStore.prototype, "findLastByTimestamp")
+            try {
+                await expect(reader.getBySourceIndex(20)).resolves.toMatchObject({ ts: 900, messageIndex: 20, text: "source-20" })
+                expect(read.mock.calls).toEqual([[20, 21]])
+                expect(timestamp).not.toHaveBeenCalled()
+                await expect(reader.getBySourceIndex(0)).resolves.toMatchObject({ ts: 1, say: "task", messageIndex: 0 })
+                await expect(reader.getBySourceIndex(260)).resolves.toBeUndefined()
+                await expect(reader.getBySourceIndex(-1)).resolves.toBeUndefined()
+                await expect(reader.getBySourceIndex(0.5)).resolves.toBeUndefined()
+                await expect(reader.getPage(0, 1)).resolves.toMatchObject({ startIndex: 0, messages: [{ messageIndex: 0 }] })
+                expect((await reader.getLatest(2)).map((message) => [message.ts, message.messageIndex])).toEqual([
+                    [259, 258],
+                    [260, 259],
+                ])
+                await expect(reader.getByTimestamp(900)).resolves.toMatchObject({ messageIndex: 20 })
+                await expect(reader.getLastAsk("outside-window")).resolves.toMatchObject({ messageIndex: 20 })
+            } finally {
+                await reader.close()
+            }
+            await expect(reader.getBySourceIndex(0)).rejects.toThrow("UIMessageWindowReader is closed")
+        })
+
+        it("uses returned record ordinals, not the requested start plus output offset", async () => {
+            const writer = await UIMessage.open("ordinal-records")
+            await writer.overwrite(
+                Array.from({ length: 80 }, (_, index): UiMessage => ({ ts: index + 1, type: "say", say: "text" })),
+            )
+            await writer.close()
+            const reader = await UIMessage.openWindow("ordinal-records")
+            try {
+                // Emulate a row change between the count and page reads: only these
+                // returned records carry their source positions, not the page offset.
+                vi.spyOn(UiMessageRowStore.prototype, "readRange").mockResolvedValueOnce([
+                    { ordinal: 61, ts: 62, message: { ts: 62, type: "say", say: "text" } },
+                    { ordinal: 63, ts: 64, message: { ts: 64, type: "say", say: "text" } },
+                ])
+                const page = await reader.getPage(60, 4)
+                expect(page.startIndex).toBe(60)
+                expect(page.messages.map((message) => [message.ts, message.messageIndex])).toEqual([
+                    [62, 61],
+                    [64, 63],
+                ])
+            } finally {
+                await reader.close()
+            }
+        })
+
+        it("does not manufacture source indexes, import legacy rows or create missing storage", async () => {
+            const taskDirectory = await ensureTaskDirectoryExists("legacy-source-index")
+            const legacyFile = path.join(taskDirectory, GlobalFileNames.uiMessages)
+            await writeJsonl(legacyFile, [{ ts: 10, type: "say", say: "task", text: "legacy", messageIndex: 99 }])
+            const before = await fs.readFile(legacyFile, "utf8")
+            const reader = await UIMessage.openWindow("legacy-source-index")
+            try {
+                expect(reader.canonicalIndexes).toBe(false)
+                await expect(reader.getBySourceIndex(0)).resolves.toBeUndefined()
+                expect((await reader.getPage(0, 1)).messages).toEqual([{ ts: 10, type: "say", say: "task", text: "legacy" }])
+                await expect(reader.getByTimestamp(10)).resolves.toMatchObject({ text: "legacy" })
+                expect(await reader.getByTimestamp(10)).not.toHaveProperty("messageIndex")
+            } finally {
+                await reader.close()
+            }
+            expect(await fs.readFile(legacyFile, "utf8")).toBe(before)
+            expect((await fs.readdir(taskDirectory)).filter((name) => name.startsWith("messages"))).toEqual([])
+            const missing = await UIMessage.openWindow("missing-source-index")
+            try {
+                await expect(missing.getBySourceIndex(0)).resolves.toBeUndefined()
+            } finally {
+                await missing.close()
+            }
+            await expect(fs.access(path.join(dlineDocsDir, "tasks", "missing-source-index"))).rejects.toMatchObject({
+                code: "ENOENT",
+            })
+        })
     })
 
     it("uses a bounded reader for new tasks and rejects reads after close", async () => {

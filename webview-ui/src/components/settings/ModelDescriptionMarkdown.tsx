@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState } from "react"
 import { useRemark } from "react-remark"
 import { Button } from "@/components/ui/button"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 
 interface ModelDescriptionMarkdownProps {
@@ -10,6 +11,7 @@ interface ModelDescriptionMarkdownProps {
 }
 
 export const ModelDescriptionMarkdown = memo(({ markdown, key, isPopup }: ModelDescriptionMarkdownProps) => {
+    const { t } = useUiTranslation()
     // Update the markdown content when the prop changes
     const [reactContent, setMarkdown] = useRemark()
     const contentRef = useRef<HTMLDivElement>(null)
@@ -51,7 +53,7 @@ export const ModelDescriptionMarkdown = memo(({ markdown, key, isPopup }: ModelD
                             })}
                             onClick={() => setIsExpanded(!isExpanded)}
                             variant="link">
-                            {isExpanded ? "See less" : "See more"}
+                            {isExpanded ? t("settings.ui.seeLess") : t("settings.ui.seeMore")}
                         </Button>
                     </div>
                 )}

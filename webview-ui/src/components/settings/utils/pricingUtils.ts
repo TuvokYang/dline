@@ -35,8 +35,12 @@ export const supportsBrowserUse = (modelInfo: ModelInfo): boolean => {
 /**
  * Helper function to check if a model supports prompt caching
  */
-export const supportsPromptCache = (modelInfo: ModelInfo): boolean => {
-    return !!modelInfo.capabilities?.supportsPromptCache
+export const supportsPromptCache = (modelInfo: ModelInfo): boolean | undefined => {
+    // Three states, not two: `undefined` means the model never declared caching,
+    // which is not the same claim as "this model cannot cache". Coercing it to
+    // false made the settings page assert `No` for every model whose catalog or
+    // listing stayed silent.
+    return modelInfo.capabilities?.supportsPromptCache
 }
 
 /**

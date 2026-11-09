@@ -34,7 +34,7 @@ A resource with no entry in a scope **inherits** from the next one; it is not tr
 
 ## Effect on a running task
 
-A task freezes its system prompt and tool list when it starts. Changing a toggle in the middle of a task does not silently rewrite that snapshot: the **Refresh Prompt Cache** button in the task header shows a warning icon and lists what changed, for example `Rules changed` or `MCP tools changed`. Select it and confirm to rebuild the prompt with the new toggles. Refreshing causes one prompt-cache miss.
+After you change toggles during a task, the **Refresh Prompt Cache** button in the task header shows a warning icon and lists what changed, for example `Rules changed` or `MCP tools changed`. Select it and confirm to apply the new settings to the current task. Refreshing causes one prompt-cache miss.
 
 ![Turning off a skill and a workflow for one task, then seeing the stale-prompt warning](@docs-assets/marketplace/r6-capability-scopes.gif)
 

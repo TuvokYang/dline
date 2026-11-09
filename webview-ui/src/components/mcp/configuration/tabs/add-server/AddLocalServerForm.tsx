@@ -1,7 +1,9 @@
 import { EmptyRequest } from "@shared/proto/dline/common"
 import { VSCodeButton, VSCodeLink } from "@vscode/webview-ui-toolkit/react"
 import styled from "styled-components"
+import { CapabilityRichText } from "@/components/agent-capabilities/CapabilityRichText"
 import { LINKS } from "@/constants"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { McpServiceClient } from "@/services/grpc-client"
 
 type AddLocalServerFormProps = {
@@ -9,13 +11,16 @@ type AddLocalServerFormProps = {
 }
 
 const AddLocalServerForm = ({}: AddLocalServerFormProps) => {
+    const { t } = useUiTranslation()
     return (
         <FormContainer>
             <div className="text-(--vscode-foreground)">
-                Add a local MCP server by configuring it in <code>mcp_settings.json</code>. You'll need to specify the server
-                name, command, arguments, and any required environment variables in the JSON configuration. Learn more
+                <CapabilityRichText
+                    parts={[{ name: "file", node: <code>mcp_settings.json</code> }]}
+                    render={(slot) => t("capabilities.mcp.localHelp", { file: slot("file") })}
+                />{" "}
                 <VSCodeLink href={LINKS.DOCUMENTATION.LOCAL_MCP_SERVER_DOCS} style={{ display: "inline" }}>
-                    here.
+                    {t("capabilities.mcp.learnMore")}
                 </VSCodeLink>
             </div>
 
@@ -27,7 +32,7 @@ const AddLocalServerForm = ({}: AddLocalServerFormProps) => {
                     })
                 }}
                 style={{ width: "100%", marginBottom: "5px", marginTop: 8 }}>
-                Open mcp_settings.json
+                {t("capabilities.mcp.openSettings")}
             </VSCodeButton>
         </FormContainer>
     )

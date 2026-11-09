@@ -2,6 +2,7 @@ import { QwenApiRegions } from "@shared/api"
 import type { ModelCapabilities } from "@shared/proto/dline/models/metadata"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import { describe, expect, it, vi } from "vitest"
 import { AnthropicHandler } from "../anthropic"
 import { AskSageHandler } from "../asksage"
@@ -73,7 +74,7 @@ describe.each(runtimeModelHandlers)("$provider final runtime metadata", ({ provi
                 name: "Effective custom model",
                 userDefined: true,
                 apiFormats: [],
-                pricing: { inputPrice: 0, outputPrice: 0 },
+                pricing: flatMeteredPricing(0, 0),
                 capabilities: {
                     maxTokens: 0,
                     contextWindow: 71,

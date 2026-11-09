@@ -5,7 +5,7 @@ import { useMemo } from "react"
 import type { FoldExpansion, MessageHandlers, RowExpansionOrigin } from "../../types/chatTypes"
 import { isActivityFold, isExplorationRun } from "../../utils/chatRowKinds"
 import { isToolGroup } from "../../utils/messageUtils"
-import { ROW_TS_ATTRIBUTE } from "../../utils/viewportRowAnchor"
+import { ROW_SOURCE_INDEX_ATTRIBUTE, ROW_TRAJECTORY_INDEX_ATTRIBUTE, ROW_TS_ATTRIBUTE } from "../../utils/viewportRowAnchor"
 import { ActivityFoldRenderer } from "./ActivityFoldRenderer"
 import { RowContent } from "./RowContent"
 
@@ -65,13 +65,13 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
     }, [messageOrGroup, groupedMessages, index])
 
     // A fold is an array row too, so it must be recognised before the browser-session fallback.
+    // An open fold keeps its header and draws its members beneath it.
     if (isActivityFold(messageOrGroup)) {
         return (
             <ActivityFoldRenderer
                 {...context}
-                expandedFolds={foldExpansion.expanded}
+                expanded={foldExpansion.expanded[messageOrGroup._activityFoldId] === true}
                 fold={messageOrGroup}
-                isExpanded={foldExpansion.expanded[messageOrGroup._activityFoldId] === true}
                 onToggleFold={foldExpansion.toggle}
             />
         )
@@ -98,9 +98,24 @@ export const createMessageRenderer = (
     foldExpansion: FoldExpansion = NO_FOLD_EXPANSION,
 ) => {
     const checkpointAttachments = indexPreEditCheckpointAttachments(modifiedMessages)
+    let precedingIndex: number | undefined
+    const readingIndexByRow = new Map<UiMessage | UiMessage[], number | undefined>()
+    for (const row of groupedMessages) {
+        readingIndexByRow.set(row, rowSourceIndex(row) ?? precedingIndex)
+        for (const message of Array.isArray(row) ? row : [row]) {
+            if (message.messageIndex !== undefined) precedingIndex = message.messageIndex
+        }
+    }
     return (index: number, messageOrGroup: UiMessage | UiMessage[]) => (
-        // Box-less, so it adds a row identity every row kind shares without changing layout.
-        <div className="contents" {...{ [ROW_TS_ATTRIBUTE]: rowTs(messageOrGroup) }}>
+        // Box-less, so every row kind shares metadata without changing layout. Reading
+        // context is separate: transient rows must never become durable jump targets.
+        <div
+            className="contents"
+            {...{
+                [ROW_TS_ATTRIBUTE]: rowTs(messageOrGroup),
+                [ROW_SOURCE_INDEX_ATTRIBUTE]: rowSourceIndex(messageOrGroup),
+                [ROW_TRAJECTORY_INDEX_ATTRIBUTE]: readingIndexByRow.get(messageOrGroup),
+            }}>
             <MessageRenderer
                 checkpointAttachments={checkpointAttachments}
                 expandedRows={expandedRows}
@@ -124,4 +139,11 @@ export const createMessageRenderer = (
 /** The ts that places a rendered row in the conversation: its first message's. */
 export function rowTs(messageOrGroup: UiMessage | UiMessage[]): number | undefined {
     return Array.isArray(messageOrGroup) ? messageOrGroup[0]?.ts : messageOrGroup.ts
+}
+
+/** The first real committed member, including members inside a flattened activity fold. */
+export function rowSourceIndex(messageOrGroup: UiMessage | UiMessage[]): number | undefined {
+    return Array.isArray(messageOrGroup)
+        ? messageOrGroup.find((message) => message.messageIndex !== undefined)?.messageIndex
+        : messageOrGroup.messageIndex
 }

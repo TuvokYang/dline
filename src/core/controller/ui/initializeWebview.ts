@@ -1,4 +1,5 @@
 import { findEnabledProfiles } from "@core/controller/file/getApiProfiles"
+import { isProviderCatalogStale } from "@core/model-registry/provider-catalog-freshness"
 import { getProfileCatalogRepository } from "@core/profiles/profile-catalog-runtime"
 import * as SecretsManager from "@core/storage/secrets"
 import { Empty, EmptyRequest } from "@shared/proto/dline/common"
@@ -16,6 +17,9 @@ import { refreshHicapModels } from "../models/refreshHicapModels"
 import { refreshLiteLlmModels } from "../models/refreshLiteLlmModels"
 import { refreshOpenRouterModels } from "../models/refreshOpenRouterModels"
 import { sendOpenRouterModelsEvent } from "../models/subscribeToOpenRouterModels"
+
+/** OpenRouter lists its catalog publicly, so its identity is not profile-scoped. */
+const OPENROUTER_PROVIDER_ID = "openrouter"
 
 /**
  * Initialize webview when it launches
@@ -40,8 +44,17 @@ export async function initializeWebview(controller: Controller, _request: EmptyR
             })
             .catch((error) => Logger.error("Failed to load cached OpenRouter models:", error))
 
-        // Refresh OpenRouter models from API (public API, always available)
-        void refreshOpenRouterModels(controller).catch((error) => Logger.error("Failed to refresh OpenRouter models:", error))
+        // Refresh OpenRouter models only when the stored catalog has gone stale.
+        // The listing is public, so it works without credentials, but that is not
+        // a reason to pull it on every Webview mount: this handler runs again each
+        // time the panel returns to the welcome view, and an unconditional request
+        // there rewrites a multi-hundred-kilobyte file and republishes state.
+        void isProviderCatalogStale(OPENROUTER_PROVIDER_ID).then((stale) => {
+            if (!stale) return
+            return refreshOpenRouterModels(controller).catch((error) =>
+                Logger.error("Failed to refresh OpenRouter models:", error),
+            )
+        })
 
         // Only refresh provider-specific models if the corresponding credentials are configured.
         // This avoids unnecessary network requests for unauthenticated users or providers

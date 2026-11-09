@@ -2,6 +2,7 @@ import { VSCodeButton, VSCodeLink } from "@vscode/webview-ui-toolkit/react"
 import { RefreshCwIcon } from "lucide-react"
 import { useState } from "react"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { DebouncedTextField } from "../common/DebouncedTextField"
 import { ModelAutocomplete } from "../common/ModelAutocomplete"
 import { ModelInfoView } from "../common/ModelInfoView"
@@ -16,6 +17,7 @@ interface LiteLlmProviderProps {
 }
 
 export const LiteLlmProvider = ({ showModelOptions, isPopup, profile, onUpdate }: LiteLlmProviderProps) => {
+    const { t } = useUiTranslation()
     const { remoteConfigSettings, liteLlmModels, refreshLiteLlmModels } = useExtensionState()
     const remote = remoteConfigSettings as any
     const [isLoading, setIsLoading] = useState(false)
@@ -29,11 +31,11 @@ export const LiteLlmProvider = ({ showModelOptions, isPopup, profile, onUpdate }
                     disabled={remote?.liteLlmBaseUrl !== undefined}
                     initialValue={profile.baseUrl || ""}
                     onChange={(value) => onUpdate({ baseUrl: value || undefined })}
-                    placeholder="Default: http://localhost:4000"
+                    placeholder={t("settings.ui.defaultValue", { value: "http://localhost:4000" })}
                     style={{ width: "100%" }}
                     type="text">
                     <div className="flex items-center gap-2 mb-1">
-                        <span style={{ fontWeight: 500 }}>Base URL (optional)</span>
+                        <span style={{ fontWeight: 500 }}>{t("settings.ui.optionalBaseUrl")}</span>
                         {remote?.liteLlmBaseUrl !== undefined && <LockIcon />}
                     </div>
                 </DebouncedTextField>
@@ -43,11 +45,11 @@ export const LiteLlmProvider = ({ showModelOptions, isPopup, profile, onUpdate }
                     disabled={remote?.configuredApiKeys?.litellm}
                     initialValue={profile.apiKey}
                     onChange={(value) => onUpdate({ apiKey: value })}
-                    placeholder="Default: noop"
+                    placeholder={t("settings.ui.defaultValue", { value: "noop" })}
                     style={{ width: "100%" }}
                     type="password">
                     <div className="flex items-center gap-2 mb-1">
-                        <span style={{ fontWeight: 500 }}>API Key</span>
+                        <span style={{ fontWeight: 500 }}>{t("settings.ui.aws.apiKey")}</span>
                         {remote?.configuredApiKeys?.litellm && <LockIcon />}
                     </div>
                 </DebouncedTextField>
@@ -55,10 +57,9 @@ export const LiteLlmProvider = ({ showModelOptions, isPopup, profile, onUpdate }
             {showModelOptions && (
                 <>
                     <ModelAutocomplete
-                        label="Model"
                         models={liteLlmModels}
                         onChange={(newModelId, mi) => onUpdate({ modelId: newModelId, modelInfo: mi })}
-                        placeholder="Search or enter a custom model ID..."
+                        placeholder={t("settings.ui.searchOrEnterModel")}
                         selectedModelId={modelId}
                     />
                     <VSCodeButton
@@ -73,11 +74,11 @@ export const LiteLlmProvider = ({ showModelOptions, isPopup, profile, onUpdate }
                             }
                         }}>
                         {isLoading ? (
-                            "Loading..."
+                            t("settings.ui.loading")
                         ) : (
                             <>
                                 <RefreshCwIcon className="ml-1" />
-                                Refresh models
+                                {t("settings.ui.refreshModels")}
                             </>
                         )}
                     </VSCodeButton>
@@ -86,19 +87,18 @@ export const LiteLlmProvider = ({ showModelOptions, isPopup, profile, onUpdate }
                 </>
             )}
             <p style={{ fontSize: "12px", marginTop: "5px", color: "var(--vscode-descriptionForeground)" }}>
-                Extended thinking is available for models such as Sonnet-4, o3-mini, Deepseek R1, etc. More info on{" "}
+                {t("settings.ui.litellm.thinkingHelp")}{" "}
                 <VSCodeLink
                     href="https://docs.litellm.ai/docs/reasoning_content"
                     style={{ display: "inline", fontSize: "inherit" }}>
-                    thinking mode configuration
+                    {t("settings.ui.litellm.thinkingLink")}
                 </VSCodeLink>
             </p>
             <p style={{ fontSize: "12px", marginTop: "5px", color: "var(--vscode-descriptionForeground)" }}>
-                LiteLLM provides a unified interface to access various LLM providers' models. See their{" "}
+                {t("settings.ui.litellm.help")}{" "}
                 <VSCodeLink href="https://docs.litellm.ai/docs/" style={{ display: "inline", fontSize: "inherit" }}>
-                    quickstart guide
-                </VSCodeLink>{" "}
-                for more information.
+                    {t("settings.ui.quickstart")}
+                </VSCodeLink>
             </p>
         </div>
     )

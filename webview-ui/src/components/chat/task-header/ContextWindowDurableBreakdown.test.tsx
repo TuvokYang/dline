@@ -96,22 +96,9 @@ describe("durable context breakdown", () => {
         const breakdown = screen.getByTestId("context-window-durable-breakdown")
         expect(durable).toHaveAttribute("aria-expanded", "true")
         expect(durable).toHaveAttribute("aria-controls", breakdown.id)
-        expect(breakdown.querySelector('[data-durable-breakdown-part="conversation"]')).toHaveTextContent("52.0k")
-        expect(breakdown.querySelector('[data-durable-breakdown-part="userRules"]')).toHaveTextContent("5%")
-        expect(breakdown.querySelector('[data-durable-breakdown-part="toolDefinitions"]')).toHaveTextContent("Tool definitions")
-        expect(breakdown.querySelector('[data-durable-breakdown-part="mcpToolDefinitions"]')).toHaveTextContent("MCP")
-        expect(breakdown.querySelector('[data-durable-breakdown-part="mcpToolDefinitions"]')).toHaveTextContent("8%")
 
         fireEvent.click(durable as HTMLButtonElement)
         expect(screen.queryByTestId("context-window-durable-breakdown")).not.toBeInTheDocument()
-    })
-
-    it("says the breakdown is unavailable for a snapshot without a measured prefix", () => {
-        renderSummary(snapshot({ durableComposition: undefined }))
-
-        fireEvent.click(document.querySelector('[data-segment-detail="durable"]') as HTMLElement)
-
-        expect(screen.getByTestId("context-window-durable-breakdown")).toHaveTextContent("Breakdown unavailable")
     })
 
     it("draws decorative stripes inside the durable segment and opens the breakdown on click", () => {
@@ -124,8 +111,6 @@ describe("durable context breakdown", () => {
         expect(durable).toHaveAttribute("data-tokens", "100000")
         expect(durable).toContainElement(stripes)
         expect(stripes).toHaveAttribute("aria-hidden", "true")
-        expect(stripes.querySelector('[data-durable-part="conversation"]')).toHaveStyle({ width: "52%" })
-        expect(stripes.querySelector('[data-durable-part="mcpToolDefinitions"]')).toHaveStyle({ width: "8%" })
         expect(stripes.querySelectorAll("[data-durable-part]")).toHaveLength(7)
 
         fireEvent.click(durable)

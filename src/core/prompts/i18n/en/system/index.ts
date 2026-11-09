@@ -65,7 +65,12 @@ export const systemPromptModules = [
         inProgressMismatchRejected: createRuntimeContract("EXAMPLES"),
     }),
     defineLegacyModule("inputQueue", "system", inputQueue),
-    defineLegacyModule("mcp", "system", mcp, { serverEntry: createRuntimeContract("NAME", "COUNT") }),
+    defineLegacyModule("mcp", "system", mcp, {
+        serverEntry: createRuntimeContract("NAME", "COUNT"),
+        resourceCatalog: createRuntimeContract("ENTRIES"),
+        resourceServerEntry: createRuntimeContract("NAME", "COUNT"),
+        resourceEntry: createRuntimeContract("URI", "NAME", "DESCRIPTION"),
+    }),
     defineLegacyModule("objective", "system", objective),
     defineLegacyModule("runtimeEnvironment", "system", runtimeEnvironment, {
         multiRootHint: createRuntimeContract("AVAILABLE_WORKSPACE_NAMES"),
@@ -115,5 +120,8 @@ export const systemPromptModules = [
     defineLegacyModule("workflows", "system", workflows),
     defineLegacyModule("userAuthority", "system", userAuthority),
     defineLegacyModule("userCommunication", "system", userCommunication),
-    defineLegacyModule("userInstructions", "system", userInstructions, { main: createRuntimeContract("CUSTOM_INSTRUCTIONS") }),
+    defineLegacyModule("userInstructions", "system", userInstructions, {
+        main: createRuntimeContract("CUSTOM_INSTRUCTIONS"),
+        fixedLanguage: createRuntimeContract("LANGUAGE"),
+    }),
 ] as const

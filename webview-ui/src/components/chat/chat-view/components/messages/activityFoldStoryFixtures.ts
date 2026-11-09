@@ -1,4 +1,4 @@
-import type { UiMessage } from "@shared/ExtensionMessage"
+import type { SubagentStatusItem, UiMessage } from "@shared/ExtensionMessage"
 
 /**
  * Transcripts for the activity-fold stories and render tests.
@@ -42,6 +42,76 @@ export const workingRespond = (ts: number, content: string) => tool(ts, { tool: 
 export const finishedCommand = (ts: number, command: string) =>
     ask(ts, "command", { text: command, commandStatus: "completed", exitCode: 0 })
 export const runningCommand = (ts: number, command: string) => ask(ts, "command", { text: command, commandStatus: "running" })
+/** A command that ran to completion and exited non-zero, which the chat draws as failed. */
+export const failedCommand = (ts: number, command: string, exitCode = 1) =>
+    ask(ts, "command", { text: command, commandStatus: "completed", exitCode })
+/** An edit whose per-block diff reported an error, which DiffEditRow draws as failed. */
+export const failedEdit = (ts: number, path: string) =>
+    tool(ts, { tool: "editedExistingFile", path, diff: "-old\n+new", blockErrors: ["No match found"] })
+/**
+ * A subagent row in a stated terminal state.
+ *
+ * The batch states a per-agent breakdown, and the row draws one card per entry:
+ * a payload without entries would render the header alone, which is not a state
+ * the extension writes. `failures` therefore produces that many failed agents
+ * plus one completed agent, so the header title, the cards and the batch count
+ * all describe the same batch.
+ */
+export const subagentBatch = (ts: number, status: string, failures = 0) => {
+    const failed = Math.max(status === "failed" ? Math.max(failures, 1) : failures, 0)
+    const completed = status === "failed" ? 0 : 1
+    const items: SubagentStatusItem[] = [
+        ...Array.from({ length: completed }, (_, index) => ({
+            index: index + 1,
+            prompt: `Scan src/module-${index + 1} for the disabled lint rule`,
+            status: "completed" as const,
+            result: `One disabled rule found in src/module-${index + 1}.`,
+            toolCalls: 3,
+            inputTokens: 5_600,
+            outputTokens: 720,
+            totalCost: 0.004,
+            currency: "USD",
+            contextTokens: 9_400,
+            contextWindow: 200_000,
+            contextUsagePercentage: 4,
+        })),
+        ...Array.from({ length: failed }, (_, index) => ({
+            index: completed + index + 1,
+            prompt: `Scan src/legacy-${index + 1} for the disabled lint rule`,
+            status: (status === "timeout" ? "timeout" : "failed") as "failed" | "timeout",
+            error: status === "timeout" ? "The agent did not finish within its timeout." : "The agent stopped before reporting.",
+            toolCalls: 1,
+            inputTokens: 4_100,
+            outputTokens: 210,
+            totalCost: 0.003,
+            currency: "USD",
+            contextTokens: 7_800,
+            contextWindow: 200_000,
+            contextUsagePercentage: 3,
+        })),
+    ]
+    // The batch totals are what `buildStatusPayload` derives from its entries, so
+    // the fixture cannot state them independently of the cards it draws.
+    const sum = (pick: (item: SubagentStatusItem) => number) => items.reduce((acc, item) => acc + pick(item), 0)
+    const peak = (pick: (item: SubagentStatusItem) => number) => items.reduce((acc, item) => Math.max(acc, pick(item)), 0)
+    return say(ts, "subagent", {
+        text: JSON.stringify({
+            kind: "batch",
+            status,
+            total: items.length,
+            completed: items.filter((item) => item.status !== "pending" && item.status !== "running").length,
+            successes: items.filter((item) => item.status === "completed").length,
+            failures: items.filter((item) => item.status === "failed" || item.status === "timeout").length,
+            toolCalls: sum((item) => item.toolCalls),
+            inputTokens: sum((item) => item.inputTokens),
+            outputTokens: sum((item) => item.outputTokens),
+            contextWindow: peak((item) => item.contextWindow),
+            maxContextTokens: peak((item) => item.contextTokens),
+            maxContextUsagePercentage: peak((item) => item.contextUsagePercentage),
+            items,
+        }),
+    })
+}
 export const errorRow = (ts: number, text: string) => say(ts, "error", { text })
 export const completion = (ts: number, text: string) => ask(ts, "completion_result", { text })
 
@@ -73,6 +143,11 @@ export const multiTurnTranscript: UiMessage[] = [
     restorePoint(40, "files-1"),
     finishedRequest(41),
     finishedCommand(42, "npm run lint"),
+    // Round 5 fails in all three countable ways, so the block that holds it has
+    // to report each category instead of hiding the failures behind its header.
+    failedCommand(43, "npm run test", 1),
+    failedEdit(44, "src/a.ts"),
+    subagentBatch(45, "failed", 2),
     restorePoint(50, "files-1"),
     finishedRequest(51),
     editFile(52, "src/a.ts"),
@@ -216,6 +291,20 @@ export const liveTwoTurnSteps: readonly LiveStep[] = playEvents([
     { caption: "Round 3 runs the linter", append: [runningCommand(34, "npm run lint")] },
     { caption: "The linter passes", update: [finishedCommand(34, "npm run lint")] },
     {
+        caption: "The next request replies after lint completed",
+        update: [finishedRequest(31)],
+        append: [finishedRequest(35), workingRespond(36, "Lint passes. I will verify the final diff.")],
+    },
+    {
+        caption: "The following request runs a diff check",
+        append: [finishedRequest(37), runningCommand(38, "git diff --check")],
+    },
+    { caption: "The diff check finishes", update: [finishedCommand(38, "git diff --check")] },
+    {
+        caption: "A later request reports the verification phase",
+        append: [finishedRequest(39), tool(39.5, { tool: "statusUpdate", content: "Lint and diff checks passed." })],
+    },
+    {
         caption: "Round 3 ends as round 4 starts",
         update: [finishedRequest(31)],
         append: [
@@ -256,7 +345,7 @@ export const liveTwoTurnSteps: readonly LiveStep[] = playEvents([
     },
 ])
 
-/** A single finished turn whose activity folds into one block at the `turn` level. */
+/** A finished turn with assistant prose separating its turn-level activity blocks. */
 export const finishedTurnTranscript: UiMessage[] = [
     userTask(1, "Fix the failing lint step"),
     restorePoint(10, "files-1"),

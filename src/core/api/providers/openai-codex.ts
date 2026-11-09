@@ -288,11 +288,8 @@ export class OpenAiCodexHandler extends ApiHandler {
         return apiFormat === ApiFormat.OPENAI_RESPONSES || apiFormat === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE
     }
 
-    /**
-     * The usage endpoint is served by the same subscription as conversations,
-     * so it is read once per Profile and then only on an explicit refresh.
-     */
-    override readonly supportsAccountUsagePolling = false
+    /** Keep the account quota snapshot current through the shared polling policy. */
+    override readonly supportsAccountUsagePolling = true
 
     /** Fetch current ChatGPT Codex quota windows for this OAuth account. */
     override async getAccountUsage(): Promise<AccountUsage | undefined> {
@@ -501,8 +498,10 @@ export class OpenAiCodexHandler extends ApiHandler {
                     baseURL: this.runtimeConfig.apiBaseUrl,
                     defaultHeaders: codexHeaders,
                     fetch: providerFetch,
+                    maxRetries: 0,
                 })
 
+            const sentAtMs = Date.now()
             const stream = (await (client as any).responses.create(requestBody, {
                 signal,
                 headers: codexHeaders,
@@ -512,7 +511,7 @@ export class OpenAiCodexHandler extends ApiHandler {
                 throw new Error("OpenAI SDK did not return an AsyncIterable")
             }
 
-            yield* this.handleResponseEvents(stream, model)
+            yield* this.handleResponseEvents(stream, model, sentAtMs)
         } catch (error) {
             if (signal.aborted || isOutputLimitExceededError(error) || this.isAuthenticationFailure(error)) {
                 throw error
@@ -531,10 +530,7 @@ export class OpenAiCodexHandler extends ApiHandler {
         signal: AbortSignal,
     ): ApiStream {
         try {
-            yield* this.handleResponseEvents(
-                this.createResponseEventsViaWebsocket(primaryParams, credential, codexHeaders, signal),
-                model,
-            )
+            yield* this.createResponseEventsViaWebsocket(primaryParams, credential, codexHeaders, signal, model)
         } catch (error) {
             // A cancelled request must not open a fresh socket or close the one a newer request owns.
             if (!signal.aborted && this.shouldRetryWebsocketWithFullContext(error, !!primaryParams.previous_response_id)) {
@@ -542,18 +538,19 @@ export class OpenAiCodexHandler extends ApiHandler {
                     "Retrying Codex websocket response with full context after previous_response_not_found or socket reset",
                 )
                 this.closeResponsesWebsocket()
-                yield* this.handleResponseEvents(
-                    this.createResponseEventsViaWebsocket(fallbackParams, credential, codexHeaders, signal),
-                    model,
-                )
+                yield* this.createResponseEventsViaWebsocket(fallbackParams, credential, codexHeaders, signal, model)
                 return
             }
             throw error
         }
     }
 
-    private async *handleResponseEvents(events: AsyncIterable<unknown>, model: { id: string; info: ModelInfo }): ApiStream {
-        yield* handleResponsesApiStreamResponse(canonicalizeOpenAiCodexResponseEvents(events), model.info, async () => 0)
+    private async *handleResponseEvents(
+        events: AsyncIterable<unknown>,
+        model: { id: string; info: ModelInfo },
+        sentAtMs: number,
+    ): ApiStream {
+        yield* handleResponsesApiStreamResponse(canonicalizeOpenAiCodexResponseEvents(events), model.info, sentAtMs)
     }
 
     private shouldRetryWebsocketWithFullContext(error: unknown, hadPreviousResponseId: boolean): boolean {
@@ -651,7 +648,8 @@ export class OpenAiCodexHandler extends ApiHandler {
         credential: OpenAiCodexCredentialContext,
         codexHeaders: Record<string, string>,
         signal: AbortSignal,
-    ): AsyncGenerator<OpenAI.Responses.ResponseStreamEvent> {
+        model: { id: string; info: ModelInfo },
+    ): ApiStream {
         if (this.websocketRequestOwner) {
             const error: Error & { code?: string } = new Error("Websocket response.create is already in progress")
             error.code = "websocket_concurrency_limit"
@@ -660,7 +658,7 @@ export class OpenAiCodexHandler extends ApiHandler {
         // Claimed before connecting so a second request cannot open a competing socket meanwhile.
         this.websocketRequestOwner = signal
         try {
-            yield* this.streamWebsocketResponse(params, credential, codexHeaders, signal)
+            yield* this.streamWebsocketResponse(params, credential, codexHeaders, signal, model)
         } finally {
             if (this.websocketRequestOwner === signal) this.websocketRequestOwner = undefined
         }
@@ -671,7 +669,8 @@ export class OpenAiCodexHandler extends ApiHandler {
         credential: OpenAiCodexCredentialContext,
         codexHeaders: Record<string, string>,
         signal: AbortSignal,
-    ): AsyncGenerator<OpenAI.Responses.ResponseStreamEvent> {
+        model: { id: string; info: ModelInfo },
+    ): ApiStream {
         const ws = await this.ensureResponsesWebsocket(credential, codexHeaders, signal)
 
         const eventQueue: OpenAI.Responses.ResponseStreamEvent[] = []
@@ -773,20 +772,17 @@ export class OpenAiCodexHandler extends ApiHandler {
 
         try {
             const identity = ApiHandler.identifyProviderAttempt("openai-codex", params)
+            let sentAtMs = Number.NaN
             const responseEvents = await ApiHandler.observeProviderStream(
                 identity,
-                () =>
-                    (async function* () {
-                        signal.throwIfAborted()
-                        const websocketParams = { ...params } as Record<string, unknown>
-                        delete websocketParams.stream
-                        ws.send(
-                            JSON.stringify({
-                                type: "response.create",
-                                ...websocketParams,
-                            }),
-                        )
-
+                () => {
+                    signal.throwIfAborted()
+                    const websocketParams = { ...params } as Record<string, unknown>
+                    delete websocketParams.stream
+                    const payload = JSON.stringify({ type: "response.create", ...websocketParams })
+                    sentAtMs = Date.now()
+                    ws.send(payload)
+                    return (async function* () {
                         while (!completed || eventQueue.length > 0) {
                             if (eventQueue.length === 0) {
                                 await new Promise<void>((resolve) => {
@@ -800,10 +796,11 @@ export class OpenAiCodexHandler extends ApiHandler {
                         }
 
                         if (failure) throw failure
-                    })(),
+                    })()
+                },
                 { signal },
             )
-            yield* responseEvents
+            yield* this.handleResponseEvents(responseEvents, model, sentAtMs)
         } finally {
             ws.removeEventListener("message", handleMessage)
             ws.removeEventListener("error", handleError)
@@ -827,6 +824,7 @@ export class OpenAiCodexHandler extends ApiHandler {
         }
 
         try {
+            const sentAtMs = Date.now()
             const response = await providerFetch(url, {
                 method: "POST",
                 headers,
@@ -858,7 +856,7 @@ export class OpenAiCodexHandler extends ApiHandler {
                 throw new Error("No response body from Codex API")
             }
 
-            yield* this.handleStreamResponse(response.body, model, signal)
+            yield* this.handleStreamResponse(response.body, model, signal, sentAtMs)
         } catch (error) {
             if (isOutputLimitExceededError(error)) {
                 throw error
@@ -871,8 +869,9 @@ export class OpenAiCodexHandler extends ApiHandler {
         body: ReadableStream<Uint8Array>,
         model: { id: string; info: ModelInfo },
         signal: AbortSignal,
+        sentAtMs: number,
     ): ApiStream {
-        yield* this.handleResponseEvents(this.readStreamEvents(body, signal), model)
+        yield* this.handleResponseEvents(this.readStreamEvents(body, signal), model, sentAtMs)
     }
 
     private async *readStreamEvents(body: ReadableStream<Uint8Array>, signal: AbortSignal): AsyncGenerator<unknown> {

@@ -37,9 +37,20 @@ function placeBySeq(held: readonly TrajectoryTurnSummary[], update: TrajectoryUp
     return turns.slice(0, contiguous)
 }
 
-/** Whether the rail has anything trustworthy to show for this log. */
+/**
+ * Whether the rail has anything trustworthy to show for this log.
+ *
+ * `building` only counts once it carries a turn. A build that has not folded
+ * anything yet says the cache is still empty, not that the task has no turns,
+ * and treating it as shown would both draw nothing and let the client believe
+ * a failing source is healthy.
+ */
 export function isTrajectoryShown(log: TrajectoryLog | undefined): log is TrajectoryLog {
-    return log?.state === TrajectoryState.TRAJECTORY_STATE_READY || log?.state === TrajectoryState.TRAJECTORY_STATE_BUILDING
+    if (log?.state === TrajectoryState.TRAJECTORY_STATE_READY) return true
+    return (
+        (log?.state === TrajectoryState.TRAJECTORY_STATE_BUILDING || log?.state === TrajectoryState.TRAJECTORY_STATE_ERROR) &&
+        log.turns.length > 0
+    )
 }
 
 /** Group turns into attempts: an attempt is the run of turns sharing an attemptSeq. */
@@ -52,6 +63,8 @@ export function toTrajectoryAttempts(turns: readonly TrajectoryTurnSummary[]): T
             attempts.push(attempt)
         }
         attempt.turns.push({
+            seq: turn.seq,
+            anchorIndex: turn.anchorIndex,
             anchorTs: turn.anchorTs,
             prompt: turn.prompt,
             rounds: turn.rounds,

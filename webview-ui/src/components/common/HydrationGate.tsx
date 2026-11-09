@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react"
+import type { HydrationFailureReason } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 
 /**
  * What the user sees while the webview has no state to render yet.
@@ -25,6 +27,7 @@ interface HydrationPendingProps {
  * from here, and claiming failure prematurely would be its own defect.
  */
 export const HydrationPending = ({ slowThresholdMs = SLOW_HYDRATION_THRESHOLD_MS }: HydrationPendingProps) => {
+    const { t } = useUiTranslation()
     const [isSlow, setIsSlow] = useState(false)
 
     useEffect(() => {
@@ -36,10 +39,10 @@ export const HydrationPending = ({ slowThresholdMs = SLOW_HYDRATION_THRESHOLD_MS
         <div
             className="flex h-screen w-full flex-col items-center justify-center gap-2 p-4 text-center"
             data-testid="hydration-pending">
-            <div className="text-[var(--vscode-descriptionForeground)]">Loading Dline…</div>
+            <div className="text-[var(--vscode-descriptionForeground)]">{t("shell.hydration.pending")}</div>
             {isSlow && (
                 <div className="text-sm text-[var(--vscode-descriptionForeground)]" data-testid="hydration-pending-slow">
-                    Still waiting for the extension to send its state. This is taking longer than usual.
+                    {t("shell.hydration.slow")}
                 </div>
             )}
         </div>
@@ -47,7 +50,8 @@ export const HydrationPending = ({ slowThresholdMs = SLOW_HYDRATION_THRESHOLD_MS
 }
 
 interface HydrationFailedProps {
-    reason: string
+    /** Stream diagnostics stay verbatim; product fallbacks are translated at render. */
+    reason: HydrationFailureReason
     onRetry: () => void
 }
 
@@ -58,20 +62,28 @@ interface HydrationFailedProps {
  * reporting a blank panel cannot be asked to open developer tools, and the
  * console message was the only trace this failure previously left.
  */
-export const HydrationFailed = ({ reason, onRetry }: HydrationFailedProps) => (
-    <div
-        className="flex h-screen w-full flex-col items-center justify-center gap-3 p-4 text-center"
-        data-testid="hydration-failed">
-        <div className="text-[var(--vscode-errorForeground)]">Dline could not load its state.</div>
-        <div className="text-sm text-[var(--vscode-descriptionForeground)]" data-testid="hydration-failed-reason">
-            {reason}
+export const HydrationFailed = ({ reason, onRetry }: HydrationFailedProps) => {
+    const { t } = useUiTranslation()
+
+    return (
+        <div
+            className="flex h-screen w-full flex-col items-center justify-center gap-3 p-4 text-center"
+            data-testid="hydration-failed">
+            <div className="text-[var(--vscode-errorForeground)]">{t("shell.hydration.failed")}</div>
+            <div className="text-sm text-[var(--vscode-descriptionForeground)]" data-testid="hydration-failed-reason">
+                {typeof reason === "string"
+                    ? reason
+                    : reason.kind === "closed"
+                      ? t("runtime.hydration.closed")
+                      : t("runtime.hydration.unknown")}
+            </div>
+            <button
+                className="cursor-pointer rounded border border-[var(--vscode-button-border)] bg-[var(--vscode-button-background)] px-3 py-1 text-[var(--vscode-button-foreground)]"
+                data-testid="hydration-retry"
+                onClick={onRetry}
+                type="button">
+                {t("shell.chrome.retry")}
+            </button>
         </div>
-        <button
-            className="cursor-pointer rounded border border-[var(--vscode-button-border)] bg-[var(--vscode-button-background)] px-3 py-1 text-[var(--vscode-button-foreground)]"
-            data-testid="hydration-retry"
-            onClick={onRetry}
-            type="button">
-            Retry
-        </button>
-    </div>
-)
+    )
+}

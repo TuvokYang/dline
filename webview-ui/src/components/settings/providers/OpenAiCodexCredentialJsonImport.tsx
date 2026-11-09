@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 
 interface OpenAiCodexCredentialJsonImportProps {
     busy: boolean
@@ -6,15 +7,16 @@ interface OpenAiCodexCredentialJsonImportProps {
 }
 
 export function OpenAiCodexCredentialJsonImport({ busy, onImport }: OpenAiCodexCredentialJsonImportProps) {
+    const { t } = useUiTranslation()
     const [open, setOpen] = useState(false)
     const [oauthJson, setOauthJson] = useState("")
-    const [error, setError] = useState<string>()
+    const [error, setError] = useState<"settings.ui.auth.pasteJson">()
 
     const importCredential = async () => {
         const submitted = oauthJson.trim()
         setOauthJson("")
         if (!submitted) {
-            setError("Paste the full OAuth credential JSON.")
+            setError("settings.ui.auth.pasteJson")
             return
         }
         setError(undefined)
@@ -35,13 +37,11 @@ export function OpenAiCodexCredentialJsonImport({ busy, onImport }: OpenAiCodexC
                     }
                 }}
                 type="button">
-                {open ? "▾" : "▸"} Advanced: import OAuth credential JSON
+                {open ? "▾" : "▸"} {t("settings.ui.auth.advancedImport")}
             </button>
             {open ? (
                 <div className="mt-2 flex flex-col gap-2">
-                    <p className="m-0 text-xs text-description">
-                        Use this only when the normal sign-in cannot complete. The JSON is written to this profile's secret file.
-                    </p>
+                    <p className="m-0 text-xs text-description">{t("settings.ui.auth.importHelp")}</p>
                     <textarea
                         aria-label="OpenAI Codex OAuth JSON"
                         autoCapitalize="off"
@@ -54,7 +54,7 @@ export function OpenAiCodexCredentialJsonImport({ busy, onImport }: OpenAiCodexC
                     />
                     {error ? (
                         <div className="text-sm text-error-foreground" role="alert">
-                            {error}
+                            {t(error)}
                         </div>
                     ) : null}
                     <div className="flex justify-end">
@@ -63,7 +63,7 @@ export function OpenAiCodexCredentialJsonImport({ busy, onImport }: OpenAiCodexC
                             disabled={busy || oauthJson.trim().length === 0}
                             onClick={() => void importCredential()}
                             type="button">
-                            Import credential
+                            {t("settings.ui.auth.importCredential")}
                         </button>
                     </div>
                 </div>

@@ -1,5 +1,6 @@
 import type { ModelInfo } from "@shared/proto/dline/models"
-import type { ModelCapabilities, ModelPricing } from "@shared/proto/dline/models/metadata"
+import type { ModelCapabilities } from "@shared/proto/dline/models/metadata"
+import { modelPricingForWrite } from "@shared/providers/pricing-shape"
 
 export type ModelCapabilityOverrideField = "maxTokens" | "contextWindow" | "supportsImages" | "supportsPromptCache"
 export type ModelPricingOverrideField = "inputPrice" | "outputPrice" | "cacheWritesPrice" | "cacheReadsPrice" | "currency"
@@ -102,12 +103,9 @@ export function mergeModelInfo(base?: ModelInfo, override?: Partial<ModelInfo>):
         delete merged.capabilities
     }
 
-    const pricing = mergeDefined(
-        baseClone.pricing as Record<string, unknown> | undefined,
-        overrideClone.pricing as Record<string, unknown> | undefined,
-    )
+    const pricing = overrideClone.pricing ?? baseClone.pricing
     if (pricing) {
-        merged.pricing = pricing as unknown as ModelPricing
+        merged.pricing = pricing
     } else {
         delete merged.pricing
     }
@@ -164,16 +162,9 @@ export function pickModelInfoOverride(
     }
 
     if (fields.pricing?.length) {
-        const pricing: Record<string, unknown> = {}
-        for (const field of fields.pricing) {
-            const value = candidate.pricing?.[field]
-            if (value !== undefined && !valuesEqual(value, base.pricing?.[field])) {
-                pricing[field] = clone(value)
-            }
-        }
-        const compacted = compactObject(pricing)
-        if (compacted) {
-            override.pricing = compacted as unknown as ModelPricing
+        const pricing = modelPricingForWrite(candidate.pricing)
+        if (pricing && !valuesEqual(pricing, modelPricingForWrite(base.pricing))) {
+            override.pricing = clone(pricing)
         }
     }
 
@@ -191,6 +182,6 @@ export function modelInfoToStorageJson(modelInfo: Partial<ModelInfo> | undefined
     if (!modelInfo) {
         return undefined
     }
-    const json = clone(modelInfo) as Record<string, unknown>
+    const json = clone({ ...modelInfo, pricing: modelPricingForWrite(modelInfo.pricing) }) as Record<string, unknown>
     return isObject(json) && (json.id !== undefined || Object.keys(json).length > 0) ? json : undefined
 }

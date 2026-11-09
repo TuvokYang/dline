@@ -51,8 +51,8 @@ Use \`task_progress\` only when completion state or the current work changes:
 
     planModeReminder: `# TODO LIST (RECOMMENDED IN PLAN MODE)
 
-When presenting a finalized plan through \`make_plan\`, include a TODO list with a \`# Title\`, optional \`## Section\` headings, and at least one non-empty item.
-After the list is active, changing its structure requires \`change_todo_list\` and user approval.
+When presenting a finalized plan through \`make_plan\`, create a TODO list with a \`# Title\` and at least one non-empty unchecked item only if no list exists or the old list is fully complete. Otherwise send only a legal incremental update, or omit task_progress if nothing changed.
+Changing an unfinished list's structure still requires \`change_todo_list\` and user approval.
 
 @REMINDER@`,
 
@@ -77,6 +77,14 @@ Compare the completed phase with the latest user request and the Objective:
 - If the user explicitly requested a plan or report for review, use the corresponding tool when it is ready.
 - Use attempt_completion when the entire current task is complete and the relevant verification is consistent.`,
 
+    loadingFailed:
+        "TODO update unavailable: the existing checklist or history could not be read. It has not been replaced. Resolve the storage error before reporting TODO changes; other task work can continue.",
+    persistenceFailed:
+        "TODO update failed: the checklist could not be saved. The previous committed checklist is unchanged. Retry the update after resolving the storage error.",
+    archiveFailed:
+        "The new TODO list was saved, but the previous checklist could not be archived. Its history may be incomplete.",
+    ignoredCompletionProgress:
+        "Warning: attempt_completion does not support task_progress. The parameter was ignored. Submit TODO updates with a supported tool before attempting completion.",
     tamperingRejected: `TODO list update rejected. The submitted \`task_progress\` changes the stored list structure while unchecked items remain. Continue from the stored TODO list and report only exact existing items whose completion state or current-work selection changed. Use \`change_todo_list\` with user approval to change the structure.`,
     titleRequired: `TODO list update rejected. A complete checklist requires a top-level \`# Title\`. \`## Section\` headings are optional and cannot replace the title.`,
     uncheckedItemRequired: `TODO list update rejected. A new complete checklist requires at least one non-empty \`- [ ]\` item. A checklist containing only completed items does not start a new work phase.`,
@@ -87,7 +95,7 @@ Complete these items FIRST (in order):
 
 To change the order, use change_todo_list to get user authorization. Continue reporting progress via task_progress parameter.`,
     skipOrderWarning: `TODO list warning. You marked a later item complete while an earlier item remains unchecked. The update was accepted once; the next order violation will be rejected. Use \`change_todo_list\` with user approval if the order must change.`,
-    itemMismatchRejected: `TODO list update rejected — NEXT TOOL CALLS BLOCKED. The submitted completed items do not match the stored TODO list.
+    itemMismatchRejected: `TODO list update rejected. The submitted completed items do not match the stored TODO list; the committed checklist is unchanged.
 
 Unmatched items:
 @UNMATCHED_ITEMS@

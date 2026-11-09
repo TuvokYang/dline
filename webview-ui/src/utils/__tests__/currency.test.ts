@@ -25,6 +25,11 @@ describe("getCurrencySymbol", () => {
 })
 
 describe("formatCurrencyAmount", () => {
+    it("does not label an amount whose source currency is unknown", () => {
+        expect(formatCurrencyAmount(0, undefined)).toBe("0.00")
+        expect(formatCurrencyAmount(2, "")).toBe("2.00")
+    })
+
     it("prefixes the model currency symbol with the requested precision", () => {
         expect(formatCurrencyAmount(0.0123, "CNY", 4)).toBe("¥0.0123")
         expect(formatCurrencyAmount(1.5, "EUR")).toBe("€1.50")

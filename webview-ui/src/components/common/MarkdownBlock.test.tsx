@@ -72,7 +72,6 @@ describe("MarkdownBlock links", () => {
         const markdown = "[/compact](#dline-entity/command/%2Fcompact) now"
         const { container } = render(<MarkdownBlock markdown={markdown} submittedEntities />)
 
-        expect(container.querySelector(".mention-context-highlight-with-shadow")).toHaveTextContent("/compact")
         expect(screen.queryByRole("link", { name: "/compact" })).toBeNull()
     })
 

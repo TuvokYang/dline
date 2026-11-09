@@ -3,6 +3,7 @@ import { VSCodeButton, VSCodeCheckbox, VSCodeLink } from "@vscode/webview-ui-too
 import { useState } from "react"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { StateServiceClient } from "@/services/grpc-client"
 import Section from "../Section"
 import { SupportTelemetryStatus } from "../SupportTelemetryStatus"
@@ -36,38 +37,45 @@ function formatBytes(bytes: number): string {
  */
 function ConsentCheckbox({
     label,
+    description,
     setting,
     settingKey,
     organizationSetting,
     testId,
 }: {
     label: string
+    description: string
     setting: string
     settingKey: "usageReportingSetting" | "errorReportingSetting"
     organizationSetting: string | undefined
     testId: string
 }) {
+    const { t } = useUiTranslation()
     return (
-        <Tooltip>
-            <TooltipContent hidden={organizationSetting === undefined}>
-                This setting is managed by your organization's remote configuration
-            </TooltipContent>
-            <TooltipTrigger asChild>
-                <div className="flex items-center gap-2 mt-2">
-                    <VSCodeCheckbox
-                        checked={setting === "enabled"}
-                        data-testid={testId}
-                        disabled={organizationSetting === "disabled"}
-                        onChange={(e: any) => {
-                            const checked = e.target.checked === true
-                            updateSetting(settingKey, checked ? "enabled" : "disabled")
-                        }}>
-                        {label}
-                    </VSCodeCheckbox>
-                    {organizationSetting === "disabled" && <i className="codicon codicon-lock text-description text-sm" />}
-                </div>
-            </TooltipTrigger>
-        </Tooltip>
+        <div className="mt-2" data-consent={settingKey}>
+            <Tooltip>
+                <TooltipContent hidden={organizationSetting === undefined}>{t("settings.ui.managed")}</TooltipContent>
+                <TooltipTrigger asChild>
+                    <div className="flex items-center gap-2">
+                        <VSCodeCheckbox
+                            checked={setting === "enabled"}
+                            data-testid={testId}
+                            disabled={organizationSetting === "disabled"}
+                            onChange={(e: any) => {
+                                const checked = e.target.checked === true
+                                updateSetting(settingKey, checked ? "enabled" : "disabled")
+                            }}>
+                            {label}
+                        </VSCodeCheckbox>
+                        {organizationSetting === "disabled" && <i className="codicon codicon-lock text-description text-sm" />}
+                    </div>
+                </TooltipTrigger>
+            </Tooltip>
+            {/* The description belongs to its own switch: each consent answers a
+                different question, and a shared paragraph made the reader match
+                sentences to checkboxes. */}
+            <p className="text-sm mt-[2px] ml-6 text-description">{description}</p>
+        </div>
     )
 }
 
@@ -84,47 +92,49 @@ function ConsentCheckbox({
  * here instead of hunting for the cause elsewhere.
  */
 function ReportingConsent() {
+    const { t } = useUiTranslation()
     const { usageReportingSetting, errorReportingSetting, remoteConfigSettings } = useExtensionState()
 
     return (
         <div>
-            <h3 className="text-md font-semibold">Error and usage reporting</h3>
+            <h3 className="text-md font-semibold">{t("settings.ui.about.reporting")}</h3>
 
             <ConsentCheckbox
-                label="Allow usage reporting"
+                description={t("settings.ui.about.usageHelp")}
+                label={t("settings.ui.about.usage")}
                 organizationSetting={remoteConfigSettings?.usageReportingSetting}
                 setting={usageReportingSetting}
                 settingKey="usageReportingSetting"
                 testId="usage-reporting-setting-checkbox"
             />
             <ConsentCheckbox
-                label="Allow error reporting"
+                description={t("settings.ui.about.errorHelp")}
+                label={t("settings.ui.about.error")}
                 organizationSetting={remoteConfigSettings?.errorReportingSetting}
                 setting={errorReportingSetting}
                 settingKey="errorReportingSetting"
                 testId="error-reporting-setting-checkbox"
             />
 
-            <p className="text-sm mt-[5px] text-description">
-                Usage reporting and error reporting are both on by default and can be turned off independently here. Usage
-                reporting sends bounded aggregate request, token, cache, cost, provider, and model statistics to Dline's telemetry
-                service at otel.dline.cc. Error reporting sends allowlisted failure and runtime-health records. Ordinary reporting
-                excludes prompts, model responses, source code, file contents, paths, commands, terminal output, credentials, and
-                account identity. See our{" "}
+            {/* The privacy guarantee describes both consents, so it stays shared
+                instead of being repeated under each switch. The destination is
+                deliberately not named here: what matters to the reader is that
+                reported data is aggregated, not where it is posted. */}
+            <p className="text-sm mt-[8px] text-description">
+                {t("settings.ui.about.privacyHelp")}{" "}
                 <VSCodeLink
                     className="text-inherit"
                     href="https://docs.dline.cc/troubleshooting/telemetry/"
                     style={{ fontSize: "inherit", textDecoration: "underline" }}>
-                    telemetry overview
-                </VSCodeLink>{" "}
-                and{" "}
+                    {t("settings.ui.about.telemetry")}
+                </VSCodeLink>
+                {" · "}
                 <VSCodeLink
                     className="text-inherit"
                     href="https://docs.dline.cc/privacy/"
                     style={{ fontSize: "inherit", textDecoration: "underline" }}>
-                    privacy policy
-                </VSCodeLink>{" "}
-                for more details.
+                    {t("settings.ui.about.privacy")}
+                </VSCodeLink>
             </p>
         </div>
     )
@@ -142,6 +152,7 @@ function ReportingConsent() {
  * the extension is not permitted to collect.
  */
 function DiagnosticBundleExport() {
+    const { t } = useUiTranslation()
     const [isExporting, setIsExporting] = useState(false)
     const [outcome, setOutcome] = useState<ExportOutcome | null>(null)
 
@@ -164,28 +175,26 @@ function DiagnosticBundleExport() {
 
     return (
         <div>
-            <h3 className="text-md font-semibold">Diagnostics</h3>
-            <p>
-                Saves this session's runtime events, health snapshots, and root-cause analysis to a zip file under the Dline data
-                directory, which you can attach to a bug report. Prompts, file contents, and credentials are excluded.
-            </p>
+            <h3 className="text-md font-semibold">{t("settings.ui.about.diagnostics")}</h3>
+            <p>{t("settings.ui.about.diagnosticsHelp")}</p>
             <VSCodeButton className="rounded-xs mt-2" disabled={isExporting} onClick={onExport}>
-                {isExporting ? "Exporting…" : "Export diagnostic bundle"}
+                {isExporting ? t("settings.ui.about.exporting") : t("settings.ui.about.export")}
             </VSCodeButton>
             {outcome?.kind === "written" && (
                 <p className="text-sm mt-[5px] text-description" data-testid="diagnostic-bundle-written">
-                    Saved to {outcome.path} ({formatBytes(outcome.sizeBytes)}).
+                    {t("settings.ui.about.saved", { path: outcome.path, size: formatBytes(outcome.sizeBytes) })}
                 </p>
             )}
             {outcome?.kind === "failed" && (
                 <p className="text-sm mt-[5px] text-error" data-testid="diagnostic-bundle-error">
-                    {outcome.message}
+                    {t("settings.ui.about.exportError", { diagnostic: outcome.message })}
                 </p>
             )}
         </div>
     )
 }
 const AboutSection = ({ version, renderSectionHeader }: AboutSectionProps) => {
+    const { t } = useUiTranslation()
     const { errorReportingSetting } = useExtensionState()
     // Mirrors the backend gate exactly: the runtime diagnostics pipeline follows
     // the error consent and starts only on "enabled", so an undecided user must
@@ -198,21 +207,17 @@ const AboutSection = ({ version, renderSectionHeader }: AboutSectionProps) => {
             <Section>
                 <div className="flex px-4 flex-col gap-2">
                     <h2 className="text-lg font-semibold">Dline v{version}</h2>
-                    <p>
-                        An AI assistant that can use your CLI and Editor. Dline can handle complex software development tasks
-                        step-by-step with tools that let him create & edit files, explore large projects, use the browser, and
-                        execute terminal commands (after you grant permission).
-                    </p>
+                    <p>{t("settings.ui.about.description")}</p>
 
-                    <h3 className="text-md font-semibold">Development</h3>
+                    <h3 className="text-md font-semibold">{t("settings.ui.about.development")}</h3>
                     <p>
                         <VSCodeLink href="https://github.com/TuvokYang/dline">GitHub</VSCodeLink>
                         {" • "}
-                        <VSCodeLink href="https://github.com/TuvokYang/dline/issues"> Issues</VSCodeLink>
+                        <VSCodeLink href="https://github.com/TuvokYang/dline/issues">{t("settings.ui.about.issues")}</VSCodeLink>
                         {" • "}
                         <VSCodeLink href="https://github.com/TuvokYang/dline/discussions/categories/feature-requests?discussions_q=is%3Aopen+category%3A%22Feature+Requests%22+sort%3Atop">
                             {" "}
-                            Feature Requests
+                            {t("settings.ui.about.requests")}
                         </VSCodeLink>
                     </p>
 

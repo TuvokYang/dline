@@ -67,6 +67,7 @@ export class DoubaoHandler extends ApiHandler {
             { role: "system", content: systemPrompt },
             ...convertToOpenAiMessages(messages),
         ]
+        const sentAtMs = Date.now()
         const stream = await client.chat.completions.create({
             model: model.id,
             max_completion_tokens: model.info.capabilities?.maxTokens,
@@ -93,10 +94,12 @@ export class DoubaoHandler extends ApiHandler {
                     // @ts-expect-error-next-line
                     cacheWriteTokens: chunk.usage.prompt_cache_miss_tokens,
                 })
+                const tokens = { ...inputUsage, outputTokens: chunk.usage.completion_tokens || 0 }
+                const cost = ApiHandler.calculateUsageCost(model.info.pricing, tokens, sentAtMs)
                 yield {
                     type: "usage",
-                    ...inputUsage,
-                    outputTokens: chunk.usage.completion_tokens || 0,
+                    ...tokens,
+                    ...(cost.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
                 }
             }
         }

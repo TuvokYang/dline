@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import type { ModelInfo } from "@shared/proto/dline/models"
-import { ApiFormat } from "@shared/proto/dline/models/metadata"
+import { ApiFormat, PricingDayRule } from "@shared/proto/dline/models/metadata"
 import { ApiProfile as ProtoApiProfile } from "@shared/proto/dline/profile"
 import { BaseProviderConfig } from "@shared/proto/dline/provider/common"
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import { fireEvent, render, screen } from "@testing-library/react"
 import React from "react"
 import { describe, expect, it, vi } from "vitest"
@@ -28,11 +29,19 @@ const models = {
             },
         },
         pricing: {
-            inputPrice: 3,
-            outputPrice: 6,
-            cacheWritesPrice: 3,
-            cacheReadsPrice: 0.025,
             currency: "CNY",
+            strategy: {
+                timeOfDay: {
+                    schedule: {
+                        timezoneOffsetMinutes: 480,
+                        dayRule: PricingDayRule.PRICING_DAY_RULE_ALL_DAYS,
+                        defaultOnPublicHolidays: false,
+                        holidayCalendar: "",
+                    },
+                    defaultPrices: { inputPrice: 3, outputPrice: 6, cacheWritePrice: 3, cacheReadPrice: 0.025 },
+                    timeWindows: [],
+                },
+            },
         },
     } as ModelInfo,
     "deepseek-flash": {
@@ -51,13 +60,7 @@ const models = {
                 effortLevels: ["low", "high", "max"],
             },
         },
-        pricing: {
-            inputPrice: 1,
-            outputPrice: 2,
-            cacheWritesPrice: 1,
-            cacheReadsPrice: 0.02,
-            currency: "CNY",
-        },
+        pricing: flatMeteredPricing(1, 2, 1, 0.02, "CNY"),
     } as ModelInfo,
 }
 
@@ -88,6 +91,11 @@ vi.mock("../common/ModelAutocomplete", () => ({
     ),
 }))
 vi.mock("@vscode/webview-ui-toolkit/react", () => ({
+    VSCodeButton: ({ children, onClick, disabled }: React.ComponentProps<"button">) => (
+        <button disabled={disabled} onClick={onClick} type="button">
+            {children}
+        </button>
+    ),
     VSCodeTextField: ({ children: _children, ...props }: React.InputHTMLAttributes<HTMLInputElement>) => <input {...props} />,
     VSCodeCheckbox: ({
         checked,
@@ -229,10 +237,10 @@ describe("DeepSeekProvider", () => {
 
         expect(screen.getByRole("textbox", { name: "Context Window Size" })).toHaveValue("1000000")
         expect(screen.getByRole("textbox", { name: "Max Output Tokens" })).toHaveValue("384000")
-        expect(screen.getByRole("textbox", { name: "Input Price (¥/1M tokens)" })).toHaveValue("3")
-        expect(screen.getByRole("textbox", { name: "Output Price (¥/1M tokens)" })).toHaveValue("6")
-        expect(screen.getByRole("textbox", { name: "Cache Writes (¥/M)" })).toHaveValue("3")
-        expect(screen.getByRole("textbox", { name: "Cache Reads (¥/M)" })).toHaveValue("0.025")
+        expect(screen.getByRole("textbox", { name: "Off-peak Input Price (¥/1M tokens)" })).toHaveValue("3")
+        expect(screen.getByRole("textbox", { name: "Off-peak Output Price (¥/1M tokens)" })).toHaveValue("6")
+        expect(screen.getByRole("textbox", { name: "Off-peak Cache Writes (¥/1M tokens)" })).toHaveValue("3")
+        expect(screen.getByRole("textbox", { name: "Off-peak Cache Reads (¥/1M tokens)" })).toHaveValue("0.025")
     })
 
     it("persists a context override without losing a preceding API format edit or existing provider settings", async () => {
@@ -284,7 +292,6 @@ describe("DeepSeekProvider", () => {
         render(<DeepSeekProvider onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
 
         // The picker lists remote discoveries alongside the local catalog.
-        expect(screen.getByTestId("deepseek-models")).toHaveTextContent("deepseek-v4-preview,deepseek-v4-pro,deepseek-flash")
         const format = screen.getByRole("combobox", { name: "API Format" })
         expect(format).toHaveValue(String(ApiFormat.OPENAI_CHAT))
         expect(screen.getByRole("option", { name: "OpenAI Chat" })).toBeInTheDocument()

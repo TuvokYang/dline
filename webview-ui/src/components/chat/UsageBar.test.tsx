@@ -202,6 +202,98 @@ describe("UsageBar", () => {
         expect(document.querySelector('[data-slot="popover-content"]')).not.toBeInTheDocument()
     })
 
+    it.each([
+        "openai-native",
+        "openrouter",
+        "deepseek",
+        "claude-code",
+        "openai-codex",
+        "opencode",
+    ])("does not create a usage entry from local counts for %s", (providerId) => {
+        mockedContext.value = {
+            accountUsage: {
+                profileId: "profile-local",
+                providerId,
+                currency: "",
+                local: { inputTokens: 1_200, outputTokens: 300, usageReported: true },
+            },
+        }
+
+        const { container } = render(<UsageBar />)
+
+        expect(container).toBeEmptyDOMElement()
+    })
+
+    it("does not show a default zero for an unsupported Provider", () => {
+        mockedContext.value = {
+            accountUsage: {
+                profileId: "unsupported-a",
+                providerId: "openai-native",
+                currency: "",
+                local: { inputTokens: 0, outputTokens: 0, usageReported: true },
+            },
+        }
+
+        const { container } = render(<UsageBar />)
+
+        expect(container).toBeEmptyDOMElement()
+    })
+
+    it("keeps the remote summary when both a quota and local facts exist", () => {
+        mockedContext.value = {
+            accountUsage: {
+                ...usage([{ ...codexFiveHour, used: 20, limit: 100 }]),
+                local: { inputTokens: 900, outputTokens: 100, usageReported: true },
+            },
+        }
+
+        render(<UsageBar />)
+
+        // The account's own limit is what blocks the next request, so it stays the
+        // headline; the local numbers are still reachable in the expanded details.
+        expect(screen.getByRole("button", { name: "Provider usage" })).toHaveTextContent("5h: 80%")
+    })
+
+    it("shows DeepSeek's local total alongside its account balance", async () => {
+        mockedContext.value = {
+            accountUsage: {
+                profileId: "profile-local",
+                providerId: "deepseek",
+                currency: "",
+                remainingBalance: 10,
+                local: {
+                    inputTokens: 700,
+                    outputTokens: 200,
+                    usageReported: true,
+                    retrievedAt: new Date().toISOString(),
+                },
+            },
+        }
+
+        render(<UsageBar />)
+        fireEvent.click(screen.getByRole("button", { name: "Provider usage" }))
+
+        const menu = await screen.findByRole("dialog", { name: "Provider usage details" })
+        expect(within(menu).getByText(/Today In: 700/)).toBeInTheDocument()
+        expect(within(menu).queryByText("Usage unavailable")).not.toBeInTheDocument()
+    })
+
+    it("does not claim a quiet day when the local record reported no usage", () => {
+        mockedContext.value = {
+            accountUsage: {
+                profileId: "profile-quiet",
+                providerId: "deepseek",
+                currency: "",
+                local: { inputTokens: 0, outputTokens: 0, usageReported: false },
+            },
+        }
+
+        const { container } = render(<UsageBar />)
+
+        // An unmeasured day is not a zero day, and it is not a bar worth showing.
+        expect(container).toBeEmptyDOMElement()
+    })
+
     it("applies the explicit refresh response without waiting for a state-stream update", async () => {
         mockedContext.value = {
             accountUsage: usage([{ ...codexFiveHour, used: 20, limit: 100 }]),

@@ -1,8 +1,10 @@
 import { StringRequest } from "@shared/proto/dline/common"
 import { LmStudioProviderConfig } from "@shared/proto/dline/provider/lmstudio"
-import { VSCodeDropdown, VSCodeLink, VSCodeOption, VSCodeTextField } from "@vscode/webview-ui-toolkit/react"
-import { useCallback, useMemo } from "react"
+import { VSCodeLink, VSCodeOption, VSCodeTextField } from "@vscode/webview-ui-toolkit/react"
+import { type FormEvent, useCallback, useMemo } from "react"
+import { LocalizedDropdown, LocalizedOption } from "@/components/common/LocalizedDropdown"
 import UseCustomPromptCheckbox from "@/components/settings/UseCustomPromptCheckbox"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ModelsServiceClient } from "@/services/grpc-client"
 import { BaseUrlField } from "../common/BaseUrlField"
 import { DebouncedTextField } from "../common/DebouncedTextField"
@@ -19,6 +21,7 @@ interface LMStudioProviderProps {
 
 /** LM Studio provider �?baseUrl, apiKey, modelId from ApiProfile. */
 export const LMStudioProvider = ({ showModelOptions, isPopup: _isPopup, profile, onUpdate }: LMStudioProviderProps) => {
+    const { t } = useUiTranslation()
     const pc = profile.lmstudio ?? LmStudioProviderConfig.create()
 
     const probeLmStudioModels = useCallback(async () => {
@@ -47,60 +50,64 @@ export const LMStudioProvider = ({ showModelOptions, isPopup: _isPopup, profile,
         <div className="flex flex-col gap-2">
             <BaseUrlField
                 initialValue={profile.baseUrl}
-                label="Base URL"
+                label={t("settings.ui.baseUrl")}
                 onChange={(v) => onUpdate({ baseUrl: v || undefined })}
-                placeholder="Default: http://localhost:1234"
+                placeholder={t("settings.ui.defaultValue", { value: "http://localhost:1234" })}
             />
             <label htmlFor="lmstudio-model">
-                <span className="font-semibold">Model</span>
+                <span className="font-semibold">{t("settings.ui.model")}</span>
             </label>
             <DropdownContainer className="dropdown-container">
                 {modelOptions.length > 0 ? (
-                    <VSCodeDropdown
+                    <LocalizedDropdown
                         id="lmstudio-model"
-                        onChange={(e) => onUpdate({ modelId: (e.target as HTMLInputElement).value })}
+                        onChange={(e: Event | FormEvent<HTMLElement>) =>
+                            onUpdate({ modelId: (e.target as HTMLInputElement).value })
+                        }
                         onFocus={refreshLmStudioModels}
+                        selectedLabel={
+                            (profile.modelId || "") === ""
+                                ? t("settings.ui.selectModel")
+                                : modelOptions.find((option) => option.value === profile.modelId)?.label
+                        }
                         style={{ width: "100%" }}
                         value={profile.modelId || ""}>
-                        <VSCodeOption value="">Select a model...</VSCodeOption>
+                        <LocalizedOption label={t("settings.ui.selectModel")} value="" />
                         {modelOptions.map((m) => (
                             <VSCodeOption key={m.value} value={m.value}>
                                 {m.label}
                             </VSCodeOption>
                         ))}
-                    </VSCodeDropdown>
+                    </LocalizedDropdown>
                 ) : (
                     <VSCodeTextField
                         id="lmstudio-model"
                         onFocus={refreshLmStudioModels}
                         onInput={(e: any) => onUpdate({ modelId: (e.target as HTMLInputElement).value })}
-                        placeholder="e.g. llama-3.2-3b-instruct"
+                        placeholder={t("settings.ui.example", { value: "llama-3.2-3b-instruct" })}
                         style={{ width: "100%" }}
                         value={profile.modelId || ""}
                     />
                 )}
             </DropdownContainer>
             {modelOptions.length === 0 && (
-                <p className="text-sm mt-1 text-description italic">
-                    Unable to fetch models from LM Studio. Ensure LM Studio is running or enter model ID manually.
-                </p>
+                <p className="text-sm mt-1 text-description italic">{t("settings.ui.lmstudio.fetchError")}</p>
             )}
             {showModelOptions && (
                 <DebouncedTextField
                     initialValue={pc.lmStudioNumCtx || ""}
                     onChange={(v) => onUpdate({ lmstudio: { ...pc, lmStudioNumCtx: v } })}
-                    placeholder="e.g. 4096"
+                    placeholder={t("settings.ui.example", { value: "4096" })}
                     style={{ width: "100%" }}>
-                    <span className="font-semibold">Context Length</span>
+                    <span className="font-semibold">{t("settings.ui.lmstudio.context")}</span>
                 </DebouncedTextField>
             )}
             <UseCustomPromptCheckbox providerId="lmstudio" />
             <p style={{ fontSize: "12px", marginTop: "5px", color: "var(--vscode-descriptionForeground)" }}>
-                LM Studio runs models locally. See{" "}
+                {t("settings.ui.lmstudio.help")}{" "}
                 <VSCodeLink href="https://lmstudio.ai/" style={{ display: "inline", fontSize: "inherit" }}>
                     lmstudio.ai
-                </VSCodeLink>{" "}
-                for setup.
+                </VSCodeLink>
             </p>
         </div>
     )

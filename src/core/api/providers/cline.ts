@@ -6,7 +6,7 @@ import OpenAI from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
 import { buildClineExtraHeaders } from "@/services/EnvUtils"
 import type { ClineStorageMessage } from "@/shared/messages/content"
-import { resolveClineProviderApiBaseUrl } from "@/shared/providers/cline-runtime"
+import { CLINE_PROVIDER_DEFAULT_API_BASE_URL, resolveClineProviderApiBaseUrl } from "@/shared/providers/cline-runtime"
 import { Logger } from "@/shared/services/Logger"
 import { ApiHandler, type ApiHandlerContext } from "../ApiHandler"
 import { withRetry } from "../retry"
@@ -76,6 +76,7 @@ export class ClineHandler extends ApiHandler {
                     baseURL: `${this._baseUrl}/api/v1`,
                     apiKey: credential,
                     defaultHeaders,
+                    maxRetries: 0,
                     // Capture real HTTP request ID from initial streaming response headers
                     fetch: async (
                         ...args: Parameters<typeof providerFetch>
@@ -123,11 +124,12 @@ export class ClineHandler extends ApiHandler {
 
             let didOutputUsage = false
 
-            const stream = await createOpenRouterStream(
+            const model = this.getModel()
+            const { stream, sentAtMs } = await createOpenRouterStream(
                 client,
                 systemPrompt,
                 messages,
-                this.getModel(),
+                model,
                 this.reasoningEffort,
                 this.thinkingBudgetTokens,
                 (this.config as any)?.openRouterProviderSorting,
@@ -210,20 +212,35 @@ export class ClineHandler extends ApiHandler {
                 }
 
                 if (!didOutputUsage && chunk.usage) {
-                    // The API reports what the request cost, including zero for free
-                    // models; overriding it here would only mask a billing bug.
-                    // @ts-expect-error-next-line
-                    const totalCost = (chunk.usage.cost || 0) + (chunk.usage.cost_details?.upstream_inference_cost || 0)
+                    const reported = (chunk.usage as OpenAI.CompletionUsage & { cost?: number }).cost
+                    const hasReportedCost = typeof reported === "number" && Number.isFinite(reported) && reported >= 0
                     const cacheReadTokens = getCacheReadTokens(chunk.usage)
                     const cacheWriteTokens = getCacheWriteTokens(chunk.usage)
-
-                    yield {
-                        type: "usage",
+                    const tokens = {
                         cacheWriteTokens,
                         cacheReadTokens,
                         inputTokens: Math.max(0, (chunk.usage.prompt_tokens || 0) - cacheReadTokens - cacheWriteTokens),
                         outputTokens: chunk.usage.completion_tokens || 0,
-                        totalCost,
+                    }
+                    const cost = hasReportedCost
+                        ? undefined
+                        : ApiHandler.calculateUsageCost(
+                              model.info.pricing,
+                              {
+                                  ...tokens,
+                                  thoughtsTokenCount: chunk.usage.completion_tokens_details?.reasoning_tokens,
+                              },
+                              sentAtMs,
+                          )
+                    const reportedCurrency = this._baseUrl === CLINE_PROVIDER_DEFAULT_API_BASE_URL ? "USD" : undefined
+                    yield {
+                        type: "usage",
+                        ...tokens,
+                        ...(hasReportedCost
+                            ? { totalCost: reported, ...(reportedCurrency ? { currency: reportedCurrency } : {}) }
+                            : cost?.kind === "calculated"
+                              ? { totalCost: cost.amount, currency: cost.currency }
+                              : {}),
                     }
                     didOutputUsage = true
                 }
@@ -234,7 +251,14 @@ export class ClineHandler extends ApiHandler {
                 Logger.warn("Cline API did not return usage chunk, fetching from generation endpoint")
                 const apiStreamUsage = await this.getApiStreamUsage()
                 if (apiStreamUsage) {
-                    yield apiStreamUsage
+                    const cost =
+                        apiStreamUsage.totalCost === undefined
+                            ? ApiHandler.calculateUsageCost(model.info.pricing, apiStreamUsage, sentAtMs)
+                            : undefined
+                    yield {
+                        ...apiStreamUsage,
+                        ...(cost?.kind === "calculated" ? { totalCost: cost.amount, currency: cost.currency } : {}),
+                    }
                 }
             }
         } catch (error) {
@@ -257,7 +281,8 @@ export class ClineHandler extends ApiHandler {
                 const response = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) })
                 if (!response.ok) return undefined
                 const generation = await response.json()
-                const totalCost = generation?.total_cost || 0
+                const reported = generation?.total_cost
+                const hasReportedCost = typeof reported === "number" && Number.isFinite(reported) && reported >= 0
 
                 return {
                     type: "usage",
@@ -271,7 +296,7 @@ export class ClineHandler extends ApiHandler {
                             (generation?.native_tokens_cache_write || 0),
                     ),
                     outputTokens: generation?.native_tokens_completion || 0,
-                    totalCost,
+                    ...(hasReportedCost ? { totalCost: reported } : {}),
                 }
             } catch (error) {
                 // ignore if fails

@@ -1,15 +1,32 @@
 import { sayFeedbackOnce } from "@core/task/tools/utils/UserFeedbackUtils"
 import type { UiAsk, UiMessage, UiSay } from "@shared/ExtensionMessage"
-import { ADMITTED_SUBMISSION, submittedInputRow, submittedRowFields } from "@shared/input-semantics/submitted-input"
+import {
+    ADMITTED_SUBMISSION,
+    type SubmittedInputRow,
+    submittedInputRow,
+    submittedRowFields,
+} from "@shared/input-semantics/submitted-input"
+
+export const TIMESTAMP_PATTERNS = ["increasing", "equal", "decreasing"] as const
+export type TimestampPattern = (typeof TIMESTAMP_PATTERNS)[number]
+
+/** Change identity payloads without changing row kinds, source positions or the original fixture. */
+export function withTimestampPattern(rows: readonly UiMessage[], pattern: TimestampPattern): UiMessage[] {
+    return rows.map((row, index) => ({
+        ...row,
+        ts: pattern === "increasing" ? 1_000 + index : pattern === "equal" ? 1_000 : 1_000 + rows.length - index,
+    }))
+}
+
+type FeedbackConfig = Parameters<typeof sayFeedbackOnce>[0]
 
 /**
- * Chat rows in the exact shapes their production producers persist.
+ * Producer-shaped committed rows, with each builder naming the source it models.
  *
- * Each builder names the producer it reproduces. User rows go through the same
- * shared row builders the producers call (`submittedInputRow`,
- * `submittedRowFields`), and tool-dialog replies go through the real
- * `sayFeedbackOnce`, so a producer that starts tagging or stops tagging its rows
- * changes these fixtures and fails the rule tests.
+ * User rows use the shared submitted-input builders. Tool replies execute the
+ * real sayFeedbackOnce with producer-shaped callbacks, not an instantiated
+ * Controller adapter. Keep these callbacks aligned with that owner's row shape;
+ * a producer change is not automatically detected by this fixture.
  */
 export class ProducerRows {
     private nextTs = 1_000
@@ -75,11 +92,11 @@ export class ProducerRows {
     /**
      * A reply a tool handler shows through `sayFeedbackOnce`.
      *
-     * The callbacks build rows the way `ControllerTaskCallbacksOwner.say` and
-     * `sayUserReply` do (`ControllerTaskCallbacksOwner.ts:251–282,335–346`): no
-     * `interactionId` and no `userInputKind`.
+     * The callbacks model ControllerTaskCallbacksOwner.say and sayUserReply:
+     * neither adds interactionId or userInputKind. A structured presentation
+     * exercises sayUserReply; an unstructured reply exercises say.
      */
-    async toolReply(text: string): Promise<UiMessage> {
+    async toolReply(text: string, presentation?: Parameters<typeof sayFeedbackOnce>[5]): Promise<UiMessage> {
         const before = this.rows.length
         const callbacks = {
             say: async (type: UiSay, sayText?: string, images?: string[], files?: string[]) => {
@@ -87,12 +104,12 @@ export class ProducerRows {
                 this.push({ ts, type: "say", say: type, text: sayText, images, files, partial: undefined, commandTs: undefined })
                 return ts
             },
-            sayUserReply: async (row: Parameters<typeof submittedRowFields>[0]) => {
+            sayUserReply: async (row: SubmittedInputRow) => {
                 this.push({ ts: this.ts(), type: "say", say: "user_feedback", ...submittedRowFields(row) })
             },
-        }
-        const config = { callbacks, taskState: { ackedFeedback: undefined } } as unknown as Parameters<typeof sayFeedbackOnce>[0]
-        await sayFeedbackOnce(config, "messageResponse", text, [], [])
+        } satisfies Pick<FeedbackConfig["callbacks"], "say" | "sayUserReply">
+        const config = { callbacks, taskState: { ackedFeedback: undefined } } as unknown as FeedbackConfig
+        await sayFeedbackOnce(config, "messageResponse", text, [], [], presentation)
         const added = this.rows[before]
         if (!added) throw new Error("sayFeedbackOnce did not write a row")
         return added

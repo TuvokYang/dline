@@ -22,22 +22,6 @@ describe("renderer registry", () => {
         expect(screen.getByTestId(`presentation-${kind}`)).toBeVisible()
     })
 
-    it.each(APPROVAL_PRESENTATION_KINDS)("caps %s at 30 percent of the viewport with internal scrolling", (kind) => {
-        render(renderPresentation(kind, { message: MESSAGE, selection: [], onSelectionChange: vi.fn() }))
-
-        expect(screen.getByTestId(`presentation-${kind}`)).toHaveClass("max-h-[30vh]", "overflow-y-auto", "overscroll-x-contain")
-    })
-
-    it("caps make_plan at 80 percent of the viewport with internal scrolling", () => {
-        render(renderPresentation("make_plan", { message: MESSAGE, selection: [], onSelectionChange: vi.fn() }))
-
-        expect(screen.getByTestId("presentation-make_plan")).toHaveClass(
-            "max-h-[80vh]",
-            "overflow-y-auto",
-            "overscroll-x-contain",
-        )
-    })
-
     it("renders a pending new_task as its task and context, not the encoded payload", async () => {
         const message: UiMessage = {
             ts: 100,

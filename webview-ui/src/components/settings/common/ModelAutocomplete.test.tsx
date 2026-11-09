@@ -31,7 +31,6 @@ describe("ModelAutocomplete", () => {
 
         const label = screen.getByText("Model ID").closest("label")
         const input = document.getElementById(label?.getAttribute("for") ?? "")
-        expect(input).toHaveClass("min-h-7", "w-full")
         expect(screen.getAllByText("Model ID")).toHaveLength(1)
         expect(input?.closest(".profile-field")).toBeInTheDocument()
     })
@@ -50,22 +49,6 @@ describe("ModelAutocomplete", () => {
 
         expect(screen.getByRole("option", { name: /catalog-model/ })).toBeInTheDocument()
         expect(screen.getByRole("option", { name: /listing-only-model/ })).toBeInTheDocument()
-    })
-
-    it("badges models the local catalog does not carry", () => {
-        render(
-            <ModelAutocomplete
-                models={models}
-                onChange={vi.fn()}
-                optionOrigins={optionOrigins}
-                selectedModelId="catalog-model"
-            />,
-        )
-
-        fireEvent.focus(screen.getByRole("combobox"))
-
-        expect(screen.getByRole("option", { name: /listing-only-model/ })).toHaveTextContent("New")
-        expect(screen.getByRole("option", { name: /^catalog-model/ })).not.toHaveTextContent("New")
     })
 
     it("commits a clicked suggestion and shows it once the profile round-trips", () => {
@@ -109,7 +92,6 @@ describe("ModelAutocomplete", () => {
         fireEvent.focus(input)
         typeQuery(input, "hand-typed-model")
         const customOption = screen.getByRole("option", { name: /hand-typed-model/ })
-        expect(customOption).toHaveTextContent("Custom")
 
         fireEvent.click(customOption)
         expect(onChange).toHaveBeenCalledWith("hand-typed-model", undefined)

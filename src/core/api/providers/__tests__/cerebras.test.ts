@@ -1,4 +1,5 @@
 import { ApiProfile } from "@shared/proto/dline/profile"
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const mocks = vi.hoisted(() => ({
@@ -110,7 +111,7 @@ describe("CerebrasHandler", () => {
             modelId: "qwen-3-coder-480b-free",
             modelInfo: {
                 id: "qwen-3-coder-480b-free",
-                pricing: { inputPrice: 3, outputPrice: 5 },
+                pricing: flatMeteredPricing(3, 5),
                 capabilities: { maxTokens: 0, thinking: { supported: false } },
             },
         })

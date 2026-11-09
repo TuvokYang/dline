@@ -1,78 +1,95 @@
-import { ChevronRightIcon } from "lucide-react"
+import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import type React from "react"
 import { useMemo } from "react"
-import { cn } from "@/lib/utils"
-import { describeActivityFold, describeToolCalls, summarizeActivityFold } from "../../utils/activityFoldSummary"
-import { type ActivityFold, isActivityFold } from "../../utils/chatRowKinds"
+import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
+import { describeActivityFoldParts, describeFoldDetail, summarizeActivityFold } from "../../utils/activityFoldSummary"
+import type { ActivityFold } from "../../utils/chatRowKinds"
+import { describeLocalizedFoldUsage } from "../../utils/foldUsagePresentation"
 import { rowIdentity } from "../../utils/rowCoordinate"
 import { RowContent, type RowRenderContext } from "./RowContent"
 
 interface ActivityFoldRendererProps extends RowRenderContext {
     fold: ActivityFold
-    isExpanded: boolean
+    expanded: boolean
     onToggleFold: (foldId: string) => void
-    /** Expansion of the round folds a turn fold holds, by fold id. */
-    expandedFolds?: Readonly<Record<string, boolean>>
 }
 
 /**
- * A collapsible block of finished rows.
+ * One collapsible block of finished activity.
  *
- * Collapsed, it draws a one-line summary. Expanded, it draws each member row
- * exactly as the standard level does, so nested groups keep their own
- * expansion; a turn fold draws its round folds, each expanding on its own. A
- * fold only ever holds finished work, so no member is drawn as the list's last
- * row or as the newest tool activity.
+ * The header is drawn whether the block is open or closed, so the same control
+ * opens it and closes it again. The cost line — generation time, tokens and the
+ * average token rate — stays with the header in both states: it answers "what
+ * did this block cost me" before the reader opens it, and keeps answering while
+ * they read the work underneath.
  */
-export const ActivityFoldRenderer: React.FC<ActivityFoldRendererProps> = ({
-    fold,
-    isExpanded,
-    onToggleFold,
-    expandedFolds = {},
-    ...context
-}) => {
+export const ActivityFoldRenderer: React.FC<ActivityFoldRendererProps> = ({ fold, expanded, onToggleFold, ...context }) => {
+    const { t } = useUiTranslation()
+    const { workspaceRoots } = useExtensionState()
+    // The roots are read here rather than threaded through every row: only the
+    // fold header classifies a command by the directory it ran in.
+    const roots = useMemo(() => (workspaceRoots ?? []).map((root) => root.path).filter((path) => path !== ""), [workspaceRoots])
     const summary = useMemo(
-        () => summarizeActivityFold(fold, context.checkpointAttachments),
-        [fold, context.checkpointAttachments],
+        () => summarizeActivityFold(fold, context.checkpointAttachments, { workspaceRoots: roots }),
+        [fold, context.checkpointAttachments, roots],
     )
+    const parts = useMemo(() => describeActivityFoldParts(summary, t), [summary, t])
+    const detail = useMemo(() => describeFoldDetail(summary, t), [summary, t])
+    const usage = useMemo(() => (fold._usage ? describeLocalizedFoldUsage(fold._usage, t) : ""), [fold._usage, t])
     const foldId = fold._activityFoldId
 
     return (
         <div data-fold-id={foldId} data-testid="activity-fold">
             <div className="px-4 py-1">
                 <button
-                    aria-expanded={isExpanded}
-                    className="flex w-full items-center gap-1.5 rounded-xs border-0 bg-transparent p-0 text-left text-xs text-description hover:text-foreground cursor-pointer"
+                    aria-expanded={expanded}
+                    className="flex w-full items-start gap-1.5 rounded-xs border-0 bg-transparent p-0 text-left text-xs text-description hover:text-foreground cursor-pointer"
                     data-testid="activity-fold-header"
                     onClick={() => onToggleFold(foldId)}
-                    title={describeToolCalls(summary) || undefined}
+                    title={detail}
                     type="button">
-                    <ChevronRightIcon className={cn("size-3 shrink-0 transition-transform", isExpanded && "rotate-90")} />
-                    <span className="truncate">{describeActivityFold(summary)}</span>
+                    {expanded ? (
+                        <ChevronDownIcon className="mt-0.5 size-3 shrink-0" />
+                    ) : (
+                        <ChevronRightIcon className="mt-0.5 size-3 shrink-0" />
+                    )}
+                    {/* One wrapping line: the figures ride beside the summary when they fit and
+                        fall onto a second line aligned with it when the summary is too wide.
+                        Each part wraps on its own, so a long summary cannot truncate the
+                        counts that follow it. */}
+                    <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
+                        <span className="min-w-0 break-words">
+                            {parts.map((part, index) => (
+                                <span key={part.kind}>
+                                    {index === 0 ? "" : " · "}
+                                    {/* A lost edit, command or subagent is the first thing a
+                                        reader looks for, so error counts carry the error tone
+                                        while the rest of the line stays muted. */}
+                                    <span className={part.isFailure ? "text-error" : undefined}>{part.text}</span>
+                                </span>
+                            ))}
+                        </span>
+                        {/* The cost capsule is one unbroken unit: it states what the block
+                            spent, and a header too narrow for it wraps the capsule to its own
+                            line instead of truncating the figures. */}
+                        {usage !== "" && (
+                            <span
+                                className="shrink-0 whitespace-nowrap rounded-xs bg-toolbar-hover/40 px-1.5 py-0.5 text-[11px] leading-none tabular-nums text-description"
+                                data-testid="activity-fold-usage">
+                                {usage}
+                            </span>
+                        )}
+                    </span>
                 </button>
             </div>
-            {isExpanded && (
-                <div className={cn(fold._foldKind === "turn" && "pl-3")} data-testid="activity-fold-children">
-                    {fold._children.map((child) =>
-                        isActivityFold(child) ? (
-                            <ActivityFoldRenderer
-                                {...context}
-                                expandedFolds={expandedFolds}
-                                fold={child}
-                                isExpanded={expandedFolds[child._activityFoldId] === true}
-                                key={rowIdentity(child)}
-                                onToggleFold={onToggleFold}
-                            />
-                        ) : (
-                            <RowContent
-                                {...context}
-                                isLastRow={false}
-                                isLastToolActivity={false}
-                                key={rowIdentity(child)}
-                                row={child}
-                            />
-                        ),
-                    )}
+            {expanded && (
+                <div data-testid="activity-fold-children">
+                    {fold._children.map((child) => (
+                        <div key={rowIdentity(child)}>
+                            <RowContent {...context} isLastRow={false} isLastToolActivity={false} row={child} />
+                        </div>
+                    ))}
                 </div>
             )}
         </div>

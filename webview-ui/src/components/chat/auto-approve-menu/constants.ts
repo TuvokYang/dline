@@ -1,4 +1,10 @@
+import type { UiTranslator } from "@/i18n/messages"
 import { ActionMetadata } from "./types"
+
+/** Translate by stable permission identity; metadata objects still travel unchanged to the settings owner. */
+export function autoApproveText(action: ActionMetadata, field: "label" | "short", t: UiTranslator): string {
+    return t(`chatInput.auto.${action.id}.${field}`)
+}
 
 export const ACTION_METADATA: ActionMetadata[] = [
     {

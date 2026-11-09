@@ -2,6 +2,7 @@ import type { ResourceInputNode, SemanticResourceRef } from "@shared/input-seman
 import { createContext, useContext, useState } from "react"
 import { chipLabelClass, describeResourceChip } from "@/components/chat/input/semantic-composer/chip-presentation"
 import { useResourceThumbnail } from "@/components/chat/input/semantic-composer/resource-thumbnails"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import "@/components/chat/input/semantic-composer/composer-chip.css"
 
 export interface ResourceChipProps {
@@ -11,8 +12,6 @@ export interface ResourceChipProps {
     /** Opens the resource; without it the chip only names the resource. */
     readonly onOpen?: () => void
 }
-
-const OPEN_HINT = "Click to open."
 
 /** Image formats a sent row's display name can safely be read as. */
 const IMAGE_EXTENSIONS: ReadonlySet<string> = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"])
@@ -25,11 +24,14 @@ const IMAGE_EXTENSIONS: ReadonlySet<string> = new Set(["png", "jpg", "jpeg", "gi
  * resource is a button, so the action is reachable from the keyboard.
  */
 export function ResourceChip({ node, resource, thumbnailUrl, onOpen }: ResourceChipProps): JSX.Element {
+    const { t } = useUiTranslation()
     const [thumbnailFailed, setThumbnailFailed] = useState(false)
     // A queued or sent image has no preview of its own; its verified bytes provide one.
     const loadedThumbnail = useResourceThumbnail(thumbnailUrl === undefined && node.kind === "image" ? resource : undefined)
     const thumbnail = thumbnailUrl ?? loadedThumbnail
-    const chip = describeResourceChip(node, resource, onOpen ? OPEN_HINT : undefined)
+    // The hint names what this surface lets the user do, so it is translated here
+    // rather than frozen into the chip description module.
+    const chip = describeResourceChip(node, resource, onOpen ? t("shell.resourceChip.openHint") : undefined, t)
     const className = `composer-chip composer-chip--${chip.tone}`
     const content = (
         <>

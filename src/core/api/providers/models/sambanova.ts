@@ -3,6 +3,7 @@
  * Extracted from api.ts sambanovaModels (lines 3887-3992).
  */
 import type { ModelInfo } from "@shared/api"
+import { flatPricing } from "./pricing"
 
 export const sambanovaModels: Record<string, ModelInfo> = {
     "DeepSeek-R1-0528": {
@@ -15,10 +16,7 @@ export const sambanovaModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 5.0,
-            outputPrice: 7.0,
-        },
+        pricing: flatPricing(5.0, 7.0),
     },
     "DeepSeek-R1-Distill-Llama-70B": {
         id: "DeepSeek-R1-Distill-Llama-70B",
@@ -30,10 +28,7 @@ export const sambanovaModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.7,
-            outputPrice: 1.4,
-        },
+        pricing: flatPricing(0.7, 1.4),
     },
     "DeepSeek-V3-0324": {
         id: "DeepSeek-V3-0324",
@@ -45,10 +40,7 @@ export const sambanovaModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 3.0,
-            outputPrice: 4.5,
-        },
+        pricing: flatPricing(3.0, 4.5),
     },
     "DeepSeek-V3.1": {
         id: "DeepSeek-V3.1",
@@ -60,10 +52,7 @@ export const sambanovaModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 3.0,
-            outputPrice: 4.5,
-        },
+        pricing: flatPricing(3.0, 4.5),
     },
     "DeepSeek-V3.1-Terminus": {
         id: "DeepSeek-V3.1-Terminus",
@@ -75,10 +64,7 @@ export const sambanovaModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 3.0,
-            outputPrice: 4.5,
-        },
+        pricing: flatPricing(3.0, 4.5),
     },
     "Llama-4-Maverick-17B-128E-Instruct": {
         id: "Llama-4-Maverick-17B-128E-Instruct",
@@ -90,10 +76,7 @@ export const sambanovaModels: Record<string, ModelInfo> = {
             supportsImages: true,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.63,
-            outputPrice: 1.8,
-        },
+        pricing: flatPricing(0.63, 1.8),
     },
     "Meta-Llama-3.1-8B-Instruct": {
         id: "Meta-Llama-3.1-8B-Instruct",
@@ -105,10 +88,7 @@ export const sambanovaModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.1,
-            outputPrice: 0.2,
-        },
+        pricing: flatPricing(0.1, 0.2),
     },
     "Meta-Llama-3.3-70B-Instruct": {
         id: "Meta-Llama-3.3-70B-Instruct",
@@ -120,10 +100,7 @@ export const sambanovaModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.6,
-            outputPrice: 1.2,
-        },
+        pricing: flatPricing(0.6, 1.2),
     },
     "MiniMax-M2.5": {
         id: "MiniMax-M2.5",
@@ -135,10 +112,7 @@ export const sambanovaModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.3,
-            outputPrice: 1.2,
-        },
+        pricing: flatPricing(0.3, 1.2),
     },
     "Qwen3-235B": {
         id: "Qwen3-235B",
@@ -150,10 +124,7 @@ export const sambanovaModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.4,
-            outputPrice: 0.8,
-        },
+        pricing: flatPricing(0.4, 0.8),
     },
     "Qwen3-32B": {
         id: "Qwen3-32B",
@@ -165,10 +136,7 @@ export const sambanovaModels: Record<string, ModelInfo> = {
             supportsImages: false,
             supportsPromptCache: false,
         },
-        pricing: {
-            inputPrice: 0.4,
-            outputPrice: 0.8,
-        },
+        pricing: flatPricing(0.4, 0.8),
     },
 }
 

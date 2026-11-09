@@ -4,6 +4,7 @@ import mermaid from "mermaid"
 import { useEffect, useRef, useState } from "react"
 import styled from "styled-components"
 import { svgToDataUrl } from "@/components/common/mermaid-export"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { FileServiceClient } from "@/services/grpc-client"
 import { useDebounceEffect } from "@/utils/useDebounceEffect"
 
@@ -82,6 +83,7 @@ interface MermaidBlockProps {
 }
 
 export default function MermaidBlock({ code }: MermaidBlockProps) {
+    const { t } = useUiTranslation()
     const containerRef = useRef<HTMLDivElement>(null)
     const [isLoading, setIsLoading] = useState(false)
 
@@ -155,9 +157,9 @@ export default function MermaidBlock({ code }: MermaidBlockProps) {
 
     return (
         <MermaidBlockContainer>
-            {isLoading && <LoadingMessage>Generating mermaid diagram...</LoadingMessage>}
+            {isLoading && <LoadingMessage>{t("shell.mermaid.generating")}</LoadingMessage>}
             <ButtonContainer>
-                <StyledVSCodeButton aria-label="Copy Code" onClick={handleCopyCode} title="Copy Code">
+                <StyledVSCodeButton aria-label={t("shell.mermaid.copy")} onClick={handleCopyCode} title={t("shell.mermaid.copy")}>
                     <span className="codicon codicon-copy" />
                 </StyledVSCodeButton>
             </ButtonContainer>

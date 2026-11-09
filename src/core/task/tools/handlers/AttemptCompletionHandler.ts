@@ -234,7 +234,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 
         const toolResults: (Anthropic.TextBlockParam | Anthropic.ImageBlockParam)[] = []
 
-        if (text) {
+        if (text && !outcome.roundMaterialOwned) {
             toolResults.push(
                 {
                     type: "text",
@@ -255,7 +255,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
             })
         }
 
-        const attachments = await attachToolFeedbackFiles(completionFiles)
+        const attachments = await attachToolFeedbackFiles(outcome.roundMaterialOwned ? undefined : completionFiles)
         if (attachments.text) {
             toolResults.push({
                 type: "text" as const,
@@ -263,7 +263,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
             })
         }
 
-        if (images && images.length > 0) {
+        if (!outcome.roundMaterialOwned && images && images.length > 0) {
             toolResults.push(...formatResponse.imageBlocks(images))
         }
 

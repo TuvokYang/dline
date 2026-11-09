@@ -73,9 +73,20 @@ Read the exit code by what produced it. Blocking findings in a declared pairing 
 | `pending` | nothing; the task is genuinely unfinished and stays that way |
 | `unverifiable` | resolve the identity (`%% concept:`), declare the anchor (`%% refines:`), bind the edge, or record the decision needed |
 | `depends-on-not-explained-by-diagram` | the Workstream diagram omits an edge or the task cut is wrong; repair in the Workstream, not by editing `Depends On` |
-| tooling problem, exit code 2 | report the tool defect to the user and stop; do not read it as a design verdict |
+| tooling problem, exit code 2 | stop relying on the affected automatic result, then apply the triage below; do not read it as a product or design defect |
 
 Never clear a Workstream-attributed finding inside the task diagram. That hides the defect instead of fixing it.
+
+### Triage parser limits and verify the architecture
+
+1. Prefer the existing parser and verifier for the declared Workstream module/function/interface boundary. Check responsibility and state ownership, dependency direction, interfaces/injection, data/control flow, lifecycle, calls/order, and actual relationships missing from the drawing. Do not replace this with a mandatory per-edit AST registry or recursively audit unrelated support code.
+2. Read each relevant error before assigning ownership. Distinguish a product/design defect, incorrect evidence mapping, a reproducible verifier bug, and a parser/analysis limitation. An aggregate `failed`, syntax diagnostic or unsupported proof adapter is not by itself a product defect; an import or a green test is not by itself proof of wiring.
+3. A clear verifier false positive, false negative or false proof may be repaired locally when authorized: reproduce it, preserve the architectural invariant, add a focused regression, and verify the repair. Do not lower report severity, weaken an assertion, invent imports, or alter valid product code to obtain a clean report.
+4. When the parser cannot parse valid source, exhausts its bounded context, or cannot decide a relationship, record the exact diagnostic, affected files/symbols/diagram edges, and why it is a tool limitation. Inspect those definitions and their actual producers, consumers, assembly, registration, state owner and ordering yourself. Follow only the supporting context needed to settle the relationship; use focused behavioral/recovery tests where applicable. Do not silently mark a budget-truncated or unsupported result as absence or as a pass.
+5. Record the manual method, source locations, observed wiring/ownership/order, applicable test results and remaining uncertainty in the owning verification record. Mark it as manual verification, separately from the unchanged machine verdict. This can satisfy the affected architecture check when the required claim is established; it does not turn the machine report into `conformant`. If the evidence still cannot establish the claim, keep that claim unverified and stop only the affected delivery.
+6. Return to the product task after the bounded check or obvious local tool repair. Do not turn feature delivery into parser/compiler/grammar development, dependency installation, or a general proof-engine project. A broader tooling effort needs a separate explicit task and authorization; another run is useful only after relevant changes or new evidence.
+
+A tool limitation covered by adequate manual verification is a disclosed tool limitation, not an unresolved product blocker. Actual architecture contradictions, failed required behavior, missing authority/receiver, unknown risks that defeat acceptance, and unapproved architecture changes remain blockers. A caller that explicitly requires a machine-only pass must obtain a user decision before substituting manual verification.
 
 ## 6. Obtain confirmation for architecture change
 
@@ -97,14 +108,14 @@ Report three lists, separately:
 - implemented but not wired, with the owning task;
 - not verified, with the reason and what would prove it.
 
-Then re-run the aggregate command and report its verdict, coverage object, self-test status, warning count and exit code unchanged. Completion evidence requires `coverage.complete: true`; `incomplete`/exit 0 is not a clean pass.
+Run the aggregate command after relevant changes, not repeatedly to chase counts. Report its verdict, coverage object, self-test status, warning count and exit code unchanged; `incomplete`/exit 0 is not a clean machine pass. For parser or analysis errors, report the cause and affected scope, any obvious verifier repairs, the separate manual verification and its result, and any residual unverified risks. Completion requires coverage of every required claim by valid machine or manual evidence under step 5, not a fabricated clean aggregate result. Never hide remaining parser errors in the final delivery report.
 
 ## Stop conditions
 
 - The task cannot be placed in a layer.
 - The gate is postponed by `blockers` and the user has not resolved it.
 - The only regions the task may still write are named in `waiting_for`.
-- Verification exits `2`, meaning the tool is unsound.
+- A tool failure leaves a required architecture or behavior claim unverified after the bounded independent checks in step 5.
 - A required architecture change is unconfirmed.
 - Implementation contradicts the verified diagram.
 
@@ -113,6 +124,6 @@ Then re-run the aggregate command and report its verdict, coverage object, self-
 - Repairing a Workstream defect inside a task diagram.
 - Using a fake adapter, mock composition or temporary adapter to make an unwired edge appear verified.
 - Implementing an unconfirmed architecture change.
-- Treating `unverifiable`, `not checked` or a `pending` gate as a pass.
+- Treating an unresolved `unverifiable`, `not checked` or `pending` claim as a pass, or reporting a manual result as a clean machine verdict.
 - Editing `status.yml` to change what the verification reports; `progress.md` is authoritative.
 - Broadening the task's `owns` boundary to absorb a finding owned by another task.

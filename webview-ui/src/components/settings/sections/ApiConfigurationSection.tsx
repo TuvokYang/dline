@@ -1,6 +1,7 @@
 import { Mode } from "@shared/storage/types"
 import { useState } from "react"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ImageGenerationProfileList } from "../providers/ImageGenerationProfileList"
 import ProviderProfileList from "../providers/ProviderProfileList"
 import { useApiProfiles } from "../providers/useApiProfiles"
@@ -16,6 +17,7 @@ interface ApiConfigurationSectionProps {
  * with a unified ProviderProfileList that reuses existing Provider components.
  */
 const ApiConfigurationSection = ({ renderSectionHeader }: ApiConfigurationSectionProps) => {
+    const { t } = useUiTranslation()
     const { mode, imageGenerationEnabled } = useExtensionState()
     const [currentTab] = useState<Mode>(mode)
     const {
@@ -31,6 +33,7 @@ const ApiConfigurationSection = ({ renderSectionHeader }: ApiConfigurationSectio
         providerOptions,
         loaded,
         error,
+        saveError,
         reloadProfiles,
     } = useApiProfiles()
     const imageProfiles = useImageGenerationProfiles()
@@ -39,12 +42,17 @@ const ApiConfigurationSection = ({ renderSectionHeader }: ApiConfigurationSectio
         <div>
             {renderSectionHeader?.("api-config")}
             <Section>
-                {!loaded && !error && <div className="py-3 text-sm text-description">Loading API profiles…</div>}
+                {saveError && (
+                    <div className="py-3 text-sm text-errorForeground" role="alert">
+                        {t("settings.ui.api.saveError")}
+                    </div>
+                )}
+                {!loaded && !error && <div className="py-3 text-sm text-description">{t("settings.ui.api.loading")}</div>}
                 {error && (
                     <div className="py-3 text-sm text-errorForeground">
-                        <div>Failed to load API profiles. Existing profiles have not been replaced.</div>
+                        <div>{t("settings.ui.api.loadError")}</div>
                         <button className="mt-2" onClick={() => void reloadProfiles()} type="button">
-                            Retry
+                            {t("settings.ui.retry")}
                         </button>
                     </div>
                 )}
@@ -69,13 +77,13 @@ const ApiConfigurationSection = ({ renderSectionHeader }: ApiConfigurationSectio
             {imageGenerationEnabled ? (
                 <Section>
                     {!imageProfiles.loaded && !imageProfiles.error ? (
-                        <div className="py-3 text-sm text-description">Loading image profiles…</div>
+                        <div className="py-3 text-sm text-description">{t("settings.ui.api.imageLoading")}</div>
                     ) : null}
                     {imageProfiles.error ? (
                         <div className="py-3 text-sm text-errorForeground">
-                            <div>Failed to load image profiles.</div>
+                            <div>{t("settings.ui.api.imageLoadError")}</div>
                             <button className="mt-2" onClick={() => void imageProfiles.reload()} type="button">
-                                Retry
+                                {t("settings.ui.retry")}
                             </button>
                         </div>
                     ) : null}

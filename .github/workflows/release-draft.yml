@@ -203,4 +203,7 @@ jobs:
       artifact_name: dline-vsix-${{ needs.verify-tag.outputs.commit_sha }}
       asset_name: dline-${{ needs.verify-tag.outputs.version }}-pre-release.vsix
       expected_sha256: ${{ needs.release.outputs.sha256 }}
+      marketplace_artifact_name: ${{ needs.tests.outputs.marketplace_artifact_name }}
+      marketplace_asset_name: ${{ needs.tests.outputs.marketplace_asset_name }}
+      marketplace_expected_sha256: ${{ needs.tests.outputs.marketplace_sha256 }}
     secrets: inherit

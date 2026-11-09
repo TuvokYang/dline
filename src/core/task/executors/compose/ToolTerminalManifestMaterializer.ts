@@ -1,10 +1,12 @@
 import { estimateContextValueBreakdown } from "@core/context/context-management/context-window-projection"
+import { formatResponse } from "@core/prompts/responses"
 import { serializeDurableToolResult, toolResultReplayOf } from "../../DurableToolResult"
 import type { ToolTerminalManifest, ToolTerminalPhase } from "../../kernel"
 import type { ConversationJournal, JournalEntry, TaskPayloadStore } from "../../stores"
 import { readAttachedDocuments } from "../../stores/payload/AttachedDocuments"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
 import type {
+    DialogDraftEnvelope,
     ToolInvocationEnvelope,
     ToolResultEnvelope,
     ToolTerminalManifestEnvelope,
@@ -90,6 +92,11 @@ async function terminalResult(
     invocation: ToolInvocationEnvelope,
     denial: ToolDenialPort | undefined,
 ): Promise<ToolResultEnvelope> {
+    if (block.approvalTimedOut)
+        return {
+            ...syntheticResult(block, invocation, { text: formatResponse.awayCommandTimeout(), isError: false }),
+            failed: false,
+        }
     if (block.phase === "rejected" && block.deniedByUser && denial) {
         return syntheticResult(block, invocation, await denial.describe(block.invocationRef))
     }
@@ -196,7 +203,11 @@ export async function materializeToolTerminalManifest(input: {
               ? raw.payload
               : await terminalResult(block, invocation, input.denial)
         for (const ref of result.feedbackInputRefs ?? []) feedbackInputRefs.add(ref)
-        const feedbackRef = block.approvalFeedbackRef ?? recordedFeedback
+        const feedbackRef = block.approvalTimedOut ? undefined : (block.approvalFeedbackRef ?? recordedFeedback)
+        if (feedbackRef) {
+            const draft = decodeTaskPayload<DialogDraftEnvelope>(await input.payloads.read(feedbackRef))
+            if (draft.admittedInputRef) feedbackInputRefs.add(draft.admittedInputRef)
+        }
         results.push({
             blockId: block.blockId,
             phase: block.phase,

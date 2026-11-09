@@ -219,13 +219,17 @@ export class GeminiHandler extends ApiHandler {
             apiSuccess = true
 
             if (lastUsageMetadata) {
-                const totalCost = this.calculateCost({
-                    info,
-                    inputTokens: promptTokens,
-                    outputTokens,
-                    thoughtsTokenCount,
-                    cacheReadTokens,
-                })
+                const result = ApiHandler.calculateUsageCost(
+                    info.pricing,
+                    {
+                        inputTokens: promptTokens - cacheReadTokens,
+                        outputTokens: outputTokens + thoughtsTokenCount,
+                        thoughtsTokenCount,
+                        cacheReadTokens,
+                    },
+                    sdkCallStartTime,
+                )
+                const totalCost = result.kind === "calculated" ? result.amount : undefined
                 yield {
                     type: "usage",
                     inputTokens: promptTokens - cacheReadTokens,
@@ -235,6 +239,7 @@ export class GeminiHandler extends ApiHandler {
                     cacheReadTokens,
                     cacheWriteTokens: 0,
                     totalCost,
+                    ...(result.kind === "calculated" ? { currency: result.currency } : {}),
                     provider_metadata: responseId ? { response_id: responseId } : undefined,
                 }
             }
@@ -294,45 +299,6 @@ export class GeminiHandler extends ApiHandler {
                 Logger.warn("GeminiHandler: ulid not available for telemetry in createMessage.")
             }
         }
-    }
-
-    public calculateCost({
-        info,
-        inputTokens,
-        outputTokens,
-        thoughtsTokenCount = 0,
-        cacheReadTokens = 0,
-    }: {
-        info: ModelInfo
-        inputTokens: number
-        outputTokens: number
-        thoughtsTokenCount: number
-        cacheReadTokens?: number
-    }) {
-        if (!info.pricing?.inputPrice || !info.pricing?.outputPrice) {
-            return undefined
-        }
-
-        let inputPrice = info.pricing?.inputPrice
-        let outputPrice = info.pricing?.outputPrice
-        let cacheReadsPrice = info.pricing?.cacheReadsPrice ?? 0
-
-        if (info.pricing?.tiers) {
-            const tier = info.pricing?.tiers.find((tier) => inputTokens <= tier.contextWindow)
-            if (tier) {
-                inputPrice = tier.inputPrice ?? inputPrice
-                outputPrice = tier.outputPrice ?? outputPrice
-                cacheReadsPrice = tier.cacheReadsPrice ?? cacheReadsPrice
-            }
-        }
-
-        const uncachedInputTokens = inputTokens - (cacheReadTokens ?? 0)
-        const inputTokensCost = inputPrice * (uncachedInputTokens / 1_000_000)
-        const responseTokensCost = outputPrice * ((outputTokens + thoughtsTokenCount) / 1_000_000)
-        const cacheReadCost = (cacheReadTokens ?? 0) > 0 ? cacheReadsPrice * ((cacheReadTokens ?? 0) / 1_000_000) : 0
-        const totalCost = inputTokensCost + responseTokensCost + cacheReadCost
-
-        return totalCost
     }
 
     getModel(): { id: GeminiModelId; info: ModelInfo } {

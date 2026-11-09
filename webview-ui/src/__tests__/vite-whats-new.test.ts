@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { describe, expect, it } from "vitest"
-import { parseWhatsNew, WHATS_NEW_SOURCE } from "../../vite-whats-new"
+import { parseWhatsNew, parseWhatsNewEditions, WHATS_NEW_SOURCE } from "../../vite-whats-new"
 
 const CHINESE_SOURCE = WHATS_NEW_SOURCE.replace(/WHATS_NEW_en\.md$/, "WHATS_NEW.md")
 const PACKAGE_MANIFEST = resolve(__dirname, "../../../package.json")
@@ -107,6 +107,35 @@ describe("parseWhatsNew", () => {
         expect(() => parse("## 1.2.0\n- see [notes](../changelog/CHANGELOG_en.md)\n")).toThrow(
             'WHATS_NEW_en.md:2: link "notes" must use an absolute https:// URL',
         )
+    })
+})
+
+describe("bilingual What's New editions", () => {
+    const source = (markdown: string, name: string) => ({ markdown, source: name })
+
+    it("keeps each edition's parsed content under the same release identity", () => {
+        const editions = parseWhatsNewEditions(
+            source("## 1.2.0\n- **English**: `code` and [docs](https://example.com).\n", "en.md"),
+            source("## 1.2.0\n- **中文**：`code` 和[文档](https://example.com)。\n", "zh.md"),
+        )
+        expect(editions.en.version).toBe("1.2.0")
+        expect(editions["zh-CN"].version).toBe("1.2.0")
+        expect(editions.en.items[0][0]).toEqual({ kind: "strong", text: "English" })
+        expect(editions["zh-CN"].items[0][0]).toEqual({ kind: "strong", text: "中文" })
+        expect(editions["zh-CN"].items[0]).toContainEqual({ kind: "code", text: "code" })
+        expect(editions["zh-CN"].items[0]).toContainEqual({ kind: "link", text: "文档", href: "https://example.com" })
+    })
+
+    it("rejects a stale translated edition instead of acknowledging another release", () => {
+        expect(() => parseWhatsNewEditions(source("## 1.2.0\n- item\n", "en.md"), source("## 1.1.0\n- 内容\n", "zh.md"))).toThrow(
+            "release versions differ",
+        )
+    })
+
+    it("rejects missing translated highlights", () => {
+        expect(() =>
+            parseWhatsNewEditions(source("## 1.2.0\n- one\n- two\n", "en.md"), source("## 1.2.0\n- 内容\n", "zh.md")),
+        ).toThrow("item counts differ")
     })
 })
 

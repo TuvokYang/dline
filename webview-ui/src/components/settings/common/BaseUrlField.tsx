@@ -1,5 +1,6 @@
 import { VSCodeCheckbox, VSCodeTextField } from "@vscode/webview-ui-toolkit/react"
 import { useState } from "react"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { useDebouncedInput } from "../utils/useDebouncedInput"
 
 /**
@@ -13,6 +14,8 @@ interface BaseUrlFieldProps {
     placeholder?: string
     disabled?: boolean
     showLockIcon?: boolean
+    enabled?: boolean
+    onEnabledChange?: (enabled: boolean) => void
 }
 
 /**
@@ -21,17 +24,23 @@ interface BaseUrlFieldProps {
 export const BaseUrlField = ({
     initialValue,
     onChange,
-    label = "Use custom base URL",
-    placeholder = "Default: https://api.example.com",
+    label,
+    placeholder,
     disabled = false,
     showLockIcon = false,
+    enabled,
+    onEnabledChange,
 }: BaseUrlFieldProps) => {
-    const [isEnabled, setIsEnabled] = useState(!!initialValue)
+    const { t } = useUiTranslation()
+    const displayLabel = label ?? t("settings.ui.customBaseUrl")
+    const [localEnabled, setIsEnabled] = useState(!!initialValue)
+    const isEnabled = enabled ?? localEnabled
     const [localValue, setLocalValue] = useDebouncedInput(initialValue || "", onChange)
 
     const handleToggle = (e: any) => {
         const checked = e.target.checked === true
         setIsEnabled(checked)
+        onEnabledChange?.(checked)
         if (!checked) {
             setLocalValue("")
         }
@@ -41,18 +50,18 @@ export const BaseUrlField = ({
         <div className="flex min-w-0 flex-col gap-1">
             <div className="flex min-w-0 items-center gap-2">
                 <VSCodeCheckbox checked={isEnabled} className="text-sm" disabled={disabled} onChange={handleToggle}>
-                    {label}
+                    {displayLabel}
                 </VSCodeCheckbox>
                 {showLockIcon && <i className="codicon codicon-lock text-(--vscode-descriptionForeground) text-sm" />}
             </div>
 
             {isEnabled ? (
                 <VSCodeTextField
-                    aria-label={label.replace(/^Use /, "")}
+                    aria-label={label ?? t("settings.ui.baseUrl")}
                     className="min-h-7 w-full"
                     disabled={disabled}
                     onInput={(e: any) => setLocalValue(e.target.value.trim())}
-                    placeholder={placeholder}
+                    placeholder={placeholder ?? t("settings.ui.defaultValue", { value: "https://api.example.com" })}
                     type="text"
                     value={localValue}
                 />

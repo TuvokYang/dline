@@ -31,7 +31,7 @@ export class TaskBackgroundIngressOwner implements BackgroundResultDeliveryPort 
     constructor(
         private readonly session: () => ActiveTaskSession,
         private readonly ledger: BackgroundDeliveryLedger,
-        private readonly budget?: BackgroundDeliveryBudget,
+        readonly _budget?: BackgroundDeliveryBudget,
     ) {}
 
     /** Replay producer results that were durable before the previous process stopped. */
@@ -94,16 +94,11 @@ export class TaskBackgroundIngressOwner implements BackgroundResultDeliveryPort 
         await this.publishStaged(staged, fitted, delivery.acknowledge)
     }
 
-    /** The text to deliver now and the room it took, or undefined when it must wait. */
     private fit(text: string): FittedDelivery | undefined {
-        if (!this.budget) return { text }
-        const textBytes = Buffer.byteLength(text, "utf8")
-        const reservation = this.budget.reserveBytes(textBytes)
+        if (!this._budget) return { text }
+        const reservation = this._budget.reserveBytes(Buffer.byteLength(text, "utf8"))
         if (!reservation) return undefined
-        return {
-            text: reservation.bytes < textBytes ? truncateContent(text, reservation.bytes) : text,
-            reservation,
-        }
+        return { text: truncateContent(text, reservation.bytes), reservation }
     }
 
     private async publishStaged(

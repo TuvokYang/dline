@@ -1,10 +1,11 @@
 import { ClaudeCodeProviderConfig } from "@shared/proto/dline/provider/claude_code"
 import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ModelInfoView } from "../common/ModelInfoView"
 import { ModelSelector } from "../common/ModelSelector"
 import ThinkingControl from "../ThinkingControl"
-import { ANTHROPIC_THINKING_DISPLAY_DESCRIPTION, ANTHROPIC_THINKING_DISPLAY_SELECTOR_OPTIONS } from "./anthropicThinkingDisplay"
+import { anthropicThinkingDisplayOptions } from "./anthropicThinkingDisplay"
 import { ClaudeCodeOAuthControl } from "./ClaudeCodeOAuthControl"
 import type { ApiProfile } from "./ProviderProfile"
 import { useProviderModels } from "./useProviderModels"
@@ -23,6 +24,7 @@ interface ClaudeCodeProviderProps {
  * than an API key or a local CLI path.
  */
 export const ClaudeCodeProvider = ({ showModelOptions, isPopup, profile, onUpdate }: ClaudeCodeProviderProps) => {
+    const { t } = useUiTranslation()
     const { models: claudeCodeModels, defaultModelId: claudeCodeDefaultModelId } = useProviderModels("claude-code")
 
     const pc = profile.claudeCode ?? ClaudeCodeProviderConfig.create()
@@ -48,7 +50,6 @@ export const ClaudeCodeProvider = ({ showModelOptions, isPopup, profile, onUpdat
             {showModelOptions && (
                 <>
                     <ModelSelector
-                        label="Model"
                         models={claudeCodeModels}
                         onChange={(e) => {
                             const v = (e.target as HTMLSelectElement).value
@@ -65,15 +66,15 @@ export const ClaudeCodeProvider = ({ showModelOptions, isPopup, profile, onUpdat
                             defaultEffort={thinking?.defaultEffort}
                             defaultEnabled={thinking?.defaultEnabled}
                             disableSupported={thinkingDisableSupported}
-                            displayDescription={ANTHROPIC_THINKING_DISPLAY_DESCRIPTION}
-                            displayLabel="Thinking Display"
-                            displayOptions={ANTHROPIC_THINKING_DISPLAY_SELECTOR_OPTIONS}
+                            displayDescription={t("settings.ui.anthropic.displayHelp")}
+                            displayLabel={t("settings.ui.thinkingDisplay")}
+                            displayOptions={anthropicThinkingDisplayOptions(t)}
                             effortDescription={
                                 thinkingDisableSupported
-                                    ? "Use None to disable adaptive thinking. Higher effort increases response detail and token usage."
-                                    : "Adaptive thinking is always enabled for this model. Higher effort increases response detail and token usage."
+                                    ? t("settings.ui.anthropic.effortHelp")
+                                    : t("settings.ui.anthropic.requiredHelp")
                             }
-                            effortLabel="Adaptive Thinking"
+                            effortLabel={t("settings.ui.adaptiveThinking")}
                             effortOptions={effortOptions}
                             maxBudget={thinking?.maxBudget}
                             minBudget={thinking?.minBudget}

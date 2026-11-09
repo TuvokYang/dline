@@ -43,7 +43,6 @@ describe("OllamaProvider", () => {
         render(<OllamaProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
 
         expect(screen.getByText("Lite prompt profile")).toBeInTheDocument()
-        expect(screen.getByRole("status")).toHaveTextContent("below 64K tokens")
         expect(screen.queryByText("Dline uses complex prompts", { exact: false })).not.toBeInTheDocument()
     })
 

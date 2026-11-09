@@ -1,8 +1,10 @@
 import { VSCodeCheckbox, VSCodeDropdown, VSCodeOption, VSCodeTextField } from "@vscode/webview-ui-toolkit/react"
-import React, { useEffect, useRef, useState } from "react"
+import React, { type FormEvent, useEffect, useRef, useState } from "react"
+import { LocalizedDropdown, LocalizedOption } from "@/components/common/LocalizedDropdown"
 import { PlatformType } from "@/config/platform.config"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { usePlatform } from "@/context/PlatformContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { StateServiceClient } from "../../../services/grpc-client"
 import Section from "../Section"
 import TerminalCommandTimeoutSetting from "../TerminalCommandTimeoutSetting"
@@ -16,6 +18,7 @@ interface TerminalSettingsSectionProps {
 }
 
 export const TerminalSettingsSection: React.FC<TerminalSettingsSectionProps> = ({ renderSectionHeader }) => {
+    const { t } = useUiTranslation()
     const {
         shellIntegrationTimeout,
         terminalReuseEnabled,
@@ -27,11 +30,11 @@ export const TerminalSettingsSection: React.FC<TerminalSettingsSectionProps> = (
     const isVsCodePlatform = platformConfig.type === PlatformType.VSCODE
 
     const [inputValue, setInputValue] = useState((shellIntegrationTimeout / 1000).toString())
-    const [inputError, setInputError] = useState<string | null>(null)
+    const [inputError, setInputError] = useState<boolean | null>(null)
     const [isEditingShellIntegrationTimeoutValue, setIsEditingShellIntegrationTimeoutValue] = useState(false)
     const isEditingShellIntegrationTimeout = useRef(false)
     const shellIntegrationTimeoutHostProps = useTextFieldHost(
-        "Shell integration timeout (seconds)",
+        t("settings.ui.terminal.integrationTimeout"),
         inputValue,
         !isEditingShellIntegrationTimeoutValue,
     )
@@ -54,7 +57,7 @@ export const TerminalSettingsSection: React.FC<TerminalSettingsSectionProps> = (
 
         const seconds = Number.parseFloat(value)
         if (Number.isNaN(seconds) || seconds <= 0) {
-            setInputError("Please enter a positive number")
+            setInputError(true)
             return
         }
 
@@ -108,7 +111,7 @@ export const TerminalSettingsSection: React.FC<TerminalSettingsSectionProps> = (
                 <div className="mb-5" id="terminal-settings-section">
                     <div className="mb-4">
                         <label className="font-medium block mb-1" htmlFor="default-terminal-profile">
-                            Default Terminal Profile
+                            {t("settings.ui.terminal.profile")}
                         </label>
                         <VSCodeDropdown
                             className="w-full"
@@ -122,8 +125,7 @@ export const TerminalSettingsSection: React.FC<TerminalSettingsSectionProps> = (
                             ))}
                         </VSCodeDropdown>
                         <p className="text-xs text-(--vscode-descriptionForeground) mt-1">
-                            Select the default terminal Dline will use. On Windows, 'Default' uses Windows PowerShell; on other
-                            platforms it uses your VS Code global setting.
+                            {t("settings.ui.terminal.profileHelp")}
                         </p>
                     </div>
                     <TerminalCommandTimeoutSetting />
@@ -132,7 +134,7 @@ export const TerminalSettingsSection: React.FC<TerminalSettingsSectionProps> = (
                     <div className="mb-4">
                         <div className="mb-2">
                             <label className="font-medium block mb-1" htmlFor="shell-integration-timeout">
-                                Shell integration timeout (seconds)
+                                {t("settings.ui.terminal.integrationTimeout")}
                             </label>
                             <div className="flex items-center">
                                 <VSCodeTextField
@@ -145,14 +147,17 @@ export const TerminalSettingsSection: React.FC<TerminalSettingsSectionProps> = (
                                         setIsEditingShellIntegrationTimeoutValue(true)
                                     }}
                                     onInput={(event) => handleTimeoutChange(event as unknown as Event)}
-                                    placeholder="Enter timeout in seconds"
+                                    placeholder={t("settings.ui.terminal.enterTimeout")}
                                 />
                             </div>
-                            {inputError && <div className="text-(--vscode-errorForeground) text-xs mt-1">{inputError}</div>}
+                            {inputError && (
+                                <div className="text-(--vscode-errorForeground) text-xs mt-1">
+                                    {t("settings.ui.terminal.positiveInvalid")}
+                                </div>
+                            )}
                         </div>
                         <p className="text-xs text-(--vscode-descriptionForeground)">
-                            Set how long Dline waits for shell integration to activate before executing commands. Increase this
-                            value if you experience terminal connection timeouts.
+                            {t("settings.ui.terminal.integrationHelp")}
                         </p>
                     </div>
 
@@ -161,52 +166,55 @@ export const TerminalSettingsSection: React.FC<TerminalSettingsSectionProps> = (
                             <VSCodeCheckbox
                                 checked={terminalReuseEnabled ?? true}
                                 onChange={(event) => handleTerminalReuseChange(event as Event)}>
-                                Enable aggressive terminal reuse
+                                {t("settings.ui.terminal.reuse")}
                             </VSCodeCheckbox>
                         </div>
-                        <p className="text-xs text-(--vscode-descriptionForeground)">
-                            When enabled, Dline reuses healthy prewarmed terminals across commands and working directories. When
-                            disabled, each command consumes a fresh prewarmed terminal.
-                        </p>
+                        <p className="text-xs text-(--vscode-descriptionForeground)">{t("settings.ui.terminal.reuseHelp")}</p>
                     </div>
                     {isVsCodePlatform && (
                         <div className="mb-4">
                             <label className="font-medium block mb-1" htmlFor="terminal-execution-mode">
-                                Terminal Execution Mode
+                                {t("settings.ui.terminal.executionMode")}
                             </label>
-                            <VSCodeDropdown
+                            <LocalizedDropdown
                                 className="w-full"
                                 id="terminal-execution-mode"
-                                onChange={(event) => handleExecutionModeChange(event as Event)}
+                                onChange={(event: Event | FormEvent<HTMLElement>) => handleExecutionModeChange(event as Event)}
+                                selectedLabel={
+                                    (vscodeTerminalExecutionMode ?? "vscodeTerminal") === "vscodeTerminal"
+                                        ? t("settings.ui.terminal.vscode")
+                                        : vscodeTerminalExecutionMode === "backgroundExec"
+                                          ? t("settings.ui.terminal.background")
+                                          : undefined
+                                }
                                 value={vscodeTerminalExecutionMode ?? "vscodeTerminal"}>
-                                <VSCodeOption value="vscodeTerminal">VS Code Terminal</VSCodeOption>
-                                <VSCodeOption value="backgroundExec">Background Exec</VSCodeOption>
-                            </VSCodeDropdown>
+                                <LocalizedOption label={t("settings.ui.terminal.vscode")} value="vscodeTerminal" />
+                                <LocalizedOption label={t("settings.ui.terminal.background")} value="backgroundExec" />
+                            </LocalizedDropdown>
                             <p className="text-xs text-[var(--vscode-descriptionForeground)] mt-1">
-                                Choose whether Dline runs commands in the VS Code terminal or a background process.
+                                {t("settings.ui.terminal.executionHelp")}
                             </p>
                         </div>
                     )}
                     <TerminalOutputLineLimitSlider />
                     <div className="mt-5 p-3 bg-(--vscode-textBlockQuote-background) rounded border border-(--vscode-textBlockQuote-border)">
                         <p className="text-[13px] m-0">
-                            <strong>Having terminal issues?</strong> Check our{" "}
+                            <strong>{t("settings.ui.terminal.issues")}</strong>{" "}
                             <a
                                 className="text-(--vscode-textLink-foreground) underline hover:no-underline"
                                 href="https://docs.dline.cc/customization/terminal-environment/"
                                 rel="noopener noreferrer"
                                 target="_blank">
-                                Terminal Quick Fixes
-                            </a>{" "}
-                            or the{" "}
-                            <a
-                                className="text-(--vscode-textLink-foreground) underline hover:no-underline"
-                                href="https://docs.dline.cc/customization/terminal-environment/"
-                                rel="noopener noreferrer"
-                                target="_blank">
-                                Complete Troubleshooting Guide
+                                {t("settings.ui.terminal.quickFixes")}
                             </a>
-                            .
+                            {" · "}
+                            <a
+                                className="text-(--vscode-textLink-foreground) underline hover:no-underline"
+                                href="https://docs.dline.cc/customization/terminal-environment/"
+                                rel="noopener noreferrer"
+                                target="_blank">
+                                {t("settings.ui.terminal.guide")}
+                            </a>
                         </p>
                     </div>
                 </div>

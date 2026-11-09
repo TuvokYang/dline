@@ -12,7 +12,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import type { UiTranslator } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import AutoCondenseSettings from "../AutoCondenseSettings"
+import AwayModeSettings from "../AwayModeSettings"
 import Section from "../Section"
 import SettingsSlider from "../SettingsSlider"
 import { updateSetting } from "../utils/settingsHandlers"
@@ -48,165 +51,161 @@ interface FeatureToggle {
     nestedKey?: string
 }
 
-const agentFeatures: FeatureToggle[] = [
+const agentFeatures = (t: UiTranslator): FeatureToggle[] => [
     {
         id: "subagents",
-        label: "Subagents",
-        description: "Let Dline run focused subagents in parallel to explore the codebase for you.",
+        label: t("settings.ui.features.subagents"),
+        description: t("settings.ui.features.subagentsHelp"),
         stateKey: "subagentsEnabled",
         settingKey: "subagentsEnabled",
     },
     {
         id: "enable-mcp",
-        label: "Enable MCP",
-        description: "Show MCP server controls in the chat input.",
+        label: t("settings.ui.features.mcp"),
+        description: t("settings.ui.features.mcpHelp"),
         stateKey: "mcpEnabled",
         settingKey: "mcpEnabled",
     },
     {
         id: "mcp-tools-on-demand",
-        label: "Load MCP Tools on Demand",
-        description:
-            "List MCP tools by server in the prompt and load a tool's input schema only when it is needed, instead of sending every MCP tool definition with each request.",
+        label: t("settings.ui.features.mcpOnDemand"),
+        description: t("settings.ui.features.mcpOnDemandHelp"),
         stateKey: "mcpToolsOnDemandEnabled",
         settingKey: "mcpToolsOnDemandEnabled",
     },
     {
         id: "native-tool-call",
-        label: "Native Tool Call",
-        description: "Use native function calling when available",
+        label: t("settings.ui.features.native"),
+        description: t("settings.ui.features.nativeHelp"),
         stateKey: "nativeToolCallSetting",
         settingKey: "nativeToolCallEnabled",
     },
     {
         id: "parallel-tool-calling",
-        label: "Parallel Tool Calling",
-        description: "Execute multiple tool calls simultaneously",
+        label: t("settings.ui.features.parallel"),
+        description: t("settings.ui.features.parallelHelp"),
         stateKey: "enableParallelToolCalling",
         settingKey: "enableParallelToolCalling",
     },
     {
         id: "active-tasks-env-details",
-        label: "Active Tasks",
-        description: "Show currently active tasks in environment details.",
+        label: t("settings.ui.features.active"),
+        description: t("settings.ui.features.activeHelp"),
         stateKey: "showActiveTasksInEnvDetails",
         settingKey: "showActiveTasksInEnvDetails",
     },
     {
         id: "strict-plan-mode",
-        label: "Strict Plan Mode",
-        description: "Prevents file edits while in Plan mode",
+        label: t("settings.ui.features.strictPlan"),
+        description: t("settings.ui.features.strictPlanHelp"),
         stateKey: "strictPlanModeEnabled",
         settingKey: "strictPlanModeEnabled",
     },
     {
         id: "auto-compact",
-        label: "Auto Compact",
-        description: "Automatically compress conversation history.",
+        label: t("settings.ui.features.compact"),
+        description: t("settings.ui.features.compactHelp"),
         stateKey: "useAutoCondense",
         settingKey: "useAutoCondense",
     },
     {
         id: "focus-chain",
-        label: "Focus Chain",
-        description: "Maintain context focus across interactions",
+        label: t("settings.ui.features.focus"),
+        description: t("settings.ui.features.focusHelp"),
         stateKey: "focusChainEnabled",
         settingKey: "focusChainSettings",
         nestedKey: "enabled",
     },
     {
         id: "image-generation",
-        label: "Enable Image Generation",
-        description: "Expose the generate_image tool and route calls through the configured image source.",
+        label: t("settings.ui.features.images"),
+        description: t("settings.ui.features.imagesHelp"),
         stateKey: "imageGenerationEnabled",
         settingKey: "imageGenerationEnabled",
     },
     {
         id: "web-tools",
-        label: "Web Tools",
-        description: "Access web browsing and search capabilities",
+        label: t("settings.ui.features.web"),
+        description: t("settings.ui.features.webHelp"),
         stateKey: "clineWebToolsEnabled",
         settingKey: "clineWebToolsEnabled",
     },
 ]
 
-const editorFeatures: FeatureToggle[] = [
+const editorFeatures = (t: UiTranslator): FeatureToggle[] => [
     {
         id: "show-feature-tips",
-        label: "Feature Tips",
-        description: "Show rotating tips during the thinking phase to help you discover Dline features.",
+        label: t("settings.ui.features.tips"),
+        description: t("settings.ui.features.tipsHelp"),
         stateKey: "showFeatureTips",
         settingKey: "showFeatureTips",
     },
     {
         id: "background-edit",
-        label: "Background Edit",
-        description: "Allow edits without stealing editor focus",
+        label: t("settings.ui.features.background"),
+        description: t("settings.ui.features.backgroundHelp"),
         stateKey: "backgroundEditEnabled",
         settingKey: "backgroundEditEnabled",
     },
     {
         id: "checkpoints",
-        label: "Checkpoints",
-        description: "Save progress at key points for easy rollback",
+        label: t("settings.ui.features.checkpoints"),
+        description: t("settings.ui.features.checkpointsHelp"),
         stateKey: "enableCheckpointsSetting",
         settingKey: "enableCheckpointsSetting",
     },
     {
         id: "worktrees",
-        label: "Worktrees",
-        description: "Enables git worktree management for running parallel Dline tasks.",
+        label: t("settings.ui.features.worktrees"),
+        description: t("settings.ui.features.worktreesHelp"),
         stateKey: "worktreesEnabled",
         settingKey: "worktreesEnabled",
     },
 ]
 
-const experimentalFeatures: FeatureToggle[] = [
+const experimentalFeatures = (t: UiTranslator): FeatureToggle[] => [
     {
         id: "yolo",
-        label: "Yolo Mode",
-        description:
-            "Execute tasks without user's confirmation. Auto-switches from Plan to Act mode and disables the ask question tool. Use with extreme caution.",
+        label: t("settings.ui.features.yolo"),
+        description: t("settings.ui.features.yoloHelp"),
         stateKey: "yoloModeToggled",
         settingKey: "yoloModeToggled",
     },
     {
         id: "double-check-completion",
-        label: "Double-Check Completion",
-        description:
-            "Rejects the first completion attempt and asks the model to re-verify its work against the original task requirements before accepting.",
+        label: t("settings.ui.features.doubleCheck"),
+        description: t("settings.ui.features.doubleCheckHelp"),
         stateKey: "doubleCheckCompletionEnabled",
         settingKey: "doubleCheckCompletionEnabled",
     },
     {
         id: "lazy-teammate",
-        label: "Lazy Teammate Mode",
-        description: "Sometimes Dline just isn't feeling it today. For entertainment purposes only.",
+        label: t("settings.ui.features.lazy"),
+        description: t("settings.ui.features.lazyHelp"),
         stateKey: "lazyTeammateModeEnabled",
         settingKey: "lazyTeammateModeEnabled",
     },
     {
         id: "account",
-        label: "Account",
-        description: "Show Dline account sign-in, the account view and billing. The account service is in early rollout.",
+        label: t("settings.ui.features.account"),
+        description: t("settings.ui.features.accountHelp"),
         stateKey: "accountEnabled",
         settingKey: "accountEnabled",
     },
     {
         id: "external-file-checkpoints",
-        label: "External File Checkpoints",
-        description:
-            "Prepare checkpoint support for files outside the open workspace. This rollout setting is not connected to file restore yet.",
+        label: t("settings.ui.features.external"),
+        description: t("settings.ui.features.externalHelp"),
         stateKey: "externalFileCheckpoints",
         settingKey: "externalFileCheckpointsEnabled",
     },
 ]
 
-const advancedFeatures: FeatureToggle[] = [
+const advancedFeatures = (t: UiTranslator): FeatureToggle[] => [
     {
         id: "hooks",
-        label: "Hooks",
-        description: "Enable lifecycle and tool hooks during task execution.",
+        label: t("settings.ui.features.hooks"),
+        description: t("settings.ui.features.hooksHelp"),
         stateKey: "hooksEnabled",
         settingKey: "hooksEnabled",
     },
@@ -270,12 +269,16 @@ interface FeatureSettingsSectionProps {
 }
 
 const FeatureSettingsSection = ({ renderSectionHeader }: FeatureSettingsSectionProps) => {
+    const { t } = useUiTranslation()
     const {
         enableCheckpointsSetting,
         hooksEnabled,
         mcpDisplayMode,
         strictPlanModeEnabled,
         yoloModeToggled,
+        awayModeGateEnabled,
+        awayModeEnabled,
+        autoAwayModeEnabled,
         useAutoCondense,
         subagentsEnabled,
         mcpEnabled,
@@ -382,11 +385,13 @@ const FeatureSettingsSection = ({ renderSectionHeader }: FeatureSettingsSectionP
                 <div className="mb-5 flex flex-col gap-3">
                     {/* Core features */}
                     <div>
-                        <div className="text-xs font-medium text-foreground/80 uppercase tracking-wider mb-3">Agent</div>
+                        <div className="text-xs font-medium text-foreground/80 uppercase tracking-wider mb-3">
+                            {t("settings.ui.features.agent")}
+                        </div>
                         <div
                             className="relative p-3 pt-0 my-3 rounded-md border border-editor-widget-border/50"
                             id="agent-features">
-                            {agentFeatures.map((feature) => (
+                            {agentFeatures(t).map((feature) => (
                                 <div key={feature.id}>
                                     <FeatureRow
                                         checked={featureState[feature.stateKey]}
@@ -402,7 +407,7 @@ const FeatureSettingsSection = ({ renderSectionHeader }: FeatureSettingsSectionP
                                     />
                                     {feature.id === "subagents" && featureState[feature.stateKey] && (
                                         <SettingsSlider
-                                            label={`Max Parallel Subagents (1-${MAX_PARALLEL_SUBAGENTS})`}
+                                            label={t("settings.ui.features.parallelSubagents", { max: MAX_PARALLEL_SUBAGENTS })}
                                             max={MAX_PARALLEL_SUBAGENTS}
                                             min={MIN_PARALLEL_EXECUTIONS}
                                             onChange={handleMaxParallelSubagentsChange}
@@ -413,7 +418,7 @@ const FeatureSettingsSection = ({ renderSectionHeader }: FeatureSettingsSectionP
                                     )}
                                     {feature.id === "parallel-tool-calling" && featureState[feature.stateKey] && (
                                         <SettingsSlider
-                                            label={`Max Parallel Tool Calls (1-${MAX_PARALLEL_TOOL_CALLS})`}
+                                            label={t("settings.ui.features.parallelTools", { max: MAX_PARALLEL_TOOL_CALLS })}
                                             max={MAX_PARALLEL_TOOL_CALLS}
                                             min={MIN_PARALLEL_EXECUTIONS}
                                             onChange={handleMaxParallelToolCallsChange}
@@ -424,7 +429,7 @@ const FeatureSettingsSection = ({ renderSectionHeader }: FeatureSettingsSectionP
                                     )}
                                     {feature.id === "focus-chain" && featureState[feature.stateKey] && (
                                         <SettingsSlider
-                                            label="Reminder Interval (1-10)"
+                                            label={t("settings.ui.features.reminder")}
                                             max={10}
                                             min={1}
                                             onChange={handleFocusChainIntervalChange}
@@ -447,11 +452,13 @@ const FeatureSettingsSection = ({ renderSectionHeader }: FeatureSettingsSectionP
 
                     {/* Editor features */}
                     <div>
-                        <div className="text-xs font-medium text-foreground/80 uppercase tracking-wider mb-3">Editor</div>
+                        <div className="text-xs font-medium text-foreground/80 uppercase tracking-wider mb-3">
+                            {t("settings.ui.features.editor")}
+                        </div>
                         <div
                             className="relative p-3 pt-0 my-3 rounded-md border border-editor-widget-border/50"
                             id="optional-features">
-                            {editorFeatures.map((feature) => (
+                            {editorFeatures(t).map((feature) => (
                                 <FeatureRow
                                     checked={featureState[feature.stateKey]}
                                     description={feature.description}
@@ -466,11 +473,19 @@ const FeatureSettingsSection = ({ renderSectionHeader }: FeatureSettingsSectionP
 
                     {/* Experimental features */}
                     <div>
-                        <div className="text-xs font-medium uppercase tracking-wider mb-3 text-warning/80">Experimental</div>
+                        <div className="text-xs font-medium uppercase tracking-wider mb-3 text-warning/80">
+                            {t("settings.ui.features.experimental")}
+                        </div>
                         <div
                             className="relative p-3 pt-0 my-3 rounded-md border border-editor-widget-border/50 w-full"
                             id="experimental-features">
-                            {experimentalFeatures.map((feature) => (
+                            <AwayModeSettings
+                                automatic={autoAwayModeEnabled ?? false}
+                                enabled={awayModeEnabled ?? false}
+                                gateEnabled={awayModeGateEnabled ?? false}
+                                onChange={updateSetting}
+                            />
+                            {experimentalFeatures(t).map((feature) => (
                                 <FeatureRow
                                     checked={featureState[feature.stateKey]}
                                     description={feature.description}
@@ -480,7 +495,7 @@ const FeatureSettingsSection = ({ renderSectionHeader }: FeatureSettingsSectionP
                                     key={feature.id}
                                     label={feature.label}
                                     onChange={(checked) => handleFeatureChange(feature, checked)}
-                                    remoteTooltip="This setting is managed by your organization's remote configuration"
+                                    remoteTooltip={t("settings.ui.managed")}
                                 />
                             ))}
                         </div>
@@ -489,10 +504,12 @@ const FeatureSettingsSection = ({ renderSectionHeader }: FeatureSettingsSectionP
 
                 {/* Advanced */}
                 <div>
-                    <div className="text-xs font-medium text-foreground/80 uppercase tracking-wider mb-3">Advanced</div>
+                    <div className="text-xs font-medium text-foreground/80 uppercase tracking-wider mb-3">
+                        {t("settings.ui.features.advanced")}
+                    </div>
                     <div className="relative p-3 my-3 rounded-md border border-editor-widget-border/50" id="advanced-features">
                         <div className="space-y-3">
-                            {advancedFeatures.map((feature) => (
+                            {advancedFeatures(t).map((feature) => (
                                 <FeatureRow
                                     checked={featureState[feature.stateKey]}
                                     description={feature.description}
@@ -505,15 +522,17 @@ const FeatureSettingsSection = ({ renderSectionHeader }: FeatureSettingsSectionP
 
                             {/* MCP Display Mode */}
                             <div className="space-y-2">
-                                <Label className="text-sm font-medium text-foreground">MCP Display Mode</Label>
-                                <p className="text-xs text-muted-foreground">Controls how MCP responses are displayed</p>
+                                <Label className="text-sm font-medium text-foreground">
+                                    {t("settings.ui.features.mcpDisplay")}
+                                </Label>
+                                <p className="text-xs text-muted-foreground">{t("settings.ui.features.mcpDisplayHelp")}</p>
                                 <Select onValueChange={handleMcpDisplayModeChange} value={mcpDisplayMode}>
                                     <SelectTrigger className="w-full">
                                         <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value="plain">Plain Text</SelectItem>
-                                        <SelectItem value="rich">Rich Display</SelectItem>
+                                        <SelectItem value="plain">{t("settings.ui.features.plain")}</SelectItem>
+                                        <SelectItem value="rich">{t("settings.ui.features.rich")}</SelectItem>
                                         <SelectItem value="markdown">Markdown</SelectItem>
                                     </SelectContent>
                                 </Select>

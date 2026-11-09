@@ -44,6 +44,8 @@ service TaskService {
   rpc dispatchInteraction(DispatchInteractionRequest) returns (DispatchInteractionResponse);
   // Requests a task-local context compaction without consuming the active interaction
   rpc compactTask(CompactTaskRequest) returns (CompactTaskResponse);
+  // Exits Away Mode on this task opening without answering an interaction or consuming a draft.
+  rpc stopAwayMode(StopAwayModeRequest) returns (StopAwayModeResponse);
   // Records task feedback (thumbs up/down)
   rpc taskFeedback(StringRequest) returns (Empty);
   // Shows task completion changes diff in a view
@@ -78,6 +80,18 @@ service TaskService {
   rpc moveCommandToBackground(MoveCommandToBackgroundRequest) returns (MoveCommandToBackgroundResponse);
   // Applies one user-driven change to the task input queue
   rpc mutateInputQueue(MutateInputQueueRequest) returns (MutateInputQueueResponse);
+}
+
+// A task control, not a dialog response. No composer content is accepted.
+message StopAwayModeRequest {
+  string task_id = 1;
+  string task_instance_id = 2;
+}
+
+// Acceptance is returned only after the mode change is durable.
+message StopAwayModeResponse {
+  bool accepted = 1;
+  string result = 2;
 }
 
 // Request message for creating a new task
@@ -404,7 +418,7 @@ message ExplainChangesRequest {
 // Request for fetching messages (for virtual scrolling)
 message FetchMessageRequest {
   Metadata metadata = 1;
-  // Absolute index in the full message list (excluding task message)
+  // Index in this opening's served message sequence, including the initial task at 0.
   int64 reference_index = 2;
   // Number of messages to fetch starting from reference_index
   int32 count = 3;
@@ -412,14 +426,17 @@ message FetchMessageRequest {
   string task_instance_id = 5;
   // When set, reference_index is ignored and the page of `count` messages is centred on the message with this ts
   optional int64 anchor_ts = 6;
+  // Committed message ordinal, including the initial task at 0; takes precedence over reference_index.
+  // With anchor_ts, that timestamp must match this ordinal's message identity.
+  optional int64 anchor_index = 7;
 }
 
 // Response for fetchMessage
 message FetchMessageResponse {
   repeated ClineMessage messages = 1;
-  // Total number of messages (excluding task) for virtuoso totalCount
+  // Number of messages in the same served sequence, including the initial task.
   int32 total_count = 2;
-  // Absolute index of the first message in the returned messages array
+  // Page coordinate of the first returned message; not a committed source ordinal.
   int32 start_index = 3;
   string task_id = 4;
   string task_instance_id = 5;
@@ -587,7 +604,7 @@ enum TrajectoryState {
   TRAJECTORY_STATE_READY = 1;
   // A rebuild or catch-up is running; the turns are a consistent prefix
   TRAJECTORY_STATE_BUILDING = 2;
-  // The history breaks ts uniqueness, so no trajectory is projected
+  // Retained for wire compatibility with older trajectory builders.
   TRAJECTORY_STATE_ERROR = 3;
   // This opening may not maintain the trajectory, for example while another instance holds the task
   TRAJECTORY_STATE_UNAVAILABLE = 4;
@@ -603,13 +620,15 @@ message TrajectoryTurnSummary {
   int64 seq = 1;
   // Attempt the turn belongs to; an attempt ends at a turn with ends_attempt
   int64 attempt_seq = 2;
-  // Timestamp of the message that opens the turn, the jump target
+  // Existing message identity; does not determine turn ordering.
   int64 anchor_ts = 3;
   string prompt = 4;
   int32 rounds = 5;
   repeated TrajectoryToolCount tool_usage = 6;
   bool ends_attempt = 7;
   int64 tail_ts = 8;
+  // Committed source ordinal of the user message; 0 is a valid anchor.
+  optional int64 anchor_index = 9;
 }
 
 // A full snapshot when reset is true; otherwise the change since base_revision, which equals the previous response's revision

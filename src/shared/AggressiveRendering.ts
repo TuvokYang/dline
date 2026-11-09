@@ -1,26 +1,34 @@
 /**
  * How aggressively the chat folds a turn's activity rows into expandable blocks.
  *
- * Folding follows the running task: a request round folds once it has ended,
- * while the round still running stays drawn as it is.
+ * Request completion makes content eligible for folding; it does not split a
+ * block. Content from the running request stays drawn as it is.
  *
- * - `standard`: today's rendering; nothing is folded.
- * - `activity`: each request round folds into its own block when it ends.
- * - `turn`: the ended rounds between a user message and the turn's end fold into
- *   one block, which takes in each further round as it ends.
+ * The levels are cumulative: each one folds at least as much as the one before
+ * it, and `FOLD_POLICIES` in the Webview states exactly how, so the levels share
+ * one implementation instead of one implementation per level.
  *
- * The stored values are a persisted contract; only the labels describe them.
+ * - `none`: standard rows without an additional folding layer.
+ * - `round`: finished activity is folded within one request round, so a block
+ *   never holds work from two provider sends.
+ * - `message_segment`: finished activity between assistant messages is folded
+ *   together, even when that spans several request rounds.
+ * - `user_turn`: finished content is folded across assistant messages, within a
+ *   user turn.
+ *
+ * Legacy persisted values are normalized on read; new writes use only canonical values.
  */
-export const AGGRESSIVE_RENDERING_LEVELS = ["standard", "activity", "turn"] as const
+export const AGGRESSIVE_RENDERING_LEVELS = ["none", "round", "message_segment", "user_turn"] as const
 
 export type AggressiveRenderingLevel = (typeof AGGRESSIVE_RENDERING_LEVELS)[number]
 
-export const DEFAULT_AGGRESSIVE_RENDERING: AggressiveRenderingLevel = "standard"
+export const DEFAULT_AGGRESSIVE_RENDERING: AggressiveRenderingLevel = "none"
 
 export const AGGRESSIVE_RENDERING_LABELS: Record<AggressiveRenderingLevel, string> = {
-    standard: "Standard (no folding)",
-    activity: "Fold each round when it ends",
-    turn: "Fold the whole turn into one block",
+    none: "Standard (no folding)",
+    round: "Fold activity within each request round",
+    message_segment: "Fold activity between messages",
+    user_turn: "Fold the whole turn into one block",
 }
 
 /**
@@ -43,7 +51,17 @@ export function isAggressiveRenderingLevel(value: unknown): value is AggressiveR
 
 /** Reads a stored value; anything that is not a known level reads as the default. */
 export function normalizeAggressiveRenderingLevel(value: unknown): AggressiveRenderingLevel {
-    return isAggressiveRenderingLevel(value) ? value : DEFAULT_AGGRESSIVE_RENDERING
+    if (isAggressiveRenderingLevel(value)) return value
+    switch (value) {
+        case "standard":
+            return "none"
+        case "activity":
+            return "message_segment"
+        case "turn":
+            return "user_turn"
+        default:
+            return DEFAULT_AGGRESSIVE_RENDERING
+    }
 }
 
 /**
@@ -56,7 +74,7 @@ export function projectAggressiveRendering(storedValue: unknown, featureFlag: bo
 
 /**
  * The level the chat renders at. The rollout flag only makes the choice available:
- * while it is off the chat renders at `standard`, and the stored choice is kept for
+ * while it is off the chat renders at `none`, and the stored choice is kept for
  * when the flag turns on again.
  */
 export function effectiveAggressiveRendering(setting: Partial<AggressiveRenderingSetting> | undefined): AggressiveRenderingLevel {

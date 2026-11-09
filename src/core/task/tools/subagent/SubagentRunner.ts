@@ -8,15 +8,16 @@ import {
     type WebSearchRoutingPlan,
 } from "@core/api/server-tools"
 import { createIdentityFactory, type IdentityFactory } from "@core/api/transform/block-identity"
-import type { ApiProviderStreamChunk, ApiStopReason } from "@core/api/transform/stream"
+import type { ApiStopReason } from "@core/api/transform/stream"
 import { createStreamNormalizer, normalizeApiStream } from "@core/api/transform/stream-identity-normalizer"
 import { ApiUsageAccumulator } from "@core/api/transform/usage-accumulator"
 import { declaredAnthropicHostedToolNames } from "@core/api/utils/messages_api_support"
 import { parseAssistantMessage, ToolUse } from "@core/assistant-message"
-import { discoverAvailableSkills } from "@core/context/instructions/user-instructions/skills"
 import { createImageProfileResolverForProfile } from "@core/image-generation/runtime"
+import { PromptProfile } from "@core/prompts/profiles/types"
 import { formatResponse } from "@core/prompts/responses"
 import { getSystemPrompt, type SystemPromptContext } from "@core/prompts/system-prompt"
+import { LITE_TOOL_IDS, STANDARD_TOOL_IDS } from "@core/prompts/tools/tool-ids"
 import {
     buildTurnFailureFeedback,
     ConsecutiveTurnFailures,
@@ -54,10 +55,11 @@ import {
     shouldCompactProjectedUsage,
 } from "@/core/context/context-management/context-window-utils"
 import { HostRegistryInfo } from "@/registry"
+import { resolveLocalWebToolCapabilities } from "@/services/web-tools/LocalWebToolCapabilities"
 import { boundToolText, MAX_TOOL_RESULT_TEXT_BYTES } from "@/shared/content-limits"
 import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
-import { calculateApiCostAnthropic } from "@/utils/cost"
-import { isNativeToolCallingConfig, isNextGenModelFamily } from "@/utils/model-utils"
+import { isNativeToolCallingConfig } from "@/utils/model-utils"
+import type { UsageToolCall } from "../../telemetry/UsageToolCalls"
 import { canonicalizeAttemptCompletionParams } from "../attempt-completion-params"
 import { partitionDeferredHostedCalls } from "../deferred-hosted-rows"
 import { type DeferredServerToolCall, ServerToolLifecycle } from "../ServerToolLifecycle"
@@ -67,8 +69,16 @@ import { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
 import { resolveToolResultBudget } from "../utils/tool-result-budget"
 import type { AgentBaseConfig } from "./AgentConfigLoader"
-import { SUBAGENT_COMPLETION_CONTRACT, SubagentBuilder } from "./SubagentBuilder"
+import { forwardProviderAttempt, producesUnreplayableOutput } from "./SubagentAttemptForwarding"
+import { SUBAGENT_COMPLETION_CONTRACT, SubagentBuilder, type SubagentCapabilityConfig } from "./SubagentBuilder"
+import { resolveSubagentCapabilitySelection, type SubagentCapabilitySelection } from "./SubagentCapabilitySelection"
 import { buildContextBudgetSection, resolveFinalResultTokens } from "./SubagentContextBudget"
+import {
+    compactSubagentConversation,
+    estimateSubagentContext,
+    subagentCompactTriggerOptions,
+    truncateSubagentConversation,
+} from "./SubagentContextCompaction"
 import { buildContextUsageSection, buildFinishReminder, exceedsContextConvergenceThreshold } from "./SubagentConvergenceGate"
 import type { SubagentFinishReason, SubagentProgressUpdate, SubagentRunStats } from "./SubagentExecutor"
 import {
@@ -78,6 +88,7 @@ import {
 } from "./SubagentOutputBudget"
 import { SubagentProseStream } from "./SubagentProseStream"
 import { type FrozenSubagentRoundContext, SubagentRoundContextProjection } from "./SubagentRoundContextProjection"
+import { SubagentRoundUsageSettlement } from "./SubagentRoundUsageSettlement"
 import { observeSubagentToolExecution, reportSubagentPlainTextWarning } from "./SubagentTurnHealth"
 
 /**
@@ -116,6 +127,10 @@ const MAX_INITIAL_STREAM_ATTEMPTS = INITIAL_STREAM_RETRY_DELAYS_MS.length + 1
 export interface SubagentRunnerOptions {
     /** Keep ordinary subagents coupled to parent Task cancellation unless an explicit Activity owns their lifecycle. */
     inheritTaskAbort?: boolean
+    /** Original child task only; omission supplies no rule-condition path evidence. */
+    taskText?: string
+    /** Read current YAML capability intent once per new run, including explicit Retry. */
+    reloadCapabilityConfig?: () => Promise<SubagentCapabilityConfig>
 }
 
 function formatApiFormat(apiFormat: ApiFormat | undefined): string | undefined {
@@ -236,6 +251,7 @@ interface SubagentRequestUsageState {
     cacheReadTokens: number
     totalTokens: number
     totalCost?: number
+    currency?: string
 }
 
 interface SubagentUsageState {
@@ -339,32 +355,6 @@ function formatToolCallPreview(toolName: string, params: Partial<Record<string, 
  * Treating every non-usage chunk as observable disabled the whole backoff sequence for
  * adaptive-thinking models, because the scaffolding always precedes the failure.
  */
-function isAttemptCommitChunk(
-    chunk: ApiProviderStreamChunk,
-): chunk is Extract<ApiProviderStreamChunk, { type: "usage" | "tool_calls" }> {
-    return chunk.type === "usage" || chunk.type === "tool_calls"
-}
-
-function producesUnreplayableOutput(chunk: ApiProviderStreamChunk): boolean {
-    switch (chunk.type) {
-        // Attempt-local accounting and native tool deltas are committed only after EOF.
-        case "usage":
-        case "tool_calls":
-            return false
-        // Forwarded to progress only and never written back into the conversation.
-        case "reasoning":
-            return false
-        // Whitespace-only text is a block separator, not an answer.
-        case "text":
-            return (chunk.text ?? "").trim().length > 0
-        // A hosted tool lifecycle is observable from its first phase: the started event is
-        // already forwarded to progress and counted in the tool-call stats, so replaying the
-        // attempt would duplicate both the rendered row and the count.
-        case "server_tool":
-            return true
-    }
-}
-
 function waitForSubagentRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) {
         return Promise.reject(signal.reason ?? new Error("Subagent retry wait was aborted."))
@@ -497,6 +487,8 @@ export class SubagentRunner {
     private activeCommandExecutions = 0
     private abortingCommands = false
     private apiLogRequestIndex = 0
+    /** The instrumented Usage request of the turn in flight; each turn runs its own tools. */
+    private readonly roundUsage: SubagentRoundUsageSettlement
     private interruptionController: AbortController | undefined
     private activeToolState: DefaultToolHandlerState | undefined
     /** Capture the parent's operation scope once; a later rearm cannot revive this run. */
@@ -530,6 +522,25 @@ export class SubagentRunner {
         this.agent = new SubagentBuilder(baseConfig, subagentName, agentConfig)
         this.apiHandler = this.agent.getApiHandler()
         this.allowedTools = this.agent.getAllowedTools()
+        // Built here, not in a field initializer: `baseConfig` is a constructor
+        // parameter property, so it does not exist while initializers run.
+        this.roundUsage = new SubagentRoundUsageSettlement(baseConfig.taskId, SUBAGENT_TELEMETRY_ROLE)
+    }
+
+    /**
+     * Settle the turn that just ran its tools.
+     *
+     * The Provider stream reported its usage; the tools it asked for are only
+     * known now, so this is where the request's logical execution closes with
+     * real tool outcomes instead of a zero-tool Provider-only claim.
+     */
+    private settleRoundToolExecution(toolCalls: readonly UsageToolCall[]): void {
+        this.roundUsage.settleTools(toolCalls)
+    }
+
+    /** End the turn's deferred settlement when its Provider stream asked for no tool. */
+    private releaseRoundToolDeferral(): void {
+        this.roundUsage.release()
     }
 
     async abort(): Promise<void> {
@@ -787,7 +798,7 @@ export class SubagentRunner {
         const contextState: SubagentContextState = {
             roundContexts: new SubagentRoundContextProjection(),
         }
-        const contextManager = new ContextManager()
+        let contextManager = new ContextManager()
         const usageState: SubagentUsageState = {
             currentRequest: createEmptyRequestUsageState(),
         }
@@ -845,11 +856,17 @@ export class SubagentRunner {
                 mode,
                 customPrompt: this.baseConfig.services.stateManager.getGlobalSettingsKey("customPrompt"),
             }
+            const promptProfile = resolvePromptProfile({
+                modelId: providerInfo.model.id,
+                contextWindow: providerInfo.model.info.capabilities?.contextWindow,
+            })
+            const profileTools: readonly DlineDefaultTool[] =
+                promptProfile === PromptProfile.Lite ? LITE_TOOL_IDS : STANDARD_TOOL_IDS
+            const allowedTools = new Set(this.allowedTools.filter((tool) => profileTools.includes(tool)))
             const webToolsEnabled =
                 this.baseConfig.webToolsEnabled ??
                 this.baseConfig.services.stateManager.getGlobalSettingsKey("clineWebToolsEnabled") === true
             stats.contextWindow = providerInfo.model.info.capabilities?.contextWindow || 0
-            stats.currency = providerInfo.model.info.pricing?.currency || "USD"
             const apiFormat = providerInfo.model.info.apiFormats?.[0]
             const nativeToolCallsRequested =
                 apiFormat === ApiFormat.OPENAI_RESPONSES ||
@@ -860,7 +877,7 @@ export class SubagentRunner {
             const turnFailureFeedback = (failure: TurnFailure): string => {
                 const feedback = buildTurnFailureFeedback(failure, {
                     usesNativeToolCalls: useNativeToolCalls,
-                    availableTools: this.completionOnly ? [DlineDefaultTool.ATTEMPT] : this.allowedTools,
+                    availableTools: this.completionOnly ? [DlineDefaultTool.ATTEMPT] : [...allowedTools],
                     finishing: this.completionOnly,
                 })
                 // A subagent that answered in prose believes it is done; restate how a run ends.
@@ -892,37 +909,36 @@ export class SubagentRunner {
             })
 
             const host = HostRegistryInfo.get()
-            const remoteSkillEntries = this.baseConfig.services.stateManager.getRemoteConfigSettings().remoteGlobalSkills || []
-            const availableSkills = await discoverAvailableSkills(this.baseConfig.cwd, {
-                remoteSkillEntries,
-                globalSkillsToggles: this.baseConfig.capabilityToggles.globalSkillsToggles,
-                localSkillsToggles: this.baseConfig.capabilityToggles.localSkillsToggles,
-                remoteSkillsToggles: this.baseConfig.capabilityToggles.remoteSkillsToggles,
-            })
-            const configuredSkillNames = this.agent.getConfiguredSkills()
-            const skills =
-                configuredSkillNames !== undefined
-                    ? configuredSkillNames
-                          .map((skillName) => {
-                              const skill = availableSkills.find((candidate) => candidate.name === skillName)
-                              if (!skill) {
-                                  Logger.warn(`[SubagentRunner] Configured skill '${skillName}' not found for subagent run.`)
-                              }
-                              return skill
-                          })
-                          .filter((skill): skill is (typeof availableSkills)[number] => Boolean(skill))
-                    : availableSkills
-
-            const allowedTools = new Set(this.allowedTools)
+            const selection = await resolveSubagentCapabilitySelection(
+                this.baseConfig,
+                (await this.options.reloadCapabilityConfig?.()) ?? this.agent.getCapabilityConfig(),
+                this.options.taskText ?? "",
+                [...allowedTools],
+                promptProfile,
+            )
             const context: SystemPromptContext = {
                 providerInfo,
-                promptProfile: resolvePromptProfile({
-                    modelId: providerInfo.model.id,
-                    contextWindow: providerInfo.model.info.capabilities?.contextWindow,
-                }),
+                promptProfile,
                 cwd: this.baseConfig.cwd,
                 ide: host?.platform || "Unknown",
-                skills,
+                skills: selection.skills,
+                capabilities: {
+                    ...selection.capabilities,
+                    mcpResources: selection.mcpServers
+                        .filter((server) => server.disabled !== true && server.status === "connected")
+                        .flatMap((server) =>
+                            (server.resources ?? []).map((resource) => ({
+                                server: server.name,
+                                uri: resource.uri,
+                                name: resource.name,
+                                description: resource.description ?? "",
+                            })),
+                        ),
+                },
+                ...selection.ruleInstructions,
+                taskCapabilityToggles: selection.capabilityToggles,
+                mcpHub: { getServers: () => selection.mcpServers },
+                mcpToolsOnDemand: true,
                 // A subagent keeps no TODO list, so its tools must not offer task_progress.
                 focusChainSettings: { ...this.baseConfig.focusChainSettings, enabled: false },
                 browserSettings: this.baseConfig.browserSettings,
@@ -933,6 +949,9 @@ export class SubagentRunner {
                 disableTools: Object.values(DlineDefaultTool).filter((tool) => !allowedTools.has(tool)),
                 clineWebToolsEnabled: webToolsEnabled,
                 webSearchRoutingPlan,
+                localWebToolCapabilities: resolveLocalWebToolCapabilities(
+                    this.baseConfig.services.stateManager.getGlobalSettingsKey("localWebSearchEngine"),
+                ),
                 imageGenerationAvailable: imageGenerationService.hasAvailableProfile(),
             }
 
@@ -1007,20 +1026,54 @@ export class SubagentRunner {
                     })
                 }
 
-                if (
+                const autoCompactEnabled = this.baseConfig.services.stateManager.getGlobalSettingsKey("useAutoCondense") === true
+                if (autoCompactEnabled && !this.finishRequested) {
+                    const compactionInput = {
+                        api,
+                        config: this.baseConfig,
+                        systemPrompt,
+                        tools: nativeTools,
+                        profile: generated.profile,
+                        environment: workspaceMetadataEnvironmentBlock ?? undefined,
+                        webSearchRoutingPlan,
+                        messages: contextState.roundContexts.project(
+                            contextManager.getTruncatedMessages(conversation, contextState.conversationHistoryDeletedRange),
+                            contextState.conversationHistoryDeletedRange,
+                        ),
+                        signal: this.activeRetryAbortController.signal,
+                    }
+                    const pressure = Math.max(usageState.lastRequest?.totalTokens ?? 0, estimateSubagentContext(compactionInput))
+                    if (this.shouldCompactBeforeNextRequest(pressure, api)) {
+                        let compacted: ClineStorageMessage[]
+                        try {
+                            compacted = await compactSubagentConversation(compactionInput)
+                        } catch (error) {
+                            // A finish request cancels hidden work but still needs its ordinary final turn.
+                            if (this.finishRequested && !this.shouldAbort()) continue
+                            throw error
+                        }
+                        conversation.splice(0, conversation.length, ...compacted)
+                        // Materialized overlays belong to the old message indexes, never to the new summary/tail.
+                        contextManager = new ContextManager()
+                        contextState.conversationHistoryDeletedRange = undefined
+                        contextState.roundContexts = new SubagentRoundContextProjection()
+                        usageState.lastRequest = undefined
+                        stats.contextTokens = estimateSubagentContext({ ...compactionInput, messages: compacted })
+                        stats.contextUsagePercentage =
+                            stats.contextWindow > 0 ? (stats.contextTokens / stats.contextWindow) * 100 : 0
+                        onProgress({ stats: { ...stats } })
+                    }
+                } else if (
+                    !autoCompactEnabled &&
                     usageState.lastRequest &&
-                    this.shouldCompactBeforeNextRequest(usageState.lastRequest.totalTokens, api, providerInfo.model.id)
+                    this.shouldCompactBeforeNextRequest(usageState.lastRequest.totalTokens, api)
                 ) {
-                    const compactResult = this.compactConversationForContextWindow(
+                    const compactResult = truncateSubagentConversation(
                         contextManager,
                         conversation,
                         contextState.conversationHistoryDeletedRange,
                     )
                     contextState.conversationHistoryDeletedRange = compactResult.conversationHistoryDeletedRange
-                    if (compactResult.didCompact) {
-                        Logger.warn("[SubagentRunner] Proactively compacted context before next subagent request.")
-                    }
-                    // Prevent repeated compaction attempts off the same token sample.
                     usageState.lastRequest = undefined
                 }
 
@@ -1037,21 +1090,11 @@ export class SubagentRunner {
                 // hosted-tool failure. Skipping it would drop this request's cost and
                 // leave the next turn's compaction check reading a stale token sample.
                 const settleRequestUsage = (): void => {
-                    const calculatedRequestCost =
-                        requestUsage.totalCost ??
-                        calculateApiCostAnthropic(
-                            providerInfo.model.info,
-                            requestUsage.inputTokens,
-                            requestUsage.outputTokens,
-                            requestUsage.cacheWriteTokens,
-                            requestUsage.cacheReadTokens,
-                        )
                     requestUsage.totalTokens =
                         requestUsage.inputTokens +
                         requestUsage.outputTokens +
                         requestUsage.cacheWriteTokens +
                         requestUsage.cacheReadTokens
-                    stats.totalCost += calculatedRequestCost || 0
                     usageState.lastRequest = { ...requestUsage }
                 }
                 let recoveredFromHostedServerToolFailure = false
@@ -1130,10 +1173,13 @@ export class SubagentRunner {
                 const roundContext = contextState.roundContexts.freeze(
                     conversation,
                     [
-                        buildContextUsageSection({
-                            contextTokens: stats.contextTokens,
-                            contextWindow: stats.contextWindow,
-                        }),
+                        buildContextUsageSection(
+                            {
+                                contextTokens: stats.contextTokens,
+                                contextWindow: stats.contextWindow,
+                            },
+                            autoCompactEnabled,
+                        ),
                         buildContextBudgetSection(this.activeBudget, outputBudget.outputTokens),
                     ]
                         .filter((section): section is string => Boolean(section))
@@ -1170,26 +1216,39 @@ export class SubagentRunner {
                 try {
                     for await (const chunk of stream) {
                         switch (chunk.type) {
-                            case "usage":
+                            case "usage": {
                                 requestId = requestId ?? chunk.provider_metadata?.response_id
-                                // Providers may resend cumulative usage snapshots; only the
-                                // accumulator's delta is new and may be added to running totals.
-                                const { delta: usageDelta } = roundUsageAccumulator.apply(chunk)
+                                // Take this send's resolved total, not the sum of its deltas.
+                                // A Provider may publish an estimate and replace it with the
+                                // final total; `getUsage()` is that total and is what the
+                                // mandatory transport wrapper reports for the same send.
+                                // Accumulating deltas kept the estimate and disagreed with it.
+                                const settled = roundUsageAccumulator.apply(chunk).usage
                                 if (chunk.stopReason) roundStopReason = chunk.stopReason
-                                stats.inputTokens += usageDelta.inputTokens
-                                stats.outputTokens += usageDelta.outputTokens
-                                stats.cacheWriteTokens += usageDelta.cacheWriteTokens
-                                stats.cacheReadTokens += usageDelta.cacheReadTokens
-                                requestUsage.inputTokens += usageDelta.inputTokens
-                                requestUsage.outputTokens += usageDelta.outputTokens
-                                requestUsage.cacheWriteTokens += usageDelta.cacheWriteTokens
-                                requestUsage.cacheReadTokens += usageDelta.cacheReadTokens
+                                // The send's total replaces what this request contributed
+                                // before, so the run total moves by exactly the difference.
+                                // Adding the total itself would count it again on every chunk.
+                                stats.inputTokens += settled.inputTokens - requestUsage.inputTokens
+                                stats.outputTokens += settled.outputTokens - requestUsage.outputTokens
+                                stats.cacheWriteTokens += settled.cacheWriteTokens - requestUsage.cacheWriteTokens
+                                stats.cacheReadTokens += settled.cacheReadTokens - requestUsage.cacheReadTokens
+                                requestUsage.inputTokens = settled.inputTokens
+                                requestUsage.outputTokens = settled.outputTokens
+                                requestUsage.cacheWriteTokens = settled.cacheWriteTokens
+                                requestUsage.cacheReadTokens = settled.cacheReadTokens
                                 requestUsage.totalTokens =
                                     requestUsage.inputTokens +
                                     requestUsage.outputTokens +
                                     requestUsage.cacheWriteTokens +
                                     requestUsage.cacheReadTokens
-                                requestUsage.totalCost = chunk.totalCost ?? requestUsage.totalCost
+                                if (chunk.totalCost !== undefined) {
+                                    const previousCost = requestUsage.totalCost ?? 0
+                                    requestUsage.totalCost =
+                                        chunk.usageMode === "delta" ? previousCost + chunk.totalCost : chunk.totalCost
+                                    requestUsage.currency = chunk.currency
+                                    stats.totalCost += requestUsage.totalCost - previousCost
+                                    stats.currency = chunk.currency ?? ""
+                                }
                                 stats.contextTokens = requestUsage.totalTokens
                                 stats.contextUsagePercentage =
                                     stats.contextWindow > 0 ? (stats.contextTokens / stats.contextWindow) * 100 : 0
@@ -1197,7 +1256,7 @@ export class SubagentRunner {
 
                                 // Past this point the remaining window has to carry the
                                 // final result, so the run converges from the next turn on.
-                                if (exceedsContextConvergenceThreshold(stats)) {
+                                if (!autoCompactEnabled && exceedsContextConvergenceThreshold(stats)) {
                                     if (this.requestFinishAfterCurrentTurn("context_pressure")) {
                                         Logger.warn(
                                             "[SubagentRunner] Context usage crossed the convergence threshold; steering the next turn to attempt_completion.",
@@ -1205,6 +1264,7 @@ export class SubagentRunner {
                                     }
                                 }
                                 break
+                            }
                             case "text":
                                 requestId = requestId ?? chunk.provider_metadata?.response_id
                                 assistantText += chunk.text || ""
@@ -1416,9 +1476,11 @@ export class SubagentRunner {
                             outputTokens: requestUsage.outputTokens,
                             stopReason: roundStopReason,
                         },
-                        this.allowedTools,
+                        [...allowedTools],
                     )
                     turnFailures.record(failure)
+                    // This send asked for no tool, so its deferred settlement is over.
+                    this.releaseRoundToolDeferral()
                     if (failure.kind === "text_only")
                         reportSubagentPlainTextWarning(
                             providerInfo.providerId,
@@ -1455,6 +1517,7 @@ export class SubagentRunner {
                 }
 
                 const toolResultBlocks = [] as ClineUserContent[]
+                const toolOutcomes: UsageToolCall[] = []
                 for (const call of finalizedToolCalls) {
                     const toolName = call.name as DlineDefaultTool
                     const toolCallParams = toToolUseParams(call.input)
@@ -1513,12 +1576,14 @@ export class SubagentRunner {
                             },
                         })
                         stats.toolCalls += 1
+                        toolOutcomes.push({ outcome: "completed", toolName })
                         onProgress({ stats: { ...stats } })
                         onProgress({ status: "completed", result: boundedCompletionResult, stats: { ...stats } })
+                        this.settleRoundToolExecution(toolOutcomes)
                         return { status: "completed", result: boundedCompletionResult, stats }
                     }
 
-                    if (!this.allowedTools.includes(toolName)) {
+                    if (!allowedTools.has(toolName)) {
                         const deniedResult = formatResponse.toolError(`Tool '${toolName}' is not available inside subagent runs.`)
                         pushSubagentToolResultBlock(toolResultBlocks, call, toolName, deniedResult)
                         continue
@@ -1544,6 +1609,8 @@ export class SubagentRunner {
                         webSearchRoutingPlan,
                         imageGenerationService,
                         toolLease,
+                        selection,
+                        allowedTools,
                     )
                     const handler = subagentConfig.coordinator.getHandler(toolName)
                     let toolResult: unknown
@@ -1608,6 +1675,7 @@ export class SubagentRunner {
                     }
 
                     stats.toolCalls += 1
+                    toolOutcomes.push({ outcome: toolError ? "failed" : "completed", toolName })
                     onProgress({ stats: { ...stats } })
 
                     if (!toolError) turnFailures.reset()
@@ -1653,6 +1721,7 @@ export class SubagentRunner {
                     role: "user",
                     content: toolResultBlocks,
                 })
+                this.settleRoundToolExecution(toolOutcomes)
 
                 await Promise.resolve()
             }
@@ -1724,17 +1793,21 @@ export class SubagentRunner {
         webSearchRoutingPlan: WebSearchRoutingPlan,
         imageGenerationService: TaskConfig["services"]["imageGenerationService"],
         contextBudget: TaskConfig["contextBudget"],
+        selection: SubagentCapabilitySelection,
+        allowedTools: ReadonlySet<DlineDefaultTool>,
     ): TaskConfig {
         const baseCallbacks = this.baseConfig.callbacks
         const coordinator = new ToolExecutorCoordinator()
         const validator = new ToolValidator(this.baseConfig.services.ignoreController)
 
-        for (const tool of this.allowedTools) {
+        for (const tool of allowedTools) {
             coordinator.registerByName(tool, validator)
         }
 
         return {
             ...this.baseConfig,
+            subagentCapabilitySelection: selection,
+            capabilityToggles: structuredClone(selection.capabilityToggles),
             api: this.apiHandler,
             coordinator,
             services: { ...this.baseConfig.services, imageGenerationService },
@@ -1773,86 +1846,15 @@ export class SubagentRunner {
         return isRetryableProviderError(error, { providerId, modelId })
     }
 
-    private compactConversationForContextWindow(
-        contextManager: ContextManager,
-        conversation: ClineStorageMessage[],
-        conversationHistoryDeletedRange: [number, number] | undefined,
-    ): {
-        didCompact: boolean
-        conversationHistoryDeletedRange: [number, number] | undefined
-    } {
-        const optimizationResult = this.optimizeConversationForContextWindow(contextManager, conversation)
-        let didCompact = optimizationResult.didOptimize
-        let updatedDeletedRange = conversationHistoryDeletedRange
-
-        if (optimizationResult.didOptimize && !optimizationResult.needToTruncate) {
-            return {
-                didCompact: true,
-                conversationHistoryDeletedRange: updatedDeletedRange,
-            }
-        }
-
-        const deletedRange = contextManager.getNextTruncationRange(conversation, conversationHistoryDeletedRange, "quarter")
-        if (deletedRange[1] < deletedRange[0]) {
-            return {
-                didCompact,
-                conversationHistoryDeletedRange: updatedDeletedRange,
-            }
-        }
-
-        if (
-            conversationHistoryDeletedRange &&
-            deletedRange[0] === conversationHistoryDeletedRange[0] &&
-            deletedRange[1] === conversationHistoryDeletedRange[1]
-        ) {
-            return {
-                didCompact,
-                conversationHistoryDeletedRange: updatedDeletedRange,
-            }
-        }
-
-        updatedDeletedRange = deletedRange
-        didCompact = true
-        return {
-            didCompact,
-            conversationHistoryDeletedRange: updatedDeletedRange,
-        }
-    }
-
-    private optimizeConversationForContextWindow(
-        contextManager: ContextManager,
-        conversation: ClineStorageMessage[],
-    ): {
-        didOptimize: boolean
-        needToTruncate: boolean
-    } {
-        const timestamp = Date.now()
-        const optimizationResult = contextManager.attemptFileReadOptimizationInMemory(conversation, undefined, timestamp)
-        if (!optimizationResult.anyContextUpdates) {
-            return { didOptimize: false, needToTruncate: true }
-        }
-
-        const optimizedConversation = optimizationResult.optimizedConversationHistory.map(
-            (message) => message as ClineStorageMessage,
-        )
-        conversation.splice(0, conversation.length, ...optimizedConversation)
-        return { didOptimize: true, needToTruncate: optimizationResult.needToTruncate }
-    }
-
-    private shouldCompactBeforeNextRequest(
-        requestTotalTokens: number,
-        api: ReturnType<typeof buildApiHandler>,
-        modelId: string,
-    ): boolean {
+    private shouldCompactBeforeNextRequest(requestTotalTokens: number, api: ApiHandler): boolean {
         const { contextWindow, maxAllowedSize } = getContextWindowInfo(api)
         const useAutoCondense = this.baseConfig.services.stateManager.getGlobalSettingsKey("useAutoCondense")
-        if (useAutoCondense && isNextGenModelFamily(modelId)) {
-            const thresholdTokens = computeCompactTrigger(contextWindow, computeSummarizeBudget(), {
-                triggerPercent: this.baseConfig.services.stateManager.getGlobalSettingsKey("autoCondenseTriggerPercent"),
-                minReserveTokens: this.baseConfig.services.stateManager.getGlobalSettingsKey("autoCondenseMinReserveTokens"),
-                maxReserveTokens: this.baseConfig.services.stateManager.getGlobalSettingsKey("autoCondenseMaxReserveTokens"),
-                maxContextTokens: this.baseConfig.services.stateManager.getGlobalSettingsKey("autoCondenseMaxContextTokens"),
-            })
+        if (useAutoCondense) {
+            const thresholdTokens = computeCompactTrigger(
+                contextWindow,
+                computeSummarizeBudget(),
+                subagentCompactTriggerOptions(this.baseConfig),
+            )
             return shouldCompactProjectedUsage(requestTotalTokens, thresholdTokens)
         }
 
@@ -1874,8 +1876,12 @@ export class SubagentRunner {
         onProgress: (update: SubagentProgressUpdate) => void,
     ) {
         let cumulativeRetryDelayMs = 0
+        // One logical request per turn: its Provider send and the tools that send
+        // asked for settle together under this identity.
         const telemetryRequestId = `${SUBAGENT_TELEMETRY_ROLE}:${crypto.randomUUID()}`
+        this.roundUsage.begin(telemetryRequestId)
         for (let attempt = 1; attempt <= MAX_INITIAL_STREAM_ATTEMPTS; attempt += 1) {
+            this.roundUsage.attemptChanged(attempt - 1)
             // Only a pre-finish abort is expected; a later attempt is the finish turn and reports its real failure.
             const startedBeforeFinish = this.finishRequested === undefined
             const truncatedConversation = contextState.roundContexts.project(
@@ -1914,36 +1920,13 @@ export class SubagentRunner {
                     telemetryAttempt: attempt - 1,
                 }),
             )
-            const iterator = stream[Symbol.asyncIterator]()
-            const bufferedCommitChunks: Array<Extract<ApiProviderStreamChunk, { type: "usage" | "tool_calls" }>> = []
             let didYieldUnreplayableOutput = false
             try {
-                while (true) {
-                    const nextChunk = await iterator.next()
-                    if (nextChunk.done) {
-                        for (const bufferedChunk of bufferedCommitChunks) yield bufferedChunk
-                        return
-                    }
-                    if (isAttemptCommitChunk(nextChunk.value)) {
-                        // Native tool deltas have no business side effects until the complete
-                        // response is finalized. Keep them before the normalizer so a failed
-                        // attempt cannot pollute tool identity, parser or Session state.
-                        bufferedCommitChunks.push(nextChunk.value)
-                        continue
-                    }
-                    if (!producesUnreplayableOutput(nextChunk.value)) {
-                        // Forward replayable scaffolding for live progress. The caller resets
-                        // attempt-local accumulators if a retry discards the attempt.
-                        yield nextChunk.value
-                        continue
-                    }
-
-                    didYieldUnreplayableOutput = true
-                    for (const bufferedChunk of bufferedCommitChunks) yield bufferedChunk
-                    yield nextChunk.value
-                    yield* { [Symbol.asyncIterator]: () => iterator }
-                    return
+                for await (const chunk of forwardProviderAttempt(stream[Symbol.asyncIterator]())) {
+                    if (producesUnreplayableOutput(chunk)) didYieldUnreplayableOutput = true
+                    yield chunk
                 }
+                return
             } catch (error) {
                 if (startedBeforeFinish && this.finishRequested && !this.shouldAbort()) {
                     if (!didYieldUnreplayableOutput) onReplayableAttemptDiscarded()
@@ -1957,7 +1940,7 @@ export class SubagentRunner {
                 }
 
                 if (checkContextWindowExceededError(error)) {
-                    const compactResult = this.compactConversationForContextWindow(
+                    const compactResult = truncateSubagentConversation(
                         contextManager,
                         fullConversation,
                         contextState.conversationHistoryDeletedRange,

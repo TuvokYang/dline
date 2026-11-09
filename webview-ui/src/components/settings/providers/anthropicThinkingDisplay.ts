@@ -1,3 +1,5 @@
+import type { UiTranslator } from "@/i18n/messages"
+
 /**
  * Selector options for the Anthropic `thinking.display` request field.
  *
@@ -5,11 +7,9 @@
  * request and the API default applies. The remaining entries mirror the values the
  * Messages API accepts.
  */
-export const ANTHROPIC_THINKING_DISPLAY_SELECTOR_OPTIONS = [
-    { value: "none", label: "None" },
-    { value: "summarized", label: "Summarized" },
-    { value: "omitted", label: "Omitted" },
-] as const
-
-export const ANTHROPIC_THINKING_DISPLAY_DESCRIPTION =
-    "None leaves the choice to Anthropic. Summarized returns thinking normally; Omitted redacts it while keeping multi-turn continuity."
+export const anthropicThinkingDisplayOptions = (t: UiTranslator) =>
+    [
+        { value: "none", label: t("settings.ui.none") },
+        { value: "summarized", label: t("settings.ui.anthropic.summarized") },
+        { value: "omitted", label: t("settings.ui.anthropic.omitted") },
+    ] as const

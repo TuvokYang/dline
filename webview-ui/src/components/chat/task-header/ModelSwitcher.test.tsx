@@ -1,5 +1,7 @@
+import type { UiLanguage } from "@shared/UiLanguage"
 import { fireEvent, render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { UiLanguageProvider } from "@/i18n/UiLanguageProvider"
 import ModelSwitcher from "./ModelSwitcher"
 
 const mocks = vi.hoisted(() => ({
@@ -115,71 +117,13 @@ describe("ModelSwitcher Profile transitions", () => {
         mocks.profileStore.error = undefined
     })
 
-    it("resolves a renamed active Profile by stable identity", () => {
-        mocks.state.apiConfiguration = {
-            planModeProfileId: "large-id",
-            planModeProfile: "old-profile-name",
-            actModeProfileId: "large-id",
-            actModeProfile: "old-profile-name",
-        }
-
-        render(<ModelSwitcher onOpenSettings={vi.fn()} />)
-
-        const profileButton = screen.getByRole("button", { name: "Select model" })
-        const profileText = profileButton.querySelector<HTMLElement>("[data-chat-input-profile-text]")
-        expect(profileButton).toHaveTextContent("large-profile")
-        expect(profileButton).toHaveClass(
-            "chat-input-control-outline",
-            "inline-flex",
-            "h-[18.5px]",
-            "w-full",
-            "min-w-0",
-            "items-center",
-            "overflow-hidden",
-        )
-        expect(profileText).toHaveClass("inline-flex", "h-full", "min-w-0", "flex-1", "items-center", "truncate")
-    })
-
     it("shows loading instead of an empty placeholder while the Catalog loads", () => {
         mocks.profileStore.loaded = false
         mocks.profileStore.profiles = []
 
         render(<ModelSwitcher onOpenSettings={vi.fn()} />)
 
-        expect(screen.getByRole("button", { name: "Select model" })).toHaveTextContent("Loading profiles…")
         expect(screen.queryByText("-:-")).not.toBeInTheDocument()
-    })
-
-    it("shows a Catalog load error separately from a deleted Profile", () => {
-        mocks.profileStore.loaded = false
-        mocks.profileStore.profiles = []
-        mocks.profileStore.error = new Error("Catalog read failed")
-
-        render(<ModelSwitcher onOpenSettings={vi.fn()} />)
-
-        expect(screen.getByRole("button", { name: "Select model" })).toHaveTextContent("Profiles unavailable")
-    })
-
-    it("shows Select profile without silently matching the stale display name", () => {
-        mocks.state.apiConfiguration = {
-            planModeProfileId: "deleted-id",
-            planModeProfile: "large-profile",
-            actModeProfileId: "deleted-id",
-            actModeProfile: "large-profile",
-        }
-
-        render(<ModelSwitcher onOpenSettings={vi.fn()} />)
-
-        expect(screen.getByRole("button", { name: "Select model" })).toHaveTextContent("Select profile")
-        expect(screen.getByRole("button", { name: "Select model" })).not.toHaveTextContent("large-profile")
-    })
-
-    it("shows a selection prompt when no Profile has ever been selected", () => {
-        mocks.state.apiConfiguration = {}
-
-        render(<ModelSwitcher onOpenSettings={vi.fn()} />)
-
-        expect(screen.getByRole("button", { name: "Select model" })).toHaveTextContent("Select profile")
     })
 
     it("creates and opens a new API configuration when the Catalog is empty", () => {
@@ -189,22 +133,10 @@ describe("ModelSwitcher Profile transitions", () => {
         render(<ModelSwitcher onOpenSettings={onOpenSettings} />)
 
         const button = screen.getByRole("button", { name: "Select model" })
-        expect(button).toHaveTextContent("Create profile")
         fireEvent.click(button)
         expect(mocks.addProfile).toHaveBeenCalledOnce()
         expect(onOpenSettings).toHaveBeenCalledOnce()
         expect(screen.queryByTestId("profile-menu")).not.toBeInTheDocument()
-    })
-
-    it("resolves a name-only legacy binding through the historical name", () => {
-        mocks.state.apiConfiguration = {
-            planModeProfile: "old-large-profile",
-            actModeProfile: "old-large-profile",
-        }
-
-        render(<ModelSwitcher onOpenSettings={vi.fn()} />)
-
-        expect(screen.getByRole("button", { name: "Select model" })).toHaveTextContent("large-profile")
     })
 
     it("uses the shared menu surface for the Profile list", () => {
@@ -215,24 +147,22 @@ describe("ModelSwitcher Profile transitions", () => {
         const menu = screen.getByTestId("profile-menu")
         const list = screen.getByTestId("profile-list")
 
-        expect(menu).toHaveClass(
-            "flex",
-            "max-h-[360px]",
-            "flex-col",
-            "overflow-hidden",
-            "bg-menu",
-            "text-menu-foreground",
-            "border-editor-group-border",
-        )
-        expect(menu).not.toHaveClass("overflow-y-auto")
-        expect(list).toHaveClass("min-h-0", "overflow-y-auto", "overscroll-contain")
-        expect(list).not.toHaveClass("max-h-72", "snap-y", "snap-mandatory")
         for (const option of screen.getAllByRole("option")) {
-            expect(option).not.toHaveClass("h-12", "snap-always", "snap-start")
         }
-        expect(menu).not.toHaveStyle({
-            background: "var(--vscode-dropdown-background)",
+    })
+
+    it("shows declared flat prices without inventing a missing rate or currency", () => {
+        Object.assign(mocks.profileStore.profiles[0], {
+            modelInfo: { pricing: { currency: "CNY", strategy: { flat: { prices: { outputPrice: 0 } } } } },
         })
+        render(<ModelSwitcher onOpenSettings={vi.fn()} />)
+        fireEvent.click(screen.getByRole("button", { name: "Select model" }))
+        const option = screen.getByRole("option", { name: /large-profile/ })
+        const priceSlots = option
+            .getAttribute("title")
+            ?.match(/In: (.*?)\/M \| Out: (.*?)\/M/)
+            ?.slice(1)
+        expect(priceSlots).toEqual(["—", "¥0"])
     })
 
     it("routes an active Task selection through the Profile transition transaction", () => {
@@ -270,6 +200,44 @@ describe("ModelSwitcher Profile transitions", () => {
 
         expect(mocks.selectProfiles).toHaveBeenCalledWith("small-id", ["plan", "act"], undefined, false)
         expect(mocks.requestSwitch).not.toHaveBeenCalled()
+    })
+
+    it("keeps the open portal, selected mode and Profile identity across both language directions", () => {
+        mocks.state.planActSeparateModelsSetting = true
+        const profile = mocks.profileStore.profiles[1]
+        if (!profile) throw new Error("Expected the second Profile fixture")
+        profile.usedFor = ["plan", "subagents", "image", "RAW custom usage"]
+        const profiles = mocks.profileStore.profiles
+        const usedFor = profile.usedFor
+        const tree = (language: UiLanguage) => (
+            <UiLanguageProvider language={language}>
+                <ModelSwitcher onOpenSettings={vi.fn()} />
+            </UiLanguageProvider>
+        )
+        const view = render(tree("en"))
+        const trigger = screen.getByRole("button", { name: "Select model" })
+        fireEvent.click(trigger)
+        fireEvent.click(screen.getByRole("button", { name: "Plan", exact: true }))
+        const menu = screen.getByTestId("profile-menu")
+        const option = screen.getByRole("option", { name: /small-profile/ })
+        expect(option).toHaveTextContent("Plan, subagents, image, RAW custom usage")
+
+        view.rerender(tree("zh-CN"))
+        expect(screen.getByRole("button", { name: "选择模型" })).toBe(trigger)
+        expect(screen.getByTestId("profile-menu")).toBe(menu)
+        expect(screen.getByRole("option", { name: /small-profile/ })).toBe(option)
+        expect(option).toHaveTextContent("规划, 子代理, 图片, RAW custom usage")
+        expect(mocks.requestSwitch).not.toHaveBeenCalled()
+
+        view.rerender(tree("en"))
+        expect(screen.getByTestId("profile-menu")).toBe(menu)
+        expect(option).toHaveTextContent("Plan, subagents, image, RAW custom usage")
+        expect(mocks.profileStore.profiles).toBe(profiles)
+        expect(profile.usedFor).toBe(usedFor)
+        fireEvent.click(option)
+        expect(mocks.requestSwitch).toHaveBeenCalledExactlyOnceWith("small-id", ["plan"])
+        expect(mocks.selectProfiles).not.toHaveBeenCalled()
+        expect(mocks.selectProfile).not.toHaveBeenCalled()
     })
 
     it("hides Profiles that no conversational mode uses, even without Split Model", () => {

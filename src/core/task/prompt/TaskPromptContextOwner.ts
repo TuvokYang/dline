@@ -12,13 +12,14 @@ import type { IgnoreController } from "@core/ignore/IgnoreController"
 import { resolveAvailableImageModelId } from "@core/image-generation/runtime"
 import { projectTaskCapabilityView } from "@core/prompts/capabilities/TaskCapabilityView"
 import { getWorkspaceCapabilityCatalogRegistry } from "@core/prompts/capabilities/WorkspaceCapabilityCatalog"
+import { buildPreferredLanguageInstructions } from "@core/prompts/generators/preferred-language"
 import { formatResponse } from "@core/prompts/responses"
 import type { SystemPromptContext } from "@core/prompts/system-prompt"
 import { ensureRulesDirectoryExists } from "@core/storage/disk"
 import type { StateManager } from "@core/storage/StateManager"
 import { isMultiRootEnabled } from "@core/workspace/multi-root-utils"
 import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
-import { DEFAULT_LANGUAGE_SETTINGS, getLanguageKey, type LanguageDisplay } from "@shared/Languages"
+import type { ApiFormat } from "@shared/proto/dline/models/metadata"
 import { resolvePromptProfile } from "@shared/resolve-prompt-profile"
 import type { Mode } from "@shared/storage/types"
 import { serializeTaskCapabilityToggles, type TaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
@@ -26,6 +27,7 @@ import { DEFAULT_TERMINAL_COMMAND_TIMEOUT_SECONDS } from "@shared/terminal-setti
 import { DlineDefaultTool } from "@shared/tools"
 import { recordPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
+import { resolveLocalWebToolCapabilities } from "@/services/web-tools/LocalWebToolCapabilities"
 import { ClineClient } from "@/shared/cline"
 import { Logger } from "@/shared/services/Logger"
 import type { TaskPromptContextHost } from "../composition/TaskSessionPorts"
@@ -70,6 +72,7 @@ export class TaskPromptContextOwner {
         providerInfo: Readonly<ApiProviderInfo>,
         webToolsEnabled: boolean,
         webSearchRoutingPlan: WebSearchRoutingPlan,
+        selectedApiFormat?: ApiFormat,
     ): Promise<SystemPromptContext> {
         const startedAt = performance.now()
         let stageStartedAt = startedAt
@@ -85,11 +88,7 @@ export class TaskPromptContextOwner {
             false
         const supportsBrowserUse = modelSupportsBrowserUse && !disableBrowserTool
         const preferredLanguageRaw = this.options.stateManager.getGlobalSettingsKey("preferredLanguage")
-        const preferredLanguage = getLanguageKey(preferredLanguageRaw as LanguageDisplay)
-        const preferredLanguageInstructions =
-            preferredLanguage && preferredLanguage !== DEFAULT_LANGUAGE_SETTINGS
-                ? `# Preferred Language\n\nSpeak in ${preferredLanguage}.`
-                : ""
+        const preferredLanguageInstructions = buildPreferredLanguageInstructions(preferredLanguageRaw)
 
         stageStartedAt = performance.now()
         const { globalToggles, localToggles } = await this.options.host.refreshClineRules(this.options.identity.cwd)
@@ -250,12 +249,19 @@ export class TaskPromptContextOwner {
             subagentsEnabled: this.options.stateManager.getGlobalSettingsKey("subagentsEnabled"),
             clineWebToolsEnabled: webToolsEnabled,
             webSearchRoutingPlan,
+            localWebToolCapabilities: resolveLocalWebToolCapabilities(
+                this.options.stateManager.getGlobalSettingsKey("localWebSearchEngine"),
+            ),
             imageGenerationAvailable: boundImageModelId !== undefined,
             imageModelId: boundImageModelId,
             isMultiRootEnabled: multiRootEnabled,
             workspaceRoots,
             isSubagentRun: false,
             isCliEnvironment,
+            // The request already resolved its wire protocol. Carrying it here keeps
+            // tool schemas, hosted tool routing and the prompt cache on one fact
+            // instead of three inferences from the provider name.
+            ...(selectedApiFormat === undefined ? {} : { selectedApiFormat }),
             enableNativeToolCalls: this.options.runtime.shouldUseNativeToolCalls(providerInfo),
             mcpToolsOnDemand: this.options.stateManager.getGlobalSettingsKey("mcpToolsOnDemandEnabled") === true,
             enableParallelToolCalling: this.options.runtime.resolveParallelToolCallingEnabled(providerInfo),

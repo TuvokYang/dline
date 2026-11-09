@@ -10,7 +10,7 @@ import { checkAstForTask, selfTestAst } from "./lib/checks-ast.mjs"
 import { checkTaskAgainstWorkstream } from "./lib/checks-b2.mjs"
 import { checkTaskHorizontally } from "./lib/checks-b3.mjs"
 import { checkDependsOnReachability } from "./lib/checks-depends.mjs"
-import { checkInterLevel, checkLayerSequence, resolveNode } from "./lib/checks-interlevel.mjs"
+import { checkInterLevel, checkLayerSequence, checkRefinementCoverage, resolveNode } from "./lib/checks-interlevel.mjs"
 import { checkCycles, checkIntraLayer } from "./lib/checks-intra.mjs"
 import { checkTaskGraph } from "./lib/checks-task-graph.mjs"
 import { evaluateAllGates } from "./lib/gate.mjs"
@@ -281,9 +281,11 @@ function runWorkstreamScope({ spec, findings }) {
         findings.push(...checkIntraLayer(diagram, spec.labelVocabulary))
     }
 
-    for (const { coarse, fine, declared, allowedLocalNodes } of refinementPairs(checked, findings)) {
-        findings.push(...checkInterLevel(coarse, fine, { declared, allowedLocalNodes }))
+    const pairs = refinementPairs(checked, findings)
+    for (const { coarse, fine, declared, allowedLocalNodes } of pairs) {
+        findings.push(...checkInterLevel(coarse, fine, { declared, allowedLocalNodes, coverageCheckedAtSet: true }))
     }
+    findings.push(...checkRefinementCoverage(checked, pairs))
     return checked
 }
 
@@ -347,7 +349,7 @@ async function runTaskScope({ spec, tasks, gates, scopeTaskId, findings, repoRoo
                 line: null,
                 diagram: task.id,
                 rule: "no-task-diagram",
-                message: `${task.id} is complete but has no readable architecture diagram, so implementation claims cannot be anchored`,
+                message: `${task.id} has implementation evidence but no readable architecture diagram, so implementation claims cannot be anchored`,
                 task: task.id,
             })
         } else {
@@ -355,7 +357,8 @@ async function runTaskScope({ spec, tasks, gates, scopeTaskId, findings, repoRoo
                 ...(await checkAstForTask({ task: { ...task, diagrams: checked }, wsModules: spec.moduleTable, repoRoot })),
             )
         }
-    } else {
+    }
+    if (!gate.readyForConformance) {
         findings.push({
             severity: "pending",
             attribution: "diagram",
@@ -364,7 +367,7 @@ async function runTaskScope({ spec, tasks, gates, scopeTaskId, findings, repoRoo
             line: task.statusLine,
             diagram: task.id,
             rule: "ast-postponed",
-            message: `implementation checks postponed: ${gate.reasons.join("; ")}`,
+            message: `${gate.astAllowed ? "read-only implementation checks ran; conformance postponed" : "implementation checks postponed"}: ${gate.reasons.join("; ")}`,
             task: task.id,
         })
     }
@@ -403,7 +406,7 @@ function runCrossTaskScope({ spec, tasks, gates, planGraph, planPath, findings }
     // A task that cannot run its own gate cannot support a horizontal claim either.
     for (const task of tasks.values()) {
         const gate = gates.get(task.id)
-        if (gate.astAllowed) continue
+        if (gate.readyForConformance) continue
         findings.push({
             severity: "pending",
             attribution: "diagram",

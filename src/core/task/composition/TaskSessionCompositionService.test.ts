@@ -1,4 +1,7 @@
 import * as coreApi from "@core/api"
+import type { SettingsSnapshot } from "@core/storage/settings/settings-types"
+import { parseSettingsDocument } from "@core/storage/settings/settings-validation"
+import { SETTINGS_DEFAULTS } from "@shared/storage/state-keys"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { TaskActivityPersistence } from "../activity/TaskActivityPersistence"
 import { TaskActivityStore } from "../activity/TaskActivityStore"
@@ -23,6 +26,23 @@ function messageStores() {
     return {
         uiMessage: { close: vi.fn(async () => undefined), getAll: () => [] },
         apiConversation: { close: vi.fn(async () => undefined), getAll: () => [] },
+    }
+}
+
+function stateManagerFixture() {
+    const snapshot: SettingsSnapshot = {
+        schemaVersion: 1,
+        revision: 0,
+        values: parseSettingsDocument(SETTINGS_DEFAULTS).values,
+        contentHash: "fixture",
+        awayRevocations: { mode: 0, automatic: 0 },
+    }
+    return {
+        getTaskCacheRef: () => ({ mode: "act" }),
+        getApiConfigurationForTask: () => ({}),
+        subscribeAwaySettings: () => () => undefined,
+        readAwaySettingsSnapshot: () => snapshot,
+        revokeAwayMode: async () => snapshot,
     }
 }
 
@@ -133,10 +153,7 @@ describe("TaskSessionCompositionService", () => {
             ...openOptions(stores),
             cwd: ".",
             deferRestoredCommands: true,
-            stateManager: {
-                getTaskCacheRef: () => ({ mode: "act" }),
-                getApiConfigurationForTask: () => ({}),
-            } as never,
+            stateManager: stateManagerFixture() as never,
             prompt: { ports: { promptContext: {} } } as never,
             hostFactory: { create },
             publishState: async () => undefined,
@@ -185,8 +202,11 @@ describe("TaskSessionCompositionService orphaned activities", () => {
                 close: vi.fn(async () => undefined),
                 getAll: () => rows,
                 findIndexByTs: (ts: number) => rows.findIndex((row) => row.ts === ts),
-                updateMessage: vi.fn(async (index: number, updates: Record<string, unknown>) => {
+                updateMessageByTs: vi.fn(async (ts: number, updates: Record<string, unknown>) => {
+                    const index = rows.findIndex((row) => row.ts === ts)
+                    if (index < 0) return undefined
                     rows[index] = { ...rows[index], ...updates }
+                    return rows[index]
                 }),
             },
             apiConversation: { close: vi.fn(async () => undefined), getAll: () => [] },
@@ -209,10 +229,7 @@ describe("TaskSessionCompositionService orphaned activities", () => {
             ...openOptions(stores as unknown as ReturnType<typeof messageStores>),
             cwd: ".",
             deferRestoredCommands,
-            stateManager: {
-                getTaskCacheRef: () => ({ mode: "act" }),
-                getApiConfigurationForTask: () => ({}),
-            } as never,
+            stateManager: stateManagerFixture() as never,
             prompt: { ports: { promptContext: {} } } as never,
             hostFactory: {
                 create: vi.fn(async () => {
@@ -227,7 +244,7 @@ describe("TaskSessionCompositionService orphaned activities", () => {
         const written = upsert.mock.calls.flatMap(([activities]) => activities)
         if (deferRestoredCommands) {
             expect(written).toEqual([])
-            expect(stores.uiMessage.updateMessage).not.toHaveBeenCalled()
+            expect(stores.uiMessage.updateMessageByTs).not.toHaveBeenCalled()
         } else {
             expect(written).toEqual([expect.objectContaining({ activityId: "orphan", status: "interrupted" })])
         }
@@ -246,8 +263,11 @@ describe("TaskSessionCompositionService orphaned activities", () => {
                 close: vi.fn(async () => undefined),
                 getAll: () => rows,
                 findIndexByTs: (ts: number) => rows.findIndex((row) => row.ts === ts),
-                updateMessage: vi.fn(async (index: number, updates: Record<string, unknown>) => {
+                updateMessageByTs: vi.fn(async (ts: number, updates: Record<string, unknown>) => {
+                    const index = rows.findIndex((row) => row.ts === ts)
+                    if (index < 0) return undefined
                     rows[index] = { ...rows[index], ...updates }
+                    return rows[index]
                 }),
             },
             apiConversation: { close: vi.fn(async () => undefined), getAll: () => [] },
@@ -272,10 +292,7 @@ describe("TaskSessionCompositionService orphaned activities", () => {
             ...openOptions(stores as unknown as ReturnType<typeof messageStores>),
             cwd: ".",
             deferRestoredCommands: false,
-            stateManager: {
-                getTaskCacheRef: () => ({ mode: "act" }),
-                getApiConfigurationForTask: () => ({}),
-            } as never,
+            stateManager: stateManagerFixture() as never,
             prompt: { ports: { promptContext: {} } } as never,
             hostFactory: {
                 create: vi.fn(async () => {
@@ -289,7 +306,7 @@ describe("TaskSessionCompositionService orphaned activities", () => {
 
         expect(rows[0].commandStatus).toBe("interrupted")
         expect(stores.uiMessage.close).toHaveBeenCalledOnce()
-        expect(stores.uiMessage.updateMessage.mock.invocationCallOrder[0]).toBeLessThan(
+        expect(stores.uiMessage.updateMessageByTs.mock.invocationCallOrder[0]).toBeLessThan(
             stores.uiMessage.close.mock.invocationCallOrder[0],
         )
     })

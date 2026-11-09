@@ -12,6 +12,7 @@ import {
     ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS,
     adaptiveThinkingCapabilities,
 } from "./anthropic"
+import { flatPricing } from "./pricing"
 
 /**
  * Models offered to a Claude Code subscription.
@@ -38,12 +39,7 @@ export const claudeCodeModels: Record<string, ModelInfo> = {
             supportsReasoning: true,
             ...adaptiveThinkingCapabilities(ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS, true),
         },
-        pricing: {
-            inputPrice: 4.0,
-            outputPrice: 20.0,
-            cacheWritesPrice: 5.0,
-            cacheReadsPrice: 0.2,
-        },
+        pricing: flatPricing(4.0, 20.0, 5.0, 0.2),
     },
     "claude-fable-5-1": {
         id: "claude-fable-5-1",
@@ -60,13 +56,8 @@ export const claudeCodeModels: Record<string, ModelInfo> = {
             supportsReasoning: true,
             ...adaptiveThinkingCapabilities(ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS, true),
         },
-        pricing: {
-            inputPrice: 10.0,
-            outputPrice: 50.0,
-            cacheWritesPrice: 12.5,
-            // Fable 5.1 keeps Fable 5 pricing except for a cheaper cache read.
-            cacheReadsPrice: 0.25,
-        },
+        // Fable 5.1 keeps Fable 5 pricing except for a cheaper cache read.
+        pricing: flatPricing(10.0, 50.0, 12.5, 0.25),
     },
     "claude-sonnet-5": {
         id: "claude-sonnet-5",
@@ -81,12 +72,7 @@ export const claudeCodeModels: Record<string, ModelInfo> = {
             supportsReasoning: true,
             ...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS, true),
         },
-        pricing: {
-            inputPrice: 2.0,
-            outputPrice: 10.0,
-            cacheWritesPrice: 2.5,
-            cacheReadsPrice: 0.2,
-        },
+        pricing: flatPricing(2.0, 10.0, 2.5, 0.2),
     },
     "claude-fable-5": {
         id: "claude-fable-5",
@@ -102,12 +88,7 @@ export const claudeCodeModels: Record<string, ModelInfo> = {
             supportsReasoning: true,
             ...adaptiveThinkingCapabilities(ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS, true),
         },
-        pricing: {
-            inputPrice: 10.0,
-            outputPrice: 50.0,
-            cacheWritesPrice: 12.5,
-            cacheReadsPrice: 1.0,
-        },
+        pricing: flatPricing(10.0, 50.0, 12.5, 1.0),
     },
     "claude-opus-5": {
         id: "claude-opus-5",
@@ -122,12 +103,7 @@ export const claudeCodeModels: Record<string, ModelInfo> = {
             supportsReasoning: true,
             ...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS, true),
         },
-        pricing: {
-            inputPrice: 5.0,
-            outputPrice: 25.0,
-            cacheWritesPrice: 6.25,
-            cacheReadsPrice: 0.5,
-        },
+        pricing: flatPricing(5.0, 25.0, 6.25, 0.5),
     },
     "claude-opus-4-8": {
         id: "claude-opus-4-8",
@@ -142,12 +118,7 @@ export const claudeCodeModels: Record<string, ModelInfo> = {
             supportsReasoning: true,
             ...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
         },
-        pricing: {
-            inputPrice: 5.0,
-            outputPrice: 25.0,
-            cacheWritesPrice: 6.25,
-            cacheReadsPrice: 0.5,
-        },
+        pricing: flatPricing(5.0, 25.0, 6.25, 0.5),
     },
     "claude-opus-4-7": {
         id: "claude-opus-4-7",
@@ -162,12 +133,7 @@ export const claudeCodeModels: Record<string, ModelInfo> = {
             supportsReasoning: true,
             ...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
         },
-        pricing: {
-            inputPrice: 5.0,
-            outputPrice: 25.0,
-            cacheWritesPrice: 6.25,
-            cacheReadsPrice: 0.5,
-        },
+        pricing: flatPricing(5.0, 25.0, 6.25, 0.5),
     },
     "claude-opus-4-6": {
         id: "claude-opus-4-6",
@@ -182,12 +148,7 @@ export const claudeCodeModels: Record<string, ModelInfo> = {
             supportsReasoning: true,
             ...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS_WITHOUT_XHIGH),
         },
-        pricing: {
-            inputPrice: 5.0,
-            outputPrice: 25.0,
-            cacheWritesPrice: 6.25,
-            cacheReadsPrice: 0.5,
-        },
+        pricing: flatPricing(5.0, 25.0, 6.25, 0.5),
     },
     "claude-sonnet-4-6": {
         id: "claude-sonnet-4-6",
@@ -202,12 +163,7 @@ export const claudeCodeModels: Record<string, ModelInfo> = {
             supportsReasoning: true,
             ...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS_WITHOUT_XHIGH),
         },
-        pricing: {
-            inputPrice: 3.0,
-            outputPrice: 15.0,
-            cacheWritesPrice: 3.75,
-            cacheReadsPrice: 0.3,
-        },
+        pricing: flatPricing(3.0, 15.0, 3.75, 0.3),
     },
 }
 

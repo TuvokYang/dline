@@ -2,7 +2,6 @@ import path from "node:path"
 import { isTaskReadScopePath } from "@core/artifacts/runtime"
 import type { ToolUse } from "@core/assistant-message"
 import { getTaskTempDirectory } from "@core/storage/task-temp"
-import { formatCommandApprovalBody } from "@core/task/ask-row"
 import type { AutoApprovalSettings } from "@shared/AutoApprovalSettings"
 import { type BrowserAction, browserActions, type UiAsk, type UiSayTool } from "@shared/ExtensionMessage"
 import { DlineDefaultTool } from "@shared/tools"
@@ -35,6 +34,8 @@ export interface ToolAdmissionSnapshot {
     blanket: { yoloMode?: boolean; approveAll?: boolean }
     inheritsApproval?: boolean
     mcpToolAutoApprove?: boolean
+    awayActive?: boolean
+    awayCommandScope?: "workspace" | "external"
 }
 
 /** Inputs supplied by the coordinator for one registered handler. */
@@ -267,13 +268,18 @@ function resolveScopeContext(
     const roots = projectRoots(snapshot)
     const absolutePaths = declaredPaths(block, toolName).map((candidate) => resolveLexicalPath(candidate, snapshot))
     const requiresApproval = String(parameterValue(block, "requires_approval") ?? "").toLowerCase() === "true"
+    const awayCommand = toolName === DlineDefaultTool.BASH && snapshot.awayActive ? snapshot.awayCommandScope : undefined
     return {
-        isExternalPath: absolutePaths.some(
-            (absolutePath) =>
-                absolutePath !== undefined &&
-                !isTrustedTaskRead(toolName, absolutePath, snapshot) &&
-                !roots.some((root) => isPathInsideRoot(absolutePath, root)),
-        ),
+        isExternalPath:
+            awayCommand !== undefined
+                ? awayCommand === "external"
+                : absolutePaths.some(
+                      (absolutePath) =>
+                          absolutePath !== undefined &&
+                          !isTrustedTaskRead(toolName, absolutePath, snapshot) &&
+                          !roots.some((root) => isPathInsideRoot(absolutePath, root)),
+                  ),
+        ...(awayCommand === undefined ? {} : { awayCommand }),
         isSafeCommand: toolName === DlineDefaultTool.BASH ? !requiresApproval : false,
         isToolAutoApproveEnabled: resolveToolAutoApprove(toolName, snapshot),
     }
@@ -318,7 +324,7 @@ export class ToolBoundaryReviewError extends Error {
  * they will touch, so they never contribute canonical write-path lanes and
  * fall back to the conservative fan-out lane instead.
  */
-const DYNAMIC_WRITE_FANOUT_TOOLS = new Set<DlineDefaultTool>([DlineDefaultTool.REPLACE_TEXT, DlineDefaultTool.RENAME])
+const _DYNAMIC_WRITE_FANOUT_TOOLS = new Set<DlineDefaultTool>([DlineDefaultTool.REPLACE_TEXT, DlineDefaultTool.RENAME])
 
 async function confirmScopeContext(
     block: ToolUse,
@@ -414,7 +420,8 @@ function buildPresentation(
         const command = parameterValue(block, "command")
         const workingDirectory = resolveLexicalPath(declaredPath(block, toolName), snapshot) ?? snapshot.cwd
         const commandLine = typeof command === "string" ? command : description
-        return { ask, body: formatCommandApprovalBody(commandLine, workingDirectory), notify }
+        // The directory is its own fact; `body` is the command line only.
+        return { ask, body: commandLine, commandWorkingDirectory: workingDirectory, notify }
     }
     if (ask === "browser_action_launch") {
         const url = parameterValue(block, "url")

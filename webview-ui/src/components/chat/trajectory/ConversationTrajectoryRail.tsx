@@ -1,5 +1,7 @@
 import { type FocusEvent, useState } from "react"
+import { FLOATING_CONTROL_VISIBILITY } from "@/components/chat/floating-control-styles"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
 import type { TrajectoryAttempt, TrajectoryTurn } from "./trajectory-model"
 import {
@@ -17,10 +19,9 @@ const PREVIEW_CLOSE_DELAY_MS = 80
 interface ConversationTrajectoryRailProps {
     attempts: readonly TrajectoryAttempt[]
     /** The turn whose user message is at the top of the viewport. */
-    activeTurnTs?: number
-    /** Whether the list is being scrolled. A rail the pointer or focus is on stays shown either way. */
-    visible: boolean
-    onSelectTurn: (anchorTs: number) => void
+    activeTurnSeq?: number
+    className?: string
+    onSelectTurn: (turn: TrajectoryTurn) => void
 }
 
 /**
@@ -36,8 +37,14 @@ interface ConversationTrajectoryRailProps {
  * spacing does not fit, the bars scroll inside the rail, follow the current
  * turn, and fade out at each edge that hides more.
  */
-export function ConversationTrajectoryRail({ attempts, activeTurnTs, visible, onSelectTurn }: ConversationTrajectoryRailProps) {
-    // Keeps the rail up while the reader is using it, after the scroll that revealed it has stopped.
+export function ConversationTrajectoryRail({
+    attempts,
+    activeTurnSeq,
+    className,
+    onSelectTurn,
+}: ConversationTrajectoryRailProps) {
+    const { t } = useUiTranslation()
+    // Pause active-turn following while the reader is using the rail.
     const [engaged, setEngaged] = useState(false)
     // State rather than refs: the rail renders nothing until the first turn arrives, and the
     // layout hooks must attach to the elements once they exist.
@@ -45,7 +52,7 @@ export function ConversationTrajectoryRail({ attempts, activeTurnTs, visible, on
     const [scroller, setScroller] = useState<HTMLDivElement | null>(null)
     const barGap = useCompressedBarGap(rail, scroller, countBarGaps(attempts))
     const edges = useScrollEdges(scroller)
-    useFollowActiveTurn(scroller, activeTurnTs, engaged)
+    useFollowActiveTurn(scroller, activeTurnSeq, engaged)
 
     if (attempts.length === 0) return null
 
@@ -56,14 +63,14 @@ export function ConversationTrajectoryRail({ attempts, activeTurnTs, visible, on
     }
 
     return (
-        // biome-ignore lint/a11y/noNoninteractiveElementInteractions: pointer and focus tracking only keep the rail shown; the bars inside are the controls.
+        // biome-ignore lint/a11y/noNoninteractiveElementInteractions: pointer and focus tracking pause internal scrolling; the bars inside are the controls.
         <nav
-            aria-label="Conversation trajectory"
+            aria-label={t("chatInput.trajectory.title")}
             className={cn(
                 // One translucent backdrop behind the whole rail keeps the bars legible over the chat text underneath.
                 "absolute top-1/2 right-1 z-10 flex -translate-y-1/2 flex-col rounded-[4px] bg-background/35 p-1 backdrop-blur-sm transition-opacity duration-200",
-                // A hidden rail must not take clicks meant for the chat underneath it.
-                visible || engaged ? "opacity-100" : "pointer-events-none opacity-0",
+                FLOATING_CONTROL_VISIBILITY,
+                className,
             )}
             data-testid="trajectory-rail"
             onBlur={releaseFocus}
@@ -85,9 +92,9 @@ export function ConversationTrajectoryRail({ attempts, activeTurnTs, visible, on
                         style={{ rowGap: barGap }}>
                         {attempt.turns.map((turn, turnIndex) => (
                             <TrajectoryBar
-                                active={turn.anchorTs === activeTurnTs}
+                                active={turn.seq === activeTurnSeq}
                                 attemptNumber={attemptIndex + 1}
-                                key={turn.anchorTs}
+                                key={turn.seq}
                                 onSelect={onSelectTurn}
                                 turn={turn}
                                 turnNumber={turnIndex + 1}
@@ -110,20 +117,23 @@ interface TrajectoryBarProps {
     turnNumber: number
     attemptNumber: number
     active: boolean
-    onSelect: (anchorTs: number) => void
+    onSelect: (turn: TrajectoryTurn) => void
 }
 
 function TrajectoryBar({ turn, turnNumber, attemptNumber, active, onSelect }: TrajectoryBarProps) {
+    const { t } = useUiTranslation()
     return (
         <HoverCard closeDelay={PREVIEW_CLOSE_DELAY_MS} openDelay={PREVIEW_OPEN_DELAY_MS}>
             <HoverCardTrigger asChild>
                 <button
                     aria-current={active ? "location" : undefined}
-                    aria-label={`Jump to message: ${turn.prompt}`}
+                    aria-label={t("chatInput.trajectory.jump", { prompt: turn.prompt })}
                     className="group flex h-2 w-full cursor-pointer items-center justify-center border-0 bg-transparent p-0"
                     data-testid="trajectory-turn"
+                    data-turn-index={turn.anchorIndex}
+                    data-turn-seq={turn.seq}
                     data-turn-ts={turn.anchorTs}
-                    onClick={() => onSelect(turn.anchorTs)}
+                    onClick={() => onSelect(turn)}
                     type="button">
                     <span
                         className={cn(
@@ -154,20 +164,19 @@ interface TrajectoryTurnPreviewProps {
 
 /** The hover card of one turn: the user's message, then how many rounds it ran and which tools it called how often. */
 function TrajectoryTurnPreview({ turn, turnNumber, attemptNumber }: TrajectoryTurnPreviewProps) {
+    const { t } = useUiTranslation()
     return (
         <div className="flex flex-col gap-2 p-2.5 text-xs" data-testid="trajectory-turn-preview">
             <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-description">
-                <span>Attempt {attemptNumber}</span>
+                <span>{t("chatInput.trajectory.attempt", { number: attemptNumber })}</span>
                 <span aria-hidden="true">·</span>
-                <span>Turn {turnNumber}</span>
+                <span>{t("chatInput.trajectory.turn", { number: turnNumber })}</span>
             </div>
             <p className="m-0 line-clamp-3 whitespace-pre-wrap break-words text-foreground">{turn.prompt}</p>
             {turn.rounds > 0 && (
                 // The summary is secondary to the message, so it sits back behind it.
                 <div className="flex flex-col gap-1 border-t border-foreground/10 pt-2 opacity-60">
-                    <span className="text-description">
-                        {turn.rounds} {turn.rounds === 1 ? "round" : "rounds"}
-                    </span>
+                    <span className="text-description">{t("chatInput.trajectory.rounds", { count: turn.rounds })}</span>
                     {turn.toolUsage.length > 0 && (
                         <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
                             {turn.toolUsage.map(({ tool, count }) => (

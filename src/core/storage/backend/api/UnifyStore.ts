@@ -144,6 +144,8 @@ export interface BufferedUnifyStore<TItem extends { ts: number }> {
     stageInsertAt(index: number, item: TItem): Promise<void>
     stageUpdateAt(index: number, item: TItem): Promise<void>
     stagePatchAt(index: number, updates: Partial<TItem>): Promise<TItem>
+    /** Resolve identity and patch under the insertion lock; undefined when the row was removed. */
+    stagePatchByTimestamp(timestamp: number, updates: Partial<TItem>): Promise<TItem | undefined>
     stageUpsertByTimestamp(item: TItem): Promise<void>
     /**
      * Merge `item` into the row carrying its timestamp, or insert it in timestamp

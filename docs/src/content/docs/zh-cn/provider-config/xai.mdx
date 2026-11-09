@@ -1,0 +1,72 @@
+---
+title: xAI
+description: 获取 xAI API Key，并在 Dline 中配置 Grok 模型。
+---
+
+import { Steps } from "@astrojs/starlight/components"
+
+xAI 通过自有 API 平台提供 Grok 模型系列。在 Dline 的 **Provider** 中显示为 **xAI**。
+
+**官网：** [x.ai](https://x.ai/) | **API 控制台：** [console.x.ai](https://console.x.ai/)
+
+## 获取 API Key
+
+<Steps>
+
+1. 打开 [console.x.ai](https://console.x.ai/) 并注册或登录。
+
+2. 为将要支付请求费用的 team 添加账单信息或额度。
+
+3. 打开 API Key 页面，创建一个新的 Key。
+
+4. 立即复制并妥善保存。
+
+</Steps>
+
+## 配置 Dline
+
+通用流程见 [模型配置](/zh-cn/getting-started/authorizing-with-dline/)。
+
+<Steps>
+
+1. 点击 Dline 面板标题栏的 **Settings** 按钮。
+
+2. 把 **Provider** 设为 **xAI**。
+
+3. 把 Key 粘贴到 **xAI API Key** 字段。
+
+4. 在 **Model** 下选择模型。
+
+</Steps>
+
+Dline 把请求发往 `https://api.x.ai/v1`。
+
+## 模型
+
+| 模型 | 上下文窗口 | 说明 |
+| --- | --- | --- |
+| `grok-4` | 262,144 | 默认模型。先推理再作答，推理内容不显示。 |
+| `grok-4-1-fast-reasoning` | 2,000,000 | 先推理再作答，推理内容不显示。 |
+| `grok-4-1-fast-non-reasoning` | 2,000,000 | 直接作答。 |
+| `grok-4-fast-reasoning` | 2,000,000 | 先推理再作答，推理内容不显示。 |
+| `grok-code-fast-1` | 256,000 | 面向编码任务。 |
+
+卡片里还列出了较早的 Grok 3、Grok 2 系列，以及 `grok-beta` 与 `grok-vision-beta`。只有当任务需要新版系列已不再提供的模型时才选择它们。
+
+## 推理
+
+xAI 卡片没有思考控件，因为推理等级由模型 ID 决定：名字带 `reasoning` 的模型总是推理，带 `non-reasoning` 的模型从不推理。在 **Model** 下按需要选择变体即可。
+
+
+## 提示缓存
+
+支持提示缓存的模型会复用已缓存的前缀。Dline 在用量面板中单独统计缓存部分的输入，因此重复的系统提示词与工作区上下文按缓存价计费，而不是按完整输入价计费。
+
+## 常见问题
+
+| 现象 | 处理方式 |
+| --- | --- |
+| 每个请求都返回 `401` | Key 对 `https://api.x.ai/v1` 无效。在控制台新建 Key 后重新粘贴。 |
+| 返回 `403`，提到模型或 team | 该 team 未获得这个模型的权限，或没有额度。到控制台检查模型权限与账单状态。 |
+| 选择某个模型后返回 `404` | 该账号下不存在这个模型 ID。请从列表中选择，不要手动输入 ID。 |
+| 返回 `429` | 账号触发速率限制。稍后重试，或减少任务发送的上下文量。 |

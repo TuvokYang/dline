@@ -1,7 +1,10 @@
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
-import { memo, useCallback, useEffect, useRef, useState } from "react"
+import { memo, useId } from "react"
 import { Button } from "@/components/ui/button"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
+import { ThinkingContent } from "./ThinkingContent"
+import { useThinkingScroll } from "./useThinkingScroll"
 
 interface ThinkingRowProps {
     showTitle: boolean
@@ -21,30 +24,16 @@ export const ThinkingRow = memo(
         isVisible,
         isExpanded,
         onToggle,
-        title = "Thinking",
+        title,
         isStreaming = false,
         showChevron = true,
     }: ThinkingRowProps) => {
-        const scrollRef = useRef<HTMLDivElement>(null)
-        const [canScrollUp, setCanScrollUp] = useState(false)
-        const [canScrollDown, setCanScrollDown] = useState(false)
-
-        const checkScrollable = useCallback(() => {
-            if (scrollRef.current) {
-                const { scrollTop, scrollHeight, clientHeight } = scrollRef.current
-                setCanScrollUp(scrollTop > 1)
-                setCanScrollDown(scrollTop + clientHeight < scrollHeight - 1)
-            }
-        }, [])
-
-        // Only auto-scroll to bottom during streaming (showCursor=true)
-        // For expanded collapsed thinking, start at top
-        useEffect(() => {
-            if (scrollRef.current && isVisible) {
-                scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-            }
-            checkScrollable()
-        }, [isVisible, checkScrollable])
+        const { t } = useUiTranslation()
+        const contentId = useId()
+        const { scrollRef, contentRef, onScroll, canScrollUp, canScrollDown } = useThinkingScroll(
+            isVisible && isExpanded,
+            isStreaming,
+        )
 
         if (!isVisible) {
             return null
@@ -59,6 +48,8 @@ export const ThinkingRow = memo(
             <div className="ml-1 pl-0 mb-0 -mt-[2px]">
                 {showTitle ? (
                     <Button
+                        aria-controls={isExpanded ? contentId : undefined}
+                        aria-expanded={showChevron ? isExpanded : undefined}
                         className={cn(
                             "inline-flex justify-baseline gap-0.5 text-left select-none px-0 py-0 my-0 h-auto min-h-0 w-full text-description overflow-visible",
                             {
@@ -75,7 +66,7 @@ export const ThinkingRow = memo(
                                     isStreaming,
                                 "select-none": isStreaming,
                             })}>
-                            {title}
+                            {title ?? t("chatRows.thinking.title")}
                         </span>
                         {showChevron &&
                             (isExpanded ? (
@@ -87,36 +78,26 @@ export const ThinkingRow = memo(
                 ) : null}
 
                 {isExpanded && (
-                    <Button
-                        className={cn(
-                            "flex gap-0 overflow-hidden w-full min-w-0 max-h-0 opacity-0 items-baseline justify-baseline text-left !p-0 !pl-0",
-                            "disabled:cursor-text disabled:opacity-100",
-                            {
-                                "max-h-[200px] opacity-100": isVisible,
-                                "transition-[max-height] duration-[250ms] ease-[cubic-bezier(0.4,0,0.2,1)] [transition:max-height_250ms_cubic-bezier(0.4,0,0.2,1),opacity_150ms_ease-out]":
-                                    isVisible,
-                            },
-                        )}
-                        disabled={!showTitle}
-                        onClick={onToggle}
-                        variant="text">
-                        <div className="relative flex-1">
-                            <div
-                                className={cn(
-                                    "flex max-h-[150px] overflow-y-auto text-description leading-normal truncated whitespace-pre-wrap break-words pl-0 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden [direction:ltr]",
-                                )}
-                                onScroll={checkScrollable}
-                                ref={scrollRef}>
-                                <span className="pb-2 block text-sm">{reasoningContent}</span>
+                    <div className="relative w-full min-w-0 text-left">
+                        <div
+                            aria-label={t("chatRows.thinking.content")}
+                            className="max-h-[150px] overflow-y-auto text-description leading-normal break-words pl-0 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden [direction:ltr]"
+                            id={contentId}
+                            onScroll={onScroll}
+                            ref={scrollRef}
+                            role="region"
+                            tabIndex={0}>
+                            <div className="pb-2" ref={contentRef}>
+                                <ThinkingContent content={reasoningContent} />
                             </div>
-                            {canScrollUp && (
-                                <div className="absolute top-0 left-0 right-0 h-6 pointer-events-none bg-gradient-to-b from-background to-transparent" />
-                            )}
-                            {canScrollDown && (
-                                <div className="absolute bottom-0 left-0 right-0 h-6 pointer-events-none bg-gradient-to-t from-background to-transparent" />
-                            )}
                         </div>
-                    </Button>
+                        {canScrollUp && (
+                            <div className="absolute top-0 left-0 right-0 h-6 pointer-events-none bg-gradient-to-b from-background to-transparent" />
+                        )}
+                        {canScrollDown && (
+                            <div className="absolute bottom-0 left-0 right-0 h-6 pointer-events-none bg-gradient-to-t from-background to-transparent" />
+                        )}
+                    </div>
                 )}
             </div>
         )

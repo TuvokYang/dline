@@ -1,6 +1,7 @@
 import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
 import { EmptyRequest } from "@shared/proto/dline/common"
 import { Logger } from "@shared/services/Logger"
+import type { SemanticCommandAvailability } from "@/core/input-semantics/InputSemanticCatalogService"
 import {
     type CapabilityInventory,
     type CapabilityInventoryPort,
@@ -8,6 +9,7 @@ import {
 } from "@/core/input-semantics/InputSemanticCatalogService"
 import { refreshRules } from "../file/refreshRules"
 import type { Controller } from "../index"
+import { awaySettingsProjection } from "../state/awaySettingsProjection"
 import { getAvailableSlashCommands } from "./getAvailableSlashCommands"
 
 /** Sections produced by slash-command discovery that carry a capability identity. */
@@ -85,10 +87,24 @@ const services = new WeakMap<Controller, InputSemanticCatalogService>()
 export function inputSemanticCatalogService(controller: Controller): InputSemanticCatalogService {
     let service = services.get(controller)
     if (!service) {
-        service = new InputSemanticCatalogService(new ControllerCapabilityInventory(controller))
+        service = new InputSemanticCatalogService(
+            new ControllerCapabilityInventory(controller),
+            awayCommandAvailability(controller),
+        )
         services.set(controller, service)
     }
     return service
+}
+
+/**
+ * Whether this controller may currently offer the `/away` command.
+ *
+ * The setting projection already folds the rollout, storage safety and the
+ * user's own choice into `awayModeEnabled`, so the catalog does not re-derive
+ * the permission and the menu cannot disagree with what entering Away would do.
+ */
+function awayCommandAvailability(controller: Controller): SemanticCommandAvailability {
+    return { awayMode: awaySettingsProjection(controller.stateManager).awayModeEnabled }
 }
 
 export interface CatalogRefresh {
@@ -106,6 +122,9 @@ export interface CatalogRefresh {
 export async function refreshInputSemanticCatalog(controller: Controller): Promise<CatalogRefresh> {
     const service = inputSemanticCatalogService(controller)
     const previousRevision = service.current().revision
+    // Availability is re-read on every refresh, so enabling or disabling Away
+    // moves the revision exactly like a capability that appeared or was withdrawn.
+    const withAvailability = await service.setCommandAvailability(awayCommandAvailability(controller))
     const catalog = await service.refresh()
-    return { catalog, changed: catalog.revision !== previousRevision }
+    return { catalog, changed: catalog.revision !== previousRevision || withAvailability.revision !== previousRevision }
 }

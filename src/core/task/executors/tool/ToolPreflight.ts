@@ -46,6 +46,14 @@ export interface ToolApprovalPresentation {
     ask: UiAsk
     /** Serialized payload for that interaction. */
     body: string
+    /**
+     * The directory a command runs in, kept out of `body`.
+     *
+     * A command is presented as its own line plus the directory it runs in; the
+     * two used to be concatenated into `body`, which forced every reader to split
+     * them again and misread a command that contained the separator.
+     */
+    commandWorkingDirectory?: string
     /** Whether a desktop notification should accompany the request. */
     notify: boolean
 }

@@ -1,8 +1,8 @@
 {
     "name": "dline",
     "displayName": "Dline",
-    "description": "Independent coding agent for VS Code with separate task panels, per-task model Profiles, persistent state, MCP, subagents, and configurable tool approvals.",
-    "version": "0.12.2",
+    "description": "Comprehensive multi-task automated coding agent with per-task model Profiles, persistent state, scoped capabilities, and global approval settings with per-action granularity.",
+    "version": "0.14.0",
     "icon": "assets/icons/icon.png",
     "engines": {
         "vscode": "^1.134.0"
@@ -421,6 +421,7 @@
         "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
         "package": "npm run check-types && npm run build:webview && npm run lint && node esbuild.mjs --production",
         "vsix": "node scripts/package-vsix.mjs",
+        "vsix:vscode-marketplace": "node scripts/package-vsix.mjs --registry vscode-marketplace --publisher tuvokyangdline",
         "vsix:dev": "node scripts/package-dev.mjs",
         "protos": "node scripts/build-proto.mjs",
         "protos-python": "node scripts/build-python-proto.mjs",

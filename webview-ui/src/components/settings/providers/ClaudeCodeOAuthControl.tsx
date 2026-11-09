@@ -1,6 +1,8 @@
 import { ClaudeCodeAuthStatus } from "@shared/proto/dline/account"
 import { CheckCircle2Icon, CircleDashedIcon, LoaderIcon, TriangleAlertIcon } from "lucide-react"
 import type { ReactNode } from "react"
+import type { UiTranslator } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ProfileActionRow, ProfileNotice, ProfileSection } from "../profile-ui"
 import { ClaudeCodeOAuthDialog } from "./ClaudeCodeOAuthDialog"
 import { ProviderUsage } from "./ProviderUsage"
@@ -32,28 +34,28 @@ interface StatusPresentation {
     guidance?: string
 }
 
-function statusPresentation(status: ClaudeCodeAuthStatus): StatusPresentation {
+function statusPresentation(status: ClaudeCodeAuthStatus, t: UiTranslator): StatusPresentation {
     switch (status) {
         case ClaudeCodeAuthStatus.CLAUDE_CODE_AUTH_STATUS_AUTHENTICATED:
-            return { label: "Signed in", severity: "normal" }
+            return { label: t("settings.ui.auth.signedIn"), severity: "normal" }
         case ClaudeCodeAuthStatus.CLAUDE_CODE_AUTH_STATUS_REFRESHABLE_EXPIRED:
-            return { label: "Signed in · refreshing", severity: "normal" }
+            return { label: t("settings.ui.auth.refreshing"), severity: "normal" }
         case ClaudeCodeAuthStatus.CLAUDE_CODE_AUTH_STATUS_UNUSABLE_EXPIRED:
             return {
-                label: "Sign-in expired",
+                label: t("settings.ui.auth.expired"),
                 severity: "attention",
-                guidance: "The credential can no longer refresh. Sign in again.",
+                guidance: t("settings.ui.auth.expiredHelp"),
             }
         case ClaudeCodeAuthStatus.CLAUDE_CODE_AUTH_STATUS_MALFORMED:
             return {
-                label: "Invalid credential",
+                label: t("settings.ui.auth.invalid"),
                 severity: "attention",
-                guidance: "The stored credential cannot be read. Sign in again.",
+                guidance: t("settings.ui.auth.invalidHelp"),
             }
         case ClaudeCodeAuthStatus.CLAUDE_CODE_AUTH_STATUS_MISSING:
-            return { label: "Not signed in", severity: "normal" }
+            return { label: t("settings.ui.auth.notSignedIn"), severity: "normal" }
         default:
-            return { label: "Checking", severity: "normal" }
+            return { label: t("settings.ui.auth.checking"), severity: "normal" }
     }
 }
 
@@ -79,12 +81,13 @@ function statusIcon(status: ClaudeCodeAuthStatus, severity: StatusSeverity, chec
  * the OAuth session and mirrors the Codex sign-in presentation.
  */
 export function ClaudeCodeOAuthControl({ profileId }: { profileId: string }) {
+    const { t } = useUiTranslation()
     const oauth = useClaudeCodeOAuthFlow(profileId)
     const authenticated = isClaudeCodeAuthenticated(oauth.status)
-    const presentation = statusPresentation(oauth.status)
+    const presentation = statusPresentation(oauth.status, t)
     const inProgress = oauth.phase === "starting" || oauth.phase === "active" || oauth.phase === "completing"
     const checking = !inProgress && oauth.status === ClaudeCodeAuthStatus.CLAUDE_CODE_AUTH_STATUS_UNSPECIFIED
-    const label = inProgress ? "Signing in" : presentation.label
+    const label = inProgress ? t("settings.ui.auth.signingIn") : presentation.label
     const actionsDisabled = oauth.busy || inProgress
     // While the dialog is open it shows the error itself, so surfacing it here too would duplicate it.
     const blockingError = oauth.dialogOpen ? undefined : oauth.error
@@ -93,14 +96,16 @@ export function ClaudeCodeOAuthControl({ profileId }: { profileId: string }) {
     const organization = oauth.account?.organizationName?.trim()
 
     return (
-        <ProfileSection aria-label="Claude subscription">
+        <ProfileSection aria-label={t("settings.ui.auth.claudeSubscription")}>
             <div className="min-w-0 rounded-xs border border-editor-widget-border/60 bg-toolbar-hover/20 p-2">
                 <ProfileActionRow className="justify-between gap-2">
                     <span className="flex min-w-0 items-center gap-1.5 text-xs text-description">
                         <span aria-hidden="true" className="flex shrink-0 items-center">
                             {statusIcon(oauth.status, presentation.severity, checking || inProgress)}
                         </span>
-                        <span className="truncate">Claude: {label}</span>
+                        <span className="truncate">
+                            {t("settings.ui.auth.providerStatus", { provider: "Claude", status: label })}
+                        </span>
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
                         <button
@@ -108,7 +113,7 @@ export function ClaudeCodeOAuthControl({ profileId }: { profileId: string }) {
                             disabled={actionsDisabled}
                             onClick={() => void oauth.signIn()}
                             type="button">
-                            {authenticated ? "Sign in again" : "Sign in"}
+                            {authenticated ? t("settings.ui.auth.signInAgain") : t("settings.ui.auth.signIn")}
                         </button>
                         {authenticated ? (
                             <button
@@ -116,19 +121,19 @@ export function ClaudeCodeOAuthControl({ profileId }: { profileId: string }) {
                                 disabled={actionsDisabled}
                                 onClick={() => void oauth.signOut()}
                                 type="button">
-                                Sign out
+                                {t("settings.ui.auth.signOut")}
                             </button>
                         ) : null}
                     </span>
                 </ProfileActionRow>
                 {authenticated ? (
                     <div
-                        aria-label="Signed-in Claude account"
+                        aria-label={t("settings.ui.auth.signedInAccount", { provider: "Claude" })}
                         className="mt-2 min-w-0 border-t border-editor-widget-border/50 pt-2 text-xs text-description"
                         role="group">
                         <div className="flex min-w-0 items-center gap-2">
                             <span className="truncate font-medium text-foreground">
-                                {accountName ?? accountEmail ?? "Claude account"}
+                                {accountName ?? accountEmail ?? t("settings.ui.auth.account", { provider: "Claude" })}
                             </span>
                             {organization ? (
                                 <span className="shrink-0 rounded-full border border-editor-widget-border bg-toolbar-hover/50 px-1.5 py-0.5 text-[10px] font-medium text-foreground">

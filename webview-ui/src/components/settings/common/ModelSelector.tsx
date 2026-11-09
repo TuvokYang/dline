@@ -1,6 +1,8 @@
-import { VSCodeDropdown, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
+import { VSCodeOption } from "@vscode/webview-ui-toolkit/react"
 import { type FormEventHandler, useId } from "react"
 import styled from "styled-components"
+import { LocalizedDropdown, LocalizedOption } from "@/components/common/LocalizedDropdown"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ProfileField } from "../profile-ui"
 
 /**
@@ -13,6 +15,20 @@ export const DropdownContainer = styled.div.attrs<{ zIndex?: number }>(({ zIndex
     },
 }))`
 	position: relative;
+
+	/**
+	 * The toolkit's \`vscode-dropdown\` renders inside a shadow root whose
+	 * stylesheet resolves \`--vscode-dropdown-*\` at the host element. A value
+	 * written on \`document.documentElement\` does not cross that boundary, so the
+	 * host would keep falling back to the toolkit's own dark defaults in every
+	 * theme. Declaring the three properties on the host itself is what makes the
+	 * control follow the surrounding theme.
+	 */
+	& vscode-dropdown {
+		--vscode-dropdown-background: var(--vscode-input-background, #3c3c3c);
+		--vscode-dropdown-foreground: var(--vscode-input-foreground, #cccccc);
+		--vscode-dropdown-border: var(--vscode-input-border, #3c3c3c);
+	}
 
 	// Force dropdowns to open downward
 	& vscode-dropdown::part(listbox) {
@@ -47,24 +63,33 @@ OG Saoud Note:
 /**
  * A reusable component for selecting models from a dropdown
  */
-export const ModelSelector = ({ models, selectedModelId, onChange, zIndex, label = "Model" }: ModelSelectorProps) => {
+export const ModelSelector = ({ models, selectedModelId, onChange, zIndex, label: customLabel }: ModelSelectorProps) => {
+    const { t } = useUiTranslation()
+    const label = customLabel ?? t("settings.ui.model")
     const inputId = useId()
     return (
         <ProfileField htmlFor={inputId} label={label}>
             <DropdownContainer className="dropdown-container min-w-0" zIndex={zIndex}>
-                <VSCodeDropdown
+                <LocalizedDropdown
                     aria-label={label}
                     className="min-h-7 w-full"
                     id={inputId}
                     onChange={onChange}
+                    selectedLabel={
+                        selectedModelId === ""
+                            ? t("settings.ui.selectModel")
+                            : selectedModelId !== undefined && Object.keys(models).includes(selectedModelId)
+                              ? selectedModelId
+                              : undefined
+                    }
                     value={selectedModelId}>
-                    <VSCodeOption value="">Select a model...</VSCodeOption>
+                    <LocalizedOption label={t("settings.ui.selectModel")} value="" />
                     {Object.keys(models).map((modelId) => (
                         <VSCodeOption className="max-w-full break-words whitespace-normal" key={modelId} value={modelId}>
                             {modelId}
                         </VSCodeOption>
                     ))}
-                </VSCodeDropdown>
+                </LocalizedDropdown>
             </DropdownContainer>
         </ProfileField>
     )

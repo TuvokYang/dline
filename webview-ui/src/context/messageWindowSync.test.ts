@@ -59,6 +59,46 @@ describe("row copy precedence", () => {
     })
 })
 
+describe("source-index projection metadata", () => {
+    it.each([false, true])("refreshes moved source indices without regressing settled bodies (replace=%s)", (replaceWindow) => {
+        const held = [100, 200, 300, 400, 500].map((ts, messageIndex) => ({
+            ...message(ts),
+            messageIndex,
+            text: `live-${ts}`,
+        }))
+        const fetched = [100, 300, 400, 500].map((ts, messageIndex) => ({
+            ...message(ts),
+            messageIndex,
+            text: `snapshot-${ts}`,
+        }))
+        const result = reconcileMessageWindow(
+            { messages: held, startIndex: 0 },
+            { messages: fetched, startIndex: 0, total: 4 },
+            { replaceWindow },
+        )
+        expect(result.messages.map(({ ts, messageIndex, text }) => [ts, messageIndex, text])).toEqual([
+            [100, 0, "live-100"],
+            [300, 1, "live-300"],
+            [400, 2, "live-400"],
+            [500, 3, "live-500"],
+        ])
+        expect(held.map(({ messageIndex }) => messageIndex)).toEqual([0, 1, 2, 3, 4])
+        expect(fetched[1].text).toBe("snapshot-300")
+    })
+
+    it.each([0, undefined])("preserves source index %s from the accepted page without inventing a default", (messageIndex) => {
+        const held = { ...message(100), text: "live", messageIndex: 7 }
+        const result = reconcileMessageWindow(
+            { messages: [held], startIndex: 0 },
+            { messages: [{ ...message(100), messageIndex }], startIndex: 0, total: 1 },
+        )
+        expect(result.messages[0].text).toBe("live")
+        expect(result.messages[0].messageIndex).toBe(messageIndex)
+        if (messageIndex === undefined) expect(result.messages[0]).not.toHaveProperty("messageIndex")
+        expect(held.messageIndex).toBe(7)
+    })
+})
+
 describe("rebaseMessageWindow", () => {
     it("returns the reconciled rows when nothing arrived since the base", () => {
         const base = [message(1)]

@@ -15,6 +15,7 @@ import { Logger } from "@/shared/services/Logger"
 import { getCwd, getDesktopDir } from "@/utils/path"
 import { ApiConversation } from "../storage/ApiConversation"
 import { ensureTaskDirectoryExists } from "../storage/disk"
+import { bucketMessageCount } from "../storage/persistence-attribution"
 import { UIMessage } from "../storage/UIMessage"
 import type { ConversationHistoryReader } from "./conversation/ConversationHistoryReader"
 import { readHistoryContextWindowIndicator } from "./HistoryContextWindow"
@@ -169,6 +170,26 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
         const merged = new Map(durable.map((message) => [message.ts, message]))
         for (const [ts, message] of this.transientClineMessages) merged.set(ts, message)
         return [...merged.values()].sort((left, right) => left.ts - right.ts)
+    }
+
+    /** Read-only metadata over the actual presentation sequence, or a selected outgoing page of it. */
+    async readClineMessageProjection(messages: readonly UiMessage[] = this.clineMessages): Promise<UiMessage[]> {
+        if (this.uiMessage) return await this.uiMessage.projectMessageSourceIndexes(messages)
+        return messages.map((message) => {
+            const projected = { ...message }
+            delete projected.messageIndex
+            return projected
+        })
+    }
+
+    /** Resolve an index request from the committed owner before looking in the presentation sequence. */
+    async readClineMessageAtSourceIndex(sourceIndex: number): Promise<UiMessage | undefined> {
+        return (await this.uiMessage?.readCommittedMessageAt(sourceIndex))?.message
+    }
+
+    /** A single outgoing partial row uses the same committed mapping as a message page. */
+    async projectMessageSourceIndex(ts: number): Promise<number | undefined> {
+        return await this.uiMessage?.sourceIndexOfTimestamp(ts)
     }
 
     /**
@@ -366,6 +387,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
         const span = startPerfPhase(PerfDomain.TurnPrepare, "history_update", {
             taskId: this.taskId,
             recomputed: this.historyMetricsCache?.revision !== this.messageRevision,
+            messagesBucket: bucketMessageCount(this.clineMessages.length),
         })
         try {
             return this.projectHistory()
@@ -549,6 +571,58 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
             index,
             message: msg,
         })
+
+        await this.updateTaskHistoryOnly()
+    }
+
+    /**
+     * Publish a complete row at the position its reserved timestamp requires.
+     *
+     * A retained input reserves its presentation id at journal intake, while
+     * later round work (checkpoints, compaction cards) may publish rows with
+     * later ids. Appending the reserved row after them would make the reopened
+     * history disagree with the current chat's presentation order, so the row is
+     * inserted at its id position and the tail is persisted as one rewrite. This
+     * source repair is independent of trajectory aggregation, which uses committed
+     * ordinals without timestamp ordering. The row is published after the rewrite
+     * so the chat never shows a position the store does not hold.
+     */
+    async addToClineMessagesOrdered(message: Partial<UiMessage>): Promise<void> {
+        if (message.ts === undefined) {
+            throw new Error("addToClineMessagesOrdered: ts is required")
+        }
+        const msg = message as UiMessage
+        if (msg.conversationHistoryIndex === undefined) this.placeRow(msg, await this.currentConversationSize())
+        else this.placeRow(msg, 0)
+
+        const all = this.clineMessages
+        const existingIndex = all.findIndex((candidate) => candidate.ts === msg.ts)
+        if (existingIndex >= 0) this.keepPlace(msg, all[existingIndex])
+        const previousMessage = existingIndex >= 0 ? { ...all[existingIndex] } : undefined
+        const admit = (current: UiMessage) => mayReplaceRow(current, msg)
+
+        const stored = await this.uiMessage?.upsertMessage(msg, admit)
+        if (stored?.applied === false) return
+        await this.uiMessage?.flush()
+
+        const freshAll = this.clineMessages
+        const index = freshAll.findIndex((candidate) => candidate.ts === msg.ts)
+        if (previousMessage) {
+            this.emitClineMessagesChanged({
+                type: "update",
+                messages: freshAll,
+                index: index >= 0 ? index : existingIndex,
+                previousMessage,
+                message: freshAll[index] ?? stored?.message ?? msg,
+            })
+        } else {
+            this.emitClineMessagesChanged({
+                type: "add",
+                messages: freshAll,
+                index: index >= 0 ? index : freshAll.length - 1,
+                message: freshAll[index] ?? stored?.message ?? msg,
+            })
+        }
 
         await this.updateTaskHistoryOnly()
     }
@@ -881,16 +955,18 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
             this.upsertTransientClineMessage({ ...previousMessage, ...updates })
             return
         }
-        const storedIndex = this.uiMessage?.findIndexByTs(previousMessage.ts) ?? -1
-        if (storedIndex >= 0) await this.uiMessage?.updateMessage(storedIndex, updates)
+        const updated = await this.uiMessage?.updateMessageByTs(previousMessage.ts, updates)
+        if (!updated) return
 
         const freshAll = this.clineMessages
+        const freshIndex = freshAll.findIndex((message) => message.ts === updated.ts)
+        if (freshIndex < 0) return
         this.emitClineMessagesChanged({
             type: "update",
             messages: freshAll,
-            index,
+            index: freshIndex,
             previousMessage,
-            message: freshAll[index],
+            message: freshAll[freshIndex],
         })
     }
 

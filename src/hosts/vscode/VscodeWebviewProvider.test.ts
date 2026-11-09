@@ -71,6 +71,7 @@ function createProvider(): VscodeWebviewProvider {
     const provider = new VscodeWebviewProvider({ extensionMode: 1 } as never, { deferController: true })
     provider.attachController({
         setAccountUsagePollingEnabled: vi.fn(),
+        setSurfaceVisible: vi.fn(),
         postStateToWebview: vi.fn(async () => undefined),
         dispose: vi.fn(async () => undefined),
     } as never)

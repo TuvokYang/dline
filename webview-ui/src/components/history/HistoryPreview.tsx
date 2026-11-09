@@ -4,6 +4,8 @@ import { GetTaskHistoryRequest } from "@shared/proto/dline/task"
 import { ExternalLinkIcon, LoaderCircle } from "lucide-react"
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import type { UiTranslator } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { TaskServiceClient } from "@/services/grpc-client"
 import { TaskCompletionBadge } from "./TaskCompletionBadge"
 import { getTaskUsageLabel, isTaskCompleted } from "./task-metrics"
@@ -27,10 +29,13 @@ export const HISTORY_PREVIEW_ROW_HEIGHT_PX = 64
 export const HISTORY_PREVIEW_ROW_GAP_PX = 8
 const INITIAL_HISTORY_LOAD_RETRY_DELAY_MS = 250
 
-const FILTERS: Array<{ value: HistoryPreviewFilter; label: string }> = [
-    { value: "workspace", label: "Workspace" },
-    { value: "favorite", label: "Favorite" },
-    { value: "all", label: "All" },
+const FILTERS: Array<{
+    value: HistoryPreviewFilter
+    labelKey: "shell.historyPreview.filter.workspace" | "shell.historyPreview.filter.favorite" | "shell.historyPreview.filter.all"
+}> = [
+    { value: "workspace", labelKey: "shell.historyPreview.filter.workspace" },
+    { value: "favorite", labelKey: "shell.historyPreview.filter.favorite" },
+    { value: "all", labelKey: "shell.historyPreview.filter.all" },
 ]
 
 function normalizeWorkspacePath(value: string): string {
@@ -76,12 +81,14 @@ function HistoryPreviewRow({
     item,
     isOpening,
     onSelect,
+    t,
 }: {
     item: PreviewTask
     isOpening: boolean
     onSelect: (item: PreviewTask) => void
+    t: UiTranslator
 }) {
-    const usage = getTaskUsageLabel(item)
+    const usage = getTaskUsageLabel(item, 2, t)
     const timestamp = formatHistoryTimestamp(item.ts)
 
     return (
@@ -94,7 +101,7 @@ function HistoryPreviewRow({
             <div className="history-task-content">
                 {item.isFavorited && (
                     <span
-                        aria-label="Favorited"
+                        aria-label={t("shell.historyPreview.favorited")}
                         className="codicon codicon-star-full"
                         style={{ color: "var(--vscode-button-background)", flexShrink: 0 }}
                     />
@@ -103,7 +110,7 @@ function HistoryPreviewRow({
             </div>
             <div className="history-preview-btns">
                 {isOpening ? (
-                    <LoaderCircle aria-label="Opening task" className="animate-spin" size={14} />
+                    <LoaderCircle aria-label={t("shell.historyItem.opening")} className="animate-spin" size={14} />
                 ) : (
                     <button
                         onClick={(event) => {
@@ -121,14 +128,14 @@ function HistoryPreviewRow({
                             display: "flex",
                             alignItems: "center",
                         }}
-                        title="Open in New Window"
+                        title={t("shell.historyItem.openInNewWindow")}
                         type="button">
                         <ExternalLinkIcon size={14} />
                     </button>
                 )}
             </div>
             <div className="history-meta-stack">
-                <span className="history-date" title={`Last edited ${timestamp}`}>
+                <span className="history-date" title={t("shell.historyPreview.lastEdited", { timestamp })}>
                     {timestamp}
                 </span>
                 {(usage || item.isCompleted) && (
@@ -147,6 +154,7 @@ function HistoryPreviewRow({
 }
 
 const HistoryPreview = ({ showHistoryView }: HistoryPreviewProps) => {
+    const { t } = useUiTranslation()
     const { taskHistory, workspaceRoots, historyTaskOpening, openHistoryTask } = useExtensionState()
     const [filter, setFilter] = useState<HistoryPreviewFilter>("workspace")
     const workspacePaths = useMemo(() => workspaceRoots.map((root) => root.path), [workspaceRoots])
@@ -377,16 +385,18 @@ const HistoryPreview = ({ showHistoryView }: HistoryPreviewProps) => {
                             className="codicon codicon-comment-discussion"
                             style={{ marginRight: "4px", transform: "scale(0.9)" }}
                         />
-                        <span style={{ fontWeight: 500, fontSize: "0.85em", textTransform: "uppercase" }}>Recent</span>
+                        <span style={{ fontWeight: 500, fontSize: "0.85em", textTransform: "uppercase" }}>
+                            {t("shell.historyPreview.recent")}
+                        </span>
                     </div>
                     {taskHistory.some((item) => item.ts && item.task) && (
                         <button className="history-view-all-btn" onClick={() => showHistoryView()} type="button">
-                            View All
+                            {t("shell.historyPreview.viewAll")}
                             <span className="codicon codicon-chevron-right" />
                         </button>
                     )}
                 </div>
-                <div aria-label="Recent task filter" className="history-preview-filters" role="group">
+                <div aria-label={t("shell.historyPreview.filterGroup")} className="history-preview-filters" role="group">
                     {FILTERS.map((option) => (
                         <button
                             aria-pressed={filter === option.value}
@@ -394,7 +404,7 @@ const HistoryPreview = ({ showHistoryView }: HistoryPreviewProps) => {
                             key={option.value}
                             onClick={() => setFilter(option.value)}
                             type="button">
-                            {option.label}
+                            {t(option.labelKey)}
                         </button>
                     ))}
                 </div>
@@ -408,6 +418,7 @@ const HistoryPreview = ({ showHistoryView }: HistoryPreviewProps) => {
                             item={item}
                             key={item.id}
                             onSelect={handleHistorySelect}
+                            t={t}
                         />
                     ))
                 ) : (
@@ -418,7 +429,7 @@ const HistoryPreview = ({ showHistoryView }: HistoryPreviewProps) => {
                             fontSize: "var(--vscode-font-size)",
                             padding: "10px 0",
                         }}>
-                        No recent tasks
+                        {t("shell.historyPreview.empty")}
                     </div>
                 )}
             </div>

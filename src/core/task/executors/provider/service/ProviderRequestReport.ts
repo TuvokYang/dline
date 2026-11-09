@@ -89,6 +89,8 @@ export interface ProviderRequestRecord {
 export interface ProviderRequestSettlement {
     /** Tokens and cost every provider attempt consumed, abandoned attempts included. */
     readonly usage?: Readonly<Record<string, number>>
+    /** Currency attached to the resolved amount, not to the numeric token/metrics record. */
+    readonly currency?: string
     /**
      * Usage of the attempt that produced the turn. A retried request carries the
      * same conversation once, so context occupancy must never sum attempts.
@@ -125,10 +127,10 @@ export function mergeProviderUsage(
 /**
  * Fold one finished provider attempt into what the logical request consumed.
  *
- * Unlike chunks of one stream, separate attempts are separate charges, so a
- * total cost adds up here; report flags stay set once any attempt reported them.
- * A cost counts as reported only when every attempt reported one: otherwise the
- * summed cost would miss the unpriced attempts and suppress the model-price fallback.
+ * Unlike chunks of one stream, separate attempts are separate charges, so their
+ * amounts add directly. Other report flags stay set once any attempt reported them.
+ * A cost counts as reported only when every attempt reported one, so a partial
+ * amount is not presented as a complete request total.
  */
 export function sumAttemptUsage(
     consumed: Readonly<Record<string, number>> | undefined,

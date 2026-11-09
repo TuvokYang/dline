@@ -221,8 +221,8 @@ Do not add, remove, reorder, rename, rephrase, or regroup checklist items throug
 - Treat each active tool descriptor as the source of truth for its parameters, side effects, approval behavior, and output.
 - Runtime capability catalogs may list Skills, Workflows, MCP resources, or Subagents below. Match the task to advertised descriptions, use the exact advertised name, load an item only through its exposed loader, and do not reload instructions already supplied through an `<explicit_instructions>` block.
 - Prefer repository evidence over assumptions: inspect relevant files, definitions, references, and tests before changing behavior.
-- Use web_fetch to retrieve and analyze content from a known URL when external source material is needed.
-- When the task requires current information (for example current documentation, best practices, or news), use web_search. This request routes that tool through Dline's local executor.
+- Use web_fetch to retrieve readable content from a known URL when external source material is needed.
+- When the task requires current information (for example current documentation, best practices, or news), use web_search.
 - Markdown supports fenced `latex`, `math`, or `tex` blocks for formulas and fenced `mermaid` blocks for diagrams. Do not use `$...$` delimiters for rendered math.
 
 ## MCP

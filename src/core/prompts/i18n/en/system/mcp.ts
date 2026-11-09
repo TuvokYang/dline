@@ -8,6 +8,10 @@ const prompts: Record<string, string> = {
     standardCatalogListIntroduction: "The MCP tools available to the current task are listed below, grouped by server:",
     liteCatalogListIntroduction: "The connected MCP tools known to the current task are listed below, grouped by server:",
     serverEntry: "- Server `@NAME@` (tools: @COUNT@):",
+    resourceCatalog:
+        "### Resources\nMCP resources provide context from external data sources. Read a listed resource with `access_mcp_resource`, passing its server as `server_name` and its exact URI as `uri`.\n\nThe MCP resources available to the current task are listed below, grouped by server:\n@ENTRIES@",
+    resourceServerEntry: "- Server `@NAME@` (resources: @COUNT@):",
+    resourceEntry: "- `@URI@` (`@NAME@`): @DESCRIPTION@",
 }
 
 export default prompts

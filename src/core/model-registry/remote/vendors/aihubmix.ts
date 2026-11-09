@@ -6,8 +6,9 @@
  * tokens, unlike the vendors that publish a per-token rate.
  */
 import type { ModelCapabilities, ModelPricing } from "@shared/proto/dline/models/metadata"
+import { flatMeteredPricing } from "@shared/providers/pricing-shape"
 import type { ProviderModelReconciliationMode } from "../../provider-model-reconciliation"
-import { isRecord, ModelListingSource, readPositiveNumber, readString } from "../model-listing-source"
+import { isRecord, ModelListingSource, readNonNegativeNumber, readPositiveNumber, readString } from "../model-listing-source"
 import type { ProviderRemoteContext } from "../model-source"
 
 /** AIhubmix omits limits for some models; these keep a usable entry. */
@@ -64,13 +65,13 @@ export class AiHubMixModelSource extends ModelListingSource {
     }
 
     /** Prices are already per million tokens, so they pass through unscaled. */
-    protected override readPricing(raw: unknown): ModelPricing {
-        return {
-            inputPrice: readPositiveNumber(raw, "pricing.input") ?? 0,
-            outputPrice: readPositiveNumber(raw, "pricing.output") ?? 0,
-            cacheWritesPrice: readPositiveNumber(raw, "pricing.cache_write") ?? 0,
-            cacheReadsPrice: readPositiveNumber(raw, "pricing.cache_read") ?? 0,
-        }
+    protected override readPricing(raw: unknown): ModelPricing | undefined {
+        const input = readNonNegativeNumber(raw, "pricing.input")
+        const output = readNonNegativeNumber(raw, "pricing.output")
+        const cacheWrite = readNonNegativeNumber(raw, "pricing.cache_write")
+        const cacheRead = readNonNegativeNumber(raw, "pricing.cache_read")
+        if ([input, output, cacheWrite, cacheRead].every((rate) => rate === undefined)) return undefined
+        return flatMeteredPricing(input, output, cacheWrite, cacheRead)
     }
 }
 

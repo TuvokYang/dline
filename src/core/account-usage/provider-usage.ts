@@ -1,6 +1,5 @@
 import type { AccountUsage, ApiHandler } from "@core/api"
 import type { ApiProfile } from "@shared/proto/dline/profile"
-import type { TokenIncrement } from "./daily-token-ledger"
 
 /** The handler surface the polling policy depends on. */
 type AccountUsageSource = Pick<ApiHandler, "getAccountUsage" | "supportsAccountUsagePolling">
@@ -50,47 +49,12 @@ export function decideAccountUsageRead(
  * able to state its own age. A provider that reports its own retrieval time
  * keeps it.
  */
-export function decorateProviderAccountUsage(
-    profile: ApiProfile,
-    usage: AccountUsage | undefined,
-    localDailyTokens?: TokenIncrement,
-): AccountUsage | undefined {
+export function decorateProviderAccountUsage(profile: ApiProfile, usage: AccountUsage | undefined): AccountUsage | undefined {
     if (!usage) return undefined
-    return applyLocalDailyTokens(
-        {
-            ...usage,
-            profileId: profile.id,
-            providerId: profile.provider,
-            retrievedAt: usage.retrievedAt ?? new Date().toISOString(),
-        },
-        localDailyTokens,
-    )
-}
-
-/** A subscription reports quota windows or a plan, never a balance-style token count. */
-export function isSubscriptionUsage(usage: AccountUsage): boolean {
-    return Boolean(usage.planType) || (usage.quotas?.length ?? 0) > 0
-}
-
-/**
- * Fill today's token counts for a subscription from Dline's own ledger.
- *
- * A subscription endpoint reports percentages only, so the counts come from
- * the requests Dline itself sent. A provider that reports its own daily
- * counts keeps them, and balance providers are left untouched.
- */
-export function applyLocalDailyTokens(usage: AccountUsage, localDailyTokens: TokenIncrement | undefined): AccountUsage {
-    if (!localDailyTokens || !isSubscriptionUsage(usage)) return usage
-    // Zero is not a report, it is the absence of one. A provider whose model
-    // matching fails returns a defined zero for the day, and treating that as
-    // authoritative hid the ledger's real totals behind "Today In: 0". A day
-    // that reported any non-zero count is left exactly as the provider said.
-    const reportedInput = usage.dailyInputTokens ?? 0
-    const reportedOutput = usage.dailyOutputTokens ?? 0
-    if (reportedInput > 0 || reportedOutput > 0) return usage
     return {
         ...usage,
-        dailyInputTokens: localDailyTokens.inputTokens,
-        dailyOutputTokens: localDailyTokens.outputTokens,
+        profileId: profile.id,
+        providerId: profile.provider,
+        retrievedAt: usage.retrievedAt ?? new Date().toISOString(),
     }
 }

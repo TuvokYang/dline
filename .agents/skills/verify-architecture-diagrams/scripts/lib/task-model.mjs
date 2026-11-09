@@ -10,7 +10,9 @@ import { extractMermaidBlocks, parseFlowchart } from "./mermaid-parse.mjs"
 import { parseYamlLite, readFrontmatterFile, YamlLiteError } from "./yaml-lite.mjs"
 
 const COMPLETED = "completed"
-const COMPLETED_STATUSES_FOR_AST = new Set([COMPLETED])
+const IMPLEMENTATION_STATUSES = new Set(["active", "blocked", COMPLETED])
+const verificationSatisfied = (record, required) =>
+    record.result === required.requiredResult && text(record.conclusion).length > 0
 
 function asArray(value) {
     if (value === null || value === undefined) return []
@@ -75,6 +77,7 @@ function readOwns(goals) {
                 path: text(entry.path),
                 kind: text(boundary.kind) || (boundary.selector ? "module" : "whole_file"),
                 selector: text(boundary.selector) || null,
+                ...(Object.hasOwn(boundary, "regions") ? { regions: boundary.regions } : {}),
             }
         })
         .filter((entry) => entry && entry.path.length > 0)
@@ -226,26 +229,22 @@ export function evaluateGates(task, planGraph) {
     const reasons = []
     const status = task.status
 
-    if (!COMPLETED_STATUSES_FOR_AST.has(status ?? "")) {
+    if (!IMPLEMENTATION_STATUSES.has(status ?? "")) {
         reasons.push(`task status is ${status ?? "unknown"}`)
     }
     if (task.waitingFor.length > 0) {
         reasons.push(`waiting_for is not empty (${task.waitingFor.length})`)
     }
-    if (task.blockers.length > 0) {
-        reasons.push(`blockers is not empty (${task.blockers.length})`)
-    }
-
     for (const [id, required] of task.requiredVerification) {
         const matching = task.verification.filter((record) => record.check === id)
         if (matching.length === 0) {
             reasons.push(`required verification ${id} has no progress record`)
             continue
         }
-        const satisfied = matching.some((record) => record.result === required.requiredResult)
+        const satisfied = matching.some((record) => verificationSatisfied(record, required))
         if (!satisfied) {
             reasons.push(
-                `required verification ${id} is ${matching.map((record) => record.result).join("/")} not ${required.requiredResult}`,
+                `required verification ${id} needs ${required.requiredResult} with a nonempty conclusion; recorded ${matching.map((record) => record.result).join("/")}`,
             )
         }
     }
@@ -261,7 +260,7 @@ export function findRecordContradictions(task) {
 
     for (const [id, required] of task.requiredVerification) {
         const matching = task.verification.filter((record) => record.check === id)
-        const satisfied = matching.some((record) => record.result === required.requiredResult)
+        const satisfied = matching.some((record) => verificationSatisfied(record, required))
         if (!satisfied) {
             findings.push({
                 rule: "completed_without_required_verification",
@@ -284,14 +283,7 @@ export function findRecordContradictions(task) {
             file: task.progressPath,
         })
     }
-    for (const record of task.verification) {
-        if (record.check && !task.requiredVerification.has(record.check)) {
-            findings.push({
-                rule: "unknown_verification_id",
-                message: `progress verification "${record.check}" is not declared in goals.yaml required_verification`,
-                file: task.progressPath,
-            })
-        }
-    }
+    // Diagnostics are allowed but never satisfy a differently named required check.
+    // Edge references to undeclared proof IDs are validated by Architecture Evidence.
     return findings
 }

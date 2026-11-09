@@ -7,9 +7,18 @@ const SIDEBAR_RESIZE_TOLERANCE = 4
 /**
  * Resizes the real VS Code primary sidebar through its workbench sash.
  * Changing only the Electron viewport does not change the sidebar width.
+ *
+ * `viewport` pins the window while the sash is dragged. A caller that records or screenshots the
+ * workbench must pass its own viewport: resizing the window here would leave every later crop
+ * authored against a workbench that is no longer the size it claims, which silently turns every
+ * camera move into a whole-window shot.
  */
-export async function resizePrimarySidebar(page: Page, targetWidth: number): Promise<number> {
-    await page.setViewportSize({ width: WORKBENCH_WIDTH, height: WORKBENCH_HEIGHT })
+export async function resizePrimarySidebar(
+    page: Page,
+    targetWidth: number,
+    viewport: { width: number; height: number } = { width: WORKBENCH_WIDTH, height: WORKBENCH_HEIGHT },
+): Promise<number> {
+    await page.setViewportSize(viewport)
 
     const primarySidebar = page.locator('[id="workbench.parts.sidebar"]')
     await expect(primarySidebar).toBeVisible()

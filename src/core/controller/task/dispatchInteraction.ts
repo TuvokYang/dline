@@ -273,17 +273,40 @@ export async function dispatchInteraction(
         }
         return response(true, "accepted")
     }
-    const draftText = request.draft ? (reviewed?.text ?? request.draft.text) : undefined
+    const draftText = request.draft ? (reviewed?.modelText ?? reviewed?.text ?? request.draft.text) : undefined
+    const admittedReply = reviewed?.admittedInputRef === undefined ? {} : { admittedInputRef: reviewed.admittedInputRef }
+    const control = reviewed?.userControl === undefined ? {} : { userControl: { kind: reviewed.userControl.kind } }
     // A structured reply persists its verified resources as parts; a receiver that
     // reads flat lists resolves them only when it consumes the draft.
     const attachments = replyAttachmentsOf(request.draft, reviewed)
     // Once a command was taken out, only the structure before it is the reply;
     // storing the whole document would let a later admission act on it again.
     const storedDocument = reviewed ? reviewed.document : draftDocument
+    const retryPreparedRound = Boolean(
+        !hasDraftContent(request.draft, attachments) &&
+            (state.flow.compose?.draftRef || state.flow.compose?.materialPlan) &&
+            ((interaction.kind === "error_retry" && request.actionId === "retry") ||
+                (["resume", "cancelled_resume"].includes(interaction.kind) && request.actionId === "resume")),
+    )
+    const roundMaterialOwned = Boolean(
+        hasDraftContent(request.draft, attachments) &&
+            (approvalEntry ||
+                [
+                    "followup",
+                    "make_plan",
+                    "qna_response",
+                    "generate_report",
+                    "status_acknowledgment",
+                    "completion",
+                    "command_approval",
+                ].includes(interaction.kind)),
+    )
     const draftRef = request.draft
         ? await session.payloads.put(
               encodeTaskPayload<DialogDraftEnvelope>({
                   kind: "dialog_draft",
+                  ...(roundMaterialOwned ? { roundMaterialOwned: true as const } : {}),
+                  ...admittedReply,
                   text: draftText ?? request.draft.text,
                   images: [...attachments.images],
                   files: [...attachments.files],
@@ -313,6 +336,8 @@ export async function dispatchInteraction(
     const priorOutcome = outcomeBlockId ? session.approvalFeedback.takeOutcome(outcomeBlockId) : undefined
     if (feedbackBlockId && request.draft) {
         session.approvalFeedback.record(feedbackBlockId, {
+            ...(roundMaterialOwned ? { roundMaterialOwned: true as const } : {}),
+            ...admittedReply,
             text: draftText ?? request.draft.text,
             images: [...attachments.images],
             files: [...attachments.files],
@@ -326,6 +351,7 @@ export async function dispatchInteraction(
             ...(request.draft
                 ? {
                       draft: {
+                          ...admittedReply,
                           text: draftText ?? request.draft.text,
                           images: [...attachments.images],
                           files: [...attachments.files],
@@ -346,6 +372,8 @@ export async function dispatchInteraction(
               receiverGeneration: interaction.receiverGeneration,
               blockId: approvalEntry[0],
               approved: request.actionId === "approve",
+              ...(roundMaterialOwned ? { roundFeedbackRef: draftRef } : {}),
+              ...control,
               draftRef,
               selectionRef,
           })
@@ -357,6 +385,9 @@ export async function dispatchInteraction(
               stateRevision: request.stateRevision,
               receiverGeneration: interaction.receiverGeneration,
               actionId: request.actionId,
+              ...(retryPreparedRound ? { retryPreparedRound: true as const } : {}),
+              ...(roundMaterialOwned ? { roundFeedbackRef: draftRef } : {}),
+              ...control,
               draftRef,
               selectionRef,
           })
@@ -442,16 +473,18 @@ export async function dispatchInteraction(
     reviewed?.commit()
     const outcome: InteractionOutcome = {
         actionId: request.actionId as InteractionOutcome["actionId"],
+        ...(roundMaterialOwned ? { roundMaterialOwned: true as const } : {}),
         // That row is the reply's feedback; the handler's echo of the kept text
         // would only add an empty row after it.
         ...(replyConsumed ? { feedbackPresented: true } : {}),
         draft: request.draft
             ? {
                   text: draftText ?? request.draft.text,
+                  ...admittedReply,
                   images: [...attachments.images],
                   files: [...attachments.files],
-                  // The same structure the payload holds: a continuation that
-                  // re-admits the reply must not meet the claimed command again.
+                  // Keep the submitted structure for presentation and legacy readers;
+                  // admittedInputRef owns delivery of a consumed control token.
                   ...(storedDocument === undefined ? {} : { semanticInput: storedDocument }),
                   ...partsFieldOf(attachments),
               }

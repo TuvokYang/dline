@@ -1,6 +1,8 @@
 import type { LoadCapabilityDetail, LoadCapabilityPayload } from "@shared/load-capabilities"
 import { AlertCircleIcon, CheckCircle2Icon, ChevronDownIcon, ChevronRightIcon, LoaderCircleIcon } from "lucide-react"
 import { useMemo } from "react"
+import { type UiMessageKey, type UiTranslator } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { TOOL_RESPONSE_SCROLL_CLASS } from "./constants"
 
 interface LoadCapabilityRowProps {
@@ -9,11 +11,12 @@ interface LoadCapabilityRowProps {
     onToggleExpand: () => void
 }
 
-const KIND_LABELS: Record<LoadCapabilityPayload["kind"], string> = {
-    mcp: "MCP",
-    skill: "Skill",
-    workflow: "Workflow",
-}
+/** The capability kinds name product concepts, so they are translated; the payload name is not. */
+const KIND_LABEL_KEYS = {
+    mcp: undefined,
+    skill: "chatRows.capability.kind.skill",
+    workflow: "chatRows.capability.kind.workflow",
+} as const satisfies Record<LoadCapabilityPayload["kind"], UiMessageKey | undefined>
 
 /**
  * Render a structured load_xxx tool result row.
@@ -22,7 +25,8 @@ const KIND_LABELS: Record<LoadCapabilityPayload["kind"], string> = {
  * @returns React element for loading, completed, or failed capability load states.
  */
 export default function LoadCapabilityRow({ payload, isExpanded, onToggleExpand }: LoadCapabilityRowProps) {
-    const title = useMemo(() => buildTitle(payload), [payload])
+    const { t } = useUiTranslation()
+    const title = useMemo(() => buildTitle(payload, t), [payload, t])
     const details = payload.details ?? []
     const canExpand = payload.status === "completed" && (details.length > 0 || !!payload.body)
 
@@ -46,7 +50,7 @@ export default function LoadCapabilityRow({ payload, isExpanded, onToggleExpand 
                     onClick={canExpand ? onToggleExpand : undefined}
                     type="button">
                     <span className="ph-no-capture min-w-0 flex-1">
-                        <span className="font-medium">{payload.name || "Unnamed capability"}</span>
+                        <span className="font-medium">{payload.name || t("chatRows.capability.unnamed")}</span>
                         {payload.source ? <span className="text-description ml-2">{payload.source}</span> : null}
                         {payload.summary ? (
                             <span className="block text-description mt-1 whitespace-pre-wrap">{payload.summary}</span>
@@ -117,17 +121,20 @@ function ExpandedContent({ details, body }: { details: LoadCapabilityDetail[]; b
  * Build the row title from payload state.
  *
  * @param payload Load capability payload.
+ * @param t Translator of the rendering surface.
  * @returns Human-readable row title.
  */
-function buildTitle(payload: LoadCapabilityPayload): string {
-    const label = KIND_LABELS[payload.kind]
+function buildTitle(payload: LoadCapabilityPayload, t: UiTranslator): string {
+    const kindKey = KIND_LABEL_KEYS[payload.kind]
+    // A local MCP tool is named by the protocol, so its acronym stays untranslated.
+    const kind = kindKey ? t(kindKey) : "MCP"
     if (payload.status === "loading") {
-        return `Loading ${label}`
+        return t("chatRows.capability.loading", { kind })
     }
     if (payload.status === "failed") {
-        return `Failed to load ${label}`
+        return t("chatRows.capability.failed", { kind })
     }
-    return `Loaded ${label}`
+    return t("chatRows.capability.loaded", { kind })
 }
 
 /**

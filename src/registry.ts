@@ -1,6 +1,7 @@
 import { name, publisher, version } from "../package.json"
 import { HostProvider } from "./hosts/host-provider"
 import distributions from "./shared/extension-distributions.json"
+import type { GetHostVersionResponse } from "./shared/proto/dline/host/env"
 
 interface DistributionIdentity {
     name: string
@@ -117,6 +118,8 @@ export interface HostInfo {
      * The version of the host platform, e.g. 1.103.0 for VSCode, or 2025.1.1.1 for JetBrains IDEs.
      */
     hostVersion?: string
+    /** The host's raw display language; absent on older host bridges. */
+    displayLanguage?: string
     /**
      * The version of Cline that the host client is running
      */
@@ -127,13 +130,15 @@ let hostInfo = null as HostInfo | null
 
 export const HostRegistryInfo = {
     init: async (distinctId: string) => {
-        const host = await HostProvider.env.getHostVersion({})
+        // Metadata is optional. Cache its absence at this startup boundary rather
+        // than making every state publication retry an unavailable host bridge.
+        const host: GetHostVersionResponse = await HostProvider.env.getHostVersion({}).catch(() => ({}))
         const hostVersion = host.version
         const extensionVersion = host.clineVersion || ExtensionRegistryInfo.version
         const platform = host.platform || "unknown"
         const os = process.platform || "unknown"
         const ide = host.clineType || "unknown"
-        hostInfo = { hostVersion, extensionVersion, platform, os, ide, distinctId }
+        hostInfo = { hostVersion, extensionVersion, platform, os, ide, distinctId, displayLanguage: host.displayLanguage }
     },
     get: () => hostInfo,
 }

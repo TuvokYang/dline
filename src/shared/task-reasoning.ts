@@ -1,7 +1,9 @@
 import type { ModelCapabilities, ThinkingConfig } from "@shared/proto/dline/models/metadata"
 import type { ApiProfile } from "@shared/proto/dline/profile"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
+import { resolveOpenCodeReasoningConfig } from "@shared/providers/opencode-reasoning"
 import { PROFILE_PROVIDER_KEYS } from "@shared/providers/profile-model-info"
+import { readProviderConfigField, withProviderConfigField } from "@shared/providers/provider-config"
 import { resolveThinkingBudgetBounds } from "@shared/providers/thinking-budget"
 
 /** Task-local reasoning policy layered over a Profile's reasoning configuration. */
@@ -71,13 +73,25 @@ interface ProviderReasoningConfig {
     readonly [key: string]: unknown
 }
 
+/** Read the shared reasoning declaration out of a provider config of either shape. */
+function readReasoningConfig(config: unknown): ReasoningConfig | undefined {
+    const reasoning = readProviderConfigField(config, "reasoning")
+    return reasoning !== null && typeof reasoning === "object" && !Array.isArray(reasoning)
+        ? (reasoning as ReasoningConfig)
+        : undefined
+}
+
 /** Read the Profile-owned reasoning configuration for display and inheritance. */
-export function resolveProfileReasoningConfig(profile: ApiProfile | undefined): ReasoningConfig | undefined {
+export function resolveProfileReasoningConfig(
+    profile: ApiProfile | undefined,
+    capabilities: ModelCapabilities | undefined = profile?.modelInfo?.capabilities,
+): ReasoningConfig | undefined {
     if (!profile) return undefined
     const providerKey = PROFILE_PROVIDER_KEYS[profile.provider]
     if (!providerKey) return undefined
-    const providerConfig = readProviderConfig(profile[providerKey])
-    return providerConfig?.reasoning ? { ...providerConfig.reasoning } : undefined
+    const reasoning = readReasoningConfig(profile[providerKey])
+    if (profile.provider === "opencode") return resolveOpenCodeReasoningConfig(capabilities, reasoning)
+    return reasoning ? { ...reasoning } : undefined
 }
 
 /** Normalize a Task-local reasoning override into its canonical discriminated shape. */
@@ -156,13 +170,14 @@ export function applyTaskReasoningOverride(profile: ApiProfile, override: TaskRe
         throw new Error(`Provider '${profile.provider}' has no runtime configuration for a reasoning override.`)
     }
 
-    const inheritedReasoning = providerConfig.reasoning ? { ...providerConfig.reasoning } : undefined
+    const inheritedReasoning = readReasoningConfig(providerConfig)
     return {
         ...profile,
-        [providerKey]: {
-            ...providerConfig,
-            reasoning: applyReasoningConfig(inheritedReasoning, normalized),
-        },
+        [providerKey]: withProviderConfigField(
+            providerConfig,
+            "reasoning",
+            applyReasoningConfig(inheritedReasoning ? { ...inheritedReasoning } : undefined, normalized),
+        ),
     } as ApiProfile
 }
 

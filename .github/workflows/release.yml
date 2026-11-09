@@ -74,7 +74,7 @@ jobs:
       OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
 
   functional-e2e:
-    name: Functional E2E - ${{ matrix.folder }} (ubuntu)
+    name: Functional E2E - ${{ matrix.folder }} (${{ matrix.registry }}, ubuntu)
     needs: [verify-tag, tests]
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -84,11 +84,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        folder: [api, capabilities, chat, context, harness, performance, profiles, tasks, telemetry]
+        folder: [api, away-mode, capabilities, chat, context, harness, performance, profiles, tasks, telemetry]
+        registry: [open-vsx, vscode-marketplace]
     env:
       DLINE_E2E_INSTALL_VSIX: "1"
       DLINE_E2E_PROFILE: mock-openai
-      DLINE_E2E_RUN_ID: production-functional-${{ matrix.folder }}-${{ github.run_id }}-${{ github.run_attempt }}-ubuntu
+      DLINE_E2E_RUN_ID: production-functional-${{ matrix.registry }}-${{ matrix.folder }}-${{ github.run_id }}-${{ github.run_attempt }}-ubuntu
+      EXPECTED_PUBLISHER: ${{ matrix.registry == 'vscode-marketplace' && 'tuvokyangdline' || 'tuvokyang' }}
     steps:
       - name: Checkout validated tag
         uses: actions/checkout@v6
@@ -109,7 +111,7 @@ jobs:
       - name: Download production VSIX
         uses: actions/download-artifact@v8
         with:
-          name: dline-vsix-${{ needs.verify-tag.outputs.commit_sha }}
+          name: ${{ matrix.registry == 'vscode-marketplace' && 'dline-vscode-marketplace' || 'dline' }}-vsix-${{ needs.verify-tag.outputs.commit_sha }}
           path: validated-vsix
 
       - name: Verify and normalize tested VSIX
@@ -125,9 +127,19 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           manifest_path="$RUNNER_TEMP/vsix-package.json"
           unzip -p "${assets[0]}" extension/package.json > "$manifest_path"
-          if ! jq -e --arg version "$version" '
-            .name == "dline" and
-            .publisher == "tuvokyang" and
+          # The VS Code Marketplace requires a globally unique extension name;
+          # Open VSX keeps the stable identity and keys by publisher and name.
+          if [[ "${{ matrix.registry }}" == 'vscode-marketplace' ]]; then
+            expected_name=dline-main
+            expected_display_name='Dline (Stable)'
+          else
+            expected_name=dline
+            expected_display_name=Dline
+          fi
+          if ! jq -e --arg version "$version" --arg publisher "$EXPECTED_PUBLISHER" --arg name "$expected_name" --arg display_name "$expected_display_name" '
+            .name == $name and
+            .displayName == $display_name and
+            .publisher == $publisher and
             .version == $version and
             (.preview != true)
           ' "$manifest_path" >/dev/null; then
@@ -165,7 +177,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v5
         with:
-          name: playwright-functional-production-${{ matrix.folder }}-ubuntu-${{ github.sha }}
+          name: playwright-functional-production-${{ matrix.registry }}-${{ matrix.folder }}-ubuntu-${{ github.sha }}
           path: tmp/test-result/
           if-no-files-found: warn
           include-hidden-files: true
@@ -186,4 +198,7 @@ jobs:
       commit_sha: ${{ needs.verify-tag.outputs.commit_sha }}
       artifact_name: dline-vsix-${{ needs.verify-tag.outputs.commit_sha }}
       asset_name: dline-${{ needs.verify-tag.outputs.version }}.vsix
+      marketplace_artifact_name: ${{ needs.tests.outputs.marketplace_artifact_name }}
+      marketplace_asset_name: ${{ needs.tests.outputs.marketplace_asset_name }}
+      marketplace_expected_sha256: ${{ needs.tests.outputs.marketplace_sha256 }}
     secrets: inherit

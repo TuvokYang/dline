@@ -6,6 +6,7 @@ import { VSCodeLink } from "@vscode/webview-ui-toolkit/react"
 import { useCallback, useMemo } from "react"
 import UseCustomPromptCheckbox from "@/components/settings/UseCustomPromptCheckbox"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ModelsServiceClient } from "@/services/grpc-client"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { BaseUrlField } from "../common/BaseUrlField"
@@ -26,6 +27,7 @@ interface OllamaProviderProps {
 
 /** Ollama provider �?all data from ApiProfile. requestTimeoutMs from apiConfiguration (one of 6 remaining fields). */
 export const OllamaProvider = ({ showModelOptions, isPopup: _isPopup, profile, onUpdate }: OllamaProviderProps) => {
+    const { t } = useUiTranslation()
     const { apiConfiguration } = useExtensionState()
     const { handleFieldChange } = useApiConfigurationHandlers()
     const pc = profile.ollama ?? OllamaProviderConfig.create()
@@ -36,7 +38,7 @@ export const OllamaProvider = ({ showModelOptions, isPopup: _isPopup, profile, o
         ...(pc.capabilities ?? {}),
         ...(Number.isSafeInteger(contextWindow) && contextWindow > 0 ? { contextWindow } : {}),
     })
-    const compatibilityNotice = getModelCompatibilityNotice({ capabilities: compatibilityCapabilities })
+    const compatibilityNotice = getModelCompatibilityNotice({ capabilities: compatibilityCapabilities }, t)
 
     const probeOllamaModels = useCallback(async () => {
         const response = await ModelsServiceClient.getOllamaModels(StringRequest.create({ value: baseUrl }))
@@ -61,40 +63,39 @@ export const OllamaProvider = ({ showModelOptions, isPopup: _isPopup, profile, o
         <div className="flex flex-col gap-2">
             <BaseUrlField
                 initialValue={profile.baseUrl}
-                label="Use custom base URL"
                 onChange={(value) => onUpdate({ baseUrl: value || undefined })}
-                placeholder="Default: http://localhost:11434"
+                placeholder={t("settings.ui.defaultValue", { value: "http://localhost:11434" })}
             />
             {profile.baseUrl && (
                 <ApiKeyField
-                    helpText="Optional API key for authenticated Ollama instances."
+                    helpText={t("settings.ui.ollama.keyHelp")}
                     initialValue={profile.apiKey}
                     onChange={(value) => onUpdate({ apiKey: value })}
-                    placeholder="Enter API Key (optional)..."
+                    placeholder={t("settings.ui.optionalApiKey")}
                     providerName="Ollama"
                 />
             )}
             <label htmlFor="ollama-model-selection">
-                <span className="font-semibold">Model</span>
+                <span className="font-semibold">{t("settings.ui.model")}</span>
             </label>
             <OllamaModelPicker
                 ollamaModels={ollamaModels}
                 onFocus={refreshOllamaModels}
                 onModelChange={(modelId) => onUpdate({ modelId })}
-                placeholder={ollamaModels.length > 0 ? "Search and select a model..." : "e.g. llama3.1"}
+                placeholder={
+                    ollamaModels.length > 0 ? t("settings.ui.searchSelectModel") : t("settings.ui.example", { value: "llama3.1" })
+                }
                 selectedModelId={profile.modelId || ""}
             />
             {ollamaModels.length === 0 && (
-                <p className="text-sm mt-1 text-description italic">
-                    Unable to fetch models from Ollama server. Please ensure Ollama is running and accessible.
-                </p>
+                <p className="text-sm mt-1 text-description italic">{t("settings.ui.ollama.fetchError")}</p>
             )}
             <DebouncedTextField
                 initialValue={pc.ollamaApiOptionsCtxNum || "32768"}
                 onChange={(v) => onUpdate({ ollama: { ...pc, ollamaApiOptionsCtxNum: v ?? undefined } })}
-                placeholder="e.g. 32768"
+                placeholder={t("settings.ui.example", { value: "32768" })}
                 style={{ width: "100%" }}>
-                <span className="font-semibold">Model Context Window</span>
+                <span className="font-semibold">{t("settings.ui.ollama.context")}</span>
             </DebouncedTextField>
             {showModelOptions && (
                 <>
@@ -104,22 +105,20 @@ export const OllamaProvider = ({ showModelOptions, isPopup: _isPopup, profile, o
                             const n = Number.parseInt(value, 10)
                             if (!Number.isNaN(n) && n > 0) handleFieldChange("requestTimeoutMs", n)
                         }}
-                        placeholder="Default: 30000 (30 seconds)"
+                        placeholder={t("settings.ui.ollama.timeoutDefault")}
                         style={{ width: "100%" }}>
-                        <span className="font-semibold">Request Timeout (ms)</span>
+                        <span className="font-semibold">{t("settings.ui.ollama.timeout")}</span>
                     </DebouncedTextField>
-                    <p className="text-xs mt-0 text-description">
-                        Maximum time in milliseconds to wait for API responses before timing out.
-                    </p>
+                    <p className="text-xs mt-0 text-description">{t("settings.ui.ollama.timeoutHelp")}</p>
                 </>
             )}
             <UseCustomPromptCheckbox providerId="ollama" />
             <p className="text-xs text-description">
-                Ollama allows you to run models locally on your computer. See their{" "}
+                {t("settings.ui.ollama.help")}{" "}
                 <VSCodeLink
                     href="https://github.com/ollama/ollama/blob/main/README.md"
                     style={{ display: "inline", fontSize: "inherit" }}>
-                    quickstart guide.
+                    {t("settings.ui.ollama.guide")}
                 </VSCodeLink>
             </p>
             {compatibilityNotice ? (

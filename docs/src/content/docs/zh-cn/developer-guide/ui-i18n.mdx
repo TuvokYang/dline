@@ -1,0 +1,78 @@
+---
+title: 界面语言与 UI 翻译
+description: 选择界面语言，并使用 Dline 的类型化中英文 UI 资源，切换时保留界面状态。
+---
+
+Dline 的 Webview 产品界面支持英文与简体中文，覆盖设置与提供商、聊天与任务控件、历史、账户、能力、MCP、首次体验和 worktrees。用户与模型消息、代码、路径、标识符、原始诊断及外部描述保留原文。
+
+## 选择界面语言
+
+打开 **Settings → General → Interface language**，中文界面对应 **设置 → 通用 → 界面语言**：
+
+| 选项 | 值 | 行为 |
+| --- | --- | --- |
+| 自动 | `auto` | 默认值，跟随 VS Code 显示语言。中文显示语言变体使用简体中文；宿主信息缺失或不支持时回退英文。 |
+| English | `en` | 不受 VS Code 显示语言影响，固定使用英文。 |
+| 简体中文 | `zh-CN` | 不受 VS Code 显示语言影响，固定使用简体中文。 |
+
+选择会自动保存，并应用于已打开的 Dline 面板，任务持续输出时也能切换。重新打开设置或重启宿主仍保留手动选择；重新选择“自动”即可恢复跟随。Dline 在启动时读取宿主显示语言信息，VS Code 显示语言的变化通过其正常重启或重新打开边界生效。
+
+即使当前显示英文，保存的默认偏好仍是 `auto`，不会变成 `en`。旧数据中缺失或非法的偏好也按 `auto` 读取。更新失败时会显示可重试提示，请在控件中重试，不要把关闭设置当作失败更新已保存。
+
+独立的“模型沟通语言”（英文界面为 **Model response language**）控制模型回复。选项名称跟随界面语言，已有固定语言的保存值不变。“自动”跟随用户自己消息的语言，不跟随 VS Code 或界面语言，也不以代码、日志或引用判断语言；当前任务明确指定语言时，服从该指令。原有默认选项仍是英语。
+
+界面语言不会改变模型语言偏好、模型请求、用户或模型正文、代码、路径、工具原始输出、币种或时间规则。切换不会刷新 Webview，也不会重置草稿和导航；“完成”只关闭设置。
+
+What's New 显示当前语言版本。完整更新日志链接在中文界面打开 `CHANGELOG.md`，英文界面打开 `docs/changelog/CHANGELOG_en.md`；发布版本与确认状态保持不变。
+
+## 翻译组件
+
+在 `webview-ui/src/i18n/locales/{settings,chatInput,chatRows,capabilities,shell}/` 的所属领域中添加对应 key，根 `en.ts` 与 `zh_CN.ts` 负责装配。中文资源文件名使用 `zh_CN.ts` 或 `.zh_CN.ts` 后缀；运行时语言标签、偏好值和资源 key 仍使用 `zh-CN`。英文资源定义 key 和命名参数类型；中文通过 `UiResource` 核对本领域英文模块，不反向导入根词典。译文不可用时回退英文。完整句子和有意义的数量分支放在资源中，不在组件里拼接语法片段。
+
+```tsx
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
+
+export function InterfaceLanguageLabel() {
+    const { t } = useUiTranslation()
+    return <span>{t("settings.general.uiLanguage.label")}</span>
+}
+```
+
+动态条目使用有语义的命名参数：
+
+```ts
+t("settings.general.uiLanguage.followHost", { language: "English" })
+```
+
+纯 presenter 显式接收 `UiTranslator`，或把 `UiLanguage` 传给 `i18n/messages.ts` 的 `translateUi(language, key, ...args)`。非法 key、缺失参数或错误参数类型会在编译时失败。模块级配置保存 key，不预先生成译文；影响输出的 memo 和 callback 依赖当前 translator。
+
+标签、说明、tooltip、placeholder、无障碍名称以及加载和错误提示应一起迁移。用户内容和稳定 ID 保持不变。异步状态保存操作或错误的语义 kind 与原始诊断，在渲染时翻译；不要把 translator 加入加载、保存或轮询的依赖。
+
+含链接、代码、强调或控件的完整句使用 `i18n/UiText.tsx` 的命名 React slots。语序变化时保持 slot 语义 key，不注入译文 HTML。FAST 下拉还需由 React 提供 `selected-value` slot 并更新选项 ARIA，仅修改 slot 文本不会刷新其缓存显示。不得靠重挂载控件切换语言。
+
+## 设置字段排版
+
+设置字段复用 `ProfileForm` 和 `ProfileField`。字段间的 `gap-4` 由表单统一拥有，不再叠加各字段自己的底部 margin。标签和选中值使用 `text-sm`，帮助文字使用 `text-xs`、1.5 倍行高，字号跟随 VS Code 设置。字段内的帮助段落不加 margin、不截断，嵌套 span 继承行高；不要为此修改聊天使用的全局段落样式。保留说明 ID、保存中/错误/重试语义和业务值。
+
+在真实 Webview 的窄、宽侧栏中分别检查中英文的计算样式与几何关系。Toolkit 的 shadow 样式可能覆盖继承字号，单靠 class 断言或 jsdom 无法证明排版正确。
+
+## 装配语言上下文
+
+`UiLanguagePreference` 包含 `auto`、`en`、`zh-CN`，实际显示的 `UiLanguage` 只有 `en`、`zh-CN`。`resolveUiLanguage(preference, hostDisplayLanguage)` 派生显示值，不覆盖偏好。
+
+生产语言桥读取最终 ExtensionState，再给受控的 `UiLanguageProvider` 提供显示语言，并挂载一次 `UiDocumentLanguage` 更新文档的 `lang` 属性。组件通过 `useUiTranslation()` 消费，不另存一份语言偏好。
+
+Storybook 的状态覆盖应包住语言桥，而不是放在已经根据旧状态解析语言的 Provider 下面。`createStorybookDecorator` 从最终覆盖状态提供翻译上下文，不争用文档语言；预览叶节点可以挂载一次 `UiDocumentLanguage`。Interface Language stories 的交互式预览根同时拥有最终状态和文档语言。
+
+## 验证迁移表面
+
+使用 `implement-i18n` Skill 获取聚焦的实施方法。在同一挂载树中验证双向切换、无障碍名称、memo/presenter 输出、portal 内容、草稿与焦点保留，以及保存失败与重试。语言设置集成还需覆盖旧全量快照、patch 字段遗漏、旧 revision、持久化重开和多面板同步。
+
+聚焦测试配置包含 translator 类型错误和语言接入测试：
+
+```powershell
+.\webview-ui\node_modules\.bin\tsc.cmd --noEmit -p webview-ui/src/i18n/tsconfig.test.json
+npm run test:run -- webview-ui/src/components/settings/SettingsView.ui-language.test.tsx webview-ui/src/context/ExtensionStateContext.ui-language.test.tsx webview-ui/src/components/settings/__tests__/UiLanguageSetting.test.tsx
+```
+
+迁移结论只对应实际验证过的表面，词条清单或目录审计不等于整页已翻译。

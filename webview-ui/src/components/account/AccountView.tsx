@@ -2,13 +2,16 @@ import type { UsageTransaction as ClineAccountUsageTransaction, PaymentTransacti
 import { isClineInternalTester } from "@shared/internal/account"
 import type { UserOrganization } from "@shared/proto/dline/account"
 import { EmptyRequest } from "@shared/proto/dline/common"
-import { VSCodeButton, VSCodeDivider, VSCodeDropdown, VSCodeOption, VSCodeTag } from "@vscode/webview-ui-toolkit/react"
+import { VSCodeButton, VSCodeDivider, VSCodeOption, VSCodeTag } from "@vscode/webview-ui-toolkit/react"
 import deepEqual from "fast-deep-equal"
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { type FormEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useInterval } from "react-use"
+import { LocalizedDropdown, LocalizedOption } from "@/components/common/LocalizedDropdown"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { type ClineUser, handleSignOut } from "@/context/ClineAuthContext"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import type { UiMessageKey } from "@/i18n/messages"
+import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { AccountServiceClient } from "@/services/grpc-client"
 import ViewHeader from "../common/ViewHeader"
 import VSCodeButtonLink from "../common/VSCodeButtonLink"
@@ -16,8 +19,15 @@ import { updateSetting } from "../settings/utils/settingsHandlers"
 import { AccountWelcomeView } from "./AccountWelcomeView"
 import { CreditBalance } from "./CreditBalance"
 import CreditsHistoryTable from "./CreditsHistoryTable"
-import { convertProtoUsageTransactions, getClineUris, getMainRole } from "./helpers"
+import { convertProtoUsageTransactions, getClineUris, getMainRole, type MainRole } from "./helpers"
 import { RemoteConfigToggle } from "./RemoteConfigToggle"
+
+/** Role identities are mapped to display keys; the identity itself never changes. */
+const MAIN_ROLE_KEYS: Readonly<Record<MainRole, Extract<UiMessageKey, `shell.account.role.${string}`>>> = {
+    owner: "shell.account.role.owner",
+    admin: "shell.account.role.admin",
+    member: "shell.account.role.member",
+}
 
 type AccountViewProps = {
     clineUser: ClineUser | null
@@ -41,13 +51,21 @@ type CachedData = {
 }
 
 const ClineEnvOptions = ["Production", "Staging", "Local"] as const
+const CLINE_ENV_LABEL_KEYS: Readonly<
+    Record<(typeof ClineEnvOptions)[number], Extract<UiMessageKey, `shell.chrome.environment.${string}`>>
+> = {
+    Production: "shell.chrome.environment.production",
+    Staging: "shell.chrome.environment.staging",
+    Local: "shell.chrome.environment.local",
+}
 
 const AccountView = ({ onDone, clineUser, organizations, activeOrganization }: AccountViewProps) => {
+    const { t } = useUiTranslation()
     const { environment } = useExtensionState()
 
     return (
         <div className="fixed inset-0 flex flex-col overflow-hidden">
-            <ViewHeader environment={environment} onDone={onDone} showEnvironmentSuffix title="Account" />
+            <ViewHeader environment={environment} onDone={onDone} showEnvironmentSuffix title={t("shell.account.title")} />
             <div className="grow flex flex-col px-5 overflow-y-auto">
                 {clineUser?.uid ? (
                     <ClineAccountView
@@ -66,6 +84,7 @@ const AccountView = ({ onDone, clineUser, organizations, activeOrganization }: A
 }
 
 export const ClineAccountView = ({ clineUser, userOrganizations, activeOrganization, clineEnv }: ClineAccountViewProps) => {
+    const { t } = useUiTranslation()
     const { email, displayName, appBaseUrl, uid } = clineUser
     const { remoteConfigSettings, environment } = useExtensionState()
 
@@ -99,19 +118,19 @@ export const ClineAccountView = ({ clineUser, userOrganizations, activeOrganizat
         return false
     }, [])
 
-    // Simple cache function without dependencies
-    const cacheCurrentData = useCallback(
-        (id: string) => {
-            dataCache.current.set(id, {
-                balance,
-                usageData,
-                paymentsData,
-                lastFetchTime,
-            })
-        },
-        [balance, usageData, paymentsData, lastFetchTime],
-    )
+    // Cache the committed display snapshot without making request callbacks depend
+    // on the state they update. Otherwise the initial-fetch effect retriggers itself.
+    const currentData = useRef<CachedData>({ balance, usageData, paymentsData, lastFetchTime })
+    useEffect(() => {
+        currentData.current = { balance, usageData, paymentsData, lastFetchTime }
+    }, [balance, usageData, paymentsData, lastFetchTime])
+    const cacheCurrentData = useCallback((id: string) => {
+        dataCache.current.set(id, currentData.current)
+    }, [])
+    const balanceRequestInProgress = useRef(false)
     // Track the active organization ID to detect changes
+    const mainRole = getMainRole(activeOrganization?.roles)
+
     const [lastActiveOrgId, setLastActiveOrgId] = useState<string | undefined>(activeOrganization?.organizationId)
     // Use ref for debounce timeout to avoid re-renders
     const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -139,11 +158,9 @@ export const ClineAccountView = ({ clineUser, userOrganizations, activeOrganizat
 
     const fetchCreditBalance = useCallback(
         async (id: string, skipCache = false) => {
+            if (balanceRequestInProgress.current) return
+            balanceRequestInProgress.current = true
             try {
-                if (isLoading) {
-                    return // Prevent multiple concurrent fetches
-                }
-
                 // Load cached data immediately if available (unless skipping cache)
                 if (!skipCache && loadCachedData(id)) {
                     // If we have cached data, show it first, then fetch in background
@@ -169,17 +186,12 @@ export const ClineAccountView = ({ clineUser, userOrganizations, activeOrganizat
             } catch (error) {
                 console.error("Failed to fetch credit balance:", error)
             } finally {
+                balanceRequestInProgress.current = false
                 setLastFetchTime(Date.now())
                 setIsLoading(false)
             }
         },
-        [
-            isLoading,
-            uid,
-            fetchUserCredit,
-            loadCachedData, // Cache the updated data
-            cacheCurrentData,
-        ],
+        [uid, fetchUserCredit, loadCachedData, cacheCurrentData],
     )
 
     const handleOrganizationChange = useCallback(
@@ -328,28 +340,31 @@ export const ClineAccountView = ({ clineUser, userOrganizations, activeOrganizat
                             <div className="flex gap-2 items-center mt-1">
                                 <Tooltip>
                                     <TooltipTrigger>
-                                        <VSCodeDropdown
+                                        <LocalizedDropdown
                                             className="w-full"
                                             currentValue={dropdownValue}
                                             disabled={isLoading || isLockedByRemoteConfig}
-                                            onChange={handleOrganizationChange}>
-                                            <VSCodeOption key="personal" value={uid}>
-                                                Personal
-                                            </VSCodeOption>
+                                            onChange={handleOrganizationChange}
+                                            selectedLabel={
+                                                dropdownValue === uid
+                                                    ? t("shell.account.personal")
+                                                    : userOrganizations?.find((org) => org.organizationId === dropdownValue)?.name
+                                            }>
+                                            <LocalizedOption key="personal" label={t("shell.account.personal")} value={uid} />
                                             {userOrganizations?.map((org: UserOrganization) => (
                                                 <VSCodeOption key={org.organizationId} value={org.organizationId}>
                                                     {org.name}
                                                 </VSCodeOption>
                                             ))}
-                                        </VSCodeDropdown>
+                                        </LocalizedDropdown>
                                     </TooltipTrigger>
                                     <TooltipContent hidden={!isLockedByRemoteConfig}>
-                                        This cannot be changed while your organization has remote configuration enabled.
+                                        {t("shell.account.roleLocked")}
                                     </TooltipContent>
                                 </Tooltip>
-                                {activeOrganization && (
-                                    <VSCodeTag className="text-xs p-2" title="Role">
-                                        {getMainRole(activeOrganization.roles)}
+                                {mainRole && (
+                                    <VSCodeTag className="text-xs p-2" title={t("shell.account.role")}>
+                                        {t(MAIN_ROLE_KEYS[mainRole])}
                                     </VSCodeTag>
                                 )}
                             </div>
@@ -363,11 +378,11 @@ export const ClineAccountView = ({ clineUser, userOrganizations, activeOrganizat
                 <div className="w-full flex gap-2 flex-col min-[225px]:flex-row">
                     <div className="w-full min-[225px]:w-1/2">
                         <VSCodeButtonLink appearance="primary" className="w-full" href={getClineUris(clineUrl, "dashboard").href}>
-                            Dashboard
+                            {t("shell.account.dashboard")}
                         </VSCodeButtonLink>
                     </div>
                     <VSCodeButton appearance="secondary" className="w-full min-[225px]:w-1/2" onClick={() => handleSignOut()}>
-                        Log out
+                        {t("shell.account.logOut")}
                     </VSCodeButton>
                 </div>
 
@@ -396,23 +411,23 @@ export const ClineAccountView = ({ clineUser, userOrganizations, activeOrganizat
                 {isClineTester && environment !== "selfHosted" && (
                     <div className="w-full gap-1 items-end">
                         <VSCodeDivider className="w-full my-3" />
-                        <div className="text-sm font-semibold">Dline Environment</div>
-                        <VSCodeDropdown
+                        <div className="text-sm font-semibold">{t("shell.account.environment")}</div>
+                        <LocalizedDropdown
+                            aria-label={t("shell.account.environment")}
                             className="w-full mt-1"
                             currentValue={clineEnv}
-                            onChange={async (e) => {
+                            onChange={async (e: Event | FormEvent<HTMLElement>) => {
                                 const target = e.target as HTMLSelectElement
                                 if (target?.value) {
                                     const value = target.value as "Local" | "Staging" | "Production"
                                     updateSetting("clineEnv", value.toLowerCase())
                                 }
-                            }}>
+                            }}
+                            selectedLabel={ClineEnvOptions.includes(clineEnv) ? t(CLINE_ENV_LABEL_KEYS[clineEnv]) : undefined}>
                             {ClineEnvOptions.map((env) => (
-                                <VSCodeOption key={env} value={env}>
-                                    {env}
-                                </VSCodeOption>
+                                <LocalizedOption key={env} label={t(CLINE_ENV_LABEL_KEYS[env])} value={env} />
                             ))}
-                        </VSCodeDropdown>
+                        </LocalizedDropdown>
                     </div>
                 )}
             </div>
