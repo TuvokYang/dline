@@ -2,7 +2,7 @@
 
 # What's New
 
-The What's New dialog in the Dline sidebar shows the newest release section of this file. The webview build reads it, so an edit ships with the next build. Every change is listed in the [changelog](../changelog/CHANGELOG_en.md).
+The What's New dialog in the Dline sidebar shows the newest release section in English or Chinese to match the interface language. The webview build reads both editions, so edits ship with the next build. Every change is listed in the [changelog](../changelog/CHANGELOG_en.md).
 
 <!--
 Format rules, enforced by webview-ui/vite-whats-new.ts at build time:
@@ -14,6 +14,11 @@ Format rules, enforced by webview-ui/vite-whats-new.ts at build time:
   package.json, and WHATS_NEW.md must carry the same version with the same number of items.
   Unit tests enforce both.
 -->
+
+## 0.13.2
+
+- **English/Chinese UI**: follow VS Code or switch manually; model replies can follow your language automatically.
+- **Marketplace images**: direct links for extension icons and demo GIFs reduce loading failures.
 
 ## 0.13.1
 

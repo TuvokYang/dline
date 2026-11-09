@@ -4,6 +4,8 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 ## [Unreleased]
 
+## [0.13.2]
+
 ### Added
 - Added English/Chinese interface switching (following VS Code by default) and automatic model response language
 
