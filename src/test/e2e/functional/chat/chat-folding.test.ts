@@ -94,7 +94,7 @@ function fixtureTurn(ts: number, prompt: string, first: boolean): UiMessage[] {
     ]
 }
 
-async function taskIds(docs: string) {
+async function taskIds(docs: string): Promise<string[]> {
     return readdir(path.join(docs, "tasks"), { withFileTypes: true })
         .then((entries) => entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name))
         .catch(() => [])
@@ -367,11 +367,10 @@ e2e(
     },
 )
 
-// The call never ran, so its streamed preview must not keep a completed card.
-// Before the fix the row stayed partial, the chat drew it as `Completed`, and the
-// folded block never counted it — the failure shown to the model was invisible.
+// Admission rejects malformed calls before command execution creates a card.
+// The refusal must remain visible and terminal without inventing completed work.
 e2e(
-    "Folding - a rejected command call settles as a counted command error instead of a completed card",
+    "Folding - a rejected command call displays the admission error without an execution card",
     async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
         e2e.setTimeout(180_000)
         const task = "E2E_FOLDING_REJECTED_COMMAND"
@@ -401,20 +400,21 @@ e2e(
                 timeout: 60_000,
             })
 
-            // The rejected call is finished work of a countable kind, so it belongs
-            // in the block and its header states the error. Before the fix this
-            // header could not appear: the row was still partial, so folding read it
-            // as live work and left it outside every block.
-            const header = sidebar.getByTestId("activity-fold-header").filter({ hasText: "1 cmd failed" })
-            await expect(header).toHaveCount(1)
-
-            // Opening the block shows the rejected command, and its card states the
-            // state the call actually reached rather than a completed one.
-            await header.click()
-            const rejectedCard = sidebar.getByTestId("command-card").filter({ hasText: "FOLDING_REJECTED_COMMAND_NEVER_RUNS" })
-            await expect(rejectedCard).toHaveCount(1)
-            await expect(rejectedCard.getByText("Failed", { exact: true })).toBeVisible({ timeout: 30_000 })
-            await expect(rejectedCard.getByText("Completed", { exact: true })).toHaveCount(0)
+            const refusal = sidebar.getByTestId("error-message-box")
+            await expect(refusal).toBeVisible()
+            await expect(refusal).toContainText("requires_approval")
+            await expect(refusal).toContainText("execute_command")
+            await expect(sidebar.getByTestId("command-card")).toHaveCount(0)
+            const requests = server.getMockConsumptions()
+            expect(requests).toHaveLength(2)
+            expect(requests.every(({ contractError, requestToolPairing }) => !contractError && requestToolPairing.complete)).toBe(
+                true,
+            )
+            const results = requests[1].requestToolResults.filter(({ callId }) => callId === "call_folding_rejected_command")
+            expect(results).toHaveLength(1)
+            const errorBody = /<error>([\s\S]*?)<\/error>/.exec(results[0].content)?.[1]
+            expect(errorBody).toContain("requires_approval")
+            expect(errorBody).not.toContain("FOLDING_REJECTED_COMMAND_NEVER_RUNS")
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
         } finally {
             await app.close()

@@ -864,17 +864,16 @@ e2e(
             extraSources.map((source) => source.slice(0, CONSECUTIVE_LARGE_TURN_EXTRA_FILE_CHARS)).join("\n"),
             "utf8",
         )
-        const largeTurnToolCalls = shuffled(
-            [
-                ...largeTurn.toolCalls,
-                {
-                    ...extraReads[0],
-                    id: `call_consecutive_extra_read_${scenario.seedHex}_${hashText(shortenedExtraPath).slice(0, 8)}`,
-                    arguments: { path: shortenedExtraPath },
-                },
-            ],
-            createSeededRandom(scenario.seed ^ 0x5a5a_a5a5),
-        )
+        // Keep the small top-up in the final batch: seven full reads can exceed that round's
+        // result budget for some seeds. The large reads remain randomized and every byte is checked.
+        const largeTurnToolCalls = [
+            ...shuffled(largeTurn.toolCalls, createSeededRandom(scenario.seed ^ 0x5a5a_a5a5)),
+            {
+                ...extraReads[0],
+                id: `call_consecutive_extra_read_${scenario.seedHex}_${hashText(shortenedExtraPath).slice(0, 8)}`,
+                arguments: { path: shortenedExtraPath },
+            },
+        ]
         expect(largeTurnToolCalls.filter(({ name }) => name === "read_file")).toHaveLength(LATER_TURN_READ_CALLS + 1)
         const expectedLargeReadBodies = await Promise.all(
             largeTurnToolCalls
