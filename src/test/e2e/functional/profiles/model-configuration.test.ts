@@ -5,8 +5,10 @@ import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { startSettingControlStabilityObserver, stopSettingControlStabilityObserver } from "@e2e/utils/ui-stability"
 import { expect, type Frame, type Locator, type Page } from "@playwright/test"
-import { ApiFormat } from "@shared/proto/dline/models/metadata"
+import { ApiFormat, type ModelPricing, type PriceSet } from "@shared/proto/dline/models/metadata"
 import type { ElectronApplication } from "playwright"
+
+type StoredPricing = Pick<ModelPricing, "currency" | "strategy">
 
 interface StoredProfile {
     id: string
@@ -19,6 +21,7 @@ interface StoredProfile {
         apiFormat?: string
         customModelEnabled?: boolean
         serviceTier?: string
+        serviceTierEnabled?: boolean
         azureApiVersion?: string
         azureIdentity?: boolean
         streamIncludeUsage?: boolean
@@ -35,27 +38,7 @@ interface StoredProfile {
             supportsTools?: boolean
             contextWindowTiers?: Array<{ id: string; contextWindow: number; label?: string }>
         }
-        pricing?: {
-            /**
-             * Metered prices as the editor persists them: rates live under
-             * `strategy.flat.prices`, and usage tiers under `strategy.contextWindow.bands`.
-             */
-            metered?: {
-                strategy?: {
-                    flat?: {
-                        prices?: {
-                            inputPrice?: number
-                            outputPrice?: number
-                            cacheWritePrice?: number
-                            cacheReadPrice?: number
-                        }
-                    }
-                    contextWindow?: {
-                        bands?: Array<{ maxInputTokens?: number }>
-                    }
-                }
-            }
-        }
+        pricing?: StoredPricing
     }
     anthropic?: {
         enableLongContext?: boolean
@@ -68,9 +51,7 @@ interface StoredProfile {
             contextWindow?: number
             contextWindowTiers?: Array<{ id: string; contextWindow: number; label?: string; apiModelSuffix?: string }>
         }
-        pricing?: {
-            tiers?: Array<{ contextWindow: number; inputPrice?: number; outputPrice?: number }>
-        }
+        pricing?: StoredPricing
     }
 }
 
@@ -147,20 +128,22 @@ async function openProfileEditor(sidebar: Frame, profileName: string): Promise<L
     return card
 }
 
+/** A model-id change remounts the disclosure, so ensure it is open before editing its fields. */
+async function ensureModelConfigurationExpanded(card: Locator): Promise<void> {
+    const modelConfiguration = card.getByRole("button", { name: "Model Configuration", exact: true })
+    await expect(modelConfiguration).toBeVisible()
+    if ((await modelConfiguration.getAttribute("aria-expanded")) !== "true") {
+        await modelConfiguration.click()
+    }
+    await expect(modelConfiguration).toHaveAttribute("aria-expanded", "true")
+    await expect(card.getByRole("textbox", { name: "Context Window Size" })).toBeVisible()
+}
+
 async function openModelConfiguration(sidebar: Frame, profileName: string): Promise<Locator> {
     const card = getProfileCard(sidebar, profileName)
     await expect(card).toHaveCount(1)
     await expandProfileCard(card)
-
-    // "Model Configuration" is a disclosure button; its fields only mount once opened.
-    const modelConfiguration = card.getByRole("button", { name: "Model Configuration" })
-    await expect(modelConfiguration).toBeVisible()
-
-    const contextWindow = card.getByRole("textbox", { name: "Context Window Size" })
-    if (!(await contextWindow.isVisible())) {
-        await modelConfiguration.click()
-    }
-    await expect(contextWindow).toBeVisible()
+    await ensureModelConfigurationExpanded(card)
     return card
 }
 
@@ -205,10 +188,11 @@ async function expectAdvancedValue(card: Locator, label: string, value: string):
     await expect(row).toContainText(value)
 }
 
-async function expectModelInfoValue(card: Locator, label: string, value: string): Promise<void> {
-    const row = card.getByText(label, { exact: true }).locator("..")
-    await expect(row).toBeVisible()
-    await expect(row).toContainText(value)
+async function expectModelInfoValue(card: Locator, slot: "inputPrice" | "outputPrice", value: string): Promise<void> {
+    const price = card.locator(`[data-price-slot="${slot}"]`)
+    await expect(price).toHaveCount(1)
+    await expect(price).toBeVisible()
+    await expect(price).toHaveText(value)
 }
 
 e2e(
@@ -308,6 +292,7 @@ e2e(
             await apiFormatSelector.selectOption(String(ApiFormat.OPENAI_RESPONSES))
             await expect(apiFormatSelector).toHaveValue(String(ApiFormat.OPENAI_RESPONSES))
             await waitForProfile(dlineDir, profileName, (profile) => profile.openai?.apiFormat === "OPENAI_RESPONSES")
+            await ensureModelConfigurationExpanded(card)
 
             await startSettingControlStabilityObserver(
                 firstSidebar,
@@ -335,20 +320,20 @@ e2e(
             await waitForProfile(dlineDir, profileName, (profile) => profile.openai?.capabilities?.contextWindow === 234_567)
             await setTextField(card, "Max Output Tokens", "32768")
             await waitForProfile(dlineDir, profileName, (profile) => profile.openai?.capabilities?.maxTokens === 32_768)
-            // Metered prices persist nested under strategy.flat.prices; the retired
-            // flat `pricing.inputPrice` shape never appears in a written profile.
-            const flatPrices = (profile: StoredProfile) => profile.openai?.pricing?.metered?.strategy?.flat?.prices
+            // Current writers store currency and strategy directly on pricing;
+            // the deprecated metered envelope is read compatibility only.
+            const flatPrices = (profile: StoredProfile) => profile.openai?.pricing?.strategy?.flat?.prices
             await setTextField(card, "Input Price ($/1M tokens)", "1.25")
             await waitForProfile(dlineDir, profileName, (profile) => flatPrices(profile)?.inputPrice === 1.25)
             await setTextField(card, "Output Price ($/1M tokens)", "2.5")
             await waitForProfile(dlineDir, profileName, (profile) => flatPrices(profile)?.outputPrice === 2.5)
-            await setTextField(card, "Cache Writes ($/M)", "0.75")
+            await setTextField(card, "Cache Writes ($/1M tokens)", "0.75")
             await waitForProfile(dlineDir, profileName, (profile) => flatPrices(profile)?.cacheWritePrice === 0.75)
-            await setTextField(card, "Cache Reads ($/M)", "0.25")
+            await setTextField(card, "Cache Reads ($/1M tokens)", "0.25")
             await waitForProfile(dlineDir, profileName, (profile) => flatPrices(profile)?.cacheReadPrice === 0.25)
             await expect(card.getByText("235K", { exact: true })).toBeVisible()
-            await expectModelInfoValue(card, "Input:", "$1.25/M")
-            await expectModelInfoValue(card, "Output:", "$2.50/M")
+            await expectModelInfoValue(card, "inputPrice", "$1.25")
+            await expectModelInfoValue(card, "outputPrice", "$2.5")
 
             const storedBeforeReasoning = await waitForProfile(
                 dlineDir,
@@ -367,7 +352,7 @@ e2e(
                     flatPrices(profile)?.cacheReadPrice === 0.25,
             )
             expect(storedBeforeReasoning.openai?.capabilities?.contextWindow).toBe(234_567)
-            expect(storedBeforeReasoning.openai?.pricing?.metered?.strategy?.flat?.prices).toMatchObject({
+            expect(storedBeforeReasoning.openai?.pricing?.strategy?.flat?.prices).toMatchObject({
                 inputPrice: 1.25,
                 outputPrice: 2.5,
                 cacheWritePrice: 0.75,
@@ -438,8 +423,8 @@ e2e(
             await expect(reopenedCard.getByRole("textbox", { name: "Max Output Tokens" })).toHaveValue("32768")
             await expect(reopenedCard.getByRole("textbox", { name: "Input Price ($/1M tokens)" })).toHaveValue("1.25")
             await expect(reopenedCard.getByRole("textbox", { name: "Output Price ($/1M tokens)" })).toHaveValue("2.5")
-            await expect(reopenedCard.getByRole("textbox", { name: "Cache Writes ($/M)" })).toHaveValue("0.75")
-            await expect(reopenedCard.getByRole("textbox", { name: "Cache Reads ($/M)" })).toHaveValue("0.25")
+            await expect(reopenedCard.getByRole("textbox", { name: "Cache Writes ($/1M tokens)" })).toHaveValue("0.75")
+            await expect(reopenedCard.getByRole("textbox", { name: "Cache Reads ($/1M tokens)" })).toHaveValue("0.25")
             await setCapability(reopenedCard, "Supports Prompt Cache", true)
             await setCapability(reopenedCard, "Supports Native Tool Calls", true)
             await setCapability(reopenedCard, "Enable Thinking", true)
@@ -465,8 +450,8 @@ e2e(
             await expect(reopenedCard.getByText("Include usage stats in stream responses", { exact: true })).toHaveCount(0)
             await expect(reopenedCard.getByText("Use explicit prompt cache controls", { exact: true })).toHaveCount(0)
             await expect(reopenedCard.getByText("235K", { exact: true })).toBeVisible()
-            await expectModelInfoValue(reopenedCard, "Input:", "$1.25/M")
-            await expectModelInfoValue(reopenedCard, "Output:", "$2.50/M")
+            await expectModelInfoValue(reopenedCard, "inputPrice", "$1.25")
+            await expectModelInfoValue(reopenedCard, "outputPrice", "$2.5")
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
         } finally {
             await reopenedApp?.close()
@@ -730,7 +715,7 @@ e2e(
             reasoning_effort: "medium",
         })
 
-        await actMode.evaluate((element) => element.click())
+        await actMode.evaluate((element) => (element as HTMLElement).click())
         await expect(actMode).toHaveAttribute("aria-checked", "true")
         await expect(modelSwitcher).toHaveText(E2E_PROFILE_NAMES.mockAnthropic)
 
@@ -770,17 +755,58 @@ e2e(
         // OpenAI models have no context-window tiers; context is controlled directly.
         await expect(card.getByRole("button", { name: "Add Context Tier" })).toHaveCount(0)
 
-        // Usage-based pricing tiers stay editable and persist as provider overrides.
-        const addPricingTier = card.getByRole("button", { name: "Add Pricing Tier" })
+        // A flat declaration already prices one unbounded band. Adding a tier
+        // splits it into a bounded band and an unbounded tail, retaining the rates.
+        const pricingMode = card.getByRole("combobox", { name: "Pricing Mode", exact: true })
+        await expect(pricingMode).toHaveText("Flat rate")
+        const removePricingTier = card.getByRole("button", { name: "Remove Pricing Tier", exact: true })
+        await expect(removePricingTier).toHaveCount(0)
+        const initialBandCount = 1
+        const priceFields = [
+            { slot: "inputPrice", label: "Input Price ($/1M tokens)" },
+            { slot: "outputPrice", label: "Output Price ($/1M tokens)" },
+            { slot: "cacheWritePrice", label: "Cache Writes ($/1M tokens)" },
+            { slot: "cacheReadPrice", label: "Cache Reads ($/1M tokens)" },
+        ] as const
+        const initialPrices: PriceSet = {}
+        const initialValues = new Map<string, string>()
+        for (const { slot, label } of priceFields) {
+            const field = card.getByRole("textbox", { name: label, exact: true })
+            await expect(field).toHaveCount(1)
+            const value = await field.inputValue()
+            initialValues.set(label, value)
+            if (value !== "") initialPrices[slot] = Number(value)
+        }
+        expect(initialPrices.inputPrice).toBeGreaterThanOrEqual(0)
+        expect(initialPrices.outputPrice).toBeGreaterThanOrEqual(0)
+
+        const addPricingTier = card.getByRole("button", { name: "Add Pricing Tier", exact: true })
         await expect(addPricingTier).toBeVisible()
         await addPricingTier.click()
-        // Usage-based tiers persist as context-window bands; the retired flat
-        // `pricing.tiers` array is not written by the tier editor.
-        await waitForProfile(
-            dlineDir,
-            profileName,
-            (profile) => profile.openai?.pricing?.metered?.strategy?.contextWindow?.bands?.length === 1,
-        )
+        await expect(pricingMode).toHaveText("By context size")
+        await expect(removePricingTier).toHaveCount(initialBandCount + 1)
+        await expect(card.getByRole("textbox", { name: "Up To Input Tokens", exact: true })).toHaveValue("128000")
+        await expect(card.getByText("No upper limit", { exact: true })).toHaveCount(1)
+        for (let tier = 1; tier <= initialBandCount + 1; tier++) {
+            for (const { label } of priceFields) {
+                await expect(card.getByRole("textbox", { name: `Tier ${tier} ${label}`, exact: true })).toHaveValue(
+                    initialValues.get(label)!,
+                )
+            }
+        }
+
+        // Edit the new tail through the UI, then compare the complete persisted
+        // bands with the independently observed UI count, bounds, and rates.
+        await setTextField(card, "Tier 2 Input Price ($/1M tokens)", "1.75")
+        await expect
+            .poll(
+                async () => {
+                    const profile = (await readProfiles(dlineDir)).find((candidate) => candidate.name === profileName)
+                    return profile?.openai?.pricing?.strategy?.contextWindow?.bands
+                },
+                { timeout: 15_000 },
+            )
+            .toEqual([{ maxInputTokens: 128_000, prices: initialPrices }, { prices: { ...initialPrices, inputPrice: 1.75 } }])
 
         await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
     },

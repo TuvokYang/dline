@@ -4,6 +4,7 @@ import path from "node:path"
 import type { OpenAiMockResponse } from "@e2e/fixtures/server"
 import { getE2EWorkspaceMcpUrl } from "@e2e/fixtures/server/workspace-mcp"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
+import { expectOwnedUserFeedback, requestUserTextBlocks } from "@e2e/utils/compaction-request-oracle"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame } from "@playwright/test"
 import type { ElectronApplication } from "playwright"
@@ -45,13 +46,22 @@ interface StoredProfile {
 const PROVIDER_CONTEXT_WINDOW = 472_000
 const AUTO_CONDENSE_TRIGGER_PERCENT = 95
 const AUTO_CONDENSE_TRIGGER_BUFFER_TOKENS = 3_000
+const SUMMARIZE_INSTRUCTION_BUDGET_TOKENS = 2_500
+const AUTO_CONDENSE_RESERVE_TOKENS = Math.min(
+    30_000,
+    Math.max(5_000, Math.floor((PROVIDER_CONTEXT_WINDOW * (100 - AUTO_CONDENSE_TRIGGER_PERCENT)) / 100)),
+)
 const AUTO_CONDENSE_MAX_CONTEXT_TOKENS = 0
 const MIN_NEAR_TRIGGER_INPUT_TOKENS = 400_000
+// Expected ceilings come from the fixed fixture settings, not the selected Pass.
 const CONSECUTIVE_COMPACTION_TRIGGER_TOKENS =
-    Math.floor((PROVIDER_CONTEXT_WINDOW * AUTO_CONDENSE_TRIGGER_PERCENT) / 100) - AUTO_CONDENSE_TRIGGER_BUFFER_TOKENS
+    PROVIDER_CONTEXT_WINDOW -
+    AUTO_CONDENSE_RESERVE_TOKENS -
+    SUMMARIZE_INSTRUCTION_BUDGET_TOKENS -
+    AUTO_CONDENSE_TRIGGER_BUFFER_TOKENS
 const CONSECUTIVE_COMPACTION_MAX_TOTAL_INPUT_TOKENS =
-    CONSECUTIVE_COMPACTION_TRIGGER_TOKENS + Math.floor((PROVIDER_CONTEXT_WINDOW - CONSECUTIVE_COMPACTION_TRIGGER_TOKENS) / 2)
-const AUTO_COMPACTION_PROVIDER_INPUT_TOKENS = CONSECUTIVE_COMPACTION_TRIGGER_TOKENS + AUTO_CONDENSE_TRIGGER_BUFFER_TOKENS + 1_000
+    CONSECUTIVE_COMPACTION_TRIGGER_TOKENS + Math.floor(AUTO_CONDENSE_RESERVE_TOKENS / 2)
+const AUTO_COMPACTION_PROVIDER_INPUT_TOKENS = Math.floor((PROVIDER_CONTEXT_WINDOW * AUTO_CONDENSE_TRIGGER_PERCENT) / 100) + 1_000
 const MAX_COMPACTION_DYNAMIC_TAIL_TOKENS = 10_000
 const AUTO_COMPACTION_COUNT = 6
 const ORDINARY_TURN_COUNT = AUTO_COMPACTION_COUNT + 1
@@ -61,9 +71,9 @@ const MIN_SEARCH_CALLS_PER_TURN = 2
 const MAX_SEARCH_CALLS_PER_TURN = 4
 const CORPUS_FILE_CHARS = 57 * 1024
 const SIX_CYCLE_CORPUS_FILE_CHARS = 55 * 1024
-// The large turn must cross the ordinary trigger once fully delivered while staying under the
-// last-complete-turn Pass ceiling; 60 KiB reads plus their framing land on that ceiling.
-const CONSECUTIVE_CORPUS_FILE_CHARS = 58 * 1024
+// Keep the complete 27-read request in the crossing band rather than above the
+// last-turn ceiling; the actual request assertions below enforce both bounds.
+const CONSECUTIVE_CORPUS_FILE_CHARS = 56 * 1024
 // Leave headroom for frozen-prefix growth while keeping the complete provider request above the 446.4K trigger boundary.
 const LARGE_TURN_CORPUS_FILE_CHARS = 56 * 1024
 // The pending-completed scenario must fit the history turn plus the latest turn in the first hidden Pass for every seed.
@@ -725,7 +735,10 @@ e2e(
                 expectedRequestIncludes: [historyTurn.marker, latestUserMarker],
                 expectedRequestExcludes: [COMPACTION_MARKER],
                 expectedToolResults: [
-                    { callId: `call_pending_completed_history_ready_${scenario.seedHex}`, contentIncludes: latestUserMarker },
+                    {
+                        callId: `call_pending_completed_history_ready_${scenario.seedHex}`,
+                        contentIncludes: "The user response was received.",
+                    },
                 ],
                 requireCompleteToolPairing: true,
                 matchRequestContract: true,
@@ -735,7 +748,11 @@ e2e(
                 id: `call_pending_completed_summary_${scenario.seedHex}`,
                 name: "summarize_task",
                 arguments: { context: summary },
-                expectedRequestIncludes: [COMPACTION_MARKER, historyTurn.marker],
+                expectedRequestIncludes: [COMPACTION_MARKER, historyTurn.marker, latestUserMarker, ...latestResultMarkers],
+                expectedToolResults: latestReadCalls.map((toolCall, index) => ({
+                    callId: toolCall.id,
+                    contentIncludes: latestResultMarkers[index],
+                })),
                 requireCompleteToolPairing: true,
                 matchRequestContract: true,
             },
@@ -759,6 +776,16 @@ e2e(
             await send(sidebar, historyTurn.userText)
             await expect(sidebar.getByText(historyReady, { exact: true })).toBeVisible({ timeout: 180_000 })
             await send(sidebar, latestUserMarker)
+            await expect
+                .poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 180_000 })
+                .toBeGreaterThanOrEqual(historyRounds.length + 2)
+            const latestInputRequest = server.getMockConsumptions("openai-compatible-responses")[historyRounds.length + 1]
+            if (!latestInputRequest) throw new Error("Missing pending-completed latest input request")
+            expectOwnedUserFeedback(
+                latestInputRequest,
+                [...historyToolCalls.map((toolCall) => toolCall.id), `call_pending_completed_history_ready_${scenario.seedHex}`],
+                [latestUserMarker],
+            )
             await expect(sidebar.getByText(completed, { exact: true })).toBeVisible({ timeout: 180_000 })
             await expect
                 .poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 180_000 })
@@ -849,6 +876,14 @@ e2e(
             createSeededRandom(scenario.seed ^ 0x5a5a_a5a5),
         )
         expect(largeTurnToolCalls.filter(({ name }) => name === "read_file")).toHaveLength(LATER_TURN_READ_CALLS + 1)
+        const expectedLargeReadBodies = await Promise.all(
+            largeTurnToolCalls
+                .filter(({ name }) => name === "read_file")
+                .map(async (call) => ({
+                    callId: call.id,
+                    lines: (await readFile(path.join(workspaceDir, call.arguments.path), "utf8")).split(/\r?\n/),
+                })),
+        )
         const historyReady = `E2E_CONSECUTIVE_CACHE_HISTORY_READY_${scenario.seedHex}`
         const firstSummary = `E2E_CONSECUTIVE_CACHE_SUMMARY_${scenario.seedHex}_1 preserves the first complete randomized turn.`
         const secondCompactionCarrySummary = `E2E_CONSECUTIVE_CACHE_SUMMARY_${scenario.seedHex}_2_CARRY preserves ${firstSummary} before the large tool turn.`
@@ -1052,6 +1087,7 @@ e2e(
             const secondSummaryRequestText = JSON.stringify(secondSummaryRequest.requestBody)
             const finalRequestText = JSON.stringify(finalRequest.requestBody)
             expect(firstSummaryRequestText).toContain(historyTurn.marker)
+            expect(requestUserTextBlocks(firstSummaryRequest).some((text) => text.includes(historyTurn.userText))).toBe(true)
             expect(firstSummaryRequestText).not.toContain(largeTurn.marker)
             if (summaryRequests.length === 3) {
                 const carryRequestText = JSON.stringify(summaryRequests[1].requestBody)
@@ -1060,6 +1096,17 @@ e2e(
             }
             expect(secondSummaryRequestText).toContain(firstSummary)
             expect(secondSummaryRequestText).toContain(largeTurn.marker)
+            expect(requestUserTextBlocks(secondSummaryRequest).some((text) => text.includes(largeTurn.userText))).toBe(true)
+            for (const expectedRead of expectedLargeReadBodies) {
+                const result = secondSummaryRequest.requestToolResults.find(({ callId }) => callId === expectedRead.callId)
+                if (!result) throw new Error(`Missing complete large-turn read: ${expectedRead.callId}`)
+                let position = 0
+                for (const [lineIndex, line] of expectedRead.lines.entries()) {
+                    const found = result.content.indexOf(line, position)
+                    expect(found, `${expectedRead.callId}: source line ${lineIndex + 1}`).toBeGreaterThanOrEqual(position)
+                    position = found + line.length
+                }
+            }
             for (const marker of largeTurnToolCalls.map(({ expectedResultIncludes }) => expectedResultIncludes)) {
                 expect(secondSummaryRequestText).toContain(marker)
             }
@@ -1075,6 +1122,8 @@ e2e(
             )
             expect(finalRequestText).toContain(secondSummary)
             expect(finalRequestText).not.toContain(COMPACTION_MARKER)
+            expect(finalRequestText).not.toContain(largeTurn.marker)
+            for (const call of largeTurnToolCalls) expect(finalRequestText).not.toContain(call.expectedResultIncludes)
 
             const diagnostics = requests.map(({ cacheDiagnostic }) => {
                 if (!cacheDiagnostic) throw new Error("Missing consecutive-compaction OpenAI cache diagnostic")
@@ -1098,6 +1147,7 @@ e2e(
             }
             expect(historyProviderDiagnostic.totalInputTokens).toBeGreaterThanOrEqual(CONSECUTIVE_COMPACTION_TRIGGER_TOKENS)
             expect(historyProviderDiagnostic.totalInputTokens).toBeLessThan(PROVIDER_CONTEXT_WINDOW)
+            expect(secondSummaryRequest.cacheDiagnostic?.totalInputTokens).toBeGreaterThan(CONSECUTIVE_COMPACTION_TRIGGER_TOKENS)
             for (const summaryRequest of [firstSummaryRequest, secondSummaryRequest]) {
                 if (!summaryRequest.cacheDiagnostic) throw new Error("Missing consecutive summary cache diagnostic")
                 expect(summaryRequest.cacheDiagnostic.totalInputTokens).toBeGreaterThanOrEqual(MIN_NEAR_TRIGGER_INPUT_TOKENS)

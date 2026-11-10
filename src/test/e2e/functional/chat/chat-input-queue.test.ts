@@ -1,3 +1,4 @@
+import { expectOwnedUserFeedback } from "@e2e/utils/compaction-request-oracle"
 import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { type ElectronApplication, expect } from "@playwright/test"
@@ -165,9 +166,12 @@ e2e("Chat input queue - a queued entry is delivered at the next turn end", async
     e2e.setTimeout(240_000)
     await helper.signin(sidebar)
     server.resetOpenAiMock()
+    const firstCallId = "call_queue_turnend_first"
+    const queuedText = "## E2E_TURNEND_QUEUED_TEXT\n\n- E2E_DELIVERED_MARKDOWN_ITEM"
     server.enqueueOpenAiResponses(
         {
             type: "tool",
+            id: firstCallId,
             name: "attempt_completion",
             arguments: { result: "E2E_QUEUE_TURNEND_FIRST" },
             delayMs: 15_000,
@@ -185,7 +189,7 @@ e2e("Chat input queue - a queued entry is delivered at the next turn end", async
     await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(1)
     await expect(sidebar.locator('[data-testid="send-button"][data-action="cancel"]')).toBeVisible({ timeout: 30_000 })
 
-    await input.fill("## E2E_TURNEND_QUEUED_TEXT\n\n- E2E_DELIVERED_MARKDOWN_ITEM")
+    await input.fill(queuedText)
     await input.press("Enter")
     await expect(sidebar.getByTestId("input-queue-toggle")).toContainText("Queue 1", { timeout: 30_000 })
 
@@ -196,8 +200,9 @@ e2e("Chat input queue - a queued entry is delivered at the next turn end", async
 
     const consumptions = server.getMockConsumptions()
     const delivered = consumptions.at(-1)
-    expect(JSON.stringify(delivered?.requestToolResults ?? [])).toContain("E2E_TURNEND_QUEUED_TEXT")
-    const deliveredRequest = JSON.stringify(delivered?.requestBody)
+    if (!delivered) throw new Error("Missing turn-end queue delivery request")
+    expectOwnedUserFeedback(delivered, [firstCallId], [queuedText])
+    const deliveredRequest = JSON.stringify(delivered.requestBody)
     expect(deliveredRequest).toContain("sent by the user while work was in progress")
 
     const deliveredInput = sidebar.getByTestId("queued-user-input").last()

@@ -1,5 +1,6 @@
 import { readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
+import type { MockApiConsumption } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
@@ -214,6 +215,33 @@ function startNewTaskButton(frame: Frame) {
     return frame.locator('vscode-button[aria-label="Start New Task"]')
 }
 
+function responsesUserTextBlocks(consumption: MockApiConsumption): string[] {
+    const input = (consumption.requestBody as { input?: unknown[] }).input ?? []
+    return input.flatMap((value) => {
+        if (typeof value !== "object" || value === null) return []
+        const message = value as { role?: unknown; content?: unknown }
+        if (message.role !== "user" || !Array.isArray(message.content)) return []
+        return message.content.flatMap((value) => {
+            if (typeof value !== "object" || value === null) return []
+            const block = value as { type?: unknown; text?: unknown }
+            // Active Tasks metadata may name another panel, but it is not that panel's conversation.
+            return block.type === "input_text" &&
+                typeof block.text === "string" &&
+                !block.text.trimStart().startsWith("<environment_details>")
+                ? [block.text]
+                : []
+        })
+    })
+}
+
+function expectNewTaskFeedback(consumption: MockApiConsumption, callId: string, feedback: string): void {
+    expect(consumption.contractError).toBeUndefined()
+    expect(consumption.requestToolPairing.complete).toBe(true)
+    expect(consumption.requestToolResults).toEqual([{ callId, content: expect.stringContaining("dline:new-task-feedback:v1") }])
+    expect(consumption.requestToolResults[0].content).not.toContain(feedback)
+    expect(responsesUserTextBlocks(consumption).join("\n").split(feedback)).toHaveLength(2)
+}
+
 e2e(
     "New Task handoff - Sidebar successor opens from task and context alone while feedback stays with the source",
     async ({ dlineDir, dlineDocsDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
@@ -245,12 +273,14 @@ e2e(
                 name: "new_task",
                 arguments: { task: successorTask, context: successorContext },
                 expectedRequestIncludes: [feedback, "dline:new-task-feedback:v1"],
+                expectedToolResultCount: 1,
                 expectedToolResults: [
                     {
                         callId: "call_new_task_sidebar_initial",
-                        contentIncludes: [feedback, "dline:new-task-feedback:v1"],
+                        contentIncludes: "dline:new-task-feedback:v1",
                     },
                 ],
+                requireCompleteToolPairing: true,
             },
             {
                 type: "tool",
@@ -288,6 +318,11 @@ e2e(
             await submitNewTaskFeedback(sidebar, feedback, "button")
             await expect(sidebar.getByText(successorTask, { exact: true })).toBeVisible({ timeout: 60_000 })
             await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(2)
+            expectNewTaskFeedback(
+                server.getMockConsumptions("openai-compatible-responses")[1],
+                "call_new_task_sidebar_initial",
+                feedback,
+            )
 
             const input = sidebar.getByTestId("chat-input")
             await input.fill(unsentDraft)
@@ -398,16 +433,21 @@ e2e(
                 name: "new_task",
                 arguments: { task: successorTask, context: successorContext },
                 expectedRequestIncludes: [feedback, "dline:new-task-feedback:v1"],
+                expectedToolResultCount: 1,
                 expectedToolResults: [
                     {
                         callId: "call_new_task_panel_initial",
-                        contentIncludes: [feedback, "dline:new-task-feedback:v1"],
+                        contentIncludes: "dline:new-task-feedback:v1",
                     },
                 ],
+                requireCompleteToolPairing: true,
             })
             await submitNewTaskFeedback(panel, feedback, "enter")
             await expect(panel.getByText(successorTask, { exact: true })).toBeVisible({ timeout: 60_000 })
             await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(3)
+            const feedbackRequest = server.getMockConsumptions("openai-compatible-responses")[2]
+            expectNewTaskFeedback(feedbackRequest, "call_new_task_panel_initial", feedback)
+            expect(responsesUserTextBlocks(feedbackRequest).join("\n")).not.toContain(sidebarTask)
             server.enqueueResponses("openai-compatible-responses", {
                 type: "tool",
                 id: "call_new_task_panel_successor_ready",
@@ -495,9 +535,11 @@ e2e(
                 id: approvedToolId,
                 name: "new_task",
                 arguments: { task: successorTask, context: successorContext },
-                // The restored decline answers the call it belongs to, as the live handler would.
+                // The paired decline keeps its marker; the source's next user input carries the feedback.
                 expectedRequestIncludes: [feedback, "dline:new-task-feedback:v1"],
-                expectedToolResults: [{ callId: declinedToolId, contentIncludes: [feedback, "dline:new-task-feedback:v1"] }],
+                expectedToolResultCount: 1,
+                expectedToolResults: [{ callId: declinedToolId, contentIncludes: "dline:new-task-feedback:v1" }],
+                requireCompleteToolPairing: true,
             },
             {
                 type: "tool",
@@ -541,6 +583,7 @@ e2e(
             await submitNewTaskFeedback(sidebar, feedback, "button")
             await expect(sidebar.getByText(successorTask, { exact: true })).toBeVisible({ timeout: 60_000 })
             await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(2)
+            expectNewTaskFeedback(server.getMockConsumptions("openai-compatible-responses")[1], declinedToolId, feedback)
             await expect(startNewTaskButton(sidebar)).toBeEnabled({ timeout: 60_000 })
         } finally {
             await second.close()

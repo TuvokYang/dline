@@ -125,6 +125,33 @@ function normalizeNewlines(value: string): string {
     return value.replaceAll("\r\n", "\n")
 }
 
+/** Read only user-authored text, never tool outputs, assistant calls, or tool schemas. */
+function requestUserTextBlocks(consumption: MockApiConsumption): string[] {
+    const body = consumption.requestBody as { messages?: unknown[]; input?: unknown[] }
+    return [...(body.messages ?? []), ...(body.input ?? [])].flatMap((value) => {
+        if (typeof value !== "object" || value === null) return []
+        const message = value as { role?: unknown; content?: unknown }
+        if (message.role !== "user") return []
+        if (typeof message.content === "string") return [message.content]
+        if (!Array.isArray(message.content)) return []
+        return message.content.flatMap((value) => {
+            if (typeof value !== "object" || value === null) return []
+            const block = value as { type?: unknown; text?: unknown }
+            return (block.type === "text" || block.type === "input_text") && typeof block.text === "string" ? [block.text] : []
+        })
+    })
+}
+
+function expectCompletionFeedback(consumption: MockApiConsumption, callId: string, feedback: string): void {
+    expect(consumption.contractError).toBeUndefined()
+    expect(consumption.requestToolPairing.complete).toBe(true)
+    const results = consumption.requestToolResults.filter((result) => result.callId === callId)
+    expect(results).toHaveLength(1)
+    expect(results[0].content).toContain("[attempt_completion] Result: Done")
+    expect(requestUserTextBlocks(consumption).join("\n").split(feedback)).toHaveLength(2)
+    for (const result of consumption.requestToolResults) expect(result.content).not.toContain(feedback)
+}
+
 async function configureStressRuntime(dlineDir: string): Promise<void> {
     const profilePath = path.join(dlineDir, "data", "settings", "api_profiles.json")
     const profiles = JSON.parse(await readFile(profilePath, "utf8")) as StoredStressProfile[]
@@ -408,7 +435,7 @@ async function waitForWebviewFocusHandoff(frame: Frame): Promise<void> {
 async function isActiveElementOfParent(frame: Frame): Promise<boolean> {
     const element = await frame.frameElement()
     try {
-        return await element.evaluate((node) => node.ownerDocument.activeElement === node)
+        return await element.evaluate((node) => (node as Element).ownerDocument.activeElement === node)
     } finally {
         await element.dispose()
     }
@@ -1200,13 +1227,21 @@ e2e(
             id: "call_concurrent_panel_b_follow_up",
             name: "attempt_completion",
             arguments: { result: "E2E_CONCURRENT_PANEL_B_STILL_WORKS" },
-            expectedToolResults: [{ callId: "call_concurrent_panel_b_completion", contentIncludes: panelBFollowUp }],
+            expectedRequestIncludes: [panelBFollowUp],
+            expectedToolResultCount: 2,
+            expectedToolResults: [
+                { callId: "call_concurrent_panel_b_completion", contentIncludes: "[attempt_completion] Result: Done" },
+            ],
+            requireCompleteToolPairing: true,
         })
         await panelB.getByTestId("chat-input").fill(panelBFollowUp)
         await panelB.getByTestId("send-button").click()
         await expect(panelB.getByText("E2E_CONCURRENT_PANEL_B_STILL_WORKS", { exact: false }).last()).toBeVisible({
             timeout: 60_000,
         })
+        const panelBFeedbackRequest = server.getMockConsumptions("openai-compatible-responses")[2]
+        expectCompletionFeedback(panelBFeedbackRequest, "call_concurrent_panel_b_completion", panelBFollowUp)
+        expect(requestUserTextBlocks(panelBFeedbackRequest).join("\n")).not.toContain(panelAFollowUp)
         await expect.poll(() => pathExists(panelBPath)).toBe(true)
         expect(normalizeNewlines(await readFile(panelBPath, "utf8"))).toBe("panel B checkpoint content\n")
 
@@ -1490,8 +1525,13 @@ e2e(
             name: "attempt_completion",
             arguments: { result: "E2E_MULTI_WINDOW_SIDEBAR_OK" },
             delayMs: responseDelayMs,
+            expectedRequestIncludes: [sidebarTurn],
+            expectedRequestExcludes: [panelTurn],
             expectedToolResultCount: 1,
-            expectedToolResults: [{ callId: "call_multi_window_sidebar_setup_completion", contentIncludes: sidebarTurn }],
+            expectedToolResults: [
+                { callId: "call_multi_window_sidebar_setup_completion", contentIncludes: "[attempt_completion] Result: Done" },
+            ],
+            requireCompleteToolPairing: true,
         })
         server.enqueueResponses("openai-compatible-responses", {
             type: "tool",
@@ -1499,8 +1539,13 @@ e2e(
             name: "attempt_completion",
             arguments: { result: "E2E_MULTI_WINDOW_PANEL_OK" },
             delayMs: responseDelayMs,
+            expectedRequestIncludes: [panelTurn],
+            expectedRequestExcludes: [sidebarTurn],
             expectedToolResultCount: 1,
-            expectedToolResults: [{ callId: "call_multi_window_setup_completion", contentIncludes: panelTurn }],
+            expectedToolResults: [
+                { callId: "call_multi_window_setup_completion", contentIncludes: "[attempt_completion] Result: Done" },
+            ],
+            requireCompleteToolPairing: true,
         })
 
         const panelInput = panel.locator('[data-testid="chat-input"]:visible')
@@ -1523,8 +1568,10 @@ e2e(
         ])
         const chatRequest = server.getMockConsumptions("openai-compatible-chat")[0]
         const responsesRequest = server.getMockConsumptions("openai-compatible-responses")[0]
-        expect(chatRequest.contractError).toBeUndefined()
-        expect(responsesRequest.contractError).toBeUndefined()
+        expectCompletionFeedback(chatRequest, "call_multi_window_sidebar_setup_completion", sidebarTurn)
+        expectCompletionFeedback(responsesRequest, "call_multi_window_setup_completion", panelTurn)
+        expect(requestUserTextBlocks(chatRequest).join("\n")).not.toContain(panelTurn)
+        expect(requestUserTextBlocks(responsesRequest).join("\n")).not.toContain(sidebarTurn)
         expect(chatRequest.requestToolResults[0]?.content).not.toContain(panelTurn)
         expect(responsesRequest.requestToolResults[0]?.content).not.toContain(sidebarTurn)
         expect(Math.abs(chatRequest.receivedAtMs - responsesRequest.receivedAtMs)).toBeLessThan(responseDelayMs)

@@ -5,6 +5,7 @@ import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { MultiInstanceLauncher } from "@e2e/utils/multi-instance"
 import { expect, type Frame, type Page } from "@playwright/test"
+import { load as parseYaml } from "js-yaml"
 
 interface StoredSettingsFile {
     subagentsEnabled?: boolean
@@ -258,9 +259,15 @@ Preserve this instruction body exactly.\n`
         const profileSelect = row.getByRole("combobox")
         await expect(profileSelect).toBeVisible({ timeout: 30_000 })
         await profileSelect.selectOption({ label: E2E_PROFILE_NAMES.mockOpenAi })
+        const readFrontmatter = (yaml: string) =>
+            parseYaml(yaml.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/)?.[1] ?? "") as {
+                profile?: string
+                tools?: string[]
+                skills?: string[]
+            }
         await expect
-            .poll(async () => (await readFile(agentPath, "utf8")).includes(`profile: "${E2E_PROFILE_NAMES.mockOpenAi}"`))
-            .toBe(true)
+            .poll(async () => readFrontmatter(await readFile(agentPath, "utf8")).profile)
+            .toBe(E2E_PROFILE_NAMES.mockOpenAi)
 
         const updatedYaml = await readFile(agentPath, "utf8")
         const originalBody = originalYaml.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n([\s\S]*)$/)?.[1]?.trim()
@@ -271,11 +278,12 @@ Preserve this instruction body exactly.\n`
         // an implicit guarantee as an editable preference. The selected tool
         // survives, and the completion contract is enforced below by the
         // child actually reporting back.
-        expect(updatedYaml).toContain("tools:\n  - read_file")
-        expect(updatedYaml).not.toContain("- attempt_completion")
-        expect(updatedYaml).toContain("skills: []")
+        expect(readFrontmatter(updatedYaml)).toMatchObject({
+            tools: ["read_file"],
+            skills: [],
+            profile: E2E_PROFILE_NAMES.mockOpenAi,
+        })
         expect(updatedBody).toBe(originalBody)
-        expect(updatedYaml).toContain(`profile: "${E2E_PROFILE_NAMES.mockOpenAi}"`)
 
         await sidebar.getByRole("button", { name: "Hide Dline Rules & Workflows", exact: true }).first().click()
         server.resetOpenAiMock()

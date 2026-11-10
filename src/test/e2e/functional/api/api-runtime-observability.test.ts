@@ -158,6 +158,33 @@ async function expectSingleUserFeedback(sidebar: Frame, text: string): Promise<v
     await expect(feedback).toHaveText(text)
 }
 
+/** Anthropic tool_result blocks are not user-authored text, even inside a user message. */
+function requestUserTextBlocks(consumption: MockApiConsumption): string[] {
+    const body = consumption.requestBody as { messages?: unknown[]; input?: unknown[] }
+    return [...(body.messages ?? []), ...(body.input ?? [])].flatMap((value) => {
+        if (typeof value !== "object" || value === null) return []
+        const message = value as { role?: unknown; content?: unknown }
+        if (message.role !== "user") return []
+        if (typeof message.content === "string") return [message.content]
+        if (!Array.isArray(message.content)) return []
+        return message.content.flatMap((value) => {
+            if (typeof value !== "object" || value === null) return []
+            const block = value as { type?: unknown; text?: unknown }
+            return (block.type === "text" || block.type === "input_text") && typeof block.text === "string" ? [block.text] : []
+        })
+    })
+}
+
+function expectRequestUserFeedbackOnce(consumption: MockApiConsumption, ...markers: readonly string[]): void {
+    expect(consumption.contractError).toBeUndefined()
+    expect(consumption.requestToolPairing.complete).toBe(true)
+    const text = requestUserTextBlocks(consumption).join("\n")
+    for (const marker of markers) {
+        expect(text.split(marker), `User feedback must occur exactly once: ${marker}`).toHaveLength(2)
+        for (const result of consumption.requestToolResults) expect(result.content).not.toContain(marker)
+    }
+}
+
 async function exerciseChatAndEditorSurface(page: Page, sidebar: Frame): Promise<void> {
     const input = sidebar.getByTestId("chat-input")
     await expect(input).toBeVisible()
@@ -450,7 +477,10 @@ for (const testCase of protocolCases) {
                     id: toolCallIds.qna,
                     name: "qna_respond",
                     arguments: { response: QNA_RESPONSE },
-                    expectedToolResults: [{ callId: toolCallIds.report, contentIncludes: REPORT_FEEDBACK }],
+                    expectedRequestIncludes: [REPORT_FEEDBACK],
+                    expectedToolResultCount: 3,
+                    expectedToolResults: [{ callId: toolCallIds.report, contentIncludes: "The user response was received." }],
+                    requireCompleteToolPairing: true,
                     ...reasoningResponse(3),
                 },
                 {
@@ -458,7 +488,10 @@ for (const testCase of protocolCases) {
                     id: toolCallIds.blockedCompletion,
                     name: "attempt_completion",
                     arguments: { result: "E2E_INCOMPLETE_COMPLETION_MUST_NOT_FINISH" },
-                    expectedToolResults: [{ callId: toolCallIds.qna, contentIncludes: QNA_FEEDBACK }],
+                    expectedRequestIncludes: [QNA_FEEDBACK],
+                    expectedToolResultCount: 4,
+                    expectedToolResults: [{ callId: toolCallIds.qna, contentIncludes: "The user response was received." }],
+                    requireCompleteToolPairing: true,
                     ...reasoningResponse(4),
                 },
                 {
@@ -540,10 +573,9 @@ for (const testCase of protocolCases) {
                 expect(visibleThinkingGroups).toBeGreaterThan(0)
                 expect(visibleThinkingGroups).toBeLessThanOrEqual(thinkingTexts.length)
                 // The completion round keeps its thinking as the last standalone row.
-                const completionThinking = sidebar.getByRole("button", {
-                    name: thinkingTexts[thinkingTexts.length - 1],
-                    exact: true,
-                })
+                const completionThinking = sidebar
+                    .getByRole("region", { name: "Thinking content", exact: true })
+                    .filter({ hasText: thinkingTexts[thinkingTexts.length - 1] })
                 if (!(await completionThinking.isVisible())) await thinkingToggles.last().click()
                 await expect(completionThinking).toBeVisible()
                 // The search round only thinks and searches, so it folds into an exploration
@@ -552,10 +584,9 @@ for (const testCase of protocolCases) {
                 await searchRun.locator("button[aria-controls]").click()
                 const searchRound = searchRun.getByTestId("exploration-round")
                 await expect(searchRound).toHaveCount(1)
-                const searchThinking = searchRound.getByRole("button", {
-                    name: thinkingTexts[thinkingTexts.length - 2],
-                    exact: true,
-                })
+                const searchThinking = searchRound
+                    .getByRole("region", { name: "Thinking content", exact: true })
+                    .filter({ hasText: thinkingTexts[thinkingTexts.length - 2] })
                 if (!(await searchThinking.isVisible())) {
                     await searchRound.getByRole("button", { name: "Thinking", exact: true }).click()
                 }
@@ -599,11 +630,22 @@ for (const testCase of protocolCases) {
                 expect.objectContaining({ callId: toolCallIds.list, content: expect.stringContaining("index.html") }),
             )
             expect(consumptions[3].requestToolResults).toContainEqual(
-                expect.objectContaining({ callId: toolCallIds.report, content: expect.stringContaining(REPORT_FEEDBACK) }),
+                expect.objectContaining({
+                    callId: toolCallIds.report,
+                    content: expect.stringContaining("The user response was received."),
+                }),
             )
             expect(consumptions[4].requestToolResults).toContainEqual(
-                expect.objectContaining({ callId: toolCallIds.qna, content: expect.stringContaining(QNA_FEEDBACK) }),
+                expect.objectContaining({
+                    callId: toolCallIds.qna,
+                    content: expect.stringContaining("The user response was received."),
+                }),
             )
+            for (const [index, consumption] of consumptions.entries()) {
+                if (index < 3) continue
+                expect(consumption.requestToolResults).toHaveLength(index)
+                expectRequestUserFeedbackOnce(consumption, REPORT_FEEDBACK, ...(index >= 4 ? [QNA_FEEDBACK] : []))
+            }
             expect(consumptions[5].requestToolResults).toContainEqual(
                 expect.objectContaining({
                     callId: toolCallIds.blockedCompletion,
@@ -1424,7 +1466,12 @@ e2e(
                 id: "call_deepseek_recovered_completion",
                 name: "attempt_completion",
                 arguments: { result: completion },
-                expectedToolResults: [{ callId: "call_deepseek_recovered_followup", contentIncludes: [option] }],
+                expectedRequestIncludes: [option],
+                expectedToolResultCount: 1,
+                expectedToolResults: [
+                    { callId: "call_deepseek_recovered_followup", contentIncludes: "The user response was received." },
+                ],
+                requireCompleteToolPairing: true,
             },
             {
                 type: "error",
@@ -1448,7 +1495,9 @@ e2e(
         await optionButton.click()
         await expect(sidebar.getByText(completion, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
         await expect(sidebar.getByTestId("error-retry-box")).toHaveCount(0)
-        expect(server.getMockConsumptions("deepseek-chat")).toHaveLength(3)
+        const consumptions = server.getMockConsumptions("deepseek-chat")
+        expect(consumptions).toHaveLength(3)
+        expectRequestUserFeedbackOnce(consumptions[2], option)
         await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [/Connection error|ECONNRESET|fetch failed/])
     },
 )

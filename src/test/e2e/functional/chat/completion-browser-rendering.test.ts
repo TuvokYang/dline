@@ -177,12 +177,19 @@ e2e(
         await sendTask(sidebar, taskText)
         await expect.poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 120_000 }).toBe(5)
 
-        const frame = sidebar.getByTestId("browser-session-frame")
-        const toolbar = sidebar.getByTestId("browser-session-toolbar")
+        // Ordinary assistant text ends a browser group; the later scroll opens a second group.
+        const frames = sidebar.getByTestId("browser-session-frame")
+        await expect(frames).toHaveCount(2)
+        const navigableSession = sidebar
+            .getByTestId("browser-session")
+            .filter({ has: sidebar.getByTestId("browser-session-toolbar") })
+        await expect(navigableSession).toHaveCount(1)
+        const frame = navigableSession.getByTestId("browser-session-frame")
+        const toolbar = frame.getByTestId("browser-session-toolbar")
         const previous = toolbar.getByRole("button", { name: "Previous browser step" })
         const screenshot = frame.getByRole("img", { name: "Browser screenshot" })
-        const stepsToggle = sidebar.getByTestId("browser-session-steps-toggle")
-        const steps = sidebar.getByTestId("browser-session-steps")
+        const stepsToggle = navigableSession.getByTestId("browser-session-steps-toggle")
+        const steps = navigableSession.getByTestId("browser-session-steps")
         const response = sidebar.getByText(responseMarker, { exact: false })
         await expect(frame).toBeVisible()
         await expect(toolbar).toBeVisible()
@@ -190,7 +197,7 @@ e2e(
         await expect(screenshot).toBeVisible()
         await expect(response).toHaveCount(1)
         await expect(frame.getByRole("button", { name: "Thinking", exact: true })).toHaveCount(0)
-        await expect(frame.getByText(responseMarker, { exact: false })).toHaveCount(0)
+        await expect(frames.getByText(responseMarker, { exact: false })).toHaveCount(0)
         // Each round's thinking sits in the steps card under the frame, folded until the reader opens it.
         await expect(stepsToggle).toHaveAttribute("aria-expanded", "false")
         await stepsToggle.click()
@@ -222,6 +229,14 @@ e2e(
         )
         expect(framePrecedesReasoning).toBe(true)
 
+        // Reading expanded earlier steps deliberately leaves the transcript away from its live tail.
+        await expect(
+            sidebar.getByRole("contentinfo").getByRole("button", { name: "Start New Task", exact: true }).first(),
+        ).toBeVisible({
+            timeout: 120_000,
+        })
+        const scrollToBottom = sidebar.getByRole("button", { name: "Scroll to bottom", exact: true })
+        if (await scrollToBottom.isVisible()) await scrollToBottom.click()
         await expect(sidebar.getByText(completionMarker, { exact: false }).last()).toBeVisible({ timeout: 120_000 })
         const consumptions = server.getMockConsumptions("openai-compatible-responses")
         expect(consumptions.every((entry) => entry.contractError === undefined)).toBe(true)
@@ -230,13 +245,15 @@ e2e(
 
         const requestsBeforeReopen = server.getRequestCount("openai-compatible-responses")
         await closeAndReopenTask(page, sidebar, taskText)
-        const restoredFrame = sidebar.getByTestId("browser-session-frame")
-        const restoredToolbar = sidebar.getByTestId("browser-session-toolbar")
+        const restoredFrames = sidebar.getByTestId("browser-session-frame")
+        await expect(restoredFrames).toHaveCount(2)
+        const restoredFrame = restoredFrames.filter({ has: sidebar.getByTestId("browser-session-toolbar") })
+        const restoredToolbar = restoredFrame.getByTestId("browser-session-toolbar")
         await expect(restoredFrame).toBeVisible()
         await expect(restoredToolbar).toBeVisible()
         await expect(restoredToolbar.getByRole("button", { name: "Previous browser step" })).toBeVisible()
         await expect(restoredFrame.getByRole("button", { name: "Thinking", exact: true })).toHaveCount(0)
-        await expect(restoredFrame.getByText(responseMarker, { exact: false })).toHaveCount(0)
+        await expect(restoredFrames.getByText(responseMarker, { exact: false })).toHaveCount(0)
         await expect(sidebar.getByText(responseMarker, { exact: false })).toHaveCount(1)
         expect(server.getRequestCount("openai-compatible-responses")).toBe(requestsBeforeReopen)
         await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)

@@ -162,7 +162,12 @@ e2e(
             await expect.poll(() => readSavedVariables(dlineDir)).toBeUndefined()
 
             await page.locator(".quick-input-widget input").last().press("Escape")
-            await expect(row.getByText(DECLINED_ERROR, { exact: true })).toBeVisible({ timeout: 30_000 })
+            const failure = row.getByRole("alert")
+            await expect(failure).toContainText("Could not connect to the MCP server.", { timeout: 30_000 })
+            const diagnostics = failure.locator("details")
+            await diagnostics.locator("summary").click()
+            await expect(diagnostics).toHaveAttribute("open", "")
+            await expect(diagnostics).toContainText(DECLINED_ERROR)
             expect(await spawnsIn(userDataDir, VARIABLE_MCP_NAME)).toBe(1)
             expect(await readSavedVariables(dlineDir)).toBeUndefined()
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)

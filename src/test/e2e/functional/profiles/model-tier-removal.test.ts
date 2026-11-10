@@ -3,6 +3,7 @@ import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame, type Locator, type Page } from "@playwright/test"
+import type { ModelPricing } from "@shared/proto/dline/models/metadata"
 import type { ElectronApplication } from "playwright"
 
 interface StoredProfile {
@@ -10,7 +11,7 @@ interface StoredProfile {
     anthropic?: {
         customModelEnabled?: boolean
         capabilities?: { contextWindowTiers?: unknown[] }
-        pricing?: { tiers?: unknown[] }
+        pricing?: Pick<ModelPricing, "currency" | "strategy">
         pricingTiersEnabled?: boolean
     }
 }
@@ -34,7 +35,8 @@ async function openModelConfiguration(page: Page, sidebar: Frame): Promise<Locat
     return card
 }
 
-async function removeAll(card: Locator, name: "Remove Context Tier" | "Remove Pricing Tier"): Promise<void> {
+async function removeAllContextTiers(card: Locator): Promise<void> {
+    const name = "Remove Context Tier"
     const buttons = card.getByRole("button", { name })
     while ((await buttons.count()) > 0) {
         const previous = await buttons.count()
@@ -64,7 +66,15 @@ async function seedExplicitTiers(dlineDir: string): Promise<void> {
             ],
         },
         pricing: {
-            tiers: [{ contextWindow: 200_000, inputPrice: 3, outputPrice: 15 }],
+            currency: "USD",
+            strategy: {
+                contextWindow: {
+                    bands: [
+                        { maxInputTokens: 200_000, prices: { inputPrice: 3, outputPrice: 15 } },
+                        { prices: { inputPrice: 3, outputPrice: 15 } },
+                    ],
+                },
+            },
         },
         pricingTiersEnabled: true,
     }
@@ -72,7 +82,7 @@ async function seedExplicitTiers(dlineDir: string): Promise<void> {
 }
 
 e2e(
-    "Model configuration keeps explicitly removed context and pricing tiers empty after restart",
+    "Model configuration preserves removed context tiers and reset pricing overrides after restart",
     async ({ dlineDir, helper, openVSCode, userDataDir, workspaceDir }) => {
         e2e.setTimeout(180_000)
         let firstApp: ElectronApplication | undefined
@@ -87,18 +97,28 @@ e2e(
             const card = await openModelConfiguration(firstPage, firstSidebar)
             expect(await card.getByRole("button", { name: "Remove Context Tier" }).count()).toBeGreaterThan(0)
             expect(await card.getByRole("button", { name: "Remove Pricing Tier" }).count()).toBeGreaterThan(0)
-            await removeAll(card, "Remove Context Tier")
-            await removeAll(card, "Remove Pricing Tier")
+            await removeAllContextTiers(card)
+            const pricingRemoval = card.getByRole("button", { name: "Remove Pricing Tier", exact: true })
+            await expect(pricingRemoval).toHaveCount(2)
+            await pricingRemoval.first().click()
+            await expect(pricingRemoval).toHaveCount(1)
+            await expect(pricingRemoval).toBeDisabled()
+            await expect
+                .poll(async () => (await readProfile(dlineDir)).anthropic?.pricing?.strategy?.contextWindow?.bands)
+                .toEqual([{ prices: { inputPrice: 3, outputPrice: 15 } }])
+            // Price bands cannot be empty. Reset removes the complete override
+            // instead of persisting an invalid declaration or reviving removed bands.
+            await card.getByRole("button", { name: "Reset Pricing", exact: true }).click()
             await expect
                 .poll(async () => {
                     const profile = await readProfile(dlineDir)
                     return {
                         context: profile.anthropic?.capabilities?.contextWindowTiers,
-                        pricing: profile.anthropic?.pricing?.tiers,
+                        pricing: profile.anthropic?.pricing,
                         pricingTiersEnabled: profile.anthropic?.pricingTiersEnabled,
                     }
                 })
-                .toEqual({ context: [], pricing: [], pricingTiersEnabled: true })
+                .toEqual({ context: [], pricing: undefined, pricingTiersEnabled: undefined })
 
             await firstApp.close()
             firstApp = undefined
@@ -110,6 +130,9 @@ e2e(
             await helper.signin(reopenedSidebar)
             const reopenedCard = await openModelConfiguration(reopenedPage, reopenedSidebar)
             await expect(reopenedCard.getByRole("button", { name: "Remove Context Tier" })).toHaveCount(0)
+            const reopenedProfile = await readProfile(dlineDir)
+            expect(reopenedProfile.anthropic?.pricing).toBeUndefined()
+            expect(reopenedProfile.anthropic?.pricingTiersEnabled).toBeUndefined()
             await expect(reopenedCard.getByRole("button", { name: "Remove Pricing Tier" })).toHaveCount(0)
             await expect(reopenedCard.getByRole("button", { name: "Add Context Tier" })).toBeVisible()
             await expect(reopenedCard.getByRole("button", { name: "Add Pricing Tier" })).toBeVisible()

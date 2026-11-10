@@ -1,6 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
-import { type ClineApiServerMock, type MockExternalUrlVisit } from "@e2e/fixtures/server"
+import { type ClineApiServerMock, type MockApiConsumption, type MockExternalUrlVisit } from "@e2e/fixtures/server"
 import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame } from "@playwright/test"
@@ -50,6 +50,39 @@ async function confirmReport(sidebar: Frame, server: ClineApiServerMock): Promis
     await expect(confirm).toBeVisible({ timeout: 60_000 })
     expect(server.getExternalUrlVisits()).toEqual([])
     await confirm.click()
+}
+
+/** A follow-up option in an assistant call is not the user's submitted answer. */
+function requestUserTextBlocks(consumption: MockApiConsumption): string[] {
+    const messages = (consumption.requestBody as { messages?: unknown[] }).messages ?? []
+    return messages.flatMap((value) => {
+        if (typeof value !== "object" || value === null) return []
+        const message = value as { role?: unknown; content?: unknown }
+        if (message.role !== "user") return []
+        if (typeof message.content === "string") return [message.content]
+        if (!Array.isArray(message.content)) return []
+        return message.content.flatMap((value) => {
+            if (typeof value !== "object" || value === null) return []
+            const block = value as { type?: unknown; text?: unknown }
+            return block.type === "text" && typeof block.text === "string" ? [block.text] : []
+        })
+    })
+}
+
+function expectRequestUserFeedbackOnce(consumption: MockApiConsumption, ...markers: readonly string[]): void {
+    expect(consumption.contractError).toBeUndefined()
+    expect(consumption.requestToolPairing.complete).toBe(true)
+    const text = requestUserTextBlocks(consumption).join("\n")
+    for (const marker of markers) {
+        expect(text.split(marker), `User feedback must occur exactly once: ${marker}`).toHaveLength(2)
+        for (const result of consumption.requestToolResults) expect(result.content).not.toContain(marker)
+    }
+}
+
+/** Explicit report_bug calls use XML, so their result is prose beside the native call/output pairs. */
+function expectReportBugResultOnce(consumption: MockApiConsumption, nativeCallIds: string[]): void {
+    expect(consumption.requestToolResults.map((result) => result.callId)).toEqual(nativeCallIds)
+    expect(requestUserTextBlocks(consumption).filter((text) => text.startsWith("[report_bug] Result:"))).toHaveLength(1)
 }
 
 e2e(
@@ -167,7 +200,10 @@ e2e(
                 type: "tool",
                 id: "call_reply_report_bug",
                 name: "report_bug",
-                expectedToolResults: [{ callId: "call_reply_question", contentIncludes: details }],
+                expectedRequestIncludes: [details],
+                expectedToolResultCount: 1,
+                expectedToolResults: [{ callId: "call_reply_question", contentIncludes: "The user response was received." }],
+                requireCompleteToolPairing: true,
                 arguments: {
                     title: "E2E reply bug title",
                     what_happened: "E2E reply description",
@@ -211,6 +247,9 @@ e2e(
             "attempt_completion",
         ])
         expect(consumptions.every((consumption) => consumption.contractError === undefined)).toBe(true)
+        expectRequestUserFeedbackOnce(consumptions[1], details)
+        expectRequestUserFeedbackOnce(consumptions[2], details)
+        expectReportBugResultOnce(consumptions[2], ["call_reply_question"])
         await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
     },
 )
@@ -235,7 +274,12 @@ e2e(
                 type: "tool",
                 id: "call_later_second_question",
                 name: "ask_followup_question",
-                expectedToolResults: [{ callId: "call_later_first_question", contentIncludes: details }],
+                expectedRequestIncludes: [details],
+                expectedToolResultCount: 1,
+                expectedToolResults: [
+                    { callId: "call_later_first_question", contentIncludes: "The user response was received." },
+                ],
+                requireCompleteToolPairing: true,
                 arguments: { question: secondQuestion },
             },
             {
@@ -243,7 +287,12 @@ e2e(
                 id: "call_later_report_bug",
                 name: "report_bug",
                 // The plain second reply grants nothing; the authority comes from the first reply's record.
-                expectedToolResults: [{ callId: "call_later_second_question", contentIncludes: supplement }],
+                expectedRequestIncludes: [supplement],
+                expectedToolResultCount: 2,
+                expectedToolResults: [
+                    { callId: "call_later_second_question", contentIncludes: "The user response was received." },
+                ],
+                requireCompleteToolPairing: true,
                 arguments: {
                     title: "E2E later bug title",
                     what_happened: "E2E later description",
@@ -284,6 +333,10 @@ e2e(
             "attempt_completion",
         ])
         expect(consumptions.every((consumption) => consumption.contractError === undefined)).toBe(true)
+        expectRequestUserFeedbackOnce(consumptions[1], details)
+        expectRequestUserFeedbackOnce(consumptions[2], details, supplement)
+        expectRequestUserFeedbackOnce(consumptions[3], details, supplement)
+        expectReportBugResultOnce(consumptions[3], ["call_later_first_question", "call_later_second_question"])
         await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
     },
 )
@@ -308,7 +361,10 @@ e2e(
                 type: "tool",
                 id: "call_report_bug",
                 name: "report_bug",
-                expectedToolResults: [{ callId: "call_report_bug_question", contentIncludes: followup }],
+                expectedRequestIncludes: [followup],
+                expectedToolResultCount: 1,
+                expectedToolResults: [{ callId: "call_report_bug_question", contentIncludes: "The user response was received." }],
+                requireCompleteToolPairing: true,
                 expectedRequestExcludes: ["explicit_instruction_missing"],
                 arguments: {
                     title: "E2E generated bug title",
@@ -383,6 +439,9 @@ e2e(
             "attempt_completion",
         ])
         expect(consumptions.every((consumption) => consumption.contractError === undefined)).toBe(true)
+        expectRequestUserFeedbackOnce(consumptions[1], followup)
+        expectRequestUserFeedbackOnce(consumptions[2], followup)
+        expectReportBugResultOnce(consumptions[2], ["call_report_bug_question"])
         await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
     },
 )

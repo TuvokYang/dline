@@ -1,58 +1,32 @@
-import { readdir, readFile, writeFile } from "node:fs/promises"
-import path from "node:path"
+import { readFile, writeFile } from "node:fs/promises"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
-import { expectComposerText, PASTED_PNG_CHIP_NAME } from "@e2e/utils/composer"
-import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import {
-    pauseTaskBetweenTurns,
-    readTaskConversation,
-    readTaskUiMessagesText,
-    seedTaskConversation,
-} from "@e2e/utils/task-instance-store"
-import { expect, type Frame, type Locator, type Page } from "@playwright/test"
+    closeCurrentTask,
+    configureAutoCompaction,
+    configureResponsesAutoCompaction,
+    configureTriggerBoundary,
+    onlyTaskId,
+    openSidebar,
+    profilesPath,
+    reopenTask,
+    type StoredCompactionProfile as StoredProfile,
+    seedLargeCompactionHistory,
+    sendTask,
+    settingsPath,
+    submitTask,
+} from "@e2e/utils/compaction-fixture"
+import { countOccurrences, estimateTokens, expectCompactionBudgetFormula } from "@e2e/utils/compaction-request-oracle"
+import { PASTED_PNG_CHIP_NAME } from "@e2e/utils/composer"
+import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { readTaskConversation } from "@e2e/utils/task-instance-store"
+import { expect, type Locator } from "@playwright/test"
 import type { ElectronApplication } from "playwright"
-
-interface StoredProfile {
-    name: string
-    modelId?: string
-    webToolsMode?: "WEB_TOOLS_MODE_FORCE_OFF"
-    openai?: {
-        capabilities?: {
-            contextWindow?: number
-        }
-    }
-    anthropic?: {
-        capabilities?: {
-            contextWindow?: number
-        }
-    }
-    deepseek?: {
-        capabilities?: {
-            contextWindow?: number
-        }
-    }
-}
-
-interface RollingMergeProviderCase {
-    label: string
-    profileName: string
-    target: "openai-compatible-chat" | "openai-compatible-responses" | "anthropic-messages" | "deepseek-chat"
-    modelId: string
-    providerConfigKey: "openai" | "anthropic" | "deepseek"
-}
 
 interface OpenAiChatRequestBody {
     messages?: unknown[]
     tools?: Array<{ function?: { name?: string } }>
     prompt_cache_key?: string
     prompt_cache_options?: unknown
-}
-
-interface ParsedCompactionBudget {
-    availableRemainder: number
-    hardLimit: number
-    recommendedMin: number
-    recommendedMax: number
 }
 
 interface ContextWindowProjectionDiagnostic {
@@ -65,10 +39,6 @@ interface ContextWindowProjectionDiagnostic {
     projectedUsageTokens: number
     pressureSource: string
     shouldCompact: boolean
-}
-
-function estimateTokens(value: unknown): number {
-    return Math.max(1, Math.ceil(Buffer.byteLength(JSON.stringify(value), "utf8") / 4))
 }
 
 const TRUNCATED_SUMMARY_MARKER = "E2E_CHAT_COMPACTION_TRUNCATED_RESPONSE_SHOULD_NOT_SURVIVE"
@@ -92,39 +62,8 @@ function withoutRetryReminder(body: Record<string, unknown>): Record<string, unk
         }),
     }
 }
-const OPENAI_E2E_MODEL_MAX_OUTPUT_TOKENS = 8_192
 const ONE_PIXEL_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 const ONE_PIXEL_PNG_BASE64_PREFIX = ONE_PIXEL_PNG_BASE64.slice(0, -4)
-const ROLLING_MERGE_PROVIDER_CASES: readonly RollingMergeProviderCase[] = [
-    {
-        label: "OpenAI Chat Completion",
-        profileName: E2E_PROFILE_NAMES.mockOpenAi,
-        target: "openai-compatible-chat",
-        modelId: "gpt-5.6-sol",
-        providerConfigKey: "openai",
-    },
-    {
-        label: "OpenAI Responses",
-        profileName: E2E_PROFILE_NAMES.mockOpenAiResponses,
-        target: "openai-compatible-responses",
-        modelId: "gpt-5.6-sol",
-        providerConfigKey: "openai",
-    },
-    {
-        label: "Anthropic Messages",
-        profileName: E2E_PROFILE_NAMES.mockAnthropic,
-        target: "anthropic-messages",
-        modelId: "claude-sonnet-4-6",
-        providerConfigKey: "anthropic",
-    },
-    {
-        label: "DeepSeek Chat",
-        profileName: E2E_PROFILE_NAMES.mockDeepSeek,
-        target: "deepseek-chat",
-        modelId: "deepseek-v4-flash",
-        providerConfigKey: "deepseek",
-    },
-]
 
 function estimateCommonPrefixTokens(left: unknown, right: unknown): number {
     const leftText = JSON.stringify(left)
@@ -161,115 +100,8 @@ function commonMessageCount(left: readonly unknown[], right: readonly unknown[])
     return index
 }
 
-const profilesPath = (dlineDir: string) => path.join(dlineDir, "data", "settings", "api_profiles.json")
-const settingsPath = (dlineDir: string) => path.join(dlineDir, "data", "settings", "settings.json")
-
-async function configureAutoCompaction(dlineDir: string, profileName: string): Promise<void> {
-    const profiles = JSON.parse(await readFile(profilesPath(dlineDir), "utf8")) as StoredProfile[]
-    const profile = profiles.find((candidate) => candidate.name === profileName)
-    if (!profile?.openai?.capabilities) throw new Error(`Missing configurable OpenAI E2E profile: ${profileName}`)
-    profile.modelId = "gpt-5.6-sol"
-    profile.openai.capabilities.contextWindow = 131_072
-    profile.webToolsMode = "WEB_TOOLS_MODE_FORCE_OFF"
-    await writeFile(profilesPath(dlineDir), `${JSON.stringify(profiles, null, 2)}\n`, "utf8")
-
-    const settings = JSON.parse(await readFile(settingsPath(dlineDir), "utf8")) as Record<string, unknown>
-    await writeFile(
-        settingsPath(dlineDir),
-        `${JSON.stringify(
-            {
-                ...settings,
-                actModeProfile: profileName,
-                planModeProfile: profileName,
-                useAutoCondense: true,
-                autoCondenseTriggerPercent: 60,
-                autoCondenseMaxContextTokens: 100_000,
-            },
-            null,
-            2,
-        )}\n`,
-        "utf8",
-    )
-}
-
 async function configureChatAutoCompaction(dlineDir: string): Promise<void> {
     await configureAutoCompaction(dlineDir, E2E_PROFILE_NAMES.mockOpenAi)
-}
-
-async function configureResponsesAutoCompaction(dlineDir: string): Promise<void> {
-    await configureAutoCompaction(dlineDir, E2E_PROFILE_NAMES.mockOpenAiResponses)
-}
-
-async function configureTriggerBoundary(
-    dlineDir: string,
-    contextWindow: number,
-    maxContextTokens: number,
-    minReserveTokens = 5_000,
-    maxReserveTokens = 30_000,
-    triggerPercent = 97,
-): Promise<void> {
-    const profiles = JSON.parse(await readFile(profilesPath(dlineDir), "utf8")) as StoredProfile[]
-    const profile = profiles.find((candidate) => candidate.name === E2E_PROFILE_NAMES.mockOpenAiResponses)
-    if (!profile?.openai?.capabilities) throw new Error("Missing configurable OpenAI Responses E2E profile")
-    profile.modelId = "gpt-5.6-sol"
-    profile.openai.capabilities.contextWindow = contextWindow
-    profile.webToolsMode = "WEB_TOOLS_MODE_FORCE_OFF"
-    await writeFile(profilesPath(dlineDir), `${JSON.stringify(profiles, null, 2)}\n`, "utf8")
-
-    const settings = JSON.parse(await readFile(settingsPath(dlineDir), "utf8")) as Record<string, unknown>
-    await writeFile(
-        settingsPath(dlineDir),
-        `${JSON.stringify(
-            {
-                ...settings,
-                actModeProfile: E2E_PROFILE_NAMES.mockOpenAiResponses,
-                planModeProfile: E2E_PROFILE_NAMES.mockOpenAiResponses,
-                useAutoCondense: true,
-                autoCondenseTriggerPercent: triggerPercent,
-                autoCondenseMinReserveTokens: minReserveTokens,
-                autoCondenseMaxReserveTokens: maxReserveTokens,
-                autoCondenseMaxContextTokens: maxContextTokens,
-            },
-            null,
-            2,
-        )}\n`,
-        "utf8",
-    )
-}
-
-async function configureRollingMergeTarget(dlineDir: string, providerCase: RollingMergeProviderCase): Promise<void> {
-    const profiles = JSON.parse(await readFile(profilesPath(dlineDir), "utf8")) as StoredProfile[]
-    const profile = profiles.find((candidate) => candidate.name === providerCase.profileName)
-    if (!profile) throw new Error(`Missing configurable E2E profile: ${providerCase.profileName}`)
-    profile.modelId = providerCase.modelId
-    const providerConfig = profile[providerCase.providerConfigKey] ?? {}
-    profile[providerCase.providerConfigKey] = {
-        ...providerConfig,
-        capabilities: {
-            ...(providerConfig.capabilities ?? {}),
-            contextWindow: 1_000_000,
-        },
-    }
-    profile.webToolsMode = "WEB_TOOLS_MODE_FORCE_OFF"
-    await writeFile(profilesPath(dlineDir), `${JSON.stringify(profiles, null, 2)}\n`, "utf8")
-
-    const settings = JSON.parse(await readFile(settingsPath(dlineDir), "utf8")) as Record<string, unknown>
-    await writeFile(
-        settingsPath(dlineDir),
-        `${JSON.stringify(
-            {
-                ...settings,
-                actModeProfile: providerCase.profileName,
-                planModeProfile: providerCase.profileName,
-                useAutoCondense: true,
-                autoCondenseTriggerPercent: 97,
-                autoCondenseMaxContextTokens: 272_000,
-            },
-            null,
-            2,
-        )}\n`,
-        "utf8",
-    )
 }
 
 async function configureReducedCapScenario(dlineDir: string): Promise<void> {
@@ -331,10 +163,6 @@ async function configureResponsesContextPressure(dlineDir: string): Promise<void
     )
 }
 
-function countOccurrences(text: string, marker: string): number {
-    return text.split(marker).length - 1
-}
-
 function parseContextWindowProjection(output: string, apiIndex: number): ContextWindowProjectionDiagnostic | undefined {
     const prefix = "final context-window projection "
     for (const line of output.split(/\r?\n/).reverse()) {
@@ -361,133 +189,6 @@ function parseContextWindowProjection(output: string, apiIndex: number): Context
         } catch {}
     }
     return undefined
-}
-
-function parseCompactionBudget(requestBody: unknown): ParsedCompactionBudget {
-    const requestText = JSON.stringify(requestBody)
-    const available = requestText.match(/Estimated available context-window remainder: ([0-9]+) tokens/)
-    const hardLimit = requestText.match(/Hard limit for the complete response: ([0-9]+) tokens/)
-    const recommended = requestText.match(/Recommended total response range: ([0-9]+)[–-]([0-9]+) tokens/)
-    if (!available || !hardLimit || !recommended) {
-        throw new Error("Compaction request is missing the complete window-budget guidance")
-    }
-    return {
-        availableRemainder: Number(available[1]),
-        hardLimit: Number(hardLimit[1]),
-        recommendedMin: Number(recommended[1]),
-        recommendedMax: Number(recommended[2]),
-    }
-}
-
-function expectCompactionBudgetFormula(requestBody: unknown): ParsedCompactionBudget {
-    const requestText = JSON.stringify(requestBody)
-    const budget = parseCompactionBudget(requestBody)
-    const declaredMaxOutput = (requestBody as { max_output_tokens?: unknown }).max_output_tokens
-    const transportOutputLimit =
-        typeof declaredMaxOutput === "number" && declaredMaxOutput > 0 ? Math.floor(declaredMaxOutput) : Number.POSITIVE_INFINITY
-    const expectedHardLimit = Math.min(budget.availableRemainder, OPENAI_E2E_MODEL_MAX_OUTPUT_TOKENS, transportOutputLimit)
-
-    // The recommended range is bounded by the remaining window and by the hard limit: advising a
-    // longer response than the request can emit would guarantee truncation.
-    const expectedRecommendedMax = Math.min(Math.floor(budget.availableRemainder * 0.9), 30_000, budget.hardLimit)
-    const expectedRecommendedMin = Math.min(Math.floor(budget.availableRemainder * 0.8), 5_000, expectedRecommendedMax)
-
-    expect(budget.availableRemainder).toBeGreaterThan(0)
-    expect(budget.hardLimit).toBe(expectedHardLimit)
-    expect(budget.recommendedMin).toBe(expectedRecommendedMin)
-    expect(budget.recommendedMax).toBe(expectedRecommendedMax)
-    expect(budget.recommendedMin).toBeLessThanOrEqual(budget.recommendedMax)
-    expect(budget.recommendedMax).toBeLessThanOrEqual(budget.availableRemainder)
-    expect(budget.recommendedMax).toBeLessThanOrEqual(budget.hardLimit)
-    expect(requestText).toContain("The recommended range is guidance, not a quota or a minimum output requirement")
-    expect(requestText).toContain("Do not expand the analysis or summary merely to fill the available range")
-    expect(requestText).toContain("Preserve all information required to continue the task accurately and completely")
-    expect(requestText).not.toMatch(/estimated (?:compaction request )?input/i)
-    return budget
-}
-
-async function openSidebar(app: ElectronApplication, helper: E2ETestHelper): Promise<Frame> {
-    const page = await app.firstWindow()
-    await E2ETestHelper.openClineSidebar(page)
-    const sidebar = await helper.getSidebar(page)
-    await E2ETestHelper.dismissWhatsNewModal(sidebar)
-    await helper.signin(sidebar)
-    return sidebar
-}
-
-async function submitTask(sidebar: Frame, text: string): Promise<void> {
-    const input = sidebar.getByTestId("chat-input")
-    await expect(input).toBeEnabled()
-    await input.fill(text)
-    await input.press("Enter")
-    await expectComposerText(input, "")
-}
-
-async function sendTask(sidebar: Frame, text: string): Promise<void> {
-    await submitTask(sidebar, text)
-    await expect(sidebar.getByText(text, { exact: true }).last()).toBeVisible()
-}
-
-async function closeCurrentTask(sidebar: Frame): Promise<void> {
-    const closeButton = sidebar.getByRole("button", { name: "Close Task", exact: true })
-    await expect(closeButton).toBeVisible({ timeout: 30_000 })
-    await closeButton.click()
-    await expect(sidebar.getByTestId("chat-input")).toBeVisible({ timeout: 30_000 })
-    await E2ETestHelper.dismissWhatsNewModal(sidebar)
-}
-
-async function reopenTask(page: Page, sidebar: Frame, taskText: string): Promise<void> {
-    await page.getByRole("button", { name: "History", exact: true }).click()
-    await E2ETestHelper.dismissWhatsNewModal(sidebar)
-    const historyTask = sidebar.locator(".history-preview-item, .history-item").filter({ hasText: taskText })
-    await expect(historyTask).toHaveCount(1, { timeout: 30_000 })
-    await historyTask.click()
-    await expect(sidebar.getByRole("button", { name: "Close Task", exact: true })).toBeVisible({ timeout: 30_000 })
-    await expect(sidebar.getByText(taskText, { exact: true }).first()).toBeVisible({ timeout: 30_000 })
-    // The message surface is published before resume preparation finishes, so wait until the task admits input.
-    await expect(sidebar.getByTestId("send-button")).toHaveAttribute("data-action", /^(?:send|resume)$/, { timeout: 30_000 })
-}
-
-async function onlyTaskId(dlineDocsDir: string): Promise<string> {
-    const entries = await readdir(path.join(dlineDocsDir, "tasks"), { withFileTypes: true })
-    const taskIds = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name)
-    if (taskIds.length !== 1 || !taskIds[0]) throw new Error(`Expected exactly one persisted task, found ${taskIds.length}`)
-    return taskIds[0]
-}
-
-async function seedLargeCompactionHistory(
-    dlineDocsDir: string,
-    taskId: string,
-    turns: readonly { user: string; assistant: string }[],
-): Promise<number> {
-    const now = Date.now()
-    const history = turns.flatMap((turn, index) => [
-        { role: "user" as const, content: [{ type: "text" as const, text: turn.user }], ts: now + index * 2 },
-        { role: "assistant" as const, content: [{ type: "text" as const, text: turn.assistant }], ts: now + index * 2 + 1 },
-    ])
-    // The runtime keeps the conversation in the task journal and its state in
-    // state.json; the seeded history replaces the conversation, and the task
-    // waits between turns for the next message.
-    await seedTaskConversation(dlineDocsDir, taskId, history)
-    await pauseTaskBetweenTurns(dlineDocsDir, taskId)
-    return estimateTokens({ systemPrompt: "", messages: history, tools: [], serverTools: [] })
-}
-
-async function readPersistedCompactionCards(dlineDocsDir: string, taskId: string): Promise<Array<Record<string, unknown>>> {
-    const raw = await readTaskUiMessagesText(dlineDocsDir, taskId)
-    return raw
-        .split(/\r?\n/)
-        .filter(Boolean)
-        .flatMap((line) => {
-            const message = JSON.parse(line) as { say?: string; text?: string; partial?: boolean }
-            if (message.say !== "tool" || !message.text || message.partial === true) return []
-            try {
-                const tool = JSON.parse(message.text) as Record<string, unknown>
-                return tool.tool === "summarizeTask" ? [tool] : []
-            } catch {
-                return []
-            }
-        })
 }
 
 async function pastePngWithTrailingBytes(input: Locator, trailingBytes: number): Promise<void> {
@@ -641,8 +342,9 @@ e2e(
             expect(JSON.stringify(finalBody)).toContain(summaryText)
 
             for (const request of requests) {
-                expect(request.requestBody?.prompt_cache_key).toBeTruthy()
-                expect(request.requestBody?.prompt_cache_options).toBeUndefined()
+                const body = request.requestBody as { prompt_cache_key?: unknown; prompt_cache_options?: unknown } | undefined
+                expect(body?.prompt_cache_key).toBeTruthy()
+                expect(body?.prompt_cache_options).toBeUndefined()
                 expect(JSON.stringify(request.requestBody)).not.toContain("prompt_cache_breakpoint")
             }
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
@@ -1486,574 +1188,6 @@ e2e(
 )
 
 e2e(
-    "OpenAI compaction - iterates until the projected context is below 80 percent",
-    async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
-        e2e.setTimeout(240_000)
-        await configureResponsesAutoCompaction(dlineDir)
-        const turnAMarker = "E2E_ITERATIVE_TURN_A"
-        const turnBMarker = "E2E_ITERATIVE_TURN_B"
-        const protectedTurnMarker = "E2E_ITERATIVE_PROTECTED_TURN_C"
-        const continuationMarker = "E2E_ITERATIVE_CONTINUE"
-        const firstSummary = "E2E_ITERATIVE_SUMMARY_ONE covers only turn A."
-        const secondSummary = "E2E_ITERATIVE_SUMMARY_TWO cumulatively covers turns A and B."
-        const turnAResponse = `${turnAMarker}:${"A".repeat(160_000)}`
-        const turnBResponse = `${turnBMarker}:${"B".repeat(220_000)}`
-        const protectedTurnResponse = `${protectedTurnMarker}:${"C".repeat(80_000)}`
-
-        server.enqueueResponses(
-            "openai-compatible-responses",
-            {
-                type: "tool",
-                id: "call_iterative_turn_a",
-                name: "qna_respond",
-                arguments: { response: turnAResponse },
-                usage: { inputTokens: 20_000, outputTokens: 100 },
-                expectedRequestIncludes: ["E2E_ITERATIVE_TASK"],
-                matchRequestContract: true,
-            },
-            {
-                type: "tool",
-                id: "call_iterative_turn_b",
-                name: "qna_respond",
-                arguments: { response: turnBResponse },
-                usage: { inputTokens: 40_000, outputTokens: 100 },
-                expectedRequestIncludes: [turnAMarker, "E2E_ITERATIVE_USER_TURN_B"],
-                matchRequestContract: true,
-            },
-            {
-                type: "tool",
-                id: "call_iterative_protected_turn_c",
-                name: "qna_respond",
-                arguments: { response: protectedTurnResponse },
-                // Calibrates turn B so the second Pass carries the first summary and the whole turn B
-                // within the trigger line; the continuation still crosses it.
-                usage: { inputTokens: 55_000, outputTokens: 100 },
-                expectedRequestIncludes: [turnBMarker, "E2E_ITERATIVE_USER_TURN_C"],
-                matchRequestContract: true,
-            },
-            {
-                type: "tool",
-                id: "call_iterative_summary_one",
-                name: "summarize_task",
-                arguments: { context: firstSummary },
-                usage: { inputTokens: 112_000, outputTokens: 100 },
-                expectedRequestIncludes: [
-                    "The current conversation is rapidly running out of context",
-                    "E2E_ITERATIVE_TASK",
-                    turnAMarker,
-                ],
-                expectedRequestExcludes: [turnBMarker, protectedTurnMarker, continuationMarker],
-                matchRequestContract: true,
-            },
-            {
-                type: "tool",
-                id: "call_iterative_summary_two",
-                name: "summarize_task",
-                arguments: { context: secondSummary },
-                delayMs: 2_000,
-                usage: { inputTokens: 75_000, outputTokens: 100 },
-                expectedRequestIncludes: [
-                    "The current conversation is rapidly running out of context",
-                    firstSummary,
-                    "E2E_ITERATIVE_USER_TURN_B",
-                    turnBMarker,
-                ],
-                expectedRequestExcludes: [turnAMarker, protectedTurnMarker, continuationMarker],
-                matchRequestContract: true,
-            },
-            {
-                type: "tool",
-                id: "call_iterative_complete",
-                name: "attempt_completion",
-                arguments: { result: "E2E_ITERATIVE_OK" },
-                expectedRequestIncludes: [secondSummary, protectedTurnMarker, continuationMarker],
-                expectedRequestExcludes: [
-                    "The current conversation is rapidly running out of context",
-                    firstSummary,
-                    turnAMarker,
-                    turnBMarker,
-                ],
-                matchRequestContract: true,
-            },
-        )
-
-        const app = await openVSCode(workspaceDir)
-        try {
-            const sidebar = await openSidebar(app, helper)
-            await sendTask(sidebar, "E2E_ITERATIVE_TASK")
-            await expect(sidebar.getByText(turnAMarker, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-            await submitTask(sidebar, "E2E_ITERATIVE_USER_TURN_B")
-            await expect(sidebar.getByText(turnBMarker, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-            await submitTask(sidebar, "E2E_ITERATIVE_USER_TURN_C")
-            await expect(sidebar.getByText(protectedTurnMarker, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-
-            await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(4)
-            const requestsBeforeContinuation = server.getMockConsumptions("openai-compatible-responses")
-            const firstPass = requestsBeforeContinuation[2]
-            const protectedTurn = requestsBeforeContinuation[3]
-            expect(firstPass?.contractError).toBeUndefined()
-            expect(firstPass).toMatchObject({ responseType: "tool", toolName: "summarize_task" })
-            expect(protectedTurn?.contractError).toBeUndefined()
-            expect(protectedTurn).toMatchObject({ responseType: "tool", toolName: "qna_respond" })
-
-            await submitTask(sidebar, continuationMarker)
-            await expect
-                .poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 60_000 })
-                .toBeGreaterThanOrEqual(5)
-            const secondPass = server.getMockConsumptions("openai-compatible-responses")[4]
-            expect(secondPass?.contractError).toBeUndefined()
-            expect(secondPass).toMatchObject({ responseType: "tool", toolName: "summarize_task" })
-
-            await expect(sidebar.getByText("E2E_ITERATIVE_OK", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-            await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(6)
-            const requests = server.getMockConsumptions("openai-compatible-responses")
-            const finalRequest = requests[5]
-            expect(finalRequest?.contractError).toBeUndefined()
-            expect(finalRequest).toMatchObject({ responseType: "tool", toolName: "attempt_completion" })
-            expect(estimateTokens(finalRequest?.requestBody)).toBeLessThan(80_000)
-            expect(requests.slice(2).every((request) => request.contractError === undefined)).toBe(true)
-            await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
-        } finally {
-            await app.close()
-        }
-    },
-)
-
-e2e(
-    "BUG-011 compaction - approximately 800K source refits a 600K first projection and completes Pass 2",
-    async ({ dlineDir, dlineDocsDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
-        e2e.setTimeout(360_000)
-        await configureTriggerBoundary(dlineDir, 472_000, 0, 5_000, 30_000, 95)
-        const taskText = "E2E_BUG011_800K_TASK"
-        const turnAMarker = "E2E_BUG011_800K_TURN_A"
-        const turnBMarker = "E2E_BUG011_800K_TURN_B"
-        const continuationMarker = "E2E_BUG011_800K_CONTINUE"
-        const firstSummaryMarker = "E2E_BUG011_800K_SUMMARY_ONE"
-        const refitSummaryMarker = "E2E_BUG011_800K_REFITTED"
-        const finalSummary = "E2E_BUG011_800K_FINAL_SUMMARY preserves both complete logical turns."
-        const firstSummary = `${firstSummaryMarker}:${"S".repeat(800_000)}`
-        const refittedSummary = `${refitSummaryMarker}:${"R".repeat(80_000)}`
-        const turnPayload = "x".repeat(1_570_000)
-
-        server.enqueueResponses(
-            "openai-compatible-responses",
-            {
-                type: "tool",
-                id: "call_bug011_800k_setup",
-                name: "qna_respond",
-                arguments: { response: "E2E_BUG011_800K_SETUP_READY" },
-                usage: { inputTokens: 1_000, outputTokens: 100 },
-            },
-            {
-                type: "tool",
-                id: "call_bug011_800k_pass_1",
-                name: "summarize_task",
-                arguments: { context: firstSummary },
-                expectedRequestIncludes: ["The current conversation is rapidly running out of context", turnAMarker],
-                expectedRequestExcludes: [turnBMarker, continuationMarker, "# Summary Refit"],
-                matchRequestContract: true,
-            },
-            {
-                type: "tool",
-                id: "call_bug011_800k_refit",
-                name: "summarize_task",
-                arguments: { context: refittedSummary },
-                expectedRequestIncludes: ["# Summary Refit", firstSummaryMarker],
-                expectedRequestExcludes: [turnAMarker, turnBMarker, continuationMarker],
-                matchRequestContract: true,
-            },
-            {
-                type: "tool",
-                id: "call_bug011_800k_pass_2",
-                name: "summarize_task",
-                arguments: { context: finalSummary },
-                expectedRequestIncludes: [
-                    "The current conversation is rapidly running out of context",
-                    refitSummaryMarker,
-                    turnBMarker,
-                ],
-                expectedRequestExcludes: [turnAMarker, firstSummaryMarker, continuationMarker, "# Summary Refit"],
-                matchRequestContract: true,
-            },
-            {
-                type: "tool",
-                id: "call_bug011_800k_complete",
-                name: "attempt_completion",
-                arguments: { result: "E2E_BUG011_800K_OK" },
-                expectedRequestIncludes: [finalSummary, continuationMarker],
-                expectedRequestExcludes: [turnAMarker, turnBMarker, firstSummaryMarker, refitSummaryMarker],
-                matchRequestContract: true,
-            },
-        )
-
-        let firstApp: ElectronApplication | undefined
-        let resumedApp: ElectronApplication | undefined
-        try {
-            firstApp = await openVSCode(workspaceDir)
-            const first = await openSidebar(firstApp, helper)
-            await sendTask(first, taskText)
-            await expect(first.getByText("E2E_BUG011_800K_SETUP_READY", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-            await closeCurrentTask(first)
-            await firstApp.close()
-            firstApp = undefined
-            helper.clearCachedFrame()
-
-            const taskId = await onlyTaskId(dlineDocsDir)
-            const seededTokens = await seedLargeCompactionHistory(dlineDocsDir, taskId, [
-                { user: `${turnAMarker}_USER`, assistant: `${turnAMarker}:${turnPayload}` },
-                { user: `${turnBMarker}_USER`, assistant: `${turnBMarker}:${turnPayload}` },
-            ])
-            expect(seededTokens).toBeGreaterThan(780_000)
-            expect(seededTokens).toBeLessThan(820_000)
-
-            resumedApp = await openVSCode(workspaceDir)
-            const page = await resumedApp.firstWindow()
-            await E2ETestHelper.openClineSidebar(page)
-            const sidebar = await helper.getSidebar(page)
-            await E2ETestHelper.dismissWhatsNewModal(sidebar)
-            await helper.signin(sidebar)
-            await reopenTask(page, sidebar, taskText)
-            await submitTask(sidebar, continuationMarker)
-            await expect(sidebar.getByText("E2E_BUG011_800K_OK", { exact: false }).last()).toBeVisible({ timeout: 180_000 })
-
-            await expect.poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 180_000 }).toBe(5)
-            const requests = server.getMockConsumptions("openai-compatible-responses")
-            expect(requests.slice(1).map((request) => request.toolName)).toEqual([
-                "summarize_task",
-                "summarize_task",
-                "summarize_task",
-                "attempt_completion",
-            ])
-            const firstProjectionTokens = estimateTokens({
-                systemPrompt: "",
-                messages: [
-                    { role: "user", content: [{ type: "text", text: firstSummary }] },
-                    { role: "user", content: [{ type: "text", text: `${turnBMarker}_USER` }] },
-                    { role: "assistant", content: [{ type: "text", text: `${turnBMarker}:${turnPayload}` }] },
-                ],
-                tools: [],
-                serverTools: [],
-            })
-            expect(firstProjectionTokens).toBeGreaterThan(570_000)
-            expect(firstProjectionTokens).toBeLessThan(630_000)
-            expect(requests.every((request) => request.contractError === undefined)).toBe(true)
-
-            const pass0 = sidebar.locator(
-                '[data-testid="compaction-pass"][data-compaction-unit-kind="pass"][data-compaction-unit-index="0"]',
-            )
-            const refit0 = sidebar.locator(
-                '[data-testid="compaction-pass"][data-compaction-unit-kind="summary_refit"][data-compaction-unit-index="0"]',
-            )
-            const pass1 = sidebar.locator(
-                '[data-testid="compaction-pass"][data-compaction-unit-kind="pass"][data-compaction-unit-index="1"]',
-            )
-            await expect(pass0).toHaveAttribute("data-compaction-status", "completed")
-            await expect(refit0).toHaveAttribute("data-compaction-status", "completed")
-            await expect(pass1).toHaveAttribute("data-compaction-status", "completed")
-            await expect(pass0).toContainText(firstSummaryMarker)
-            await expect(refit0).toContainText(refitSummaryMarker)
-            await expect(pass1).toContainText("E2E_BUG011_800K_FINAL_SUMMARY")
-
-            const persistedCards = await E2ETestHelper.waitForValue(async () => {
-                const cards = await readPersistedCompactionCards(dlineDocsDir, taskId)
-                return cards.length >= 3 ? cards : undefined
-            }, 30_000)
-            expect(
-                persistedCards.map((card) => ({
-                    kind: card.compactionUnitKind,
-                    index: card.compactionUnitIndex,
-                    status: card.compactionStatus,
-                })),
-            ).toEqual(
-                expect.arrayContaining([
-                    { kind: "pass", index: 0, status: "completed" },
-                    { kind: "summary_refit", index: 0, status: "completed" },
-                    { kind: "pass", index: 1, status: "completed" },
-                ]),
-            )
-            await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
-        } finally {
-            await firstApp?.close()
-            await resumedApp?.close()
-        }
-    },
-)
-
-for (const providerCase of ROLLING_MERGE_PROVIDER_CASES) {
-    e2e(
-        `Context compaction - ${providerCase.label} rolling merge preserves complete logical-turn request content`,
-        async ({ dlineDir, dlineDocsDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
-            e2e.setTimeout(300_000)
-            await configureRollingMergeTarget(dlineDir, providerCase)
-
-            const turnAMarker = "E2E_ROLLING_TURN_A"
-            const turnBMarker = "E2E_ROLLING_TURN_B"
-            const protectedTurnMarker = "E2E_ROLLING_PROTECTED_TURN_C"
-            const continuationMarker = "E2E_ROLLING_CONTINUATION"
-            const firstSummary = "E2E_ROLLING_SUMMARY_ONE covers only turn A."
-            const secondSummary = "E2E_ROLLING_SUMMARY_TWO cumulatively covers turns A and B."
-            // W is 272K, so the trigger T is 258,340, a turn crossing T may join a Pass up to 262,420
-            // (half the 8,160 reserve), and compaction stops below 217,600. Ordinary requests project
-            // from the reported usage plus about a quarter token per new character; a Pass is estimated
-            // from its request bytes, at the learned ratio of the ordinary requests (turns B and C, about
-            // 0.25 token per byte here) or at the default heuristic when no sample matches the Provider.
-            // Both estimates land within a few percent, and every boundary below keeps a wider margin.
-            const turnAResponse = `${turnAMarker}:${"A".repeat(520_000)}`
-            const turnBResponse = `${turnBMarker}:${"B".repeat(520_000)}`
-            // Turn C's call is answered only by the continuation, a reply the model has not read yet,
-            // so the call stays verbatim with it (WS-010 §2). After turn A is summarized, turn B plus
-            // the protected turn C keep the history near 240K, above the stop line and within T, so a
-            // second Pass is required and carries turn B whole. The summary plus turn C then fits.
-            const protectedTurnResponse = `${protectedTurnMarker}:${"C".repeat(360_000)}`
-
-            server.enqueueResponses(
-                providerCase.target,
-                {
-                    type: "tool",
-                    id: "call_rolling_turn_a",
-                    name: "qna_respond",
-                    arguments: { response: turnAResponse },
-                    usage: { inputTokens: 120_000, outputTokens: 100 },
-                    expectedRequestIncludes: ["E2E_ROLLING_TASK"],
-                    matchRequestContract: true,
-                },
-                {
-                    type: "tool",
-                    id: "call_rolling_turn_b",
-                    name: "qna_respond",
-                    arguments: { response: turnBResponse },
-                    // Below the request's size, so the request for turn C (about 130K more) still
-                    // projects under the trigger line although the Pass estimate of turns A and B
-                    // together, near 280K, exceeds the crossing allowance.
-                    usage: { inputTokens: 100_000, outputTokens: 100 },
-                    expectedRequestIncludes: [turnAMarker, "E2E_ROLLING_USER_TURN_B"],
-                    matchRequestContract: true,
-                },
-                {
-                    type: "tool",
-                    id: "call_rolling_protected_turn_c",
-                    name: "qna_respond",
-                    arguments: { response: protectedTurnResponse },
-                    // Above the trigger line, so the continuation compacts. With turn B's low sample this
-                    // keeps the learned ratio near 0.25 token per byte, so the first Pass carries turn A
-                    // only and the second Pass carries turn B.
-                    usage: { inputTokens: 380_000, outputTokens: 100 },
-                    expectedRequestIncludes: [turnBMarker, "E2E_ROLLING_USER_TURN_C"],
-                    matchRequestContract: true,
-                },
-                {
-                    type: "tool",
-                    id: "call_rolling_summary_one",
-                    name: "summarize_task",
-                    arguments: { context: firstSummary },
-                    usage: { inputTokens: 700_000, outputTokens: 100 },
-                    expectedRequestIncludes: [
-                        "The current conversation is rapidly running out of context",
-                        "E2E_ROLLING_TASK",
-                        turnAMarker,
-                    ],
-                    expectedRequestExcludes: [turnBMarker, protectedTurnMarker, continuationMarker],
-                    matchRequestContract: true,
-                },
-                {
-                    type: "tool",
-                    id: "call_rolling_summary_two",
-                    name: "summarize_task",
-                    arguments: { context: secondSummary },
-                    ...(providerCase.target === "openai-compatible-responses" ? { delayMs: 8_000 } : {}),
-                    usage: { inputTokens: 217_600, outputTokens: 100 },
-                    expectedRequestIncludes: [
-                        "The current conversation is rapidly running out of context",
-                        firstSummary,
-                        "E2E_ROLLING_USER_TURN_B",
-                        turnBMarker,
-                    ],
-                    expectedRequestExcludes: [turnAMarker, protectedTurnMarker, continuationMarker],
-                    matchRequestContract: true,
-                },
-                {
-                    type: "tool",
-                    id: "call_rolling_complete",
-                    name: "attempt_completion",
-                    arguments: { result: "E2E_ROLLING_MERGE_OK" },
-                    expectedRequestIncludes: [secondSummary, protectedTurnMarker, continuationMarker],
-                    expectedRequestExcludes: [
-                        "The current conversation is rapidly running out of context",
-                        firstSummary,
-                        turnAMarker,
-                        turnBMarker,
-                    ],
-                    matchRequestContract: true,
-                },
-            )
-
-            const app = await openVSCode(workspaceDir)
-            try {
-                const sidebar = await openSidebar(app, helper)
-                await sendTask(sidebar, "E2E_ROLLING_TASK")
-                await expect(sidebar.getByText(turnAMarker, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-                await submitTask(sidebar, "E2E_ROLLING_USER_TURN_B")
-                await expect(sidebar.getByText(turnBMarker, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-                await submitTask(sidebar, "E2E_ROLLING_USER_TURN_C")
-                await expect(sidebar.getByText(protectedTurnMarker, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-                await submitTask(sidebar, continuationMarker)
-
-                await expect
-                    .poll(() => server.getRequestCount(providerCase.target), { timeout: 60_000 })
-                    .toBeGreaterThanOrEqual(4)
-                const firstPass = server.getMockConsumptions(providerCase.target)[3]
-                expect(firstPass?.contractError).toBeUndefined()
-                expect(firstPass).toMatchObject({ responseType: "tool", toolName: "summarize_task" })
-                if (providerCase.target === "openai-compatible-responses") {
-                    const taskId = await onlyTaskId(dlineDocsDir)
-                    const checkpoint = await E2ETestHelper.waitForValue(async () => {
-                        const conversation = JSON.stringify(await readTaskConversation(dlineDocsDir, taskId))
-                        return conversation.includes(firstSummary) ? conversation : undefined
-                    }, 30_000)
-                    expect(checkpoint).not.toContain(turnAMarker)
-                    expect(checkpoint).toContain(turnBMarker)
-                    expect(checkpoint).toContain(protectedTurnMarker)
-                }
-
-                await expect
-                    .poll(() => server.getRequestCount(providerCase.target), { timeout: 60_000 })
-                    .toBeGreaterThanOrEqual(5)
-                const secondPass = server.getMockConsumptions(providerCase.target)[4]
-                expect(secondPass?.contractError).toBeUndefined()
-                expect(secondPass).toMatchObject({ responseType: "tool", toolName: "summarize_task" })
-
-                await expect(sidebar.getByText("E2E_ROLLING_MERGE_OK", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-                await expect.poll(() => server.getRequestCount(providerCase.target)).toBe(6)
-                const requests = server.getMockConsumptions(providerCase.target)
-                const finalRequest = requests[5]
-                expect(finalRequest?.contractError).toBeUndefined()
-                expect(finalRequest).toMatchObject({ responseType: "tool", toolName: "attempt_completion" })
-                expect(estimateTokens(finalRequest?.requestBody)).toBeLessThan(217_600)
-                expect(requests.slice(3).every((request) => request.contractError === undefined)).toBe(true)
-                await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
-            } finally {
-                await app.close()
-            }
-        },
-    )
-}
-
-e2e(
-    "Context compaction - closing during Pass 2 resumes from the canonical Pass 1 checkpoint",
-    async ({ dlineDir, dlineDocsDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
-        e2e.setTimeout(300_000)
-        const providerCase = ROLLING_MERGE_PROVIDER_CASES.find((candidate) => candidate.target === "openai-compatible-responses")
-        if (!providerCase) throw new Error("Missing OpenAI Responses rolling provider case")
-        await configureRollingMergeTarget(dlineDir, providerCase)
-        const taskText = "E2E_ROLLING_RESTART_TASK"
-        const turnAMarker = "E2E_ROLLING_RESTART_TURN_A"
-        const turnBMarker = "E2E_ROLLING_RESTART_TURN_B"
-        const protectedMarker = "E2E_ROLLING_RESTART_PROTECTED"
-        const continuation = "E2E_ROLLING_RESTART_CONTINUE"
-        const firstSummary = "E2E_ROLLING_RESTART_SUMMARY_ONE covers turn A."
-        server.enqueueResponses(
-            providerCase.target,
-            {
-                type: "tool",
-                id: "call_rolling_restart_turn_a",
-                name: "qna_respond",
-                arguments: { response: `${turnAMarker}:${"A".repeat(520_000)}` },
-                usage: { inputTokens: 120_000, outputTokens: 100 },
-            },
-            {
-                type: "tool",
-                id: "call_rolling_restart_turn_b",
-                name: "qna_respond",
-                arguments: { response: `${turnBMarker}:${"B".repeat(520_000)}` },
-                usage: { inputTokens: 130_000, outputTokens: 100 },
-            },
-            {
-                type: "tool",
-                id: "call_rolling_restart_protected",
-                name: "qna_respond",
-                arguments: { response: `${protectedMarker}:${"C".repeat(300_000)}` },
-                // Above the trigger line with the same margin as the rolling merge case, so the
-                // learned ratio stays near 0.25 token per byte and the first Pass carries turn A only.
-                usage: { inputTokens: 380_000, outputTokens: 100 },
-            },
-            {
-                type: "tool",
-                id: "call_rolling_restart_summary_one",
-                name: "summarize_task",
-                arguments: { context: firstSummary },
-                usage: { inputTokens: 700_000, outputTokens: 100 },
-                expectedRequestIncludes: [turnAMarker],
-                expectedRequestExcludes: [turnBMarker, protectedMarker],
-            },
-            {
-                type: "tool",
-                id: "call_rolling_restart_aborted_pass_two",
-                name: "summarize_task",
-                arguments: { context: "E2E_ROLLING_RESTART_ABORTED_SUMMARY" },
-                delayMs: 60_000,
-                expectedRequestIncludes: [firstSummary, turnBMarker],
-                expectedRequestExcludes: [turnAMarker, protectedMarker],
-            },
-            {
-                type: "tool",
-                id: "call_rolling_restart_complete",
-                name: "attempt_completion",
-                arguments: { result: "E2E_ROLLING_RESTART_OK" },
-                expectedRequestIncludes: [firstSummary, turnBMarker, protectedMarker, continuation],
-                expectedRequestExcludes: [turnAMarker, "E2E_ROLLING_RESTART_ABORTED_SUMMARY"],
-            },
-        )
-
-        let firstApp: ElectronApplication | undefined
-        let resumedApp: ElectronApplication | undefined
-        try {
-            firstApp = await openVSCode(workspaceDir)
-            const first = await openSidebar(firstApp, helper)
-            await sendTask(first, taskText)
-            await expect(first.getByText(turnAMarker, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-            await submitTask(first, "E2E_ROLLING_RESTART_USER_B")
-            await expect(first.getByText(turnBMarker, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-            await submitTask(first, "E2E_ROLLING_RESTART_USER_C")
-            await expect(first.getByText(protectedMarker, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-            await submitTask(first, continuation)
-            const taskId = await onlyTaskId(dlineDocsDir)
-            await E2ETestHelper.waitForValue(async () => {
-                const projected = JSON.stringify(await readTaskConversation(dlineDocsDir, taskId))
-                return projected.includes(firstSummary) && !projected.includes(turnAMarker) ? projected : undefined
-            }, 30_000)
-            await expect.poll(() => server.getRequestCount(providerCase.target), { timeout: 30_000 }).toBeGreaterThanOrEqual(5)
-            await firstApp.close()
-            firstApp = undefined
-            helper.clearCachedFrame()
-
-            resumedApp = await openVSCode(workspaceDir)
-            const page = await resumedApp.firstWindow()
-            await E2ETestHelper.openClineSidebar(page)
-            const resumed = await helper.getSidebar(page)
-            await E2ETestHelper.dismissWhatsNewModal(resumed)
-            await helper.signin(resumed)
-            await reopenTask(page, resumed, taskText)
-            const resume = resumed.getByRole("contentinfo").locator('[data-testid="send-button"][data-action="resume"]')
-            await expect(resume).toBeVisible({ timeout: 30_000 })
-            await resume.click()
-            await expect(resumed.getByText("E2E_ROLLING_RESTART_OK", { exact: false }).last()).toBeVisible({ timeout: 120_000 })
-
-            const uiHistory = await readTaskUiMessagesText(dlineDocsDir, taskId)
-            expect(countOccurrences(uiHistory, firstSummary)).toBe(1)
-            expect(uiHistory).not.toContain("E2E_ROLLING_RESTART_ABORTED_SUMMARY")
-            const finalConversation = JSON.stringify(await readTaskConversation(dlineDocsDir, taskId))
-            expect(finalConversation).toContain(firstSummary)
-            expect(finalConversation).not.toContain(turnAMarker)
-            expect(finalConversation).toContain(turnBMarker)
-            await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
-        } finally {
-            await firstApp?.close()
-            await resumedApp?.close()
-        }
-    },
-)
-
-e2e(
     "OpenAI compaction budget - automatic request follows the available-remainder formula",
     async ({ dlineDir, helper, openVSCode, server, workspaceDir }) => {
         e2e.setTimeout(120_000)
@@ -2604,7 +1738,8 @@ e2e(
                     ? projected
                     : undefined
             })
-            expect(truncatedConversation).toContain(continueMarker)
+            // A pre-round failure leaves the reply in pending round material;
+            // Retry journals it when the next provider draft is composed.
             expect(truncatedConversation).not.toContain(middleMarker)
             await sidebar.getByRole("button", { name: "Retry", exact: true }).last().click()
 
@@ -2622,6 +1757,10 @@ e2e(
             expect(recoveredRequestText).toContain(continueMarker)
             expect(recoveredRequestText).toContain("[NOTE] Some previous conversation history with the user has been removed")
             expect(recoveredRequestText).not.toContain(middleMarker)
+            const recoveredConversation = JSON.stringify(await readTaskConversation(dlineDocsDir, taskId))
+            expect(recoveredConversation).toContain(continueMarker)
+            expect(recoveredConversation).toContain("[NOTE] Some previous conversation history with the user has been removed")
+            expect(recoveredConversation).not.toContain(middleMarker)
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [/context window/i])
         } finally {
             await app?.close()

@@ -131,11 +131,18 @@ function userAgentOf(requestHeaders: Readonly<Record<string, string | string[]>>
     return Array.isArray(agent) ? (agent[0] ?? "") : (agent ?? "")
 }
 
-e2e(
-    "Anthropic billing attribution - the block only appears when enabled and never takes the cache breakpoint",
-    async ({ dlineDir, helper, page, server, sidebar, userDataDir }, testInfo) => {
-        e2e.setTimeout(180_000)
+// Prepare the catalog before app/page/sidebar can start a concurrent Profile reader.
+const billingE2e = e2e.extend({
+    dlineDir: async ({ dlineDir }, use) => {
         await configureAnthropicProfile(dlineDir)
+        await use(dlineDir)
+    },
+})
+
+billingE2e(
+    "Anthropic billing attribution - the block only appears when enabled and never takes the cache breakpoint",
+    async ({ helper, page, server, sidebar, userDataDir }, testInfo) => {
+        billingE2e.setTimeout(180_000)
         server.resetOpenAiMock()
         server.enqueueResponses(
             "anthropic-messages",
