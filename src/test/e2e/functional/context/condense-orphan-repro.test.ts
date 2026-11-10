@@ -2,6 +2,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import type { MockApiConsumption } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
+import { expectOwnedUserFeedback } from "@e2e/utils/compaction-request-oracle"
 import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame, type Locator } from "@playwright/test"
@@ -490,7 +491,7 @@ e2e(
                 assertNoOrphanToolOutputs(request)
             }
             expect(responsesUserTextBlocks(requests[3]).every((text) => text.trim().length > 0)).toBe(true)
-            expect(requests[3].requestToolResults.some((result) => result.content.includes(restoredQnaReply))).toBe(true)
+            expectOwnedUserFeedback(requests[3], ["call_condense_orphan_ready"], [restoredQnaReply])
             await attachScreenshot(app, "manual-compaction-final-state")
             await attachJson("manual-compaction-provider-consumptions", requests)
             await attachDlineOutput(userDataDir, "manual-compaction-dline-output")

@@ -26,7 +26,7 @@ import {
 } from "./file-utils"
 import { selectFocusChainInstructionPolicy } from "./instruction-policy"
 import { FocusChainPrompts } from "./prompts"
-import type { FocusChainUpdateResult } from "./update-result"
+import { FocusChainDiagnostics, type FocusChainUpdateResult } from "./update-result"
 import { parseFocusChainListCounts } from "./utils"
 
 export interface FocusChainProjectionOptions {
@@ -379,7 +379,7 @@ export class FocusChainManager {
             await this.ensureLoaded()
         } catch (error) {
             Logger.error(`[Task ${this.taskId}] Checklist loading failed; update refused:`, error)
-            await this.say("error", FocusChainPrompts.loadingFailed)
+            await this.say("error", FocusChainDiagnostics.loadingFailed)
             return { kind: "failed", message: FocusChainPrompts.loadingFailed }
         }
         return this.enqueueMutation(async () => {
@@ -396,7 +396,7 @@ export class FocusChainManager {
                 this.taskState.consecutiveMistakeCount++
                 this.taskState.focusChainRejectionMessage = decision.message
                 if (decision.blockTools) this.taskState.blockNextToolCalls = true
-                await this.say("error", decision.diagnostic ?? decision.message)
+                await this.say("error", decision.diagnostic)
                 await this.checkConsecutiveErrors()
                 return { kind: "rejected", message: decision.message }
             }
@@ -459,7 +459,7 @@ export class FocusChainManager {
         } catch (error) {
             Logger.error(`[Task ${this.taskId}] Failed to commit checklist:`, error)
             const message = FocusChainPrompts.persistenceFailed
-            await this.say("error", message)
+            await this.say("error", FocusChainDiagnostics.persistenceFailed)
             return { kind: "failed", message }
         }
         if (decision.archive) {
@@ -469,7 +469,7 @@ export class FocusChainManager {
                 this.taskState.focusChainHistory = await this.readFocusChainHistory()
             } catch (error) {
                 Logger.error(`[Task ${this.taskId}] Failed to archive checklist:`, error)
-                await this.say("error", FocusChainPrompts.archiveFailed)
+                await this.say("error", FocusChainDiagnostics.archiveFailed)
             }
         }
         this.taskState.currentFocusChainChecklist = decision.checklist
@@ -497,7 +497,7 @@ export class FocusChainManager {
             Logger.warn(`[Task ${this.taskId}] Failed to publish checklist row:`, error)
         }
         await this.publishState()
-        if (decision.warnSkip) await this.say("error", FocusChainPrompts.skipOrderWarning)
+        if (decision.warnSkip) await this.say("error", FocusChainDiagnostics.skipOrderWarning)
         return { kind: "applied" }
     }
 
@@ -516,12 +516,7 @@ export class FocusChainManager {
     private async checkConsecutiveErrors() {
         const maxMistakes = this.stateManager.getGlobalSettingsKey("maxConsecutiveMistakes")
         if (this.taskState.consecutiveMistakeCount >= 3 && this.taskState.consecutiveMistakeCount >= maxMistakes) {
-            await this.say(
-                "error",
-                `⚠️ Focus Chain: AI has failed to update the task plan ${this.taskState.consecutiveMistakeCount} times in a row. ` +
-                    `The current model may lack the reasoning capability to follow the planned task. ` +
-                    `Consider stopping and switching to a more capable model.`,
-            )
+            await this.say("error", FocusChainDiagnostics.repeatedFailures(this.taskState.consecutiveMistakeCount))
         }
     }
 

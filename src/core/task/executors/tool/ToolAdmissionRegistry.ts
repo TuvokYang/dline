@@ -73,7 +73,7 @@ const REQUIRED_PARAMETERS: Partial<Record<DlineDefaultTool, readonly RequiredPar
     [DlineDefaultTool.WORKING_RESPOND]: ["response"],
     [DlineDefaultTool.QNA_RESPOND]: ["response"],
     [DlineDefaultTool.GENERATE_REPORT]: ["title", "content"],
-    [DlineDefaultTool.WEB_FETCH]: ["url", "prompt"],
+    [DlineDefaultTool.WEB_FETCH]: ["url"],
     [DlineDefaultTool.WEB_SEARCH]: ["query"],
     [DlineDefaultTool.SUMMARIZE_TASK]: ["context"],
     [DlineDefaultTool.NEW_RULE]: ["content"],

@@ -208,7 +208,6 @@ export async function rewriteTaskConversation(
                 operationId: `${operation}:${index}`,
                 payloadRef: await payloads.put(encodeTaskPayload({ kind: "api_history_message", message })),
                 source: journalSourceOf(message),
-                watermark: journal.watermark(),
             })
         }
     })
@@ -341,9 +340,12 @@ function isManuallyApproved(state: TaskRuntimeState, blockId: string): boolean {
 function anchoredInteractionId(state: TaskRuntimeState, messages: readonly UiMessage[]): string | undefined {
     const primary = state.dialog.primary
     if (primary?.status === "awaiting") return primary.interactionId
-    const latest = messages.findLast((message) => message.type === "ask" && message.interactionId)
-    if (latest?.ask === COMPLETION_ROW_ASK && state.flow.phase !== "completed") return undefined
-    return latest?.interactionId
+    for (let index = messages.length - 1; index >= 0; index--) {
+        const message = messages[index]
+        if (message.type !== "ask" || !message.interactionId) continue
+        return message.ask === COMPLETION_ROW_ASK && state.flow.phase !== "completed" ? undefined : message.interactionId
+    }
+    return undefined
 }
 
 /**

@@ -49,7 +49,7 @@ export const interactionZhCN = {
     "chatInput.approval.findReferences": "Dline 想要查找以下内容的引用：",
     "chatInput.approval.renameSymbol": "Dline 想要重命名此符号：",
     "chatInput.approval.replaceText": "Dline 想要替换项目文件中的文本：",
-    "chatInput.approval.focusChainChanged": "Dline 想要更新焦点链：",
+    "chatInput.approval.focusChainChanged": "Dline 想要更新专注链：",
     "chatInput.approval.statusUpdate": "Dline 想要发布此状态更新：",
     "chatInput.approval.actModeRespond": "Dline 想要通过此更新继续执行：",
     "chatInput.approval.killCommand": "Dline 想要停止此命令：",

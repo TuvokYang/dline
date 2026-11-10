@@ -101,12 +101,19 @@ async function capture(sidebar: Frame, testInfo: TestInfo, name: string) {
         const controls = Array.from(document.querySelectorAll<HTMLElement>("button")).filter((button) =>
             /^(Expand|Collapse) all activity$|^Scroll to (top|bottom)$/.test(button.getAttribute("aria-label") ?? ""),
         )
-        const rect = (element: HTMLElement) => ({
-            label: element.getAttribute("aria-label"),
-            box: element.getBoundingClientRect().toJSON(),
-            opacity: getComputedStyle(element.parentElement ?? element).opacity,
-            pointerEvents: getComputedStyle(element).pointerEvents,
-        })
+        const rect = (element: HTMLElement) => {
+            const box = element.getBoundingClientRect()
+            const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)
+            return {
+                label: element.getAttribute("aria-label"),
+                box: box.toJSON(),
+                opacity: getComputedStyle(element.parentElement ?? element).opacity,
+                pointerEvents: getComputedStyle(element).pointerEvents,
+                hit: hit?.outerHTML.slice(0, 400),
+                hover: element.matches(":hover"),
+                messagesHovered: element.closest(".group\\/messages")?.matches(":hover"),
+            }
+        }
         return {
             viewport: { width: innerWidth, height: innerHeight },
             rail: rail && { ...rect(rail), opacity: getComputedStyle(rail).opacity },

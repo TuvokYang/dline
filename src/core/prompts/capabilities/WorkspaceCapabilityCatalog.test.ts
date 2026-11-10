@@ -96,6 +96,82 @@ describe("WorkspaceCapabilityCatalogRegistry", () => {
         secondSubscription.dispose()
     })
 
+    it("publishes an invalidation arriving after collection but before the in-flight promise settles", async () => {
+        let release: ((snapshot: CapabilitySourceSnapshot) => void) | undefined
+        const pending = new Promise<CapabilitySourceSnapshot>((resolve) => {
+            release = resolve
+        })
+        const collectSources = vi
+            .fn<() => Promise<CapabilitySourceSnapshot>>()
+            .mockResolvedValueOnce(sourceSnapshot("skill-v1"))
+            .mockReturnValueOnce(pending)
+            .mockResolvedValueOnce(sourceSnapshot("skill-v3"))
+        const registry = new WorkspaceCapabilityCatalogRegistry({ collectSources })
+        const observed: string[] = []
+        await registry.getSourceSnapshot(input())
+        registry.subscribe(input().cwd, (snapshot) => {
+            observed.push(snapshot.sources.skills[0].entry.contentHash!)
+        })
+
+        registry.invalidateWorkspace(input().cwd, {})
+        release?.(sourceSnapshot("skill-v2"))
+        queueMicrotask(() => registry.invalidateWorkspace(input().cwd, {}))
+        await new Promise<void>((resolve) => setImmediate(resolve))
+
+        expect(collectSources).toHaveBeenCalledTimes(3)
+        expect(observed).toEqual(["skill-v2", "skill-v3"])
+        registry.disposeAll()
+    })
+
+    it("does not retry a failed refresh automatically and permits a later explicit read to recover", async () => {
+        let fail: ((error: Error) => void) | undefined
+        const pending = new Promise<CapabilitySourceSnapshot>((_resolve, reject) => {
+            fail = reject
+        })
+        const failure = new Error("Capability source unavailable")
+        const collectSources = vi
+            .fn<() => Promise<CapabilitySourceSnapshot>>()
+            .mockResolvedValueOnce(sourceSnapshot("skill-v1"))
+            .mockReturnValueOnce(pending)
+            .mockResolvedValueOnce(sourceSnapshot("skill-v3"))
+        const registry = new WorkspaceCapabilityCatalogRegistry({ collectSources })
+        await registry.getSourceSnapshot(input())
+        registry.invalidateWorkspace(input().cwd, {})
+        const waiting = registry.getSourceSnapshot(input())
+        fail?.(failure)
+        queueMicrotask(() => registry.invalidateWorkspace(input().cwd, {}))
+        await expect(waiting).rejects.toBe(failure)
+        await new Promise<void>((resolve) => setImmediate(resolve))
+
+        expect(collectSources).toHaveBeenCalledTimes(2)
+        const recovered = await registry.getSourceSnapshot(input())
+        expect(collectSources).toHaveBeenCalledTimes(3)
+        expect(recovered.sources.skills[0].entry.contentHash).toBe("skill-v3")
+        registry.disposeAll()
+    })
+
+    it("does not restart a released catalog when a late invalidation is waiting at settlement", async () => {
+        let release: ((snapshot: CapabilitySourceSnapshot) => void) | undefined
+        const pending = new Promise<CapabilitySourceSnapshot>((resolve) => {
+            release = resolve
+        })
+        const collectSources = vi
+            .fn<() => Promise<CapabilitySourceSnapshot>>()
+            .mockResolvedValueOnce(sourceSnapshot("skill-v1"))
+            .mockReturnValueOnce(pending)
+        const registry = new WorkspaceCapabilityCatalogRegistry({ collectSources })
+        await registry.getSourceSnapshot(input())
+        registry.invalidateWorkspace(input().cwd, {})
+        release?.(sourceSnapshot("skill-v2"))
+        queueMicrotask(() => {
+            registry.invalidateWorkspace(input().cwd, {})
+            registry.disposeAll()
+        })
+        await new Promise<void>((resolve) => setImmediate(resolve))
+
+        expect(collectSources).toHaveBeenCalledTimes(2)
+    })
+
     it("owns remote source input and freezes the nested snapshot graph", async () => {
         const collectedContents: string[] = []
         const collectSources = vi.fn(async (collectionInput) => {

@@ -133,12 +133,12 @@ async function presentRejectedHostedWebSearch(config: TaskConfig, block: ToolUse
 }
 
 /**
- * Show a refusal the call met after it was approved on the call's own row.
+ * Show a refusal on the call's own row.
  *
  * The handler never runs, so nothing else would move the row its preview or
  * approval drew to a terminal state; a call that drew no row gets one appended.
  */
-async function presentBoundaryRefusal(config: TaskConfig, block: ToolUse, message: string): Promise<void> {
+async function presentToolRefusal(config: TaskConfig, block: ToolUse, message: string): Promise<void> {
     await config.callbacks.say("error", message, undefined, undefined, false, block.ts)
 }
 
@@ -328,6 +328,24 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
             ...this.options.config.create({ ...input, coordinator: this.options.runtime.coordinator }),
             ...(lease ? { contextBudget: lease } : {}),
         }
+        // Every terminal write, including an admission refusal, lands on the call's own row.
+        const approvalAnchor = config.messageState?.clineMessages.find(
+            (message) => message.interactionId === approvalInteractionId(input.invocation.dlineTid),
+        )
+        if (approvalAnchor) block.ts = approvalAnchor.ts
+        // The kernel owns approval. Rechecking value-only admission here only
+        // prevents a rejected or no-longer-registered call from reaching its effect.
+        const admission = this.options.runtime.coordinator.prepareAdmission(block, snapshot, async () => undefined)
+        if (admission.outcome === "rejected") {
+            // Validation used to reach the handler's mistake counter; refusing
+            // earlier must not let varying malformed calls bypass the loop guard.
+            if (admission.rejection.reason === "invalid_parameters") config.taskState.consecutiveMistakeCount++
+            await presentToolRefusal(config, block, admission.rejection.message)
+            return serializeResult(input.invocation, formatResponse.toolError(admission.rejection.message), description, {
+                stage: "validation",
+                code: admission.rejection.reason,
+            })
+        }
         const recheckCommand =
             block.name === DlineDefaultTool.BASH && (snapshot.awayActive || input.invocation.awayCommandApproval === "workspace")
         if (
@@ -352,18 +370,13 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
                 )
             config = { ...config, admissionOutcome: { ...outcome, source: "manual" } }
         }
-        // Every terminal write of the call, including a refusal below, lands on its approval row.
-        const approvalAnchor = config.messageState?.clineMessages.find(
-            (message) => message.interactionId === approvalInteractionId(input.invocation.dlineTid),
-        )
-        if (approvalAnchor) block.ts = approvalAnchor.ts
         const boundary = await reviewRegisteredToolBoundary(block, block.name as DlineDefaultTool, snapshot)
         if (boundary.outcome === "rejected") {
             const message =
                 boundary.code === "scope_widened"
                     ? formatResponse.toolScopeWidened()
                     : formatResponse.toolCanonicalizationFailed()
-            await presentBoundaryRefusal(config, block, message)
+            await presentToolRefusal(config, block, message)
             return serializeResult(input.invocation, formatResponse.toolError(message), description, {
                 stage: "authorization",
                 code: boundary.code,

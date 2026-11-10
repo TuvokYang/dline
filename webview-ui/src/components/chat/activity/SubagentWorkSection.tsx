@@ -27,9 +27,10 @@ export function SubagentWorkSection({
         <section
             className={cn(
                 "min-w-0 border-t border-editor-group-border/50",
-                expanded && "flex min-h-[24px] flex-col overflow-hidden",
-                expanded && !scrollable && "shrink-0",
-                expanded && scrollable && "flex-[0_1_auto]",
+                expanded && "flex flex-col overflow-hidden",
+                expanded && !scrollable && "min-h-[24px] shrink-0",
+                // Reserve body space so long siblings cannot shrink a section to its header.
+                expanded && scrollable && "min-h-[56px] flex-[0_1_auto]",
                 !expanded && "shrink-0",
             )}>
             <button

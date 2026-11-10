@@ -68,6 +68,7 @@ import { createRequestApiScope } from "../RequestApiScope"
 import { LoggingRuntimeDiagnostics } from "../runtime"
 import type { ActiveTaskSession } from "../session/ActiveTaskSession"
 import { HostedServerToolPresenter } from "../session/HostedServerToolPresenter"
+import { LocalReportBugContinuation } from "../session/LocalReportBugContinuation"
 import { createPresentationIdSequence } from "../session/PresentationIdSequence"
 import { createHostPresentationPacing, ProviderTextPresenter } from "../session/ProviderTextPresenter"
 import type { RealtimeMessagePublisher } from "../session/RealtimeMessagePublisher"
@@ -422,21 +423,28 @@ export class TaskSessionCompositionService {
         const interactions = new TaskInteractionOwner(
             messages,
             persistence.payloads,
-            new RestoredToolDialogContinuation(
+            new LocalReportBugContinuation(
                 {
                     state: () => this.requireSession(session).state(),
+                    writable: () => this.requireSession(session).writable,
                     payloads: persistence.payloads,
-                    journal: persistence.ports.journal,
-                    messages,
-                    nextPresentationId: () => nextPresentationId(),
-                    publishRow: (row) => options.prompt.ports.presentation.publish(row),
-                    publishPostCommit: postCommit,
-                    reportBug: async (outcome, presentation) =>
-                        (await executeReportBugOutcome(outcome, presentation)) !== "invalid",
-                    admitReply: (reply) => this.requireSession(session).inputs.admitReply(reply),
                 },
-                resumption,
-                new ResumeDialogContinuation(resumption, () => toolState.resetMistakeLimitState(), providerRetry),
+                new RestoredToolDialogContinuation(
+                    {
+                        state: () => this.requireSession(session).state(),
+                        payloads: persistence.payloads,
+                        journal: persistence.ports.journal,
+                        messages,
+                        nextPresentationId: () => nextPresentationId(),
+                        publishRow: (row) => options.prompt.ports.presentation.publish(row),
+                        publishPostCommit: postCommit,
+                        reportBug: async (outcome, presentation) =>
+                            (await executeReportBugOutcome(outcome, presentation)) !== "invalid",
+                        admitReply: (reply) => this.requireSession(session).inputs.admitReply(reply),
+                    },
+                    resumption,
+                    new ResumeDialogContinuation(resumption, () => toolState.resetMistakeLimitState(), providerRetry),
+                ),
             ),
             diagnostics,
             (row) => options.prompt.ports.presentation.publish(row),
@@ -656,7 +664,12 @@ export class TaskSessionCompositionService {
                     const checkpointRef = canonicalCheckpointRef(options.taskId, input.messageTs)
                     let fence: Awaited<ReturnType<ActiveTaskSession["stopForCheckpointRestore"]>> | undefined
                     const result = await restoreCanonicalCheckpoint(
-                        { taskId: options.taskId, checkpointRef, mode: input.mode },
+                        {
+                            taskId: options.taskId,
+                            checkpointRef,
+                            mode: input.mode,
+                            ...(input.row === undefined ? {} : { row: input.row }),
+                        },
                         {
                             stopAndFence: async () => {
                                 fence = await this.requireSession(session).stopForCheckpointRestore(
@@ -679,9 +692,14 @@ export class TaskSessionCompositionService {
                                 }
                             },
                             restoreWorkspace: input.restoreWorkspace,
+                            // The row's own recorded position is the base; the checkpoint's
+                            // stored one is only the fallback for rows that recorded none.
+                            resolveRowBoundary: (boundary, row) => conversationRewind.resolveRowBoundary(row, boundary),
                             applyConversationBoundary: async (boundary) => {
-                                await conversationRewind.rewindTo({
-                                    operationId: `checkpoint.restore:${checkpointRef}`,
+                                // The journal owner distinguishes a new restore from a retry
+                                // after the same checkpoint has already been restored.
+                                await conversationRewind.restoreTo({
+                                    operationId: `checkpoint.restore:${checkpointRef}:${boundary.seq}`,
                                     target: boundary,
                                 })
                                 return boundary
@@ -958,7 +976,7 @@ export class TaskSessionCompositionService {
             // A `/compact` the user types is carried out by the compaction barrier,
             // so its guidance shapes the summary instead of reaching the model.
             lifecycleBarriers: compaction,
-            inputPresentation: new TaskInputPresenter(persistence.payloads, messages, nextPresentationId),
+            inputPresentation: new TaskInputPresenter(persistence.payloads, messages, nextPresentationId, options.publishState),
             retainedInputPresentation: new RetainedInputPresenter(persistence.payloads, messages, nextPresentationId),
             // A refused call reports what the refusal left behind, which only its handler knows.
             toolDenial: { describe: (invocationRef) => toolExecution.describeDenial(invocationRef) },

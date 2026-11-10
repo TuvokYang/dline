@@ -39,6 +39,7 @@ on:
         required: false
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -49,8 +50,28 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  policy:
+    name: Resolve test execution
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run_tests: ${{ steps.policy.outputs.run_tests }}
+    steps:
+      - name: Checkout source and merge parents
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve content-preserving back-merge
+        id: policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci/workflow-policy.mjs test-gate
+
   typecheck:
     name: TypeScript
+    needs: policy
+    if: needs.policy.outputs.run_tests == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -164,6 +185,9 @@ jobs:
 
       - name: Setup project
         uses: ./.github/actions/setup-project
+
+      - name: Test CI policy and packaging projections
+        run: node --test scripts/ci/workflow-policy.test.mjs scripts/ci/packaging.test.mjs
 
       - name: Run smoke tests
         run: npm run test:smoke

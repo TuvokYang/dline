@@ -427,7 +427,8 @@ const ButtonGroup = styled.div`
 	display: flex;
 	align-items: center;
 	gap: 4px;
-	shrink: 0;
+	flex-shrink: 0;
+	padding-inline-end: var(--chat-trajectory-clearance, 0px);
 `
 
 const CustomButton = styled.button<{ disabled?: boolean; $isActive?: boolean; $isCheckedOut?: boolean }>`

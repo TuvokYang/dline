@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
+import { expectOwnedUserFeedback } from "@e2e/utils/compaction-request-oracle"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame } from "@playwright/test"
 
@@ -445,6 +446,7 @@ e2e(
         await configureAnthropicTrajectoryProfile(dlineDir)
         server.resetOpenAiMock()
         const firstCallId = "call_context_anthropic_qna"
+        const feedback = "E2E_CONTEXT_ANTHROPIC_FEEDBACK"
         const largeCompletion = `E2E_CONTEXT_ANTHROPIC_COMPLETE_${"T".repeat(12_000)}`
         server.enqueueResponses(
             "anthropic-messages",
@@ -468,7 +470,9 @@ e2e(
                 },
                 beforeUsageDelayMs: 5_000,
                 afterUsageHoldMs: 5_000,
-                expectedToolResults: [{ callId: firstCallId, contentIncludes: "E2E_CONTEXT_ANTHROPIC_FEEDBACK" }],
+                expectedRequestIncludes: [feedback],
+                expectedToolResultCount: 1,
+                requireCompleteToolPairing: true,
             },
         )
 
@@ -482,8 +486,9 @@ e2e(
         await expect(progress).toHaveAttribute("aria-valuenow", "6100", { timeout: 30_000 })
         await startContextWindowTrace(sidebar)
 
-        await sendTask(sidebar, "E2E_CONTEXT_ANTHROPIC_FEEDBACK")
+        await sendTask(sidebar, feedback)
         await expect.poll(() => server.getRequestCount("anthropic-messages"), { timeout: 30_000 }).toBe(2)
+        expectOwnedUserFeedback(server.getMockConsumptions("anthropic-messages")[1], [firstCallId], [feedback])
         await expect
             .poll(
                 async () => {

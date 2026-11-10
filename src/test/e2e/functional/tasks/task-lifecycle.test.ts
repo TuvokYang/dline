@@ -1,5 +1,6 @@
 import { readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
+import type { MockApiConsumption } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { type ComposerTextReaderWindow, expectComposerText, installComposerTextReader } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
@@ -31,6 +32,33 @@ async function expectSingleUserFeedback(sidebar: Frame, text: string): Promise<v
     const feedback = sidebar.getByTestId(/^(?:user|queued)-input-markdown-scroll$/).filter({ hasText: text })
     await expect(feedback).toHaveCount(1)
     await expect(feedback).toHaveText(text)
+}
+
+/** Read only user-authored text, never tool outputs, assistant calls, or tool schemas. */
+function requestUserTextBlocks(consumption: MockApiConsumption): string[] {
+    const body = consumption.requestBody as { messages?: unknown[]; input?: unknown[] }
+    return [...(body.messages ?? []), ...(body.input ?? [])].flatMap((value) => {
+        if (typeof value !== "object" || value === null) return []
+        const message = value as { role?: unknown; content?: unknown }
+        if (message.role !== "user") return []
+        if (typeof message.content === "string") return [message.content]
+        if (!Array.isArray(message.content)) return []
+        return message.content.flatMap((value) => {
+            if (typeof value !== "object" || value === null) return []
+            const block = value as { type?: unknown; text?: unknown }
+            return (block.type === "text" || block.type === "input_text") && typeof block.text === "string" ? [block.text] : []
+        })
+    })
+}
+
+function expectRequestUserFeedbackOnce(consumption: MockApiConsumption, ...markers: readonly string[]): void {
+    expect(consumption.contractError).toBeUndefined()
+    expect(consumption.requestToolPairing.complete).toBe(true)
+    const text = requestUserTextBlocks(consumption).join("\n")
+    for (const marker of markers) {
+        expect(text.split(marker), `User feedback must occur exactly once: ${marker}`).toHaveLength(2)
+        for (const result of consumption.requestToolResults) expect(result.content).not.toContain(marker)
+    }
 }
 
 async function startEchoOverlapObserver(sidebar: Frame, marker: string): Promise<void> {
@@ -583,6 +611,7 @@ e2e(
             },
             {
                 type: "tool",
+                id: "call_cancel_resume_completion",
                 name: "attempt_completion",
                 arguments: { result: "E2E_RESUME_CONTINUATION_OK" },
             },
@@ -624,7 +653,11 @@ e2e(
         await submitWithEnter(sidebar, "E2E_POST_COMPLETION_INPUT")
         await expect(sidebar.getByText("E2E_POST_COMPLETION_TURN_OK", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
         await expect.poll(() => server.openAiRequestCount).toBe(3)
-        expect(JSON.stringify(server.getOpenAiRequestBodies()[2])).toContain("E2E_POST_COMPLETION_INPUT")
+        const consumptions = server.getMockConsumptions("openai-compatible-chat")
+        expectRequestUserFeedbackOnce(consumptions[2], "E2E_POST_COMPLETION_INPUT")
+        expect(consumptions[2].requestToolResults).toEqual([
+            { callId: consumptions[1].toolCallId, content: expect.stringContaining("[attempt_completion] Result: Done") },
+        ])
         await expect(taskFooter.getByText("Start New Task", { exact: true })).toBeVisible()
 
         await closeCurrentTask(sidebar)
@@ -713,10 +746,11 @@ e2e(
         await helper.signin(sidebar)
         server.resetOpenAiMock()
         server.enqueueOpenAiResponses(
-            { type: "tool", name: "qna_respond", arguments: { response: "E2E_QNA_FIRST" } },
-            { type: "tool", name: "qna_respond", arguments: { response: "E2E_QNA_SECOND" } },
+            { type: "tool", id: "call_turn_end_first_qna", name: "qna_respond", arguments: { response: "E2E_QNA_FIRST" } },
+            { type: "tool", id: "call_turn_end_second_qna", name: "qna_respond", arguments: { response: "E2E_QNA_SECOND" } },
             {
                 type: "tool",
+                id: "call_turn_end_report",
                 name: "generate_report",
                 arguments: { title: "E2E_REPORT_TITLE", content: "E2E_REPORT_CONTENT" },
             },
@@ -757,10 +791,15 @@ e2e(
         await expect(sidebar.getByRole("contentinfo").getByText("Start New Task", { exact: true })).toBeVisible()
 
         await expect.poll(() => server.openAiRequestCount).toBe(4)
-        const requestBodies = server.getOpenAiRequestBodies().map((body) => JSON.stringify(body))
-        expect(requestBodies[1]).toContain("E2E_QNA_FIRST_FEEDBACK")
-        expect(requestBodies[2]).toContain("E2E_QNA_SECOND_FEEDBACK")
-        expect(requestBodies[3]).toContain("E2E_REPORT_FEEDBACK")
+        const consumptions = server.getMockConsumptions("openai-compatible-chat")
+        const feedbacks = ["E2E_QNA_FIRST_FEEDBACK", "E2E_QNA_SECOND_FEEDBACK", "E2E_REPORT_FEEDBACK"]
+        for (const [index] of feedbacks.entries()) {
+            const request = consumptions[index + 1]
+            expectRequestUserFeedbackOnce(request, ...feedbacks.slice(0, index + 1))
+            expect(request.requestToolResults.map((result) => result.callId)).toEqual(
+                consumptions.slice(0, index + 1).map((entry) => entry.toolCallId),
+            )
+        }
         await page.waitForTimeout(500)
         expect(server.openAiRequestCount).toBe(4)
         expect(await readBlankMessageRows(sidebar)).toEqual([])
@@ -789,12 +828,11 @@ e2e(
                 id: "call_followup_qna",
                 name: "qna_respond",
                 arguments: { response: "E2E_FOLLOWUP_SELECTION_ACCEPTED" },
-                expectedToolResults: [
-                    {
-                        callId: "call_followup_history",
-                        contentIncludes: ["E2E_FOLLOWUP_OPTION_B", "E2E_FOLLOWUP_DRAFT_NOTE"],
-                    },
-                ],
+                expectedRequestIncludes: ["E2E_FOLLOWUP_OPTION_B", "E2E_FOLLOWUP_DRAFT_NOTE"],
+                expectedToolResultCount: 1,
+                // The restored follow-up settles its call without repeating the reply body.
+                expectedToolResults: [{ callId: "call_followup_history", contentIncludes: "<feedback>" }],
+                requireCompleteToolPairing: true,
             },
             {
                 type: "tool",
@@ -802,6 +840,15 @@ e2e(
                 name: "attempt_completion",
                 arguments: { result: "E2E_FOLLOWUP_HISTORY_OK" },
                 expectedRequestIncludes: ["E2E_FOLLOWUP_QNA_FEEDBACK"],
+                expectedToolResultCount: 2,
+                // This reopened Q&A already owns a durable cancellation result; its reply is a new user input.
+                expectedToolResults: [
+                    {
+                        callId: "call_followup_qna",
+                        contentIncludes: "Tool call cancelled before a canonical result was accepted.",
+                    },
+                ],
+                requireCompleteToolPairing: true,
             },
         )
 
@@ -831,6 +878,10 @@ e2e(
         await expectSingleUserFeedback(sidebar, "E2E_FOLLOWUP_OPTION_B: E2E_FOLLOWUP_DRAFT_NOTE")
         await expect(selectedOption).toHaveAttribute("aria-pressed", "true")
         await expect.poll(() => server.openAiRequestCount).toBe(2)
+        expectRequestUserFeedbackOnce(
+            server.getMockConsumptions("openai-compatible-chat")[1],
+            "E2E_FOLLOWUP_OPTION_B: E2E_FOLLOWUP_DRAFT_NOTE",
+        )
 
         await closeCurrentTask(sidebar)
         await reopenTask(sidebar, taskText)
@@ -841,6 +892,11 @@ e2e(
         await submitWithEnter(sidebar, "E2E_FOLLOWUP_QNA_FEEDBACK")
         await expect(sidebar.getByText("E2E_FOLLOWUP_HISTORY_OK", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
         await expect.poll(() => server.openAiRequestCount).toBe(3)
+        expectRequestUserFeedbackOnce(
+            server.getMockConsumptions("openai-compatible-chat")[2],
+            "E2E_FOLLOWUP_OPTION_B: E2E_FOLLOWUP_DRAFT_NOTE",
+            "E2E_FOLLOWUP_QNA_FEEDBACK",
+        )
         await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
     },
 )
@@ -866,12 +922,10 @@ e2e(
                 id: "call_restored_followup_free_text_done",
                 name: "attempt_completion",
                 arguments: { result: "E2E_RESTORED_FOLLOWUP_FREE_TEXT_OK" },
-                expectedToolResults: [
-                    {
-                        callId: "call_restored_followup_free_text",
-                        contentIncludes: ["E2E_RESTORED_FOLLOWUP_CUSTOM_REPLY"],
-                    },
-                ],
+                expectedRequestIncludes: ["E2E_RESTORED_FOLLOWUP_CUSTOM_REPLY"],
+                expectedToolResultCount: 1,
+                expectedToolResults: [{ callId: "call_restored_followup_free_text", contentIncludes: "<feedback>" }],
+                requireCompleteToolPairing: true,
             },
         )
 
@@ -887,6 +941,10 @@ e2e(
         await expect(sidebar.getByText("E2E_RESTORED_FOLLOWUP_FREE_TEXT_OK", { exact: false }).last()).toBeVisible({
             timeout: 60_000,
         })
+        expectRequestUserFeedbackOnce(
+            server.getMockConsumptions("openai-compatible-chat")[1],
+            "E2E_RESTORED_FOLLOWUP_CUSTOM_REPLY",
+        )
         await expectSingleUserFeedback(sidebar, "E2E_RESTORED_FOLLOWUP_CUSTOM_REPLY")
         const directInputs = sidebar.getByTestId("direct-user-input")
         await expect(directInputs).toHaveCount(2)
@@ -912,7 +970,7 @@ e2e(
 )
 
 e2e(
-    "Follow-up replies - option and free-text Enter render once and match tool results",
+    "Follow-up replies - option and free-text Enter render once and reach the next user input",
     async ({ helper, server, sidebar, userDataDir }) => {
         e2e.setTimeout(180_000)
         await helper.signin(sidebar)
@@ -935,24 +993,22 @@ e2e(
                     question: "E2E_FOLLOWUP_FREE_TEXT_QUESTION",
                     options: ["E2E_FOLLOWUP_FREE_TEXT_A", "E2E_FOLLOWUP_FREE_TEXT_B"],
                 },
+                expectedRequestIncludes: ["E2E_FOLLOWUP_OPTION_ONLY_B"],
+                expectedToolResultCount: 1,
                 expectedToolResults: [
-                    {
-                        callId: "call_followup_option_only",
-                        contentIncludes: ["E2E_FOLLOWUP_OPTION_ONLY_B"],
-                    },
+                    { callId: "call_followup_option_only", contentIncludes: "The user response was received." },
                 ],
+                requireCompleteToolPairing: true,
             },
             {
                 type: "tool",
                 id: "call_followup_visible_completion",
                 name: "attempt_completion",
                 arguments: { result: "E2E_FOLLOWUP_VISIBLE_FEEDBACK_OK" },
-                expectedToolResults: [
-                    {
-                        callId: "call_followup_free_text",
-                        contentIncludes: ["E2E_FOLLOWUP_CUSTOM_FEEDBACK"],
-                    },
-                ],
+                expectedRequestIncludes: ["E2E_FOLLOWUP_CUSTOM_FEEDBACK"],
+                expectedToolResultCount: 2,
+                expectedToolResults: [{ callId: "call_followup_free_text", contentIncludes: "The user response was received." }],
+                requireCompleteToolPairing: true,
             },
         )
 
@@ -970,6 +1026,9 @@ e2e(
         })
         await expectSingleUserFeedback(sidebar, "E2E_FOLLOWUP_CUSTOM_FEEDBACK")
         await expect.poll(() => server.openAiRequestCount).toBe(3)
+        const consumptions = server.getMockConsumptions("openai-compatible-chat")
+        expectRequestUserFeedbackOnce(consumptions[1], "E2E_FOLLOWUP_OPTION_ONLY_B")
+        expectRequestUserFeedbackOnce(consumptions[2], "E2E_FOLLOWUP_OPTION_ONLY_B", "E2E_FOLLOWUP_CUSTOM_FEEDBACK")
 
         await closeCurrentTask(sidebar)
         await reopenTask(sidebar, taskText)

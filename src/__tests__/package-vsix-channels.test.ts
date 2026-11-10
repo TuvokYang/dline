@@ -17,6 +17,14 @@ import {
 
 const PROJECT_ROOT = process.cwd()
 
+interface ManifestKeybinding {
+    command: string
+    key: string
+    mac?: string
+    win?: string
+    linux?: string
+}
+
 async function readPackageVsix(): Promise<string> {
     return fs.readFile(path.join(PROJECT_ROOT, "scripts/package-vsix.mjs"), "utf8")
 }
@@ -59,10 +67,25 @@ describe("package-vsix release channels", () => {
         expect(openVsx.displayName).toBe("Dline")
         expect(openVsx.publisher).toBe("tuvokyang")
 
-        // Sharing the stable contribution namespace means the Marketplace build
-        // keeps every command, keybinding and view registration unchanged.
-        expect(marketplace.contributes).toEqual(openVsx.contributes)
-        expect(marketplace.contributes.keybindings).toEqual(packageJson.contributes.keybindings)
+        const sourceCommands = new Set(openVsx.contributes.commands.map(({ command }) => command))
+        const marketplaceCommands = new Set(marketplace.contributes.commands.map(({ command }) => command))
+        expect([...marketplaceCommands].every((command) => !sourceCommands.has(command))).toBe(true)
+        expect(marketplace.contributes.viewsContainers.activitybar[0].id).not.toBe(
+            openVsx.contributes.viewsContainers.activitybar[0].id,
+        )
+        const sourceBindings: ManifestKeybinding[] = packageJson.contributes.keybindings
+        const marketplaceBindings: ManifestKeybinding[] = marketplace.contributes.keybindings
+        expect(marketplaceBindings).toHaveLength(sourceBindings.length)
+        for (const [index, binding] of marketplaceBindings.entries()) {
+            const sourceBinding = sourceBindings[index]
+            expect([binding.key, binding.mac, binding.win, binding.linux]).toEqual([
+                sourceBinding.key,
+                sourceBinding.mac,
+                sourceBinding.win,
+                sourceBinding.linux,
+            ])
+            if (binding.command !== "editor.action.submitComment") expect(marketplaceCommands.has(binding.command)).toBe(true)
+        }
         expect(marketplace.activationEvents).toEqual(openVsx.activationEvents)
     })
 

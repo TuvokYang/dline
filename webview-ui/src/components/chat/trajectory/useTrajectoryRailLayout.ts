@@ -34,7 +34,7 @@ export function useCompressedBarGap(rail: HTMLElement | null, scroller: HTMLElem
     useLayoutEffect(() => {
         if (!rail || !scroller || containerHeight === 0) return
         if (gapCount === 0) {
-            setGap(MAX_BAR_GAP_PX)
+            if (gap !== MAX_BAR_GAP_PX) setGap(MAX_BAR_GAP_PX)
             return
         }
         const spare = containerHeight * RAIL_MAX_HEIGHT_RATIO - rail.offsetHeight
@@ -71,8 +71,8 @@ export function useScrollEdges(scroller: HTMLElement | null): ScrollEdges {
         if (!scroller) return
         const top = scroller.scrollTop > 1
         const bottom = scroller.scrollTop + scroller.clientHeight < scroller.scrollHeight - 1
-        setEdges((previous) => (previous.top === top && previous.bottom === bottom ? previous : { top, bottom }))
-    }, [scroller])
+        if (edges.top !== top || edges.bottom !== bottom) setEdges({ top, bottom })
+    }, [scroller, edges.top, edges.bottom])
 
     // Content and size changes move the edges as well as scrolling does.
     useLayoutEffect(measure)

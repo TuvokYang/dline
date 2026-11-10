@@ -176,6 +176,7 @@ await withMarketplaceReadme(
         console.log("[package-dev] Creating VSIX through the shared VSCE API adapter...")
         const { packagePath } = await packageVsix({
             cwd: PROJECT_ROOT,
+            cleanups,
             mode: "pack-only",
             packagePath: expectedPackagePath,
         })

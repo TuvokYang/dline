@@ -16,7 +16,12 @@ import type { CheckpointRestoreFence } from "../session/ActiveTaskSession"
 import type { PresentationIdSequence } from "../session/PresentationIdSequence"
 import type { TaskApiHandlerOwner } from "../session/TaskApiHandlerOwner"
 import type { TaskInteractionOwner } from "../session/TaskInteractionOwner"
-import type { CheckpointRestoreMode, CheckpointRestoreResult, WorkspaceRestoreResult } from "../shell/checkpoint-restore"
+import type {
+    CheckpointRestoreMode,
+    CheckpointRestoreResult,
+    CheckpointRestoreRow,
+    WorkspaceRestoreResult,
+} from "../shell/checkpoint-restore"
 import type { TaskStateManager } from "../TaskStateManager"
 import type { ChecklistChange } from "../telemetry/ChecklistDiff"
 import type { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
@@ -40,6 +45,8 @@ export interface TaskSessionCheckpointPort {
         readonly journalTarget?: { readonly seq: number }
         /** The row's own position and files, used when no checkpoint was captured for it. */
         readonly fallback?: { readonly journalTarget: { readonly seq: number }; readonly workspaceRef?: string }
+        /** Where the row's own chat returns to; the stored boundary is only where it was written. */
+        readonly row?: CheckpointRestoreRow
         readonly restoreWorkspace: (workspaceRef: string) => Promise<WorkspaceRestoreResult>
     }): Promise<{ readonly result: CheckpointRestoreResult; readonly fence?: CheckpointRestoreFence }>
 }

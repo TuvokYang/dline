@@ -130,6 +130,7 @@ type ToolNames = ReadonlyMap<string, string>
  */
 const USER_AUTHORED_KINDS: ReadonlySet<string> = new Set([
     "user_input",
+    "round_material_input",
     "dialog_draft",
     "dialog_selection",
     "task_handoff",

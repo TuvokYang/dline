@@ -13,10 +13,15 @@ function HoverCardContent({
     align = "center",
     sideOffset = 4,
     children,
+    portalContainer,
     ...props
-}: React.ComponentProps<typeof HoverCardPrimitive.Content> & { arrowClassName?: string }) {
+}: React.ComponentProps<typeof HoverCardPrimitive.Content> & {
+    arrowClassName?: string
+    /** Keep the portal in its owner's interaction scope without nesting it in a clipped trigger. */
+    portalContainer?: HTMLElement
+}) {
     return (
-        <HoverCardPrimitive.Portal data-slot="hover-card-portal">
+        <HoverCardPrimitive.Portal container={portalContainer} data-slot="hover-card-portal">
             <HoverCardPrimitive.Content
                 align={align}
                 className={cn(

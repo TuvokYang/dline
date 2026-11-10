@@ -30,6 +30,7 @@ const EXPECTED_TASK_VIEW_FILES = [
     "src/test/e2e-control/task-history-control.ts",
     "webview-ui/src/components/chat/ChatRow.tsx",
     "webview-ui/src/components/chat/ChatView.tsx",
+    "webview-ui/src/components/chat/SubagentStatusRow.stories.tsx",
     "webview-ui/src/components/chat/SubagentStatusRow.tsx",
     "webview-ui/src/components/chat/UserMessage.tsx",
     "webview-ui/src/components/chat/chat-view/components/layout/FoldingTrajectory.stories.tsx",

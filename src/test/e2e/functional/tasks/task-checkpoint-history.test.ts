@@ -13,6 +13,7 @@ import {
     waitForTaskRelease,
 } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator } from "@playwright/test"
+import { findLast, findLastIndex } from "@shared/array"
 import type { UiMessage } from "@shared/ExtensionMessage"
 import type { TaskActivityRecord } from "@shared/task-activity"
 
@@ -205,7 +206,8 @@ async function markPersistedApprovalAnchorPartial(dlineDocsDir: string, taskId: 
     }
 
     await rewriteTaskUiMessages(dlineDocsDir, taskId, (messages) => {
-        const anchor = asRecords(messages).findLast(
+        const anchor = findLast(
+            asRecords(messages),
             (message) => message.type === "ask" && typeof message.interactionId === "string" && ids.has(message.interactionId),
         )
         if (!anchor) {
@@ -219,7 +221,7 @@ async function markPersistedApprovalAnchorPartial(dlineDocsDir: string, taskId: 
 
 async function simulateIncompleteTurnEndContinuation(dlineDocsDir: string, taskId: string): Promise<void> {
     const uiMessages = asRecords(await readTaskUiMessages(dlineDocsDir, taskId))
-    const ask = uiMessages.findLast((message) => message.type === "ask" && message.ask === "qna_respond")
+    const ask = findLast(uiMessages, (message) => message.type === "ask" && message.ask === "qna_respond")
     const interactionId = typeof ask?.interactionId === "string" ? ask.interactionId : undefined
     if (!interactionId) {
         throw new Error("Expected one persisted qna_respond ask")
@@ -234,7 +236,7 @@ async function simulateIncompleteTurnEndContinuation(dlineDocsDir: string, taskI
                 (block: { type?: unknown; dline_tid?: unknown }) =>
                     block.type === "tool_use" && block.dline_tid === interactionId,
             )
-        const index = messages.findLastIndex((message) => message.role === "assistant" && declares(message.content))
+        const index = findLastIndex(messages, (message) => message.role === "assistant" && declares(message.content))
         if (index === -1) {
             throw new Error("Expected the qna ask to reference its canonical assistant tool block")
         }
@@ -1260,7 +1262,8 @@ e2e(
         const runningActivity = sidebar.getByTestId("activity-item").filter({ hasText: command })
         await expect(runningActivity.getByTestId("activity-execution-mode")).toHaveText("Background")
         await expect(runningActivity.getByText("Command", { exact: true })).toHaveCount(0)
-        await expect(runningActivity).toContainText("running")
+        await expect(runningActivity).toHaveAttribute("data-activity-status", "running")
+        await expect(runningActivity.getByText("Running", { exact: true })).toBeVisible()
         await expect(runningActivity.getByRole("button", { name: "Cancel", exact: true })).toBeVisible()
 
         await closeCurrentTask(sidebar)
@@ -1299,7 +1302,8 @@ e2e(
         await expect(sidebar.getByText("No matching activities.", { exact: true })).toBeVisible()
         await sidebar.getByRole("button", { name: "All", exact: true }).first().click()
         const interruptedActivity = sidebar.getByTestId("activity-item").filter({ hasText: command })
-        await expect(interruptedActivity).toContainText("interrupted")
+        await expect(interruptedActivity).toHaveAttribute("data-activity-status", "interrupted")
+        await expect(interruptedActivity.getByText("Interrupted", { exact: true })).toBeVisible()
         await expect(interruptedActivity.locator(".animate-spin")).toHaveCount(0)
         await expect(interruptedActivity.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0)
         await expect
@@ -1316,7 +1320,8 @@ e2e(
         await sidebar.getByRole("tab", { name: "Activities", exact: true }).click()
         await sidebar.getByRole("button", { name: "All", exact: true }).first().click()
         const reopenedInterruptedActivity = sidebar.getByTestId("activity-item").filter({ hasText: command })
-        await expect(reopenedInterruptedActivity).toContainText("interrupted")
+        await expect(reopenedInterruptedActivity).toHaveAttribute("data-activity-status", "interrupted")
+        await expect(reopenedInterruptedActivity.getByText("Interrupted", { exact: true })).toBeVisible()
         await expect(reopenedInterruptedActivity.locator(".animate-spin")).toHaveCount(0)
         await expect(reopenedInterruptedActivity.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0)
         await page.waitForTimeout(9_000)

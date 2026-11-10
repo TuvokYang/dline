@@ -1,5 +1,6 @@
 import { indexPreEditCheckpointAttachments } from "@shared/chat/drawnMessages"
 import { apiFailureOf, supersededFailureIndexes } from "@shared/chat/failurePresentation"
+import { parseMcpServerResponse, parseMcpToolRequest } from "@shared/chat/mcpResponseRows"
 import type { CodeExecutionPresentationV1 } from "@shared/code-execution-tools"
 import { isTerminalRetryFailure } from "@shared/combineErrorRetryMessages"
 import type {
@@ -22,7 +23,7 @@ import type { RequestRounds } from "./messageUtils"
  * pure function of its rows and never re-derives grouping.
  */
 export interface FoldContext {
-    /** Rows whose request or compaction failed, by the shared failure-ownership rules. */
+    /** Rows whose request, compaction or MCP tool failed, by the shared failure-ownership rules. */
     readonly failedTs: ReadonlySet<number>
     /** Subagent batches that ended, so their approval row is no longer the live fact. */
     /** Tool rows that own a pre-edit checkpoint the user checked out. */
@@ -46,7 +47,7 @@ export function buildFoldContext(messages: readonly UiMessage[], rounds: Request
  */
 function failedRowTimestamps(messages: readonly UiMessage[]): ReadonlySet<number> {
     const superseded = supersededFailureIndexes(messages)
-    const failed = new Set<number>()
+    const failed = failedMcpToolTimestamps(messages)
     let requestFailureAhead = false
     for (let index = messages.length - 1; index >= 0; index -= 1) {
         const message = messages[index]
@@ -54,6 +55,22 @@ function failedRowTimestamps(messages: readonly UiMessage[]): ReadonlySet<number
         const isRequest = message.say === "api_req_started"
         if (!superseded.has(index) && apiFailureOf(message, isRequest && requestFailureAhead)) failed.add(message.ts)
         if (isRequest) requestFailureAhead = false
+    }
+    return failed
+}
+
+/** Only an explicit result may mark its preceding tool request as failed. */
+function failedMcpToolTimestamps(messages: readonly UiMessage[]): Set<number> {
+    const requests = new Set<number>()
+    const failed = new Set<number>()
+    for (const message of messages) {
+        if (parseMcpToolRequest(message)) requests.add(message.ts)
+        else if (message.say === "mcp_server_response") {
+            const result = parseMcpServerResponse(message.text)
+            if (result.requestTs === undefined || !requests.has(result.requestTs) || result.isError === undefined) continue
+            if (result.isError) failed.add(result.requestTs)
+            else failed.delete(result.requestTs)
+        }
     }
     return failed
 }
@@ -81,7 +98,7 @@ function checkedOutAttachmentOwners(messages: readonly UiMessage[]): ReadonlySet
 export type RowState = "live" | "failed" | "settled"
 
 /** The work categories whose failures fold into the block and are counted. */
-export type FailedWorkKind = "edit" | "read" | "command" | "subagent" | "web" | "browser"
+export type FailedWorkKind = "edit" | "read" | "command" | "subagent" | "web" | "browser" | "mcp"
 
 /** File edits whose per-block errors are drawn by DiffEditRow. */
 const FILE_EDIT_TOOLS = new Set<UiSayTool["tool"]>(["editedExistingFile", "newFileCreated"])
@@ -104,6 +121,7 @@ const FILE_READ_TOOLS = new Set<UiSayTool["tool"]>([
  * separate question answered by `failedWorkKind`.
  */
 function workKindOf(message: UiMessage): FailedWorkKind | undefined {
+    if (parseMcpToolRequest(message)) return "mcp"
     if (message.say === "command" || message.ask === "command") return "command"
     if (message.say === "subagent" || message.say === "use_subagents" || message.ask === "use_subagents") return "subagent"
     // A browser step is driven through the browser, so it is neither a read nor a command.

@@ -13,6 +13,7 @@ import {
     type CheckpointRowReservation,
 } from "@core/task/checkpoints/CheckpointGate"
 import type { CompactionRestoreDisposition } from "@core/task/compaction/CompactionSummaryLanding"
+import type { CheckpointRestoreRow } from "@core/task/shell/checkpoint-restore"
 import { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
 import CheckpointTracker, { type CheckpointChangedFile } from "@integrations/checkpoints/CheckpointTracker"
 import { DiffViewProvider } from "@integrations/editor/DiffViewProvider"
@@ -48,7 +49,9 @@ import { CheckpointUnitCoordinator } from "./CheckpointUnitCoordinator"
 import {
     type ChatRestoreBoundary,
     type ChatRestoreRow,
+    type ChatRestoreUiBoundary,
     chatRestoreRow,
+    resolveCanonicalChatRestoreBoundary,
     resolveChatRestoreBoundary,
 } from "./chat-restore-boundary"
 import { decodeCheckpointWorkspaceRef, encodeCheckpointWorkspaceRef } from "./checkpoint-references"
@@ -111,6 +114,21 @@ function canonicalRestoreFallback(
  */
 function showsUserInput(message: UiMessage): boolean {
     return message.type === "say" && (message.say === "task" || message.say === "user_feedback")
+}
+
+/**
+ * The row whose chat returns, as the conversation rewind reads it.
+ *
+ * A restore has to know both where the row was written and what the row itself
+ * keeps, and it needs that answer before it touches the workspace. The length is
+ * the fallback for rows written before rows recorded a position.
+ */
+function chatRestoreRowPosition(row: ChatRestoreRow, keepInput: boolean): CheckpointRestoreRow {
+    return {
+        keep: (row.message.conversationHistoryIndex ?? -1) + 1,
+        ...(row.message.conversationJournalSeq === undefined ? {} : { seq: row.message.conversationJournalSeq }),
+        keepInput,
+    }
 }
 
 // Type definitions for better code organization
@@ -762,6 +780,16 @@ export class TaskCheckpointManager implements ICheckpointManager {
             const chat =
                 restoreType === "workspace" ? { message, index: messageIndex } : chatRestoreRow(clineMessages, messageIndex)
 
+            if (restoreType !== "workspace" && this.services.canonicalCheckpoint) {
+                const boundary = resolveCanonicalChatRestoreBoundary({
+                    messages: clineMessages,
+                    messageIndex: chat.index,
+                    uiCount: this.services.messageStateHandler.uiMessage?.count ?? clineMessages.length,
+                })
+                this.assertChatRestoreAdmissible(chat.message, boundary, editedText)
+                if (restoreType !== "task") await HostProvider.diff.closeAllDiffs({})
+                return await this.restoreCanonicalCheckpoint({ message, chat, restoreType, editedText, boundary })
+            }
             const chatRestoreBoundary =
                 restoreType === "workspace"
                     ? undefined
@@ -780,17 +808,6 @@ export class TaskCheckpointManager implements ICheckpointManager {
             // Close only Dline-owned compare tabs before mutating the workspace so VS Code
             // cannot persist a stale model back over the restored filesystem state.
             if (restoreType !== "task") await HostProvider.diff.closeAllDiffs({})
-            if (chatRestoreBoundary && this.services.canonicalCheckpoint) {
-                // Awaited here so a refused or failed restore lands in the catch below
-                // instead of escaping to the caller with nothing restored.
-                return await this.restoreCanonicalCheckpoint({
-                    message,
-                    chat,
-                    restoreType: restoreType as "task" | "taskAndWorkspace",
-                    editedText,
-                    boundary: chatRestoreBoundary,
-                })
-            }
             const workspaceRestoreResult =
                 restoreType === "task"
                     ? undefined
@@ -862,7 +879,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
         readonly chat: ChatRestoreRow
         readonly restoreType: "task" | "taskAndWorkspace"
         readonly editedText?: string
-        readonly boundary: ChatRestoreBoundary
+        readonly boundary: ChatRestoreUiBoundary
     }): Promise<CheckpointRestoreStateUpdate> {
         const canonical = this.services.canonicalCheckpoint
         if (!canonical) throw new Error("Canonical checkpoint port is unavailable")
@@ -873,6 +890,23 @@ export class TaskCheckpointManager implements ICheckpointManager {
             mode: input.restoreType === "task" ? "chat_only" : "combined",
             ...(input.boundary.journalTarget === undefined ? {} : { journalTarget: input.boundary.journalTarget }),
             ...(fallback === undefined ? {} : { fallback }),
+            // The checkpoint stores where its row was written, which is not where the
+            // row's chat returns: its own input and the results answering calls made
+            // before it were journaled after that. The port resolves that once and
+            // uses it to hydrate, rewind and save, so an edit cannot leave the input
+            // it replaces beside the text it submits again.
+            ...(input.boundary.journalTarget !== undefined
+                ? {}
+                : {
+                      // A restored input row keeps the input it shows, unless the user edited
+                      // it: an edit submits its text again as new input, so the copy it
+                      // replaces must not survive beside it. The rewind keeps it only when
+                      // that input really is the next thing the conversation says.
+                      row: chatRestoreRowPosition(
+                          input.chat,
+                          input.editedText === undefined && showsUserInput(input.chat.message),
+                      ),
+                  }),
             restoreWorkspace: async (workspaceRef) => {
                 const references = decodeCheckpointWorkspaceRef(workspaceRef)
                 workspaceRestoreResult = references
@@ -894,6 +928,10 @@ export class TaskCheckpointManager implements ICheckpointManager {
             return { checkpointManagerErrorMessage: message }
         }
 
+        // The canonical transaction already restored the journal. Only now does
+        // its current message count describe the conversation the callback resumes.
+        const apiCount = await this.conversationLength()
+        const boundary: ChatRestoreBoundary = { ...input.boundary, apiKeepCount: apiCount, runtimeApiIndex: apiCount - 1 }
         this.services.messageStateHandler.clearTransientClineMessages()
         const workspaceRestoreError = workspaceRestoreResult?.status === "failed" ? workspaceRestoreResult.error : undefined
         const successfulRestoreType: ClineCheckpointRestore =
@@ -904,7 +942,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
             input.chat.message.ts,
             input.editedText,
             successfulRestoreType === "taskAndWorkspace",
-            input.boundary,
+            boundary,
             true,
         )
         await this.finalizeSuccessfulRestore(
@@ -914,7 +952,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
             workspaceRestoreResult && workspaceRestoreResult.status !== "failed"
                 ? workspaceRestoreResult.checkpointReferences
                 : undefined,
-            input.boundary,
+            boundary,
             workspaceRestoreResult?.status === "partial" ? workspaceRestoreResult.warning : undefined,
         )
         const update: CheckpointRestoreStateUpdate = {}
@@ -1323,7 +1361,11 @@ export class TaskCheckpointManager implements ICheckpointManager {
      * so they give the same answer before the workspace rewind and at the chat
      * commit point.
      */
-    private assertChatRestoreAdmissible(message: UiMessage, boundary: ChatRestoreBoundary, editedText: string | undefined): void {
+    private assertChatRestoreAdmissible(
+        message: UiMessage,
+        boundary: ChatRestoreUiBoundary,
+        editedText: string | undefined,
+    ): void {
         if ((message.compactionConversationRange || boundary.journalTarget) && editedText !== undefined) {
             throw new Error("Editing input is unavailable when restoring a compaction card")
         }

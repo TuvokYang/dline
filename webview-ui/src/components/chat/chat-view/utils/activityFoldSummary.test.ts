@@ -223,11 +223,11 @@ describe("summarizeActivityFold", () => {
             ["docs:search", 2],
             ["docs:resource", 1],
         ])
-        // A server call is neither a workspace file operation nor a shell command,
-        // so it is neither a `file read` nor an external one.
-        expect(Array.from(summary.work)).toEqual([["other", 3]])
+        // Resource access keeps its original category; tool calls have their own MCP total.
+        expect(Array.from(summary.work)).toEqual([["other", 1]])
+        expect(summary.mcp).toEqual({ servers: 1, tools: 2, failed: 0 })
         expect(summary.external.size).toBe(0)
-        expect(describeActivityFold(summary)).toBe("1 round · 3 others · 1 checkpoint")
+        expect(describeActivityFold(summary)).toBe("1 round · 1 other · 1 MCP (2 tools, 0 failed) · 1 checkpoint")
     })
 
     it("states the external share inside the verb it qualified", () => {

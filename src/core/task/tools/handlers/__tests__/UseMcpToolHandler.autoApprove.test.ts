@@ -101,7 +101,24 @@ describe("UseMcpToolHandler auto-approval", () => {
             type: "mcp_server_response",
             requestTs: 84,
             responses: ["ok"],
+            isError: false,
         })
+    })
+
+    it.each([false, true])("publishes structured remote status isError=%s without changing the tool outcome", async (isError) => {
+        const config = createConfig(true, true)
+        config.services.mcpHub.callTool = vi.fn<typeof config.services.mcpHub.callTool>(async () => ({
+            content: [{ type: "text", text: "remote result" }],
+            isError,
+        }))
+
+        const result = await new UseMcpToolHandler().execute(config, block)
+
+        const say = vi.mocked(config.callbacks.say)
+        const responseCall = say.mock.calls.find((call) => call[0] === "mcp_server_response")
+        expect(JSON.parse(responseCall![1]!)).toMatchObject({ requestTs: 42, isError })
+        if (isError) expect(result).toMatchObject({ failure: { stage: "remote", code: "remote_tool_error" } })
+        else expect(typeof result).toBe("string")
     })
 
     it("classifies a missing server name as a validation failure before MCP execution", async () => {
@@ -131,6 +148,8 @@ describe("UseMcpToolHandler auto-approval", () => {
             "mcp_server_response",
             expect.stringContaining("Check the MCP server logs for details"),
         )
+        const responseCall = vi.mocked(config.callbacks.say).mock.calls.find((call) => call[0] === "mcp_server_response")
+        expect(JSON.parse(responseCall![1]!)).toMatchObject({ requestTs: 42, isError: true })
         expect(config.taskState.consecutiveMistakeCount).toBe(1)
     })
 })

@@ -1,8 +1,10 @@
 import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
+import { renderRetainedInputs } from "../../continuation/RetainedInputContent"
 import { InMemoryConversationJournal, InMemoryTaskPayloadStore } from "../../stores/InMemoryRuntimeStores"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
 import type { UserInputEnvelope } from "../../stores/payload/TaskPayloadEnvelopes"
+import { JournalConversationView } from "../provider/service/JournalConversationView"
 import { ProviderJournalMessageMaterializer } from "../provider/service/ProviderJournalMessageMaterializer"
 import { RetainedInputJournalBatch } from "./RetainedInputJournalBatch"
 
@@ -27,6 +29,29 @@ async function harness() {
     }
     const stage = { ...identity, generation: 0, turnId: "turn-1", signal: new AbortController().signal }
     return { payloads, journal, originals, identity, stage, batches: new RetainedInputJournalBatch(payloads, journal) }
+}
+
+async function seedPublishedOwnedBatch(h: Awaited<ReturnType<typeof harness>>) {
+    // The pushed dev format stores ownership on intake without a separate material ref.
+    const payload = {
+        kind: "user_input" as const,
+        roundMaterialOwned: true as const,
+        retainedInputBatch: h.identity,
+        text: "RAW_A\n\nRAW_B",
+        admittedText: renderRetainedInputs(["ADMITTED_A", "ADMITTED_B"]),
+        images: ["image-a"],
+        files: ["file-b"],
+        authorizedTools: [DlineDefaultTool.REPORT_BUG],
+        explicitInstructions: h.originals[0].explicitInstructions,
+    }
+    const payloadRef = await h.payloads.put(encodeTaskPayload(payload))
+    const entry = await h.journal.append({
+        operationId: "intake.retained:delivery-1",
+        payloadRef,
+        source: "intake",
+        causation: { generation: 0, turnId: "turn-1" },
+    })
+    return { payload, payloadRef, watermark: entry.watermark }
 }
 
 describe("RetainedInputJournalBatch", () => {
@@ -106,6 +131,88 @@ describe("RetainedInputJournalBatch", () => {
         expect(parts.filter((part) => part.kind === "resource")).toEqual([image])
         const asText = parts.map((part) => (part.kind === "text" ? part.text : "[image]")).join("")
         expect(asText).toBe(batch.admittedText)
+    })
+
+    it("freezes a separately renderable material ref while the owned intake row stays suppressed", async () => {
+        const h = await harness()
+        const receipt = await h.batches.stage({ ...h.stage, roundMaterialOwned: true })
+        const materializer = new ProviderJournalMessageMaterializer(h.payloads)
+        const view = new JournalConversationView(h.journal, materializer)
+        expect(await view.messages()).toEqual([])
+        expect(receipt.roundMaterialRef).toEqual(expect.any(String))
+        expect(receipt.roundMaterialRef).not.toBe(receipt.payloadRef)
+        const frozen = decodeTaskPayload<UserInputEnvelope>(await h.payloads.read(receipt.roundMaterialRef!))
+        expect(frozen.roundMaterialOwned).toBeUndefined()
+        expect(frozen.admittedText?.match(/sent by the user while work was in progress/g)).toHaveLength(1)
+        // Inspect legacy attachment refs without opening local files. The adapter
+        // tests exercise this material ref through the real resource renderer.
+        expect(frozen).toMatchObject({ images: ["image-a"], files: ["file-b"] })
+        expect(await materializer.collectAuthority([receipt.roundMaterialRef!])).toEqual(
+            await materializer.collectAuthority(h.identity.entries.map((entry) => entry.payloadRef)),
+        )
+        const reopened = new RetainedInputJournalBatch(h.payloads, h.journal)
+        expect(await reopened.inspect(h.identity.deliveryId)).toEqual({ kind: "staged", receipt })
+        expect(await reopened.stage({ ...h.stage, roundMaterialOwned: true })).toEqual(receipt)
+        expect(await h.journal.read()).toHaveLength(1)
+        await expect(reopened.stage(h.stage)).rejects.toThrow("RetainedBatchOwnershipConflict")
+    })
+
+    it("reuses the published owned intake without rewriting its journal or payload", async () => {
+        const h = await harness()
+        const legacy = await seedPublishedOwnedBatch(h)
+        const put = vi.spyOn(h.payloads, "put")
+        const reopened = new RetainedInputJournalBatch(h.payloads, h.journal)
+        await expect(reopened.inspect(h.identity.deliveryId)).resolves.toEqual({
+            kind: "staged",
+            receipt: { ...h.identity, payloadRef: legacy.payloadRef, watermark: legacy.watermark },
+        })
+        expect(put).not.toHaveBeenCalled()
+        const receipt = await reopened.stage({ ...h.stage, roundMaterialOwned: true })
+        expect(receipt).toMatchObject({ payloadRef: legacy.payloadRef, watermark: legacy.watermark })
+        expect(receipt.roundMaterialRef).toEqual(expect.any(String))
+        expect(receipt.roundMaterialRef).not.toBe(legacy.payloadRef)
+        const frozen = decodeTaskPayload<UserInputEnvelope>(await h.payloads.read(receipt.roundMaterialRef!))
+        const { roundMaterialOwned: _owned, ...renderable } = legacy.payload
+        expect(frozen).toEqual(renderable)
+        expect(decodeTaskPayload(await h.payloads.read(legacy.payloadRef))).toEqual(legacy.payload)
+        expect(await reopened.stage({ ...h.stage, roundMaterialOwned: true })).toEqual(receipt)
+        expect(await h.journal.read()).toHaveLength(1)
+        const materializer = new ProviderJournalMessageMaterializer(h.payloads)
+        expect(await new JournalConversationView(h.journal, materializer).messages()).toEqual([])
+        expect(await materializer.collectAuthority([receipt.roundMaterialRef!])).toEqual(h.originals[0].explicitInstructions)
+    })
+
+    it("does not downgrade published owned intake to an independently visible batch", async () => {
+        const h = await harness()
+        const legacy = await seedPublishedOwnedBatch(h)
+        await expect(h.batches.stage(h.stage)).rejects.toThrow("RetainedBatchOwnershipConflict")
+        expect(decodeTaskPayload(await h.payloads.read(legacy.payloadRef))).toEqual(legacy.payload)
+        expect(await h.journal.read()).toHaveLength(1)
+    })
+
+    it("leaves published intake intact when its recovered material projection cannot be written", async () => {
+        const h = await harness()
+        const legacy = await seedPublishedOwnedBatch(h)
+        vi.spyOn(h.payloads, "put").mockRejectedValueOnce(new Error("legacy projection write failed"))
+        await expect(h.batches.stage({ ...h.stage, roundMaterialOwned: true })).rejects.toThrow("legacy projection write failed")
+        expect(decodeTaskPayload(await h.payloads.read(legacy.payloadRef))).toEqual(legacy.payload)
+        expect(await h.journal.read()).toHaveLength(1)
+        await expect(h.batches.inspect(h.identity.deliveryId)).resolves.toMatchObject({ kind: "staged" })
+    })
+
+    it("does not reinterpret an already-visible batch as material-owned", async () => {
+        const h = await harness()
+        await h.batches.stage(h.stage)
+        await expect(h.batches.stage({ ...h.stage, roundMaterialOwned: true })).rejects.toThrow("RetainedBatchOwnershipConflict")
+        expect(await h.journal.read()).toHaveLength(1)
+    })
+
+    it("cannot append an owned receipt when writing its renderable projection fails", async () => {
+        const h = await harness()
+        vi.spyOn(h.payloads, "put").mockRejectedValueOnce(new Error("projection write failed"))
+        await expect(h.batches.stage({ ...h.stage, roundMaterialOwned: true })).rejects.toThrow("projection write failed")
+        expect(await h.journal.read()).toEqual([])
+        expect(await h.batches.inspect(h.identity.deliveryId)).toEqual({ kind: "absent" })
     })
 
     it("writes no parts for a batch whose inputs carry no resource", async () => {

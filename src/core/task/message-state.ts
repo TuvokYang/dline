@@ -255,6 +255,14 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
         return journal > 0 ? journal : (this.apiConversation?.count ?? 0)
     }
 
+    /** Freeze both coordinates before a row's causal work can advance the journal. */
+    captureConversationPosition(): Pick<UiMessage, "conversationHistoryIndex" | "conversationJournalSeq"> {
+        return {
+            conversationHistoryIndex: this.conversationSize() - 1,
+            conversationJournalSeq: this.conversation?.position(),
+        }
+    }
+
     /**
      * The conversation length now, counting journal entries written since the last read.
      *

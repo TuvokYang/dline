@@ -41,19 +41,19 @@
         "packageName": "dline-main",
         "displayName": "Dline (Stable)",
         "preview": false,
-        "contributionNamespace": "dline",
-        "activityBarId": "dline-ActivityBar",
-        "sidebarViewId": "dline.SidebarProvider",
-        "panelViewType": "dlineTask",
-        "diffUriScheme": "cline-diff",
-        "commentControllerId": "dline-ai-review",
-        "productIconId": "dline-icon",
+        "contributionNamespace": "dline-main",
+        "activityBarId": "dline-main-ActivityBar",
+        "sidebarViewId": "dline-main.SidebarProvider",
+        "panelViewType": "dlineMainTask",
+        "diffUriScheme": "dline-main-diff",
+        "commentControllerId": "dline-main-ai-review",
+        "productIconId": "dline-main-icon",
         "walkthroughId": "DlineWalkthrough",
         "contextKeys": {
-            "accountEnabled": "dline.accountEnabled",
-            "isGeneratingCommit": "dline.isGeneratingCommit",
-            "isDevMode": "dline.isDevMode",
-            "isTestMode": "dline.isTestMode"
+            "accountEnabled": "dlineMain.accountEnabled",
+            "isGeneratingCommit": "dlineMain.isGeneratingCommit",
+            "isDevMode": "dlineMain.isDevMode",
+            "isTestMode": "dlineMain.isTestMode"
         }
     }
 }

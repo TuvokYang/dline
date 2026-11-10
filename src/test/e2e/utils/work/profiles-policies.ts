@@ -247,6 +247,8 @@ export async function closeWorkTask(sidebar: Frame): Promise<void> {
     const closeTask = sidebar.getByRole("button", { name: "Close Task", exact: true })
     await expect(closeTask).toBeVisible({ timeout: 60_000 })
     await closeTask.click()
+    // The composer stays visible while the host closes the old task; wait for ownership to leave first.
+    await expect(closeTask).toBeHidden({ timeout: 60_000 })
     await expect(sidebar.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 })
     await E2ETestHelper.dismissWhatsNewModal(sidebar)
 }

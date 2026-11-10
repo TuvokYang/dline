@@ -1,4 +1,4 @@
-import type { InteractionOutcome } from "@core/task/interaction/InteractionProtocol"
+import type { InteractionOutcome, OpenInteractionRequest } from "@core/task/interaction/InteractionProtocol"
 import type { TaskInteractionPorts } from "@core/task/tools/types/TaskConfig"
 import {
     createReportBugDraft,
@@ -59,7 +59,9 @@ async function discardAuthorization(supportCode: string | undefined): Promise<vo
 export async function executeReportBugOutcome(
     outcome: InteractionOutcome,
     presentation?: string,
+    isCurrent: () => boolean = () => true,
 ): Promise<ReportBugWorkflowOutcome> {
+    if (!isCurrent()) return "invalid"
     if (outcome.actionId !== "approve") {
         await discardAuthorization(parseReportBugDraft(presentation)?.supportCode)
         return "cancelled"
@@ -72,8 +74,31 @@ export async function executeReportBugOutcome(
         return "opened"
     }
     if (!draft.temporaryTelemetryConsent) await discardAuthorization(draft.supportCode)
+    if (!isCurrent()) return "invalid"
     await support.openAuthorizedIssue(draft)
     return "opened"
+}
+
+/** The local unary ends at durable admission; its task owns the later answer. */
+export async function admitLocalReportBugPreview(
+    input: Omit<OpenReportBugPreviewInput, "interactions"> & {
+        readonly interactions: { admit(request: OpenInteractionRequest): Promise<void> }
+    },
+): Promise<void> {
+    const draft = await prepareReportBugDraft(input.content, input.environment)
+    try {
+        await input.interactions.admit({
+            turnId: input.turnId,
+            interactionId: input.interactionId,
+            kind: "report_bug",
+            presentation: serializeReportBugDraft(draft),
+            ...(input.existingTs === undefined ? {} : { existingTs: input.existingTs }),
+            ...(input.placement === undefined ? {} : { placement: input.placement }),
+        })
+    } catch (error) {
+        await discardAuthorization(draft.supportCode)
+        throw error
+    }
 }
 
 /** Open the canonical editable preview; nothing opens in the browser before its Confirm action. */

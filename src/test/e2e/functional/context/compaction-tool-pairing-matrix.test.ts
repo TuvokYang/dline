@@ -389,6 +389,43 @@ function expectCompletePairing(consumption: MockApiConsumption, scenario: { labe
     expect(consumption.contractError, diagnostic).toBeUndefined()
 }
 
+/** Read user prose independently of system guidance, tool schemas and paired outputs. */
+function requestUserText(consumption: MockApiConsumption): string {
+    const input = (consumption.requestBody as { input?: unknown[] })?.input ?? []
+    return input
+        .flatMap((value) => {
+            if (typeof value !== "object" || value === null) return []
+            const item = value as { role?: unknown; content?: unknown }
+            if (item.role !== "user" || !Array.isArray(item.content)) return []
+            return item.content.flatMap((value) => {
+                if (typeof value !== "object" || value === null) return []
+                const block = value as { type?: unknown; text?: unknown }
+                return block.type === "input_text" && typeof block.text === "string" ? [block.text] : []
+            })
+        })
+        .join("\n")
+}
+
+/** An answer arrives once without replacing or duplicating its paired output. */
+function expectTurnEndAnswerDeliveredOnce(consumption: MockApiConsumption, scenario: TurnEndPairingScenario): void {
+    const diagnostic = JSON.stringify({ scenario: scenario.label, requestToolResults: consumption.requestToolResults }, null, 2)
+    const occurrences = (text: string) => text.split(scenario.feedback).length - 1
+    const userCount = occurrences(requestUserText(consumption))
+    const outputCount = consumption.requestToolResults.reduce((count, result) => count + occurrences(result.content), 0)
+    expect(userCount + outputCount, diagnostic).toBe(1)
+    if (scenario.action !== "reject_new_task") {
+        expect(userCount, diagnostic).toBe(1)
+        expect(outputCount, diagnostic).toBe(0)
+    }
+    const turnEndOutput = consumption.requestToolResults.find(
+        (result) => result.callId === `call_pairing_turn_end_${scenario.id}`,
+    )?.content
+    expect(turnEndOutput?.trim().length ?? 0, diagnostic).toBeGreaterThan(0)
+    if (scenario.tool.name === "attempt_completion") {
+        expect(turnEndOutput, diagnostic).toContain("[attempt_completion] Result: Done")
+    }
+}
+
 for (const scenario of turnEndScenarios) {
     e2e(
         `Compaction tool pairing - ${scenario.label} keeps every Provider call paired with exactly one output`,
@@ -414,12 +451,19 @@ for (const scenario of turnEndScenarios) {
                     id: `call_pairing_pause_${scenario.id}`,
                     name: "qna_respond",
                     arguments: { response: pauseText },
-                    expectedToolResults: [{ callId: `call_pairing_turn_end_${scenario.id}`, contentIncludes: scenario.feedback }],
+                    // The turn-end call's answer reaches the model as this round's own
+                    // user input, not inside the paired result, so only the pairing and
+                    // the answer's presence are stable here. Its exactly-once delivery is
+                    // asserted on the consumption below.
+                    expectedRequestIncludes: [scenario.feedback],
+                    expectedToolResultCount: 1,
+                    requireCompleteToolPairing: true,
                 },
                 {
                     type: "message",
                     text: `<thinking>Validate canonical tool pairing.</thinking><summarize_task><context>E2E_TURN_END_PAIRING_SUMMARY_${scenario.id.toUpperCase()}</context></summarize_task>`,
                     expectedRequestIncludes: [COMPACT_INSTRUCTION_MARKER],
+                    // The hidden Pass must keep every call paired with one output.
                     requireCompleteToolPairing: true,
                 },
             )
@@ -434,6 +478,9 @@ for (const scenario of turnEndScenarios) {
                 await submitTurnEndFeedback(sidebar, scenario)
                 await expect(sidebar.getByText(pauseText, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
                 await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(2)
+                const pauseRequest = server.getMockConsumptions("openai-compatible-responses")[1]
+                expect(pauseRequest, "The request answering the turn-end call was not captured").toBeDefined()
+                expectTurnEndAnswerDeliveredOnce(pauseRequest, scenario)
                 await triggerTaskHeaderCompaction(sidebar)
                 await expect.poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 90_000 }).toBe(3)
 

@@ -27,6 +27,8 @@ async function createFixture(ref: string | undefined) {
     for (const relativePath of [
         "README.marketplace.md",
         "marketplace.zh-cn.md",
+        "CHANGELOG.md",
+        "docs/changelog/CHANGELOG_en.md",
         ".vscodeignore",
         "LICENSE",
         "scripts/marketplace-readme.mjs",
@@ -93,13 +95,24 @@ describe("marketplace language links and images in a VSIX", () => {
                 "--eval",
                 `import { withMarketplaceReadme } from ${JSON.stringify(readmeModule)};
                  import { packageVsix } from ${JSON.stringify(packagerModule)};
-                 await withMarketplaceReadme(() => packageVsix(${request}), ${JSON.stringify(ref ? { ref } : {})})
+                 await withMarketplaceReadme((cleanups) => packageVsix({ ...${request}, cleanups }), ${JSON.stringify(ref ? { ref } : {})})
                      .catch((error) => { console.error(error.message); process.exitCode = 1; });`,
             ],
             { cwd: root, timeout: 30_000, windowsHide: true },
         )
 
         const entries = await readZip(packagePath, (name) => name.endsWith(".md"))
+        const originalChinese = await fs.readFile(path.join(PROJECT_ROOT, "CHANGELOG.md"), "utf8")
+        const originalEnglish = await fs.readFile(path.join(PROJECT_ROOT, "docs/changelog/CHANGELOG_en.md"), "utf8")
+        const packagedChangelog = entries.get("extension/changelog.md")?.toString("utf8")
+        expect(packagedChangelog).toBeDefined()
+        expect(load(markdown.render(packagedChangelog ?? "")).text()).toBe(load(markdown.render(originalEnglish)).text())
+        expect([...entries.keys()].filter((name) => /(?:^|\/)changelog[^/]*\.md$/i.test(name))).toEqual([
+            "extension/changelog.md",
+        ])
+        expect([...entries.keys()].some((name) => name.startsWith("extension/docs/"))).toBe(false)
+        expect(await fs.readFile(path.join(root, "CHANGELOG.md"), "utf8")).toBe(originalChinese)
+        expect(await fs.readFile(path.join(root, "docs/changelog/CHANGELOG_en.md"), "utf8")).toBe(originalEnglish)
         const readme = entries.get("extension/readme.md")?.toString("utf8")
         expect(readme).toBeDefined()
         const links = [...(readme ?? "").matchAll(/(?<!!)\[([^\]]*)\]\(([^)\s]+)\)/g)]
@@ -116,7 +129,7 @@ describe("marketplace language links and images in a VSIX", () => {
             .toArray()
             .map((image) => image.attribs.src)
         const images = load(markdown.render(readme ?? ""))("img[src]").toArray()
-        expect(sourceImages.map((image) => path.posix.extname(image))).toEqual([".png", ".gif", ".gif"])
+        expect(sourceImages.map((image) => path.posix.extname(image))).toEqual([".gif", ".gif"])
         expect(images).toHaveLength(sourceImages.length)
         for (const [index, image] of images.entries()) {
             const original = new URL(sourceImages[index], "https://repository.invalid/")

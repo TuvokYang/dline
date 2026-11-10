@@ -131,6 +131,13 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
         return this.request(request)
     }
 
+    /** Durably admit a task-owned dialog without parking a call-local receiver. */
+    async admit(request: OpenInteractionRequest): Promise<void> {
+        const { session, event } = await this.prepareAdmission(request)
+        await this.submitAdmission(session, event, request)
+        this.assertAdmissionCurrent(session, event.generation)
+    }
+
     complete(request: CompleteInteractionRequest): Promise<InteractionOutcome> {
         return this.request({ ...request, kind: "completion" })
     }
@@ -415,6 +422,8 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
      */
     suspend(reason: string): void {
         this.suspendedReason = reason
+        // A fenced request may never claim its Retry; the next request does not inherit it.
+        this.session?.owners?.providerRetry?.releaseTakeover()
         for (const pending of this.pending.values()) pending.reject(new InteractionCancellationError(reason))
         this.pending.clear()
     }
@@ -673,7 +682,8 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
             interactionId,
             kind,
             outcome,
-            ...(queuedInput ? { queuedInput, isCurrent } : {}),
+            isCurrent,
+            ...(queuedInput ? { queuedInput } : {}),
         }
         const accepted = this.unownedContinuation?.accepts(resolution) ?? false
         let continuation: UnownedDialogOutcome = "declined"
@@ -768,22 +778,38 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
     ): Promise<boolean> {
         const session = this.session
         if (!session?.writable || generation === undefined) return false
+        const state = session.state()
+        const retry =
+            retriesPreparedRound(state, interactionId) &&
+            state.dialog.primary?.kind === "error_retry" &&
+            state.dialog.primary.acceptedResponse?.actionId === "retry"
+                ? session.owners?.providerRetry
+                : undefined
+        let accepted = false
         try {
             if (pending?.retirement) {
                 if (pending.retirement.generation !== generation) return false
                 await session.assembly.runtime.waitForDurable(pending.retirement.revision)
                 return true
             }
+            // Retiring dispatches the frozen request without an unowned continuation.
+            retry?.takeOver()
             const result = await session.assembly.runtime.submit({
                 type: "dialog.resolved",
                 generation,
                 interactionId,
             })
-            if (result.kind === "rejected") return false
+            if (result.kind === "rejected") {
+                retry?.releaseTakeover()
+                return false
+            }
+            accepted = true
             if (pending && result.receipt) pending.retirement = { revision: result.receipt.revision, generation }
             await result.receipt?.durable
             return true
         } catch (error) {
+            // An accepted outbox survives a failed commit and must keep its manual budget.
+            if (!accepted) retry?.releaseTakeover()
             // A retired interaction only affects later dialogs, so a failure here
             // must be visible without failing the answer the user already gave.
             Logger.warn(`Failed to retire interaction ${interactionId}: ${error instanceof Error ? error.message : error}`)
@@ -791,10 +817,17 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
         }
     }
 
-    private async request(request: InteractionRequest): Promise<InteractionOutcome> {
-        // Refused rather than parked: the domain that would answer is stopped, so
-        // admitting this caller would block the very stop it is waiting behind.
-        if (this.suspendedReason) throw new InteractionCancellationError(this.suspendedReason)
+    private assertAdmissionCurrent(session: ActiveTaskSession, generation: number): void {
+        if (session.writable === false) throw new Error("Task interaction admission requires write ownership")
+        if (this.suspendedReason || session.state().generation !== generation || session.state().halt.status !== "idle") {
+            throw new InteractionCancellationError(this.suspendedReason ?? "Interaction generation retired")
+        }
+    }
+
+    private async prepareAdmission(request: InteractionRequest): Promise<{ session: ActiveTaskSession; event: TaskEvent }> {
+        const session = this.requireSession()
+        const generation = session.state().generation
+        this.assertAdmissionCurrent(session, generation)
         if (this.pending.has(request.interactionId)) throw new Error(`Interaction ${request.interactionId} is already pending`)
         // Turn-end placement is a presentation rule, never a reason to replace the streamed row's identity.
         const anchorTs = request.existingTs ?? this.nextRowTs()
@@ -809,15 +842,16 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
         )
         // The complete anchor and its call-local effects settle before queued or
         // immediate feedback is admitted. Restored dialogs never replay this hook.
+        this.assertAdmissionCurrent(session, generation)
         await this.present({ ...request, existingTs: anchorTs })
-        const session = this.requireSession()
+        this.assertAdmissionCurrent(session, generation)
         const state = session.state()
         // An interrupt only differs from a request when a dialog holds the slot;
         // with the slot free it is an ordinary dialog the kernel can admit.
         const interrupts = request.placement === "interrupt" && state.dialog.primary !== undefined
         const event: TaskEvent = {
             type: interrupts ? "dialog.interrupt_requested" : "dialog.requested",
-            generation: state.generation,
+            generation,
             interactionId: request.interactionId,
             turnId: request.turnId,
             kind: request.kind,
@@ -825,18 +859,34 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
             presentationRef,
             actionRules: actionRules(request.kind),
         }
-        const outcome = new Promise<InteractionOutcome>((resolve, reject) => {
-            this.pending.set(request.interactionId, { resolve, reject })
-        })
+        return { session, event }
+    }
+
+    private async submitAdmission(session: ActiveTaskSession, event: TaskEvent, request: InteractionRequest): Promise<void> {
         const result = await session.assembly.runtime.submit(event)
         if (result.kind === "rejected") {
-            this.pending.delete(request.interactionId)
             const active = session.state().dialog.primary
             const rejectionMessage = "message" in result ? result.message : result.diagnostic.message
             Logger.error(
                 `[TaskInteractionOwner] Rejected ${request.kind} interaction ${request.interactionId}: ${result.reason} (${rejectionMessage}); active=${active?.interactionId ?? "none"}/${active?.kind ?? "none"}/${active?.status ?? "none"}; requestedTurn=${request.turnId}; activeTurn=${active?.turnId ?? "none"}; revision=${session.state().revision}`,
             )
             throw new Error(`${result.reason}: ${rejectionMessage}`)
+        }
+        await result.receipt?.durable
+    }
+
+    private async request(request: InteractionRequest): Promise<InteractionOutcome> {
+        const { session, event } = await this.prepareAdmission(request)
+        const outcome = new Promise<InteractionOutcome>((resolve, reject) => {
+            this.pending.set(request.interactionId, { resolve, reject })
+        })
+        // Suspension may reject the receiver while admission is still committing.
+        void outcome.catch(() => undefined)
+        try {
+            await this.submitAdmission(session, event, request)
+        } catch (error) {
+            this.pending.delete(request.interactionId)
+            throw error
         }
         return outcome.then((answered) => this.forReceiver(answered))
     }

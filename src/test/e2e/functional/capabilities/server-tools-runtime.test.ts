@@ -5,20 +5,12 @@ import { getE2EMockProviderBaseUrl } from "@e2e/fixtures/server/api"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { expectComposerPlaceholder, expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
-import {
-    readTaskConversation,
-    readTaskUiMessagesText,
-    rewriteTaskUiMessages,
-    waitForTaskRelease,
-} from "@e2e/utils/task-instance-store"
+import { seedLegacyHostedWebApproval } from "@e2e/utils/legacy-hosted-approval"
+import { readTaskConversation, readTaskUiMessagesText } from "@e2e/utils/task-instance-store"
 import { prepareWebFetchBrowser, webFetchE2e } from "@e2e/utils/web-fetch-browser-fixture"
 import { expect, type Frame, type Locator, type Page } from "@playwright/test"
 import { ServerTool } from "@shared/proto/dline/models/metadata"
 import type { ElectronApplication } from "playwright"
-import { InstanceDatabase, InstanceLayout, openInstanceStorage } from "@/core/storage/instance"
-import { openTaskJournalStores } from "@/core/task/stores"
-import { FileTaskStateVault } from "@/core/task/stores/FileTaskStateVault"
-import { JournalConversationRewind } from "@/core/task/stores/JournalConversationRewind"
 
 type StoredWebToolsMode =
     | "WEB_TOOLS_MODE_AUTO"
@@ -349,74 +341,6 @@ function expectIsolatedDirectories(dlineDir: string, dlineHomeDir: string, dline
     expect(path.resolve(dlineDocsDir)).not.toBe(path.resolve(dlineDir))
 }
 
-async function seedLegacyHostedWebApproval(dlineDocsDir: string, taskId: string): Promise<void> {
-    const taskDir = path.join(dlineDocsDir, "tasks", taskId)
-    // A fixture written before the closed task releases its stores is overwritten by its final flush.
-    await waitForTaskRelease(dlineDocsDir, taskId)
-    const layout = new InstanceLayout(taskDir)
-    const conversation = await readTaskConversation(dlineDocsDir, taskId)
-    const [request] = conversation
-    if (
-        conversation.length !== 2 ||
-        request?.role !== "user" ||
-        conversation.some(
-            (message) =>
-                !Array.isArray(message.content) ||
-                message.content.some(
-                    (block) => typeof block === "object" && block !== null && "type" in block && block.type === "tool_use",
-                ),
-        )
-    ) {
-        const shape = conversation.map((message) => ({ role: message.role, contentIsArray: Array.isArray(message.content) }))
-        throw new Error(`Expected one failed user request and no executed tool: ${JSON.stringify(shape)}`)
-    }
-
-    // The runtime conversation is journal-backed. Rewind it to the original user
-    // request instead of editing the obsolete legacy JSONL import source.
-    const storage = openInstanceStorage(layout.root)
-    try {
-        const stores = await openTaskJournalStores(await storage.openDatabase(InstanceDatabase.Journal, "e2e-fixture-writer"))
-        const visible = (await stores.journal.project()).visibleMessages
-        if (visible.length < 2 || visible[0]?.source !== "intake") {
-            throw new Error(`Expected an intake followed by failed-turn journal entries, found ${visible.length}`)
-        }
-        await new JournalConversationRewind(stores.journal).rewindTo({
-            operationId: `e2e:legacy-hosted:${taskId}`,
-            target: visible[0].watermark,
-        })
-
-        const vault = new FileTaskStateVault(layout.stateFile)
-        const durable = await vault.load(taskId)
-        if (!durable) throw new Error("Expected current runtime state before seeding the legacy Hosted approval")
-        await vault.save({
-            state: {
-                ...durable.state,
-                flow: { phase: "paused" },
-                dialog: { approvalsByBlock: {} },
-                halt: { status: "idle", generation: durable.state.generation },
-                journalWatermark: stores.journal.watermark(),
-            },
-            outbox: [],
-        })
-    } finally {
-        await storage.close()
-    }
-    const apiIndex = 0
-    let failedAskTs: number | undefined
-    await rewriteTaskUiMessages(dlineDocsDir, taskId, (uiMessages) => {
-        const failedAsk = uiMessages.findLast((message) => message.type === "ask" && message.ask === "api_req_failed")
-        if (!failedAsk || typeof failedAsk.ts !== "number") throw new Error("Expected a persisted failed-request ask")
-        failedAskTs = failedAsk.ts
-        const interactionId = `hosted-web:${taskId}:${apiIndex}`
-        failedAsk.ask = "tool"
-        failedAsk.interactionId = interactionId
-        failedAsk.conversationHistoryIndex = apiIndex
-        failedAsk.text = JSON.stringify({ tool: "webSearch", content: "Legacy Hosted Web approval" })
-        return uiMessages
-    })
-    if (failedAskTs === undefined) throw new Error("Expected a hosted approval anchor timestamp")
-}
-
 async function expectHostedLifecycle(
     sidebar: Frame,
     query: string,
@@ -618,7 +542,7 @@ e2e(
             await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(1)
             const taskId = await onlyTaskId(dlineDocsDir)
             await closeCurrentTask(opened.sidebar)
-            await seedLegacyHostedWebApproval(dlineDocsDir, taskId)
+            await seedLegacyHostedWebApproval(dlineDocsDir, taskId, taskText)
 
             // Reopening migrates the obsolete pre-send approval into an explicit Resume that
             // owns the persisted request, so no approval decision is left to replay.

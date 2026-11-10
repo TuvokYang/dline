@@ -64,7 +64,7 @@ export const en = {
     "settings.ui.usage.unknownReset": "The reset request returned an unknown result.",
     "settings.ui.usage.todayInput": ({ count }: { count: string }) => `Today In: ${count}`,
     "settings.ui.usage.todayOutput": ({ count }: { count: string }) => `Today Out: ${count}`,
-    "settings.ui.usage.cacheHit": ({ percent }: { percent: string }) => `Cache hit: ${percent}%`,
+    "settings.ui.usage.cacheHit": ({ percent }: { percent: string }) => `Cache: ${percent}%`,
     "settings.ui.usage.balance": "Balance",
     "settings.ui.usage.remaining": ({ percent }: { percent: string }) => `${percent}% remaining`,
     "settings.ui.usage.resets": ({ time }: { time: string }) => `Resets ${time}`,

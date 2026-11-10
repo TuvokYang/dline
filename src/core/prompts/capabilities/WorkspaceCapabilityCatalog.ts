@@ -158,9 +158,15 @@ export class WorkspaceCapabilityCatalogRegistry {
     private ensureFresh(entry: CatalogEntry): Promise<WorkspaceCapabilityCatalogSnapshot> {
         if (entry.inFlight) return entry.inFlight
         const run = this.refreshLoop(entry)
-        const settled = run.finally(() => {
-            if (entry.inFlight === settled) entry.inFlight = undefined
-        })
+        const settled = run
+            .finally(() => {
+                if (entry.inFlight === settled) entry.inFlight = undefined
+            })
+            .then((snapshot) => {
+                // A new invalidation can arrive after the loop exits but before its promise settles.
+                if (entry.dirty && this.entries.get(entry.key) === entry) return this.ensureFresh(entry)
+                return snapshot
+            })
         entry.inFlight = settled
         return settled
     }

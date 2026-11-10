@@ -6,11 +6,9 @@ export interface ConversationJournalPosition {
     readonly seq: number
 }
 
-export interface ChatRestoreBoundary {
-    readonly apiKeepCount: number
+export interface ChatRestoreUiBoundary {
     readonly uiKeepCount: number
     readonly contextAnchorTs: number
-    readonly runtimeApiIndex: number
     readonly conversationHistoryDeletedRange?: [number, number]
     /**
      * Journal position the provider conversation returns to.
@@ -19,6 +17,42 @@ export interface ChatRestoreBoundary {
      * lives in the journal; the legacy API rows are then left untouched.
      */
     readonly journalTarget?: ConversationJournalPosition
+}
+
+export interface ChatRestoreBoundary extends ChatRestoreUiBoundary {
+    readonly apiKeepCount: number
+    readonly runtimeApiIndex: number
+}
+
+interface ChatRestoreUiInput {
+    readonly messages: readonly UiMessage[]
+    readonly messageIndex: number
+    readonly uiCount: number
+}
+
+/** A canonical transaction validates the conversation; its UI boundary has no current-length constraint. */
+export function resolveCanonicalChatRestoreBoundary(input: ChatRestoreUiInput): ChatRestoreUiBoundary {
+    const message = validatedRestoreMessage(input)
+    const journalTarget = message.compactionConversationRange ? undefined : readCompactionJournalBoundary(message)
+    const removesCard = message.compactionConversationRange !== undefined || journalTarget !== undefined
+    if (removesCard && input.messageIndex <= 0) {
+        throw new Error("Compaction Restore boundary is inconsistent with the current conversation")
+    }
+    return {
+        uiKeepCount: input.messageIndex + (removesCard ? 0 : 1),
+        contextAnchorTs: removesCard ? input.messages[input.messageIndex - 1].ts : message.ts,
+        conversationHistoryDeletedRange: cloneDeletedRange(message.conversationHistoryDeletedRange),
+        ...(journalTarget ? { journalTarget } : {}),
+    }
+}
+
+function validatedRestoreMessage(input: ChatRestoreUiInput): UiMessage {
+    const message = input.messages[input.messageIndex]
+    if (!message) throw new Error(`Restore message index ${input.messageIndex} is unavailable`)
+    if (input.uiCount !== input.messages.length) {
+        throw new Error(`Restore UI history is stale: loaded=${input.messages.length}, durable=${input.uiCount}`)
+    }
+    return message
 }
 
 /** A row together with its index in the durable chat sequence. */
@@ -54,11 +88,7 @@ export function resolveChatRestoreBoundary(input: {
     readonly uiCount: number
 }): ChatRestoreBoundary {
     const { messages, messageIndex, apiCount, uiCount } = input
-    const message = messages[messageIndex]
-    if (!message) throw new Error(`Restore message index ${messageIndex} is unavailable`)
-    if (uiCount !== messages.length) {
-        throw new Error(`Restore UI history is stale: loaded=${messages.length}, durable=${uiCount}`)
-    }
+    const message = validatedRestoreMessage({ messages, messageIndex, uiCount })
 
     const compactionRange = message.compactionConversationRange
     const journalTarget = compactionRange ? undefined : readCompactionJournalBoundary(message)

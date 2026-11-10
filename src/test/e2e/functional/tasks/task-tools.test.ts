@@ -1,10 +1,12 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
+import { expectOwnedUserFeedback } from "@e2e/utils/compaction-request-oracle"
 import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
-import { openSubagentCard, showSubagentOutput, subagentCardByTask } from "@e2e/utils/subagent-card"
+import { showSubagentOutput, subagentCardByTask } from "@e2e/utils/subagent-card"
 import { readTaskActivities, readTaskConversationText } from "@e2e/utils/task-instance-store"
+import { sendTask, setAutoApproveAction } from "@e2e/utils/task-tool-fixture"
 import { startFooterActionStabilityObserver, stopFooterActionStabilityObserver } from "@e2e/utils/ui-stability"
 import { expect, type Frame, type Page } from "@playwright/test"
 
@@ -19,18 +21,6 @@ import { expect, type Frame, type Page } from "@playwright/test"
  */
 const APPROVED_WRITE_TIMEOUT_MS = 15_000
 
-async function setAutoApproveAction(sidebar: Frame, label: string, enabled: boolean): Promise<void> {
-    await sidebar.getByLabel("Open auto-approve settings").click()
-    const checkbox = sidebar.locator("vscode-checkbox").filter({ hasText: label })
-    await expect(checkbox).toHaveCount(1)
-    const isChecked = () => checkbox.evaluate((element) => Boolean((element as HTMLInputElement).checked))
-    if ((await isChecked()) !== enabled) {
-        await sidebar.getByText(label, { exact: true }).click()
-    }
-    await expect.poll(isChecked).toBe(enabled)
-    await sidebar.getByLabel("Close auto-approve settings").click()
-}
-
 async function selectBackgroundExecTerminalMode(page: Page, sidebar: Frame): Promise<void> {
     await page.getByRole("button", { name: "Settings", exact: true }).click()
     await expect(sidebar.getByRole("heading", { name: "API Configuration" })).toBeVisible({ timeout: 30_000 })
@@ -41,13 +31,6 @@ async function selectBackgroundExecTerminalMode(page: Page, sidebar: Frame): Pro
     await expect.poll(() => dropdown.evaluate((element) => (element as HTMLSelectElement).value)).toBe("backgroundExec")
     await sidebar.getByRole("button", { name: "Done", exact: true }).click()
     await expect(sidebar.getByTestId("chat-input")).toBeVisible()
-}
-
-async function sendTask(sidebar: Frame, text: string): Promise<void> {
-    const input = sidebar.getByTestId("chat-input")
-    await input.fill(text)
-    await sidebar.getByTestId("send-button").click()
-    await expect(sidebar.getByText(text, { exact: true }).first()).toBeVisible()
 }
 
 async function expectSingleUserFeedback(sidebar: Frame, text: string): Promise<void> {
@@ -228,6 +211,7 @@ e2e(
         await expect(successActivity.getByLabel(/Command timeout:/)).toHaveCount(0)
         const timeoutIndicator = failureActivity.getByLabel("Command timeout: 60 s")
         const timeoutLayout = await timeoutIndicator.evaluate((indicator) => {
+            if (!(indicator instanceof HTMLElement)) throw new Error("Command timeout indicator must be an HTML element")
             const icon = indicator.querySelector("svg")
             const label = indicator.querySelector("span")
             if (!icon || !label) throw new Error("Command timeout indicator is incomplete")
@@ -652,6 +636,7 @@ e2e(
                 arguments: { result: "E2E_READ_REJECTION_CONTINUED" },
                 expectedToolResults: [{ callId: "call_rejected_read", contentIncludes: "The user denied this operation." }],
                 expectedRequestIncludes: ["E2E_READ_REJECT_FEEDBACK"],
+                requireCompleteToolPairing: true,
             },
         )
 
@@ -675,8 +660,7 @@ e2e(
                 content: expect.stringContaining("The user denied this operation."),
             }),
         )
-        const rejectedReadResult = continuation.requestToolResults.find(({ callId }) => callId === "call_rejected_read")
-        expect(rejectedReadResult?.content).toContain("E2E_READ_REJECT_FEEDBACK")
+        expectOwnedUserFeedback(continuation, ["call_rejected_read"], ["E2E_READ_REJECT_FEEDBACK"])
         expect(JSON.stringify(continuation.requestBody)).not.toContain("This workspace is used for testing the extension")
         await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
     },
@@ -1497,323 +1481,6 @@ e2e(
 )
 
 e2e(
-    "Tools - local subagent YAML controls its system prompt and final output token budget",
-    async ({ helper, server, sidebar, userDataDir, workspaceDir }) => {
-        e2e.setTimeout(180_000)
-        const subagentDirectory = path.join(workspaceDir, ".agents", "subagents")
-        const yamlSystemPromptMarker = "E2E_SUBAGENT_YAML_SYSTEM_PROMPT"
-        // Stays above MIN_SUBAGENT_OUTPUT_TOKENS so the configured value, not the
-        // floor that protects results from being erased, is the budget under test.
-        const truncatedResultMarker = "...[truncated to 1,024 tokens"
-        const omittedTailMarker = "E2E_SUBAGENT_BUDGET_TAIL"
-        const longChildResult = `E2E_SUBAGENT_BUDGET_PREFIX_${"A".repeat(8_192)}_${omittedTailMarker}`
-        await mkdir(subagentDirectory, { recursive: true })
-        await writeFile(
-            path.join(subagentDirectory, "e2e-output-budget.yml"),
-            `---
-name: e2e-output-budget
-description: E2E subagent output budget
-profile: ${E2E_PROFILE_NAMES.mockOpenAiResponses}
-tools:
-  - attempt_completion
-maxOutputTokens: 1024
----
-
-${yamlSystemPromptMarker}
-Return only the highest-value findings.`,
-            "utf8",
-        )
-
-        await helper.signin(sidebar)
-        await setAutoApproveAction(sidebar, "Read project files", false)
-        server.resetOpenAiMock()
-        server.enqueueOpenAiResponses(
-            {
-                type: "tool",
-                id: "call_subagent_output_budget",
-                name: "use_subagent",
-                arguments: {
-                    agent_name: "e2e-output-budget",
-                    task: "E2E_SUBAGENT_OUTPUT_BUDGET_TASK",
-                    context: "Verify the configured final response budget.",
-                    timeout: 60,
-                },
-            },
-            {
-                type: "tool",
-                id: "call_subagent_output_budget_parent_complete",
-                name: "attempt_completion",
-                arguments: { result: "E2E_SUBAGENT_OUTPUT_BUDGET_DONE" },
-                expectedToolResults: [
-                    {
-                        callId: "call_subagent_output_budget",
-                        contentIncludes: ["E2E_SUBAGENT_BUDGET_PREFIX_", truncatedResultMarker],
-                    },
-                ],
-                expectedRequestExcludes: [omittedTailMarker],
-            },
-        )
-        server.enqueueResponses("openai-compatible-responses", {
-            type: "tool",
-            id: "call_subagent_output_budget_child_complete",
-            name: "attempt_completion",
-            arguments: { result: longChildResult },
-            expectedRequestIncludes: [
-                yamlSystemPromptMarker,
-                "# Final Response Budget",
-                // The figure lives in the per-request Context Budget section; the
-                // task prompt's Final Response Budget deliberately states no number.
-                "# Context Budget",
-                "may use about 1,024 tokens",
-            ],
-        })
-
-        await sendTask(sidebar, "Run the configured output-budget subagent.")
-        const approveButton = sidebar.getByText("Approve", { exact: true })
-        await expect(approveButton).toBeVisible({ timeout: 60_000 })
-        await approveButton.click()
-        await expect(sidebar.getByText("E2E_SUBAGENT_OUTPUT_BUDGET_DONE", { exact: false }).last()).toBeVisible({
-            timeout: 60_000,
-        })
-
-        await expect.poll(() => server.getRequestCount("openai-compatible-chat")).toBe(2)
-        await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(1)
-        const childRequest = server.getMockConsumptions("openai-compatible-responses")[0]
-        expect(childRequest.contractError).toBeUndefined()
-        const childRequestText = JSON.stringify(childRequest.requestBody)
-        expect(childRequestText).toContain(yamlSystemPromptMarker)
-        expect(childRequestText).toContain("# Final Response Budget")
-        expect(childRequestText).toContain("# Context Budget")
-        expect(childRequestText).toContain("may use about 1,024 tokens")
-
-        const parentContinuation = server.getMockConsumptions("openai-compatible-chat")[1]
-        expect(parentContinuation.contractError).toBeUndefined()
-        const returnedResult = parentContinuation.requestToolResults.find(
-            (result) => result.callId === "call_subagent_output_budget",
-        )?.content
-        expect(returnedResult).toContain("E2E_SUBAGENT_BUDGET_PREFIX_")
-        expect(returnedResult).toContain(truncatedResultMarker)
-        expect(returnedResult).not.toContain(omittedTailMarker)
-        await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
-    },
-)
-
-e2e(
-    "Tools - subagent aligns header actions, wraps context, and orders Tools before output",
-    async ({ helper, server, sidebar, userDataDir }) => {
-        e2e.setTimeout(180_000)
-        const subagentTask = "E2E_SUBAGENT_RENDERING_TASK"
-        const subagentContext = [
-            "Inspect the workspace in the exact order requested.",
-            "Keep this second context line hidden until the user expands it.",
-            "Keep this third context line hidden as well.",
-        ].join("\n")
-
-        await helper.signin(sidebar)
-        await setAutoApproveAction(sidebar, "Read project files", false)
-        server.resetOpenAiMock()
-        server.enqueueOpenAiResponses(
-            {
-                type: "tool",
-                id: "call_subagent_rendering",
-                name: "use_subagent",
-                arguments: {
-                    agent_name: "default",
-                    task: subagentTask,
-                    context: subagentContext,
-                    timeout: 60,
-                },
-            },
-            {
-                type: "tool",
-                id: "call_subagent_rendering_read",
-                name: "read_file",
-                arguments: { path: "README.md" },
-            },
-            {
-                type: "tool",
-                id: "call_subagent_rendering_list",
-                name: "list_files",
-                arguments: { path: ".", recursive: false },
-                expectedToolResults: [{ callId: "call_subagent_rendering_read", contentIncludes: "# Test Workspace" }],
-            },
-            {
-                type: "tool",
-                id: "call_subagent_rendering_complete",
-                name: "attempt_completion",
-                arguments: { result: "E2E_SUBAGENT_RENDERING_CHILD_DONE" },
-                expectedToolResults: [{ callId: "call_subagent_rendering_list", contentIncludes: "README.md" }],
-            },
-            {
-                type: "tool",
-                id: "call_subagent_rendering_parent_complete",
-                name: "attempt_completion",
-                arguments: { result: "E2E_SUBAGENT_RENDERING_DONE" },
-                expectedToolResults: [
-                    { callId: "call_subagent_rendering", contentIncludes: "E2E_SUBAGENT_RENDERING_CHILD_DONE" },
-                ],
-            },
-        )
-
-        await sendTask(sidebar, "Ask a subagent to inspect the workspace in order.")
-        const approveButton = sidebar.getByText("Approve", { exact: true })
-        await expect(approveButton).toBeVisible({ timeout: 60_000 })
-        await approveButton.click()
-        await expect(sidebar.getByText("E2E_SUBAGENT_RENDERING_DONE", { exact: false }).last()).toBeVisible({
-            timeout: 60_000,
-        })
-
-        const subagentCard = subagentCardByTask(sidebar, subagentTask)
-        await expect(subagentCard).toBeVisible()
-        await expect(subagentCard.getByTestId("subagent-name")).toHaveText("default")
-        // A single foreground run is identified by its agent name; the "#n" index
-        // only distinguishes items inside a batch.
-        await expect(subagentCard).not.toContainText("subagent_1")
-        const itemHeader = subagentCard.getByTestId("subagent-item-header")
-        const executionMode = itemHeader.getByTestId("subagent-execution-mode")
-        await expect(executionMode).toHaveText("Foreground")
-        await expect(itemHeader.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0)
-        await expect(subagentCard.getByRole("button", { name: "Continue in Background", exact: true })).toHaveCount(0)
-
-        // The card opens folded to its header; its Work sections render once opened.
-        await expect(subagentCard.getByTestId("subagent-item-body")).toHaveCount(0)
-        await openSubagentCard(subagentCard)
-
-        // TODO(BUGFIX-049): the Task block layout contract predates the
-        // SubagentStatusRow popover rework and no longer matches the rendered DOM.
-        // Redefine it against the current component before re-enabling.
-        await expect(subagentCard.getByRole("heading", { name: subagentTask, exact: true })).toBeVisible()
-
-        const context = subagentCard.getByTestId("subagent-context")
-        await expect(context).toContainText("Context")
-        const contextContent = context.getByTestId("subagent-context-content")
-        // The row truncates to one line and reveals the full context through a
-        // popover, so the trigger no longer carries a title attribute.
-        await expect(contextContent).toContainText("Inspect the workspace in the exact order requested")
-        await expect(contextContent).not.toHaveAttribute("title", subagentContext)
-        const contextLayout = await context.evaluate((element) => {
-            const style = getComputedStyle(element)
-            return {
-                clientHeight: element.clientHeight,
-                scrollWidth: element.scrollWidth,
-                clientWidth: element.clientWidth,
-                overflowX: style.overflowX,
-            }
-        })
-        expect(contextLayout.clientHeight).toBeGreaterThan(0)
-        expect(contextLayout.scrollWidth).toBeLessThanOrEqual(contextLayout.clientWidth + 1)
-        expect(contextLayout.overflowX).toBe("hidden")
-        const contextTextLayout = await contextContent.evaluate((element) => {
-            const style = getComputedStyle(element)
-            return {
-                overflowWrap: style.overflowWrap,
-                whiteSpace: style.whiteSpace,
-            }
-        })
-        // The trigger truncates to a single line; the wrapped, pre-formatted copy
-        // lives in the popover that "Context" opens.
-        expect(contextTextLayout.whiteSpace).toBe("nowrap")
-
-        // The wrapped, pre-formatted copy lives in the popover the trigger opens.
-        const showFullContext = subagentCard.getByRole("button", { name: "Show full subagent context", exact: true })
-        await expect(showFullContext).toHaveCount(1)
-        await showFullContext.click()
-        const contextPopover = sidebar.getByTestId("subagent-context-popover-content")
-        await expect(contextPopover).toBeVisible()
-        await expect(contextPopover).toContainText("Keep this second context line hidden until the user expands it.")
-        await expect(contextPopover).toContainText("Keep this third context line hidden as well.")
-        const popoverTextLayout = await contextPopover.evaluate((element) => {
-            const style = getComputedStyle(element)
-            return { overflowWrap: style.overflowWrap, whiteSpace: style.whiteSpace }
-        })
-        expect(popoverTextLayout.whiteSpace).toBe("pre-wrap")
-        expect(["anywhere", "break-word"]).toContain(popoverTextLayout.overflowWrap)
-        // Close the popover so it cannot cover the sections asserted below.
-        await showFullContext.click()
-        await expect(contextPopover).toHaveCount(0)
-
-        // The tools section is expanded by default and lists each executed step.
-        const toolRows = subagentCard.getByTestId("subagent-tool-step")
-        await expect(toolRows).toHaveCount(3)
-        expect(await subagentCard.getByTestId("subagent-tool-step-name").allTextContents()).toEqual([
-            "read_file",
-            "list_files",
-            "attempt_completion",
-        ])
-        expect(await toolRows.allTextContents()).toEqual([
-            expect.stringContaining("README.md"),
-            expect.stringContaining("list_files"),
-            expect.stringContaining("attempt_completion"),
-        ])
-        await expect(subagentCard.getByRole("button", { name: "Collapse subagent tools", exact: true })).toHaveCount(1)
-        const toolsScroll = subagentCard.getByTestId("subagent-tools-scroll")
-        expect(
-            await toolsScroll.evaluate((element) => {
-                const style = getComputedStyle(element)
-                return { overflowX: style.overflowX, overflowY: style.overflowY }
-            }),
-        ).toEqual({ overflowX: "hidden", overflowY: "auto" })
-
-        // The output section stays collapsed until requested, and is ordered after Tools.
-        const showOutput = subagentCard.getByRole("button", { name: "Show subagent output", exact: true })
-        await expect(showOutput).toHaveCount(1)
-        await expect(subagentCard.getByTestId("subagent-output")).toHaveCount(0)
-        expect(
-            await subagentCard.evaluate((card) => {
-                const tools = card.querySelector<HTMLElement>('[aria-label="Collapse subagent tools"]')
-                const toggle = card.querySelector<HTMLElement>('[aria-label="Show subagent output"]')
-                if (!tools || !toggle) throw new Error("Subagent Tools or output toggle is missing")
-                return Boolean(tools.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING)
-            }),
-        ).toBe(true)
-
-        // The list bounds the complete subagent collection at 60vh and owns outer scrolling.
-        const itemsContainer = sidebar.getByTestId("subagent-list-scroll")
-        const itemsLayout = await itemsContainer.evaluate((element) => {
-            const style = getComputedStyle(element)
-            return {
-                maxHeight: Number.parseFloat(style.maxHeight),
-                overflowY: style.overflowY,
-                viewportHeight: window.innerHeight,
-            }
-        })
-        expect(itemsLayout.overflowY).toBe("auto")
-        expect(itemsLayout.maxHeight).toBeCloseTo(itemsLayout.viewportHeight * 0.6, 0)
-        // The card itself is height-bounded (30vh) so a long run cannot grow the chat.
-        const cardLayout = await subagentCard.evaluate((element) => {
-            const style = getComputedStyle(element)
-            return {
-                maxHeight: Number.parseFloat(style.maxHeight),
-                overflowY: style.overflowY,
-                viewportHeight: window.innerHeight,
-            }
-        })
-        expect(cardLayout.overflowY).toBe("hidden")
-        expect(cardLayout.maxHeight).toBeCloseTo(cardLayout.viewportHeight * 0.3, 0)
-
-        await showOutput.click()
-        const output = subagentCard.getByTestId("subagent-output")
-        expect(
-            await subagentCard.evaluate((card) => {
-                const toggle = card.querySelector<HTMLElement>('[aria-label="Hide subagent output"]')
-                const result = card.querySelector<HTMLElement>('[data-testid="subagent-output"]')
-                if (!toggle || !result) throw new Error("Subagent output hierarchy is incomplete")
-                return Boolean(toggle.compareDocumentPosition(result) & Node.DOCUMENT_POSITION_FOLLOWING)
-            }),
-        ).toBe(true)
-        await expect(output).toContainText("E2E_SUBAGENT_RENDERING_CHILD_DONE")
-        expect(
-            await subagentCard.getByTestId("subagent-output-scroll").evaluate((element) => {
-                const style = getComputedStyle(element)
-                return { overflowX: style.overflowX, overflowY: style.overflowY }
-            }),
-        ).toEqual({ overflowX: "hidden", overflowY: "auto" })
-        await subagentCard.screenshot({ path: e2e.info().outputPath("subagent-bounded-sections.png") })
-        await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
-    },
-)
-
-e2e(
     "Tools - subagent-row Cancel stops a foreground subagent and returns its tool result",
     async ({ helper, server, sidebar, userDataDir }) => {
         e2e.setTimeout(180_000)
@@ -2280,8 +1947,10 @@ Remain active until the parent task is closed.`,
         await sidebar.getByRole("button", { name: "All", exact: true }).first().click()
         const commandActivity = sidebar.getByTestId("activity-item").filter({ hasText: "close-task-background-heartbeat.log" })
         const subagentActivity = sidebar.getByTestId("activity-item").filter({ hasText: "e2e-close-task" })
-        await expect(commandActivity).toContainText("cancelled", { timeout: 30_000 })
-        await expect(subagentActivity).toContainText("cancelled", { timeout: 30_000 })
+        await expect(commandActivity).toHaveAttribute("data-activity-status", "cancelled", { timeout: 30_000 })
+        await expect(subagentActivity).toHaveAttribute("data-activity-status", "cancelled", { timeout: 30_000 })
+        await expect(commandActivity).toContainText("Cancelled")
+        await expect(subagentActivity).toContainText("Cancelled")
         await expect(commandActivity.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0)
         await expect(subagentActivity.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0)
         await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)

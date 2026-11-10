@@ -29,6 +29,7 @@ import { isTelemetryDevelopmentMode } from "./services/telemetry/development-mod
 import { recordPerfPhase } from "./services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "./services/telemetry/instrumentation/perf-domains"
 import { hostEditorOf, releaseChannelOf } from "./services/telemetry/remote/clientIdentity"
+import { resolveRemoteTelemetryEndpoint } from "./services/telemetry/remote/endpoint-selection"
 import { HostDiagnosticsPolicy } from "./services/telemetry/remote/policy/hostDiagnosticsPolicy"
 import { readHostUsagePolicyInputs } from "./services/telemetry/remote/policy/hostUsagePolicyInputs"
 import {
@@ -43,7 +44,6 @@ import {
     stopRemoteUsage,
     usageReportingAllowed,
 } from "./services/telemetry/remote/remoteUsageRuntime"
-import { loopbackEndpointOverride } from "./services/telemetry/remote/transport/DlineOtelHttpClient"
 import {
     completeRuntimeSessionLedger,
     deactivateRuntimeTelemetry,
@@ -221,7 +221,6 @@ export async function initialize(storageContext: StorageContext): Promise<Webvie
         dataDir: storageContext.dataDir,
         clientVersion: ExtensionRegistryInfo.version,
         platform: process.platform,
-        otelEndpoint: loopbackEndpointOverride(process.env.DLINE_OTEL_ENDPOINT),
     })
     // State earlier builds left under an older telemetry contract is dropped, never migrated; no runtime reads it.
     void retireLegacyTelemetryState(storageContext.dataDir).catch((error) =>
@@ -456,20 +455,6 @@ function revalidateRolloutParticipation(): void {
     void revalidateFeatureFlagRollout().catch((error) =>
         Logger.warn("[Dline] Failed to re-check feature flag rollout participation:", error),
     )
-}
-
-/**
- * The telemetry service endpoint for this run: a loopback override, the real
- * service, or none at all for a test run without its own loopback service.
- */
-function resolveRemoteTelemetryEndpoint(): { readonly endpoint: string | undefined } | undefined {
-    const endpoint = loopbackEndpointOverride(process.env.DLINE_OTEL_ENDPOINT)
-    if (process.env.DLINE_OTEL_ENDPOINT && !endpoint) {
-        Logger.warn("[Dline] Ignoring DLINE_OTEL_ENDPOINT: only a loopback origin may replace the telemetry service")
-    }
-    // A test run reports only to a loopback service it started; it never reaches the real one.
-    const isTestRun = envFlagEnabled(process.env.E2E_TEST) || envFlagEnabled(process.env.IS_TEST)
-    return isTestRun && !endpoint ? undefined : { endpoint }
 }
 
 async function startRemoteDiagnosticsReporting(dataDir: string): Promise<void> {

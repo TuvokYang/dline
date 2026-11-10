@@ -180,7 +180,7 @@ export const zhCN = {
     "settings.ui.seeMore": "展开更多",
     "settings.ui.compactPrompt": "使用精简提示",
     "settings.ui.compactPromptHelp": "针对较小上下文窗口（例如 8K 或更少）优化的系统提示。",
-    "settings.ui.compactPromptWarning": "不支持 MCP 和焦点链",
+    "settings.ui.compactPromptWarning": "不支持 MCP 和专注链",
     "settings.ui.claudeIdentity.enable": "发送 Claude Code 计费请求头",
     "settings.ui.claudeIdentity.help":
         "在每次请求中添加 Claude Code 计费归属信息。Anthropic 会使用多种信号判断请求归属，因此仅启用此项不能保证适用订阅配额。除非确定需要，否则请保持关闭。",

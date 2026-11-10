@@ -426,6 +426,7 @@ await withMarketplaceReadme(
         )
         await packageVsix({
             cwd: PROJECT_ROOT,
+            cleanups,
             mode: "build-and-pack",
             packagePath: resolvedOutputPath,
             preRelease,

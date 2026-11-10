@@ -342,10 +342,17 @@ function openAiProfile(
                           thinking: { supported: true, mode: "effort", effortLevels: ["none", "low", "medium", "high"] },
                       },
                       pricing: {
-                          inputPrice: 1,
-                          outputPrice: 2,
-                          cacheReadsPrice: 0.1,
-                          cacheWritesPrice: 1.25,
+                          currency: "USD",
+                          strategy: {
+                              flat: {
+                                  prices: {
+                                      inputPrice: 1,
+                                      outputPrice: 2,
+                                      cacheReadPrice: 0.1,
+                                      cacheWritePrice: 1.25,
+                                  },
+                              },
+                          },
                       },
                   }
                 : {}),

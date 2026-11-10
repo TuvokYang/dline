@@ -23,7 +23,9 @@ const DLINE_EXTENSION_DIRECTORY_PATTERN = /^tuvokyang(?:dline)?\.dline-/i
 export const E2E_VSIX_INSTALL_TIMEOUT_MS = 120_000
 const INSTALL_DIAGNOSTIC_LIMIT = 4_000
 const PACKAGED_E2E_LIFECYCLES = new Set(["test:e2e", "test:e2e:optimal", "test:e2e:pressure"])
-type PackagedE2EEnvironment = Pick<NodeJS.ProcessEnv, "DLINE_E2E_INSTALL_VSIX" | "DLINE_E2E_VSIX_PATH" | "npm_lifecycle_event">
+type PackagedE2EEnvironment = Partial<
+    Pick<NodeJS.ProcessEnv, "DLINE_E2E_INSTALL_VSIX" | "DLINE_E2E_VSIX_PATH" | "npm_lifecycle_event">
+>
 
 export interface VSCodeExtensionInstallInvocation {
     readonly command: string

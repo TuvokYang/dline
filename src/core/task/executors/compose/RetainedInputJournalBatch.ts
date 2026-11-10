@@ -12,11 +12,14 @@ export interface RetainedBatchIdentity {
 
 interface RetainedBatchEnvelope extends UserInputEnvelope {
     readonly retainedInputBatch: RetainedBatchIdentity
+    /** Renderable batch referenced only by an ordered round material, never by this intake row. */
+    readonly roundMaterialRef?: string
 }
 
 export interface RetainedBatchReceipt extends RetainedBatchIdentity {
     readonly payloadRef: string
     readonly watermark: JournalWatermark
+    readonly roundMaterialRef?: string
 }
 
 export type RetainedBatchEvidence =
@@ -76,6 +79,7 @@ export class RetainedInputJournalBatch {
             ...payload.retainedInputBatch,
             payloadRef: entry.payloadRef,
             watermark: entry.watermark,
+            ...(payload.roundMaterialRef ? { roundMaterialRef: payload.roundMaterialRef } : {}),
         }
         const retracted = await this.journal.findByOperation(retractOperation(deliveryId))
         if (retracted && (retracted.kind !== "tombstone" || retracted.target?.seq !== entry.watermark.seq))
@@ -97,7 +101,16 @@ export class RetainedInputJournalBatch {
         if (existing.kind !== "absent") {
             if (!sameEntries(existing.receipt.entries, input.entries)) throw new Error("RetainedBatchIdentityConflict")
             if (existing.kind === "retracted") throw new Error("RetainedBatchAlreadyRetracted")
+            const staged = decodeTaskPayload<RetainedBatchEnvelope>(await this.payloads.read(existing.receipt.payloadRef))
+            if (Boolean(input.roundMaterialOwned) !== (staged.roundMaterialOwned === true))
+                throw new Error("RetainedBatchOwnershipConflict")
             input.signal.throwIfAborted()
+            if (input.roundMaterialOwned && !existing.receipt.roundMaterialRef) {
+                // Published intake already records ownership; derive its material copy without rewriting that durable fact.
+                const roundMaterialRef = await projectRetainedMaterialInput(this.payloads, existing.receipt.payloadRef, false)
+                input.signal.throwIfAborted()
+                return { ...existing.receipt, roundMaterialRef }
+            }
             return existing.receipt
         }
         const payloads = await Promise.all(
@@ -114,7 +127,6 @@ export class RetainedInputJournalBatch {
         }
         const envelope: RetainedBatchEnvelope = {
             kind: "user_input",
-            ...(input.roundMaterialOwned ? { roundMaterialOwned: true as const } : {}),
             retainedInputBatch: identity,
             text: payloads.map((payload) => payload.text ?? "").join("\n\n"),
             admittedText: renderRetainedInputs(payloads.map(modelTextOf)),
@@ -123,7 +135,14 @@ export class RetainedInputJournalBatch {
             images: payloads.flatMap((payload) => [...(payload.images ?? [])]),
             files: payloads.flatMap((payload) => [...(payload.files ?? [])]),
         }
-        const payloadRef = await this.payloads.put(encodeTaskPayload(envelope))
+        // Keep the intake row suppressed without asking the provider materializer
+        // to bypass its ownership guard. Only the material plan references this
+        // renderable copy; recovery reads that exact ref from the staged row.
+        const roundMaterialRef = input.roundMaterialOwned ? await this.payloads.put(encodeTaskPayload(envelope)) : undefined
+        input.signal.throwIfAborted()
+        const payloadRef = await this.payloads.put(
+            encodeTaskPayload(roundMaterialRef ? { ...envelope, roundMaterialOwned: true, roundMaterialRef } : envelope),
+        )
         input.signal.throwIfAborted()
         const appended = await this.journal.append({
             operationId: stageOperation(input.deliveryId),
@@ -133,7 +152,7 @@ export class RetainedInputJournalBatch {
         })
         // An abort inside append cannot erase its durable fact. Return the receipt
         // so the caller can reconcile it instead of treating it as an unsent batch.
-        return { ...identity, payloadRef, watermark: appended.watermark }
+        return { ...identity, payloadRef, watermark: appended.watermark, ...(roundMaterialRef ? { roundMaterialRef } : {}) }
     }
 
     /** Retract only this staged row; all its inputs disappear from the projection together. */
@@ -146,6 +165,30 @@ export class RetainedInputJournalBatch {
         await this.journal.tombstone({ operationId: retractOperation(identity.deliveryId), target: evidence.receipt.watermark })
         return { kind: "retracted", receipt: evidence.receipt }
     }
+}
+
+/**
+ * A reselected batch may span other frozen material. Its inputs then keep their
+ * individual positions, with the first one carrying the batch's guidance once.
+ * The material row freezes this derived ref, so replay never renders it again.
+ */
+export async function projectRetainedMaterialInput(
+    payloads: TaskPayloadStore,
+    inputRef: string,
+    guidance: boolean,
+): Promise<string> {
+    const input = decodeTaskPayload<UserInputEnvelope>(await payloads.read(inputRef))
+    if (input.kind !== "user_input") throw new Error("InvalidRetainedMaterialInput")
+    if (!guidance && !input.roundMaterialOwned) return inputRef
+    const { roundMaterialOwned: _owned, ...body } = input
+    return payloads.put(
+        encodeTaskPayload({
+            ...body,
+            ...(guidance
+                ? { admittedText: renderRetainedInputs([modelTextOf(input)]), admittedParts: retainedInputPartsOf([input]) }
+                : {}),
+        }),
+    )
 }
 
 function modelTextOf(payload: UserInputEnvelope): string {

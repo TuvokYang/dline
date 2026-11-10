@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
+import { UiLanguageProvider } from "@/i18n/UiLanguageProvider"
 import { TaskRateMetrics } from "./TaskRateMetrics"
 
 const defaultProps = {
@@ -27,9 +28,28 @@ describe("TaskRateMetrics", () => {
         expect(button).toHaveAccessibleName(/RPM: 3/)
         expect(button).toHaveAccessibleName(/TPM: 4500/)
         expect(button).not.toHaveAccessibleName(/Request/i)
-        expect(button).toHaveAccessibleName(/Hit: 0\.0%/)
+        expect(button).toHaveAccessibleName(/Cache: 0\.0%/)
         expect(button.textContent?.indexOf("In:1.3K")).toBeLessThan(button.textContent?.indexOf("RPM:3") ?? -1)
         expect(button.querySelectorAll("button")).toHaveLength(0)
+    })
+
+    it("retranslates the cache percentage in place without changing its value or focus", () => {
+        const tree = (language: "en" | "zh-CN") => (
+            <UiLanguageProvider language={language}>
+                <TaskRateMetrics {...defaultProps} cacheHitRate={42.57} />
+            </UiLanguageProvider>
+        )
+        const view = render(tree("en"))
+        const button = screen.getByRole("button", { name: /Cache: 42\.6%/ })
+        expect(button).toHaveTextContent("Cache:42.6%")
+        button.focus()
+        view.rerender(tree("zh-CN"))
+        expect(screen.getByRole("button", { name: /缓存：42\.6%/ })).toBe(button)
+        expect(button).toHaveTextContent("缓存:42.6%")
+        expect(button).toHaveFocus()
+        view.rerender(tree("en"))
+        expect(screen.getByRole("button", { name: /Cache: 42\.6%/ })).toBe(button)
+        expect(button).toHaveFocus()
     })
 
     it("opens history without bubbling click or keyboard activation to the Task header", async () => {

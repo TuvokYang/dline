@@ -64,7 +64,7 @@ export const zhCN = {
     "settings.ui.usage.unknownReset": "重置请求返回了未知结果。",
     "settings.ui.usage.todayInput": ({ count }) => `今日输入：${count}`,
     "settings.ui.usage.todayOutput": ({ count }) => `今日输出：${count}`,
-    "settings.ui.usage.cacheHit": ({ percent }) => `缓存命中：${percent}%`,
+    "settings.ui.usage.cacheHit": ({ percent }) => `缓存：${percent}%`,
     "settings.ui.usage.balance": "余额",
     "settings.ui.usage.remaining": ({ percent }) => `剩余 ${percent}%`,
     "settings.ui.usage.resets": ({ time }) => `于 ${time} 重置`,

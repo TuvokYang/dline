@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest"
-import type { TaskState } from "../../kernel"
+import { serializeDurableToolResult } from "../../DurableToolResult"
+import type { RoundMaterialPlan, TaskState } from "../../kernel"
 import { createInitialTaskState } from "../../kernel"
 import type { TaskPayloadStore } from "../../stores/contracts"
-import { InMemoryConversationJournal } from "../../stores/InMemoryRuntimeStores"
+import { InMemoryConversationJournal, InMemoryTaskPayloadStore } from "../../stores/InMemoryRuntimeStores"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
+import type { ProviderDraftEnvelope, UserInputEnvelope } from "../../stores/payload/TaskPayloadEnvelopes"
 import { JournalConversationView } from "../provider/service/JournalConversationView"
 import { ProviderJournalMessageMaterializer } from "../provider/service/ProviderJournalMessageMaterializer"
 import { LIFECYCLE_ROUND_SETTLED, ProductionComposeAdapter, type TurnContinuationInput } from "./ProductionComposeAdapter"
@@ -287,6 +289,321 @@ describe("ProductionComposeAdapter background results", () => {
             expect("draftRef" in composed.result).toBe(true)
             expect(composed.kinds).toEqual(["user_input"])
         })
+    })
+})
+
+describe("ProductionComposeAdapter frozen retained material", () => {
+    async function fixture(point: "tool_round" | "turn_end", mixed = false) {
+        const store = new InMemoryTaskPayloadStore()
+        const journal = new InMemoryConversationJournal()
+        const resources = {
+            readBytes: vi.fn(async (ref: { readonly mediaType: string }) => ({
+                ok: true as const,
+                value: {
+                    record: { mediaType: ref.mediaType },
+                    bytes: Buffer.from(ref.mediaType === "image/png" ? "retained pixels" : "retained file"),
+                },
+            })),
+        }
+        const view = new JournalConversationView(journal, new ProviderJournalMessageMaterializer(store, resources))
+        const resource = {
+            kind: "resource" as const,
+            entityId: "image",
+            nodeKind: "image" as const,
+            displayName: "retained.png",
+            ref: {
+                resourceId: "00000000-0000-4000-8000-000000000001",
+                expectedContentHash: "a".repeat(64),
+                mediaType: "image/png",
+                byteLength: 15,
+                owner: { kind: "task" as const, taskId: "task-1" },
+                generation: 1,
+            },
+        }
+        const file = {
+            ...resource,
+            entityId: "file",
+            nodeKind: "file" as const,
+            displayName: "retained.bin",
+            ref: {
+                ...resource.ref,
+                resourceId: "00000000-0000-4000-8000-000000000002",
+                mediaType: "application/octet-stream",
+                byteLength: 13,
+            },
+        }
+        const originals: UserInputEnvelope[] = [
+            {
+                kind: "user_input",
+                text: "raw FIRST",
+                admittedText: "FIRST [image] END_FIRST",
+                admittedParts: [{ kind: "text", text: "FIRST " }, resource, { kind: "text", text: " END_FIRST" }],
+            },
+            {
+                kind: "user_input",
+                text: "raw SECOND",
+                admittedText: "SECOND [file] END_SECOND",
+                admittedParts: [{ kind: "text", text: "SECOND " }, file, { kind: "text", text: " END_SECOND" }],
+            },
+        ]
+        const refs = await Promise.all(originals.map((payload) => store.put(encodeTaskPayload(payload))))
+        // Acceptance identities, not content-addressed refs, select this delivery.
+        const delivered = refs.map((payloadRef, index) => ({ entryId: `retained-${index}`, payloadRef }))
+        const withheldRef = await store.put(encodeTaskPayload({ kind: "user_input", text: "WITHHELD_QUEUED" }))
+        const delivery = { deliveryId: `delivery-${point}`, point, ownerId: "compose", generation: 0 }
+        const base = createInitialTaskState("task-1")
+        const state: TaskState = {
+            ...base,
+            intake: {
+                ...base.intake,
+                queued: [
+                    // Deliberately opposite to the accepted delivery's order.
+                    ...[...delivered].reverse().map((entry, index) => ({
+                        ...entry,
+                        source: "user" as const,
+                        mode: point === "tool_round" ? ("steering" as const) : ("queued" as const),
+                        sequence: 1 - index,
+                        acceptedRevision: 3,
+                        state: point === "tool_round" ? ("reserved" as const) : ("consumed" as const),
+                        queue: { editing: false, ...(point === "tool_round" ? { delivery } : {}) },
+                    })),
+                    {
+                        entryId: "withheld",
+                        payloadRef: withheldRef,
+                        source: "user",
+                        mode: "queued",
+                        sequence: 2,
+                        state: "accepted",
+                        queue: { editing: false },
+                    },
+                ],
+            },
+        }
+        const approvalRef = await store.put(
+            encodeTaskPayload({ kind: "dialog_draft", text: "APPROVAL_BODY", images: [], files: [], roundMaterialOwned: true }),
+        )
+        const ordinaryRef = await store.put(encodeTaskPayload({ kind: "user_input", text: "ORDINARY_BODY" }))
+        const plan: RoundMaterialPlan = {
+            id: "round-material:compose",
+            frozenRevision: 6,
+            notices: [{ id: "exit", kind: "away_exited", revision: 2, reason: "stopped" }],
+            inputs: [
+                ...(mixed ? [{ id: "approval", payloadRef: approvalRef, revision: 1, source: "approval" as const }] : []),
+                ...delivered.map((entry) => ({
+                    ...entry,
+                    id: `intake:${entry.entryId}`,
+                    revision: 3,
+                    source: "intake" as const,
+                })),
+                ...(mixed ? [{ id: "ordinary", payloadRef: ordinaryRef, revision: 4, source: "intake" as const }] : []),
+            ],
+        }
+        const invocationRef = await store.put(
+            encodeTaskPayload({
+                kind: "tool_invocation",
+                toolName: "read_file",
+                input: {},
+                functionId: "call",
+                dlineTid: "block",
+            }),
+        )
+        const terminalResult = {
+            type: "tool_result" as const,
+            function_id: "call",
+            dline_tid: "block",
+            content: [{ type: "text" as const, text: "COMPLETE_TOOL_RESULT\nTAIL" }],
+        }
+        await journal.append({
+            operationId: "tool.result:block",
+            source: "tool",
+            causation: { turnId: "previous" },
+            payloadRef: await store.put(
+                encodeTaskPayload({ kind: "tool_result", blockId: "block", content: serializeDurableToolResult(terminalResult) }),
+            ),
+        })
+        const feedbackRef =
+            point === "turn_end"
+                ? await store.put(
+                      encodeTaskPayload({
+                          kind: "dialog_draft",
+                          roundMaterialOwned: true,
+                          text: "FIRST SECOND",
+                          images: [],
+                          files: [],
+                      }),
+                  )
+                : approvalRef
+        const options = {
+            payloads: store,
+            journal,
+            readState: () => state,
+            environment: { render: async () => "ENVIRONMENT" },
+        }
+        const input = {
+            admittedEntryIds: point === "tool_round" ? delivered.map((entry) => entry.entryId) : [],
+            ...(point === "tool_round"
+                ? { queueDelivery: delivery }
+                : { respondedQueue: { deliveryId: delivery.deliveryId, mode: "queued" as const, entries: delivered } }),
+            toolTerminals: {
+                turnId: "previous",
+                blocks: [{ blockId: "block", phase: "completed" as const, invocationRef, approvalFeedbackRef: feedbackRef }],
+            },
+            signal: new AbortController().signal,
+            composeCommandId: "compose",
+            freezeMaterial: async () => plan,
+        }
+        return { store, journal, view, resources, originals, refs, delivered, delivery, options, input, plan, terminalResult }
+    }
+
+    it.each([
+        "tool_round",
+        "turn_end",
+    ] as const)("projects retained guidance once with ordered bodies and resources (%s)", async (point) => {
+        const h = await fixture(point)
+        const result = await new ProductionComposeAdapter(h.options).compose(h.input)
+        if (!("draftRef" in result)) throw new Error("Expected a frozen draft")
+        const draft = decodeTaskPayload<ProviderDraftEnvelope>(await h.store.read(result.draftRef))
+        const entries = (await h.view.entries(draft.journalThrough)).filter((entry) => entry.messages.length > 0)
+        const messages = entries.flatMap((entry) => [...entry.messages])
+        const blocks = messages.flatMap((message) => (Array.isArray(message.content) ? message.content : []))
+        const text = blocks
+            .filter((block) => block.type === "text")
+            .map((block) => block.text)
+            .join("\n")
+        expect(text.match(/sent by the user while work was in progress/g)).toHaveLength(1)
+        expect(text.match(/FIRST /g)).toHaveLength(1)
+        expect(text.match(/END_FIRST/g)).toHaveLength(1)
+        expect(text.match(/SECOND /g)).toHaveLength(1)
+        expect(text.match(/END_SECOND/g)).toHaveLength(1)
+        expect(text.indexOf("FIRST ")).toBeLessThan(text.indexOf("<image_ref "))
+        expect(text.indexOf("<image_ref ")).toBeLessThan(text.indexOf(" END_FIRST"))
+        expect(text.indexOf("END_FIRST")).toBeLessThan(text.indexOf("SECOND"))
+        expect(text.indexOf("SECOND ")).toBeLessThan(text.indexOf("<attached_resource "))
+        expect(text.indexOf("<attached_resource ")).toBeLessThan(text.indexOf(" END_SECOND"))
+        expect(text.indexOf("END_SECOND")).toBeLessThan(text.indexOf("ENVIRONMENT"))
+        expect(text).toContain(Buffer.from("retained file").toString("base64"))
+        expect(text).not.toContain("WITHHELD_QUEUED")
+        expect(blocks.filter((block) => block.type === "image")).toEqual([
+            {
+                type: "image",
+                source: { type: "base64", media_type: "image/png", data: Buffer.from("retained pixels").toString("base64") },
+            },
+        ])
+        expect(h.resources.readBytes.mock.calls.map(([ref]) => ref.mediaType)).toEqual(["image/png", "application/octet-stream"])
+        expect(blocks.filter((block) => block.type === "tool_result")).toEqual([h.terminalResult])
+        expect(entries[0].kind).toBe("tool_terminal_manifest")
+        expect(draft.inputPayloadRefs).toEqual(h.refs)
+        for (const [index, ref] of h.refs.entries())
+            expect(decodeTaskPayload(await h.store.read(ref))).toEqual(h.originals[index])
+    })
+
+    it("keeps approval ownership, notices and ordinary inputs around a retained batch", async () => {
+        const h = await fixture("turn_end", true)
+        const result = await new ProductionComposeAdapter(h.options).compose(h.input)
+        if (!("draftRef" in result)) throw new Error("Expected a frozen draft")
+        const entries = (await h.view.entries()).filter((entry) => entry.messages.length > 0)
+        const text = entries.map((entry) => JSON.stringify(entry.messages)).join("\n")
+        expect(text.match(/sent by the user while work was in progress/g)).toHaveLength(1)
+        expect(text.match(/APPROVAL_BODY/g)).toHaveLength(1)
+        expect(text.match(/ORDINARY_BODY/g)).toHaveLength(1)
+        expect(entries.map((entry) => entry.kind)).toEqual([
+            "tool_terminal_manifest",
+            "round_material_input",
+            "round_notice",
+            "round_material_input",
+            "round_material_input",
+            "environment_details",
+        ])
+        expect(text.indexOf("APPROVAL_BODY")).toBeLessThan(text.indexOf("FIRST "))
+        expect(text.indexOf("SECOND")).toBeLessThan(text.indexOf("ORDINARY_BODY"))
+        expect(entries[0].messages[0].content).toEqual([h.terminalResult])
+    })
+
+    it.each([
+        "tool_round",
+        "turn_end",
+    ] as const)("keeps resources and guidance when notices and ordinary material split the batch (%s)", async (point) => {
+        const h = await fixture(point, true)
+        const plan: RoundMaterialPlan = {
+            ...h.plan,
+            inputs: h.plan.inputs.map((input) => (input.entryId === h.delivered[1].entryId ? { ...input, revision: 5 } : input)),
+            notices: [...h.plan.notices, { id: "between", kind: "away_exited", revision: 4, reason: "user_returned" }],
+        }
+        const result = await new ProductionComposeAdapter(h.options).compose({ ...h.input, freezeMaterial: async () => plan })
+        if (!("draftRef" in result)) throw new Error("Expected a frozen draft")
+        const entries = (await h.view.entries()).filter((entry) => entry.messages.length > 0)
+        expect(entries.map((entry) => entry.kind)).toEqual([
+            "tool_terminal_manifest",
+            "round_material_input",
+            "round_notice",
+            "round_material_input",
+            "round_notice",
+            "round_material_input",
+            "round_material_input",
+            "environment_details",
+        ])
+        expect(JSON.stringify(entries[3].messages)).toContain("FIRST ")
+        expect(JSON.stringify(entries[5].messages)).toContain("ORDINARY_BODY")
+        expect(JSON.stringify(entries[6].messages)).toContain("SECOND ")
+        const rendered = JSON.stringify(entries.flatMap((entry) => [...entry.messages]))
+        expect(rendered.match(/sent by the user while work was in progress/g)).toHaveLength(1)
+        expect(rendered.match(/END_FIRST/g)).toHaveLength(1)
+        expect(rendered.match(/END_SECOND/g)).toHaveLength(1)
+        expect(rendered.match(/APPROVAL_BODY/g)).toHaveLength(1)
+        expect(h.resources.readBytes.mock.calls.map(([ref]) => ref.mediaType)).toEqual(["image/png", "application/octet-stream"])
+        expect(entries[0].messages[0].content).toEqual([h.terminalResult])
+    })
+
+    it.each([
+        "tool_round",
+        "turn_end",
+    ] as const)("recovers the same retained receipt and frozen projection without new journal writes (%s)", async (point) => {
+        const h = await fixture(point)
+        const first = await new ProductionComposeAdapter(h.options).compose(h.input)
+        if (!("draftRef" in first)) throw new Error("Expected a frozen draft")
+        const draft = decodeTaskPayload<ProviderDraftEnvelope>(await h.store.read(first.draftRef))
+        const staged = (await h.journal.findByOperation(`intake.retained:${h.delivery.deliveryId}`))!
+        const prepared = (await h.journal.findByOperation("compose.prepared:compose"))!
+        const material = (await h.journal.read()).find((entry) => entry.operationId.startsWith("material:"))!
+        expect(first.queueJournalReceipt).toEqual(
+            point === "tool_round"
+                ? { deliveryId: h.delivery.deliveryId, entries: h.delivered, journalWatermark: staged.watermark }
+                : undefined,
+        )
+        expect(staged.watermark.seq).toBeLessThan(material.watermark.seq)
+        expect(draft.journalThrough).toEqual(prepared.watermark)
+        const frozen = await h.view.messages(draft.journalThrough)
+        await h.journal.append({
+            operationId: "later-input",
+            source: "intake",
+            payloadRef: await h.store.put(encodeTaskPayload({ kind: "user_input", text: "LATER_INPUT" })),
+        })
+        const before = await h.journal.read()
+        const recovered = await new ProductionComposeAdapter(h.options).compose(h.input)
+        expect(recovered).toEqual(first)
+        expect(await h.journal.read()).toEqual(before)
+        const reopened = new JournalConversationView(h.journal, new ProviderJournalMessageMaterializer(h.store, h.resources))
+        const restored = await reopened.messages(draft.journalThrough)
+        expect(restored.map(({ ts: _ts, ...message }) => message)).toEqual(frozen.map(({ ts: _ts, ...message }) => message))
+        const recoveredText = JSON.stringify(restored)
+        expect(recoveredText.match(/sent by the user while work was in progress/g)).toHaveLength(1)
+        expect(recoveredText).not.toContain("LATER_INPUT")
+        expect(JSON.stringify(await reopened.messages())).toContain("LATER_INPUT")
+        expect(JSON.stringify(frozen).match(/sent by the user while work was in progress/g)).toHaveLength(1)
+    })
+
+    it("retracts all retained material after request admission refuses the prepared draft", async () => {
+        const h = await fixture("tool_round")
+        const adapter = new ProductionComposeAdapter({
+            ...h.options,
+            contextWindowGuard: { admit: async () => ({ kind: "failed" as const, reason: "context-full" }) },
+        })
+        expect(await adapter.compose(h.input)).toEqual({ failed: { kind: "failed", reason: "context-full" } })
+        expect(await adapter.rollbackRetainedQueue(h.input)).toBe("released")
+        const entries = (await h.view.entries()).filter((entry) => entry.messages.length > 0)
+        expect(entries.map((entry) => entry.kind)).toEqual(["tool_terminal_manifest"])
+        expect(entries[0].messages[0].content).toEqual([h.terminalResult])
+        expect(await h.journal.findByOperation("compose.prepared:compose")).toBeUndefined()
     })
 })
 

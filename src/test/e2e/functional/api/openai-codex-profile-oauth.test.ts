@@ -17,20 +17,23 @@ interface OAuthScenario {
     responseText: string
 }
 
-interface CodexRequest {
+interface AccountRequest {
     authorization?: string
     accountId?: string
+}
+
+interface CodexRequest extends AccountRequest {
     sessionId?: string
     threadId?: string
     clientRequestId?: string
     body: Record<string, unknown>
 }
 
-interface ModelRequest extends CodexRequest {
+interface ModelRequest extends AccountRequest {
     clientVersion?: string
 }
 
-interface ResetCreditRequest extends CodexRequest {
+interface ResetCreditRequest extends AccountRequest {
     body: Record<string, unknown>
 }
 
@@ -54,8 +57,8 @@ class CodexOAuthE2EServer {
     readonly authorizationRequests: string[] = []
     readonly codexRequests: CodexRequest[] = []
     readonly modelRequests: ModelRequest[] = []
-    readonly usageRequests: CodexRequest[] = []
-    readonly resetCreditListRequests: CodexRequest[] = []
+    readonly usageRequests: AccountRequest[] = []
+    readonly resetCreditListRequests: AccountRequest[] = []
     readonly resetCreditRequests: ResetCreditRequest[] = []
     private usageResponse: unknown = { rate_limit: {}, credits: { balance: 0 } }
     private resetCreditsResponse: unknown = { credits: [], total_count: 0 }
@@ -636,7 +639,7 @@ e2e(
         const accountId = "account-usage"
         const credentialExpiresAtMs = Date.now() + 3_600_000
         const resetCreditExpiresAt = "2026-10-10T12:00:00Z"
-        server.setUsageResponse({
+        const refreshedUsage = {
             plan_type: "pro",
             rate_limit: {
                 allowed: true,
@@ -646,6 +649,13 @@ e2e(
             },
             credits: { balance: "0.00" },
             rate_limit_reset_credits: { available_count: 1 },
+        }
+        server.setUsageResponse({
+            ...refreshedUsage,
+            rate_limit: {
+                ...refreshedUsage.rate_limit,
+                primary_window: { ...refreshedUsage.rate_limit.primary_window, used_percent: 60 },
+            },
         })
         server.setResetCreditsResponse({
             credits: [{ id: "credit-e2e", granted_at: "2026-09-10T00:00:00Z", expires_at: resetCreditExpiresAt }],
@@ -682,12 +692,19 @@ e2e(
             const accountCard = account.locator("..")
             await expect(accountCard.getByRole("button", { name: "Sign in again" })).toBeVisible()
             await expect(accountCard.getByRole("button", { name: "Sign out" })).toBeVisible()
-            // Subscription usage is read on demand: opening the settings card
-            // must not spend a read, only the explicit refresh does.
-            expect(server.usageRequests).toHaveLength(0)
-            await card.getByRole("button", { name: "Refresh Provider usage" }).click()
-            await expect.poll(() => server.usageRequests.length).toBeGreaterThan(0)
-            await expect.poll(() => server.resetCreditListRequests.length).toBeGreaterThan(0)
+            // Codex reads automatically. A refresh must issue new reads and replace
+            // the initial snapshot, not merely reuse requests made while mounting.
+            await expect(card.getByRole("button", { name: "Usage 5 hour 40%" })).toBeVisible({ timeout: 30_000 })
+            const refreshUsage = card.getByRole("button", { name: "Refresh Provider usage" })
+            await expect(refreshUsage).toBeEnabled()
+            const initialUsageReads = server.usageRequests.length
+            const initialCreditReads = server.resetCreditListRequests.length
+            expect(initialUsageReads).toBeGreaterThan(0)
+            expect(initialCreditReads).toBeGreaterThan(0)
+            server.setUsageResponse(refreshedUsage)
+            await refreshUsage.click()
+            await expect.poll(() => server.usageRequests.length).toBeGreaterThan(initialUsageReads)
+            await expect.poll(() => server.resetCreditListRequests.length).toBeGreaterThan(initialCreditReads)
             expect(server.usageRequests.at(-1)).toEqual({ authorization: `Bearer ${accessToken}`, accountId })
             expect(server.resetCreditListRequests.at(-1)).toEqual({ authorization: `Bearer ${accessToken}`, accountId })
 

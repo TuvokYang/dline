@@ -88,6 +88,32 @@ describe("context compaction boundary", () => {
         expect(continuationInput).toContain("UNSENT_NOTE")
     })
 
+    it("keeps separate round-material input outside a paired completed source without duplicating the result", () => {
+        const result: ClineStorageMessage = {
+            role: "user",
+            content: [
+                {
+                    type: "tool_result",
+                    function_id: "call-a",
+                    dline_tid: "tid-call-a",
+                    content: [{ type: "text", text: "The user response was received." }],
+                },
+            ],
+        }
+        const history = [
+            textMessage("user", "<task>Previous request</task>"),
+            qnaToolUse("call-a"),
+            result,
+            textMessage("user", "<user_message>LATEST_UNANSWERED</user_message>"),
+            textMessage("user", "<environment_details>Current environment</environment_details>"),
+        ]
+        const boundary = projectContextCompactionBoundary(history, [])
+        expect(boundary.sourceHistory).toEqual(history.slice(0, 3))
+        expect(boundary.targetContinuationHistory).toEqual(history.slice(3))
+        expect(indexLogicalTurns(boundary.sourceHistory).issues).toEqual([])
+        expect([...boundary.consumedPendingFunctionIds]).toEqual([])
+    })
+
     it("keeps tagged pending feedback in the ordinary continuation instead of consuming it", () => {
         const activeHistory: ClineStorageMessage[] = [
             textMessage("user", "<task>Turn A</task>"),

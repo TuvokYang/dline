@@ -24,6 +24,7 @@ export class TaskInputPresenter implements TaskInputPresentationPort {
         private readonly payloads: TaskPayloadStore,
         private readonly messages: MessageStateHandler,
         private readonly nextPresentationId: PresentationIdSequence,
+        private readonly publishState: () => Promise<void>,
     ) {}
 
     async prepare(input: TaskInput): Promise<TaskInputPresentationCommit> {
@@ -49,12 +50,19 @@ export class TaskInputPresenter implements TaskInputPresentationPort {
                 ? ("user_feedback" as const)
                 : ("task" as const),
             ...submittedRowFields(shown),
-            // Prepared before runtime submission, so the synchronous journal view
-            // is the exact conversation position this user row precedes. Supplying
-            // it avoids a database count on the provider-critical path.
-            conversationHistoryIndex: this.messages.conversationSize() - 1,
+            // Freeze index and journal position together before submission. Letting
+            // commit stamp the sequence would place this row after its own input
+            // or later work even though its timestamp and index precede them.
+            ...this.messages.captureConversationPosition(),
             interactionId: input.entryId,
         }
-        return { commit: () => this.messages.addToClineMessages(row) }
+        return {
+            commit: async () => {
+                await this.messages.addToClineMessages(row)
+                // Runtime patches do not carry chat rows or the task title. An
+                // accepted input must be visible even before the provider replies.
+                await this.publishState()
+            },
+        }
     }
 }

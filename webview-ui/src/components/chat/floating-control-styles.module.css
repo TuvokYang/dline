@@ -1,0 +1,18 @@
+.visibility {
+    --floating-control-hide-delay: 1s;
+    --floating-control-fade-duration: 200ms;
+
+    opacity: 0;
+    pointer-events: none;
+    transition:
+        opacity var(--floating-control-fade-duration) ease-out var(--floating-control-hide-delay),
+        pointer-events 0s calc(var(--floating-control-hide-delay) + var(--floating-control-fade-duration)) allow-discrete;
+}
+
+/* Retain hit testing through the hold and fade without removing idle controls from the tab order. */
+[class~="group/messages"]:hover .visibility,
+[class~="group/floating"]:has(:focus-visible) .visibility {
+    opacity: 1;
+    pointer-events: auto;
+    transition-delay: 0s;
+}

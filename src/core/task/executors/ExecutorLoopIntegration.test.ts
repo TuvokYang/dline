@@ -11,10 +11,17 @@ import {
     InMemoryTaskViewPort,
 } from "../stores"
 import { decodeTaskPayload, encodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
-import type { ProviderDraftEnvelope, ToolInvocationEnvelope, UserInputEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
+import type {
+    ProviderDraftEnvelope,
+    RoundMaterialInputEnvelope,
+    RoundPreparedEnvelope,
+    ToolInvocationEnvelope,
+    UserInputEnvelope,
+} from "../stores/payload/TaskPayloadEnvelopes"
 import { CompactionCommandExecutor } from "./compaction"
 import { ComposeCommandExecutor } from "./compose"
 import { ProductionComposeAdapter } from "./compose/ProductionComposeAdapter"
+import { RoundMaterialComposer } from "./compose/RoundMaterialComposer"
 import { DialogCommandExecutor } from "./dialog"
 import { CallbackHaltParticipant, HaltCommandExecutor } from "./halt"
 import { PolicyCommandExecutor } from "./policy"
@@ -216,13 +223,35 @@ describe("executor loop integration", () => {
         expect((await journal.project()).visibleMessages).toEqual([
             expect.objectContaining({ operationId: "tool.terminal_manifest:turn-1", source: "tool" }),
         ])
-        // Every new material and prepared checkpoint is retracted as well as the
-        // legacy batch; none may reappear after opening this journal again.
+        // Adjacent retained inputs share one material body. The full batch, that
+        // body and its prepared checkpoint must all be retracted together.
         const recorded = await journal.read()
         const abandoned = recorded.filter((entry) => entry.kind === "message" && entry.source !== "tool")
+        const envelopes = await Promise.all(
+            abandoned.map(async (entry) => {
+                if (!entry.payloadRef) throw new Error("Missing abandoned compose payload")
+                return decodeTaskPayload<UserInputEnvelope | RoundMaterialInputEnvelope | RoundPreparedEnvelope>(
+                    await payloads.read(entry.payloadRef),
+                )
+            }),
+        )
+        expect(envelopes.map((envelope) => envelope.kind)).toEqual(["user_input", "round_material_input", "round_prepared"])
+        const entries = refs.map((payloadRef, index) => ({ entryId: `retained-${index}`, payloadRef }))
+        expect(envelopes[0]).toMatchObject({ roundMaterialOwned: true, retainedInputBatch: { entries } })
+        const material = envelopes[1]
+        const prepared = envelopes[2]
+        if (material.kind !== "round_material_input" || prepared.kind !== "round_prepared") {
+            throw new Error("Missing retained material or prepared checkpoint")
+        }
+        expect(decodeTaskPayload(await payloads.read(material.inputRef))).toMatchObject({
+            text: "A\n\nB",
+            retainedInputBatch: { entries },
+        })
+        expect(prepared.draft.materialPlan?.inputs.map(({ entryId, payloadRef }) => ({ entryId, payloadRef }))).toEqual(entries)
         const tombstones = recorded.filter((entry) => entry.kind === "tombstone")
-        expect(abandoned).toHaveLength(4)
         expect(tombstones.map((entry) => entry.target)).toEqual(expect.arrayContaining(abandoned.map((entry) => entry.watermark)))
+        // A new reader must not resume the discarded prepared round.
+        expect(await new RoundMaterialComposer(payloads, journal).inspect(prepared.composeCommandId)).toBeUndefined()
     })
 
     /** Settle the runtime until none of the watched executors is invoked again. */

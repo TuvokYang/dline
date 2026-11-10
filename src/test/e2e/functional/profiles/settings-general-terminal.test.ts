@@ -749,7 +749,9 @@ e2e(
         await sidebar.getByRole("tab", { name: /^Activities(?: \d+)?$/ }).click()
         await sidebar.getByRole("button", { name: "All", exact: true }).first().click()
         const activity = sidebar.getByTestId("activity-item").filter({ hasText: command })
-        await expect(activity).toContainText("timeout", { timeout: 30_000 })
+        await expect(activity.getByTestId("activity-metadata").getByText("Timed out", { exact: true })).toBeVisible({
+            timeout: 30_000,
+        })
         await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
     },
 )
@@ -842,7 +844,9 @@ e2e(
         // stable prefix of the full command instead of the full escaped string.
         const activity = sidebar.getByTestId("activity-item").filter({ hasText: command.slice(0, 120) })
         await expect(activity).toHaveCount(1, { timeout: 30_000 })
-        await expect(activity).toContainText("running", { timeout: 30_000 })
+        await expect(activity.getByTestId("activity-metadata").getByText("Running", { exact: true })).toBeVisible({
+            timeout: 30_000,
+        })
         const timeoutIndicator = activity.getByLabel("Command timeout: 60 s")
         await expect(timeoutIndicator).toContainText("60 s")
         const timeoutLayout = await timeoutIndicator.evaluate((indicator) => {
@@ -852,7 +856,8 @@ e2e(
             const iconRect = icon.getBoundingClientRect()
             const labelRect = label.getBoundingClientRect()
             const indicatorRect = indicator.getBoundingClientRect()
-            const scale = indicator.offsetWidth > 0 ? indicatorRect.width / indicator.offsetWidth : 1
+            const scale =
+                (indicator as HTMLElement).offsetWidth > 0 ? indicatorRect.width / (indicator as HTMLElement).offsetWidth : 1
             return {
                 iconHeight: iconRect.height,
                 expectedIconHeight: Number.parseFloat(getComputedStyle(label).fontSize) * scale,
@@ -941,7 +946,9 @@ e2e(
 
         await sidebar.getByRole("tab", { name: /^Activities(?: \d+)?$/ }).click()
         await sidebar.getByRole("button", { name: "All", exact: true }).first().click()
-        await expect(activity).toContainText("completed", { timeout: 90_000 })
+        await expect(activity.getByTestId("activity-metadata").getByText("Completed", { exact: true })).toBeVisible({
+            timeout: 90_000,
+        })
         await expect.poll(async () => readFile(logPath, "utf8").catch(() => ""), { timeout: 90_000 }).toContain(finishedMarker)
         await sidebar.getByRole("tab", { name: "Work", exact: true }).click()
         await expect(input).toBeEnabled()
@@ -1136,7 +1143,9 @@ e2e(
 
         await sidebar.getByRole("tab", { name: /^Activities(?: \d+)?$/ }).click()
         await sidebar.getByRole("button", { name: "All", exact: true }).first().click()
-        await expect(activity).toContainText("completed", { timeout: 30_000 })
+        await expect(activity.getByTestId("activity-metadata").getByText("Completed", { exact: true })).toBeVisible({
+            timeout: 30_000,
+        })
         await expect(activity).not.toContainText("Cancelled by user")
         await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
     },

@@ -133,6 +133,7 @@ export function InteractionHost({
                     onDraftAccepted={onDraftAccepted}
                     onDraftRejected={onDraftRejected}
                     onSuccessorAccepted={onSuccessorAccepted}
+                    selection={{ values: selection }}
                     view={view}
                 />
             ) : anchor && presentationKind && isPresentationKind(presentationKind) ? (

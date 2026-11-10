@@ -85,6 +85,34 @@ describe("logical turn indexing", () => {
         expect(result.turns[0]).not.toHaveProperty("messages")
     })
 
+    it("keeps neutral turn-end results paired while protecting separately materialized unanswered input", () => {
+        const history = [
+            textMessage("user", "<task>Turn A</task>"),
+            textMessage("user", "<environment_details>Environment A</environment_details>"),
+            toolUse("call-a"),
+            toolResult("call-a", "The user response was received."),
+            textMessage("user", "<user_message>Turn B</user_message>"),
+            textMessage("user", "<environment_details>Environment B</environment_details>"),
+            toolUse("call-b"),
+            toolResult("call-b", "The user response was received."),
+            textMessage("user", "<user_message>LATEST_UNANSWERED</user_message>"),
+            textMessage("user", "<environment_details>Current environment</environment_details>"),
+        ]
+        const result = indexLogicalTurns(history)
+        expect(
+            result.turns.map(({ startMessageIndex, endMessageIndex, functionIds }) => ({
+                startMessageIndex,
+                endMessageIndex,
+                functionIds,
+            })),
+        ).toEqual([
+            { startMessageIndex: 0, endMessageIndex: 3, functionIds: ["call-a"] },
+            { startMessageIndex: 4, endMessageIndex: 7, functionIds: ["call-b"] },
+        ])
+        expect(result.protectedStartMessageIndex).toBe(8)
+        expect(result.issues).toEqual([])
+    })
+
     it("starts tagged Q&A feedback as the protected next round", () => {
         const history = [
             textMessage("user", "<task>Turn A</task>"),

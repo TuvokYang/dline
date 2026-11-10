@@ -10,6 +10,7 @@ import type {
     ApiHistoryMessageEnvelope,
     EnvironmentDetailsEnvelope,
     ProviderFinalEnvelope,
+    RoundMaterialInputEnvelope,
     ToolResultEnvelope,
     UserInputEnvelope,
 } from "../../stores/payload/TaskPayloadEnvelopes"
@@ -45,6 +46,7 @@ async function write(
     payload:
         | UserInputEnvelope
         | ProviderFinalEnvelope
+        | RoundMaterialInputEnvelope
         | ToolResultEnvelope
         | EnvironmentDetailsEnvelope
         | ApiHistoryMessageEnvelope,
@@ -52,6 +54,22 @@ async function write(
 ) {
     const payloadRef = await payloads.put(encodeTaskPayload(payload))
     await journal.append({ operationId, payloadRef, source })
+}
+
+async function writeMaterialInput(
+    journal: InMemoryConversationJournal,
+    payloads: MemoryPayloads,
+    operationId: string,
+    text: string,
+): Promise<void> {
+    const inputRef = await payloads.put(encodeTaskPayload<UserInputEnvelope>({ kind: "user_input", text }))
+    await write(
+        journal,
+        payloads,
+        operationId,
+        { kind: "round_material_input", planId: operationId, materialId: operationId, inputRef },
+        "system",
+    )
 }
 
 /**
@@ -708,6 +726,23 @@ describe("JournalCompactionConversation", () => {
         expect((await journal.read()).length).toBe(settled)
     })
 
+    it("protects round-material input before an unanswered call without protecting settled history", async () => {
+        const { journal, payloads, conversation } = open()
+        await writeMaterialInput(journal, payloads, "material:task", "MATERIAL_TASK")
+        await write(journal, payloads, "provider:answered", call("answered"), "provider")
+        await write(journal, payloads, "tool.result:answered", result("answered", "Response received."), "tool")
+        await writeMaterialInput(journal, payloads, "material:latest", "MATERIAL_UNSEEN_INPUT")
+        await write(journal, payloads, "provider:pending", call("pending", "read_file"), "provider")
+
+        const source = await conversation.read()
+
+        expect(source.messages.map((message) => message.role)).toEqual(["user", "assistant", "user"])
+        expect(source.messages.some((message) => mentions(message, "MATERIAL_TASK"))).toBe(true)
+        expect(source.messages.some((message) => mentions(message, "MATERIAL_UNSEEN_INPUT"))).toBe(false)
+        expect(source.tail?.map((message) => message.role)).toEqual(["user", "assistant"])
+        expect(source.tail?.filter((message) => mentions(message, "MATERIAL_UNSEEN_INPUT"))).toHaveLength(1)
+    })
+
     describe("context-window truncation", () => {
         const NOTICE = "TRUNCATION_NOTICE"
 
@@ -769,6 +804,56 @@ describe("JournalCompactionConversation", () => {
             const records = (await journal.read()).length
             await expect(conversation.truncate({ notice: NOTICE })).resolves.toBeUndefined()
             expect((await journal.read()).length).toBe(records)
+        })
+
+        it("truncates round-material history while preserving its opening and unanswered input", async () => {
+            const { journal, payloads, conversation } = open()
+            await writeMaterialInput(journal, payloads, "material:task", "MATERIAL_TASK")
+            for (const [index, reply] of ["MATERIAL_MIDDLE", "MATERIAL_LATE", "MATERIAL_CONTINUE"].entries()) {
+                const id = `material-round-${index}`
+                await write(journal, payloads, `provider:${id}`, call(id), "provider")
+                await write(journal, payloads, `tool.result:${id}`, result(id, "Response received."), "tool")
+                await writeMaterialInput(journal, payloads, `material:${id}`, reply)
+            }
+            await write(journal, payloads, "environment:latest", { kind: "environment_details", text: "ENVIRONMENT" }, "system")
+
+            const through = await conversation.truncate({ notice: NOTICE })
+
+            expect(through).toBeDefined()
+            const messages = await visible(journal, payloads)
+            expect(mentions(messages[0], "MATERIAL_TASK")).toBe(true)
+            expect(messages.filter((message) => mentions(message, NOTICE))).toHaveLength(1)
+            expect(messages.some((message) => mentions(message, "MATERIAL_MIDDLE"))).toBe(false)
+            expect(messages.filter((message) => mentions(message, "MATERIAL_CONTINUE"))).toHaveLength(1)
+            expect(messages.some((message) => mentions(message, "ENVIRONMENT"))).toBe(true)
+            expect(paired(messages)).toBe(true)
+        })
+
+        it.each([false, true])("truncates two completed material rounds with the next input journaled=%s", async (journaled) => {
+            const { journal, payloads, conversation } = open()
+            await writeMaterialInput(journal, payloads, "material:task", "FORCE_TASK")
+            await write(journal, payloads, "environment:1", { kind: "environment_details", text: "ENV_1" }, "system")
+            await write(journal, payloads, "provider:1", call("force-1"), "provider")
+            await write(journal, payloads, "tool.result:1", result("force-1", "Response received."), "tool")
+            await writeMaterialInput(journal, payloads, "material:middle", "FORCE_MIDDLE")
+            await write(journal, payloads, "environment:2", { kind: "environment_details", text: "ENV_2" }, "system")
+            await write(journal, payloads, "provider:2", call("force-2"), "provider")
+            await write(journal, payloads, "tool.result:2", result("force-2", "Response received."), "tool")
+            if (journaled) await writeMaterialInput(journal, payloads, "material:continue", "FORCE_CONTINUE")
+
+            // A pre-round barrier can fail before the next input is journaled.
+            // Both shapes still have completed history that Force Truncate can remove.
+            const source = await conversation.read()
+            expect(source.span).toBeDefined()
+            const through = await conversation.truncate({ notice: NOTICE })
+
+            expect(through).toBeDefined()
+            const messages = await visible(journal, payloads)
+            expect(mentions(messages[0], "FORCE_TASK")).toBe(true)
+            expect(messages.filter((message) => mentions(message, NOTICE))).toHaveLength(1)
+            expect(messages.some((message) => mentions(message, "FORCE_MIDDLE"))).toBe(false)
+            expect(messages.filter((message) => mentions(message, "FORCE_CONTINUE"))).toHaveLength(journaled ? 1 : 0)
+            expect(paired(messages)).toBe(true)
         })
 
         it("removes nothing while only the opening input is settled", async () => {
