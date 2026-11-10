@@ -127,6 +127,33 @@ describe("ContextTransitionEngine draft carrier", () => {
         expect(hold).not.toHaveBeenCalled()
     })
 
+    it("publishes the settled state after delivering a lease-free mode switch draft", async () => {
+        const policy = createPolicy({ kind: "mode", order: "compact_then_commit", confirm: false, compacts: false, log })
+        policy.prepareWithoutLease = (request, operationId) => ({ operationId, ...request })
+
+        const result = await engine.request(policy, { taskId: "task-1", chatContent: DRAFT })
+
+        expect(result).toEqual({ status: "switched", operationId: "operation-1", draftDelivered: true })
+        expect(log).toEqual(["commit", "deliver", "publish:idle/idle"])
+        expect(lease.getActive()).toBeUndefined()
+        expect(hold).not.toHaveBeenCalled()
+    })
+
+    it("does not reject an accepted lease-free draft when terminal publication fails", async () => {
+        const policy = createPolicy({ kind: "mode", order: "compact_then_commit", confirm: false, compacts: false, log })
+        policy.prepareWithoutLease = (request, operationId) => ({ operationId, ...request })
+        postState.mockRejectedValueOnce(new Error("webview gone"))
+
+        await expect(engine.request(policy, { taskId: "task-1", chatContent: DRAFT })).resolves.toEqual({
+            status: "switched",
+            operationId: "operation-1",
+            draftDelivered: true,
+        })
+        expect(postState).toHaveBeenCalledOnce()
+        expect(deliver).toHaveBeenCalledOnce()
+        expect(lease.getActive()).toBeUndefined()
+    })
+
     it("reports nothing about a draft that was empty or a host that carries none", async () => {
         const policy = createPolicy({ kind: "profile", order: "commit_then_compact", confirm: false, compacts: false, log })
         deliver.mockResolvedValueOnce("empty")

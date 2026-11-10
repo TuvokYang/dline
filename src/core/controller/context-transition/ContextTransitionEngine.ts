@@ -180,7 +180,7 @@ export class ContextTransitionEngine {
                     this.directCommit = { operationId, taskId: request.taskId }
                     try {
                         await policy.commit(directOperation)
-                        return { status: "switched", operationId, ...(await this.deliverDraft(directOperation)) }
+                        return await this.settleCommitted(directOperation, () => this.publish(policy.kind, { phase: "idle" }))
                     } finally {
                         if (this.directCommit?.operationId === operationId) this.directCommit = undefined
                     }
@@ -378,10 +378,13 @@ export class ContextTransitionEngine {
      * draft, a failure to publish the settled state must not report the switch
      * as failed: the composer would keep a draft that was already sent.
      */
-    private async settleCommitted(operation: ContextTransitionOperation): Promise<ContextTransitionRequestResult> {
+    private async settleCommitted(
+        operation: ContextTransitionOperation,
+        publishSettled = () => this.clearActive(operation.operationId),
+    ): Promise<ContextTransitionRequestResult> {
         const delivery = await this.deliverDraft(operation)
         try {
-            await this.clearActive(operation.operationId)
+            await publishSettled()
         } catch (error) {
             Logger.warn(`[ContextTransition] ${operation.operationId}: settled state was not published`, error)
         }
