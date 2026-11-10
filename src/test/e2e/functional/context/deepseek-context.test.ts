@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
-import { expectOwnedUserFeedback } from "@e2e/utils/compaction-request-oracle"
+import { expectCompleteToolPairing, expectOwnedUserFeedback } from "@e2e/utils/compaction-request-oracle"
 import {
     COMPACT_INSTRUCTION_MARKER,
     COMPACT_SIGNAL,
@@ -484,11 +484,11 @@ e2e(
             await expect.poll(() => server.getRequestCount("deepseek-chat")).toBe(3)
             const finalRequest = server.getMockConsumptions("deepseek-chat")[2]
             expect(finalRequest.contractError).toBeUndefined()
-            // The unseen reply remains protected continuation, carried once as user
-            // input while its paired tool result stays neutral.
+            // The completed QNA pair belongs to the compacted source, not its continuation.
+            expectCompleteToolPairing(summaryRequest, ["call_deepseek_near_limit_ready"])
             const reply = "E2E_DEEPSEEK_NEAR_LIMIT_CONTINUE"
             expect(JSON.stringify(summaryRequest.requestBody)).not.toContain(reply)
-            expectOwnedUserFeedback(finalRequest, ["call_deepseek_near_limit_ready"], [reply])
+            expectOwnedUserFeedback(finalRequest, [], [reply])
             expect(finalRequest.requestToolPairing.complete).toBe(true)
             expect(JSON.stringify(finalRequest.requestBody).split(reply)).toHaveLength(2)
             await expectCompactionSummary(sidebar, "E2E_DEEPSEEK_NEAR_LIMIT_SUMMARY preserves the task and latest request.")
