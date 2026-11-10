@@ -28,8 +28,7 @@ export type ChecklistUpdateDecision =
       }
     /**
      * `message` is the correction the model receives; `diagnostic` is the one-line reason shown to
-     * the user. It is required rather than optional: the presenter falls back to `message`, so a
-     * rejection without one prints the model's instructions into the conversation.
+     * the user. Requiring both keeps model instructions out of the user-visible error row.
      */
     | { readonly kind: "rejected"; readonly message: string; readonly diagnostic: string; readonly blockTools?: true }
 

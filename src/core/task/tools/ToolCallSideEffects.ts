@@ -3,7 +3,7 @@ import { STANDARD_TOOL_SPECS } from "@core/prompts/tools/tool-specs"
 import { DlineDefaultTool } from "@shared/tools"
 import { Logger } from "@/shared/services/Logger"
 import { FocusChainPrompts } from "../focus-chain/prompts"
-import type { FocusChainUpdateResult } from "../focus-chain/update-result"
+import { FocusChainDiagnostics, type FocusChainUpdateResult } from "../focus-chain/update-result"
 import { normalizeToolExecutionResult, type ToolHandlerResult } from "./ToolExecutionResult"
 import type { TaskConfig, TaskInteractionPorts } from "./types/TaskConfig"
 
@@ -45,7 +45,7 @@ export class ToolCallProgress {
         if (this.tool === DlineDefaultTool.ATTEMPT) {
             if (Object.hasOwn(this.block.params, "task_progress")) {
                 this.diagnostic = FocusChainPrompts.ignoredCompletionProgress
-                await this.config.callbacks.say("error", this.diagnostic)
+                await this.config.callbacks.say("error", FocusChainDiagnostics.ignoredCompletionProgress)
             }
             return
         }
@@ -58,7 +58,7 @@ export class ToolCallProgress {
         } catch (error) {
             Logger.error(`Failed to apply task_progress from ${this.block.name}`, error instanceof Error ? error : undefined)
             this.diagnostic = FocusChainPrompts.persistenceFailed
-            await this.config.callbacks.say("error", this.diagnostic)
+            await this.config.callbacks.say("error", FocusChainDiagnostics.persistenceFailed)
         }
     }
 
