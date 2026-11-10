@@ -257,7 +257,7 @@ e2e(
             const rate = sidebar.getByTestId("task-rate-metrics")
             await expect(rate).toBeVisible({ timeout: 30_000 })
             await expect(rate).toHaveAttribute("aria-label", new RegExp(`(?:^|; )RPM: ${seeded.expectedHeaderRpm}(?:;|$)`))
-            await expect(rate).toHaveAttribute("aria-label", new RegExp(`Hit: ${seeded.expectedCacheHitPercent.toFixed(1)}%`))
+            await expect(rate).toHaveAttribute("aria-label", new RegExp(`Cache: ${seeded.expectedCacheHitPercent.toFixed(1)}%`))
             await expect(rate).not.toHaveAttribute("aria-label", /Request/)
             expect(server.getMockConsumptions("openai-compatible-responses")).toHaveLength(1)
             await waitForRateMetricsRpcCount(recorderPath, 0)

@@ -271,8 +271,8 @@ function parseUsageTitle(title: string): { input: number; output: number; cacheR
 }
 
 function parseCacheHitRate(label: string): number {
-    const match = label.match(/(?:^|;\s*)Hit:\s*([\d.]+)%(?:;|$)/)
-    if (!match) throw new Error(`Unexpected cache hit label: ${label}`)
+    const match = label.match(/(?:^|;\s*)Cache:\s*([\d.]+)%(?:;|$)/)
+    if (!match) throw new Error(`Unexpected cache percentage label: ${label}`)
     return Number(match[1])
 }
 
@@ -359,7 +359,7 @@ async function expectContextUsage(
     expectInRange(displayed.cacheRead, expected.cacheRead)
     expectInRange(displayed.cacheWrite, expected.cacheWrite)
 
-    await expect(priceTag).toHaveAttribute("aria-label", /(?:^|;\s*)Hit:\s*[\d.]+%(?:;|$)/)
+    await expect(priceTag).toHaveAttribute("aria-label", /(?:^|;\s*)Cache:\s*[\d.]+%(?:;|$)/)
     const hitRate = parseCacheHitRate((await priceTag.getAttribute("aria-label")) ?? "")
     expectInRange(hitRate, (expected.cacheRead / expected.input) * 100, 0.01, 0.2)
 }
