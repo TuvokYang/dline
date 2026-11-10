@@ -9,6 +9,7 @@ import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import { replayDurableToolResult } from "../../../../DurableToolResult"
 import type { ToolInvocationEnvelope } from "../../../../stores/payload/TaskPayloadEnvelopes"
+import { ToolExecutorCoordinator } from "../../../../tools/ToolExecutorCoordinator"
 import type { TaskConfig } from "../../../../tools/types/TaskConfig"
 import { createDeniedSurface } from "../../ToolDomainSurface"
 import {
@@ -52,10 +53,33 @@ function configFactory(extra: Partial<TaskConfig> = {}, cwd = process.cwd()): Pr
     }
 }
 
+/** Real value-only admission for service tests; their handler effects remain isolated. */
+function admittedCoordinator(): ToolExecutorCoordinator {
+    const coordinator = new ToolExecutorCoordinator()
+    for (const name of [
+        DlineDefaultTool.SUMMARIZE_TASK,
+        DlineDefaultTool.QNA_RESPOND,
+        DlineDefaultTool.FILE_NEW,
+        DlineDefaultTool.WEB_SEARCH,
+        DlineDefaultTool.USE_SUBAGENT,
+        DlineDefaultTool.USE_SUBAGENTS,
+    ]) {
+        coordinator.register({ name, getDescription: (block) => `[${block.name}]`, execute: async () => REFUSAL })
+    }
+    return coordinator
+}
+
+function budgetInvocationInput(toolName: string): ToolInvocationEnvelope["input"] {
+    if (toolName === DlineDefaultTool.QNA_RESPOND) return { response: "Continue with the task" }
+    if (toolName === DlineDefaultTool.USE_SUBAGENT) return { task: "Inspect the source" }
+    if (toolName === DlineDefaultTool.USE_SUBAGENTS) return { subagents: [{ task: "Inspect the source" }] }
+    return INVOCATION.input
+}
+
 /** A handler runtime whose gate refuses every call, as the central explicit-only gate does. */
 function refusingRuntime(): ProductionToolHandlerRuntime {
     return {
-        coordinator: { getHandler: () => undefined },
+        coordinator: admittedCoordinator(),
         execute: async () => REFUSAL,
         restoreSubagentRetry: async () => false,
     } as unknown as ProductionToolHandlerRuntime
@@ -108,7 +132,7 @@ describe("DefaultProductionToolExecutionService", () => {
             taskId: "task-1",
             config: configFactory(),
             runtime: {
-                coordinator: { getHandler: () => undefined },
+                coordinator: admittedCoordinator(),
                 execute: async () => reply,
                 restoreSubagentRetry: async () => false,
             } as unknown as ProductionToolHandlerRuntime,
@@ -116,7 +140,7 @@ describe("DefaultProductionToolExecutionService", () => {
 
         const { content } = await service.execute({
             command: { commandId: "command-1", turnId: "turn-1", dlineTid: INVOCATION.dlineTid, invocationRef: "ref-1" },
-            invocation: { ...INVOCATION, toolName: "qna_respond" },
+            invocation: { ...INVOCATION, toolName: "qna_respond", input: budgetInvocationInput("qna_respond") },
             surface: createDeniedSurface("detached_domain"),
         })
 
@@ -130,7 +154,7 @@ describe("DefaultProductionToolExecutionService", () => {
     it("reuses the manual approval anchor timestamp for the handler lifecycle row", async () => {
         let receivedPresentationTs: number | undefined
         const runtime = {
-            coordinator: { getHandler: () => undefined },
+            coordinator: admittedCoordinator(),
             execute: async (_config: TaskConfig, block: { ts?: number }) => {
                 receivedPresentationTs = block.ts
                 return REFUSAL
@@ -188,7 +212,7 @@ describe("DefaultProductionToolExecutionService", () => {
                     workspace,
                 ),
                 runtime: {
-                    coordinator: { getHandler: () => undefined },
+                    coordinator: admittedCoordinator(),
                     execute: executeHandler,
                     restoreSubagentRetry: async () => false,
                 } as unknown as ProductionToolHandlerRuntime,
@@ -236,7 +260,7 @@ describe("DefaultProductionToolExecutionService", () => {
                 webSearchRoutingPlan: { route: "hosted", mode: WebToolsMode.WEB_TOOLS_MODE_FORCE_REMOTE },
             } as unknown as Partial<TaskConfig>),
             runtime: {
-                coordinator: { getHandler: () => undefined },
+                coordinator: admittedCoordinator(),
                 execute: executeHandler,
                 restoreSubagentRetry: async () => false,
             } as unknown as ProductionToolHandlerRuntime,
@@ -273,7 +297,7 @@ describe("DefaultProductionToolExecutionService", () => {
                 webSearchRoutingPlan: { route: "hosted", mode: WebToolsMode.WEB_TOOLS_MODE_AUTO, localFallbackAvailable: true },
             } as unknown as Partial<TaskConfig>),
             runtime: {
-                coordinator: { getHandler: () => undefined },
+                coordinator: admittedCoordinator(),
                 execute: async (config: TaskConfig) => {
                     handedOver = config
                     return "local results"
@@ -323,7 +347,7 @@ describe("DefaultProductionToolExecutionService context budget", () => {
             taskId: "task-1",
             config: configFactory(options.config),
             runtime: {
-                coordinator: { getHandler: () => undefined },
+                coordinator: admittedCoordinator(),
                 execute: async (config: TaskConfig) => {
                     leases.push(config.contextBudget)
                     return results[call++]
@@ -338,6 +362,7 @@ describe("DefaultProductionToolExecutionService context budget", () => {
                 invocation: {
                     ...INVOCATION,
                     toolName: options.toolName ?? INVOCATION.toolName,
+                    input: budgetInvocationInput(options.toolName ?? INVOCATION.toolName),
                     dlineTid,
                     functionId: `function-${dlineTid}`,
                 },

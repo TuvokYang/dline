@@ -9,7 +9,9 @@ import { resolvePermissionScope } from "../../../kernel/turn/approval-kind"
 import { AccessMcpResourceHandler } from "../../../tools/handlers/AccessMcpResourceHandler"
 import { GenerateImageToolHandler } from "../../../tools/handlers/GenerateImageToolHandler"
 import { UseMcpToolHandler } from "../../../tools/handlers/UseMcpToolHandler"
+import { WebFetchToolHandler } from "../../../tools/handlers/WebFetchToolHandler"
 import { ToolExecutorCoordinator } from "../../../tools/ToolExecutorCoordinator"
+import { planProductionTool } from "../production/ProductionToolPlanner"
 import {
     prepareRegisteredToolAdmission,
     reviewRegisteredToolBoundary,
@@ -153,6 +155,62 @@ describe("ToolAdmissionRegistry", () => {
             serverName: "docs",
             uri: "docs://index",
         })
+    })
+
+    it.each([
+        { useWeb: false, legacyPrompt: false, expected: "manual" },
+        { useWeb: true, legacyPrompt: false, expected: "automatic" },
+        { useWeb: false, legacyPrompt: true, expected: "manual" },
+        { useWeb: true, legacyPrompt: true, expected: "automatic" },
+    ])("admits Web Fetch and preserves $expected approval with legacyPrompt=$legacyPrompt", ({
+        useWeb,
+        legacyPrompt,
+        expected,
+    }) => {
+        const coordinator = new ToolExecutorCoordinator()
+        coordinator.register(new WebFetchToolHandler())
+        const run = vi.fn(async () => undefined)
+        const call = block(DlineDefaultTool.WEB_FETCH, {
+            url: "https://example.com/page",
+            ...(legacyPrompt ? { prompt: "Historical optional input" } : {}),
+        })
+        const input = snapshot({
+            settings: { ...snapshot().settings, actions: { ...snapshot().settings.actions, useWeb } },
+        })
+
+        const admission = coordinator.prepareAdmission(call, input, run)
+        const plan = planProductionTool(coordinator, call, input)
+
+        expect(admission.outcome).toBe("admitted")
+        if (admission.outcome !== "admitted") throw new Error("expected Web Fetch admission")
+        expect(admission.decision).toMatchObject({ kind: expected, scope: "web" })
+        expect(plan.approval.kind).toBe(expected)
+        if (!useWeb) {
+            expect(plan.approval).toMatchObject({ kind: "manual", presentationAsk: "tool" })
+            if (plan.approval.kind !== "manual") throw new Error("expected manual Web Fetch approval")
+            expect(JSON.parse(plan.approval.presentationRef)).toMatchObject({ tool: "webFetch" })
+        }
+        expect(run).not.toHaveBeenCalled()
+    })
+
+    it("still rejects Web Fetch without a URL when the historical prompt is present", () => {
+        const run = vi.fn(async () => undefined)
+        const admission = prepareRegisteredToolAdmission({
+            canonicalToolName: DlineDefaultTool.WEB_FETCH,
+            block: block(DlineDefaultTool.WEB_FETCH, { prompt: "Historical optional input" }),
+            description: "fetch page",
+            snapshot: snapshot(),
+            run,
+        })
+
+        expect(admission).toEqual({
+            outcome: "rejected",
+            rejection: {
+                reason: "invalid_parameters",
+                message: "Missing required parameter 'url' for tool 'web_fetch'.",
+            },
+        })
+        expect(run).not.toHaveBeenCalled()
     })
 
     it("rejects invalid parameters without constructing or running an effect", () => {
