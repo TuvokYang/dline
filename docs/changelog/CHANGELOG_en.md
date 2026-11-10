@@ -4,10 +4,42 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 ## [Unreleased]
 
+## [0.14.1]
+
+### Added
+- Switch between English and Chinese, following VS Code by default or choosing manually; model response language is independent, with Auto following the user's language.
+- Added the OpenCode provider: use paid text models in one Profile with a pay-as-you-go balance or Go, Go Plus, and Go Teams subscriptions, choosing OpenAI Chat Completions, OpenAI Responses, or Anthropic Messages.
+- Subagents support automatic compaction: with Auto Compact enabled, they summarize context using the existing settings and continue instead of being forced to finish at 80% usage; summaries stay in memory for the current run only.
+- Named subagents can select Rules, Skills, Workflows, and MCP independently of the parent task's selections and tool allowlist; rules apply directly, skills and workflows load on demand, and approvals still apply.
+
 ### Changed
+- DeepSeek pricing follows the current Beijing-time day: weekday details group peak rates first with merged interval headings, then default off-peak for "Other times", with colors matching the actual timeline; weekends and public holidays show full-day off-peak rates, retaining distinct price sets and context bands.
+- View and edit model prices as flat rates, context bands, or time-of-day schedules; custom Base URLs for OpenAI and Anthropic expose pricing strategies, and unpublished prices no longer appear as zero.
+- Provider pricing tier numbers appear in group headings instead of being repeated in field labels, while accessible names still distinguish each tier.
+- Thinking effort options in settings and the task toolbar keep English labels such as `Low`, `High`, and `Max`; surrounding labels and help follow the interface language without changing the selected or saved effort.
+- The chat trajectory and scroll-to-top/bottom buttons appear on message-area hover and remain visible and clickable for one second after leaving before fading; re-entry cancels hiding, keyboard focus keeps them usable, and scroll-direction, bottom-hiding and jump behavior are unchanged.
+- A subagent card's TASK and TOOLS sections can stay expanded and scroll independently without a long task being squeezed out by the tool list.
+- Numeric cache-hit percentages use the Cache label, and the trajectory numbers completed phases; the chart's cache-hit-rate meaning is unchanged.
+- Thinking supports basic Markdown, follows the newest line while streaming, pauses when you scroll up and resumes at the bottom; clicking text no longer folds it or opens images or files.
+- Remote model lists are cached for 30 minutes per catalog and connection in the extension process, refreshing on the next access after expiry without repeated requests during the window, including after failures.
+- Subscription usage shows only provider readings without filling unreported daily totals from local tokens; undeclared model capabilities appear as Unknown.
+- Omitted optional subagent capability fields or legacy empty arrays `[]` select no additional capabilities; clearing a category removes its field when saved, while omitted or empty `tools` still uses the default tool set.
+- Report Bug requests temporary diagnostic authorization before the preview; failure still allows an ordinary GitHub issue, and unchecking discards that authorization.
+- Local Web Fetch retrieves content by URL without an ineffective analysis `prompt`; local search no longer claims extra AI analysis.
 - The VS Code Marketplace stable extension uses separate sidebar, panel, and command IDs instead of sharing UI registrations with development builds and Insiders; existing shortcuts are retained, while configuration and task files keep their shared locations.
 - Extension stores show the English changelog by default, and packages include only that single English changelog.
-- Task progress errors show concise reasons instead of instructions for the model; checklist validation and model feedback are unchanged.
+
+### Fixed
+- Settings still save automatically and Done only closes the page without waiting or saving again; failed Profile saves show an error and reload saved values while keeping the editor usable, and consecutive pricing edits no longer lose values.
+- Fixed closing a task leaving Thinking controls on the home screen and preventing new tasks; a task whose title is still loading keeps its task view and Close action.
+- Fixed missing trajectory turns, incorrect counts, and misplaced jumps with repeated or out-of-order timestamps; a missing target preserves the current message window.
+- Fixed the trajectory overlapping floating buttons and checkpoint Compare/Restore actions; short message areas place floating buttons side by side, while long trajectories still scroll internally to the last turn.
+- Fixed queued input appearing on the wrong side of compaction cards, keeping the same order after reopen.
+- Fixed task-header costs after billing-currency changes by showing the newest currency-labelled segment; OpenCode-reported costs retain the model's billing currency.
+- Fixed TODO progress capture, recovery, and reminder cadence: progress saves and refreshes the header promptly, indented completions advance phases, and external edits survive; rejected updates show a concise reason rather than model instructions, and progress mistakenly passed to the completion tool does not change its completion decision.
+- Local web search reports engine refusals, rate limits, and DuckDuckGo challenge pages instead of treating them as searches with no matches.
+- Fixed errors from missing editor options when opening images and other custom-editor files.
+- Marketplace icons and demo GIFs use direct GitHub raw-file links, reducing loading failures caused by web-page redirects.
 
 ## [0.14.0]
 
