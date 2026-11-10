@@ -677,7 +677,7 @@ e2e(
             return true
         })
         const historySearchCalls = historyTurn.toolCalls.filter(({ name }) => name === "search_files")
-        const historyToolCalls = [...historyReadCalls, ...historySearchCalls]
+        const historyToolCalls = [...historySearchCalls, ...historyReadCalls]
         expect(historyReadCalls).toHaveLength(FIRST_TURN_READ_CALLS - 1)
 
         const historyReady = `E2E_PENDING_COMPLETED_HISTORY_READY_${scenario.seedHex}`
@@ -915,6 +915,9 @@ e2e(
             WORKFLOW_NAME,
             MCP_TOOL_NAME,
         ])
+        // Keep calibration near one token per four bytes so transport JSON overhead does not move
+        // this complete 56 KiB-read turn outside the narrow last-turn crossing band.
+        const calibrationInputTokens = [64_000, 210_000]
         const largeRounds = corpusDeliveryRounds(corpusToolBatches(largeTurnToolCalls), [
             largeTurn.marker,
             firstSummary,
@@ -922,7 +925,11 @@ e2e(
             SKILL_NAME,
             WORKFLOW_NAME,
             MCP_TOOL_NAME,
-        ])
+        ]).map((response, index) =>
+            index < calibrationInputTokens.length
+                ? { ...response, usage: { inputTokens: calibrationInputTokens[index], outputTokens: 100 } }
+                : response,
+        )
         server.resetOpenAiMock()
         server.enqueueResponses(
             "openai-compatible-responses",
@@ -1217,11 +1224,14 @@ e2e(
                 })
             }
             const turn = turns[turnIndex]
+            // The ready reply below triggers the next cycle, not this batch plus its real results.
             const deliveryRounds = corpusDeliveryRounds(corpusToolBatches(turn.toolCalls), [
                 turn.marker,
                 ...(turnIndex === 0 ? [RULE_MARKER, SKILL_NAME, WORKFLOW_NAME, MCP_TOOL_NAME] : []),
                 ...(turnIndex > 0 ? [summaryMarker(scenario.seedHex, turnIndex)] : []),
-            ])
+            ]).map((response, index, rounds) =>
+                index === rounds.length - 1 ? { ...response, usage: { inputTokens: 340_000, outputTokens: 100 } } : response,
+            )
             deliveryRoundCounts.push(deliveryRounds.length)
             server.enqueueResponses("openai-compatible-responses", ...deliveryRounds, {
                 type: "tool",
