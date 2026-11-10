@@ -26,6 +26,7 @@ import {
     type ServiceError,
     serverWaitMs,
 } from "@/services/telemetry/remote/contracts/wire"
+import { resolveRemoteTelemetryEndpoint } from "@/services/telemetry/remote/endpoint-selection"
 import {
     purgeIssueDiagnosticsOverlay,
     refreshIssueDiagnosticsOverlay,
@@ -491,8 +492,13 @@ export class SupportTelemetryService {
 
 let configured: SupportTelemetryService | undefined
 
-export function configureSupportTelemetryService(options: SupportTelemetryServiceOptions): SupportTelemetryService {
-    configured ??= new SupportTelemetryService(options)
+export function configureSupportTelemetryService(options: SupportTelemetryServiceOptions): SupportTelemetryService | undefined {
+    const target = resolveRemoteTelemetryEndpoint({
+        ...process.env,
+        DLINE_OTEL_ENDPOINT: options.otelEndpoint ?? process.env.DLINE_OTEL_ENDPOINT,
+    })
+    if (!target) return undefined
+    configured ??= new SupportTelemetryService({ ...options, otelEndpoint: target.endpoint })
     void configured.resume().catch(() => undefined)
     return configured
 }
