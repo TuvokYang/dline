@@ -614,7 +614,8 @@ e2e(
         const abortedSummary = "E2E_ROLLING_RESTART_ABORTED_SUMMARY"
         const turnAResponse = turnAMarker + ":" + "A".repeat(520_000)
         const turnBResponse = turnBMarker + ":" + "B".repeat(520_000)
-        const turnCResponse = turnCMarker + " completed before the continuation."
+        // Calibrated B+C requires Pass 2, while B+C+latestUser still fits after restarting.
+        const turnCResponse = turnCMarker + ":" + "C".repeat(100_000)
         const turns = [
             { callId: "call_rolling_restart_turn_a", user: taskText, response: turnAResponse },
             { callId: "call_rolling_restart_turn_b", user: userB, response: turnBResponse },
@@ -647,7 +648,8 @@ e2e(
                 id: turns[2].callId,
                 name: "qna_respond",
                 arguments: { response: turnCResponse },
-                usage: { inputTokens: 380_000, outputTokens: 100 },
+                // Preserve the A-only first Pass and the second Pass under usage-based token calibration.
+                usage: { inputTokens: 500_000, outputTokens: 100 },
                 expectedRequestIncludes: [turnBMarker, userC],
                 matchRequestContract: true,
                 requireCompleteToolPairing: true,
