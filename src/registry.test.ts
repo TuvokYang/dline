@@ -31,15 +31,18 @@ describe("ExtensionRegistryInfo", () => {
         })
     })
 
-    it("gives Insiders an independent VS Code-global identity", async () => {
+    it.each([
+        { name: "dline-insiders", label: "Dline (Insiders)", preview: true },
+        { name: "dline-main", label: "Dline (Stable)", preview: false },
+    ])("gives $name an independent VS Code-global identity", async ({ name, label, preview }) => {
         const { createExtensionRegistryInfo } = await import("./registry")
         const stable = createExtensionRegistryInfo({ name: "dline", publisher, version: "0.12.0" })
-        const insiders = createExtensionRegistryInfo({ name: "dline-insiders", publisher, version: "0.13.1234567890" })
+        const insiders = createExtensionRegistryInfo({ name, publisher, version: "0.14.0" })
 
-        expect(insiders.id).toBe(`${publisher}.dline-insiders`)
-        expect(insiders.displayName).toBe("Dline (Insiders)")
-        expect(insiders.isInsiders).toBe(true)
-        expect(insiders.contributionNamespace).toBe("dline-insiders")
+        expect(insiders.id).toBe(`${publisher}.${name}`)
+        expect(insiders.displayName).toBe(label)
+        expect(insiders.isInsiders).toBe(preview)
+        expect(insiders.contributionNamespace).toBe(name)
         expect(insiders.walkthrough.id).toBe(stable.walkthrough.id)
         expect(insiders.walkthrough.qualifiedId).not.toBe(stable.walkthrough.qualifiedId)
 
@@ -65,7 +68,7 @@ describe("ExtensionRegistryInfo", () => {
         ]
 
         for (const id of insidersGlobalIds) {
-            expect(stableGlobalIds.has(id), `Insiders global ID '${id}' must not collide with Stable`).toBe(false)
+            expect(stableGlobalIds.has(id), `${name} global ID '${id}' must not collide with dline`).toBe(false)
         }
     })
 

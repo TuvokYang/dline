@@ -99,8 +99,8 @@ function targetCommandId(commandId, sourceNamespace, targetNamespace) {
 /**
  * Project the stable source manifest into one distribution identity.
  *
- * The source package.json remains the stable public contract. Insiders receives
- * a structurally transformed manifest so every VS Code-global registration is
+ * The source package.json remains the default public contract. Other distributions
+ * receive a transformed manifest so every VS Code-global registration is
  * owned by its own extension instead of colliding with tuvokyang.dline.
  */
 export function createDistributionManifest(sourceManifest, packageName, version, publisher = sourceManifest.publisher) {
@@ -189,13 +189,13 @@ export function createDistributionManifest(sourceManifest, packageName, version,
         }
     }
 
-    // Stable owns extension command shortcuts when both distributions are installed.
-    // Preserve built-in bindings such as comment submission, whose when clause is
-    // scoped to this distribution's independently named controller.
+    // Insiders keeps its existing opt-in shortcut policy. Stable distributions
+    // retain their shortcuts, remapped to their own commands and controller IDs.
     const preservedKeybindings = (contributes.keybindings ?? [])
-        .filter((entry) => !commandMap.has(entry.command))
+        .filter((entry) => !target.preview || !commandMap.has(entry.command))
         .map((entry) => ({
             ...entry,
+            command: commandMap.get(entry.command) ?? entry.command,
             when: replaceRegisteredIdentifiers(entry.when, replacements),
         }))
     if (preservedKeybindings.length > 0) contributes.keybindings = preservedKeybindings

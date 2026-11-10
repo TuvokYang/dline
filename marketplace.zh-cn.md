@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="assets/icons/icon.png" width="96" alt="Dline 机器人标志" />
-
 # Dline
 
 **功能完备的多任务自动化编程代理**

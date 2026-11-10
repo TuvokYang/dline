@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="assets/icons/icon.png" width="96" alt="Dline robot mark" />
-
 # Dline
 
 **Comprehensive multi-task automated coding agent**

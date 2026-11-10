@@ -1,7 +1,9 @@
 import { execFileSync } from "node:child_process"
+import fs from "node:fs"
 import { createRequire } from "node:module"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { withSignalSafeCleanup } from "./signal-safe-cleanup.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
 const require = createRequire(import.meta.url)
@@ -31,6 +33,22 @@ function normalizeOptions({ cwd, mode, packagePath = null, preRelease = false })
     return { cwd, mode, packagePath, preRelease: preRelease === true }
 }
 
+/** Keep repository language ownership unchanged while VSCE reads the English root changelog. */
+export async function withEnglishChangelog(cwd, work, options = {}) {
+    const { fileSystem = fs, cleanups: outerCleanups, ...cleanupOptions } = options
+    const chinesePath = path.join(cwd, "CHANGELOG.md")
+    const englishPath = path.join(cwd, "docs", "changelog", "CHANGELOG_en.md")
+    const chinese = fileSystem.readFileSync(chinesePath)
+    const english = fileSystem.readFileSync(englishPath)
+    const swapAndPack = (cleanups) => {
+        // Register restoration before writing, including partial replacement failures.
+        cleanups.defer(() => fileSystem.writeFileSync(chinesePath, chinese))
+        fileSystem.writeFileSync(chinesePath, english)
+        return work()
+    }
+    return outerCleanups ? swapAndPack(outerCleanups) : withSignalSafeCleanup(swapAndPack, cleanupOptions)
+}
+
 /**
  * Call VSCE inside an isolated Node process.
  *
@@ -38,16 +56,23 @@ function normalizeOptions({ cwd, mode, packagePath = null, preRelease = false })
  * behavior in a worker guarantees the parent can still restore temporary
  * package.json and README mutations.
  *
- * @param {{ cwd: string, mode: "build-and-pack"|"pack-only", packagePath?: string|null, preRelease?: boolean }} options
+ * @param {{ cwd: string, mode: "build-and-pack"|"pack-only", packagePath?: string|null, preRelease?: boolean,
+ *   cleanups?: import("./signal-safe-cleanup.mjs").SynchronousCleanupStack }} options
  * @returns {Promise<{ packagePath: string|null }>}
  */
 export async function packageVsix(options) {
     const normalized = normalizeOptions(options)
-    execFileSync(process.execPath, [__filename, WORKER_ARGUMENT, JSON.stringify(normalized)], {
-        cwd: normalized.cwd,
-        stdio: "inherit",
-    })
-    return { packagePath: normalized.packagePath }
+    return withEnglishChangelog(
+        normalized.cwd,
+        () => {
+            execFileSync(process.execPath, [__filename, WORKER_ARGUMENT, JSON.stringify(normalized)], {
+                cwd: normalized.cwd,
+                stdio: "inherit",
+            })
+            return { packagePath: normalized.packagePath }
+        },
+        { cleanups: options.cleanups },
+    )
 }
 
 /** @param {{ cwd: string, mode: "build-and-pack"|"pack-only", packagePath: string|null, preRelease: boolean }} options */
