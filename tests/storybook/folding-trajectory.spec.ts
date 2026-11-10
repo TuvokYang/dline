@@ -23,10 +23,23 @@ for (const preset of ["collapsed", "partially-expanded", "all-expanded"] as cons
         if (preset === "collapsed") {
             await expect(fixture.locator('[data-testid="activity-fold-header"][aria-expanded="true"]')).toHaveCount(0)
         } else if (preset === "partially-expanded") {
-            // Open proposal blocks restore top-level Standard rows, not expanded fold wrappers.
-            await expect(fixture.locator('[data-row-ts="1010"]').first()).toBeAttached()
-            await expect(fixture.locator('[data-fold-id="segment:1010"]')).toHaveCount(0)
-            await expect(fixture.locator('[data-testid="activity-fold-header"][aria-expanded="true"]')).toHaveCount(0)
+            // Open blocks retain their summary control and reveal only their own members.
+            const firstFold = fixture.locator('[data-fold-id="segment:1010"]')
+            const firstHeader = firstFold.getByTestId("activity-fold-header")
+            await expect(firstHeader).toHaveAttribute("aria-expanded", "true")
+            await expect(firstFold.getByTestId("activity-fold-children")).toContainText("eslint.config.js")
+            const secondFold = fixture.locator('[data-fold-id="segment:1033"]')
+            await expect(secondFold.getByTestId("activity-fold-children")).toContainText("src/a.ts")
+            await expect(secondFold.getByTestId("activity-fold-children")).toContainText("src/b.ts")
+            const nextFold = fixture.locator('[data-fold-id="segment:1040"]')
+            await expect(nextFold.getByTestId("activity-fold-header")).toHaveAttribute("aria-expanded", "false")
+            await expect(nextFold.getByTestId("activity-fold-children")).toHaveCount(0)
+            await firstHeader.click()
+            await expect(firstHeader).toHaveAttribute("aria-expanded", "false")
+            await expect(firstFold.getByTestId("activity-fold-children")).toHaveCount(0)
+            await expect(secondFold.getByTestId("activity-fold-header")).toHaveAttribute("aria-expanded", "true")
+            await firstHeader.click()
+            await expect(firstFold.getByTestId("activity-fold-children")).toContainText("eslint.config.js")
         } else {
             await expect(fixture.locator('[data-testid="activity-fold-header"][aria-expanded="false"]')).toHaveCount(0)
         }

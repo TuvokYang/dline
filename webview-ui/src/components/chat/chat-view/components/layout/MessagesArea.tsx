@@ -3,7 +3,7 @@ import type { UiMessage } from "@shared/ExtensionMessage"
 import { convertProtoToClineMessage } from "@shared/proto-conversions/cline-message"
 import type React from "react"
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
-import { Virtuoso } from "react-virtuoso"
+import { type SizeFunction, Virtuoso } from "react-virtuoso"
 import {
     FLOATING_CONTROL_LAYOUT_STYLE,
     FLOATING_CONTROL_SURFACE,
@@ -59,6 +59,10 @@ const LOAD_COUNT = DEFAULT_MESSAGE_WINDOW_LIMITS.loadCount
  */
 const ROW_LOAD_THRESHOLD = 8
 const USER_SCROLL_INTENT_TTL_MS = 750
+
+// Per-row rounding accumulates across fractional font metrics and leaves the tail clipped.
+const measureMessageRow: SizeFunction = (element, field) =>
+    element.getBoundingClientRect()[field === "offsetHeight" ? "height" : "width"]
 
 /**
  * The one surface every floating control in the message column is drawn on.
@@ -1237,6 +1241,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                     increaseViewportBy={{ top: 400, bottom: 400 }}
                     initialTopMostItemIndex={{ index: Math.max(visibleGroupedMessages.length - 1, 0), align: "end" }}
                     itemContent={itemContent}
+                    itemSize={measureMessageRow}
                     itemsRendered={scheduleBrowsingViewportAnchorRestore}
                     key={virtuosoInstanceKey}
                     rangeChanged={handleRangeChanged}

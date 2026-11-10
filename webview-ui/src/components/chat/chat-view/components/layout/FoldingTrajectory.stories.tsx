@@ -187,14 +187,14 @@ function FoldingTrajectoryFixture({ initialExpansion, turnCount, initialLevel, w
             <div className="p-3">
                 <h2 className="m-0 mb-2 text-sm">{DESIGN_FOLDING_LABELS[level]}</h2>
                 <p className="m-0 mb-2 max-w-2xl text-xs text-description">
-                    All levels use the original MessagesArea, Virtuoso and trajectory rail. Only collapse boundaries change.
-                    Expand all restores the same Standard rows, groups and order, without extra round headers or indentation. The
-                    second option splits at messages; the third keeps whole-turn folding. These are the production folding rules.
+                    All levels use the original MessagesArea, Virtuoso and trajectory rail. Only collapse boundaries change. Open
+                    blocks keep their summary control and render the original member rows in order. The second option splits at
+                    messages; the third keeps whole-turn folding. These are the production folding rules.
                 </p>
                 <p className="m-0 mb-2 max-w-2xl text-xs text-description">
-                    Compare this story with the separate Standard story. Expand all restores the Standard layout. Click a block to
-                    open it; use the controls to fold it again. Original tool, exploration and browser cards keep their controls.
-                    Hover the message area to reveal the controls; after leaving it, the whole group stays for 1s before fading.
+                    Compare this story with the separate Standard story. Expand all reveals every block's original members. Click
+                    a block to open or close it. Original tool, exploration and browser cards keep their controls. Hover the
+                    message area to reveal the controls; after leaving it, the whole group stays for 1s before fading.
                 </p>
                 <div className="mb-3 flex flex-wrap items-center gap-2">
                     <button
