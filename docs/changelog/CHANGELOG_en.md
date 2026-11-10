@@ -4,6 +4,11 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 ## [Unreleased]
 
+### Changed
+- The VS Code Marketplace stable extension uses separate sidebar, panel, and command IDs instead of sharing UI registrations with development builds and Insiders; existing shortcuts are retained, while configuration and task files keep their shared locations.
+- Extension stores show the English changelog by default, and packages include only that single English changelog.
+- Task progress errors show concise reasons instead of instructions for the model; checklist validation and model feedback are unchanged.
+
 ## [0.14.0]
 
 ### Added
