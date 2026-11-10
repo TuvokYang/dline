@@ -3,6 +3,7 @@ import type { UiMessage } from "../ExtensionMessage"
 export interface ParsedMcpServerResponse {
     requestTs?: number
     responses: string[]
+    isError?: boolean
 }
 
 export function parseMcpServerResponse(text: string | undefined): ParsedMcpServerResponse {
@@ -16,7 +17,11 @@ export function parseMcpServerResponse(text: string | undefined): ParsedMcpServe
             Array.isArray(parsed.responses) &&
             parsed.responses.every((response) => typeof response === "string")
         ) {
-            return { requestTs: parsed.requestTs, responses: parsed.responses }
+            return {
+                requestTs: parsed.requestTs,
+                responses: parsed.responses,
+                ...(typeof parsed.isError === "boolean" ? { isError: parsed.isError } : {}),
+            }
         }
     } catch {
         // Legacy rows persist the response as plain text.
@@ -26,6 +31,19 @@ export function parseMcpServerResponse(text: string | undefined): ParsedMcpServe
 
 export function isMcpRequest(message: UiMessage): boolean {
     return message.ask === "use_mcp_server" || message.say === "use_mcp_server"
+}
+
+export function parseMcpToolRequest(message: UiMessage): { serverName: string; toolName: string } | undefined {
+    if (!isMcpRequest(message)) return undefined
+    try {
+        const parsed = JSON.parse(message.text ?? "") as { type?: unknown; serverName?: unknown; toolName?: unknown } | null
+        if (parsed?.type === "use_mcp_tool" && typeof parsed.serverName === "string" && typeof parsed.toolName === "string") {
+            return { serverName: parsed.serverName, toolName: parsed.toolName }
+        }
+    } catch {
+        // Incomplete request rows cannot identify a tool call yet.
+    }
+    return undefined
 }
 
 export function nearestPriorMcpRequestIndex(messages: readonly UiMessage[], responseIndex: number): number {

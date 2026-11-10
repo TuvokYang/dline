@@ -1,5 +1,9 @@
 import { type FocusEvent, useState } from "react"
-import { FLOATING_CONTROL_VISIBILITY } from "@/components/chat/floating-control-styles"
+import {
+    FLOATING_CONTROL_SURFACE,
+    FLOATING_CONTROL_VISIBILITY,
+    TRAJECTORY_RAIL_WIDTH_PX,
+} from "@/components/chat/floating-control-styles"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
 import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { cn } from "@/lib/utils"
@@ -57,6 +61,9 @@ export function ConversationTrajectoryRail({
     if (attempts.length === 0) return null
 
     const fadeMask = edgeFadeMask(edges)
+    // A body portal breaks native message hover as the pointer crosses its preview.
+    // Keep the fixed-position card outside the rail's scrolling/backdrop container.
+    const previewContainer = rail?.closest<HTMLElement>('[class~="group/messages"]') ?? undefined
 
     const releaseFocus = (event: FocusEvent<HTMLElement>) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setEngaged(false)
@@ -68,7 +75,8 @@ export function ConversationTrajectoryRail({
             aria-label={t("chatInput.trajectory.title")}
             className={cn(
                 // One translucent backdrop behind the whole rail keeps the bars legible over the chat text underneath.
-                "absolute top-1/2 right-1 z-10 flex -translate-y-1/2 flex-col rounded-[4px] bg-background/35 p-1 backdrop-blur-sm transition-opacity duration-200",
+                "absolute top-1/2 right-1 z-10 flex -translate-y-1/2 flex-col rounded-[4px] p-1",
+                FLOATING_CONTROL_SURFACE,
                 FLOATING_CONTROL_VISIBILITY,
                 className,
             )}
@@ -78,7 +86,7 @@ export function ConversationTrajectoryRail({
             onPointerEnter={() => setEngaged(true)}
             onPointerLeave={() => setEngaged(false)}
             ref={setRail}
-            style={{ maxHeight: `${RAIL_MAX_HEIGHT_RATIO * 100}%` }}>
+            style={{ maxHeight: `${RAIL_MAX_HEIGHT_RATIO * 100}%`, width: TRAJECTORY_RAIL_WIDTH_PX }}>
             {/* The bars scroll inside the backdrop, so the edge fades leave the backdrop itself whole. */}
             <div
                 className="flex min-h-0 flex-col gap-1.5 overflow-y-auto [scrollbar-width:none]"
@@ -96,6 +104,7 @@ export function ConversationTrajectoryRail({
                                 attemptNumber={attemptIndex + 1}
                                 key={turn.seq}
                                 onSelect={onSelectTurn}
+                                previewContainer={previewContainer}
                                 turn={turn}
                                 turnNumber={turnIndex + 1}
                             />
@@ -118,9 +127,10 @@ interface TrajectoryBarProps {
     attemptNumber: number
     active: boolean
     onSelect: (turn: TrajectoryTurn) => void
+    previewContainer?: HTMLElement
 }
 
-function TrajectoryBar({ turn, turnNumber, attemptNumber, active, onSelect }: TrajectoryBarProps) {
+function TrajectoryBar({ turn, turnNumber, attemptNumber, active, onSelect, previewContainer }: TrajectoryBarProps) {
     const { t } = useUiTranslation()
     return (
         <HoverCard closeDelay={PREVIEW_CLOSE_DELAY_MS} openDelay={PREVIEW_OPEN_DELAY_MS}>
@@ -145,9 +155,10 @@ function TrajectoryBar({ turn, turnNumber, attemptNumber, active, onSelect }: Tr
                 </button>
             </HoverCardTrigger>
             <HoverCardContent
-                align="center"
+                align="end"
                 arrowClassName="hidden"
                 className="w-60 border-foreground/10 bg-code/50 p-0 backdrop-blur-md"
+                portalContainer={previewContainer}
                 side="left"
                 sideOffset={10}>
                 <TrajectoryTurnPreview attemptNumber={attemptNumber} turn={turn} turnNumber={turnNumber} />

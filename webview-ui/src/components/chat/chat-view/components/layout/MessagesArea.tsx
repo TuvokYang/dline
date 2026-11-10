@@ -4,7 +4,11 @@ import { convertProtoToClineMessage } from "@shared/proto-conversions/cline-mess
 import type React from "react"
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { Virtuoso } from "react-virtuoso"
-import { FLOATING_CONTROL_VISIBILITY } from "@/components/chat/floating-control-styles"
+import {
+    FLOATING_CONTROL_LAYOUT_STYLE,
+    FLOATING_CONTROL_SURFACE,
+    FLOATING_CONTROL_VISIBILITY,
+} from "@/components/chat/floating-control-styles"
 import { StickyUserMessage } from "@/components/chat/task-header/StickyUserMessage"
 import { TrajectoryRailOverlay } from "@/components/chat/trajectory/TrajectoryRailOverlay"
 import type { TrajectoryTurn } from "@/components/chat/trajectory/trajectory-model"
@@ -63,8 +67,10 @@ const USER_SCROLL_INTENT_TTL_MS = 750
  * share a background, a border treatment and a size; declaring it once keeps a
  * later edit from re-splitting them.
  */
-const FLOATING_CONTROL =
-    "w-10 h-10 rounded-full bg-background/65 backdrop-blur-sm shadow-md border-0 text-foreground flex items-center justify-center cursor-pointer"
+const FLOATING_CONTROL = cn(
+    FLOATING_CONTROL_SURFACE,
+    "w-10 h-10 rounded-full shadow-md border-0 text-foreground flex items-center justify-center cursor-pointer",
+)
 
 /** Sentinel value to prevent Virtuoso zero-sized-element warnings when data is empty */
 // @ts-expect-error — Virtuoso sentinel; only ts/type needed, full UiMessage shape not required
@@ -1182,7 +1188,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
     const allFoldsOpen = closedFolds.length === 0
 
     return (
-        <div className="group/messages overflow-hidden flex flex-col h-full relative">
+        <div className="group/messages overflow-hidden flex flex-col h-full relative" style={FLOATING_CONTROL_LAYOUT_STYLE}>
             <div
                 className={cn(
                     "pointer-events-none absolute top-0 left-0 right-0 z-10 pl-[15px] pr-[14px] bg-background",
@@ -1276,17 +1282,14 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                     {(foldControlVisible || showScrollToBottom) && (
                         <div className={cn(floatingControls.buttons, "mr-4 flex items-end justify-end gap-2")}>
                             {foldControlVisible && (
-                                <div
-                                    className={cn(FLOATING_CONTROL_VISIBILITY, "transition-opacity duration-300 ease-out")}
-                                    data-testid="folding-controls">
+                                <div className={FLOATING_CONTROL_VISIBILITY} data-testid="folding-controls">
                                     <button
                                         aria-label={t(
                                             allFoldsOpen ? "chatInput.timeline.collapseAll" : "chatInput.timeline.expandAll",
                                         )}
                                         className={cn(
                                             FLOATING_CONTROL,
-                                            "hover:bg-background/90 hover:shadow-xl hover:scale-105",
-                                            "active:scale-95 transition-all duration-200",
+                                            "hover:shadow-xl hover:scale-105 active:scale-95 transition-all duration-200",
                                         )}
                                         onClick={() =>
                                             scrollBehavior.replaceFoldExpansion(
@@ -1315,7 +1318,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                                 </div>
                             )}
                             {/* Keep the fold action in its original slot when bottom-following needs no scroll button. */}
-                            <div className={cn(FLOATING_CONTROL_VISIBILITY, "h-10 transition-opacity duration-300 ease-out")}>
+                            <div className={cn(FLOATING_CONTROL_VISIBILITY, "h-10")}>
                                 {showScrollToBottom && (
                                     <button
                                         aria-label={t(
@@ -1323,8 +1326,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                                         )}
                                         className={cn(
                                             FLOATING_CONTROL,
-                                            "hover:bg-background/90 hover:shadow-xl hover:scale-105",
-                                            "active:scale-95 transition-all duration-200",
+                                            "hover:shadow-xl hover:scale-105 active:scale-95 transition-all duration-200",
                                         )}
                                         onClick={() => {
                                             if (floatingBtnDir === "bottom") {

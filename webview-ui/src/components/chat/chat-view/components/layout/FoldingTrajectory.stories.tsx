@@ -194,7 +194,7 @@ function FoldingTrajectoryFixture({ initialExpansion, turnCount, initialLevel, w
                 <p className="m-0 mb-2 max-w-2xl text-xs text-description">
                     Compare this story with the separate Standard story. Expand all restores the Standard layout. Click a block to
                     open it; use the controls to fold it again. Original tool, exploration and browser cards keep their controls.
-                    Scroll to reveal the original rail (1.2s idle fade); no alternate trajectory renderer is used.
+                    Hover the message area to reveal the controls; after leaving it, the whole group stays for 1s before fading.
                 </p>
                 <div className="mb-3 flex flex-wrap items-center gap-2">
                     <button

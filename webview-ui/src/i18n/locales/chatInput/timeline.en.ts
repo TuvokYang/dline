@@ -18,7 +18,7 @@ export const timelineEn = {
     "chatInput.timeline.thinking": "Thinking",
     "chatInput.trajectory.title": "Conversation trajectory",
     "chatInput.trajectory.jump": ({ prompt }: { prompt: string }) => `Jump to message: ${prompt}`,
-    "chatInput.trajectory.attempt": ({ number }: { number: number }) => `Attempt ${number}`,
+    "chatInput.trajectory.attempt": ({ number }: { number: number }) => `Phase ${number}`,
     "chatInput.trajectory.turn": ({ number }: { number: number }) => `Turn ${number}`,
     "chatInput.trajectory.rounds": ({ count }: { count: number }) => plural(count, "round"),
     "chatInput.fold.rounds": ({ count }: { count: number }) => plural(count, "round"),
@@ -29,6 +29,8 @@ export const timelineEn = {
     "chatInput.fold.work.web": ({ count }: { count: number }) => `${count} web tools`,
     "chatInput.fold.work.browser": ({ count }: { count: number }) => plural(count, "browser"),
     "chatInput.fold.work.other": ({ count }: { count: number }) => plural(count, "other"),
+    "chatInput.fold.mcp": ({ servers, tools, failed }: { servers: number; tools: number; failed: number }) =>
+        `${servers} MCP (${plural(tools, "tool")}, ${failed} failed)`,
     "chatInput.fold.thoughts": ({ count }: { count: number }) => plural(count, "thought"),
     "chatInput.fold.checkpoints": ({ count }: { count: number }) => plural(count, "checkpoint"),
     "chatInput.fold.messages": ({ count }: { count: number }) => plural(count, "message"),

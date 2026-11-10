@@ -1,3 +1,4 @@
+import { parseMcpToolRequest } from "@shared/chat/mcpResponseRows"
 import { readCommandRow } from "@shared/commandRow"
 import type { UiAskUseMcpServer, UiMessage, UiSayBrowserAction, UiSaySubagentStatus } from "@shared/ExtensionMessage"
 import { translateUi, type UiTranslator } from "@/i18n/messages"
@@ -45,6 +46,8 @@ export interface ActivityFoldSummary {
      * instead of only how many.
      */
     readonly subagents: ReadonlyMap<string, number>
+    /** Distinct MCP services and total tool calls, including the failed subset. */
+    readonly mcp?: { readonly servers: number; readonly tools: number; readonly failed: number }
     readonly checkpoints: number
     /** Reasoning blocks the model streamed in the folded rounds. */
     readonly thoughts: number
@@ -116,12 +119,21 @@ export function summarizeActivityFold(
     const tools = new Map<string, number>()
     const subagents = new Map<string, number>()
     const failures = fold._failures ?? new Map<FoldFailureKind, number>()
+    const mcpServers = new Set<string>()
+    let mcpTools = 0
     let checkpoints = 0
     let thoughts = 0
     let assistantMessages = 0
 
     for (const member of fold) {
         checkpoints += checkpointAttachments.get(member.ts)?.length ?? 0
+        const mcpTool = parseMcpToolRequest(member)
+        if (mcpTool) {
+            mcpServers.add(mcpTool.serverName)
+            mcpTools += 1
+            count(tools, `${mcpTool.serverName}:${mcpTool.toolName}`)
+            continue
+        }
         // A failed edit, command or subagent is reported as an error, not also as
         // a successful call. The block recorded exactly which members failed, so
         // a settled call of the same kind still counts as one.
@@ -175,7 +187,8 @@ export function summarizeActivityFold(
         }
     }
     const rounds = fold._roundCount
-    return { rounds, work, external, tools, subagents, checkpoints, thoughts, assistantMessages, failures }
+    const mcp = mcpTools > 0 ? { servers: mcpServers.size, tools: mcpTools, failed: failures.get("mcp") ?? 0 } : undefined
+    return { rounds, work, external, tools, subagents, mcp, checkpoints, thoughts, assistantMessages, failures }
 }
 
 /**
@@ -259,6 +272,7 @@ export interface ActivityFoldPart {
     /** Stable presentation identity, independent of translated text and changing counts. */
     readonly kind:
         | "rounds"
+        | "mcp"
         | `work.${FoldWorkKind}`
         | "thoughts"
         | "checkpoints"
@@ -312,6 +326,9 @@ export function describeActivityFoldParts(summary: ActivityFoldSummary, t: UiTra
             isFailure: false,
         })
     }
+    if (summary.mcp) {
+        parts.push({ kind: "mcp", text: t("chatInput.fold.mcp", summary.mcp), isFailure: summary.mcp.failed > 0 })
+    }
     const otherFacts = [
         [summary.thoughts, "thoughts"],
         [summary.checkpoints, "checkpoints"],
@@ -329,7 +346,7 @@ export function describeActivityFoldParts(summary: ActivityFoldSummary, t: UiTra
 }
 
 /** Singular nouns for counted failures, in the order a reader wants them. */
-const FAILURE_KINDS: readonly FoldFailureKind[] = ["edit", "read", "subagent", "command", "web", "browser"]
+const FAILURE_KINDS: readonly Exclude<FoldFailureKind, "mcp">[] = ["edit", "read", "subagent", "command", "web", "browser"]
 
 /** Tool names with their counts, for the header's tooltip. */
 export function describeToolCalls(summary: ActivityFoldSummary): string {

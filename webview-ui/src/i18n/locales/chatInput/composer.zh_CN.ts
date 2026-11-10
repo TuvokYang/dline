@@ -157,8 +157,8 @@ export const composerZhCN = {
     "chatInput.auto.useMcp.short": "MCP",
     "chatInput.auto.generateImages.label": "生成图片",
     "chatInput.auto.generateImages.short": "图片",
-    "chatInput.auto.focusChain.label": "焦点链覆盖设置",
-    "chatInput.auto.focusChain.short": "焦点链",
+    "chatInput.auto.focusChain.label": "专注链覆盖设置",
+    "chatInput.auto.focusChain.short": "专注链",
     "chatInput.auto.enableNotifications.label": "启用通知",
     "chatInput.auto.enableNotifications.short": "通知",
 } satisfies UiResource<typeof composerEn>

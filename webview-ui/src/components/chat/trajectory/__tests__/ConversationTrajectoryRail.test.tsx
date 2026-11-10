@@ -87,7 +87,7 @@ describe("ConversationTrajectoryRail source-index points", () => {
         expect(screen.getByRole("navigation", { name: "对话轨迹" })).toBe(rail)
         expect(screen.getByRole("button", { name: "跳转到消息：equal timestamp" })).toBe(bar)
         expect(screen.getByTestId("trajectory-turn-preview")).toBe(preview)
-        expect(within(preview).getByText("第 1 次尝试")).toBeInTheDocument()
+        expect(within(preview).getByText("第 1 阶段")).toBeInTheDocument()
         expect(within(preview).getByText("第 2 轮对话")).toBeInTheDocument()
         expect(within(preview).getByText("4 轮请求")).toBeInTheDocument()
         checkAnchor()
@@ -96,6 +96,7 @@ describe("ConversationTrajectoryRail source-index points", () => {
         view.rerender(tree("en"))
         expect(screen.getByTestId("trajectory-turn-preview")).toBe(preview)
         expect(bar).toHaveAccessibleName("Jump to message: equal timestamp")
+        expect(within(preview).getByText("Phase 1")).toBeInTheDocument()
         expect(within(preview).getByText("4 rounds")).toBeInTheDocument()
         checkAnchor()
         fireEvent.click(bar)
@@ -103,12 +104,78 @@ describe("ConversationTrajectoryRail source-index points", () => {
         expect(select.mock.calls[0][0]).toBe(attempts[0].turns[1])
     })
 
+    it("portals the preview inside the message hover scope but outside the scrolling rail", async () => {
+        const view = render(
+            <div className="group/messages">
+                <ConversationTrajectoryRail attempts={attempts} onSelectTurn={vi.fn()} />
+            </div>,
+        )
+        fireEvent.focus(screen.getAllByTestId("trajectory-turn")[1])
+        const preview = await screen.findByTestId("trajectory-turn-preview")
+        expect(view.container.firstElementChild).toContainElement(preview)
+        expect(screen.getByTestId("trajectory-rail")).not.toContainElement(preview)
+    })
+
+    it("settles a measured zero-gap rail while focus and scroll-edge state update together", () => {
+        vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200)
+        vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(800)
+        vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(160)
+        const singleTurnAttempts = Array.from({ length: 40 }, (_, index) => ({
+            id: `completed-${index}`,
+            completed: true,
+            turns: [{ seq: index, anchorIndex: index * 5, anchorTs: index, prompt: `turn ${index}`, rounds: 1, toolUsage: [] }],
+        }))
+        try {
+            render(
+                <div>
+                    <ConversationTrajectoryRail attempts={singleTurnAttempts} onSelectTurn={vi.fn()} />
+                </div>,
+            )
+            const bars = screen.getAllByTestId("trajectory-turn")
+            fireEvent.focus(bars.at(-1)!)
+            const scroller = screen.getByTestId("trajectory-rail").firstElementChild!
+            fireEvent.scroll(scroller, { target: { scrollTop: 600 } })
+            expect(screen.getAllByTestId("trajectory-turn")).toHaveLength(40)
+            expect(screen.getAllByTestId("trajectory-attempt")[0]).toHaveStyle({ rowGap: "6px" })
+        } finally {
+            cleanup()
+            vi.restoreAllMocks()
+        }
+    })
+
+    it("restores spacing once when multi-turn attempts become single-turn attempts", () => {
+        vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200)
+        vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(800)
+        vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(160)
+        try {
+            const view = render(
+                <div>
+                    <ConversationTrajectoryRail attempts={attempts} onSelectTurn={vi.fn()} />
+                </div>,
+            )
+            expect(screen.getAllByTestId("trajectory-attempt")[0]).toHaveStyle({ rowGap: "2px" })
+            const split = attempts.flatMap((attempt) =>
+                attempt.turns.map((turn) => ({ ...attempt, id: `single-${turn.seq}`, turns: [turn] })),
+            )
+            view.rerender(
+                <div>
+                    <ConversationTrajectoryRail attempts={split} onSelectTurn={vi.fn()} />
+                </div>,
+            )
+            expect(screen.getAllByTestId("trajectory-attempt")).toHaveLength(3)
+            for (const attempt of screen.getAllByTestId("trajectory-attempt")) expect(attempt).toHaveStyle({ rowGap: "6px" })
+        } finally {
+            cleanup()
+            vi.restoreAllMocks()
+        }
+    })
+
     it("preserves the preview's prompt, attempt/turn labels, rounds and tool totals for a repeated timestamp point", async () => {
         render(<ConversationTrajectoryRail activeTurnSeq={1} attempts={attempts} onSelectTurn={vi.fn()} />)
         fireEvent.focus(screen.getAllByTestId("trajectory-turn")[1])
         await waitFor(() => expect(screen.getByTestId("trajectory-turn-preview")).toBeInTheDocument())
         const preview = within(screen.getByTestId("trajectory-turn-preview"))
-        expect(preview.getByText("Attempt 1")).toBeInTheDocument()
+        expect(preview.getByText("Phase 1")).toBeInTheDocument()
         expect(preview.getByText("Turn 2")).toBeInTheDocument()
         expect(preview.getByText("equal timestamp")).toBeInTheDocument()
         expect(preview.getByText("4 rounds")).toBeInTheDocument()

@@ -3,11 +3,12 @@ import type { UiMessage } from "@shared/ExtensionMessage"
 import { fireEvent, render, screen } from "@testing-library/react"
 import React, { useState } from "react"
 import { describe, expect, it, vi } from "vitest"
+import { UiLanguageProvider } from "@/i18n/UiLanguageProvider"
 import type { MessageHandlers } from "../../types/chatTypes"
 import { isActivityFold } from "../../utils/chatRowKinds"
 import { groupChatRows } from "../../utils/messageUtils"
 import { rowIdentity } from "../../utils/rowCoordinate"
-import { finishedTurnTranscript } from "./activityFoldStoryFixtures"
+import { completion, finishedRequest, finishedTurnTranscript, userTask } from "./activityFoldStoryFixtures"
 import { MessageRenderer } from "./MessageRenderer"
 
 void React
@@ -33,10 +34,16 @@ const messageHandlers: MessageHandlers = {
 }
 
 /** The list projects folds before rendering, as ChatView does. */
-function Harness({ level = "user_turn" }: { level?: "none" | "message_segment" | "user_turn" }) {
+function Harness({
+    level = "user_turn",
+    messages = finishedTurnTranscript,
+}: {
+    level?: "none" | "message_segment" | "user_turn"
+    messages?: UiMessage[]
+}) {
     const [expandedRows, setExpandedRows] = useState<Record<number, boolean>>({})
     const [expandedFolds, setExpandedFolds] = useState<Record<string, boolean>>({})
-    const rows = groupChatRows(finishedTurnTranscript, undefined, { level })
+    const rows = groupChatRows(messages, undefined, { level })
     return (
         <>
             <button onClick={() => setExpandedFolds({})} type="button">
@@ -45,7 +52,7 @@ function Harness({ level = "user_turn" }: { level?: "none" | "message_segment" |
             {rows.map((row, index) => (
                 <div className="contents" data-row-ts={Array.isArray(row) ? row[0].ts : row.ts} key={rowIdentity(row)}>
                     <MessageRenderer
-                        checkpointAttachments={indexPreEditCheckpointAttachments(finishedTurnTranscript)}
+                        checkpointAttachments={indexPreEditCheckpointAttachments(messages)}
                         expandedRows={expandedRows}
                         foldExpansion={{
                             expanded: expandedFolds,
@@ -56,7 +63,7 @@ function Harness({ level = "user_turn" }: { level?: "none" | "message_segment" |
                         index={index}
                         messageHandlers={messageHandlers}
                         messageOrGroup={row}
-                        modifiedMessages={finishedTurnTranscript}
+                        modifiedMessages={messages}
                         onAddToInput={() => undefined}
                         onFollowupOptionSelect={async () => undefined}
                         onHeightChange={() => undefined}
@@ -73,6 +80,45 @@ const renderedRows = (container: HTMLElement) =>
     Array.from(container.querySelectorAll<HTMLElement>("[data-row-ts]"), (row) => row.dataset.rowTs)
 
 describe("ActivityFoldRenderer", () => {
+    it("switches the MCP summary language without resetting the expanded fold", () => {
+        const messages: UiMessage[] = [
+            userTask(1, "Query the service"),
+            finishedRequest(2),
+            {
+                ts: 10,
+                type: "say",
+                say: "use_mcp_server",
+                text: JSON.stringify({ type: "use_mcp_tool", serverName: "docs", toolName: "search" }),
+            },
+            {
+                ts: 11,
+                type: "say",
+                say: "mcp_server_response",
+                text: JSON.stringify({ type: "mcp_server_response", requestTs: 10, responses: ["failed"], isError: true }),
+            },
+            finishedRequest(20),
+            completion(30, "Complete."),
+        ]
+        const tree = (language: "en" | "zh-CN") => (
+            <UiLanguageProvider language={language}>
+                <Harness messages={messages} />
+            </UiLanguageProvider>
+        )
+        const view = render(tree("en"))
+        const header = screen.getByTestId("activity-fold-header")
+        expect(header).toHaveTextContent("1 MCP (1 tool, 1 failed)")
+        fireEvent.click(header)
+        const children = screen.getByTestId("activity-fold-children")
+        view.rerender(tree("zh-CN"))
+        expect(screen.getByTestId("activity-fold-header")).toBe(header)
+        expect(header).toHaveTextContent("1 个 MCP（1 次工具调用，1 次失败）")
+        expect(header).toHaveAttribute("aria-expanded", "true")
+        expect(screen.getByTestId("activity-fold-children")).toBe(children)
+        view.rerender(tree("en"))
+        expect(header).toHaveTextContent("1 MCP (1 tool, 1 failed)")
+        expect(header).toHaveAttribute("aria-expanded", "true")
+    })
+
     it("draws a whole-turn summary including prose, not nested request folds", () => {
         const rows = groupChatRows(finishedTurnTranscript, undefined, { level: "user_turn" })
         expect(rows.map(rowIdentity)).toEqual(["1", "turn:10", "51"])

@@ -949,6 +949,8 @@ export interface UiSayMcpServerResponse {
     type: "mcp_server_response"
     requestTs: number
     responses: string[]
+    /** Absent on legacy rows; response prose is not a failure status. */
+    isError?: boolean
 }
 
 export interface UiAskUseMcpServer {

@@ -112,7 +112,7 @@ describe("FocusChain history and layout", () => {
         expectPreservedContent()
 
         view.rerender(tree("zh-CN"))
-        expect(screen.getByLabelText("收起焦点链")).toBeVisible()
+        expect(screen.getByLabelText("收起专注链")).toBeVisible()
         expect(within(history).getByText(`已完成 — ${firstDate}`)).toBe(firstHeading)
         expect(within(history).getByText(`已完成 — ${secondDate}`)).toBeVisible()
         expectPreservedContent()

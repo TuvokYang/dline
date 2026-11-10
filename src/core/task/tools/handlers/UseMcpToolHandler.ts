@@ -193,6 +193,7 @@ export class UseMcpToolHandler implements IFullyManagedTool {
                 type: "mcp_server_response",
                 requestTs,
                 responses: responseItems,
+                isError: toolResult?.isError === true,
             } satisfies UiSayMcpServerResponse)
             await config.callbacks.say("mcp_server_response", responsePresentation)
 
@@ -224,6 +225,7 @@ export class UseMcpToolHandler implements IFullyManagedTool {
                     type: "mcp_server_response",
                     requestTs,
                     responses: [safeMessage],
+                    isError: true,
                 } satisfies UiSayMcpServerResponse),
             )
             return failed(formatResponse.toolError(safeMessage), "execution", "mcp_call_failed")

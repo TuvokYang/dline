@@ -23,7 +23,7 @@ export const zhCN = {
     "settings.ui.features.strictPlanHelp": "在规划模式中禁止编辑文件",
     "settings.ui.features.compact": "自动压缩",
     "settings.ui.features.compactHelp": "自动压缩对话历史。",
-    "settings.ui.features.focus": "焦点链",
+    "settings.ui.features.focus": "专注链",
     "settings.ui.features.focusHelp": "在交互之间保持上下文焦点",
     "settings.ui.features.images": "启用图像生成",
     "settings.ui.features.imagesHelp": "开放 generate_image 工具，并通过已配置的图像来源路由调用。",
