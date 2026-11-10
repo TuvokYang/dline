@@ -1,0 +1,18 @@
+.peakText {
+    /* Match the peak segment's paint over the translucent off-peak track. */
+    color: transparent;
+    background-image:
+        linear-gradient(var(--pricing-peak-color), var(--pricing-peak-color)),
+        linear-gradient(
+            color-mix(in srgb, var(--pricing-track-color) var(--pricing-track-opacity), transparent),
+            color-mix(in srgb, var(--pricing-track-color) var(--pricing-track-opacity), transparent)
+        );
+    background-clip: text;
+}
+
+@media (forced-colors: active) {
+    .peakText {
+        color: CanvasText;
+        background-image: none;
+    }
+}

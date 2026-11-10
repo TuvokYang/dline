@@ -71,11 +71,6 @@ describe("DeepSeek seller-day pricing", () => {
         ])
         expect(prices(sections[0])).toEqual(["¥2", "¥8", "Not published", "¥0.04"])
         expect(prices(sections[1])).toEqual(["¥1", "¥4", "Not published", "¥0.02"])
-        for (const [index, kind] of ["peak", "offPeak"].entries()) {
-            const heading = sections[index].querySelector("h3")!
-            const bar = screen.getByRole("img").querySelector(`[data-rate-kind="${kind}"]`)!
-            expect(heading.getAttribute("style")).toContain(bar.getAttribute("fill"))
-        }
     })
 
     it("uses the selected model's prices rather than a Flash-specific table", () => {

@@ -1,8 +1,24 @@
+import type { CSSProperties } from "react"
 import { useUiTranslation } from "@/i18n/UiLanguageProvider"
+import styles from "./PricingTimeline.module.css"
 
 export const PRICING_RATE_COLORS = {
     peak: "var(--vscode-charts-orange, #f59e0b)",
     offPeak: "var(--vscode-charts-green, #22c55e)",
+} as const
+
+const TRACK_OPACITY = 0.45
+
+export const PRICING_RATE_TEXT = {
+    peak: {
+        className: styles.peakText,
+        style: {
+            "--pricing-peak-color": PRICING_RATE_COLORS.peak,
+            "--pricing-track-color": PRICING_RATE_COLORS.offPeak,
+            "--pricing-track-opacity": `${TRACK_OPACITY * 100}%`,
+        } as CSSProperties,
+    },
+    offPeak: { className: undefined, style: { color: PRICING_RATE_COLORS.offPeak } },
 } as const
 
 export interface PricingInterval {
@@ -39,7 +55,7 @@ export function PricingTimeline({
                 role="img"
                 viewBox="0 0 1440 12">
                 <title>{label}</title>
-                <rect fill={PRICING_RATE_COLORS.offPeak} height="12" opacity="0.45" width="1440" x="0" />
+                <rect fill={PRICING_RATE_COLORS.offPeak} height="12" opacity={TRACK_OPACITY} width="1440" x="0" />
                 {windows.map((window, index) => (
                     <rect
                         data-rate-kind={window.kind}
@@ -47,7 +63,7 @@ export function PricingTimeline({
                         fill={PRICING_RATE_COLORS[window.kind ?? "peak"]}
                         height="12"
                         key={`${window.startMinute}-${window.endMinute}`}
-                        opacity={window.kind === "offPeak" ? 0.45 : undefined}
+                        opacity={window.kind === "offPeak" ? TRACK_OPACITY : undefined}
                         width={window.endMinute - window.startMinute}
                         x={window.startMinute}>
                         <title>
@@ -64,11 +80,11 @@ export function PricingTimeline({
                 <span>24</span>
             </div>
             <div className="mt-1 flex gap-3 text-[11px]">
-                <span style={{ color: PRICING_RATE_COLORS.offPeak }}>
+                <span {...PRICING_RATE_TEXT.offPeak}>
                     {peakOffPeakLabels ? t("settings.ui.offPeakRates") : t("settings.ui.defaultRates")}
                 </span>
                 {(!peakOffPeakLabels || windows.some((window) => window.kind !== "offPeak")) && (
-                    <span style={{ color: PRICING_RATE_COLORS.peak }}>
+                    <span {...PRICING_RATE_TEXT.peak}>
                         {peakOffPeakLabels ? t("settings.ui.peakRates") : t("settings.ui.windowRates")}
                     </span>
                 )}

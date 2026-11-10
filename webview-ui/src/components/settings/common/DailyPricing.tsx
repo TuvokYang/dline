@@ -2,10 +2,11 @@ import type { TimeOfDayPricing } from "@shared/proto/dline/models/metadata"
 import { resolvePricingDay } from "@shared/providers/pricing-schedule"
 import { useEffect, useState } from "react"
 import { useUiTranslation } from "@/i18n/UiLanguageProvider"
+import { cn } from "@/lib/utils"
 import { type DailyPricingWindow, dailyPricingRateGroups, dailyPricingWindows } from "./daily-pricing"
 import { PricingTierEditor } from "./ModelTierEditor"
 import { PriceSetFields } from "./PriceSetFields"
-import { formatPricingClock, formatPricingOffset, PRICING_RATE_COLORS, PricingTimeline } from "./PricingTimeline"
+import { formatPricingClock, formatPricingOffset, PRICING_RATE_TEXT, PricingTimeline } from "./PricingTimeline"
 
 function formatPeriods(windows: readonly DailyPricingWindow[]): string {
     return windows
@@ -75,7 +76,9 @@ export function DailyPricing({ time, currencySymbol, showCachePrices, atMs }: Da
                         className="flex flex-col gap-2 rounded-xs border border-editor-widget-border p-2"
                         data-rate-group={kind}
                         key={kind}>
-                        <h3 className="m-0 text-xs font-semibold" style={{ color: PRICING_RATE_COLORS[kind] }}>
+                        <h3
+                            className={cn("m-0 text-xs font-semibold", PRICING_RATE_TEXT[kind].className)}
+                            style={PRICING_RATE_TEXT[kind].style}>
                             {title}
                         </h3>
                         {groups.map((group) => {
@@ -83,7 +86,9 @@ export function DailyPricing({ time, currencySymbol, showCachePrices, atMs }: Da
                             return (
                                 <div className="flex flex-col gap-2" key={window.startMinute}>
                                     {groups.length > 1 && (
-                                        <p className="m-0 text-xs" style={{ color: PRICING_RATE_COLORS[kind] }}>
+                                        <p
+                                            className={cn("m-0 text-xs", PRICING_RATE_TEXT[kind].className)}
+                                            style={PRICING_RATE_TEXT[kind].style}>
                                             {formatPeriods(group)}
                                         </p>
                                     )}
