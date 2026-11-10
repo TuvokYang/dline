@@ -1152,6 +1152,7 @@ e2e(
         await activateDlinePanelByFrame(dlineGroup, panelA)
         await expect(panelA.getByTestId("chat-input")).toBeVisible()
         await selectProfile(panelA, E2E_PROFILE_NAMES.mockOpenAi)
+        await dismissExtensionsDisabledNotification(page)
         await panelA.getByTestId("chat-input").fill(panelATask)
         const panelASubmittedAtMs = Date.now()
         await panelA.getByTestId("send-button").click()
@@ -1160,6 +1161,7 @@ e2e(
         await activateDlinePanelByFrame(dlineGroup, panelB)
         await expect(panelB.getByTestId("chat-input")).toBeVisible()
         await selectProfile(panelB, E2E_PROFILE_NAMES.mockOpenAiResponses)
+        await dismissExtensionsDisabledNotification(page)
         await panelB.getByTestId("chat-input").fill(panelBTask)
         const panelBSubmittedAtMs = Date.now()
         await clickInDlinePanel(dlineGroup, panelB, panelB.getByTestId("send-button"))
@@ -1330,6 +1332,7 @@ e2e(
                 followUpResult: taskCase.followUpResult,
             }
             tasks.push(task)
+            await dismissExtensionsDisabledNotification(page)
             const input = frame.getByTestId("chat-input")
             await input.fill(task.marker)
             await frame.getByTestId("send-button").click()
