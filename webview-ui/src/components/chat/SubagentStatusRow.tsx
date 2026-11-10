@@ -482,7 +482,7 @@ export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
                         const retryKey = `retry:${entry.jobId ?? ""}`
                         return (
                             <div
-                                className="flex max-h-[30vh] flex-col overflow-hidden rounded-xs border border-editor-group-border"
+                                className="flex max-h-[max(30vh,240px)] flex-col overflow-hidden rounded-xs border border-editor-group-border"
                                 data-testid="subagent-item"
                                 key={itemKey}
                                 style={{ backgroundColor: "var(--vscode-editor-background)" }}>
