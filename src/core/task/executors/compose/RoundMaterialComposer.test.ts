@@ -7,6 +7,7 @@ import type { ProviderDraftEnvelope } from "../../stores/payload/TaskPayloadEnve
 import { JournalConversationView } from "../provider/service/JournalConversationView"
 import { ProviderJournalMessageMaterializer } from "../provider/service/ProviderJournalMessageMaterializer"
 import { ProductionComposeAdapter } from "./ProductionComposeAdapter"
+import { RetainedInputJournalBatch } from "./RetainedInputJournalBatch"
 import { RoundMaterialComposer } from "./RoundMaterialComposer"
 
 function harness() {
@@ -85,6 +86,142 @@ describe("ordered round material journal projection", () => {
         await h.materials.appendBody(plan, signal())
         await h.materials.appendTail(plan, "changed environment", true, signal())
         expect(await h.journal.read()).toEqual(before)
+    })
+
+    it("batches acceptance identities without taking other materials that share their bytes", async () => {
+        const h = harness()
+        const payloadRef = await h.payloads.put(encodeTaskPayload({ kind: "user_input", text: "SAME_BODY" }))
+        const entries = ["first", "second"].map((entryId) => ({ entryId, payloadRef }))
+        const batch = await new RetainedInputJournalBatch(h.payloads, h.journal).stage({
+            deliveryId: "delivery",
+            entries,
+            generation: 0,
+            signal: signal(),
+            roundMaterialOwned: true,
+        })
+        const plan: RoundMaterialPlan = {
+            id: "plan",
+            frozenRevision: 2,
+            notices: [],
+            inputs: [
+                ...entries.map((entry) => ({ ...entry, id: entry.entryId, revision: 1, source: "intake" as const })),
+                { id: "ordinary", entryId: "other-entry", payloadRef, revision: 2, source: "intake" },
+            ],
+        }
+        await h.materials.appendBody(plan, signal(), [batch])
+        const view = await h.view.entries()
+        const text = JSON.stringify(view.flatMap((entry) => [...entry.messages]))
+        expect(text.match(/SAME_BODY/g)).toHaveLength(3)
+        expect(text.match(/sent by the user while work was in progress/g)).toHaveLength(1)
+        expect(view.filter((entry) => entry.kind === "round_material_input")).toHaveLength(2)
+        const before = await h.journal.read()
+        await new RoundMaterialComposer(h.payloads, h.journal).appendBody(plan, signal(), [batch])
+        expect(await h.journal.read()).toEqual(before)
+    })
+
+    it.each([
+        "payload",
+        "membership",
+    ] as const)("refuses a batch/plan %s conflict before appending any material", async (conflict) => {
+        const h = harness()
+        const refs = await Promise.all(
+            ["FIRST", "SECOND"].map(async (text) => h.payloads.put(encodeTaskPayload({ kind: "user_input", text }))),
+        )
+        const entries = refs.map((payloadRef, index) => ({ entryId: `entry-${index}`, payloadRef }))
+        const batch = await new RetainedInputJournalBatch(h.payloads, h.journal).stage({
+            deliveryId: "delivery",
+            entries,
+            generation: 0,
+            signal: signal(),
+            roundMaterialOwned: true,
+        })
+        const inputs: RoundMaterialPlan["inputs"] = entries.map((entry, index) => ({
+            ...entry,
+            id: entry.entryId,
+            source: "intake",
+            revision: index * 2,
+            ...(conflict === "payload" && index === 1 ? { payloadRef: refs[0] } : {}),
+        }))
+        const plan: RoundMaterialPlan = {
+            id: "plan",
+            frozenRevision: 4,
+            inputs: conflict === "membership" ? inputs.slice(0, 1) : inputs,
+            notices: [],
+        }
+        const before = await h.journal.read()
+        await expect(h.materials.appendBody(plan, signal(), [batch])).rejects.toThrow("RetainedMaterialIdentityConflict")
+        expect(await h.journal.read()).toEqual(before)
+    })
+
+    it.each([
+        false,
+        true,
+    ])("preserves interleaved material revisions after retained inputs were released and selected again (reordered=%s)", async (reordered) => {
+        const h = harness()
+        const refs = await Promise.all(
+            ["FIRST", "SECOND"].map(async (text) => h.payloads.put(encodeTaskPayload({ kind: "user_input", text }))),
+        )
+        const entries = refs.map((payloadRef, index) => ({ entryId: `entry-${index}`, payloadRef }))
+        const batch = await new RetainedInputJournalBatch(h.payloads, h.journal).stage({
+            deliveryId: "delivery",
+            entries,
+            generation: 0,
+            signal: signal(),
+            roundMaterialOwned: true,
+        })
+        const plan: RoundMaterialPlan = {
+            id: "plan",
+            frozenRevision: 4,
+            inputs: entries.map((entry, index) => ({
+                ...entry,
+                id: entry.entryId,
+                revision: reordered ? 2 - index * 2 : index * 2,
+                source: "intake",
+            })),
+            notices: [{ id: "exit", kind: "away_exited", revision: 1, reason: "stopped" }],
+        }
+        await h.materials.appendBody(plan, signal(), [batch])
+        const visible = (await h.view.entries()).filter((entry) => entry.messages.length > 0)
+        expect(visible.map((entry) => entry.kind)).toEqual(["round_material_input", "round_notice", "round_material_input"])
+        expect(JSON.stringify(visible[0].messages)).toContain(reordered ? "SECOND" : "FIRST")
+        expect(JSON.stringify(visible[2].messages)).toContain(reordered ? "FIRST" : "SECOND")
+        expect(JSON.stringify(visible).match(/sent by the user while work was in progress/g)).toHaveLength(1)
+        const before = await h.journal.read()
+        await new RoundMaterialComposer(h.payloads, h.journal).appendBody(plan, signal(), [batch])
+        expect(await h.journal.read()).toEqual(before)
+    })
+
+    it("does not append split material after cancellation during its derived input write", async () => {
+        const h = harness()
+        const entries = await Promise.all(
+            ["FIRST", "SECOND"].map(async (text) => ({
+                entryId: text,
+                payloadRef: await h.payloads.put(encodeTaskPayload({ kind: "user_input", text })),
+            })),
+        )
+        const batch = await new RetainedInputJournalBatch(h.payloads, h.journal).stage({
+            deliveryId: "delivery",
+            entries,
+            generation: 0,
+            signal: signal(),
+            roundMaterialOwned: true,
+        })
+        const plan: RoundMaterialPlan = {
+            id: "plan",
+            frozenRevision: 4,
+            inputs: entries.map((entry, index) => ({ ...entry, id: entry.entryId, revision: index * 2, source: "intake" })),
+            notices: [{ id: "between", kind: "away_exited", revision: 1, reason: "stopped" }],
+        }
+        const controller = new AbortController()
+        const put = h.payloads.put.bind(h.payloads)
+        vi.spyOn(h.payloads, "put").mockImplementation(async (bytes) => {
+            const ref = await put(bytes)
+            controller.abort("cancel after projection")
+            return ref
+        })
+        await expect(h.materials.appendBody(plan, controller.signal, [batch])).rejects.toBe("cancel after projection")
+        expect((await h.journal.read()).map((entry) => entry.operationId)).toEqual(["intake.retained:delivery"])
+        expect(await h.view.messages()).toEqual([])
     })
 
     it("recovers the exact draft after the checkpoint commits but draft storage fails", async () => {

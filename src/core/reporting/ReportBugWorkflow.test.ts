@@ -7,7 +7,7 @@ const effects = vi.hoisted(() => ({
     openIssue: vi.fn(async () => undefined),
     issue: vi.fn(async () => "SUP-ABCD-1234"),
     openAuthorized: vi.fn(async () => undefined),
-    discard: vi.fn(async () => undefined),
+    discard: vi.fn(async (): Promise<void> => undefined),
     logError: vi.fn(),
 }))
 
@@ -192,6 +192,51 @@ describe("ReportBugWorkflow", () => {
 
         expect(effects.openAuthorized).toHaveBeenCalledWith(unchecked)
         expect(effects.issue).not.toHaveBeenCalled()
+    })
+
+    it("keeps the tool-open contract blocked until its receiver actually answers", async () => {
+        let answer!: (outcome: InteractionOutcome) => void
+        const open = vi.fn(
+            () =>
+                new Promise<InteractionOutcome>((resolve) => {
+                    answer = resolve
+                }),
+        )
+        let finished = false
+        const pending = openReportBugPreview({
+            interactions: { open },
+            turnId: "tool-turn",
+            interactionId: "tool-block",
+            content,
+            environment,
+        }).then((outcome) => {
+            finished = true
+            return outcome
+        })
+        await vi.waitFor(() => expect(open).toHaveBeenCalledOnce())
+        expect(finished).toBe(false)
+        expect(effects.openIssue).not.toHaveBeenCalled()
+        answer({ actionId: "reject" })
+        await expect(pending).resolves.toBe("cancelled")
+    })
+
+    it("does not start the authorized effect if the task is fenced while opt-out cleanup awaits", async () => {
+        let release!: () => void
+        let current = true
+        effects.discard.mockImplementationOnce(
+            () =>
+                new Promise<void>((resolve) => {
+                    release = resolve
+                }),
+        )
+        const unchecked = { ...createReportBugDraft(content, environment, "SUP-ABCD-1234"), temporaryTelemetryConsent: false }
+        const pending = executeReportBugOutcome(approve(unchecked), undefined, () => current)
+        expect(effects.discard).toHaveBeenCalledOnce()
+        current = false
+        release()
+        await expect(pending).resolves.toBe("invalid")
+        expect(effects.openAuthorized).not.toHaveBeenCalled()
+        expect(effects.openIssue).not.toHaveBeenCalled()
     })
 
     it("rejects a confirmed outcome without a canonical draft", async () => {

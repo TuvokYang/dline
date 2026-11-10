@@ -91,6 +91,21 @@ export class JournalConversationView implements ConversationHistoryReader {
         return undefined
     }
 
+    /** Locate a row's rendered input, not a suppressed intake or an unrelated system message. */
+    async inputPositionAfter(position: JournalWatermark, through?: JournalWatermark): Promise<JournalWatermark | undefined> {
+        for (const item of await this.entries(through)) {
+            if (item.entry.watermark.seq <= position.seq || item.messages.length === 0) continue
+            if (item.kind === "round_material_input" || item.entry.source === "intake" || item.entry.source === "dialog") {
+                return item.entry.watermark
+            }
+            // A frozen notice or an answering result can precede the same input.
+            // Environment, provider, and other system prose belong to another boundary.
+            if (item.kind === "round_notice" || item.entry.source === "tool") continue
+            return undefined
+        }
+        return undefined
+    }
+
     /** The provider messages through `through`, in journal order. */
     async messages(through?: JournalWatermark): Promise<ClineStorageMessage[]> {
         const seq = through?.seq ?? this.journal.watermark().seq

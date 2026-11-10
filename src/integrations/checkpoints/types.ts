@@ -1,6 +1,11 @@
 import type { CheckpointRoundReason } from "@core/task/checkpoints/CheckpointGate"
 import type { CompactionRestoreDisposition } from "@core/task/compaction/CompactionSummaryLanding"
-import type { CheckpointRestoreMode, CheckpointRestoreResult, WorkspaceRestoreResult } from "@core/task/shell/checkpoint-restore"
+import type {
+    CheckpointRestoreMode,
+    CheckpointRestoreResult,
+    CheckpointRestoreRow,
+    WorkspaceRestoreResult,
+} from "@core/task/shell/checkpoint-restore"
 import type { CheckpointReferenceSet } from "@shared/checkpoints"
 import type { CheckpointSource } from "@shared/ExtensionMessage"
 import type { CheckpointChangedFile } from "./CheckpointTracker"
@@ -39,6 +44,14 @@ export interface CanonicalCheckpointPort {
          * its capture failed.
          */
         readonly fallback?: { readonly journalTarget: { readonly seq: number }; readonly workspaceRef?: string }
+        /**
+         * Where the row's own chat returns to. The stored boundary is where the
+         * row was written, which is not the same position once the row's input or
+         * the tool results answering calls made before it were journaled after it.
+         * The port resolves this once and uses it for the whole transaction, so
+         * the conversation, the rewind and the saved snapshot agree.
+         */
+        readonly row?: CheckpointRestoreRow
         readonly restoreWorkspace: (workspaceRef: string) => Promise<WorkspaceRestoreResult>
     }): Promise<CheckpointRestoreResult>
 }

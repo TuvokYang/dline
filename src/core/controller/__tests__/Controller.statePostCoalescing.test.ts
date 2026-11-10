@@ -1,6 +1,12 @@
+import { PromptFreshnessInvalidationCoordinator } from "@core/prompts/system-prompt-cache/PromptFreshnessInvalidationCoordinator"
 import { createInitialTaskState } from "@core/task/kernel"
+import type { MessageStateHandler } from "@core/task/message-state"
+import { TaskInputPresenter } from "@core/task/session/TaskInputPresenter"
+import { InMemoryTaskPayloadStore } from "@core/task/stores/InMemoryRuntimeStores"
+import { encodeTaskPayload } from "@core/task/stores/payload/TaskPayloadCodec"
 import { projectCanonicalTaskView } from "@core/task/view/canonical/projectCanonicalTaskView"
-import type { TaskViewState } from "@shared/ExtensionMessage"
+import type { ExtensionState, TaskViewState, UiMessage } from "@shared/ExtensionMessage"
+import type { PromptFreshnessSnapshot } from "@shared/PromptFreshness"
 import type { UiLanguagePreference } from "@shared/UiLanguage"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { Controller } from "../index"
@@ -102,6 +108,121 @@ describe("Controller state publication coalescing", () => {
             expect(buildState).toHaveBeenCalledTimes(1)
             expect(sendStateUpdate).toHaveBeenCalledTimes(1)
         } finally {
+            vi.useRealTimers()
+        }
+    })
+
+    it("delivers an accepted task title after an empty opening without provider activity", async () => {
+        vi.useFakeTimers()
+        const { controller } = createController("task-a")
+        try {
+            const rows: UiMessage[] = []
+            const payloads = new InMemoryTaskPayloadStore()
+            const payloadRef = await payloads.put(
+                encodeTaskPayload({ kind: "user_input", entryId: "entry-a", text: "new task input" }),
+            )
+            const messages = {
+                clineMessages: rows,
+                captureConversationPosition: () => ({ conversationHistoryIndex: -1 }),
+                addToClineMessages: async (row: UiMessage) => {
+                    rows.push(row)
+                },
+            } as unknown as MessageStateHandler
+            vi.spyOn(controller as Controller & { buildState(r: number): Promise<never> }, "buildState").mockImplementation(
+                async (stateRevision: number) =>
+                    ({
+                        stateRevision,
+                        taskTitleMessage: rows.find((row) => row.say === "task"),
+                        totalMessageCount: rows.filter((row) => row.say !== "task").length,
+                    }) satisfies Pick<ExtensionState, "stateRevision" | "taskTitleMessage" | "totalMessageCount"> as never,
+            )
+            await controller.postStateToWebview({ immediate: true })
+            expect(vi.mocked(sendStateUpdate).mock.calls[0]?.[1].taskTitleMessage).toBeUndefined()
+            const presenter = new TaskInputPresenter(
+                payloads,
+                messages,
+                () => 1000,
+                () => controller.postStateToWebview(),
+            )
+            const prepared = await presenter.prepare({ entryId: "entry-a", payloadRef })
+            await prepared.commit()
+            await vi.advanceTimersByTimeAsync(50)
+
+            const delivered = vi.mocked(sendStateUpdate).mock.calls.at(-1)?.[1]
+            expect(delivered?.taskTitleMessage).toMatchObject({ say: "task", text: "new task input", interactionId: "entry-a" })
+            expect(delivered?.totalMessageCount).toBe(0)
+            expect(sendStatePatch).not.toHaveBeenCalled()
+        } finally {
+            Object.assign(controller, { disposed: true })
+            vi.clearAllTimers()
+            vi.useRealTimers()
+        }
+    })
+
+    it("holds a late input publication across an opening handoff and publishes only the new opening", async () => {
+        vi.useFakeTimers()
+        const { controller } = createController("task-a")
+        const handoff = new OpeningHandoff()
+        const rows: UiMessage[] = []
+        const payloads = new InMemoryTaskPayloadStore()
+        const payloadRef = await payloads.put(
+            encodeTaskPayload({ kind: "user_input", entryId: "old-entry", text: "old task input" }),
+        )
+        const messages = {
+            clineMessages: rows,
+            captureConversationPosition: () => ({ conversationHistoryIndex: -1 }),
+            addToClineMessages: async (row: UiMessage) => {
+                rows.push(row)
+            },
+        } as unknown as MessageStateHandler
+        const newTitle: UiMessage = { ts: 2000, type: "say", say: "task", text: "new opening input" }
+        Object.assign(controller, { openingHandoff: handoff })
+        vi.spyOn(controller as Controller & { buildState(r: number): Promise<never> }, "buildState").mockImplementation(
+            async (stateRevision: number) =>
+                ({
+                    stateRevision,
+                    taskTitleMessage:
+                        controller.currentOpening()?.taskId === "task-b" ? newTitle : rows.find((row) => row.say === "task"),
+                    totalMessageCount: 0,
+                }) satisfies Pick<ExtensionState, "stateRevision" | "taskTitleMessage" | "totalMessageCount"> as never,
+        )
+        let finishHandoff!: () => void
+        const replacing = new Promise<void>((resolve) => {
+            finishHandoff = resolve
+        })
+        let replacement: Promise<void> | undefined
+        try {
+            await controller.postStateToWebview({ immediate: true })
+            replacement = handoff.run(
+                async () => {
+                    Object.assign(controller, { task: undefined })
+                    await replacing
+                    Object.assign(controller, { task: { taskId: "task-b" } })
+                },
+                () => controller.postStateToWebview({ immediate: true }),
+            )
+            const presenter = new TaskInputPresenter(
+                payloads,
+                messages,
+                () => 1000,
+                () => controller.postStateToWebview(),
+            )
+            await (await presenter.prepare({ entryId: "old-entry", payloadRef })).commit()
+            await vi.advanceTimersByTimeAsync(50)
+            expect(vi.mocked(sendStateUpdate).mock.calls.map((call) => call[1].taskTitleMessage)).toEqual([undefined])
+            finishHandoff()
+            await replacement
+
+            expect(vi.mocked(sendStateUpdate).mock.calls.map((call) => call[1].taskTitleMessage?.text)).toEqual([
+                undefined,
+                "new opening input",
+            ])
+            expect(controller.getCurrentTaskId()).toBe("task-b")
+        } finally {
+            Object.assign(controller, { disposed: true })
+            finishHandoff()
+            await replacement
+            vi.clearAllTimers()
             vi.useRealTimers()
         }
     })
@@ -372,6 +493,74 @@ describe("Controller state publication coalescing", () => {
             Object.assign(controller, { disposed: true })
             for (const release of releases) release()
             await Promise.all([publication, languagePublication])
+            await settle()
+            vi.clearAllTimers()
+            vi.useRealTimers()
+        }
+    })
+
+    it.each([
+        { patches: 1, replacement: false },
+        { patches: 3, replacement: false },
+        { patches: 1, replacement: true },
+        { patches: 3, replacement: true },
+    ])("delivers stale prompt freshness after $patches patches (replacement=$replacement)", async ({ patches, replacement }) => {
+        vi.useFakeTimers()
+        const { controller } = createController("task-a")
+        const releases: (() => void)[] = []
+        let holdBuilds = false
+        let freshness: PromptFreshnessSnapshot = { status: "fresh", changes: [], checkedAt: 0 }
+        const coordinator = new PromptFreshnessInvalidationCoordinator({
+            reevaluate: async () => {
+                freshness = { status: "stale", changes: [{ kind: "rules", summary: "Rules changed" }], checkedAt: 1 }
+            },
+            publishState: () => controller.postStateToWebview(),
+        })
+        try {
+            stubTaskView(controller)
+            vi.spyOn(controller as Controller & { buildState(r: number): Promise<never> }, "buildState").mockImplementation(
+                async (stateRevision: number) => {
+                    const snapshot = { stateRevision, promptFreshness: freshness }
+                    if (holdBuilds) await new Promise<void>((release) => releases.push(release))
+                    return snapshot as never
+                },
+            )
+            await controller.postStateToWebview({ immediate: true })
+            holdBuilds = true
+            coordinator.invalidate("prompt_input_file")
+            await vi.advanceTimersByTimeAsync(250)
+
+            for (let round = 0; round < patches; round++) {
+                expect(releases).toHaveLength(1)
+                await controller.postTaskViewPatchToWebview()
+                if (replacement && round === patches - 1) {
+                    holdBuilds = false
+                    await controller.postStateToWebview({ immediate: true })
+                }
+                releases.shift()?.()
+                await settle()
+                if (round < patches - 1) await vi.advanceTimersByTimeAsync(50)
+            }
+            // Once the finite burst ends, the dropped full snapshot must be
+            // replaced without another invalidation or a unary state read.
+            holdBuilds = false
+            await vi.advanceTimersByTimeAsync(150)
+            await settle()
+
+            expect(sendStatePatch).toHaveBeenCalledTimes(patches)
+            expect(sendStateUpdate).toHaveBeenCalledTimes(2)
+            const delivered = vi.mocked(sendStateUpdate).mock.calls.at(-1)?.[1]
+            expect(delivered?.promptFreshness).toMatchObject({
+                status: "stale",
+                changes: [{ kind: "rules" }],
+            })
+            expect(delivered?.stateRevision).toBeGreaterThan(
+                vi.mocked(sendStatePatch).mock.calls.at(-1)?.[1].stateRevision ?? Number.POSITIVE_INFINITY,
+            )
+        } finally {
+            coordinator.dispose()
+            Object.assign(controller, { disposed: true })
+            for (const release of releases) release()
             await settle()
             vi.clearAllTimers()
             vi.useRealTimers()

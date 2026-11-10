@@ -63,6 +63,22 @@ describe("checkpoint restore coordinator", () => {
         expect(subject.save).not.toHaveBeenCalled()
     })
 
+    it("rejects row intent without a resolver before changing workspace, conversation, or vault", async () => {
+        const subject = ports()
+
+        const result = await restoreCheckpoint(
+            { taskId: "task-1", checkpointRef: "checkpoint:1", mode: "combined", row: { keep: 1, seq: 1, keepInput: false } },
+            subject,
+        )
+
+        expect(result).toMatchObject({ kind: "rejected", diagnostics: [{ code: "checkpoint_row_boundary_unavailable" }] })
+        expect(subject.calls).toEqual(["resolve"])
+        expect(subject.stopAndFence).not.toHaveBeenCalled()
+        expect(subject.restoreWorkspace).not.toHaveBeenCalled()
+        expect(subject.applyConversationBoundary).not.toHaveBeenCalled()
+        expect(subject.save).not.toHaveBeenCalled()
+    })
+
     it("restores workspace only without stopping or mutating chat state", async () => {
         const subject = ports()
         const result = await restoreCheckpoint(

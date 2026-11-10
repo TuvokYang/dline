@@ -307,6 +307,22 @@ describe("InteractionHost", () => {
         expect(confirmed?.temporaryTelemetryConsent).toBe(false)
     })
 
+    it("submits the canonical report selection from a verified footer without a local anchor", async () => {
+        const dispatch = vi.fn(async () => ({ accepted: true, result: "accepted" }))
+        const report = reportBugInteraction("SUP-ABCD-1234")
+        if (!report.view.activeInteraction) throw new Error("Expected active interaction")
+        report.view.activeInteraction.presentationText = report.message.text
+        render(<InteractionHost dispatch={dispatch} messages={[SAY]} view={report.view} />)
+
+        fireEvent.click(screen.getByRole("button", { name: "Open GitHub Issue" }))
+
+        await waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
+        const request = dispatch.mock.calls[0][0]
+        expect(request.actionId).toBe("approve")
+        expect(request.interactionId).toBe("interaction-1")
+        expect(reportBugDraftFromSelection(request.selection?.values)).toEqual(report.draft)
+    })
+
     it("submits an explicit opt-out of the prepared authorization", async () => {
         const dispatch = vi.fn(async () => ({ accepted: true, result: "accepted" }))
         const report = reportBugInteraction("SUP-ABCD-1234")

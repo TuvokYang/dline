@@ -1,5 +1,5 @@
 import { StringRequest } from "@shared/proto/dline/common"
-import { createReportBugDraft, parseReportBugDraft, reportBugDraftSelection } from "@shared/report-bug"
+import { parseReportBugDraft } from "@shared/report-bug"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { reportBug } from "./reportBug"
 
@@ -37,29 +37,17 @@ vi.mock("@/services/support/SupportTelemetryService", () => ({
     }),
 }))
 
-function controller(error: string, consent = false) {
-    const draft = createReportBugDraft(
-        {
-            title: "Edited local title",
-            whatHappened: "Edited local details",
-            stepsToReproduce: "Edited steps",
-            apiRequestOutput: `safe:${error}`,
-            additionalContext: "Edited local context",
-        },
-        environment,
-        consent ? "SUP-ABCD-1234" : undefined,
-    )
-    const open = vi.fn(async (_request: { presentation: string }) => ({
-        actionId: "approve",
-        selection: { values: reportBugDraftSelection(draft) },
-    }))
+function controller(error: string) {
+    const admit = vi.fn(async (_request: { presentation: string }) => undefined)
+    const open = vi.fn()
     return {
+        admit,
         open,
         value: {
             stateManager: { getGlobalSettingsKey: () => "act", getApiConfiguration: () => ({}) },
             task: {
                 state: () => ({ flow: { error } }),
-                owners: { interactions: { open } },
+                owners: { interactions: { admit, open } },
             },
         },
     }
@@ -68,55 +56,41 @@ function controller(error: string, consent = false) {
 describe("reportBug local fallback", () => {
     beforeEach(() => vi.clearAllMocks())
 
-    it("opens the durable preview and ordinary local issue even when authorization fails", async () => {
+    it("admits the durable preview even when authorization fails, without waiting for an answer", async () => {
         support.issue.mockRejectedValueOnce(new Error("production_token_stopped"))
         const test = controller("profile parse failed")
-
         await reportBug(test.value as never, StringRequest.create({ value: "cannot select profile" }))
-
         expect(reporting.recent).toHaveBeenCalledWith("profile parse failed")
-        expect(test.open).toHaveBeenCalledWith(
+        expect(test.admit).toHaveBeenCalledWith(
             expect.objectContaining({ kind: "report_bug", placement: "interrupt", presentation: expect.any(String) }),
         )
-        expect(reporting.open).toHaveBeenCalledWith(
-            expect.objectContaining({ title: "Edited local title", whatHappened: "Edited local details" }),
-            environment,
-        )
-        expect(support.issue).toHaveBeenCalledOnce()
+        expect(parseReportBugDraft(test.admit.mock.calls[0][0].presentation)?.supportCode).toBeUndefined()
+        expect(test.open).not.toHaveBeenCalled()
+        expect(reporting.open).not.toHaveBeenCalled()
         expect(support.open).not.toHaveBeenCalled()
     })
 
-    it("routes local consent through support without opening the ordinary issue path", async () => {
-        const test = controller("provider execution failed", true)
-
+    it("prepares local consent before admission but does not execute the outcome in the unary", async () => {
+        const test = controller("provider execution failed")
         await reportBug(test.value as never, StringRequest.create({ value: "provider failed" }))
-
         expect(support.issue).toHaveBeenCalledOnce()
-        expect(support.open).toHaveBeenCalledWith(
-            expect.objectContaining({ supportCode: "SUP-ABCD-1234", temporaryTelemetryConsent: true }),
-        )
+        expect(parseReportBugDraft(test.admit.mock.calls[0][0].presentation)).toMatchObject({
+            supportCode: "SUP-ABCD-1234",
+            temporaryTelemetryConsent: true,
+        })
+        expect(support.open).not.toHaveBeenCalled()
         expect(reporting.open).not.toHaveBeenCalled()
     })
 
-    it("creates an empty durable task owner before opening a no-profile preview", async () => {
-        const draft = createReportBugDraft(
-            {
-                title: "Edited no-profile title",
-                whatHappened: "No profile was available",
-                stepsToReproduce: "Open Dline and submit /reportbug",
-                apiRequestOutput: "No recent task error was available.",
-                additionalContext: "Edited before confirmation",
-            },
-            environment,
-        )
-        const open = vi.fn(async () => ({ actionId: "approve", selection: { values: reportBugDraftSelection(draft) } }))
+    it("creates an empty durable task owner before admitting a no-profile preview", async () => {
+        const admit = vi.fn(async () => undefined)
         const value = {
             stateManager: { getGlobalSettingsKey: () => "act", getApiConfiguration: () => ({}) },
             task: undefined as unknown,
             initTask: vi.fn(async function (this: { task: unknown }) {
                 this.task = {
                     state: () => ({ flow: {} }),
-                    owners: { interactions: { open } },
+                    owners: { interactions: { admit } },
                 }
                 return "report-bug-task"
             }),
@@ -125,8 +99,8 @@ describe("reportBug local fallback", () => {
         await reportBug(value as never, StringRequest.create({ value: "no profile" }))
 
         expect(value.initTask).toHaveBeenCalledWith()
-        expect(open).toHaveBeenCalledWith(expect.objectContaining({ kind: "report_bug", placement: "interrupt" }))
-        expect(reporting.open).toHaveBeenCalledWith(expect.objectContaining({ title: "Edited no-profile title" }), environment)
+        expect(admit).toHaveBeenCalledWith(expect.objectContaining({ kind: "report_bug", placement: "interrupt" }))
+        expect(reporting.open).not.toHaveBeenCalled()
     })
 
     // The composer already removed the command node; text that merely looks like
@@ -136,7 +110,7 @@ describe("reportBug local fallback", () => {
 
         await reportBug(test.value as never, StringRequest.create({ value: "  /reportbug is what I typed first  " }))
 
-        const presentation = test.open.mock.calls[0]?.[0].presentation
+        const presentation = test.admit.mock.calls[0]?.[0].presentation
         expect(parseReportBugDraft(presentation)?.content.whatHappened).toBe("/reportbug is what I typed first")
     })
 
@@ -145,7 +119,7 @@ describe("reportBug local fallback", () => {
 
         await reportBug(test.value as never, StringRequest.create({ value: "   " }))
 
-        const presentation = test.open.mock.calls[0]?.[0].presentation
+        const presentation = test.admit.mock.calls[0]?.[0].presentation
         expect(parseReportBugDraft(presentation)?.content.whatHappened).toBe("Please describe what happened.")
     })
 })

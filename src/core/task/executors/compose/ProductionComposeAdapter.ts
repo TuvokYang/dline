@@ -336,7 +336,19 @@ export class ProductionComposeAdapter implements ComposePort {
     ): Promise<ComposeRoundResult> {
         try {
             await this.appendContinuation(input, this.options.readState())
-            await this.materials.appendBody(plan, input.signal)
+            const retainedBatches: RetainedBatchReceipt[] = []
+            if (input.respondedQueue) {
+                retainedBatches.push(
+                    await this.retainedBatches.stage({
+                        deliveryId: input.respondedQueue.deliveryId,
+                        entries: input.respondedQueue.entries,
+                        generation: this.options.readState().generation,
+                        turnId: input.turnId,
+                        signal: input.signal,
+                        roundMaterialOwned: true,
+                    }),
+                )
+            }
             let queueJournalReceipt
             if (input.queueDelivery) {
                 const receipt = await this.retainedBatches.stage({
@@ -349,12 +361,19 @@ export class ProductionComposeAdapter implements ComposePort {
                     signal: input.signal,
                     roundMaterialOwned: true,
                 })
+                retainedBatches.push(receipt)
                 queueJournalReceipt = {
                     deliveryId: receipt.deliveryId,
                     entries: receipt.entries,
                     journalWatermark: receipt.watermark,
                 }
             }
+            await this.materials.appendBody(
+                plan,
+                input.signal,
+                retainedBatches,
+                entries.filter((entry) => entry.queue === undefined),
+            )
             const environment = await this.options.environment?.render({ turnId: input.turnId, signal: input.signal })
             const admission = (await this.options.contextWindowGuard?.admit({ signal: input.signal, environment })) ?? {
                 kind: "ready" as const,

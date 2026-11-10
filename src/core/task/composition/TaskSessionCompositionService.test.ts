@@ -5,7 +5,10 @@ import { SETTINGS_DEFAULTS } from "@shared/storage/state-keys"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { TaskActivityPersistence } from "../activity/TaskActivityPersistence"
 import { TaskActivityStore } from "../activity/TaskActivityStore"
+import { createInitialTaskState } from "../kernel"
 import { TaskPromptLifecycle } from "../prompt/TaskPromptLifecycle"
+import type { ActiveTaskSession } from "../session/ActiveTaskSession"
+import { LocalReportBugContinuation } from "../session/LocalReportBugContinuation"
 import type { TaskPersistenceAssembly } from "../shell/TaskPersistenceAssembly"
 import { InMemoryConversationJournal } from "../stores/InMemoryRuntimeStores"
 import {
@@ -14,6 +17,7 @@ import {
     type OpenTaskSessionCompositionOptions,
     TaskSessionCompositionService,
 } from "./TaskSessionCompositionService"
+import type { TaskSessionHostContext } from "./TaskSessionHostFactory"
 import { ApiHistoryImportError } from "./TaskUpgradeImport"
 
 const persistenceMock = vi.hoisted(() => ({ open: vi.fn() }))
@@ -115,6 +119,63 @@ describe("TaskSessionCompositionService", () => {
         expect(persistence.close).toHaveBeenCalledOnce()
         expect(stores.uiMessage.close).toHaveBeenCalledOnce()
         expect(stores.apiConversation.close).toHaveBeenCalledOnce()
+    })
+
+    it("wires local ReportBug answers to the task-owned continuation before the generic fallback", async () => {
+        const stores = messageStores()
+        persistenceMock.open.mockResolvedValue({
+            close: vi.fn(async () => undefined),
+            ports: { journal: new InMemoryConversationJournal() },
+            payloads: { put: vi.fn(), read: vi.fn() },
+        } as unknown as TaskPersistenceAssembly)
+        vi.spyOn(TaskActivityPersistence.prototype, "load").mockResolvedValue([])
+        vi.spyOn(TaskActivityPersistence.prototype, "close").mockResolvedValue(undefined)
+        vi.spyOn(TaskPromptLifecycle.prototype, "start").mockImplementation(() => undefined)
+        vi.spyOn(TaskPromptLifecycle.prototype, "dispose").mockResolvedValue(undefined)
+        vi.spyOn(coreApi, "buildApiHandler").mockReturnValue({} as never)
+        // Probe the real production wire; separate Runtime tests exercise the effect.
+        const continued = vi.spyOn(LocalReportBugContinuation.prototype, "continue").mockResolvedValue("continued")
+        const boundary = new Error("assembly probe complete")
+        const interactionId = "report-bug-local:composition"
+        const create = vi.fn(async (context: TaskSessionHostContext) => {
+            const initial = createInitialTaskState("task-open-failure")
+            const state = {
+                ...initial,
+                dialog: {
+                    ...initial.dialog,
+                    primary: {
+                        interactionId,
+                        turnId: "local",
+                        kind: "report_bug",
+                        status: "resolving",
+                        createdRevision: 0,
+                        presentationRef: "preview",
+                        actionRules: [],
+                        acceptedResponse: { actionId: "reject", stateRevision: 0, receiverGeneration: 0 },
+                    },
+                },
+            }
+            context.interactions.bind({
+                writable: true,
+                state: () => state,
+                assembly: { runtime: { submit: async () => ({ kind: "accepted", receipt: { durable: Promise.resolve() } }) } },
+            } as unknown as ActiveTaskSession)
+            expect(await context.interactions.resolve(interactionId, { actionId: "reject" })).toBe(true)
+            throw boundary
+        })
+        await expect(
+            new TaskSessionCompositionService().open({
+                ...openOptions(stores),
+                cwd: ".",
+                deferRestoredCommands: true,
+                stateManager: stateManagerFixture() as never,
+                prompt: { ports: { promptContext: {} } } as never,
+                hostFactory: { create },
+                publishState: async () => undefined,
+            }),
+        ).rejects.toBe(boundary)
+        expect(create).toHaveBeenCalledOnce()
+        expect(continued).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ interactionId, kind: "report_bug" }))
     })
 
     it.each(["host factory", "post-host composition"] as const)("releases acquired owners on %s failure", async (stage) => {

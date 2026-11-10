@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { resolveProvider } from "@core/api"
 import { collectReportBugEnvironment, type ReportBugContent, recentReportBugError } from "@core/reporting/ReportBugIssue"
-import { openReportBugPreview } from "@core/reporting/ReportBugWorkflow"
+import { admitLocalReportBugPreview } from "@core/reporting/ReportBugWorkflow"
 import { Empty, StringRequest } from "@shared/proto/dline/common"
 import { Controller } from ".."
 
@@ -44,7 +44,7 @@ export async function reportBug(controller: Controller, request: StringRequest):
     const task = controller.task
     if (!task) throw new Error("ReportBug preview requires an active task interaction owner")
     const operationId = randomUUID()
-    await openReportBugPreview({
+    await admitLocalReportBugPreview({
         interactions: task.owners.interactions,
         turnId: `report-bug-local:${operationId}`,
         interactionId: `report-bug-local:${operationId}`,

@@ -1,23 +1,35 @@
 import type { UiMessage } from "@shared/ExtensionMessage"
-import { describe, expect, it } from "vitest"
-import type { MessageStateHandler } from "../../message-state"
+import { Logger } from "@shared/services/Logger"
+import { describe, expect, it, vi } from "vitest"
+import { JournalConversationView } from "../../executors/provider/service/JournalConversationView"
+import { ProviderJournalMessageMaterializer } from "../../executors/provider/service/ProviderJournalMessageMaterializer"
+import { createInitialTaskState, type TaskEvent } from "../../kernel"
+import { MessageStateHandler } from "../../message-state"
+import type { RuntimeFacade } from "../../runtime"
+import { TaskShell } from "../../shell/TaskShell"
 import type { TaskPayloadStore } from "../../stores"
-import { encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
+import { InMemoryConversationJournal, InMemoryTaskPayloadStore } from "../../stores/InMemoryRuntimeStores"
+import { JournalConversationRewind } from "../../stores/JournalConversationRewind"
+import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
 import type { UserInputEnvelope } from "../../stores/payload/TaskPayloadEnvelopes"
 import { TaskInputPresenter } from "../TaskInputPresenter"
 
 function messageState() {
     const rows: UiMessage[] = []
+    const visibleRows: UiMessage[] = []
+    const publishState = async () => {
+        visibleRows.splice(0, visibleRows.length, ...rows.map((row) => ({ ...row })))
+    }
     const messages = {
         get clineMessages() {
             return rows
         },
-        conversationSize: () => 0,
+        captureConversationPosition: () => ({ conversationHistoryIndex: -1 }),
         addToClineMessages: async (message: Partial<UiMessage>) => {
             rows.push(message as UiMessage)
         },
     } as unknown as MessageStateHandler
-    return { messages, rows }
+    return { messages, rows, visibleRows, publishState }
 }
 
 function payloadStore(envelope: Partial<UserInputEnvelope>): TaskPayloadStore {
@@ -32,6 +44,33 @@ function sequence(start = 1000): () => number {
     return () => ++last
 }
 
+function submissionRuntime(taskId: string, accepts: boolean) {
+    const state = createInitialTaskState(taskId)
+    const events: TaskEvent[] = []
+    const runtime: RuntimeFacade = {
+        getState: () => state,
+        submit: async (event) => {
+            events.push(event)
+            return accepts
+                ? { kind: "accepted", state, commands: [], receipt: { revision: 0, durable: Promise.resolve() } }
+                : {
+                      kind: "rejected",
+                      reason: "read_only",
+                      state,
+                      diagnostic: { code: "read_only", message: "Test runtime is read-only" },
+                  }
+        },
+        projectTransient: () => {},
+        waitForDurable: async () => {},
+        waitForDomainCompletion: async () => {},
+        waitForQuiescence: async () => {},
+        grantWriteOwnership: () => {},
+        isWritable: () => accepts,
+        releaseRestoredCommands: () => {},
+    }
+    return { runtime, events }
+}
+
 /** Prepare and commit one submission, which is what an accepted submit does. */
 async function present(presenter: TaskInputPresenter, entryId: string): Promise<void> {
     const prepared = await presenter.prepare({ entryId, payloadRef: `ref:${entryId}` })
@@ -39,12 +78,120 @@ async function present(presenter: TaskInputPresenter, entryId: string): Promise<
 }
 
 describe("TaskInputPresenter", () => {
+    it("publishes accepted input without waiting for provider output", async () => {
+        const state = messageState()
+        const ids = sequence()
+        const presenter = new TaskInputPresenter(payloadStore({ text: "first input" }), state.messages, ids, state.publishState)
+        const prepared = await presenter.prepare({ entryId: "entry-1", payloadRef: "ref-1" })
+
+        expect(state.visibleRows).toEqual([])
+        await prepared.commit()
+        expect(state.visibleRows).toEqual([
+            expect.objectContaining({ say: "task", text: "first input", interactionId: "entry-1" }),
+        ])
+
+        await present(
+            new TaskInputPresenter(payloadStore({ text: "second input" }), state.messages, ids, state.publishState),
+            "entry-2",
+        )
+        expect(state.visibleRows.map(({ say, text }) => ({ say, text }))).toEqual([
+            { say: "task", text: "first input" },
+            { say: "user_feedback", text: "second input" },
+        ])
+    })
+
+    it("publishes only after the accepted row write finishes", async () => {
+        const state = messageState()
+        let releaseWrite!: () => void
+        const writing = new Promise<void>((resolve) => {
+            releaseWrite = resolve
+        })
+        const add = state.messages.addToClineMessages.bind(state.messages)
+        state.messages.addToClineMessages = async (row) => {
+            await writing
+            await add(row)
+        }
+        const presenter = new TaskInputPresenter(
+            payloadStore({ text: "delayed input" }),
+            state.messages,
+            sequence(),
+            state.publishState,
+        )
+        const prepared = await presenter.prepare({ entryId: "entry-1", payloadRef: "ref-1" })
+        const committed = prepared.commit()
+        expect(state.visibleRows).toEqual([])
+        releaseWrite()
+        await committed
+        expect(state.visibleRows).toEqual([expect.objectContaining({ say: "task", text: "delayed input" })])
+    })
+
+    it("does not publish a row whose write failed", async () => {
+        const state = messageState()
+        state.messages.addToClineMessages = async () => {
+            throw new Error("RowWriteFailed")
+        }
+        const presenter = new TaskInputPresenter(
+            payloadStore({ text: "unwritten" }),
+            state.messages,
+            sequence(),
+            state.publishState,
+        )
+
+        await expect(present(presenter, "entry-1")).rejects.toThrow("RowWriteFailed")
+        expect(state.rows).toEqual([])
+        expect(state.visibleRows).toEqual([])
+    })
+
+    it("leaves a rejected runtime input unpublished", async () => {
+        const state = messageState()
+        const { runtime, events } = submissionRuntime("rejected-input", false)
+        const presenter = new TaskInputPresenter(
+            payloadStore({ text: "refused" }),
+            state.messages,
+            sequence(),
+            state.publishState,
+        )
+        const shell = new TaskShell(runtime, { rearm: async () => {}, forceClose: () => {} }, presenter)
+
+        expect(await shell.submitInput({ entryId: "entry-1", payloadRef: "ref-1" })).toMatchObject({ kind: "rejected" })
+        expect(events.map((event) => event.type)).toEqual(["user.submit"])
+        expect(state.rows).toEqual([])
+        expect(state.visibleRows).toEqual([])
+    })
+
+    it("does not reject or resubmit accepted input when its publication fails", async () => {
+        const state = messageState()
+        const { runtime, events } = submissionRuntime("accepted-input", true)
+        const failure = new Error("PublicationFailed")
+        let report!: () => void
+        const reported = new Promise<void>((resolve) => {
+            report = resolve
+        })
+        const log = vi.spyOn(Logger, "error").mockImplementation(() => report())
+        try {
+            const presenter = new TaskInputPresenter(payloadStore({ text: "accepted" }), state.messages, sequence(), async () => {
+                throw failure
+            })
+            const shell = new TaskShell(runtime, { rearm: async () => {}, forceClose: () => {} }, presenter)
+            expect(await shell.submitInput({ entryId: "entry-1", payloadRef: "ref-1" })).toMatchObject({ kind: "accepted" })
+            await reported
+            await present(presenter, "entry-1")
+
+            expect(events.map((event) => event.type)).toEqual(["user.submit"])
+            expect(state.rows).toEqual([expect.objectContaining({ say: "task", text: "accepted", interactionId: "entry-1" })])
+            expect(log).toHaveBeenCalledExactlyOnceWith(expect.any(String), failure)
+        } finally {
+            log.mockRestore()
+        }
+    })
+
     it("opens the task with what the user typed, not the admitted projection", async () => {
         const state = messageState()
         const presenter = new TaskInputPresenter(
             payloadStore({ text: "/compact please", admittedText: "<compact-instructions> please" }),
             state.messages,
             sequence(),
+            state.publishState,
         )
 
         await present(presenter, "entry-1")
@@ -56,7 +203,12 @@ describe("TaskInputPresenter", () => {
 
     it("withholds the row until the submission is accepted", async () => {
         const state = messageState()
-        const presenter = new TaskInputPresenter(payloadStore({ text: "refused" }), state.messages, sequence())
+        const presenter = new TaskInputPresenter(
+            payloadStore({ text: "refused" }),
+            state.messages,
+            sequence(),
+            state.publishState,
+        )
 
         const prepared = await presenter.prepare({ entryId: "entry-1", payloadRef: "ref-1" })
 
@@ -65,20 +217,79 @@ describe("TaskInputPresenter", () => {
         expect(state.rows).toHaveLength(1)
     })
 
+    it.each([false, true])("freezes the journal position before accepted work with keepInput=%s", async (keepInput) => {
+        const journal = new InMemoryConversationJournal()
+        const payloads = new InMemoryTaskPayloadStore()
+        const conversation = new JournalConversationView(journal, new ProviderJournalMessageMaterializer(payloads))
+        const appendInput = async (entryId: string, text: string) => {
+            const payloadRef = await payloads.put(encodeTaskPayload({ kind: "user_input", entryId, text }))
+            await journal.append({ operationId: entryId, payloadRef, source: "intake" })
+        }
+        await appendInput("initial", "initial input")
+        await conversation.count()
+        const messages = new MessageStateHandler({
+            taskId: "prepared-input-position",
+            ulid: "prepared-input-position",
+            updateTaskHistory: async () => [],
+            conversation,
+        })
+        const published: UiMessage[] = []
+        messages.on("clineMessagesChanged", (change) => {
+            if (change.message) published.push(change.message)
+        })
+        const inputRef = await payloads.put(encodeTaskPayload({ kind: "user_input", entryId: "old-input", text: "old input" }))
+        const presenter = new TaskInputPresenter(payloads, messages, sequence(), async () => {})
+        const prepared = await presenter.prepare({ entryId: "old-input", payloadRef: inputRef })
+
+        // Acceptance journals this input before TaskShell commits its UI row.
+        // Other accepted work can move the journal farther while commit is pending.
+        await journal.append({ operationId: "old-input", payloadRef: inputRef, source: "intake" })
+        await appendInput("later-input", "later input")
+        await conversation.count()
+        await prepared.commit()
+
+        expect(published).toHaveLength(1)
+        const row = published[0]
+        if (row.conversationHistoryIndex === undefined) throw new Error("Missing prepared conversation index")
+        const rewind = new JournalConversationRewind(journal)
+        const boundary = await rewind.resolveRowBoundary(
+            {
+                keep: row.conversationHistoryIndex + 1,
+                seq: row.conversationJournalSeq,
+                keepInput,
+            },
+            { seq: 1 },
+        )
+        await rewind.restoreTo({ operationId: "edit-prepared-row", target: boundary })
+        const retained = await Promise.all(
+            (await journal.project()).visibleMessages.map(async (entry) => {
+                if (!entry.payloadRef) throw new Error("Missing fixture input payload")
+                return decodeTaskPayload<UserInputEnvelope>(await payloads.read(entry.payloadRef)).text
+            }),
+        )
+
+        expect(retained).toEqual(keepInput ? ["initial input", "old input"] : ["initial input"])
+        expect(boundary).toEqual({ seq: keepInput ? 2 : 1 })
+        expect(row).toMatchObject({ conversationHistoryIndex: 0, conversationJournalSeq: 1 })
+    })
+
     it("shows a later submission as user feedback", async () => {
         const state = messageState()
         const ids = sequence()
-        const presenter = new TaskInputPresenter(payloadStore({ text: "first" }), state.messages, ids)
+        const presenter = new TaskInputPresenter(payloadStore({ text: "first" }), state.messages, ids, state.publishState)
         await present(presenter, "entry-1")
 
-        await present(new TaskInputPresenter(payloadStore({ text: "second" }), state.messages, ids), "entry-2")
+        await present(
+            new TaskInputPresenter(payloadStore({ text: "second" }), state.messages, ids, state.publishState),
+            "entry-2",
+        )
 
         expect(state.rows.map((row) => row.say)).toEqual(["task", "user_feedback"])
     })
 
     it("keeps one row for a replayed entry", async () => {
         const state = messageState()
-        const presenter = new TaskInputPresenter(payloadStore({ text: "hello" }), state.messages, sequence())
+        const presenter = new TaskInputPresenter(payloadStore({ text: "hello" }), state.messages, sequence(), state.publishState)
 
         await present(presenter, "entry-1")
         await present(presenter, "entry-1")
@@ -92,6 +303,7 @@ describe("TaskInputPresenter", () => {
             payloadStore({ text: "look", images: ["image-1"], files: ["file-1"] }),
             state.messages,
             sequence(),
+            state.publishState,
         )
 
         await present(presenter, "entry-1")
@@ -106,6 +318,7 @@ describe("TaskInputPresenter", () => {
             payloadStore({ text: "", admittedText: "", semanticInput: { schemaVersion: 1, nodes: [], resources: [] } as never }),
             state.messages,
             ids,
+            state.publishState,
         )
 
         await present(presenter, "entry-1")
@@ -136,6 +349,7 @@ describe("TaskInputPresenter", () => {
             payloadStore({ text: semanticInput.rawText, semanticInput: semanticInput as never }),
             state.messages,
             sequence(),
+            state.publishState,
         )
 
         await present(presenter, "entry-1")
@@ -175,6 +389,7 @@ describe("TaskInputPresenter", () => {
             payloadStore({ text: semanticInput.rawText, semanticInput: semanticInput as never }),
             state.messages,
             sequence(),
+            state.publishState,
         )
 
         await present(presenter, "entry-1")
@@ -197,7 +412,12 @@ describe("TaskInputPresenter", () => {
 
     it("records no facts for a legacy input, so its row reads as typed", async () => {
         const state = messageState()
-        const presenter = new TaskInputPresenter(payloadStore({ text: "/compact" }), state.messages, sequence())
+        const presenter = new TaskInputPresenter(
+            payloadStore({ text: "/compact" }),
+            state.messages,
+            sequence(),
+            state.publishState,
+        )
 
         await present(presenter, "entry-1")
 
@@ -206,7 +426,12 @@ describe("TaskInputPresenter", () => {
 
     it("still renders an attachment-only submission", async () => {
         const state = messageState()
-        const presenter = new TaskInputPresenter(payloadStore({ text: "", files: ["context.txt"] }), state.messages, sequence())
+        const presenter = new TaskInputPresenter(
+            payloadStore({ text: "", files: ["context.txt"] }),
+            state.messages,
+            sequence(),
+            state.publishState,
+        )
 
         await present(presenter, "entry-1")
 

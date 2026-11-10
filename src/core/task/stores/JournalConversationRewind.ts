@@ -1,4 +1,4 @@
-import type { ConversationJournal, JournalEntry, JournalSource, JournalWatermark } from "./contracts"
+import type { ConversationJournal, JournalEntry, JournalProjection, JournalSource, JournalWatermark } from "./contracts"
 import { compareJournalWatermarks, journalWatermarkKey, rebuildJournalProjection } from "./JournalProjection"
 
 /** The position before the first entry; rewinding to it empties the conversation. */
@@ -10,6 +10,8 @@ const INPUT_SOURCES: ReadonlySet<JournalSource> = new Set(["intake", "dialog"])
 /** Finds where a conversation of a given length stood, for rows that recorded only a length. */
 export interface ConversationLengthIndex {
     positionKeeping(keep: number): Promise<JournalWatermark | undefined>
+    /** The next rendered input, without crossing an unrelated conversation entry. */
+    inputPositionAfter?(position: JournalWatermark, through?: JournalWatermark): Promise<JournalWatermark | undefined>
 }
 
 /**
@@ -76,6 +78,13 @@ export class JournalConversationRewind {
         await this.journal.rewind({ operationId: input.operationId, target: input.target })
     }
 
+    /** Restore the current conversation, distinguishing new work from a retry of its last rewind. */
+    async restoreTo(input: { readonly operationId: string; readonly target: JournalWatermark }): Promise<void> {
+        const tail = this.journal.watermark()
+        if (compareJournalWatermarks(input.target, tail) === 0 || (await this.endsWithRewindTo(input.target))) return
+        await this.rewindTo({ operationId: `${input.operationId}@${tail.seq}`, target: input.target })
+    }
+
     /**
      * Return the conversation to where it stood when a chat row was written.
      *
@@ -90,14 +99,51 @@ export class JournalConversationRewind {
      */
     async rewindToRow(input: { readonly operationId: string; readonly row: ConversationRowPosition }): Promise<void> {
         const tail = this.journal.watermark()
-        const base = await this.positionOf(input.row)
+        const target = await this.resolveRowTarget(input.row, tail)
         // The conversation never grew to the row's length, so nothing was said after it.
-        if (!base) return
+        if (!target) return
+        await this.restoreTo({ operationId: input.operationId, target })
+    }
+
+    /**
+     * The position a row's conversation returns to, without recording anything.
+     *
+     * A restore resolves this once, before it mutates any store, so the
+     * conversation it rewinds, the snapshot it saves and the chat it truncates
+     * all describe the same position. The row's own recorded position is the
+     * base; `fallback` is where the checkpoint was captured, for a row written
+     * before rows recorded a position. What the row adds on top - the input it
+     * shows and the tool results answering calls made before it - is decided
+     * here, because only the journal knows what follows the row.
+     *
+     * The result is proved projectable before it is returned, so a position the
+     * restore could not rewind to refuses it while nothing has been mutated.
+     */
+    async resolveRowBoundary(row: ConversationRowPosition, fallback: JournalWatermark): Promise<JournalWatermark> {
+        const tail = this.journal.watermark()
+        const base = row.seq === undefined ? fallback : { seq: row.seq }
         if (compareJournalWatermarks(base, tail) > 0) throw new Error("ConversationRewindTargetAhead")
-        const target = await this.extendPast(base, input.row.keepInput === true)
-        if (compareJournalWatermarks(target, tail) === 0) return
-        if (await this.endsWithRewindTo(target)) return
-        await this.rewindTo({ operationId: `${input.operationId}@${tail.seq}`, target })
+        const target = await this.extendPast(base, row.keepInput === true)
+        // Nothing has been mutated yet, so a position the restore could not rewind
+        // to refuses it here instead of failing after the files moved.
+        if (compareJournalWatermarks(target, tail) > 0) throw new Error("ConversationRewindTargetAhead")
+        if (compareJournalWatermarks(target, tail) === 0) return target
+        await this.assertProjectable(`checkpoint.restore.resolve:${row.seq ?? base.seq}`, target, tail)
+        return target
+    }
+
+    /**
+     * What a row's recorded position resolves to.
+     *
+     * A row written before rows recorded a position is placed by its conversation
+     * length instead, and a conversation that never grew that long never said
+     * anything after the row.
+     */
+    private async resolveRowTarget(row: ConversationRowPosition, tail: JournalWatermark): Promise<JournalWatermark | undefined> {
+        const base = await this.positionOf(row)
+        if (!base) return undefined
+        if (compareJournalWatermarks(base, tail) > 0) throw new Error("ConversationRewindTargetAhead")
+        return await this.extendPast(base, row.keepInput === true)
     }
 
     private async positionOf(row: ConversationRowPosition): Promise<JournalWatermark | undefined> {
@@ -110,18 +156,48 @@ export class JournalConversationRewind {
     /**
      * Extend `base` over what still belongs to the row: its own input when it
      * follows immediately, then the tool results answering the calls it keeps.
-     * Only the current view is walked, so an entry an earlier rewind undid is
-     * never picked up again.
+     * A summary covering the row is undone by the restore, so its originals
+     * determine what follows the row. The base must remain reachable in the
+     * current journal before any of those originals can extend it.
      */
     private async extendPast(base: JournalWatermark, keepInput: boolean): Promise<JournalWatermark> {
-        const later = (await this.journal.project()).visibleMessages.filter(
-            (entry) => compareJournalWatermarks(entry.watermark, base) > 0,
-        )
+        const current = await this.journal.project()
+        const projection = await this.rowProjection(base, current)
+        const later = projection.visibleMessages.filter((entry) => compareJournalWatermarks(entry.watermark, base) > 0)
         let target = base
         let index = 0
-        if (keepInput && later[0] && isInput(later[0])) target = later[index++].watermark
+        if (keepInput && this.lengths?.inputPositionAfter) {
+            const input = await this.lengths.inputPositionAfter(base, projection.through)
+            if (input) {
+                const found = later.findIndex((entry) => compareJournalWatermarks(entry.watermark, input) === 0)
+                if (found < 0) throw new Error("ConversationRewindInputTargetMissing")
+                target = input
+                index = found + 1
+            }
+        } else if (keepInput && later[0] && isInput(later[0])) {
+            target = later[index++].watermark
+        }
         for (; index < later.length && isToolResult(later[index]); index++) target = later[index].watermark
+        if (compareJournalWatermarks(target, base) > 0) {
+            await this.assertProjectable(`checkpoint.restore.base:${base.seq}`, base, current.through)
+        }
         return target
+    }
+
+    /** Read behind summaries this row's restore will undo, each step at a strictly earlier journal prefix. */
+    private async rowProjection(base: JournalWatermark, current: JournalProjection): Promise<JournalProjection> {
+        let projection = current
+        for (;;) {
+            const summary = projection.visibleMessages.find(
+                (entry) => entry.range && entry.range.from.seq <= base.seq + 1 && entry.range.to.seq > base.seq,
+            )
+            if (!summary) return projection
+            const marker = await this.journal.findByOperation(summary.operationId)
+            if (!marker || marker.kind !== "supersede_range" || marker.watermark.seq > projection.through.seq) {
+                throw new Error("ConversationRewindSummaryMarkerMissing")
+            }
+            projection = await this.journal.project({ seq: marker.watermark.seq - 1 })
+        }
     }
 
     /** Whether the latest record already returned the conversation to `target`. */
