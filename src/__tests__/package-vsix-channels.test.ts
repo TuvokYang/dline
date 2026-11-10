@@ -17,6 +17,14 @@ import {
 
 const PROJECT_ROOT = process.cwd()
 
+interface ManifestKeybinding {
+    command: string
+    key: string
+    mac?: string
+    win?: string
+    linux?: string
+}
+
 async function readPackageVsix(): Promise<string> {
     return fs.readFile(path.join(PROJECT_ROOT, "scripts/package-vsix.mjs"), "utf8")
 }
@@ -65,10 +73,11 @@ describe("package-vsix release channels", () => {
         expect(marketplace.contributes.viewsContainers.activitybar[0].id).not.toBe(
             openVsx.contributes.viewsContainers.activitybar[0].id,
         )
-        expect(marketplace.contributes.keybindings).toHaveLength(packageJson.contributes.keybindings.length)
-        for (const [index, binding] of marketplace.contributes.keybindings.entries()) {
-            const sourceBinding: { key: string; mac?: string; win?: string; linux?: string } =
-                packageJson.contributes.keybindings[index]
+        const sourceBindings: ManifestKeybinding[] = packageJson.contributes.keybindings
+        const marketplaceBindings: ManifestKeybinding[] = marketplace.contributes.keybindings
+        expect(marketplaceBindings).toHaveLength(sourceBindings.length)
+        for (const [index, binding] of marketplaceBindings.entries()) {
+            const sourceBinding = sourceBindings[index]
             expect([binding.key, binding.mac, binding.win, binding.linux]).toEqual([
                 sourceBinding.key,
                 sourceBinding.mac,
