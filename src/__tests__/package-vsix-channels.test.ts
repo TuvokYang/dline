@@ -67,7 +67,8 @@ describe("package-vsix release channels", () => {
         )
         expect(marketplace.contributes.keybindings).toHaveLength(packageJson.contributes.keybindings.length)
         for (const [index, binding] of marketplace.contributes.keybindings.entries()) {
-            const sourceBinding = packageJson.contributes.keybindings[index]
+            const sourceBinding: { key: string; mac?: string; win?: string; linux?: string } =
+                packageJson.contributes.keybindings[index]
             expect([binding.key, binding.mac, binding.win, binding.linux]).toEqual([
                 sourceBinding.key,
                 sourceBinding.mac,
