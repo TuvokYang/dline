@@ -254,21 +254,29 @@ describe("production admission rejection", () => {
         if (!resultRef) throw new Error("Missing durable admission rejection")
         const envelope = decodeTaskPayload<ToolResultEnvelope>(await payloads.read(resultRef))
         expect(envelope).toMatchObject({ kind: "tool_result", blockId: "tid-admission", failed: true })
-        const messages = await new ProviderJournalMessageMaterializer(payloads).materialize([resultRef])
-        expect(messages).toHaveLength(1)
-        expect(messages[0]).toMatchObject({ role: "user" })
-        expect(messages[0].content).toEqual([
-            resultReplay === "text"
-                ? { type: "text", text: expect.stringContaining("Invalid parameter 'requires_approval'") }
-                : expect.objectContaining({
-                      type: "tool_result",
-                      function_id: "function-admission",
-                      dline_tid: "tid-admission",
-                      is_error: true,
-                  }),
-        ])
-        // A fresh reader uses the durable result, not a live handler or admission cache.
-        expect(await new ProviderJournalMessageMaterializer(payloads).materialize([resultRef])).toEqual(messages)
+        const clock = vi.spyOn(Date, "now").mockReturnValue(10_000)
+        try {
+            const messages = await new ProviderJournalMessageMaterializer(payloads).materialize([resultRef])
+            expect(messages).toHaveLength(1)
+            expect(messages[0]).toMatchObject({ role: "user", ts: 10_000 })
+            expect(messages[0].content).toEqual([
+                resultReplay === "text"
+                    ? { type: "text", text: expect.stringContaining("Invalid parameter 'requires_approval'") }
+                    : expect.objectContaining({
+                          type: "tool_result",
+                          function_id: "function-admission",
+                          dline_tid: "tid-admission",
+                          is_error: true,
+                      }),
+            ])
+            // Replay content is durable; ts records when this reader materializes it.
+            clock.mockReturnValue(20_000)
+            expect(await new ProviderJournalMessageMaterializer(payloads).materialize([resultRef])).toEqual(
+                messages.map((message) => ({ ...message, ts: 20_000 })),
+            )
+        } finally {
+            clock.mockRestore()
+        }
         expect(await journal.read()).toHaveLength(1)
         expect(harness.effect).not.toHaveBeenCalled()
         expect(harness.open).not.toHaveBeenCalled()
