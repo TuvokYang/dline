@@ -149,17 +149,17 @@ When a development task is complete, load `writing-documentation` before editing
 
 ### What's New and changelog content
 
-`CHANGELOG.md` (Chinese) and `docs/changelog/CHANGELOG_en.md` (English) record what shipped. `docs/whats-new/WHATS_NEW.md` (Chinese) and `docs/whats-new/WHATS_NEW_en.md` (English, the edition the dialog renders) present the highlights of one release. Users read all four; maintainers and the implementation are not the audience.
+`CHANGELOG.md` (Chinese) and `docs/changelog/CHANGELOG_en.md` (English) record release changes by category. `docs/whats-new/WHATS_NEW.md` (Chinese) and `docs/whats-new/WHATS_NEW_en.md` (English, the edition the dialog renders) present selected highlights for users.
 
-- An entry states behavior a user can observe. Class, table, protocol, and endpoint names are not entry content, and internal work appears on neither surface unless it changes what a user can observe.
+- Each changelog entry states what changed in one concise sentence.
 - One entry per change; unrelated changes stay separate.
-- Both pairs cover the same changes in the same order. The languages may phrase naturally but must not differ in features, defaults, limits, or support status.
+- Within each Chinese/English pair, keep the entries equivalent and in the same order.
 
 What's New carries at most five entries per version, each within 128 characters counting the bold lead-in, and only these three kinds: a feature the user can notice, a stability improvement, or a fix users hit. A change shipped by an earlier release is not restated as new.
 
 New work belongs under `Unreleased` until the release that carries it is tagged. Published sections describe what users already have; trimming and rewording apply to unreleased entries and to the next version, not to the record of what already shipped.
 
-The file format is a build contract: a bare `## X.Y.Z` newest heading, one flat `- ` list with two-space continuations, and only `**bold**`, backtick code, and absolute `https://` links inline. Run the What's New test at `webview-ui/src/__tests__/vite-whats-new.test.ts` after editing either edition.
+The What's New file format is a build contract: a bare `## X.Y.Z` newest heading, one flat `- ` list with two-space continuations, and only `**bold**`, backtick code, and absolute `https://` links inline. Run the What's New test at `webview-ui/src/__tests__/vite-whats-new.test.ts` after editing either edition.
 
 ## Git and release work
 

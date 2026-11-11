@@ -170,12 +170,12 @@ Within each registry, `dline` carries both the release and pre-release tracks; `
 
 Release-content invariants:
 
-- The paired changelogs have equivalent headings and user-visible scope. `Unreleased` records implemented, verified dev changes, not plans or internal-only churn.
-- `Unreleased` is the cumulative user-visible difference from the latest published production release. Verify that release's tag/commit and its shipped behavior before writing entries; the preceding commit, PR, local version bump, or development checkpoint is not the baseline.
+- The paired changelogs have equivalent headings and change records. `Unreleased` records implemented, verified dev changes, with one concise sentence per entry.
+- `Unreleased` records the cumulative actual changes from the latest published production release. Verify that release's tag/commit and its shipped state before writing entries; the preceding commit, PR, local version bump, or development checkpoint is not the baseline.
 - Describe an unreleased feature once by its final behavior. Correct its existing Added/Changed entry as development evolves; do not list fixes to its unshipped intermediate versions as released-product regressions.
-- Use Fixed only for a defect present in the release baseline. Omit reverted experiments, intermediate implementations, and changes with no net user-visible difference from that release; commit history is evidence, not a changelog outline.
+- Use Fixed only for a defect present in the release baseline. Omit reverted experiments, intermediate implementations, and changes with no net difference from that release; commit history is evidence, not a changelog outline.
 - Rollout-gated (gray-release) features and their changes must not appear in either language of the changelog or What's New. Add them only when the rollout restriction is removed and they ship as regular released features.
-- Tagged sections are non-empty. A production section covers all user-visible changes since the preceding production release, including the pre-release changes, rather than linking to a partial delta.
+- Tagged sections are non-empty. A production changelog section covers the actual release changes since the preceding production release, including the pre-release changes, rather than linking to a partial delta.
 - A prepared version agrees across package, lockfile, both changelogs and both top What's New sections. The What's New editions agree on version and item count and follow the parser's supported syntax.
 - Insiders is rolling: an untagged integration does not create a permanent version section or bump package/What's New for each commit.
 

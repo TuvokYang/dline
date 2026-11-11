@@ -34,7 +34,7 @@ git --no-pager log --oneline <previous-version-ref>..HEAD
 git --no-pager diff --stat <previous-version-ref>..HEAD
 ```
 
-Review implementation, tests, and user-visible behavior rather than deriving release notes only from commit subjects.
+Review implementation and tests to establish the actual changes for the changelog.
 
 ## 3. Update the release files
 
@@ -50,7 +50,7 @@ Update all six release facts together; every version bump, including a patch or 
 Freeze the paired changelogs according to repository-and-release before changing the package version:
 
 - For a new pre-release or a production patch, move the applicable non-empty `Unreleased` body into the exact `## [X.Y.Z]` section.
-- For a production release after one or more pre-releases, write a standalone cumulative `## [X.Y.Z]` section covering every user-visible change since the preceding production release; consolidate the odd-minor pre-release sections and any final `Unreleased` delta instead of copying only the latest delta or referring readers elsewhere.
+- For a production release after one or more pre-releases, write a standalone cumulative `## [X.Y.Z]` section covering the actual release changes since the preceding production release; consolidate the odd-minor pre-release sections and any final `Unreleased` delta instead of copying only the latest delta or referring readers elsewhere.
 - Recreate an empty `## [Unreleased]` section above the new version and keep all prior version sections as history.
 - Stop if the target section already exists with conflicting content, the two language editions describe different scopes, or the target section would be empty.
 
@@ -66,7 +66,7 @@ Use the existing changelog structure and include only sections that contain real
 ### Fixed
 ```
 
-The two changelogs must describe the same user-visible changes, not independent release scopes. Routine dev integrations update only `Unreleased`; they do not update package versions or What's New until this version-preparation workflow runs.
+The two changelogs record the same changes in the same order, using one concise sentence per entry. Routine dev integrations update only `Unreleased`; they do not update package versions or What's New until this version-preparation workflow runs.
 
 Add a What's New section for the exact target version at the top of both What's New files, above the previous release, which stays below as history:
 
@@ -78,7 +78,7 @@ Add a What's New section for the exact target version at the top of both What's 
 
 - The webview build ships only the first `##` section, and its heading must be a bare `X.Y.Z`. Do not place any other `##` heading above it.
 - That section must stand alone for the version. For a patch, carry forward the highlights of the current minor line that still apply and add the patch's user-visible fixes; do not write only "bug fixes".
-- Write three to six highlights selected from the changelog, each led by a bold summary. Allowed syntax is one flat `- ` list, two-space continuation lines, `**bold**`, `` `code` ``, and absolute `https://` links, without nesting; anything else fails the build.
+- Write at most five highlights selected from the changelog, each led by a bold summary; do not pad the list to reach a minimum count. Allowed syntax is one flat `- ` list, two-space continuation lines, `**bold**`, `` `code` ``, and absolute `https://` links, without nesting; anything else fails the build.
 - The Chinese edition carries the same version, the same number of items, and the same meaning.
 
 Update package and lockfile versions without changing dependency ranges. If using a package-manager command to synchronize them, that dependency/tooling operation requires the applicable authorization and its resulting diff must be reviewed.
