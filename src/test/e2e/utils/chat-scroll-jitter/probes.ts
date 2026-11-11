@@ -1,3 +1,4 @@
+import { writeFile } from "node:fs/promises"
 import type { Frame, TestInfo } from "@playwright/test"
 import { SETTLE_SAMPLE_COUNT, SETTLE_SAMPLE_INTERVAL_MS } from "./fixture"
 import type {
@@ -640,6 +641,18 @@ export async function startPaintSampling(sidebar: Frame, durationMs: number): Pr
 }
 export async function readPaintedFrames(sidebar: Frame): Promise<PaintedFrame[]> {
     return sidebar.evaluate(() => (window as unknown as { __dlinePaintedFrames?: PaintedFrame[] }).__dlinePaintedFrames ?? [])
+}
+/** Retain both measurement phases and their scroll writes outside a report-only attachment. */
+export async function persistSamplingEvidence(sidebar: Frame, testInfo: TestInfo, name: string): Promise<void> {
+    const samples = await readContinuousSamples(sidebar)
+    const painted = await readPaintedFrames(sidebar)
+    const causes = await readDisplacementCauses(sidebar)
+    const events = await sidebar.evaluate(
+        () => (window as unknown as { __dlineScrollEvents?: ScrollEventRecord[] }).__dlineScrollEvents ?? [],
+    )
+    const path = testInfo.outputPath(name)
+    await writeFile(path, `${JSON.stringify({ samples, painted, causes, events }, null, 2)}\n`, "utf8")
+    await testInfo.attach(name, { path, contentType: "application/json" })
 }
 export async function readRenderingState(sidebar: Frame): Promise<RenderingState> {
     return sidebar.evaluate(() => ({

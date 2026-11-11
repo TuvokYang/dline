@@ -27,6 +27,7 @@ import {
     largestAnchorJump,
     largestContentDisplacement,
     largestVisualError,
+    measurePaintedDirection,
     measurePaintedDisplacements,
     paintedFlashes,
     paintedShifts,
@@ -37,6 +38,7 @@ import {
     attachDiagnostics,
     captureVisibleRows,
     installScrollObserver,
+    persistSamplingEvidence,
     readContinuousSamples,
     readDisplacementCauses,
     readPaintedFrames,
@@ -1674,6 +1676,7 @@ e2e.describe("Chat virtual scroll jitter", () => {
                 // rows are still resolving their height, which is the condition the
                 // report describes.
                 await startContinuousSampling(sidebar, 3_000)
+                await startPaintSampling(sidebar, 3_000)
                 await scroller.hover()
                 for (let pass = 0; pass < 60; pass++) {
                     await page.mouse.wheel(0, -80)
@@ -1682,16 +1685,22 @@ e2e.describe("Chat virtual scroll jitter", () => {
                 await page.waitForTimeout(400)
 
                 const liveSamples = await readContinuousSamples(sidebar)
-                // The full series is passed through: `countBackwardFrames` owns the
-                // filtering, because compacting the array here would let samples
-                // that measured different rows look adjacent.
-                const backward = countBackwardFrames(liveSamples, 1)
+                await persistSamplingEvidence(sidebar, testInfo, "chat-scroll-direction-phases.json")
+                // rAF can read before Virtuoso compensates a measured row. Verify
+                // the final coordinates of every shared visible row, keeping the
+                // provisional series above for diagnosis rather than filtering it.
+                const painted = await readPaintedFrames(sidebar)
+                const direction = measurePaintedDirection(painted, 1)
+                const backward = direction.backwardFrames
+                expect(painted.length, "painted sampling must cover the scrolling drive").toBeGreaterThan(10)
+                expect(direction.comparedFrames, "scrolling must include comparable painted frames").toBeGreaterThan(0)
+                expect(direction.coverageGaps, "moving frames must retain shared row identities").toBe(0)
                 const rowSwitches = countTrackedRowSwitches(liveSamples)
                 const displacement = largestContentDisplacement(liveSamples)
                 const resolved = liveSamples.filter((sample) => sample.anchorTop !== null)
                 await testInfo.attach("chat-scroll-jitter-live-samples.json", {
                     body: JSON.stringify(
-                        { backward, rowSwitches, displacement, resolvedCount: resolved.length, samples: liveSamples },
+                        { backward, direction, rowSwitches, displacement, resolvedCount: resolved.length, samples: liveSamples },
                         null,
                         2,
                     ),

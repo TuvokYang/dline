@@ -88,6 +88,30 @@ export function countBackwardFrames(samples: AnchorSample[], expectedAnchorDirec
     }
     return backward
 }
+/** Check every shared visible row after resize compensation, not a provisional rAF anchor. */
+export function measurePaintedDirection(
+    frames: PaintedFrame[],
+    expectedAnchorDirection: 1 | -1,
+): { backwardFrames: number; comparedFrames: number; coverageGaps: number } {
+    const MIN_VISIBLE_PX = 6
+    let backwardFrames = 0
+    let comparedFrames = 0
+    let coverageGaps = 0
+    for (let index = 1; index < frames.length; index++) {
+        const previous = frames[index - 1]!
+        const current = frames[index]!
+        if (Math.sign(current.scrollTop - previous.scrollTop) !== -expectedAnchorDirection) continue
+        const shared = Object.entries(current.visible).filter(([ts]) => previous.visible[ts] !== undefined)
+        if (shared.length === 0) {
+            coverageGaps++
+            continue
+        }
+        comparedFrames++
+        if (shared.some(([ts, top]) => (top - previous.visible[ts]!) * expectedAnchorDirection <= -MIN_VISIBLE_PX))
+            backwardFrames++
+    }
+    return { backwardFrames, comparedFrames, coverageGaps }
+}
 export function countTrackedRowSwitches(samples: AnchorSample[]): number {
     let switches = 0
     for (let index = 1; index < samples.length; index++) {
