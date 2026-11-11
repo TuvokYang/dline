@@ -112,10 +112,9 @@ export function useBrowsingScrollAnchor(
         }
     }, [capture, invalidate, scheduleRestore, scroller])
 
-    // Another writer has taken over the position for the current content change
-    // (the list's own scroll-to-index after older history merges in). A second
-    // correction measured while that one is still settling would interrupt it,
-    // so drop the pending restore and let the next scroll capture afresh.
+    // Prepend compensation or explicit navigation owns this content change.
+    // Drop the browsing restore so it cannot become a second position writer;
+    // the next scroll captures the settled viewport afresh.
     const release = invalidate
 
     return { capture, scheduleRestore, release }

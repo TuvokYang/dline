@@ -1,3 +1,4 @@
+import { writeFile } from "node:fs/promises"
 import { BROWSE_TARGET_INDEX, openSeededTask, SETTLE_SAMPLE_COUNT, seedJitterTask } from "@e2e/utils/chat-scroll-jitter/fixture"
 import {
     countContestedRestores,
@@ -55,8 +56,14 @@ e2e.describe("Chat virtual scroll jitter", () => {
                     const match = /E2E_JITTER_MESSAGE_(\d{4})/u.exec(row.text)
                     return match ? [Number(match[1])] : []
                 })
+                const browseTrace = await sidebar.evaluate(() => {
+                    const scope = window as unknown as { __dlineScrollEvents: unknown[] }
+                    return { scrollOrigins: scope.__dlineScrollEvents }
+                })
+                const browsePath = testInfo.outputPath("chat-scroll-jitter-browse-state.json")
+                await writeFile(browsePath, JSON.stringify({ reachedIndexes, visibleRows, ...browseTrace }, null, 2))
                 await testInfo.attach("chat-scroll-jitter-browse-state.json", {
-                    body: JSON.stringify({ reachedIndexes, visibleRows }, null, 2),
+                    path: browsePath,
                     contentType: "application/json",
                 })
                 expect(reachedIndexes.length, "browsing must render identifiable seeded rows").toBeGreaterThan(0)

@@ -381,6 +381,28 @@ export function paintedShifts(frames: PaintedFrame[]): PaintedShift[] {
     }
     return shifts
 }
+/** Measure every frame pair; a missing shared identity is a coverage gap, not zero motion. */
+export function measurePaintedDisplacements(frames: PaintedFrame[]): { shifts: PaintedShift[]; coverageGaps: number } {
+    const shifts: PaintedShift[] = []
+    let coverageGaps = 0
+    for (let index = 1; index < frames.length; index++) {
+        const previous = frames[index - 1]!
+        const current = frames[index]!
+        const readerScroll = current.scrollTop - previous.scrollTop - (current.programmaticTotal - previous.programmaticTotal)
+        let largest: number | null = null
+        let sharedRows = 0
+        for (const [ts, top] of Object.entries(current.visible)) {
+            const before = previous.visible[ts]
+            if (before === undefined) continue
+            sharedRows++
+            const displacement = top - before + readerScroll
+            if (largest === null || Math.abs(displacement) > Math.abs(largest)) largest = displacement
+        }
+        if (largest === null) coverageGaps++
+        else shifts.push({ frame: index, time: current.time, shift: largest, readerScroll, sharedRows })
+    }
+    return { shifts, coverageGaps }
+}
 const PAINT_FLASH_MIN_PX = 60
 const PAINT_FLASH_WINDOW_MS = 100
 export interface PaintedFlash {

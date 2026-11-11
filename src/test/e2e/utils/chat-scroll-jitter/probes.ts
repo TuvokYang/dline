@@ -21,6 +21,17 @@ interface RowShiftRecord {
     lastIndex?: string | null
     scrollTop?: number
     padding?: number
+    source?: {
+        ts: string | null
+        tag: string | null
+        className: string | null
+        previousTop: number
+        previousBottom: number
+        currentTop: number
+        currentBottom: number
+        viewportTop: number
+        viewportBottom: number
+    }
 }
 interface CorrectionPhaseRecord {
     time: number
@@ -165,6 +176,20 @@ export async function installScrollObserver(sidebar: Frame): Promise<void> {
                             lastIndex: window?.lastIndex,
                             scrollTop: window ? scroller.scrollTop : undefined,
                             padding: window?.padding,
+                            source:
+                                Math.abs(dy) >= 120
+                                    ? {
+                                          ts: element?.closest<HTMLElement>("[data-message-ts]")?.dataset.messageTs ?? null,
+                                          tag: element?.tagName ?? null,
+                                          className: element?.getAttribute("class") ?? null,
+                                          previousTop: source.previousRect.top,
+                                          previousBottom: source.previousRect.bottom,
+                                          currentTop: source.currentRect.top,
+                                          currentBottom: source.currentRect.bottom,
+                                          viewportTop: scroller.getBoundingClientRect().top,
+                                          viewportBottom: scroller.getBoundingClientRect().bottom,
+                                      }
+                                    : undefined,
                         })
                     }
                 }

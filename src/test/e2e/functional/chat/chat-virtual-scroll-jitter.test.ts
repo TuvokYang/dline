@@ -27,6 +27,7 @@ import {
     largestAnchorJump,
     largestContentDisplacement,
     largestVisualError,
+    measurePaintedDisplacements,
     paintedFlashes,
     paintedShifts,
     unexplainedShift,
@@ -86,6 +87,7 @@ e2e.describe("Chat virtual scroll jitter", () => {
 
                 await installScrollObserver(sidebar)
                 await startContinuousSampling(sidebar, 150_000)
+                await startPaintSampling(sidebar, 150_000)
 
                 // Byte-for-byte the reproduction's drive. Changing the plan here
                 // would make the two runs incomparable and defeat the control.
@@ -111,8 +113,10 @@ e2e.describe("Chat virtual scroll jitter", () => {
                 const samples = await readContinuousSamples(sidebar)
                 const visual = largestVisualError(samples)
                 const { rowShifts, correctionPhases } = await readPaintProbes(sidebar)
-                const painted = rowShifts.filter((shift) => Math.abs(shift.dy) >= 120)
-                const large = rowShifts.filter((shift) => Math.abs(shift.dy) >= 300)
+                const paintedFrames = await readPaintedFrames(sidebar)
+                const displacement = measurePaintedDisplacements(paintedFrames)
+                const painted = displacement.shifts.filter((shift) => Math.abs(shift.shift) >= 120)
+                const large = displacement.shifts.filter((shift) => Math.abs(shift.shift) >= 300)
 
                 // Confirm the fixture actually is uniform before reading anything
                 // into the numbers above. A wrapped row would be twice the height
@@ -153,36 +157,29 @@ e2e.describe("Chat virtual scroll jitter", () => {
                     ),
                 )
                 console.log("[paint] size notifications:", correctionPhases.length)
+                const scrollOrigins = await sidebar.evaluate(
+                    () => (window as unknown as { __dlineScrollEvents: unknown[] }).__dlineScrollEvents,
+                )
+                const controlPath = testInfo.outputPath("chat-scroll-uniform-control.json")
+                await writeFile(
+                    controlPath,
+                    JSON.stringify(
+                        { heights, visual, rowShifts, correctionPhases, scrollOrigins, samples, paintedFrames, displacement },
+                        null,
+                        2,
+                    ),
+                )
                 await testInfo.attach("chat-scroll-uniform-control.json", {
-                    body: JSON.stringify({ heights, visual, rowShifts: rowShifts.slice(0, 200), samples }, null, 2),
+                    path: controlPath,
                     contentType: "application/json",
                 })
 
-                // What this control established, and why only one of the two
-                // probes is gated.
-                //
-                // The paint probe reads zero on this fixture: 305 shift entries,
-                // none of them past 120px, the largest 60px at a paging boundary.
-                // The list still pages windows and still repositions itself here,
-                // so that silence is the Layout Instability rule working as
-                // written — a node that moved only because its container
-                // scrolled is not a shift candidate, and a programmatic jump
-                // scrolls the container like any other. It can therefore be
-                // trusted to report displacement rather than travel.
-                //
-                // `visualError` reads -183px on the same run, past the 120px it
-                // is gated at elsewhere. Nothing on this fixture can grow after
-                // mount, so there is no displacement for it to have found: the
-                // figure is the probe's own error. It samples in the
-                // animation-frame callbacks, before the resize-observation
-                // broadcast and before paint, so it cannot subtract a correction
-                // that has not been issued yet. It stays printed as a diagnostic
-                // and must not be used to accept or reject a candidate fix until
-                // it reads zero here.
-                //
-                // Absolute value matters: the figure is signed, and -183 passes
-                // any bare `toBeLessThan(120)` while failing the property it is
-                // supposed to express.
+                // LayoutShift attribution rectangles are clipped; an empty side is
+                // (0,0,0,0), not a message positioned at the page origin. Preserve
+                // those raw records, but gate actual same-message geometry after
+                // resize delivery. Missing correspondence must fail calibration.
+                expect(paintedFrames.length, "calibration must observe painted frames").toBeGreaterThan(SETTLE_SAMPLE_COUNT / 2)
+                expect(displacement.coverageGaps, "every painted frame pair must retain an identifiable row").toBe(0)
                 expect(painted.length, "equal-height rows have nothing to re-measure, so nothing may be displaced").toBe(0)
                 expect(large.length, "no equal-height row may be displaced by half a viewport").toBe(0)
                 console.log(

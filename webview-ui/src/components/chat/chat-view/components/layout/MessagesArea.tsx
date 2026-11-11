@@ -37,7 +37,7 @@ import { buildMessageRowKey, getBottomFollowIntent, mergeMessageWindow } from ".
 import { advanceRowCoordinate, ROW_INDEX_BASE, type RowCoordinate } from "../../utils/rowCoordinate"
 import { LAYOUT_SETTLE_RETRY_MS } from "../../utils/scrollArbiter"
 import { nestedScrollerConsumesWheel } from "../../utils/scrollUtils"
-import { findFirstVisibleMessage, ROW_SOURCE_INDEX_ATTRIBUTE } from "../../utils/viewportRowAnchor"
+import { ROW_SOURCE_INDEX_ATTRIBUTE } from "../../utils/viewportRowAnchor"
 import { decideWindowGrowth, SCROLL_SETTLE_MS } from "../../utils/windowGrowthTiming"
 import { createMessageRenderer, rowSourceIndex } from "../messages/MessageRenderer"
 import floatingControls from "./FloatingControls.module.css"
@@ -105,18 +105,6 @@ type TailMessageSnapshot = {
     contentSignature: string
     renderSignature: string
 }
-/**
- * The row the reader was looking at when older history was merged in ahead of
- * it, read from the layout at the moment of the merge.
- */
-type MergeAnchor = {
-    /** A message in the anchored row; still found after the row is regrouped. */
-    ts: number
-    /** Where the row's top sat in the viewport, restored after the merge. */
-    viewportOffset: number
-    /** Window start before the merge; the anchor only applies once it moves. */
-    windowStart: number
-}
 
 function createTailMessageSnapshot(message: UiMessage | undefined): TailMessageSnapshot | null {
     if (!message) return null
@@ -168,7 +156,6 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
     const clineMessagesLengthRef = useRef(clineMessages.length)
     const inflightRef = useRef<Set<string>>(new Set())
     const pendingEdgeScrollRef = useRef<ScrollEdge | null>(null)
-    const pendingMergeAnchorRef = useRef<MergeAnchor | null>(null)
     const latestVisibleMessageRangeRef = useRef<VisibleMessageRange | null>(null)
     const latestExtensionRangeRef = useRef<VisibleMessageRange | null>(null)
     const userScrollIntentRef = useRef<UserScrollIntent | null>(null)
@@ -221,7 +208,6 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
         windowGeneration.advance()
         inflightRef.current.clear()
         pendingEdgeScrollRef.current = null
-        pendingMergeAnchorRef.current = null
         latestVisibleMessageRangeRef.current = null
         latestExtensionRangeRef.current = null
         userScrollIntentRef.current = null
@@ -509,36 +495,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
             // Row heights are unknown until Virtuoso measures the new window.
             scrollToLoadedEdge(pendingEdge, "auto", true)
         }
-
-        // The first commit after a leading merge was requested is the merge
-        // itself; when the merge was dropped nothing re-renders, and the next
-        // unrelated commit discards the anchor because the window did not grow.
-        const mergeAnchor = pendingMergeAnchorRef.current
-        if (!mergeAnchor) return
-        pendingMergeAnchorRef.current = null
-        if (firstItemIndex >= mergeAnchor.windowStart) return
-
-        // Rows inserted above the viewport have estimated heights, so the list
-        // alone cannot hold the reader's place. Put the row the reader was
-        // looking at back where it was in the viewport — not merely at the top,
-        // and not the overscan row above it, which is what the first rendered
-        // row of the range is.
-        const rowOffset = findRowOffsetByMessageTs(mergeAnchor.ts)
-        if (rowOffset < 0) return
-        scrollToRowOffset(rowOffset, "start", "auto", -mergeAnchor.viewportOffset)
-        // The list keeps re-targeting this row while the inserted rows are
-        // measured. The browsing anchor queued its own correction for the same
-        // content change; measured mid-settle it would cut that short.
-        releaseBrowsingViewportAnchor()
-    }, [
-        renderRows,
-        firstItemIndex,
-        findRowOffsetByMessageTs,
-        isEdgeWindowReady,
-        releaseBrowsingViewportAnchor,
-        scrollToLoadedEdge,
-        scrollToRowOffset,
-    ])
+    }, [renderRows, isEdgeWindowReady, scrollToLoadedEdge])
 
     useEffect(() => clearEdgeScrollTimers, [clearEdgeScrollTimers])
 
@@ -685,19 +642,6 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
         return buildMessageRowKey(item, index)
     }, [])
 
-    /**
-     * Read the row the reader is looking at, so a leading merge can keep it in place.
-     *
-     * @returns The anchor for the current layout, or null when it cannot be read.
-     */
-    const readMergeAnchor = useCallback((): MergeAnchor | null => {
-        // A hidden view is not laid out, so there is no position to keep.
-        if (!scroller || isWebviewHiddenRef.current) return null
-        const visible = findFirstVisibleMessage(scroller)
-        if (!visible) return null
-        return { ts: visible.ts, viewportOffset: visible.viewportOffset, windowStart: firstItemIndexRef.current }
-    }, [scroller])
-
     const fetchAndMerge = useCallback(
         async (start: number, count: number, side: WindowSide) => {
             // A page cut for the window being replaced could only be dropped or merged into the wrong one.
@@ -717,12 +661,10 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                 if (!windowGeneration.isCurrent(requestVersion)) return false
                 if (msgs.length === 0) return false
 
-                // Read immediately before the state update so the anchor matches
-                // what is on screen when the new rows commit, however long the
-                // fetch took or how far the reader scrolled meanwhile. A trailing
-                // merge appends below the viewport and leaves any pending leading
-                // anchor alone.
-                if (side === "leading") pendingMergeAnchorRef.current = readMergeAnchor()
+                // The row coordinate lets Virtuoso preserve the viewport during
+                // prepend measurement. Do not add another pixel/index target: it
+                // can race compensation or keep undoing newer user input.
+                if (side === "leading") releaseBrowsingViewportAnchor()
 
                 let merged = false
 
@@ -758,7 +700,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                 if (taskKeyRef.current === taskKey) inflightRef.current.delete(key)
             }
         },
-        [readMergeAnchor, setClineMessages, setFirstItemIndex, taskViewState, taskKey, windowGeneration],
+        [releaseBrowsingViewportAnchor, setClineMessages, setFirstItemIndex, taskViewState, taskKey, windowGeneration],
     )
 
     const requestWindowExtensions = useCallback(
@@ -886,7 +828,6 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
             inflightRef.current.clear()
             latestVisibleMessageRangeRef.current = null
             latestExtensionRangeRef.current = null
-            pendingMergeAnchorRef.current = null
             pendingEdgeScrollRef.current = edge
 
             try {
@@ -938,7 +879,6 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
         releaseBrowsingViewportAnchor()
         edgeJumpInFlightRef.current = null
         pendingEdgeScrollRef.current = null
-        pendingMergeAnchorRef.current = null
         latestVisibleMessageRangeRef.current = null
         latestExtensionRangeRef.current = null
         deferredGrowthRef.current = null

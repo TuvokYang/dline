@@ -425,34 +425,7 @@ describe("MessagesArea sliding-window integration", () => {
         expect(mocks.fetchMessage).not.toHaveBeenCalled()
     })
 
-    it("keeps the row the reader can see in place when older history merges in ahead of it", async () => {
-        // The rendered range Virtuoso reports includes overscan above the
-        // viewport. Aligning its first row to the top after the merge pushed the
-        // rows the reader was looking at out of view. The restore must target the
-        // first row that intersects the viewport, at the offset it had.
-        const viewport = { top: 100, height: 500 }
-        const rowHeight = 50
-        // Row 5 is the first one on screen and starts 20px above the viewport top.
-        const rowTop = (index: number) => viewport.top - 20 + (index - 5) * rowHeight
-        vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-            const box =
-                this.dataset.testid === "virtuoso"
-                    ? viewport
-                    : this.dataset.itemIndex !== undefined
-                      ? { top: rowTop(Number(this.dataset.index)), height: rowHeight }
-                      : { top: 0, height: 0 }
-            return {
-                top: box.top,
-                bottom: box.top + box.height,
-                height: box.height,
-                left: 0,
-                right: 300,
-                width: 300,
-                x: 0,
-                y: box.top,
-                toJSON: () => ({}),
-            }
-        })
+    it("preserves the held messages on prepend without retaining an application scroll target", async () => {
         mocks.renderedRowCount = 21
         // The rendered band starts at the first loaded message (ts 301), so row 5 shows ts 306.
         mocks.firstRenderedTs = 301
@@ -471,7 +444,8 @@ describe("MessagesArea sliding-window integration", () => {
                 taskId: "task-1",
                 taskInstanceId: "task-instance-1",
             })
-        renderMessagesArea()
+        const scrollBehavior = createScrollBehavior()
+        renderMessagesArea(scrollBehavior)
         fireEvent.wheel(screen.getByTestId("virtuoso"), { deltaY: -100 })
 
         act(() => {
@@ -483,11 +457,11 @@ describe("MessagesArea sliding-window integration", () => {
         await waitFor(() => {
             expect(mocks.fetchMessage).toHaveBeenCalledTimes(2)
         })
-        // This harness passes fixed grouped rows, so the anchored row keeps its
-        // position in `data`; what matters is that it is the visible row, not
-        // the overscan row at index 0, and that its cut-off is preserved.
-        expect(mocks.scrollToIndex).toHaveBeenCalledTimes(1)
-        expect(mocks.scrollToIndex).toHaveBeenCalledWith({ index: 5, align: "start", behavior: "auto", offset: 20 })
+        expect(mocks.currentFirstItemIndex).toBe(250)
+        expect(mocks.currentMessages.map((message) => message.ts)).toEqual(Array.from({ length: 300 }, (_, index) => index + 251))
+        expect(mocks.currentMessages[55]).toBe(mocks.initialMessages[5])
+        expect(mocks.scrollToIndex).not.toHaveBeenCalled()
+        expect(scrollBehavior.requestProgrammaticScroll).not.toHaveBeenCalled()
     })
 
     it("does not claim session scrolling while a nested card can consume the wheel", () => {
