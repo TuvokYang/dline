@@ -76,10 +76,9 @@ sudo apt install -y dbus libasound2 libatk-bridge2.0-0 libatk1.0-0 libdrm2 libgb
 The branch entrances are separate and share the source-only `checks.yml` workflow: type checking, Biome/lint, smoke, and all six Vitest projects.
 
 - `test.yml` (**Tests**) handles dev pushes and dev-targeted PRs. It builds each registry publisher's VSIX before its work E2E gate; successful dev pushes feed those same artifacts to Insiders publication.
-- `test-main.yml` (**Main Tests**) handles main pushes and main-targeted PRs. It runs source checks only: no VSIX packaging, work E2E, or functional E2E.
-- `release.yml` requires an exact production tag (`vX.Y.Z`) at the current main head and reuses the successful **Main Tests** push run for that exact SHA. If that run is still in progress, the tag workflow waits within a bounded timeout rather than starting another check run. A failed, cancelled, or missing gate cannot authorize publication.
-
-After the main source gate succeeds, the tag workflow builds each publisher's final production VSIX once. Each package passes one Ubuntu work smoke and all four daily workflows on Ubuntu, Windows, and macOS. Only then do the 20 functional shards run (ten folders for each publisher). Publication consumes those original packages without rebuilding them. Ordinary main pushes never schedule either E2E tier.
+- `test-main.yml` (**Main Tests**) owns all main and production-tag tests. Ordinary main pushes and main-targeted PRs run source checks only, without VSIX packaging or either E2E tier. An exact production tag (`vX.Y.Z`) at the current main head starts a separate Main Tests run that reuses the successful same-SHA main source checks rather than rerunning them.
+- The tagged **Main Tests** run builds each publisher's final production VSIX once. Each package passes one Ubuntu work smoke and all four daily workflows on Ubuntu, Windows, and macOS, then the 20 functional shards run (ten folders per publisher). Only after all tests succeed does it record the tag, SHA, run attempt and both tested package hashes.
+- `release.yml` (**Publish Production**) only waits for that exact successful tagged Main Tests run, validates its evidence and downloads both original packages by run ID. It verifies their SHA-256 and publishes those bytes without rebuilding, calling test workflows or running E2E. Waiting is bounded; failed, cancelled, missing or mismatched evidence blocks publication.
 
 <Aside>
 The repository's `.agents/skills/use-vitest` and `.agents/skills/use-e2e` document running and diagnosing tests in more detail.

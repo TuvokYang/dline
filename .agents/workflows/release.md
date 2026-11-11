@@ -77,7 +77,7 @@ npm run test:e2e:work
 npm run vsix
 ```
 
-Load `use-vitest` for the complete Vitest run through its repository-identified background UI process; the focused command above is not a substitute for that full gate. `test:e2e:work` defaults to source mode. A later `npm run vsix` creates a different artifact boundary; never attach the source-run result to that VSIX. Use `use-e2e` for packaged-mode inspection/reproduction and keep exact artifact identity in the required CI/release evidence below. Full functional E2E runs in Production Release Validation after the production tag is pushed, one shard per functional folder against the release VSIX; locally use focused files when contracts change, and full functional only on explicit request. Dev-tier E2E never satisfies a release gate.
+Load `use-vitest` for the complete Vitest run through its repository-identified background UI process; the focused command above is not a substitute for that full gate. `test:e2e:work` defaults to source mode. A later `npm run vsix` creates a different artifact boundary; never attach the source-run result to that VSIX. Use `use-e2e` for packaged-mode inspection/reproduction and keep exact artifact identity in the required CI/release evidence below. Full functional E2E belongs to the production-tag Main Tests run, one shard per functional folder against the release VSIX; locally use focused files when contracts change, and full functional only on explicit request. Production publication never starts tests. Dev-tier E2E never satisfies a release gate.
 
 Equivalent successful CI evidence from the exact `dev` commit may satisfy a check. The reusable Tests workflow must package one VSIX before E2E, run one work smoke on Linux, then each of four daily workflows on Linux, macOS, and Windows against that exact artifact, and expose it to release jobs. Record the workflow/run, SHA, and artifact identity rather than assuming a feature-branch run covers integrated `dev`.
 
@@ -149,13 +149,13 @@ Never move an existing tag and never create a production tag from a commit outsi
 
 ## 7. Observe automated release gates
 
-Pushing `vX.Y.Z` triggers `release.yml` (`Production Release Validation`). Follow the jobs in the repository rather than inferring behavior from a filename:
+Pushing `vX.Y.Z` starts independent Main Tests (`test-main.yml`) and Publish Production (`release.yml`) runs. Tests belong to Main Tests; publication only consumes their successful evidence and original artifacts:
 
-1. `verify-tag` checks the exact tag format, package version and current `main` head, then reuses the successful `test-main.yml` push run for that exact SHA. A pending run is awaited within a bounded timeout; failure, cancellation or missing evidence blocks release without dispatching replacement checks. Ordinary Main Tests runs source checks only, never packaging or either E2E tier.
-2. `package` and `package-marketplace` each build one final production VSIX through `package.yml`. The tag workflow does not call the dev `test.yml` or rerun its shared source-check workflow.
-3. `e2e` and `e2e-marketplace` run one Linux work smoke and all four daily workflows on Linux, macOS and Windows against their own original packages.
-4. Only after both work gates pass, `functional-e2e` runs the ten production functional folders against both registry-specific release VSIX files. A valid production tag is required; neither ordinary main nor dev pushes schedule this full suite.
-5. Only after those jobs pass, `publish` calls `publish-production-release.yml`. It verifies and publishes the default-publisher VSIX to the stable GitHub Release, then passes each registry's existing artifact and its own SHA-256 to `publish-vsix-registries.yml`. No tested VSIX is rebuilt.
+1. Main Tests `verify-tag` checks the exact tag format, package version and current `main` head, then reuses the successful same-SHA ordinary main source run. It waits within a bounded timeout and rejects failed or missing checks instead of dispatching replacements. Ordinary main pushes and main-targeted PRs still run source checks only.
+2. Main Tests `package` and `package-marketplace` each build one final production VSIX through `package.yml`, followed by their own `e2e` and `e2e-marketplace`: one Linux work smoke, then all four daily workflows on Linux, macOS and Windows.
+3. Main Tests `functional-e2e` runs the ten folders against both original packages only after both work gates pass. Its final `evidence` job records tag, SHA, run ID/attempt and both package hashes only after all tests succeed.
+4. Publish Production `verify-tests` waits for that exact successful tag Main Tests run, validates its evidence, downloads both packages from its run ID and checks their SHA-256. It stages those unchanged bytes for the publisher; it does not build packages, call tests or run E2E.
+5. Publish Production `publish` calls `publish-production-release.yml`, publishes the default-publisher VSIX to the stable GitHub Release, and passes both verified original packages and their own hashes to `publish-vsix-registries.yml`. Missing, failed, cancelled or mismatched test evidence blocks publication. No tested VSIX is rebuilt.
 
 Both registries are enabled by default. VS Code Marketplace uploads run only in GitHub Actions; local commands only build and package. Verify the actual GitHub Release asset and each registry result: the aggregate gate requires at least one registry to succeed, and disabled/skipped is not published. Do not replace an asset, rewrite its manifest or substitute a locally rebuilt VSIX after testing.
 
