@@ -124,6 +124,7 @@ ${AGENT_BODY}\n`,
 e2e.use({ installVsix: false, trace: "retain-on-failure" })
 e2e.afterEach(async ({ server, userDataDir, workspaceDir, dlineDir }, testInfo) => {
     const diagnosticsPath = testInfo.outputPath("ws126-provider-diagnostics.json")
+    const names: readonly string[] = [E2E_PROFILE_NAMES.mockOpenAi, E2E_PROFILE_NAMES.mockOpenAiResponses]
     const profiles = JSON.parse(await readFile(path.join(dlineDir, "data", "settings", "api_profiles.json"), "utf8"))
     await writeFile(
         diagnosticsPath,
@@ -131,9 +132,7 @@ e2e.afterEach(async ({ server, userDataDir, workspaceDir, dlineDir }, testInfo) 
             {
                 mockBaseUrl: server.baseUrl,
                 profiles: profiles
-                    .filter((p: { name: string }) =>
-                        [E2E_PROFILE_NAMES.mockOpenAi, E2E_PROFILE_NAMES.mockOpenAiResponses].includes(p.name),
-                    )
+                    .filter((p: { name: string }) => names.includes(p.name))
                     .map(
                         (p: {
                             id: string
@@ -700,7 +699,7 @@ const liteE2e = e2e.extend({
 
 liteE2e(
     "WS-126 - a missing selected Rule fails only the child; Lite Activity Retry reads new Rules and original task",
-    async ({ helper, server, sidebar, userDataDir, workspaceDir }) => {
+    async ({ helper, page, server, sidebar, userDataDir, workspaceDir }) => {
         await helper.signin(sidebar)
         await deselectParentPromptResources(sidebar)
         let configuration = await openConfiguration(sidebar)
@@ -748,6 +747,7 @@ liteE2e(
         await activity.getByTestId("activity-toggle").click()
         await expect(activity).toContainText(RULE_FILE)
         await expect(activity.getByRole("button", { name: "Retry", exact: true })).toBeVisible()
+        await E2ETestHelper.dismissWorkbenchHover(page)
         await sidebar.getByRole("tab", { name: "Work", exact: true }).click()
 
         configuration = await openConfiguration(sidebar)
@@ -787,6 +787,7 @@ liteE2e(
         const toolNames = (child[0].requestBody as { tools: { name: string }[] }).tools.map((tool) => tool.name)
         expect(toolNames).toContain("attempt_completion")
         for (const loader of ["load_skill", "load_workflow", "load_mcp"]) expect(toolNames).not.toContain(loader)
+        await E2ETestHelper.dismissWorkbenchHover(page)
         await sidebar.getByRole("tab", { name: "Work", exact: true }).click()
         server.enqueueOpenAiResponses({
             type: "tool",
