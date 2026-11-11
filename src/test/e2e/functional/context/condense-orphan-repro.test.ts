@@ -2,7 +2,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import type { MockApiConsumption } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
-import { expectOwnedUserFeedback } from "@e2e/utils/compaction-request-oracle"
+import { expectOwnedUserFeedback, requestUserTextBlocks } from "@e2e/utils/compaction-request-oracle"
 import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame, type Locator } from "@playwright/test"
@@ -351,7 +351,7 @@ e2e(
                 id: "call_unauthorized_summary_done",
                 name: "attempt_completion",
                 arguments: { result: "E2E_UNAUTHORIZED_SUMMARY_REJECTED" },
-                expectedRequestIncludes: ["E2E_UNAUTHORIZED_SUMMARY_TASK", "explicit_instruction_missing"],
+                expectedRequestIncludes: ["E2E_UNAUTHORIZED_SUMMARY_TASK", "[summarize_task] Result:", "<error>"],
                 expectedRequestExcludes: [COMPACT_INSTRUCTION_MARKER],
             },
         )
@@ -372,7 +372,12 @@ e2e(
 
             const requests = server.getMockConsumptions("openai-compatible-responses")
             expect(requests[1].contractError).toBeUndefined()
-            expect(JSON.stringify(requests[1].requestBody)).toContain("E2E_UNAUTHORIZED_SUMMARY_TASK")
+            const userTexts = requestUserTextBlocks(requests[1])
+            expect(userTexts.some((text) => text.includes("E2E_UNAUTHORIZED_SUMMARY_TASK"))).toBe(true)
+            const errors = userTexts.flatMap((text) => [...text.matchAll(/<error>([\s\S]*?)<\/error>/g)].map((match) => match[1]))
+            expect(errors).toHaveLength(1)
+            expect(errors[0]).toContain("summarize_task")
+            expect(userTexts.join("\n")).not.toContain(unauthorizedSummary)
             assertNoOrphanToolOutputs(requests[1])
             await attachScreenshot(app, "unauthorized-summarize-task-final-state")
             await attachJson("unauthorized-summarize-task-provider-consumptions", requests)

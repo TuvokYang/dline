@@ -10,7 +10,8 @@ export const openTab = async (_page: Page, tabName: string) => {
 export const addSelectedCodeToDline = async (_page: Page) => {
     const editor = _page.getByRole("textbox", { name: "The editor is not accessible" })
     const actionWidget = _page.getByRole("listbox", { name: "Action Widget" }).last()
-    const action = actionWidget.getByRole("option", { name: "Add to Dline, Quick Fix" }).first()
+    const addActionName = /^Add to Dline(?: \((?:Stable|Insiders)\))?, Quick Fix$/
+    const action = actionWidget.getByRole("option", { name: addActionName }).first()
     const codeActionTrigger = _page.getByRole("listbox", { name: /Show Code Actions/ }).last()
     const emptyMenu = codeActionTrigger.locator(".message", {
         hasText: "No code actions available",
@@ -53,7 +54,7 @@ export const addSelectedCodeToDline = async (_page: Page) => {
         if (menuState === "action") {
             await expect(action).toBeVisible()
             await expect(actionWidget).toBeFocused()
-            await expect(actionWidget.getByRole("option").first()).toHaveAccessibleName("Add to Dline, Quick Fix")
+            await expect(actionWidget.getByRole("option").first()).toHaveAccessibleName(addActionName)
             await _page.keyboard.press("Enter")
             return
         }

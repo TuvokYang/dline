@@ -129,8 +129,9 @@ async function measureSubagentWorkGeometry(card: Locator) {
 
 e2e(
     "Subagent Work layout - short sections stay compact and a long Task receives the bounded space",
-    async ({ helper, server, sidebar, userDataDir, workspaceDir }, testInfo) => {
+    async ({ helper, page, server, sidebar, userDataDir, workspaceDir }, testInfo) => {
         e2e.setTimeout(240_000)
+        await page.setViewportSize({ width: 1200, height: 800 })
         const agentName = "e2e-work-layout"
         const evidenceFileName = "e2e-subagent-work-layout.txt"
         const evidenceMarker = "E2E_SUBAGENT_WORK_LAYOUT_EVIDENCE"
@@ -219,9 +220,10 @@ e2e(
             contentType: "application/json",
         })
         const shortGeometryMessage = JSON.stringify(shortGeometry)
-        expect(Math.abs(shortGeometry.maxHeight - shortGeometry.viewportHeight * 0.3), shortGeometryMessage).toBeLessThanOrEqual(
-            2,
-        )
+        expect(
+            Math.abs(shortGeometry.maxHeight - Math.max(shortGeometry.viewportHeight * 0.3, 240)),
+            shortGeometryMessage,
+        ).toBeLessThanOrEqual(2)
         // Compactness is proven by the sections below (no overflow, no trailing space);
         // the cap check only rules out a card stretched to its max height. Linux font
         // metrics put this short card's natural height within 4px of the cap, so the
@@ -330,8 +332,9 @@ e2e(
 
 e2e(
     "Subagent recovery controls - Finish renders in Work and Activities and enforces completion-only recovery",
-    async ({ helper, server, sidebar, userDataDir, workspaceDir }, testInfo) => {
+    async ({ helper, page, server, sidebar, userDataDir, workspaceDir }, testInfo) => {
         e2e.setTimeout(240_000)
+        await page.setViewportSize({ width: 1200, height: 800 })
         const agentName = "e2e-recoverable-finish"
         const taskMarker = "E2E_SUBAGENT_FINISH_TASK"
         const childTask = [
@@ -447,7 +450,7 @@ e2e(
                 toolsScrollHeight: toolsScroll.scrollHeight,
             }
         })
-        expect(Math.abs(workLayout.maxHeight - workLayout.viewportHeight * 0.3)).toBeLessThanOrEqual(2)
+        expect(Math.abs(workLayout.maxHeight - Math.max(workLayout.viewportHeight * 0.3, 240))).toBeLessThanOrEqual(2)
         expect(workLayout.overflow).toBe("hidden")
         expect(workLayout.bodyOverflowY).toBe("hidden")
         expect(workLayout.taskOverflowY).toBe("auto")
@@ -483,6 +486,8 @@ e2e(
         await expect(workBody).toBeVisible()
 
         await sidebar.getByRole("tab", { name: /^Activities(?: \d+)?$/ }).click()
+        // Dismiss the host's activity-bar hover before clicking the filter beneath it.
+        await page.keyboard.press("Escape")
         await sidebar.getByRole("button", { name: "All", exact: true }).first().click()
         const activity = sidebar.getByTestId("activity-item").filter({ hasText: agentName })
         await expect(activity).toHaveCount(1)
@@ -550,7 +555,7 @@ e2e(
             }
         })
         expect(outputLayout.bodyOverflowY).toBe("hidden")
-        expect(Math.abs(outputLayout.cardHeight - outputLayout.viewportHeight * 0.3)).toBeLessThanOrEqual(2)
+        expect(Math.abs(outputLayout.cardHeight - Math.max(outputLayout.viewportHeight * 0.3, 240))).toBeLessThanOrEqual(2)
         expect(outputLayout.taskClientHeight).toBeGreaterThan(0)
         expect(outputLayout.toolsClientHeight).toBeGreaterThan(0)
         expect(outputLayout.outputClientHeight).toBeGreaterThan(0)

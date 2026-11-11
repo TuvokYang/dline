@@ -30,6 +30,8 @@ export interface ToolPreflightRejection {
     reason: "invalid_parameters" | "unsupported_tool"
     /** Message shown to the model, already safe to surface. */
     message: string
+    /** Parameter correction that must not create a user-facing error row. */
+    presentation?: "model_only"
 }
 
 /**

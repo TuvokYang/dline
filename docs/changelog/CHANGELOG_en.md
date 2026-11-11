@@ -40,6 +40,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Local web search reports engine refusals, rate limits, and DuckDuckGo challenge pages instead of treating them as searches with no matches.
 - Fixed errors from missing editor options when opening images and other custom-editor files.
 - Marketplace icons and demo GIFs use direct GitHub raw-file links, reducing loading failures caused by web-page redirects.
+- Fixed scrolling back through long chats being repeatedly pulled back after earlier messages load, and visible jumps while browsing history during streaming; scroll-to-top/bottom and automatic following are unchanged.
 
 ## [0.14.0]
 

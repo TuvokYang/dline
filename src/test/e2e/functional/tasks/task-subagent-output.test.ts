@@ -115,8 +115,9 @@ Return only the highest-value findings.`,
 
 e2e(
     "Tools - subagent aligns header actions, wraps context, and orders Tools before output",
-    async ({ helper, server, sidebar, userDataDir }) => {
+    async ({ helper, page, server, sidebar, userDataDir }) => {
         e2e.setTimeout(180_000)
+        await page.setViewportSize({ width: 1200, height: 800 })
         const subagentTask = "E2E_SUBAGENT_RENDERING_TASK"
         const subagentContext = [
             "Inspect the workspace in the exact order requested.",
@@ -294,7 +295,7 @@ e2e(
         })
         expect(itemsLayout.overflowY).toBe("auto")
         expect(itemsLayout.maxHeight).toBeCloseTo(itemsLayout.viewportHeight * 0.6, 0)
-        // The card itself is height-bounded (30vh) so a long run cannot grow the chat.
+        // The card is bounded by max(30vh, 240px) so its sections remain readable in short windows.
         const cardLayout = await subagentCard.evaluate((element) => {
             const style = getComputedStyle(element)
             return {
@@ -304,7 +305,7 @@ e2e(
             }
         })
         expect(cardLayout.overflowY).toBe("hidden")
-        expect(cardLayout.maxHeight).toBeCloseTo(cardLayout.viewportHeight * 0.3, 0)
+        expect(cardLayout.maxHeight).toBeCloseTo(Math.max(cardLayout.viewportHeight * 0.3, 240), 0)
 
         await showOutput.click()
         const output = subagentCard.getByTestId("subagent-output")

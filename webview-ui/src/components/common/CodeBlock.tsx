@@ -1,6 +1,7 @@
-import { memo, useEffect } from "react"
-import { useRemark } from "react-remark"
-import rehypeHighlight, { Options } from "rehype-highlight"
+import type { Root } from "mdast"
+import { memo } from "react"
+import ReactMarkdown, { type Components } from "react-markdown"
+import rehypeHighlight from "rehype-highlight"
 import styled from "styled-components"
 import { visit } from "unist-util-visit"
 import "./codeblock-parser.css"
@@ -116,39 +117,27 @@ const StyledPre = styled.pre<{ theme: any }>`
             .join("")}
 `
 
+function remarkCodeLanguage() {
+    return (tree: Root) => {
+        visit(tree, "code", (node) => {
+            if (!node.lang) {
+                node.lang = "javascript"
+            } else if (node.lang.includes(".")) {
+                node.lang = node.lang.split(".").at(-1)
+            }
+        })
+    }
+}
+
+const codeBlockComponents: Components = {
+    pre: ({ node: _node, ...props }) => <StyledPre {...props} />,
+}
+const remarkPlugins = [remarkCodeLanguage]
+const rehypePlugins = [rehypeHighlight]
+
+// A virtual row must commit its real body before the list measures it. Rendering
+// through an effect first commits an empty block and then changes the row height.
 const CodeBlock = memo(({ source, forceWrap = false }: CodeBlockProps) => {
-    const [reactContent, setMarkdownSource] = useRemark({
-        remarkPlugins: [
-            () => {
-                return (tree) => {
-                    visit(tree, "code", (node: any) => {
-                        if (!node.lang) {
-                            node.lang = "javascript"
-                        } else if (node.lang.includes(".")) {
-                            // if the language is a file, get the extension
-                            node.lang = node.lang.split(".").slice(-1)[0]
-                        }
-                    })
-                }
-            },
-        ],
-        rehypePlugins: [
-            rehypeHighlight as any,
-            {
-                // languages: {},
-            } as Options,
-        ],
-        rehypeReactOptions: {
-            components: {
-                pre: ({ node, ...preProps }: any) => <StyledPre {...preProps} />,
-            },
-        },
-    })
-
-    useEffect(() => {
-        setMarkdownSource(source || "")
-    }, [source, setMarkdownSource])
-
     return (
         <div
             style={{
@@ -157,7 +146,9 @@ const CodeBlock = memo(({ source, forceWrap = false }: CodeBlockProps) => {
                 backgroundColor: CODE_BLOCK_BG_COLOR,
             }}>
             <StyledMarkdown $forceWrap={forceWrap} className="ph-no-capture markdown">
-                {reactContent}
+                <ReactMarkdown components={codeBlockComponents} rehypePlugins={rehypePlugins} remarkPlugins={remarkPlugins}>
+                    {source || ""}
+                </ReactMarkdown>
             </StyledMarkdown>
         </div>
     )

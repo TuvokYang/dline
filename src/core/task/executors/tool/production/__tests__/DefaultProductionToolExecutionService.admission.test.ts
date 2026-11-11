@@ -33,7 +33,12 @@ const INVOCATION: ToolInvocationEnvelope = {
 function subject(overrides: Partial<TaskConfig> = {}) {
     const effect = vi.fn(async (_config: TaskConfig, block: ToolUse) => `handled:${block.params.command ?? block.params.url}`)
     const coordinator = new ToolExecutorCoordinator()
-    for (const name of [DlineDefaultTool.BASH, DlineDefaultTool.WEB_FETCH]) {
+    for (const name of [
+        DlineDefaultTool.BASH,
+        DlineDefaultTool.WEB_FETCH,
+        DlineDefaultTool.MCP_USE,
+        DlineDefaultTool.MCP_ACCESS,
+    ]) {
         coordinator.register({ name, getDescription: (block) => `[${block.name}]`, execute: effect })
     }
     const snapshot: ToolAdmissionSnapshot = {
@@ -149,6 +154,28 @@ describe("production admission rejection", () => {
         })
     }
 
+    it.each([
+        { toolName: DlineDefaultTool.MCP_USE, input: { tool_name: "probe" }, missing: "server_name" },
+        { toolName: DlineDefaultTool.MCP_USE, input: { server_name: "probe" }, missing: "tool_name" },
+        { toolName: DlineDefaultTool.MCP_ACCESS, input: { uri: "probe://resource" }, missing: "server_name" },
+        { toolName: DlineDefaultTool.MCP_ACCESS, input: { server_name: "probe" }, missing: "uri" },
+    ])("keeps missing MCP $missing model-only for $toolName", async ({ toolName, input, missing }) => {
+        const harness = subject()
+        const result = await harness.execute({ ...INVOCATION, toolName, input })
+
+        expect(result).toMatchObject({ failed: true, failure: { stage: "validation", code: "invalid_parameters" } })
+        expect(readDurableToolResult(result.content)?.block).toMatchObject({
+            function_id: INVOCATION.functionId,
+            dline_tid: INVOCATION.dlineTid,
+            is_error: true,
+            content: expect.stringContaining(`Missing value for required parameter '${missing}'`),
+        })
+        expect(harness.say).not.toHaveBeenCalled()
+        expect(harness.effect).not.toHaveBeenCalled()
+        expect(harness.open).not.toHaveBeenCalled()
+        expect(harness.config.taskState.consecutiveMistakeCount).toBe(1)
+    })
+
     it("counts varying malformed calls once each without running a handler", async () => {
         const harness = subject()
         const inputs = [{ command: "echo missing-flag" }, { command: "echo malformed-flag", requires_approval: "invalid" }]
@@ -222,13 +249,22 @@ describe("production admission rejection", () => {
     })
 
     it.each([
-        undefined,
-        "text",
-    ] as const)("persists a rejection and rehydrates its provider replay=%s without effects", async (resultReplay) => {
+        { resultReplay: undefined, mcp: false },
+        { resultReplay: "text" as const, mcp: false },
+        { resultReplay: undefined, mcp: true },
+        { resultReplay: "text" as const, mcp: true },
+    ])("persists a rejection and rehydrates replay=$resultReplay mcp=$mcp without effects", async ({ resultReplay, mcp }) => {
         const harness = subject()
         const payloads = new InMemoryTaskPayloadStore()
         const journal = new InMemoryConversationJournal()
-        const invocationRef = await payloads.put(encodeTaskPayload({ ...INVOCATION, resultReplay }))
+        const invocationRef = await payloads.put(
+            encodeTaskPayload({
+                ...INVOCATION,
+                ...(mcp ? { toolName: DlineDefaultTool.MCP_USE, input: { tool_name: "probe" } } : {}),
+                resultReplay,
+            }),
+        )
+        const correction = mcp ? "Missing value for required parameter 'server_name'" : "Invalid parameter 'requires_approval'"
         const adapter = createProductionToolAdapter({
             payloads,
             journal,
@@ -261,12 +297,13 @@ describe("production admission rejection", () => {
             expect(messages[0]).toMatchObject({ role: "user", ts: 10_000 })
             expect(messages[0].content).toEqual([
                 resultReplay === "text"
-                    ? { type: "text", text: expect.stringContaining("Invalid parameter 'requires_approval'") }
+                    ? { type: "text", text: expect.stringContaining(correction) }
                     : expect.objectContaining({
                           type: "tool_result",
                           function_id: "function-admission",
                           dline_tid: "tid-admission",
                           is_error: true,
+                          content: expect.stringContaining(correction),
                       }),
             ])
             // Replay content is durable; ts records when this reader materializes it.
@@ -280,7 +317,8 @@ describe("production admission rejection", () => {
         expect(await journal.read()).toHaveLength(1)
         expect(harness.effect).not.toHaveBeenCalled()
         expect(harness.open).not.toHaveBeenCalled()
-        expect(harness.say).toHaveBeenCalledOnce()
+        if (mcp) expect(harness.say).not.toHaveBeenCalled()
+        else expect(harness.say).toHaveBeenCalledOnce()
     })
 
     it.each(["true", "false"])("still executes an admitted command with requires_approval=%s once", async (requiresApproval) => {

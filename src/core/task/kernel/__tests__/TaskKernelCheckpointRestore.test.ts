@@ -116,6 +116,25 @@ describe("hydrate for a checkpoint restore", () => {
         expect(result.state.dialog.primary?.kind).toBe("completion")
     })
 
+    it.each(["checkpoint_restore", "resume"] as const)("handles pending dialog feedback on %s", (openReason) => {
+        const feedback = [
+            { id: "reply:old-completion:12", source: "dialog" as const, revision: 12, payloadRef: "old-input" },
+            { id: "reply:old-approval:13", source: "approval" as const, revision: 13, payloadRef: "old-approval" },
+            { id: "queue-answer:pending:14", source: "intake" as const, revision: 14, payloadRef: "pending-input" },
+        ]
+        const snapshot: TaskState = {
+            ...completedSnapshot(),
+            roundMaterial: { notices: [], feedback },
+        }
+
+        const result = hydrate({ taskId: TASK_ID, snapshot, journalTail: { seq: 14 }, openReason })
+
+        expect(result.kind).toBe("ready")
+        if (result.kind !== "ready") throw new Error("Expected hydrated task")
+        expect(result.state.roundMaterial?.feedback).toEqual(openReason === "checkpoint_restore" ? [feedback[2]] : feedback)
+        expect(result.state.intake).toEqual(snapshot.intake)
+    })
+
     it("leaves a consumed task consumed, because a restore does not take back the handoff", () => {
         const consumed: TaskState = {
             ...completedSnapshot(),
