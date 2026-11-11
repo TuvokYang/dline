@@ -1,6 +1,7 @@
 import path from "node:path"
 import { isTaskReadScopePath } from "@core/artifacts/runtime"
 import type { ToolUse } from "@core/assistant-message"
+import { formatResponse } from "@core/prompts/responses"
 import { getTaskTempDirectory } from "@core/storage/task-temp"
 import type { AutoApprovalSettings } from "@shared/AutoApprovalSettings"
 import { type BrowserAction, browserActions, type UiAsk, type UiSayTool } from "@shared/ExtensionMessage"
@@ -138,6 +139,9 @@ function validateParameters(block: ToolUse, toolName: DlineDefaultTool): string 
     for (const requirement of REQUIRED_PARAMETERS[toolName] ?? []) {
         const alternatives = typeof requirement === "string" ? [requirement] : requirement
         if (!alternatives.some((name) => hasValue(parameterValue(block, name)))) {
+            if (toolName === DlineDefaultTool.MCP_USE || toolName === DlineDefaultTool.MCP_ACCESS) {
+                return formatResponse.missingToolParameterError(alternatives[0])
+            }
             return `Missing required parameter '${alternatives.join("' or '")}' for tool '${block.name}'.`
         }
     }
@@ -450,7 +454,13 @@ function buildPresentation(
 export function prepareRegisteredToolAdmission<T>(input: RegisteredToolAdmissionInput<T>): ToolPreflightResult<T> {
     const invalid = validateParameters(input.block, input.canonicalToolName)
     if (invalid) {
-        return rejectToolCall({ reason: "invalid_parameters", message: invalid })
+        return rejectToolCall({
+            reason: "invalid_parameters",
+            message: invalid,
+            ...(input.canonicalToolName === DlineDefaultTool.MCP_USE || input.canonicalToolName === DlineDefaultTool.MCP_ACCESS
+                ? { presentation: "model_only" as const }
+                : {}),
+        })
     }
     const presentation =
         input.presentation ??

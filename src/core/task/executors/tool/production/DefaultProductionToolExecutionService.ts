@@ -340,7 +340,9 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
             // Validation used to reach the handler's mistake counter; refusing
             // earlier must not let varying malformed calls bypass the loop guard.
             if (admission.rejection.reason === "invalid_parameters") config.taskState.consecutiveMistakeCount++
-            await presentToolRefusal(config, block, admission.rejection.message)
+            if (admission.rejection.presentation !== "model_only") {
+                await presentToolRefusal(config, block, admission.rejection.message)
+            }
             return serializeResult(input.invocation, formatResponse.toolError(admission.rejection.message), description, {
                 stage: "validation",
                 code: admission.rejection.reason,
