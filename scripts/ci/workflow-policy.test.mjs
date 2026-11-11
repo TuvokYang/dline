@@ -181,7 +181,9 @@ test("dev and main have separate entrances and only a production tag schedules m
     const main = workflow("test-main")
     assert.deepEqual(main.on.push.branches, ["main"])
     assert.deepEqual(main.on.pull_request.branches, ["main"])
-    assert.deepEqual(Object.keys(main.jobs), ["checks"])
+    assert.deepEqual(main.on.push.tags, ["v*"])
+    assert.equal(main.jobs.checks.if, "!startsWith(github.ref, 'refs/tags/')")
+    assert.equal(main.jobs["verify-tag"].if, "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')")
     assert.equal(main.jobs.checks.uses, dev.jobs.checks.uses)
     const checks = workflow("checks")
     assert.deepEqual(Object.keys(checks.on), ["workflow_call"])
@@ -189,24 +191,24 @@ test("dev and main have separate entrances and only a production tag schedules m
     const release = workflow("release")
     assert.deepEqual(Object.keys(release.on), ["push"])
     assert.deepEqual(release.on.push.tags, ["v*"])
-    assert.equal(release.jobs.tests, undefined)
+    assert.deepEqual(Object.keys(release.jobs), ["verify-tests", "publish"])
     for (const job of ["package", "package-marketplace"]) {
-        assert.equal(release.jobs[job].uses, "./.github/workflows/package.yml")
-        assert.equal(release.jobs[job].needs, "verify-tag")
-        assert.equal(release.jobs[job].with.profile, "release")
-        assert.equal(release.jobs[job].with.channel, "production")
+        assert.equal(main.jobs[job].uses, "./.github/workflows/package.yml")
+        assert.equal(main.jobs[job].needs, "verify-tag")
+        assert.equal(main.jobs[job].with.profile, "release")
+        assert.equal(main.jobs[job].with.channel, "production")
     }
-    assert.equal(release.jobs.e2e.uses, "./.github/workflows/e2e.yml")
-    assert.equal(release.jobs["e2e-marketplace"].uses, "./.github/workflows/e2e.yml")
-    assert.deepEqual(release.jobs["functional-e2e"].needs, [
+    assert.equal(main.jobs.e2e.uses, "./.github/workflows/e2e.yml")
+    assert.equal(main.jobs["e2e-marketplace"].uses, "./.github/workflows/e2e.yml")
+    assert.deepEqual(main.jobs["functional-e2e"].needs, [
         "verify-tag",
         "package",
         "package-marketplace",
         "e2e",
         "e2e-marketplace",
     ])
-    assert.deepEqual(release.jobs["functional-e2e"].strategy.matrix.registry, ["open-vsx", "vscode-marketplace"])
-    assert.deepEqual(release.jobs.publish.needs, [
+    assert.deepEqual(main.jobs["functional-e2e"].strategy.matrix.registry, ["open-vsx", "vscode-marketplace"])
+    assert.deepEqual(main.jobs.evidence.needs, [
         "verify-tag",
         "package",
         "package-marketplace",
@@ -214,6 +216,16 @@ test("dev and main have separate entrances and only a production tag schedules m
         "e2e-marketplace",
         "functional-e2e",
     ])
+    assert.equal(release.jobs.publish.needs, "verify-tests")
+    const downloads = release.jobs["verify-tests"].steps.filter((step) => step.uses?.startsWith("actions/download-artifact@"))
+    assert.equal(downloads.length, 3)
+    for (const step of downloads) assert.equal(step.with["run-id"], "${{ steps.tests.outputs.tests_run_id }}")
+    for (const job of Object.values(release.jobs)) {
+        assert.notEqual(job.uses, "./.github/workflows/test-main.yml")
+        assert.notEqual(job.uses, "./.github/workflows/package.yml")
+        assert.notEqual(job.uses, "./.github/workflows/e2e.yml")
+        assert.ok(!job.steps?.some((step) => /playwright test|npm run e2e:bundle/.test(step.run ?? "")))
+    }
 })
 
 test("normal successful dev Tests still automatically publish their tested Insiders artifacts", () => {

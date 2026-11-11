@@ -106,6 +106,7 @@ describe("package topology safety", () => {
     it("keeps ordinary main source-only and tests each tagged production package before functional", async () => {
         interface Job {
             uses?: string
+            if?: string
             needs?: string | string[]
             with?: Record<string, string>
             steps?: { name?: string; run?: string; uses?: string; with?: Record<string, string> }[]
@@ -113,7 +114,8 @@ describe("package topology safety", () => {
         const readWorkflow = async (name: string) =>
             parseYaml(await readProjectFile(`.github/workflows/${name}.yml`)) as { jobs: Record<string, Job> }
         const main = await readWorkflow("test-main")
-        expect(Object.keys(main.jobs)).toEqual(["checks"])
+        expect(main.jobs.checks.if).toBe("!startsWith(github.ref, 'refs/tags/')")
+        expect(main.jobs["verify-tag"].if).toBe("github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')")
         expect(main.jobs.checks.uses).toBe("./.github/workflows/checks.yml")
         const checks = await readWorkflow("checks")
         expect(Object.keys(checks.jobs).sort()).toEqual(["biome", "smoke", "typecheck", "vitest"])
@@ -122,29 +124,29 @@ describe("package topology safety", () => {
             ["package", "e2e"],
             ["package-marketplace", "e2e-marketplace"],
         ]) {
-            expect(release.jobs[packageId].needs).toBe("verify-tag")
-            expect(release.jobs[workId].needs).toBe(packageId)
-            expect(release.jobs[workId].with?.artifact_name).toBe(`\${{ needs.${packageId}.outputs.artifact_name }}`)
-            expect(release.jobs[workId].with?.commit_sha).toBe(`\${{ needs.${packageId}.outputs.commit_sha }}`)
+            expect(main.jobs[packageId].needs).toBe("verify-tag")
+            expect(main.jobs[workId].needs).toBe(packageId)
+            expect(main.jobs[workId].with?.artifact_name).toBe(`\${{ needs.${packageId}.outputs.artifact_name }}`)
+            expect(main.jobs[workId].with?.commit_sha).toBe(`\${{ needs.${packageId}.outputs.commit_sha }}`)
         }
         const e2e = await readWorkflow("e2e")
         for (const job of Object.values(e2e.jobs)) {
             const downloads = job.steps?.filter((step) => step.uses?.startsWith("actions/download-artifact@")) ?? []
             for (const download of downloads) expect(download.with?.name).toBe("${{ inputs.artifact_name }}")
         }
-        const steps = release.jobs["functional-e2e"].steps ?? []
+        const steps = main.jobs["functional-e2e"].steps ?? []
         const build = steps.findIndex((step) => step.run === "npm run e2e:bundle")
         const download = steps.findIndex((step) => step.uses?.startsWith("actions/download-artifact@"))
         expect(build).toBeGreaterThan(-1)
         expect(download).toBeGreaterThan(build)
-        expect(release.jobs["functional-e2e"].needs).toEqual([
+        expect(main.jobs["functional-e2e"].needs).toEqual([
             "verify-tag",
             "package",
             "package-marketplace",
             "e2e",
             "e2e-marketplace",
         ])
-        expect(release.jobs.publish.needs).toEqual([
+        expect(main.jobs.evidence.needs).toEqual([
             "verify-tag",
             "package",
             "package-marketplace",
@@ -152,10 +154,12 @@ describe("package topology safety", () => {
             "e2e-marketplace",
             "functional-e2e",
         ])
+        expect(Object.keys(release.jobs)).toEqual(["verify-tests", "publish"])
+        expect(release.jobs.publish.needs).toBe("verify-tests")
     })
 
     it("shards the release functional gate across every functional folder", async () => {
-        const releaseWorkflow = await readProjectFile(".github/workflows/release.yml")
+        const mainWorkflow = await readProjectFile(".github/workflows/test-main.yml")
         const functionalRoot = path.join(PROJECT_ROOT, "src/test/e2e/functional")
         const folders = (await fs.readdir(functionalRoot, { withFileTypes: true }))
             .filter((entry) => entry.isDirectory())
@@ -163,18 +167,18 @@ describe("package topology safety", () => {
             .sort()
 
         // A folder missing from the matrix would silently drop its tests from the release gate.
-        const matrixLine = releaseWorkflow.match(/^\s*folder: \[([^\]]+)\]\s*$/m)
+        const matrixLine = mainWorkflow.match(/^\s*folder: \[([^\]]+)\]\s*$/m)
         expect(matrixLine).not.toBeNull()
         const matrixFolders = (matrixLine?.[1] ?? "")
             .split(",")
             .map((folder) => folder.trim())
             .sort()
         expect(matrixFolders).toEqual(folders)
-        expect(releaseWorkflow).toContain("fail-fast: false")
-        expect(releaseWorkflow).toContain(
+        expect(mainWorkflow).toContain("fail-fast: false")
+        expect(mainWorkflow).toContain(
             'npx playwright test -c playwright.functional.config.ts "src/test/e2e/functional/${FUNCTIONAL_FOLDER}/" --project "functional e2e tests"',
         )
-        expect(releaseWorkflow).toContain(
+        expect(mainWorkflow).toContain(
             "name: playwright-functional-production-${{ matrix.registry }}-${{ matrix.folder }}-ubuntu-${{ github.sha }}",
         )
     })

@@ -6,15 +6,230 @@ on:
     types: [opened, reopened, synchronize, ready_for_review]
   push:
     branches: [main]
+    tags: ["v*"]
 
 permissions:
+  actions: read
   contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 concurrency:
   group: main-tests-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   checks:
     name: Main source checks
+    if: "!startsWith(github.ref, 'refs/tags/')"
     uses: ./.github/workflows/checks.yml
+
+  verify-tag:
+    name: Verify production tag and reuse main source checks
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    outputs:
+      tag: ${{ steps.verify.outputs.tag }}
+      version: ${{ steps.verify.outputs.version }}
+      commit_sha: ${{ steps.verify.outputs.commit_sha }}
+    steps:
+      - name: Checkout repository history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Verify tag, version, and main branch head
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: production tag must match vX.Y.Z"
+            exit 1
+          fi
+          tag_version="${tag#v}"
+          package_version=$(node -p "require('./package.json').version")
+          if [[ "$tag_version" != "$package_version" ]]; then
+            echo "Error: production tag version does not match package.json"
+            exit 1
+          fi
+          tag_sha=$(git rev-parse "${tag}^{commit}")
+          main_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')
+          if [[ "$tag_sha" != "$main_sha" ]]; then
+            echo "Error: production tag must point to current main head"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$tag_version" >> "$GITHUB_OUTPUT"
+          echo "commit_sha=$tag_sha" >> "$GITHUB_OUTPUT"
+      - name: Reuse the exact main source checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ steps.verify.outputs.commit_sha }}
+          RELEASE_TAG: ${{ steps.verify.outputs.tag }}
+        run: node scripts/ci/main-gate.mjs
+
+  package:
+    name: Package production VSIX
+    needs: verify-tag
+    uses: ./.github/workflows/package.yml
+    with:
+      profile: release
+      channel: production
+    secrets: inherit
+
+  package-marketplace:
+    name: Package production Marketplace VSIX
+    needs: verify-tag
+    uses: ./.github/workflows/package.yml
+    with:
+      profile: release
+      channel: production
+      registry: vscode-marketplace
+    secrets: inherit
+
+  e2e:
+    name: Production work (Open VSX)
+    needs: package
+    uses: ./.github/workflows/e2e.yml
+    with:
+      artifact_name: ${{ needs.package.outputs.artifact_name }}
+      commit_sha: ${{ needs.package.outputs.commit_sha }}
+
+  e2e-marketplace:
+    name: Production work (Marketplace)
+    needs: package-marketplace
+    uses: ./.github/workflows/e2e.yml
+    with:
+      artifact_name: ${{ needs.package-marketplace.outputs.artifact_name }}
+      commit_sha: ${{ needs.package-marketplace.outputs.commit_sha }}
+      registry: vscode-marketplace
+
+  functional-e2e:
+    name: Functional E2E - ${{ matrix.folder }} (${{ matrix.registry }}, ubuntu)
+    needs: [verify-tag, package, package-marketplace, e2e, e2e-marketplace]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        folder: [api, away-mode, capabilities, chat, context, harness, performance, profiles, tasks, telemetry]
+        registry: [open-vsx, vscode-marketplace]
+    env:
+      DLINE_E2E_INSTALL_VSIX: "1"
+      DLINE_E2E_PROFILE: mock-openai
+      DLINE_E2E_RUN_ID: production-functional-${{ matrix.registry }}-${{ matrix.folder }}-${{ github.run_id }}-${{ github.run_attempt }}-ubuntu
+      EXPECTED_PUBLISHER: ${{ matrix.registry == 'vscode-marketplace' && 'tuvokyangdline' || 'tuvokyang' }}
+    steps:
+      - name: Checkout validated tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.verify-tag.outputs.commit_sha }}
+      - name: Setup project
+        uses: ./.github/actions/setup-project
+        with:
+          install-webview: "true"
+          include-optional: "true"
+      # Source-mode harness cases need the checkout bundle before the tested VSIX is placed in dist/.
+      - name: Build source E2E bundle for checkout-launched harness tests
+        run: npm run e2e:bundle
+      - name: Download production VSIX
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ matrix.registry == 'vscode-marketplace' && needs.package-marketplace.outputs.artifact_name || needs.package.outputs.artifact_name }}
+          path: validated-vsix
+      - name: Verify and normalize tested VSIX
+        shell: bash
+        env:
+          EXPECTED_SHA256: ${{ matrix.registry == 'vscode-marketplace' && needs.package-marketplace.outputs.sha256 || needs.package.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          mapfile -t assets < <(find validated-vsix -maxdepth 1 -type f -name '*.vsix' -print)
+          if [[ "${#assets[@]}" -ne 1 ]]; then
+            echo "Error: expected exactly one tested VSIX, found ${#assets[@]}"
+            exit 1
+          fi
+          version="${GITHUB_REF_NAME#v}"
+          manifest_path="$RUNNER_TEMP/vsix-package.json"
+          unzip -p "${assets[0]}" extension/package.json > "$manifest_path"
+          if [[ "${{ matrix.registry }}" == 'vscode-marketplace' ]]; then
+            expected_name=dline-main
+            expected_display_name='Dline (Stable)'
+          else
+            expected_name=dline
+            expected_display_name=Dline
+          fi
+          if ! jq -e --arg version "$version" --arg publisher "$EXPECTED_PUBLISHER" --arg name "$expected_name" --arg display_name "$expected_display_name" '
+            .name == $name and
+            .displayName == $display_name and
+            .publisher == $publisher and
+            .version == $version and
+            (.preview != true)
+          ' "$manifest_path" >/dev/null; then
+            echo "Error: tested VSIX does not match the production channel."
+            jq '{name, publisher, version, preview}' "$manifest_path"
+            exit 1
+          fi
+          actual_sha256=$(sha256sum "${assets[0]}" | cut -d' ' -f1)
+          if [[ "$actual_sha256" != "$EXPECTED_SHA256" ]]; then
+            echo "Error: functional VSIX differs from the packaged and work-tested artifact."
+            exit 1
+          fi
+          mkdir -p dist
+          cp "${assets[0]}" dist/e2e.vsix
+          sha256sum dist/e2e.vsix
+      - name: Cache VS Code
+        uses: actions/cache@v5
+        with:
+          path: .vscode-test
+          key: vscode-${{ runner.os }}-stable-${{ hashFiles('.vscode-test.mjs', 'package.json') }}
+          restore-keys: |
+            vscode-${{ runner.os }}-stable-
+      - name: Prepare VS Code and Playwright
+        run: node src/test/e2e/utils/build.mjs
+      - name: Install xvfb
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+      - name: Run functional E2E folder
+        env:
+          FUNCTIONAL_FOLDER: ${{ matrix.folder }}
+        run: xvfb-run -a npx playwright test -c playwright.functional.config.ts "src/test/e2e/functional/${FUNCTIONAL_FOLDER}/" --project "functional e2e tests"
+      - name: Upload failed functional artifacts
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-functional-production-${{ matrix.registry }}-${{ matrix.folder }}-ubuntu-${{ github.sha }}
+          path: tmp/test-result/
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 14
+
+  evidence:
+    name: Record production test evidence
+    needs: [verify-tag, package, package-marketplace, e2e, e2e-marketplace, functional-e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Record the exact tested package hashes
+        env:
+          RELEASE_TAG: ${{ needs.verify-tag.outputs.tag }}
+          COMMIT_SHA: ${{ needs.verify-tag.outputs.commit_sha }}
+          PUBLIC_ARTIFACT: ${{ needs.package.outputs.artifact_name }}
+          PUBLIC_ASSET: ${{ needs.package.outputs.asset_name }}
+          PUBLIC_SHA256: ${{ needs.package.outputs.sha256 }}
+          MARKETPLACE_ARTIFACT: ${{ needs.package-marketplace.outputs.artifact_name }}
+          MARKETPLACE_ASSET: ${{ needs.package-marketplace.outputs.asset_name }}
+          MARKETPLACE_SHA256: ${{ needs.package-marketplace.outputs.sha256 }}
+        run: node scripts/ci/production-gate.mjs record "$RUNNER_TEMP/production-tests.json"
+      - name: Upload production test evidence
+        uses: actions/upload-artifact@v5
+        with:
+          name: production-test-evidence-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/production-tests.json
+          if-no-files-found: error
+          retention-days: 14

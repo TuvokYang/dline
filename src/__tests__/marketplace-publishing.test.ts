@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process"
+import { createHash } from "node:crypto"
 import { existsSync } from "node:fs"
 import fs from "node:fs/promises"
 import os from "node:os"
@@ -342,9 +343,9 @@ describe("Marketplace publisher delivery", () => {
         expect(e2e.jobs["work-daily"].strategy?.matrix.runner).toEqual(["ubuntu", "windows", "macos"])
         expect(e2e.jobs["work-daily"].strategy?.matrix.shard).toHaveLength(4)
 
-        const release = await readWorkflow("release.yml")
-        expect(release.jobs["functional-e2e"].strategy?.matrix.registry).toEqual(["open-vsx", "vscode-marketplace"])
-        expect(dependencies(release.jobs.publish)).toEqual([
+        const main = await readWorkflow("test-main.yml")
+        expect(main.jobs["functional-e2e"].strategy?.matrix.registry).toEqual(["open-vsx", "vscode-marketplace"])
+        expect(dependencies(main.jobs.evidence)).toEqual([
             "verify-tag",
             "package",
             "package-marketplace",
@@ -352,21 +353,68 @@ describe("Marketplace publisher delivery", () => {
             "e2e-marketplace",
             "functional-e2e",
         ])
-        expect(release.jobs.publish.with?.marketplace_expected_sha256).toBe("${{ needs.package-marketplace.outputs.sha256 }}")
+        const release = await readWorkflow("release.yml")
+        expect(Object.keys(release.jobs)).toEqual(["verify-tests", "publish"])
+        expect(dependencies(release.jobs.publish)).toEqual(["verify-tests"])
+        expect(release.jobs.publish.with?.marketplace_expected_sha256).toBe(
+            "${{ needs.verify-tests.outputs.marketplace_sha256 }}",
+        )
         for (const [packageId, workId, registry] of [
             ["package", "e2e", undefined],
             ["package-marketplace", "e2e-marketplace", "vscode-marketplace"],
         ] as const) {
-            expect(release.jobs[packageId].with).toMatchObject({ profile: "release", channel: "production" })
-            expect(release.jobs[packageId].with?.registry).toBe(registry)
-            expect(dependencies(release.jobs[workId])).toEqual([packageId])
-            expect(release.jobs[workId].with?.artifact_name).toBe(`\${{ needs.${packageId}.outputs.artifact_name }}`)
+            expect(main.jobs[packageId].with).toMatchObject({ profile: "release", channel: "production" })
+            expect(main.jobs[packageId].with?.registry).toBe(registry)
+            expect(dependencies(main.jobs[workId])).toEqual([packageId])
+            expect(main.jobs[workId].with?.artifact_name).toBe(`\${{ needs.${packageId}.outputs.artifact_name }}`)
         }
         const prerelease = await readWorkflow("release-draft.yml")
         expect(dependencies(prerelease.jobs["publish-pre-release-registry"])).toEqual(["verify-tag", "tests", "release"])
         expect(prerelease.jobs["publish-pre-release-registry"].with?.marketplace_expected_sha256).toBe(
             "${{ needs.tests.outputs.marketplace_sha256 }}",
         )
+    })
+
+    it("checks original package bytes and rejects a tampered or extra publication asset", async () => {
+        const workflow = await readWorkflow("release.yml")
+        const script = workflow.jobs["verify-tests"].steps?.find((step) => step.env?.PUBLIC_SHA256)?.run
+        if (!script) throw new Error("Missing publication package verification")
+        const directory = await fs.mkdtemp(path.join(os.tmpdir(), "dline-production-bytes-"))
+        const asset = "dline-2.4.0.vsix"
+        const contents = { "open-vsx": "public package bytes", marketplace: "marketplace package bytes" }
+        const digest = (value: string) => createHash("sha256").update(value).digest("hex")
+        const verify = () =>
+            spawnSync(resolveBash(), ["--noprofile", "--norc", "-c", script], {
+                cwd: directory,
+                encoding: "utf8",
+                timeout: 10_000,
+                env: {
+                    ...process.env,
+                    PUBLIC_ASSET: asset,
+                    PUBLIC_SHA256: digest(contents["open-vsx"]),
+                    MARKETPLACE_ASSET: asset,
+                    MARKETPLACE_SHA256: digest(contents.marketplace),
+                },
+            })
+        try {
+            for (const [registry, content] of Object.entries(contents)) {
+                await fs.mkdir(path.join(directory, `tested-${registry}`))
+                await fs.writeFile(path.join(directory, `tested-${registry}`, asset), content)
+            }
+            const valid = verify()
+            expect(valid.status, valid.stderr).toBe(0)
+            for (const [registry, content] of Object.entries(contents)) {
+                const file = path.join(directory, `tested-${registry}`, asset)
+                expect(await fs.readFile(file, "utf8")).toBe(content)
+                await fs.writeFile(file, `${content} tampered`)
+                expect(verify().status).not.toBe(0)
+                await fs.writeFile(file, content)
+            }
+            await fs.writeFile(path.join(directory, "tested-open-vsx", "extra.vsix"), "not tested")
+            expect(verify().status).not.toBe(0)
+        } finally {
+            await fs.rm(directory, { recursive: true, force: true })
+        }
     })
 
     it("retrieves both Insiders packages from the exact successful Tests run", async () => {

@@ -1,9 +1,8 @@
-name: Production Release Validation
+name: Publish Production
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -17,213 +16,104 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  verify-tag:
-    name: Verify production tag and reuse Main Tests
+  verify-tests:
+    name: Verify tagged Main Tests and retrieve tested packages
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    # Bound the wait above the unchanged source/package/work/functional critical-path limits.
+    timeout-minutes: 310
     outputs:
-      tag: ${{ steps.verify.outputs.tag }}
-      version: ${{ steps.verify.outputs.version }}
-      commit_sha: ${{ steps.verify.outputs.commit_sha }}
+      tag: ${{ steps.evidence.outputs.tag }}
+      version: ${{ steps.evidence.outputs.version }}
+      commit_sha: ${{ steps.evidence.outputs.commit_sha }}
+      artifact_name: ${{ steps.evidence.outputs.artifact_name }}
+      asset_name: ${{ steps.evidence.outputs.asset_name }}
+      marketplace_artifact_name: ${{ steps.evidence.outputs.marketplace_artifact_name }}
+      marketplace_asset_name: ${{ steps.evidence.outputs.marketplace_asset_name }}
+      marketplace_sha256: ${{ steps.evidence.outputs.marketplace_sha256 }}
     steps:
-      - name: Checkout repository history
+      - name: Checkout publication verifier
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0
-          fetch-tags: true
-
-      - name: Verify tag, version, and main branch head
-        id: verify
+          persist-credentials: false
+      - name: Wait for the exact tagged Main Tests run
+        id: tests
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          tag="$GITHUB_REF_NAME"
-          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Error: production tag must match vX.Y.Z"
-            exit 1
-          fi
-
-          tag_version="${tag#v}"
-          package_version=$(node -p "require('./package.json').version")
-          if [[ "$tag_version" != "$package_version" ]]; then
-            echo "Error: tag version '$tag_version' does not match package version '$package_version'"
-            exit 1
-          fi
-
-          tag_sha=$(git rev-parse "${tag}^{commit}")
-          main_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')
-          if [[ "$tag_sha" != "$main_sha" ]]; then
-            echo "Error: production tag '$tag' must point to current main head '$main_sha', got '$tag_sha'"
-            exit 1
-          fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "version=$tag_version" >> "$GITHUB_OUTPUT"
-          echo "commit_sha=$tag_sha" >> "$GITHUB_OUTPUT"
-
-      - name: Reuse the exact main source checks
-        env:
-          GH_TOKEN: ${{ github.token }}
-          COMMIT_SHA: ${{ steps.verify.outputs.commit_sha }}
-          RELEASE_TAG: ${{ steps.verify.outputs.tag }}
-        run: node scripts/ci/main-gate.mjs
-
-  package:
-    name: Package production VSIX
-    needs: verify-tag
-    uses: ./.github/workflows/package.yml
-    with:
-      profile: release
-      channel: production
-    secrets: inherit
-
-  package-marketplace:
-    name: Package production Marketplace VSIX
-    needs: verify-tag
-    uses: ./.github/workflows/package.yml
-    with:
-      profile: release
-      channel: production
-      registry: vscode-marketplace
-    secrets: inherit
-
-  e2e:
-    name: Production work (Open VSX)
-    needs: package
-    uses: ./.github/workflows/e2e.yml
-    with:
-      artifact_name: ${{ needs.package.outputs.artifact_name }}
-      commit_sha: ${{ needs.package.outputs.commit_sha }}
-
-  e2e-marketplace:
-    name: Production work (Marketplace)
-    needs: package-marketplace
-    uses: ./.github/workflows/e2e.yml
-    with:
-      artifact_name: ${{ needs.package-marketplace.outputs.artifact_name }}
-      commit_sha: ${{ needs.package-marketplace.outputs.commit_sha }}
-      registry: vscode-marketplace
-
-  functional-e2e:
-    name: Functional E2E - ${{ matrix.folder }} (${{ matrix.registry }}, ubuntu)
-    needs: [verify-tag, package, package-marketplace, e2e, e2e-marketplace]
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    # One shard per functional folder: the gate takes as long as the slowest
-    # folder, and a rerun of failed jobs repeats only the folders that failed.
-    # fail-fast stays off so one failing folder still reports every other one.
-    strategy:
-      fail-fast: false
-      matrix:
-        folder: [api, away-mode, capabilities, chat, context, harness, performance, profiles, tasks, telemetry]
-        registry: [open-vsx, vscode-marketplace]
-    env:
-      DLINE_E2E_INSTALL_VSIX: "1"
-      DLINE_E2E_PROFILE: mock-openai
-      DLINE_E2E_RUN_ID: production-functional-${{ matrix.registry }}-${{ matrix.folder }}-${{ github.run_id }}-${{ github.run_attempt }}-ubuntu
-      EXPECTED_PUBLISHER: ${{ matrix.registry == 'vscode-marketplace' && 'tuvokyangdline' || 'tuvokyang' }}
-    steps:
-      - name: Checkout validated tag
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.verify-tag.outputs.commit_sha }}
-
-      - name: Setup project
-        uses: ./.github/actions/setup-project
-        with:
-          install-webview: "true"
-          include-optional: "true"
-
-      # Multi-instance and installVsix:false tests launch the checkout bundle, and some tests read
-      # dist/extension.js.map as a corpus. Build it before the tested VSIX is placed in dist/.
-      - name: Build source E2E bundle for checkout-launched harness tests
-        run: npm run e2e:bundle
-
-      - name: Download production VSIX
+        run: node scripts/ci/production-gate.mjs wait
+      - name: Download successful test evidence
         uses: actions/download-artifact@v8
         with:
-          name: ${{ matrix.registry == 'vscode-marketplace' && needs.package-marketplace.outputs.artifact_name || needs.package.outputs.artifact_name }}
-          path: validated-vsix
-
-      - name: Verify and normalize tested VSIX
-        shell: bash
+          name: ${{ steps.tests.outputs.evidence_artifact }}
+          path: test-evidence
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.tests.outputs.tests_run_id }}
+      - name: Verify test and package identities
+        id: evidence
         env:
-          EXPECTED_SHA256: ${{ matrix.registry == 'vscode-marketplace' && needs.package-marketplace.outputs.sha256 || needs.package.outputs.sha256 }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          COMMIT_SHA: ${{ github.sha }}
+          TESTS_RUN_ID: ${{ steps.tests.outputs.tests_run_id }}
+          TESTS_RUN_ATTEMPT: ${{ steps.tests.outputs.tests_run_attempt }}
+        run: node scripts/ci/production-gate.mjs verify test-evidence/production-tests.json
+      - name: Download tested Open VSX package
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ steps.evidence.outputs.artifact_name }}
+          path: tested-open-vsx
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.tests.outputs.tests_run_id }}
+      - name: Download tested Marketplace package
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ steps.evidence.outputs.marketplace_artifact_name }}
+          path: tested-marketplace
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.tests.outputs.tests_run_id }}
+      - name: Verify original tested bytes before publication
+        env:
+          PUBLIC_ASSET: ${{ steps.evidence.outputs.asset_name }}
+          PUBLIC_SHA256: ${{ steps.evidence.outputs.sha256 }}
+          MARKETPLACE_ASSET: ${{ steps.evidence.outputs.marketplace_asset_name }}
+          MARKETPLACE_SHA256: ${{ steps.evidence.outputs.marketplace_sha256 }}
+        shell: bash
         run: |
           set -euo pipefail
-          mapfile -t assets < <(find validated-vsix -maxdepth 1 -type f -name '*.vsix' -print)
-          if [[ "${#assets[@]}" -ne 1 ]]; then
-            echo "Error: expected exactly one tested VSIX, found ${#assets[@]}"
-            exit 1
-          fi
-
-          version="${GITHUB_REF_NAME#v}"
-          manifest_path="$RUNNER_TEMP/vsix-package.json"
-          unzip -p "${assets[0]}" extension/package.json > "$manifest_path"
-          # The VS Code Marketplace requires a globally unique extension name;
-          # Open VSX keeps the stable identity and keys by publisher and name.
-          if [[ "${{ matrix.registry }}" == 'vscode-marketplace' ]]; then
-            expected_name=dline-main
-            expected_display_name='Dline (Stable)'
-          else
-            expected_name=dline
-            expected_display_name=Dline
-          fi
-          if ! jq -e --arg version "$version" --arg publisher "$EXPECTED_PUBLISHER" --arg name "$expected_name" --arg display_name "$expected_display_name" '
-            .name == $name and
-            .displayName == $display_name and
-            .publisher == $publisher and
-            .version == $version and
-            (.preview != true)
-          ' "$manifest_path" >/dev/null; then
-            echo "Error: tested VSIX does not match the production channel."
-            jq '{name, publisher, version, preview}' "$manifest_path"
-            exit 1
-          fi
-
-          actual_sha256=$(sha256sum "${assets[0]}" | cut -d' ' -f1)
-          if [[ "$actual_sha256" != "$EXPECTED_SHA256" ]]; then
-            echo "Error: functional VSIX differs from the packaged and work-tested artifact."
-            exit 1
-          fi
-          mkdir -p dist
-          cp "${assets[0]}" dist/e2e.vsix
-          sha256sum dist/e2e.vsix
-
-      - name: Cache VS Code
-        uses: actions/cache@v5
-        with:
-          path: .vscode-test
-          key: vscode-${{ runner.os }}-stable-${{ hashFiles('.vscode-test.mjs', 'package.json') }}
-          restore-keys: |
-            vscode-${{ runner.os }}-stable-
-
-      - name: Prepare VS Code and Playwright
-        run: node src/test/e2e/utils/build.mjs
-
-      - name: Install xvfb
-        run: sudo apt-get update && sudo apt-get install -y xvfb
-
-      # The folder filter must precede --project: that option is variadic and would
-      # otherwise read the path as a second project name.
-      - name: Run functional E2E folder
-        env:
-          FUNCTIONAL_FOLDER: ${{ matrix.folder }}
-        run: xvfb-run -a npx playwright test -c playwright.functional.config.ts "src/test/e2e/functional/${FUNCTIONAL_FOLDER}/" --project "functional e2e tests"
-
-      - name: Upload failed functional artifacts
-        if: failure()
+          for registry in open-vsx marketplace; do
+            directory="tested-$registry"
+            asset="$PUBLIC_ASSET"
+            expected="$PUBLIC_SHA256"
+            if [[ "$registry" == 'marketplace' ]]; then
+              asset="$MARKETPLACE_ASSET"
+              expected="$MARKETPLACE_SHA256"
+            fi
+            mapfile -t files < <(find "$directory" -maxdepth 1 -type f -name '*.vsix' -print)
+            if [[ "${#files[@]}" -ne 1 || "${files[0]}" != "$directory/$asset" ]]; then
+              echo "Error: expected exactly the tested $registry VSIX"
+              exit 1
+            fi
+            echo "$expected  $directory/$asset" | sha256sum --check --strict
+          done
+      # Transfer the same bytes to this publication run; never rebuild or rewrite a manifest.
+      - name: Stage verified Open VSX package
         uses: actions/upload-artifact@v5
         with:
-          name: playwright-functional-production-${{ matrix.registry }}-${{ matrix.folder }}-ubuntu-${{ github.sha }}
-          path: tmp/test-result/
-          if-no-files-found: warn
-          include-hidden-files: true
-          retention-days: 14
+          name: ${{ steps.evidence.outputs.artifact_name }}
+          path: tested-open-vsx/${{ steps.evidence.outputs.asset_name }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Stage verified Marketplace package
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ steps.evidence.outputs.marketplace_artifact_name }}
+          path: tested-marketplace/${{ steps.evidence.outputs.marketplace_asset_name }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
 
   publish:
-    name: Automatically publish validated production release
-    needs: [verify-tag, package, package-marketplace, e2e, e2e-marketplace, functional-e2e]
+    name: Publish the validated original packages
+    needs: verify-tests
     permissions:
       actions: read
       attestations: write
@@ -231,12 +121,12 @@ jobs:
       id-token: write
     uses: ./.github/workflows/publish-production-release.yml
     with:
-      tag: ${{ needs.verify-tag.outputs.tag }}
-      version: ${{ needs.verify-tag.outputs.version }}
-      commit_sha: ${{ needs.verify-tag.outputs.commit_sha }}
-      artifact_name: dline-vsix-${{ needs.verify-tag.outputs.commit_sha }}
-      asset_name: dline-${{ needs.verify-tag.outputs.version }}.vsix
-      marketplace_artifact_name: ${{ needs.package-marketplace.outputs.artifact_name }}
-      marketplace_asset_name: ${{ needs.package-marketplace.outputs.asset_name }}
-      marketplace_expected_sha256: ${{ needs.package-marketplace.outputs.sha256 }}
+      tag: ${{ needs.verify-tests.outputs.tag }}
+      version: ${{ needs.verify-tests.outputs.version }}
+      commit_sha: ${{ needs.verify-tests.outputs.commit_sha }}
+      artifact_name: ${{ needs.verify-tests.outputs.artifact_name }}
+      asset_name: ${{ needs.verify-tests.outputs.asset_name }}
+      marketplace_artifact_name: ${{ needs.verify-tests.outputs.marketplace_artifact_name }}
+      marketplace_asset_name: ${{ needs.verify-tests.outputs.marketplace_asset_name }}
+      marketplace_expected_sha256: ${{ needs.verify-tests.outputs.marketplace_sha256 }}
     secrets: inherit

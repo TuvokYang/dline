@@ -68,7 +68,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-project
       - name: Test CI policies and packaging
-        run: node --test scripts/ci/workflow-policy.test.mjs scripts/ci/main-gate.test.mjs scripts/ci/packaging.test.mjs
+        run: node --test scripts/ci/workflow-policy.test.mjs scripts/ci/main-gate.test.mjs scripts/ci/production-gate.test.mjs scripts/ci/packaging.test.mjs
       - name: Run smoke tests
         run: npm run test:smoke
 
