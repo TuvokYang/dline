@@ -148,6 +148,40 @@ describe("IssueDiagnosticsOverlay", () => {
         expect(overlay.isActive()).toBe(false)
     })
 
+    it.each([401, 403])("preserves a new grant installed while an old %s response settles", async (status) => {
+        const layout = await authorized()
+        const overlay = new IssueDiagnosticsOverlay({
+            layout,
+            resource: RESOURCE,
+            transport: { sendIssueDiagnostics: async () => ({ status, json: { ok: false }, retryAfter: null }) },
+            allowed: () => true,
+            clock: () => NOW,
+        })
+        await overlay.refresh()
+        overlay.append(debugEvent("diagnostic.old_generation"))
+        const settle = IssueDiagnosticOutboxRepository.prototype.settle
+        vi.spyOn(IssueDiagnosticOutboxRepository.prototype, "settle").mockImplementationOnce(async function (
+            this: IssueDiagnosticOutboxRepository,
+            ...args
+        ) {
+            await settle.call(this, ...args)
+            await new IssueCredentialRepository(layout).update("c".repeat(43), (record) => ({ ...record, revision: 3 }))
+            await new IssueGrantRepository(layout, { clock: () => NOW }).publish(grant(3))
+            await overlay.refresh()
+        })
+
+        await overlay.deliver()
+
+        await expect(new IssueGrantRepository(layout).readActive(NOW, 3)).resolves.toEqual(grant(3))
+        expect(overlay.isActive()).toBe(true)
+        overlay.append(debugEvent("diagnostic.new_generation"))
+        await overlay.flush()
+        const queued = await new IssueDiagnosticOutboxRepository(layout, RESOURCE).read()
+        expect(queued.grant?.authorization_revision).toBe(3)
+        expect(queued.items.map((item) => item.name)).toEqual(["diagnostic.new_generation"])
+        await overlay.stop()
+    })
+
     it("does not reactivate from a grant read completed after deletion", async () => {
         const layout = await authorized()
         const overlay = new IssueDiagnosticsOverlay({

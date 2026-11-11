@@ -119,6 +119,32 @@ describe("temporary support telemetry force delete", () => {
         }
     })
 
+    it("keeps the partition lock intact when revocation fails, clears the ticket and permits a later retry", async () => {
+        await seedPartition()
+        const layout = resolveOtelStorageLayout(root)
+        const lockPath = `${layout.issueDiagnosticsOutboxPath}.lck`
+        const lock = JSON.stringify({ pid: process.pid, ownerId: "active-writer", ts: Date.now() })
+        await fs.writeFile(lockPath, lock)
+        const queued = await fs.readFile(layout.issueDiagnosticsOutboxPath, "utf8")
+        const denied = new Error("issue grant revocation denied")
+        vi.spyOn(IssueGrantRepository.prototype, "clear").mockRejectedValueOnce(denied)
+
+        await expect(service.deleteAndRevoke()).rejects.toBe(denied)
+
+        await expect(service.status()).resolves.toBeUndefined()
+        await expect(new IssueGrantRepository(layout).readActive(NOW, 2)).resolves.toEqual(GRANT)
+        expect(await fs.readFile(layout.issueDiagnosticsOutboxPath, "utf8")).toBe(queued)
+        expect(await fs.readFile(`${layout.issueDiagnosticsOutboxPath}.bak`, "utf8")).toBe(queued)
+        expect(await fs.readFile(lockPath, "utf8")).toBe(lock)
+
+        vi.restoreAllMocks()
+        await service.deleteAndRevoke()
+        await expect(new IssueGrantRepository(layout).readActive(NOW, 2)).resolves.toBeNull()
+        for (const suffix of ["", ".bak", ".lck"]) {
+            await expect(fs.access(`${layout.issueDiagnosticsOutboxPath}${suffix}`)).rejects.toMatchObject({ code: "ENOENT" })
+        }
+    })
+
     it("seals credentials even when the issue queue cannot be removed and reports the failure", async () => {
         await startOverlay()
         await seedPartition()

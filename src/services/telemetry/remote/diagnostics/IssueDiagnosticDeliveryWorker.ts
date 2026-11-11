@@ -51,7 +51,9 @@ export class IssueDiagnosticDeliveryWorker {
         }
         if (signal?.aborted || !this.isCurrentGrant(grant)) return
         await this.options.outbox.settle(this.options.owner, batch.requestId, settlement, this.clock(), grant)
-        if (settlement.kind === "sealed") await this.options.seal("revoked")
+        if (settlement.kind === "sealed" && !signal?.aborted && this.isCurrentGrant(grant)) {
+            await this.options.seal("revoked")
+        }
     }
 
     private isCurrentGrant(expected: AtomicIssueGrant): boolean {
