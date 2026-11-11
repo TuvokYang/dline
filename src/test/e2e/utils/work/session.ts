@@ -53,7 +53,12 @@ export async function setWorkAutoApproveAction(sidebar: Frame, label: string, en
     const checkbox = sidebar.locator("vscode-checkbox").filter({ hasText: label })
     await expect(checkbox).toHaveCount(1)
     const isChecked = () => checkbox.evaluate((element) => Boolean((element as HTMLInputElement).checked))
-    if ((await isChecked()) !== enabled) await sidebar.getByText(label, { exact: true }).click()
+    if ((await isChecked()) !== enabled) {
+        await sidebar.getByText(label, { exact: true }).click()
+        // Toolkit toggles checked before the settings RPC completes. Remount from host state before confirming it.
+        await sidebar.getByLabel("Close auto-approve settings").click()
+        await sidebar.getByLabel("Open auto-approve settings").click()
+    }
     await expect.poll(isChecked).toBe(enabled)
     await sidebar.getByLabel("Close auto-approve settings").click()
 }
