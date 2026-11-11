@@ -18,8 +18,9 @@ concurrency:
 
 jobs:
   verify-tag:
-    name: Verify production release tag
+    name: Verify production tag and reuse Main Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 75
     outputs:
       tag: ${{ steps.verify.outputs.tag }}
       version: ${{ steps.verify.outputs.version }}
@@ -60,22 +61,52 @@ jobs:
           echo "version=$tag_version" >> "$GITHUB_OUTPUT"
           echo "commit_sha=$tag_sha" >> "$GITHUB_OUTPUT"
 
-  tests:
-    name: Test and package release
+      - name: Reuse the exact main source checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ steps.verify.outputs.commit_sha }}
+          RELEASE_TAG: ${{ steps.verify.outputs.tag }}
+        run: node scripts/ci/main-gate.mjs
+
+  package:
+    name: Package production VSIX
     needs: verify-tag
-    uses: ./.github/workflows/test.yml
+    uses: ./.github/workflows/package.yml
     with:
-      package_profile: release
-      package_channel: production
-    secrets:
-      OTEL_TELEMETRY_ENABLED: ${{ secrets.OTEL_TELEMETRY_ENABLED }}
-      OTEL_EXPORTER_OTLP_PROTOCOL: ${{ secrets.OTEL_EXPORTER_OTLP_PROTOCOL }}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT }}
-      OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
+      profile: release
+      channel: production
+    secrets: inherit
+
+  package-marketplace:
+    name: Package production Marketplace VSIX
+    needs: verify-tag
+    uses: ./.github/workflows/package.yml
+    with:
+      profile: release
+      channel: production
+      registry: vscode-marketplace
+    secrets: inherit
+
+  e2e:
+    name: Production work (Open VSX)
+    needs: package
+    uses: ./.github/workflows/e2e.yml
+    with:
+      artifact_name: ${{ needs.package.outputs.artifact_name }}
+      commit_sha: ${{ needs.package.outputs.commit_sha }}
+
+  e2e-marketplace:
+    name: Production work (Marketplace)
+    needs: package-marketplace
+    uses: ./.github/workflows/e2e.yml
+    with:
+      artifact_name: ${{ needs.package-marketplace.outputs.artifact_name }}
+      commit_sha: ${{ needs.package-marketplace.outputs.commit_sha }}
+      registry: vscode-marketplace
 
   functional-e2e:
     name: Functional E2E - ${{ matrix.folder }} (${{ matrix.registry }}, ubuntu)
-    needs: [verify-tag, tests]
+    needs: [verify-tag, package, package-marketplace, e2e, e2e-marketplace]
     runs-on: ubuntu-latest
     timeout-minutes: 120
     # One shard per functional folder: the gate takes as long as the slowest
@@ -111,11 +142,13 @@ jobs:
       - name: Download production VSIX
         uses: actions/download-artifact@v8
         with:
-          name: ${{ matrix.registry == 'vscode-marketplace' && 'dline-vscode-marketplace' || 'dline' }}-vsix-${{ needs.verify-tag.outputs.commit_sha }}
+          name: ${{ matrix.registry == 'vscode-marketplace' && needs.package-marketplace.outputs.artifact_name || needs.package.outputs.artifact_name }}
           path: validated-vsix
 
       - name: Verify and normalize tested VSIX
         shell: bash
+        env:
+          EXPECTED_SHA256: ${{ matrix.registry == 'vscode-marketplace' && needs.package-marketplace.outputs.sha256 || needs.package.outputs.sha256 }}
         run: |
           set -euo pipefail
           mapfile -t assets < <(find validated-vsix -maxdepth 1 -type f -name '*.vsix' -print)
@@ -148,6 +181,11 @@ jobs:
             exit 1
           fi
 
+          actual_sha256=$(sha256sum "${assets[0]}" | cut -d' ' -f1)
+          if [[ "$actual_sha256" != "$EXPECTED_SHA256" ]]; then
+            echo "Error: functional VSIX differs from the packaged and work-tested artifact."
+            exit 1
+          fi
           mkdir -p dist
           cp "${assets[0]}" dist/e2e.vsix
           sha256sum dist/e2e.vsix
@@ -185,7 +223,7 @@ jobs:
 
   publish:
     name: Automatically publish validated production release
-    needs: [verify-tag, tests, functional-e2e]
+    needs: [verify-tag, package, package-marketplace, e2e, e2e-marketplace, functional-e2e]
     permissions:
       actions: read
       attestations: write
@@ -198,7 +236,7 @@ jobs:
       commit_sha: ${{ needs.verify-tag.outputs.commit_sha }}
       artifact_name: dline-vsix-${{ needs.verify-tag.outputs.commit_sha }}
       asset_name: dline-${{ needs.verify-tag.outputs.version }}.vsix
-      marketplace_artifact_name: ${{ needs.tests.outputs.marketplace_artifact_name }}
-      marketplace_asset_name: ${{ needs.tests.outputs.marketplace_asset_name }}
-      marketplace_expected_sha256: ${{ needs.tests.outputs.marketplace_sha256 }}
+      marketplace_artifact_name: ${{ needs.package-marketplace.outputs.artifact_name }}
+      marketplace_asset_name: ${{ needs.package-marketplace.outputs.asset_name }}
+      marketplace_expected_sha256: ${{ needs.package-marketplace.outputs.sha256 }}
     secrets: inherit

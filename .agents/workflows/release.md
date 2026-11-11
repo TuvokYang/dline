@@ -151,10 +151,11 @@ Never move an existing tag and never create a production tag from a commit outsi
 
 Pushing `vX.Y.Z` triggers `release.yml` (`Production Release Validation`). Follow the jobs in the repository rather than inferring behavior from a filename:
 
-1. `verify-tag` checks the exact tag format, package version and current `main` head.
-2. `tests` calls `test.yml` with `package_profile: release` and `package_channel: production`. It runs the type/lint/smoke/Vitest gates, builds a separate final VSIX for each registry publisher, then runs one Linux work smoke and all four daily workflows on Linux, macOS and Windows against each artifact.
-3. `functional-e2e` runs the production functional folders against both registry-specific release VSIX files; a successful reusable Tests run alone is not the whole production gate.
-4. Only after those jobs pass, `publish` calls `publish-production-release.yml`. It verifies and publishes the default-publisher VSIX to the stable GitHub Release, then passes each registry's existing artifact and its own SHA-256 to `publish-vsix-registries.yml`.
+1. `verify-tag` checks the exact tag format, package version and current `main` head, then reuses the successful `test-main.yml` push run for that exact SHA. A pending run is awaited within a bounded timeout; failure, cancellation or missing evidence blocks release without dispatching replacement checks. Ordinary Main Tests runs source checks only, never packaging or either E2E tier.
+2. `package` and `package-marketplace` each build one final production VSIX through `package.yml`. The tag workflow does not call the dev `test.yml` or rerun its shared source-check workflow.
+3. `e2e` and `e2e-marketplace` run one Linux work smoke and all four daily workflows on Linux, macOS and Windows against their own original packages.
+4. Only after both work gates pass, `functional-e2e` runs the ten production functional folders against both registry-specific release VSIX files. A valid production tag is required; neither ordinary main nor dev pushes schedule this full suite.
+5. Only after those jobs pass, `publish` calls `publish-production-release.yml`. It verifies and publishes the default-publisher VSIX to the stable GitHub Release, then passes each registry's existing artifact and its own SHA-256 to `publish-vsix-registries.yml`. No tested VSIX is rebuilt.
 
 Both registries are enabled by default. VS Code Marketplace uploads run only in GitHub Actions; local commands only build and package. Verify the actual GitHub Release asset and each registry result: the aggregate gate requires at least one registry to succeed, and disabled/skipped is not published. Do not replace an asset, rewrite its manifest or substitute a locally rebuilt VSIX after testing.
 

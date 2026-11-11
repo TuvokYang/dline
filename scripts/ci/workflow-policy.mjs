@@ -27,20 +27,19 @@ export function hasTestedPackages(artifacts, sha) {
     )
 }
 
-/** Reuse dev evidence only for a tree-equivalent promotion or content-preserving back-merge. */
+/** Reuse dev evidence only for a content-preserving dev back-merge. */
 export async function resolveTestExecution(context, ports) {
     const execute = (reason) => ({ run_tests: "true", reason })
-    if (context.event !== "push" || !["refs/heads/dev", "refs/heads/main"].includes(context.ref)) {
+    if (context.event !== "push" || context.ref !== "refs/heads/dev") {
         return execute("This event requires its own gate.")
     }
     if (!SHA.test(context.before ?? "") || /^0+$/.test(context.before)) return execute("No previous branch commit is available.")
 
     const current = await ports.readCommit(requireSha(context.sha))
-    const isBackMerge = context.ref === "refs/heads/dev"
-    if (current.parents.length !== (isBackMerge ? 2 : 1) || current.parents[0] !== context.before) {
+    if (current.parents.length !== 2 || current.parents[0] !== context.before) {
         return execute("Not a supported promotion or back-merge.")
     }
-    const candidate = isBackMerge ? context.before : requireSha(await ports.readDevHead())
+    const candidate = context.before
     const previous = await ports.readCommit(candidate)
     if (current.tree !== previous.tree) return execute("Repository content differs from the dev candidate.")
 
@@ -65,7 +64,7 @@ export async function resolveTestExecution(context, ports) {
 export function isReusedTestRun(jobs) {
     return (
         jobs.some((job) => job.name === "Resolve test execution" && job.conclusion === "success") &&
-        jobs.some((job) => job.name === "TypeScript" && job.conclusion === "skipped") &&
+        jobs.some((job) => ["Checks", "TypeScript"].includes(job.name) && job.conclusion === "skipped") &&
         jobs.filter((job) => job.name !== "Resolve test execution").every((job) => job.conclusion === "skipped")
     )
 }
@@ -103,7 +102,6 @@ async function main(action, env) {
                     const [tree, parents] = command("git", ["show", "--no-patch", "--format=%T%n%P", requireSha(sha)]).split("\n")
                     return { tree: tree.trim(), parents: parents?.trim().split(/\s+/).filter(Boolean) ?? [] }
                 },
-                readDevHead: () => github(repository, "git/ref/heads/dev").object.sha,
                 listRuns: (sha) =>
                     github(repository, `actions/workflows/test.yml/runs?branch=dev&event=push&head_sha=${sha}&per_page=100`)
                         .workflow_runs,

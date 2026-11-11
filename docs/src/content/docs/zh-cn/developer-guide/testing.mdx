@@ -50,7 +50,7 @@ npm run test:e2e:work -- --project "work smoke"
 npm run test:e2e:functional -- src/test/e2e/functional/tasks/history-resume-liveness.test.ts --project "functional e2e tests" --workers=1 --retries=0
 ```
 
-完整运行 functional 层用于夜间或专门排查，日常修改只运行相关文件。
+自动完整运行 functional 必须有指向当前 main 头的生产标签。日常修改只运行相关文件；本地完整运行需要明确的专项排查请求。
 
 ### 运行隔离
 
@@ -73,9 +73,13 @@ sudo apt install -y dbus libasound2 libatk-bridge2.0-0 libatk1.0-0 libdrm2 libgb
 
 ## CI 门禁
 
-`.github/workflows/test.yml`（**Tests**）在针对 `main` 或 `dev` 的 PR 以及推送到这两个分支时运行，依次执行：类型检查、Biome、冒烟测试、Vitest（五个后端项目和 Webview）、E2E、打包 VSIX。
+分支入口相互独立，共同使用只做源码检查的 `checks.yml`：类型检查、Biome/lint、冒烟测试和全部六个 Vitest 项目。
 
-E2E 部分先在 Ubuntu 上运行 work 冒烟测试，再把四个日常工作流分别在 Ubuntu、Windows 和 macOS 上运行。生产版本标签（`vX.Y.Z`）的验证流程还会额外运行完整的 functional E2E。
+- `test.yml`（**Tests**）处理 dev 推送和以 dev 为目标的 PR，先构建每个注册表 publisher 的 VSIX，再执行各自的 work E2E；成功的 dev 推送将这批原包交给 Insiders 发布。
+- `test-main.yml`（**Main Tests**）处理 main 推送和以 main 为目标的 PR，只做源码检查，不打包 VSIX，不执行 work 或 functional E2E。
+- `release.yml` 要求精确的生产标签（`vX.Y.Z`）指向当前 main 头，并复用该 SHA 已成功的 **Main Tests** 推送运行。检查仍在进行时，标签流程在有限超时内等待，不再启动另一轮检查；失败、取消或缺失的门禁不能授权发布。
+
+main 源码门禁成功后，标签流程为每个 publisher 各构建一个最终正式 VSIX。每个包先通过 Ubuntu 上的一个 work 冒烟测试，再通过 Ubuntu、Windows 和 macOS 上的四条日常工作流，之后才执行 20 个 functional 分片（每个 publisher 十个目录）。发布消费这批原包，不重新构建。普通 main 推送不会调度这两类 E2E。
 
 <Aside>
 仓库中的 `.agents/skills/use-vitest` 和 `.agents/skills/use-e2e` 记录了更详细的运行与排查方法。

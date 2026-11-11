@@ -50,7 +50,7 @@ npm run test:e2e:work -- --project "work smoke"
 npm run test:e2e:functional -- src/test/e2e/functional/tasks/history-resume-liveness.test.ts --project "functional e2e tests" --workers=1 --retries=0
 ```
 
-A full functional run is for nightly runs or dedicated investigation; for everyday changes, run only the relevant files.
+Automatic full functional runs require a production tag at the current main head. For everyday changes, run only the relevant files; a local full run requires an explicit investigation request.
 
 ### Run isolation
 
@@ -73,9 +73,13 @@ sudo apt install -y dbus libasound2 libatk-bridge2.0-0 libatk1.0-0 libdrm2 libgb
 
 ## CI gates
 
-`.github/workflows/test.yml` (**Tests**) runs for pull requests targeting `main` or `dev` and for pushes to those branches. It runs, in order: type checking, Biome, the smoke test, Vitest (the five backend projects and the Webview), E2E, and VSIX packaging.
+The branch entrances are separate and share the source-only `checks.yml` workflow: type checking, Biome/lint, smoke, and all six Vitest projects.
 
-The E2E stage first runs the work smoke test on Ubuntu, then runs each of the four daily workflows on Ubuntu, Windows, and macOS. The validation workflow for production version tags (`vX.Y.Z`) additionally runs the full functional E2E suite.
+- `test.yml` (**Tests**) handles dev pushes and dev-targeted PRs. It builds each registry publisher's VSIX before its work E2E gate; successful dev pushes feed those same artifacts to Insiders publication.
+- `test-main.yml` (**Main Tests**) handles main pushes and main-targeted PRs. It runs source checks only: no VSIX packaging, work E2E, or functional E2E.
+- `release.yml` requires an exact production tag (`vX.Y.Z`) at the current main head and reuses the successful **Main Tests** push run for that exact SHA. If that run is still in progress, the tag workflow waits within a bounded timeout rather than starting another check run. A failed, cancelled, or missing gate cannot authorize publication.
+
+After the main source gate succeeds, the tag workflow builds each publisher's final production VSIX once. Each package passes one Ubuntu work smoke and all four daily workflows on Ubuntu, Windows, and macOS. Only then do the 20 functional shards run (ten folders for each publisher). Publication consumes those original packages without rebuilding them. Ordinary main pushes never schedule either E2E tier.
 
 <Aside>
 The repository's `.agents/skills/use-vitest` and `.agents/skills/use-e2e` document running and diagnosing tests in more detail.

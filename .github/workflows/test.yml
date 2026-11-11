@@ -2,10 +2,10 @@ name: Tests
 
 on:
   pull_request:
-    branches: [main, dev]
+    branches: [dev]
     types: [opened, reopened, synchronize, ready_for_review]
   push:
-    branches: [main, dev]
+    branches: [dev]
   workflow_call:
     inputs:
       package_profile:
@@ -14,13 +14,13 @@ on:
         required: false
         default: ci
       package_channel:
-        description: VSIX identity channel. Auto maps direct dev pushes to insiders and other direct runs to ci.
+        description: VSIX identity channel; direct dev pushes use Insiders.
         type: string
         required: false
         default: auto
     outputs:
       marketplace_artifact_name:
-        description: Marketplace VSIX artifact tested by this workflow.
+        description: Tested Marketplace VSIX artifact.
         value: ${{ jobs.package-marketplace.outputs.artifact_name }}
       marketplace_asset_name:
         description: Marketplace VSIX filename.
@@ -68,201 +68,36 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/ci/workflow-policy.mjs test-gate
 
-  typecheck:
-    name: TypeScript
+  checks:
+    name: Checks
     needs: policy
     if: needs.policy.outputs.run_tests == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    outputs:
-      package_profile: ${{ steps.package-settings.outputs.profile }}
-      package_channel: ${{ steps.package-settings.outputs.channel }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Setup project
-        uses: ./.github/actions/setup-project
-        with:
-          install-webview: "true"
-
-      - name: Check types
-        run: npm run check-types
-
-      - name: Resolve package settings
-        id: package-settings
-        shell: bash
-        env:
-          REQUESTED_PROFILE: ${{ inputs.package_profile }}
-          REQUESTED_CHANNEL: ${{ inputs.package_channel }}
-          EVENT_NAME: ${{ github.event_name }}
-          REF_NAME: ${{ github.ref }}
-        run: |
-          set -euo pipefail
-
-          profile="${REQUESTED_PROFILE:-ci}"
-          if [[ "$profile" != "ci" && "$profile" != "release" ]]; then
-            echo "Error: package profile must be 'ci' or 'release'"
-            exit 1
-          fi
-
-          channel="${REQUESTED_CHANNEL:-auto}"
-          if [[ "$channel" == "auto" ]]; then
-            if [[ "$EVENT_NAME" == "push" && "$REF_NAME" == "refs/heads/dev" ]]; then
-              channel="insiders"
-            else
-              channel="ci"
-            fi
-          fi
-          if [[ "$channel" != "ci" && "$channel" != "insiders" && "$channel" != "pre-release" && "$channel" != "production" ]]; then
-            echo "Error: package channel must be 'auto', 'ci', 'insiders', 'pre-release', or 'production'"
-            exit 1
-          fi
-          if [[ "$profile" == "release" && "$channel" != "production" ]]; then
-            echo "Error: the release package profile requires the production channel"
-            exit 1
-          fi
-          if [[ "$profile" == "ci" && "$channel" == "production" ]]; then
-            echo "Error: the production channel requires the release package profile"
-            exit 1
-          fi
-
-          echo "profile=$profile" >> "$GITHUB_OUTPUT"
-          echo "channel=$channel" >> "$GITHUB_OUTPUT"
-
-  biome:
-    name: Biome
-    needs: typecheck
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Setup project
-        uses: ./.github/actions/setup-project
-
-      - name: Resolve Biome comparison base
-        id: biome-base
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          BASE_REF: ${{ github.base_ref }}
-          BEFORE_SHA: ${{ github.event.before }}
-        run: |
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            base="origin/$BASE_REF"
-          elif [[ -n "$BEFORE_SHA" && ! "$BEFORE_SHA" =~ ^0+$ ]]; then
-            base="$BEFORE_SHA"
-          else
-            base="HEAD^"
-          fi
-
-          if ! git rev-parse --verify "$base^{commit}" >/dev/null 2>&1; then
-            echo "::warning::Biome comparison base $base is unavailable; checking from the current history root"
-            base="$(git rev-list --max-parents=0 HEAD | tail -n 1)"
-          fi
-
-          git rev-parse --verify "$base^{commit}"
-          echo "value=$base" >> "$GITHUB_OUTPUT"
-
-      - name: Check Biome formatting
-        run: npm run format -- --since="${{ steps.biome-base.outputs.value }}"
-
-      - name: Check Biome and protobuf lint rules
-        run: npm run lint
-
-  smoke:
-    name: Smoke
-    needs: biome
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Setup project
-        uses: ./.github/actions/setup-project
-
-      - name: Test CI policy and packaging projections
-        run: node --test scripts/ci/workflow-policy.test.mjs scripts/ci/packaging.test.mjs
-
-      - name: Run smoke tests
-        run: npm run test:smoke
-
-  vitest:
-    name: Vitest (${{ matrix.project }})
-    needs: smoke
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - project: backend-task
-            config: vitest.backend.config.ts
-            install_webview: "false"
-          - project: backend-prompts
-            config: vitest.backend.config.ts
-            install_webview: "false"
-          - project: backend-hooks
-            config: vitest.backend.config.ts
-            install_webview: "false"
-          - project: backend-core
-            config: vitest.backend.config.ts
-            install_webview: "false"
-          - project: backend
-            config: vitest.backend.config.ts
-            install_webview: "false"
-          - project: webview
-            config: webview-ui/vitest.config.ts
-            install_webview: "true"
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Setup project
-        uses: ./.github/actions/setup-project
-        with:
-          install-webview: ${{ matrix.install_webview }}
-
-      - name: Generate Protobuf code
-        run: npm run protos
-
-      - name: Run Vitest project
-        env:
-          VITEST_CONFIG: ${{ matrix.config }}
-          VITEST_PROJECT: ${{ matrix.project }}
-        run: npx vitest run --config "$VITEST_CONFIG" --project "$VITEST_PROJECT"
+    uses: ./.github/workflows/checks.yml
 
   package:
     name: Package VSIX
-    needs: [typecheck, vitest]
+    needs: checks
     uses: ./.github/workflows/package.yml
     with:
-      profile: ${{ needs.typecheck.outputs.package_profile }}
-      channel: ${{ needs.typecheck.outputs.package_channel }}
+      profile: ${{ inputs.package_profile || 'ci' }}
+      channel: ${{ inputs.package_channel && inputs.package_channel != 'auto' && inputs.package_channel || (github.event_name == 'push' && github.ref == 'refs/heads/dev' && 'insiders' || 'ci') }}
     secrets:
-      OTEL_TELEMETRY_ENABLED:
-      OTEL_EXPORTER_OTLP_PROTOCOL: ${{ needs.typecheck.outputs.package_profile == 'release' && secrets.OTEL_EXPORTER_OTLP_PROTOCOL || '' }}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ needs.typecheck.outputs.package_profile == 'release' && secrets.OTEL_EXPORTER_OTLP_ENDPOINT || '' }}
-      OTEL_EXPORTER_OTLP_HEADERS: ${{ needs.typecheck.outputs.package_profile == 'release' && secrets.OTEL_EXPORTER_OTLP_HEADERS || '' }}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${{ inputs.package_profile == 'release' && secrets.OTEL_EXPORTER_OTLP_PROTOCOL || '' }}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ inputs.package_profile == 'release' && secrets.OTEL_EXPORTER_OTLP_ENDPOINT || '' }}
+      OTEL_EXPORTER_OTLP_HEADERS: ${{ inputs.package_profile == 'release' && secrets.OTEL_EXPORTER_OTLP_HEADERS || '' }}
 
   package-marketplace:
     name: Package Marketplace VSIX
-    needs: [typecheck, vitest]
+    needs: checks
     uses: ./.github/workflows/package.yml
     with:
-      profile: ${{ needs.typecheck.outputs.package_profile }}
-      channel: ${{ needs.typecheck.outputs.package_channel }}
+      profile: ${{ inputs.package_profile || 'ci' }}
+      channel: ${{ inputs.package_channel && inputs.package_channel != 'auto' && inputs.package_channel || (github.event_name == 'push' && github.ref == 'refs/heads/dev' && 'insiders' || 'ci') }}
       registry: vscode-marketplace
     secrets:
-      OTEL_TELEMETRY_ENABLED:
-      OTEL_EXPORTER_OTLP_PROTOCOL: ${{ needs.typecheck.outputs.package_profile == 'release' && secrets.OTEL_EXPORTER_OTLP_PROTOCOL || '' }}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ needs.typecheck.outputs.package_profile == 'release' && secrets.OTEL_EXPORTER_OTLP_ENDPOINT || '' }}
-      OTEL_EXPORTER_OTLP_HEADERS: ${{ needs.typecheck.outputs.package_profile == 'release' && secrets.OTEL_EXPORTER_OTLP_HEADERS || '' }}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${{ inputs.package_profile == 'release' && secrets.OTEL_EXPORTER_OTLP_PROTOCOL || '' }}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ inputs.package_profile == 'release' && secrets.OTEL_EXPORTER_OTLP_ENDPOINT || '' }}
+      OTEL_EXPORTER_OTLP_HEADERS: ${{ inputs.package_profile == 'release' && secrets.OTEL_EXPORTER_OTLP_HEADERS || '' }}
 
   e2e:
     name: E2E (Open VSX)
