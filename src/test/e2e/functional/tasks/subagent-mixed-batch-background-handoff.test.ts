@@ -52,12 +52,16 @@ e2e(
                 id: "call_mixed_batch_settled_child",
                 name: "attempt_completion",
                 arguments: { result: settledResult },
+                expectedRequestIncludes: [settledTask],
+                matchRequestContract: true,
             },
             {
                 type: "tool",
                 id: "call_mixed_batch_background_child",
                 name: "attempt_completion",
                 arguments: { result: backgroundResult },
+                expectedRequestIncludes: [runningTask],
+                matchRequestContract: true,
                 delayMs: 20_000,
             },
             {
