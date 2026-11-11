@@ -149,6 +149,53 @@ function createActivityCallbacks(taskId = "task-1"): {
 }
 
 describe("CommandExecutor explicit background execution", () => {
+    it("reveals a foreground terminal without redirecting a chat draft into the shell", async () => {
+        const editor = { text: "" }
+        const shell = { text: "" }
+        let focused = editor
+        const processResult = new FakeTerminalProcess()
+        const terminalInfo: TerminalInfo = {
+            id: 1,
+            terminal: {
+                dispose: vi.fn(),
+                hide: vi.fn(),
+                name: "Focus terminal",
+                processId: Promise.resolve(1),
+                sendText: vi.fn(),
+                // Model VS Code's show(preserveFocus) contract at the host boundary.
+                show: (preserveFocus?: boolean) => {
+                    if (!preserveFocus) focused = shell
+                },
+            },
+            busy: false,
+            lastActive: Date.now(),
+            lastCommand: "",
+        }
+        const manager = createTerminalManager()
+        vi.mocked(manager.getOrCreateTerminal).mockResolvedValue(terminalInfo)
+        vi.mocked(manager.runCommand).mockReturnValue(processResult.asResultPromise())
+        const executor = new CommandExecutor(
+            {
+                cwd: documentsRoot,
+                workspaceRoots: [documentsRoot],
+                taskId: "task-focus",
+                terminalExecutionMode: "vscodeTerminal",
+                terminalManager: manager,
+                terminalConfiguration,
+                ulid: "task-focus",
+            },
+            createCallbacks(),
+        )
+        const execution = executor.execute("echo command", 30, { synchronous: true, workdirectory: documentsRoot })
+        await vi.waitFor(() => assert.equal(vi.mocked(manager.runCommand).mock.calls.length, 1))
+        focused.text += "E2E_UNSENT_DRAFT"
+        processResult.complete({ exitCode: 0, signal: null })
+        processResult.continue()
+        await execution
+        assert.equal(editor.text, "E2E_UNSENT_DRAFT")
+        assert.equal(shell.text, "")
+    })
+
     it("initializes a persistent terminal separately and wraps every user command with preCommands and postCommand", async () => {
         const workspace = await mkdtemp(path.join(os.tmpdir(), "dline-command-environment-"))
         const platform = process.platform
