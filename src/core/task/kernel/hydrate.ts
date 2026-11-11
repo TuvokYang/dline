@@ -603,6 +603,13 @@ function rewoundSnapshot(snapshot: TaskState, tail: JournalWatermark): TaskState
         journalWatermark:
             snapshot.journalWatermark && isAfter(snapshot.journalWatermark, tail) ? tail : snapshot.journalWatermark,
         flow: { phase: "paused" },
+        // Feedback answers the discarded dialog; replaying it would resurrect the input an edit replaced.
+        roundMaterial: snapshot.roundMaterial
+            ? {
+                  ...snapshot.roundMaterial,
+                  feedback: snapshot.roundMaterial.feedback.filter((input) => input.source === "intake"),
+              }
+            : undefined,
         turn: {
             ...snapshot.turn,
             blocks: [],
