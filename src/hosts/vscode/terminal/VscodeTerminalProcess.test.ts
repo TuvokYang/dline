@@ -610,6 +610,29 @@ describe("TerminalProcess (Integration Tests)", () => {
             expect(getLatestTerminalOutput).toHaveBeenCalledWith(expect.objectContaining({ wholeBuffer: true }))
         })
 
+        it("recovers command output and its exact exit marker without requiring terminal selection", async () => {
+            const terminal = TerminalRegistry.createTerminal().terminal
+            createdTerminals.push(terminal)
+            const token = "focus-safe-token"
+            const primary = createPendingExecution()
+            vi.spyOn(terminal, "shellIntegration", "get").mockReturnValue({
+                executeCommand: vi.fn().mockReturnValue(primary.execution),
+            })
+            getLatestTerminalOutput.mockResolvedValue(`COMMAND_OUTPUT\n__DLINE_INTERNAL_COMMAND_EXIT__${token}:7`)
+            const lines: string[] = []
+            process.on("line", (line) => lines.push(line))
+            const runPromise = process.run(terminal, "printf OUT", { completionMarkerToken: token })
+            await vi.waitFor(() => expect(primary.iterator.next).toHaveBeenCalled())
+            process.acceptCompletionDetails(primary.execution, { exitCode: 0 })
+            await runPromise
+
+            expect(process.getCompletionDetails()).toEqual({ exitCode: 7, signal: null })
+            expect(process.isCompletionVerified()).toBe(true)
+            expect(lines).toContain("COMMAND_OUTPUT")
+            expect(lines.join("\n")).not.toContain("__DLINE_INTERNAL_COMMAND_EXIT__")
+            expect(getLatestTerminalOutput.mock.calls.every(([options]) => options.scope === "command")).toBe(true)
+        })
+
         it("should keep waiting after an end hint until this command's own marker is in the buffer", async () => {
             const terminal = TerminalRegistry.createTerminal().terminal
             createdTerminals.push(terminal)

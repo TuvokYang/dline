@@ -2,6 +2,8 @@ import { readTextFromClipboard, writeTextToClipboard } from "@utils/env"
 import * as vscode from "vscode"
 
 export interface LatestTerminalOutputOptions {
+    /** Command capture does not select the terminal or move the user's keyboard focus. */
+    scope?: "buffer" | "command"
     /** Keep the final terminal line so callers can inspect a completion marker. */
     preserveLastLine?: boolean
     /** Refuse to capture another terminal after focus changes. */
@@ -36,23 +38,27 @@ async function captureLatestTerminalOutput(options: LatestTerminalOutputOptions)
     let capturedClipboard: string | undefined
 
     try {
-        // Select terminal content
-        await vscode.commands.executeCommand("workbench.action.terminal.selectAll")
-
-        // Copy selection to clipboard
-        await vscode.commands.executeCommand("workbench.action.terminal.copySelection")
-
-        // Clear the selection
-        await vscode.commands.executeCommand("workbench.action.terminal.clearSelection")
+        if (options.scope === "command") {
+            await vscode.commands.executeCommand("workbench.action.terminal.copyLastCommandOutput")
+        } else {
+            // Explicit buffer references retain the complete scrollback selection.
+            await vscode.commands.executeCommand("workbench.action.terminal.selectAll")
+            await vscode.commands.executeCommand("workbench.action.terminal.copySelection")
+            await vscode.commands.executeCommand("workbench.action.terminal.clearSelection")
+        }
 
         // Get terminal contents from clipboard
         capturedClipboard = await readTextFromClipboard()
+        if (options.terminal && vscode.window.activeTerminal !== options.terminal) return ""
         let terminalContents = capturedClipboard.trim()
 
         // Check if there's actually a terminal open
         if (terminalContents === originalClipboard) {
             return ""
         }
+
+        // Command output has no trailing shell prompt to remove.
+        if (options.scope === "command") return terminalContents
 
         // Clean up command separation
         const lines = terminalContents.split("\n")
