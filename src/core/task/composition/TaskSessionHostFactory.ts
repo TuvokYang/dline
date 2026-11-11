@@ -17,6 +17,7 @@ import type { PresentationIdSequence } from "../session/PresentationIdSequence"
 import type { TaskApiHandlerOwner } from "../session/TaskApiHandlerOwner"
 import type { TaskInteractionOwner } from "../session/TaskInteractionOwner"
 import type {
+    CheckpointRestoreInput,
     CheckpointRestoreMode,
     CheckpointRestoreResult,
     CheckpointRestoreRow,
@@ -47,6 +48,8 @@ export interface TaskSessionCheckpointPort {
         readonly fallback?: { readonly journalTarget: { readonly seq: number }; readonly workspaceRef?: string }
         /** Where the row's own chat returns to; the stored boundary is only where it was written. */
         readonly row?: CheckpointRestoreRow
+        /** An explicit edit replaces pending replies independently of journal row positioning. */
+        readonly pendingInput?: CheckpointRestoreInput["pendingInput"]
         readonly restoreWorkspace: (workspaceRef: string) => Promise<WorkspaceRestoreResult>
     }): Promise<{ readonly result: CheckpointRestoreResult; readonly fence?: CheckpointRestoreFence }>
 }

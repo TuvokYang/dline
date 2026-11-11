@@ -1,6 +1,7 @@
 import type { CheckpointRoundReason } from "@core/task/checkpoints/CheckpointGate"
 import type { CompactionRestoreDisposition } from "@core/task/compaction/CompactionSummaryLanding"
 import type {
+    CheckpointRestoreInput,
     CheckpointRestoreMode,
     CheckpointRestoreResult,
     CheckpointRestoreRow,
@@ -52,6 +53,8 @@ export interface CanonicalCheckpointPort {
          * the conversation, the rewind and the saved snapshot agree.
          */
         readonly row?: CheckpointRestoreRow
+        /** Separate from row positioning: only an explicit edit replaces accepted pending replies. */
+        readonly pendingInput?: CheckpointRestoreInput["pendingInput"]
         readonly restoreWorkspace: (workspaceRef: string) => Promise<WorkspaceRestoreResult>
     }): Promise<CheckpointRestoreResult>
 }

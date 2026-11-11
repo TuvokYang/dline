@@ -669,6 +669,7 @@ export class TaskSessionCompositionService {
                             checkpointRef,
                             mode: input.mode,
                             ...(input.row === undefined ? {} : { row: input.row }),
+                            ...(input.pendingInput === undefined ? {} : { pendingInput: input.pendingInput }),
                         },
                         {
                             stopAndFence: async () => {

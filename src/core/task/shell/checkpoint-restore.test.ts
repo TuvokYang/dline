@@ -100,6 +100,47 @@ describe("checkpoint restore coordinator", () => {
         expect(subject.restoreWorkspace).not.toHaveBeenCalled()
     })
 
+    it.each([
+        { keepInput: undefined, pendingInput: undefined },
+        { keepInput: true, pendingInput: undefined },
+        { keepInput: false, pendingInput: undefined },
+        { keepInput: false, pendingInput: "keep" as const },
+        { keepInput: false, pendingInput: "replace" as const },
+    ])("keeps pending inputs unless an edit replaces them: %j", async ({ keepInput, pendingInput }) => {
+        const subject = ports()
+        const resolved = await subject.resolve("checkpoint:1")
+        const feedback = [
+            { id: "reply:before-compaction", source: "dialog" as const, revision: 1, payloadRef: "trigger-input" },
+            { id: "approval:before-checkpoint", source: "approval" as const, revision: 1, payloadRef: "approval-feedback" },
+            { id: "queue:pending", source: "intake" as const, revision: 2, payloadRef: "queued-input" },
+        ]
+        const notices = [{ id: "exit-away", kind: "away_exited" as const, revision: 1, reason: "stopped" as const }]
+        const state = { ...resolved.snapshot.state, roundMaterial: { feedback, notices } }
+        vi.mocked(subject.resolve).mockResolvedValue({ ...resolved, snapshot: { ...resolved.snapshot, state } })
+        subject.resolveRowBoundary = vi.fn(async () => resolved.boundary)
+        subject.calls.length = 0
+
+        const result = await restoreCheckpoint(
+            {
+                taskId: "task-1",
+                checkpointRef: "checkpoint:1",
+                mode: "chat_only",
+                ...(keepInput === undefined ? {} : { row: { keep: 1, seq: 4, keepInput } }),
+                ...(pendingInput === undefined ? {} : { pendingInput }),
+            },
+            subject,
+        )
+
+        expect(result.kind).toBe("restored")
+        if (result.kind !== "restored") throw new Error("Expected checkpoint restore")
+        expect(result.snapshot?.state.roundMaterial).toEqual({
+            feedback: pendingInput === "replace" ? [feedback[2]] : feedback,
+            notices,
+        })
+        expect(result.snapshot?.state.intake).toEqual(state.intake)
+        expect(state.roundMaterial.feedback).toEqual(feedback)
+    })
+
     it("discards commands owned by the rewound tail", async () => {
         const subject = ports()
         const resolved = await subject.resolve("checkpoint:1")

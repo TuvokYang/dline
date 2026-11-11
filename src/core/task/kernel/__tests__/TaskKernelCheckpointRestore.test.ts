@@ -116,7 +116,7 @@ describe("hydrate for a checkpoint restore", () => {
         expect(result.state.dialog.primary?.kind).toBe("completion")
     })
 
-    it.each(["checkpoint_restore", "resume"] as const)("handles pending dialog feedback on %s", (openReason) => {
+    it.each(["checkpoint_restore", "resume"] as const)("keeps accepted pending feedback on %s", (openReason) => {
         const feedback = [
             { id: "reply:old-completion:12", source: "dialog" as const, revision: 12, payloadRef: "old-input" },
             { id: "reply:old-approval:13", source: "approval" as const, revision: 13, payloadRef: "old-approval" },
@@ -131,7 +131,7 @@ describe("hydrate for a checkpoint restore", () => {
 
         expect(result.kind).toBe("ready")
         if (result.kind !== "ready") throw new Error("Expected hydrated task")
-        expect(result.state.roundMaterial?.feedback).toEqual(openReason === "checkpoint_restore" ? [feedback[2]] : feedback)
+        expect(result.state.roundMaterial?.feedback).toEqual(feedback)
         expect(result.state.intake).toEqual(snapshot.intake)
     })
 

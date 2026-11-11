@@ -4,7 +4,7 @@ import type { UiMessage } from "@/shared/ExtensionMessage"
 vi.unmock("@integrations/checkpoints")
 
 import { CanonicalCheckpointRepository, canonicalCheckpointRef } from "@/core/task/checkpoints/CanonicalCheckpointRepository"
-import { createInitialTaskState } from "@/core/task/kernel"
+import { createInitialTaskState, type TaskState } from "@/core/task/kernel"
 import { restoreCheckpoint } from "@/core/task/shell/checkpoint-restore"
 import {
     InMemoryConversationJournal,
@@ -111,6 +111,7 @@ function canonicalTransaction(input: { readonly boundary: { readonly seq: number
                 mode: request.mode,
                 ...(request.journalTarget === undefined ? {} : { journalTarget: request.journalTarget }),
                 ...(request.row === undefined ? {} : { row: request.row }),
+                ...(request.pendingInput === undefined ? {} : { pendingInput: request.pendingInput }),
             },
             {
                 stopAndFence: async () => undefined,
@@ -133,11 +134,11 @@ function canonicalTransaction(input: { readonly boundary: { readonly seq: number
         return result
     })
     /** Write the bundle the checkpoint row stands for, at the position that row recorded. */
-    const capture = () =>
+    const capture = (roundMaterial?: TaskState["roundMaterial"]) =>
         repository.capture({
             checkpointRef,
             boundary: input.boundary,
-            snapshot: { state: { ...createInitialTaskState(taskId), revision: 2 }, outbox: [] },
+            snapshot: { state: { ...createInitialTaskState(taskId), revision: 2, roundMaterial }, outbox: [] },
         })
     return {
         port: { capture: vi.fn(), restore } satisfies CanonicalCheckpointPort,
@@ -169,6 +170,8 @@ function canonicalTransaction(input: { readonly boundary: { readonly seq: number
             }),
         conversationSize: async () => (await journal.project()).visibleMessages.length,
         savedWatermark: async () => (await vault.load(taskId))?.state.journalWatermark,
+        savedMaterial: async () => (await vault.load(taskId))?.state.roundMaterial,
+        putInput: (text: string) => payloads.put(encodeTaskPayload({ text })),
         rewindRecords: async () => (await journal.read()).filter((entry) => entry.kind === "rewind"),
     }
 }
@@ -226,6 +229,25 @@ describe("TaskCheckpointManager canonical row-aware boundary", () => {
         expect(transaction.port.restore).toHaveBeenCalledOnce()
         expect(truncateUiHistory).toHaveBeenCalledWith(2)
         expect(restoreChatRuntime).toHaveBeenCalledWith({ apiIndex: 5 })
+    })
+
+    it.each([undefined, "edited reply"])("keeps a checkpoint's pending reply except during an edit: %s", async (editedText) => {
+        const transaction = canonicalTransaction({ boundary: { seq: 2 }, messageTs: 30 })
+        await transaction.say("initial task", "intake")
+        await transaction.say("question before compaction", "provider")
+        const feedback = [{ source: "dialog" as const, revision: 1, payloadRef: await transaction.putInput("accepted trigger") }]
+        await transaction.capture({ feedback, notices: [] })
+        const { manager } = createHarness(
+            [{ ts: 30, type: "say", say: "checkpoint_created", conversationHistoryIndex: 1, conversationJournalSeq: 2 }],
+            transaction.rewindPort as never,
+            transaction.port,
+        )
+
+        const result = await manager.restoreCheckpoint(30, "task", undefined, editedText)
+
+        expect(result.checkpointManagerErrorMessage).toBeUndefined()
+        expect(await transaction.savedMaterial()).toEqual({ feedback: editedText === undefined ? feedback : [], notices: [] })
+        expect(await transaction.visible()).toEqual(["initial task", "question before compaction"])
     })
 
     it("drops the input an edited row replaces instead of leaving both copies", async () => {
