@@ -17,6 +17,18 @@ Rules describe project architecture and conventions. Skills teach concrete work 
 - Do not split a file merely because it is large while its responsibilities, change reasons, and dependency direction remain coherent. When a file approaches the limit, extract stable responsibilities or dependency boundaries rather than creating arbitrary forwarding fragments.
 - Generated code, machine-managed lockfiles and snapshots, and fixture data are not hand-written source files and must not be split solely to satisfy this limit.
 
+## Naming
+
+- File names and type names (classes, interfaces, type aliases, and enums) must not exceed four words. Function, method, variable, parameter, field, and constant names must not exceed three words.
+- Names must identify the concrete subject and responsibility or action. A reader should be able to tell what the component does and how it differs from neighboring components.
+- Treat abstract role words (for example, `Owner`, `Projection`, or `Manager`) as a signal to examine what the name communicates. Replace labels that could fit unrelated components equally well with the specific operation, data, or domain concept they represent.
+- Use directory, module, namespace, enclosing-type, and local-scope context to avoid repeating information. Preserve the meaning needed to identify a responsibility and distinguish its consumers.
+- Name functions and methods for their action, and variables for their subject or meaning. Use clear predicates such as `is`, `has`, and `can` for booleans.
+- Count words at camelCase, PascalCase, and separator boundaries. Established acronyms such as API, HTTP, UI, and MCP count as one word. Prefixes and suffixes such as `get`, `create`, `is`, `Options`, `Result`, and `Handler` count toward the limit; split constants at underscores.
+- For file names, count the business stem after removing the extension and conventional test, spec, stories, module, or locale suffixes. Business and test-scenario qualifiers remain part of the count.
+- Use established domain terms and abbreviations. Do not invent abbreviations, join words, change capitalization, or remove necessary meaning to evade the limits.
+- Resolve overlong names by removing repeated context and choosing a more precise name. When a name combines independent responsibilities, review and separate those responsibilities.
+
 ## Searching ignored directories
 
 `search_files` runs through ripgrep, which honours `.gitignore` plus the scan
