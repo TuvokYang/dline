@@ -73,6 +73,60 @@ describe("painted chat direction calibration", () => {
         })
     })
 
+    it("measures a full viewport turnover through retained mounted rows", () => {
+        const before = {
+            ...frame({ leaving: 10 }, 1000),
+            rows: [
+                { ts: "entering", top: -390 },
+                { ts: "leaving", top: 10 },
+            ],
+        }
+        const after = {
+            ...frame({ entering: 10 }, 600),
+            rows: [
+                { ts: "entering", top: 10 },
+                { ts: "leaving", top: 410 },
+            ],
+        }
+        expect(measurePaintedDirection([before, after], 1)).toEqual({
+            backwardFrames: 0,
+            comparedFrames: 1,
+            coverageGaps: 0,
+        })
+    })
+
+    it("still detects reversals when a previously visible row leaves the viewport", () => {
+        const before = {
+            ...frame({ leaving: 20 }, 1000),
+            rows: [
+                { ts: "leaving", top: 20 },
+                { ts: "entering", top: 300 },
+            ],
+        }
+        const after = {
+            ...frame({ entering: 60 }, 600),
+            rows: [
+                { ts: "leaving", top: -46 },
+                { ts: "entering", top: 60 },
+            ],
+        }
+        expect(measurePaintedDirection([before, after], 1)).toEqual({
+            backwardFrames: 1,
+            comparedFrames: 1,
+            coverageGaps: 0,
+        })
+    })
+
+    it("does not use an unrelated offscreen row to conceal missing viewport coverage", () => {
+        const before = { ...frame({ leaving: 10 }, 1000), rows: [{ ts: "unseen", top: -1000 }] }
+        const after = { ...frame({ entering: 10 }, 600), rows: [{ ts: "unseen", top: -600 }] }
+        expect(measurePaintedDirection([before, after], 1)).toEqual({
+            backwardFrames: 0,
+            comparedFrames: 0,
+            coverageGaps: 1,
+        })
+    })
+
     it("does not treat movement with the requested direction as a reversal", () => {
         expect(measurePaintedDirection([frame({ a: 10 }, 1000), frame({ a: 90 }, 920)], 1)).toEqual({
             backwardFrames: 0,

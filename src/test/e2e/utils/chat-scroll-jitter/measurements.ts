@@ -88,7 +88,11 @@ export function countBackwardFrames(samples: AnchorSample[], expectedAnchorDirec
     }
     return backward
 }
-/** Check every shared visible row after resize compensation, not a provisional rAF anchor. */
+function paintedRowCoordinates(frame: PaintedFrame): Record<string, number> {
+    return { ...Object.fromEntries((frame.rows ?? []).map(({ ts, top }) => [ts, top])), ...frame.visible }
+}
+
+/** Follow rows visible in either frame, including across a full viewport of wheel travel. */
 export function measurePaintedDirection(
     frames: PaintedFrame[],
     expectedAnchorDirection: 1 | -1,
@@ -101,14 +105,16 @@ export function measurePaintedDirection(
         const previous = frames[index - 1]!
         const current = frames[index]!
         if (Math.sign(current.scrollTop - previous.scrollTop) !== -expectedAnchorDirection) continue
-        const shared = Object.entries(current.visible).filter(([ts]) => previous.visible[ts] !== undefined)
+        const before = paintedRowCoordinates(previous)
+        const after = paintedRowCoordinates(current)
+        const observed = new Set([...Object.keys(previous.visible), ...Object.keys(current.visible)])
+        const shared = [...observed].filter((ts) => before[ts] !== undefined && after[ts] !== undefined)
         if (shared.length === 0) {
             coverageGaps++
             continue
         }
         comparedFrames++
-        if (shared.some(([ts, top]) => (top - previous.visible[ts]!) * expectedAnchorDirection <= -MIN_VISIBLE_PX))
-            backwardFrames++
+        if (shared.some((ts) => (after[ts]! - before[ts]!) * expectedAnchorDirection <= -MIN_VISIBLE_PX)) backwardFrames++
     }
     return { backwardFrames, comparedFrames, coverageGaps }
 }
