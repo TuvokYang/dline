@@ -5,7 +5,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 ## [Unreleased]
 
 ### Fixed
-- Fixed scrolling back through long chats being repeatedly pulled back after earlier messages load; scroll-to-top/bottom and automatic following are unchanged.
+- Fixed scrolling back through long chats being repeatedly pulled back after earlier messages load, and visible jumps while browsing history during streaming; scroll-to-top/bottom and automatic following are unchanged.
 
 ## [0.14.1]
 
