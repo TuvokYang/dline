@@ -139,20 +139,10 @@ test("failed provenance retrieval fails the gate rather than skipping tests", as
     await assert.rejects(resolveTestExecution(push, ports), /API unavailable/)
 })
 
-test("main still enters Tests and reuses only a verified identical dev tree", async () => {
-    const context = { ...push, ref: "refs/heads/main", before: main }
+test("main always owns its base checks rather than inheriting a dev package gate", async () => {
     const ports = fixture({ current: { tree, parents: [main] } })
-    const result = await resolveTestExecution(context, ports)
-    assert.equal(result.run_tests, "false")
-    assert.equal(result.reused_run_id, "123")
-    for (const options of [
-        { current: { tree, parents: [main] }, previous: { tree: "e".repeat(40) } },
-        { current: { tree, parents: [main] }, runs: [] },
-        { current: { tree, parents: [main] }, runs: [{ ...successfulRun, conclusion: "failure" }] },
-        { current: { tree, parents: [before, main] } },
-    ]) {
-        assert.equal((await resolveTestExecution(context, fixture(options))).run_tests, "true")
-    }
+    assert.equal((await resolveTestExecution({ ...push, ref: "refs/heads/main", before: main }, ports)).run_tests, "true")
+    assert.deepEqual(ports.requests, [])
 })
 
 const reuseOnlyJobs = [
@@ -164,6 +154,10 @@ const reuseOnlyJobs = [
 
 test("only a successful reuse-only gate suppresses duplicate Insiders publication", () => {
     assert.equal(isReusedTestRun(reuseOnlyJobs), true)
+    assert.equal(
+        isReusedTestRun(reuseOnlyJobs.map((job) => (job.name === "TypeScript" ? { ...job, name: "Checks" } : job))),
+        true,
+    )
     for (const jobs of [
         [],
         reuseOnlyJobs.slice(1),
@@ -179,26 +173,47 @@ test("only a successful reuse-only gate suppresses duplicate Insiders publicatio
 
 const workflow = (name) => yaml.load(readFileSync(new URL(`../../.github/workflows/${name}.yml`, import.meta.url), "utf8"))
 
-test("main and dev retain Tests while the production tag retains every release gate", () => {
-    const tests = workflow("test")
-    assert.deepEqual(tests.on.push.branches, ["main", "dev"])
-    assert.deepEqual(tests.on.pull_request.branches, ["main", "dev"])
-    assert.equal(tests.jobs.policy.name, "Resolve test execution")
-    assert.equal(tests.jobs.typecheck.name, "TypeScript")
-    assert.ok(tests.on.workflow_call)
-    assert.equal(tests.jobs.typecheck.needs, "policy")
-    assert.equal(tests.jobs.typecheck.if, "needs.policy.outputs.run_tests == 'true'")
-    for (const job of ["biome", "smoke", "vitest", "package", "package-marketplace", "e2e", "e2e-marketplace"]) {
-        assert.ok(tests.jobs[job].needs, `${job} must remain downstream of the gate`)
-        assert.equal(tests.jobs[job].if, undefined)
-    }
+test("dev and main have separate entrances and only a production tag schedules main E2E", () => {
+    const dev = workflow("test")
+    assert.deepEqual(dev.on.push.branches, ["dev"])
+    assert.deepEqual(dev.on.pull_request.branches, ["dev"])
+    assert.equal(dev.jobs.checks.uses, "./.github/workflows/checks.yml")
+    const main = workflow("test-main")
+    assert.deepEqual(main.on.push.branches, ["main"])
+    assert.deepEqual(main.on.pull_request.branches, ["main"])
+    assert.deepEqual(Object.keys(main.jobs), ["checks"])
+    assert.equal(main.jobs.checks.uses, dev.jobs.checks.uses)
+    const checks = workflow("checks")
+    assert.deepEqual(Object.keys(checks.on), ["workflow_call"])
+    assert.deepEqual(Object.keys(checks.jobs), ["typecheck", "biome", "smoke", "vitest"])
     const release = workflow("release")
+    assert.deepEqual(Object.keys(release.on), ["push"])
     assert.deepEqual(release.on.push.tags, ["v*"])
-    assert.equal(release.jobs.tests.uses, "./.github/workflows/test.yml")
-    assert.equal(release.jobs.tests.with.package_profile, "release")
-    assert.equal(release.jobs.tests.with.package_channel, "production")
+    assert.equal(release.jobs.tests, undefined)
+    for (const job of ["package", "package-marketplace"]) {
+        assert.equal(release.jobs[job].uses, "./.github/workflows/package.yml")
+        assert.equal(release.jobs[job].needs, "verify-tag")
+        assert.equal(release.jobs[job].with.profile, "release")
+        assert.equal(release.jobs[job].with.channel, "production")
+    }
+    assert.equal(release.jobs.e2e.uses, "./.github/workflows/e2e.yml")
+    assert.equal(release.jobs["e2e-marketplace"].uses, "./.github/workflows/e2e.yml")
+    assert.deepEqual(release.jobs["functional-e2e"].needs, [
+        "verify-tag",
+        "package",
+        "package-marketplace",
+        "e2e",
+        "e2e-marketplace",
+    ])
     assert.deepEqual(release.jobs["functional-e2e"].strategy.matrix.registry, ["open-vsx", "vscode-marketplace"])
-    assert.deepEqual(release.jobs.publish.needs, ["verify-tag", "tests", "functional-e2e"])
+    assert.deepEqual(release.jobs.publish.needs, [
+        "verify-tag",
+        "package",
+        "package-marketplace",
+        "e2e",
+        "e2e-marketplace",
+        "functional-e2e",
+    ])
 })
 
 test("normal successful dev Tests still automatically publish their tested Insiders artifacts", () => {

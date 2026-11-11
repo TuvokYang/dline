@@ -1,5 +1,6 @@
 import fs from "node:fs/promises"
 import path from "node:path"
+import { load as parseYaml } from "js-yaml"
 import { describe, expect, it } from "vitest"
 
 interface RootPackageJson {
@@ -102,35 +103,55 @@ describe("package topology safety", () => {
         // Publisher-specific workflow bindings are exercised in marketplace-publishing.test.ts.
     })
 
-    it("runs the required work gate against the exact VSIX packaged for the workflow", async () => {
-        const testsWorkflow = await readProjectFile(".github/workflows/test.yml")
-        const e2eWorkflow = await readProjectFile(".github/workflows/e2e.yml")
-        const releaseWorkflow = await readProjectFile(".github/workflows/release.yml")
-
-        expect(testsWorkflow).toMatch(/package:\n[\s\S]*?needs: \[typecheck, vitest\]/)
-        expect(testsWorkflow).toMatch(/e2e:\n[\s\S]*?needs: package/)
-        expect(testsWorkflow).toContain("artifact_name: ${{ needs.package.outputs.artifact_name }}")
-        expect(testsWorkflow).toContain("commit_sha: ${{ needs.package.outputs.commit_sha }}")
-
-        expect(e2eWorkflow).toContain('DLINE_E2E_INSTALL_VSIX: "1"')
-        expect(e2eWorkflow).toContain("runner: [ubuntu, windows, macos]")
-        expect(e2eWorkflow.match(/run: npm run protos/g)).toHaveLength(2)
-        expect(e2eWorkflow.match(/uses: actions\/download-artifact@v8/g)).toHaveLength(2)
-        expect(e2eWorkflow.match(/name: \$\{\{ inputs\.artifact_name \}\}/g)).toHaveLength(2)
-        expect(e2eWorkflow).toContain('$expectedArtifact = "$env:VSIX_ARTIFACT_PREFIX-vsix-$env:COMMIT_SHA"')
-        expect(e2eWorkflow).toContain("Copy-Item -LiteralPath $assets[0].FullName -Destination dist/e2e.vsix -Force")
-        expect(e2eWorkflow).toContain("npx playwright test -c playwright.work.config.ts")
-        expect(e2eWorkflow).not.toContain("npm run e2e:smoke")
-        expect(e2eWorkflow).not.toContain("npm run e2e:work")
-
-        expect(releaseWorkflow).toContain('DLINE_E2E_INSTALL_VSIX: "1"')
-        expect(releaseWorkflow).toContain("name: Build source E2E bundle for checkout-launched harness tests")
-        expect(releaseWorkflow).toContain("run: npm run e2e:bundle")
-        expect(releaseWorkflow.indexOf("run: npm run e2e:bundle")).toBeLessThan(
-            releaseWorkflow.indexOf("name: Download production VSIX"),
-        )
-        expect(releaseWorkflow).toContain("npx playwright test -c playwright.functional.config.ts")
-        expect(releaseWorkflow).toContain("needs: [verify-tag, tests, functional-e2e]")
+    it("keeps ordinary main source-only and tests each tagged production package before functional", async () => {
+        interface Job {
+            uses?: string
+            needs?: string | string[]
+            with?: Record<string, string>
+            steps?: { name?: string; run?: string; uses?: string; with?: Record<string, string> }[]
+        }
+        const readWorkflow = async (name: string) =>
+            parseYaml(await readProjectFile(`.github/workflows/${name}.yml`)) as { jobs: Record<string, Job> }
+        const main = await readWorkflow("test-main")
+        expect(Object.keys(main.jobs)).toEqual(["checks"])
+        expect(main.jobs.checks.uses).toBe("./.github/workflows/checks.yml")
+        const checks = await readWorkflow("checks")
+        expect(Object.keys(checks.jobs).sort()).toEqual(["biome", "smoke", "typecheck", "vitest"])
+        const release = await readWorkflow("release")
+        for (const [packageId, workId] of [
+            ["package", "e2e"],
+            ["package-marketplace", "e2e-marketplace"],
+        ]) {
+            expect(release.jobs[packageId].needs).toBe("verify-tag")
+            expect(release.jobs[workId].needs).toBe(packageId)
+            expect(release.jobs[workId].with?.artifact_name).toBe(`\${{ needs.${packageId}.outputs.artifact_name }}`)
+            expect(release.jobs[workId].with?.commit_sha).toBe(`\${{ needs.${packageId}.outputs.commit_sha }}`)
+        }
+        const e2e = await readWorkflow("e2e")
+        for (const job of Object.values(e2e.jobs)) {
+            const downloads = job.steps?.filter((step) => step.uses?.startsWith("actions/download-artifact@")) ?? []
+            for (const download of downloads) expect(download.with?.name).toBe("${{ inputs.artifact_name }}")
+        }
+        const steps = release.jobs["functional-e2e"].steps ?? []
+        const build = steps.findIndex((step) => step.run === "npm run e2e:bundle")
+        const download = steps.findIndex((step) => step.uses?.startsWith("actions/download-artifact@"))
+        expect(build).toBeGreaterThan(-1)
+        expect(download).toBeGreaterThan(build)
+        expect(release.jobs["functional-e2e"].needs).toEqual([
+            "verify-tag",
+            "package",
+            "package-marketplace",
+            "e2e",
+            "e2e-marketplace",
+        ])
+        expect(release.jobs.publish.needs).toEqual([
+            "verify-tag",
+            "package",
+            "package-marketplace",
+            "e2e",
+            "e2e-marketplace",
+            "functional-e2e",
+        ])
     })
 
     it("shards the release functional gate across every functional folder", async () => {

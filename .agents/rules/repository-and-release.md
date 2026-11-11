@@ -119,7 +119,9 @@ History that reached `main` before this rule (fast-forward promotions up to `v0.
 
 Use `release` for the fetch, candidate verification, push previews, separately authorized squash/back-merge/tag operations and publication observation. Its evidence must bind explicit remote-tracking `dev`/`main` SHAs, the verified tree and the tested artifact; bare local branch names are not remote facts.
 
-The automatic `release.yml` gate requires the production tag at current `main` head. The separate manual override in `publish-vscode-marketplace.yml` requires main ancestry and an explicit reason; it is not the automatic continuation and is not an ordinary release shortcut. Neither shape requires the individual `dev` commits in `main` history.
+Branch validation has separate entrances: `test.yml` owns dev checks, packaging and work E2E; `test-main.yml` owns main source checks only. Ordinary main pushes and main-targeted PRs must not package VSIX files or run work/full functional E2E. Both entrances share the source-only `checks.yml` implementation.
+
+The automatic `release.yml` gate requires the production tag at current `main` head and reuses the exact SHA's successful Main Tests push run without rerunning its source checks. A pending run may be awaited within a bounded timeout; failed, cancelled or missing evidence blocks release. Only that valid production tag schedules the two final publisher builds, each package's work smoke/daily gate, then full functional E2E and publication of the same packages. The separate manual override in `publish-vscode-marketplace.yml` requires main ancestry and an explicit reason; it is not the automatic continuation and is not an ordinary release shortcut. Neither shape requires the individual `dev` commits in `main` history.
 
 Never:
 

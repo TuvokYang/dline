@@ -1,0 +1,113 @@
+name: Source Checks
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  typecheck:
+    name: TypeScript
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-project
+        with:
+          install-webview: "true"
+      - name: Check types
+        run: npm run check-types
+
+  biome:
+    name: Biome
+    needs: typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-project
+      - name: Resolve Biome comparison base
+        id: biome-base
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            base="origin/$BASE_REF"
+          elif [[ -n "$BEFORE_SHA" && ! "$BEFORE_SHA" =~ ^0+$ ]]; then
+            base="$BEFORE_SHA"
+          else
+            base="HEAD^"
+          fi
+          if ! git rev-parse --verify "$base^{commit}" >/dev/null 2>&1; then
+            echo "::warning::Biome comparison base $base is unavailable; checking from the current history root"
+            base="$(git rev-list --max-parents=0 HEAD | tail -n 1)"
+          fi
+          git rev-parse --verify "$base^{commit}"
+          echo "value=$base" >> "$GITHUB_OUTPUT"
+      - name: Check Biome formatting
+        run: npm run format -- --since="${{ steps.biome-base.outputs.value }}"
+      - name: Check Biome and protobuf lint rules
+        run: npm run lint
+
+  smoke:
+    name: Smoke
+    needs: biome
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-project
+      - name: Test CI policies and packaging
+        run: node --test scripts/ci/workflow-policy.test.mjs scripts/ci/main-gate.test.mjs scripts/ci/packaging.test.mjs
+      - name: Run smoke tests
+        run: npm run test:smoke
+
+  vitest:
+    name: Vitest (${{ matrix.project }})
+    needs: smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: backend-task
+            config: vitest.backend.config.ts
+            install_webview: "false"
+          - project: backend-prompts
+            config: vitest.backend.config.ts
+            install_webview: "false"
+          - project: backend-hooks
+            config: vitest.backend.config.ts
+            install_webview: "false"
+          - project: backend-core
+            config: vitest.backend.config.ts
+            install_webview: "false"
+          - project: backend
+            config: vitest.backend.config.ts
+            install_webview: "false"
+          - project: webview
+            config: webview-ui/vitest.config.ts
+            install_webview: "true"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-project
+        with:
+          install-webview: ${{ matrix.install_webview }}
+      - name: Generate Protobuf code
+        run: npm run protos
+      - name: Run Vitest project
+        env:
+          VITEST_CONFIG: ${{ matrix.config }}
+          VITEST_PROJECT: ${{ matrix.project }}
+        run: npx vitest run --config "$VITEST_CONFIG" --project "$VITEST_PROJECT"

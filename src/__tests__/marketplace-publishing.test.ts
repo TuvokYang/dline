@@ -37,6 +37,8 @@ interface Workflow {
 const WORKFLOW_NAMES = [
     "package.yml",
     "test.yml",
+    "test-main.yml",
+    "checks.yml",
     "e2e.yml",
     "publish-insiders.yml",
     "release-draft.yml",
@@ -303,12 +305,13 @@ describe("Marketplace publisher delivery", () => {
         const workflow = await readWorkflow("test.yml")
         const original = workflow.jobs.package
         const marketplace = workflow.jobs["package-marketplace"]
-        expect(dependencies(original)).toEqual(["typecheck", "vitest"])
-        expect(dependencies(marketplace)).toEqual(["typecheck", "vitest"])
+        expect(dependencies(original)).toEqual(["checks"])
+        expect(dependencies(marketplace)).toEqual(["checks"])
         expect(marketplace.uses).toBe(original.uses)
         expect(marketplace.with).toMatchObject({
-            profile: "${{ needs.typecheck.outputs.package_profile }}",
-            channel: "${{ needs.typecheck.outputs.package_channel }}",
+            profile: "${{ inputs.package_profile || 'ci' }}",
+            channel:
+                "${{ inputs.package_channel && inputs.package_channel != 'auto' && inputs.package_channel || (github.event_name == 'push' && github.ref == 'refs/heads/dev' && 'insiders' || 'ci') }}",
             registry: "vscode-marketplace",
         })
         expect(original.with?.registry).toBeUndefined()
@@ -341,8 +344,24 @@ describe("Marketplace publisher delivery", () => {
 
         const release = await readWorkflow("release.yml")
         expect(release.jobs["functional-e2e"].strategy?.matrix.registry).toEqual(["open-vsx", "vscode-marketplace"])
-        expect(dependencies(release.jobs.publish)).toEqual(["verify-tag", "tests", "functional-e2e"])
-        expect(release.jobs.publish.with?.marketplace_expected_sha256).toBe("${{ needs.tests.outputs.marketplace_sha256 }}")
+        expect(dependencies(release.jobs.publish)).toEqual([
+            "verify-tag",
+            "package",
+            "package-marketplace",
+            "e2e",
+            "e2e-marketplace",
+            "functional-e2e",
+        ])
+        expect(release.jobs.publish.with?.marketplace_expected_sha256).toBe("${{ needs.package-marketplace.outputs.sha256 }}")
+        for (const [packageId, workId, registry] of [
+            ["package", "e2e", undefined],
+            ["package-marketplace", "e2e-marketplace", "vscode-marketplace"],
+        ] as const) {
+            expect(release.jobs[packageId].with).toMatchObject({ profile: "release", channel: "production" })
+            expect(release.jobs[packageId].with?.registry).toBe(registry)
+            expect(dependencies(release.jobs[workId])).toEqual([packageId])
+            expect(release.jobs[workId].with?.artifact_name).toBe(`\${{ needs.${packageId}.outputs.artifact_name }}`)
+        }
         const prerelease = await readWorkflow("release-draft.yml")
         expect(dependencies(prerelease.jobs["publish-pre-release-registry"])).toEqual(["verify-tag", "tests", "release"])
         expect(prerelease.jobs["publish-pre-release-registry"].with?.marketplace_expected_sha256).toBe(

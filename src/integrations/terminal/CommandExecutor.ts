@@ -299,7 +299,8 @@ export class CommandExecutor {
         if (options?.startInBackground) {
             terminalInfo.terminal.hide()
         } else {
-            terminalInfo.terminal.show()
+            // Revealing an automated command must not route an in-progress chat draft into the shell.
+            terminalInfo.terminal.show(true)
         }
         const process = manager.runCommand(
             terminalInfo,
