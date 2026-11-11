@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import fs from "node:fs/promises"
 import path from "node:path"
-import { readJsonWithBackup, writeJsonAtomic } from "@shared/storage/atomic-file"
+import { backupPathOf, readJsonWithBackup, writeJsonAtomic } from "@shared/storage/atomic-file"
 import type { AtomicIssueGrant } from "@/services/telemetry/remote/contracts/issueGrant"
 import type { DiagnosticResource } from "@/services/telemetry/remote/diagnostics/diagnosticRecord"
 import {
@@ -11,6 +11,7 @@ import {
 } from "@/services/telemetry/remote/diagnostics/issueDiagnosticRecord"
 import { FileLock } from "../backend/jsonl/FileLock"
 import { MAX_DIAGNOSTICS_REQUEST_BYTES } from "./DiagnosticOutboxRepository"
+import type { IssueGrantRepository } from "./IssueGrantRepository"
 import type { OtelStorageLayout } from "./OtelStorageLayout"
 
 // Version 2 fences the byte budget as a revision total; a version 1 partition is unreadable and starts empty.
@@ -20,6 +21,31 @@ const RETRY_MS = 30_000
 const MAX_REPLAYS = 12
 const MAX_PENDING = 5_000
 const MAX_BATCH_RECORDS = 250
+const REMOVE_RETRY_DELAYS_MS = [10, 25, 50, 100] as const
+const RETRYABLE_REMOVE_CODES = new Set(["EPERM", "EBUSY", "EACCES"])
+
+interface PendingOperations {
+    tail: Promise<void>
+    generation: number
+}
+
+// All repository instances in this host share the same purge barrier for one partition.
+const pendingOperations = new Map<string, PendingOperations>()
+
+/** Terminal issue-only cleanup. The caller must seal the grant before breaking this partition's lock. */
+export function purgeIssueDiagnosticOutbox(layout: OtelStorageLayout): Promise<void> {
+    const filePath = layout.issueDiagnosticsOutboxPath
+    return serializeOperation(
+        filePath,
+        async () => {
+            const results = await Promise.allSettled([filePath, backupPathOf(filePath), `${filePath}.lck`].map(removeIssueFile))
+            const errors = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []))
+            if (errors.length === 1) throw errors[0]
+            if (errors.length > 1) throw new AggregateError(errors, "Could not purge temporary support telemetry files")
+        },
+        "purge",
+    )
+}
 
 export interface ClaimedIssueDiagnostics {
     readonly requestId: string
@@ -79,11 +105,12 @@ export class IssueDiagnosticOutboxRepository {
     constructor(
         private readonly layout: OtelStorageLayout,
         private readonly resource: DiagnosticResource,
+        private readonly grants?: Pick<IssueGrantRepository, "withActiveGrant">,
     ) {}
 
     async append(grant: AtomicIssueGrant, incoming: readonly IssueDiagnosticItem[], now: number): Promise<void> {
         if (incoming.length === 0) return
-        await this.mutate((stored) => {
+        await this.mutate(grant, now, (stored) => {
             const current = sameGrant(stored.grant, grant) ? stored : fresh(grant)
             if (grant.expiresAt <= now || grant.captureExpiresAt <= now) return EMPTY
             if (current.acknowledged_bytes >= grant.rateLimits.maxBytes) return current
@@ -99,7 +126,7 @@ export class IssueDiagnosticOutboxRepository {
 
     async claim(owner: string, grant: AtomicIssueGrant, now: number): Promise<ClaimedIssueDiagnostics | undefined> {
         let claimed: ClaimedIssueDiagnostics | undefined
-        await this.mutate((stored) => {
+        await this.mutate(grant, now, (stored) => {
             const current = sameGrant(stored.grant, grant) ? stored : fresh(grant)
             if (grant.expiresAt <= now || grant.captureExpiresAt <= now) return EMPTY
             if (current.claim && current.claim.owner !== owner && current.claim.until > now) return current
@@ -121,8 +148,14 @@ export class IssueDiagnosticOutboxRepository {
         return claimed
     }
 
-    async settle(owner: string, requestId: string, settlement: IssueDiagnosticSettlement, now: number): Promise<void> {
-        await this.mutate((current) => {
+    async settle(
+        owner: string,
+        requestId: string,
+        settlement: IssueDiagnosticSettlement,
+        now: number,
+        grant?: AtomicIssueGrant,
+    ): Promise<void> {
+        await this.mutate(grant, now, (current) => {
             const inflight = current.inflight
             if (!inflight || inflight.request_id !== requestId) return current
             const released = current.claim?.owner === owner ? withoutClaim(current) : current
@@ -162,10 +195,13 @@ export class IssueDiagnosticOutboxRepository {
     }
 
     async clear(): Promise<void> {
-        await fs.mkdir(path.dirname(this.layout.issueDiagnosticsOutboxPath), { recursive: true })
-        await this.lock.withLock(this.layout.issueDiagnosticsOutboxPath, () =>
-            fs.rm(this.layout.issueDiagnosticsOutboxPath, { force: true }),
-        )
+        await serializeOperation(this.layout.issueDiagnosticsOutboxPath, async () => {
+            await fs.mkdir(path.dirname(this.layout.issueDiagnosticsOutboxPath), { recursive: true })
+            await this.lock.withLock(this.layout.issueDiagnosticsOutboxPath, async () => {
+                await fs.rm(this.layout.issueDiagnosticsOutboxPath, { force: true })
+                await fs.rm(backupPathOf(this.layout.issueDiagnosticsOutboxPath), { force: true })
+            })
+        })
     }
 
     async read(): Promise<Document> {
@@ -214,16 +250,60 @@ export class IssueDiagnosticOutboxRepository {
         }
     }
 
-    private async mutate(update: (current: Document) => Document): Promise<void> {
-        await fs.mkdir(path.dirname(this.layout.issueDiagnosticsOutboxPath), { recursive: true })
-        await this.lock.withLock(this.layout.issueDiagnosticsOutboxPath, async () => {
-            const next = update(await this.read())
-            if (isEmpty(next)) {
-                await fs.rm(this.layout.issueDiagnosticsOutboxPath, { force: true })
-                return
-            }
-            await writeJsonAtomic(this.layout.issueDiagnosticsOutboxPath, next, { fsync: true })
-        })
+    private async mutate(
+        grant: AtomicIssueGrant | undefined,
+        now: number,
+        update: (current: Document) => Document,
+    ): Promise<void> {
+        const operation = () =>
+            serializeOperation(this.layout.issueDiagnosticsOutboxPath, async () => {
+                await fs.mkdir(path.dirname(this.layout.issueDiagnosticsOutboxPath), { recursive: true })
+                await this.lock.withLock(this.layout.issueDiagnosticsOutboxPath, async () => {
+                    const next = update(await this.read())
+                    if (isEmpty(next)) {
+                        await fs.rm(this.layout.issueDiagnosticsOutboxPath, { force: true })
+                        return
+                    }
+                    await writeJsonAtomic(this.layout.issueDiagnosticsOutboxPath, next, { fsync: true })
+                })
+            })
+        if (!this.grants) return operation()
+        if (!grant) throw new Error("Issue diagnostic mutation requires its authorization grant")
+        await this.grants.withActiveGrant(grant, now, operation)
+    }
+}
+
+function serializeOperation(filePath: string, operation: () => Promise<void>, mode: "write" | "purge" = "write"): Promise<void> {
+    let pending = pendingOperations.get(filePath)
+    if (!pending) {
+        pending = { tail: Promise.resolve(), generation: 0 }
+        pendingOperations.set(filePath, pending)
+    }
+    const state = pending
+    if (mode === "purge") state.generation++
+    const generation = state.generation
+    const result = state.tail.then(() => (generation === state.generation ? operation() : undefined))
+    const settled = result.then(
+        () => undefined,
+        () => undefined,
+    )
+    state.tail = settled
+    void settled.then(() => {
+        if (state.tail === settled) pendingOperations.delete(filePath)
+    })
+    return result
+}
+
+async function removeIssueFile(filePath: string): Promise<void> {
+    for (let attempt = 0; ; attempt++) {
+        try {
+            await fs.rm(filePath, { force: true })
+            return
+        } catch (error) {
+            const code = (error as NodeJS.ErrnoException).code
+            if (!code || !RETRYABLE_REMOVE_CODES.has(code) || attempt >= REMOVE_RETRY_DELAYS_MS.length) throw error
+            await new Promise<void>((resolve) => setTimeout(resolve, REMOVE_RETRY_DELAYS_MS[attempt]))
+        }
     }
 }
 

@@ -131,7 +131,7 @@ export class SupportTelemetryService {
     private nextQueryAt: number | undefined
     private refusalReason: ReportQueryRefusalReason | undefined
 
-    constructor(options: SupportTelemetryServiceOptions) {
+    constructor(private readonly options: SupportTelemetryServiceOptions) {
         this.clock = options.clock ?? Date.now
         const layout = resolveOtelStorageLayout(options.dataDir)
         this.credentials = new IssueCredentialRepository(layout, { clock: this.clock })
@@ -391,18 +391,22 @@ export class SupportTelemetryService {
 
     /** Capture seal (§7): stop intake, abort in-flight issue-only work, purge its queue and token; keep the ticket. */
     private async sealCapture(reason: CaptureSealReason): Promise<void> {
-        await purgeIssueDiagnosticsOverlay(reason)
-        // The overlay runs only while remote diagnostics do; the token goes regardless.
-        await this.runtime.grants.clear(reason)
+        await purgeIssueDiagnosticsOverlay(reason, this.options.dataDir)
     }
 
     /** Full delete (§7). With a code, only that ticket is deleted, so a late refusal never removes a newer one. */
     private async deleteTicket(authorizationCode?: string): Promise<void> {
         this.stopPolling("support_deleted")
-        await this.sealCapture("deleted")
-        await this.credentials.clear(authorizationCode)
-        await this.runtime.operations.completeAll("report.authorize")
-        await this.runtime.operations.completeAll("issue.exchange")
+        // Finish every local terminal step even if physical queue cleanup fails.
+        const sealed = await Promise.allSettled([this.sealCapture("deleted")])
+        const deleted = await Promise.allSettled([this.credentials.clear(authorizationCode)])
+        const issuance = await Promise.allSettled([this.runtime.operations.completeAll("report.authorize")])
+        const exchange = await Promise.allSettled([this.runtime.operations.completeAll("issue.exchange")])
+        const errors = [...sealed, ...deleted, ...issuance, ...exchange].flatMap((result) =>
+            result.status === "rejected" ? [result.reason] : [],
+        )
+        if (errors.length === 1) throw errors[0]
+        if (errors.length > 1) throw new AggregateError(errors, "Could not delete temporary support telemetry")
     }
 
     /** The stored ticket, deleted once OTel no longer answers for it. */

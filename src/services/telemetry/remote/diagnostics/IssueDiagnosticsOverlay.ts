@@ -9,6 +9,7 @@ import type { IssueDiagnosticTransport } from "../transport/DlineOtelHttpClient"
 import type { DiagnosticResource } from "./diagnosticRecord"
 import { IssueDiagnosticDeliveryWorker } from "./IssueDiagnosticDeliveryWorker"
 import { createIssueDiagnosticSpan, type IssueDiagnosticItem, toIssueDiagnosticItem } from "./issueDiagnosticRecord"
+import { purgeIssueDiagnosticCapture } from "./purgeIssueDiagnosticCapture"
 
 const MAX_BUFFERED_ITEMS = 1_000
 
@@ -38,12 +39,16 @@ export class IssueDiagnosticsOverlay {
     private deliveryAbort = new AbortController()
     private delivering: Promise<void> | undefined
     private closed = false
+    private generation = 0
+    private refreshing: Promise<boolean> | undefined
+    private deactivating: Promise<void> | undefined
+    private inactiveCleaned = false
 
     constructor(private readonly options: IssueDiagnosticsOverlayOptions) {
         this.clock = options.clock ?? Date.now
         this.credentials = new IssueCredentialRepository(options.layout, { clock: this.clock })
         this.grants = new IssueGrantRepository(options.layout, { clock: this.clock })
-        this.outbox = new IssueDiagnosticOutboxRepository(options.layout, options.resource)
+        this.outbox = new IssueDiagnosticOutboxRepository(options.layout, options.resource, this.grants)
         this.worker = new IssueDiagnosticDeliveryWorker({
             outbox: this.outbox,
             activeGrant: () => this.activeGrant,
@@ -62,39 +67,56 @@ export class IssueDiagnosticsOverlay {
         this.buffer.push(item)
     }
 
-    readonly startSpan = (options: TelemetrySpanStartOptions): TelemetrySpanHandle =>
-        createIssueDiagnosticSpan(
+    readonly startSpan = (options: TelemetrySpanStartOptions): TelemetrySpanHandle => {
+        const generation = this.generation
+        const grant = this.activeGrant
+        return createIssueDiagnosticSpan(
             options,
-            () => Boolean(this.activeGrant && scopeAllows(this.activeGrant, "traces") && this.options.allowed()),
+            () =>
+                Boolean(
+                    grant &&
+                        this.isCurrent(generation) &&
+                        sameGeneration(this.activeGrant, grant) &&
+                        scopeAllows(grant, "traces") &&
+                        this.options.allowed(),
+                ),
             (item) => {
                 if (this.buffer.length >= MAX_BUFFERED_ITEMS) this.buffer.shift()
                 this.buffer.push(item)
             },
             this.clock,
         )
+    }
 
     async refresh(): Promise<boolean> {
-        if (this.closed) return false
+        if (this.closed || this.deactivating) return false
+        this.refreshing ??= this.refreshCurrent(this.generation).finally(() => {
+            this.refreshing = undefined
+        })
+        return this.refreshing
+    }
+
+    private async refreshCurrent(generation: number): Promise<boolean> {
         const now = this.clock()
         if (!this.options.allowed()) {
-            await this.deactivate("revoked")
+            if (!this.inactiveCleaned) await this.deactivate("revoked")
             return false
         }
         const authorization = (await this.credentials.read()).record
-        if (this.closed) return false
+        if (!this.isCurrent(generation)) return false
         if (
             !authorization ||
             authorization.state !== "approved" ||
             authorization.authorizationExpiresAt <= now ||
             (authorization.captureExpiresAt ?? authorization.authorizationExpiresAt) <= now
         ) {
-            await this.deactivate(authorization?.state === "expired" ? "expired" : "revision_changed")
+            if (!this.inactiveCleaned) await this.deactivate(authorization?.state === "expired" ? "expired" : "revision_changed")
             return false
         }
         const grant = await this.grants.readActive(now, authorization.revision)
-        if (this.closed) return false
+        if (!this.isCurrent(generation)) return false
         if (!grant || !hasOverlayScopes(grant)) {
-            await this.deactivate(grant ? "revision_changed" : "expired")
+            if (!this.inactiveCleaned) await this.deactivate(grant ? "revision_changed" : "expired")
             return false
         }
         if (!sameGeneration(this.activeGrant, grant)) {
@@ -102,13 +124,16 @@ export class IssueDiagnosticsOverlay {
             this.deliveryAbort = new AbortController()
             this.buffer = []
             await this.outbox.clear()
+            if (!this.isCurrent(generation)) return false
         }
+        this.inactiveCleaned = false
         this.activeGrant = grant
         return true
     }
 
     async flush(): Promise<void> {
-        if (!(await this.refresh()) || !this.activeGrant || this.buffer.length === 0) return
+        const generation = this.generation
+        if (!(await this.refresh()) || !this.isCurrent(generation) || !this.activeGrant || this.buffer.length === 0) return
         const items = this.buffer
         this.buffer = []
         await this.outbox.append(this.activeGrant, items, this.clock())
@@ -125,17 +150,29 @@ export class IssueDiagnosticsOverlay {
     }
 
     async deactivate(reason: "revoked" | "expired" | "revision_changed" | "deleted"): Promise<void> {
+        this.generation++
         this.deliveryAbort.abort(`issue_overlay_${reason}`)
-        this.deliveryAbort = new AbortController()
         this.buffer = []
         this.activeGrant = undefined
-        await this.outbox.clear()
-        await this.grants.clear(reason)
+        this.deactivating ??= this.purge(reason).finally(() => {
+            this.deactivating = undefined
+        })
+        return this.deactivating
+    }
+
+    private async purge(reason: "revoked" | "expired" | "revision_changed" | "deleted"): Promise<void> {
+        await purgeIssueDiagnosticCapture(this.options.layout, reason, this.grants)
+        this.inactiveCleaned = true
+    }
+
+    private isCurrent(generation: number): boolean {
+        return !this.closed && !this.deactivating && generation === this.generation
     }
 
     async stop(): Promise<void> {
         await this.flush().catch(() => undefined)
         this.closed = true
+        this.generation++
         this.deliveryAbort.abort("issue_overlay_stopped")
         await this.delivering?.catch(() => undefined)
         this.buffer = []

@@ -88,6 +88,24 @@ export class IssueGrantRepository implements IssueGrantPort {
         return grant
     }
 
+    /** Coordinate short issue-queue writes with revocation across extension hosts; never hold this across network I/O. */
+    async withActiveGrant<T>(expected: AtomicIssueGrant, now: number, operation: () => Promise<T>): Promise<T | undefined> {
+        return this.withLock(async () => {
+            const current = await this.readForWrite()
+            const grant = current.grant
+            if (
+                !grant ||
+                !sameAtomicIssueGrant(grant, expected) ||
+                grant.expiresAt <= now ||
+                grant.captureExpiresAt <= now ||
+                blocksGrant(current.tombstone, grant)
+            ) {
+                return undefined
+            }
+            return operation()
+        })
+    }
+
     async clear(reason: Parameters<IssueGrantPort["clear"]>[0]): Promise<void> {
         await this.withLock(async () => {
             const current = await this.readForWrite()

@@ -20,8 +20,31 @@ export const activityEn = {
     "chatRows.activity.commandTimeoutAria": ({ timeout }: { timeout: string }) => `Command timeout: ${timeout}`,
     "chatRows.activity.tabs.work": "Work",
     "chatRows.activity.tabs.activities": "Activities",
-    "chatRows.subagent.title.singular": "Dline wants to use a subagent:",
-    "chatRows.subagent.title.plural": "Dline wants to use subagents:",
+    "chatRows.subagent.title": ({
+        phase,
+        count,
+    }: {
+        phase: "approval" | "pending" | "running" | "completed" | "failed" | "timeout" | "cancelled"
+        count: number
+    }) => {
+        const singular = count === 1
+        switch (phase) {
+            case "approval":
+                return singular ? "Dline wants to use a subagent:" : "Dline wants to use subagents:"
+            case "running":
+                return singular ? "Dline is using a subagent:" : "Dline is using subagents:"
+            case "completed":
+                return singular ? "Subagent completed:" : "Subagents completed:"
+            case "failed":
+                return singular ? "Subagent failed:" : "Subagents failed:"
+            case "timeout":
+                return singular ? "Subagent timed out:" : "Subagents timed out:"
+            case "cancelled":
+                return singular ? "Subagent cancelled:" : "Subagents cancelled:"
+            default:
+                return singular ? "Subagent task:" : "Subagent tasks:"
+        }
+    },
     "chatRows.subagent.cancelAll": "Cancel all",
     "chatRows.subagent.expandStatus": "Expand subagent status",
     "chatRows.subagent.collapseStatus": "Collapse subagent status",

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import type { UiMessage } from "@shared/ExtensionMessage"
+import type { ActiveInteractionView, UiMessage } from "@shared/ExtensionMessage"
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { UiLanguageProvider } from "@/i18n/UiLanguageProvider"
@@ -17,15 +17,16 @@ globalThis.ResizeObserver = TestResizeObserver
 vi.mock("@/context/ExtensionStateContext", () => ({
     useExtensionState: () => ({
         currentTaskItem: { id: "task-1" },
-        taskViewState: { taskId: "task-1", taskInstanceId: "task-instance-1" },
+        taskViewState: { taskId: "task-1", taskInstanceId: "task-instance-1", activeInteraction: activeInteraction.current },
     }),
 }))
 
-const { cancelTaskActivities, finishTaskActivities, retryTaskActivities, taskActivities } = vi.hoisted(() => ({
+const { cancelTaskActivities, finishTaskActivities, retryTaskActivities, taskActivities, activeInteraction } = vi.hoisted(() => ({
     cancelTaskActivities: vi.fn(),
     finishTaskActivities: vi.fn(),
     retryTaskActivities: vi.fn(),
     taskActivities: [] as Array<Record<string, unknown>>,
+    activeInteraction: { current: undefined as ActiveInteractionView | undefined },
 }))
 
 vi.mock("./activity/useTaskActivities", () => ({
@@ -66,6 +67,92 @@ describe("SubagentStatusRow", () => {
         finishTaskActivities.mockClear()
         retryTaskActivities.mockClear()
         taskActivities.length = 0
+        activeInteraction.current = undefined
+    })
+
+    it("uses request wording only for the current manual approval, then follows live execution in place", () => {
+        const message = makeMsg({
+            ts: 100,
+            type: "ask",
+            ask: "use_subagents",
+            say: undefined,
+            interactionId: "approval-1",
+            text: JSON.stringify({ prompts: ["Review the queue"], jobId: "job-title" }),
+        })
+        activeInteraction.current = {
+            taskId: "task-1",
+            turnId: "turn-1",
+            interactionId: "approval-1",
+            kind: "tool_approval",
+            status: "awaiting",
+            stateRevision: 1,
+            taskAsk: "use_subagents",
+            presentationKind: "tool_approval",
+            askMessageTs: 100,
+        }
+        const view = (language: "en" | "zh-CN") => (
+            <UiLanguageProvider language={language}>
+                <SubagentStatusRow isLast message={message} />
+            </UiLanguageProvider>
+        )
+        const { rerender } = render(view("zh-CN"))
+        expect(screen.getByText("Dline 想要使用一个子代理：")).toBeInTheDocument()
+        taskActivities.push({ activityId: "job-title", kind: "subagent", status: "running", createdAt: 1, events: [] })
+        activeInteraction.current = undefined
+        rerender(view("zh-CN"))
+        expect(screen.getByText("Dline 正在使用子代理：")).toBeInTheDocument()
+        expect(screen.queryByText(/想要使用/)).not.toBeInTheDocument()
+        rerender(view("en"))
+        expect(screen.getByText("Dline is using a subagent:")).toBeInTheDocument()
+        taskActivities[0].status = "completed"
+        rerender(view("zh-CN"))
+        expect(screen.getByText("子代理已完成：")).toBeInTheDocument()
+    })
+
+    it("does not show an old ask as an active approval for another interaction", () => {
+        activeInteraction.current = {
+            taskId: "task-1",
+            turnId: "turn-2",
+            interactionId: "approval-other",
+            kind: "tool_approval",
+            status: "awaiting",
+            stateRevision: 2,
+            taskAsk: "use_subagents",
+            presentationKind: "tool_approval",
+            askMessageTs: 200,
+        }
+        render(
+            <UiLanguageProvider language="zh-CN">
+                <SubagentStatusRow
+                    isLast
+                    message={makeMsg({
+                        ts: 100,
+                        type: "ask",
+                        ask: "use_subagents",
+                        say: undefined,
+                        interactionId: "approval-old",
+                    })}
+                />
+            </UiLanguageProvider>,
+        )
+        expect(screen.queryByText(/想要使用/)).not.toBeInTheDocument()
+        expect(screen.getByText("子代理任务：")).toBeInTheDocument()
+    })
+
+    it.each([
+        ["running", "Dline is using subagents:"],
+        ["completed", "Subagents completed:"],
+        ["failed", "Subagents failed:"],
+        ["timeout", "Subagents timed out:"],
+        ["cancelled", "Subagents cancelled:"],
+    ])("renders the plural %s title without request wording", (status, title) => {
+        const message = makeMsg({
+            say: "subagent",
+            text: JSON.stringify({ status, items: [1, 2].map((index) => ({ index, prompt: "Review", status })) }),
+        })
+        render(<SubagentStatusRow isLast={false} message={message} />)
+        expect(screen.getByText(title)).toBeInTheDocument()
+        expect(screen.queryByText(/wants to use/)).not.toBeInTheDocument()
     })
 
     it("updates disclosure names in place and preserves expanded sections across language changes", () => {
