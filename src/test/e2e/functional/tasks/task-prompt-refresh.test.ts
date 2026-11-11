@@ -4,8 +4,6 @@ import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame } from "@playwright/test"
 
-e2e.use({ installVsix: false })
-
 interface TaskPromptContext {
     systemPrompt?: {
         frozen?: {

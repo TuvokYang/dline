@@ -1,11 +1,13 @@
 ---
 name: writing-documentation
-description: Revises Dline documentation with evidence-based claims, bilingual Chinese and English deliverables, current navigation and links, and release notes whose entries state a user-visible outcome. Use when writing or correcting pages under docs, README material, CHANGELOG.md, or the What's New editions. Do not use for code comments or internal design notes.
+description: Revises Dline documentation with evidence-based claims, bilingual deliverables, factual changelog entries, and distinct What's New highlights. Use when writing or correcting pages under docs, README material, CHANGELOG.md, or the What's New editions. Do not use for code comments or internal design notes.
 ---
 
 # Writing Documentation
 
 Use this skill for user-facing guides, feature pages, architecture documents, troubleshooting content, README material, and release documentation.
+
+For changelogs and What's New, use section 9.
 
 ## Language contract
 
@@ -126,31 +128,26 @@ After writing both language versions:
 - avoid duplicate pages that explain the same contract differently;
 - keep language counterparts discoverable according to the site's current localization convention.
 
-## 9. Write release notes and What's New
+## 9. Write changelogs and What's New
 
-These four files have their own reader: someone deciding whether to upgrade. `CHANGELOG.md` and `docs/changelog/CHANGELOG_en.md` record what shipped; the two What's New editions present one release's highlights, and the dialog renders the English one.
+`CHANGELOG.md` and `docs/changelog/CHANGELOG_en.md` record release changes by category. Each entry states what changed in one concise sentence.
 
-Record a change when a user can observe it: a capability, control or default they now have or lost, a failure that no longer happens, a limit that changes how they work. Internal work stays out of all four files: behavior-preserving refactors, tests, build and CI wiring, formatting, and dependency bumps with no user effect. What's New is stricter, because a highlight the reader cannot find in the product is a false promise. A release carrying only small fixes ships no What's New section, and a section is never padded to reach a count.
+What's New presents selected features, stability improvements, and fixes for users. The dialog renders its English edition.
 
 | Situation | Result |
 |---|---|
 | finished work, not yet released | `[Unreleased]` in both changelogs, `## Unreleased` in both What's New editions |
 | cutting a version | those entries move into the tagged `## X.Y.Z` section; load `dev-version-bump` for the version range and file set |
-| entry feels long | keep the condition the user must know, drop the mechanism |
+| changelog entry | one concise sentence stating what changed |
 | What's New entry | bold lead-in, then one sentence of behavior |
 | What's New budget | at most five entries per version, each within 128 characters counting the lead-in |
 | the other language | same changes, same order, same count; natural phrasing, no differing limits |
 
-Write the outcome the reader receives, not the machinery that delivers it:
+Changelog entries state the actual change directly:
 
 ```text
-# mechanism: nothing the reader can act on
-- The task runtime stores conversations in a journal; continuing an older task imports it
-  unchanged and per-task state.json replaces snapshot.json
-
-# outcome: what happens to the user, including the price
-- Continuing a task after upgrading keeps its conversation; an older task may reopen as
-  interrupted and continue through Resume
+- Fixed temporary support telemetry deletion blocked by a file lock.
+- Added English and Chinese interface selection.
 ```
 
 A What's New entry leads with the outcome in bold and stops there:
@@ -169,7 +166,7 @@ The shape is a build contract for the What's New editions: the newest section is
 |---|---|
 | two unrelated changes joined by "and also" | split into separate entries |
 | an older release's feature restated as new | drop it, or return it to its own section |
-| a table, RPC, endpoint or class name in the entry | name the setting or control the user clicks |
+| a What's New entry lists implementation details | summarize the feature, stability improvement, or fix |
 | a translation copied sentence by sentence | describe the same behavior naturally in each language |
 
 ## 10. Verification
@@ -197,4 +194,4 @@ For substantial user-facing docs, request an independent review for technical ac
 
 ## Completion report
 
-Report both language files, navigation or asset changes, sources used to verify behavior, validation performed, and any environment-dependent statement that could not be confirmed. For release notes and What's New, report the files changed and the entries added or reworded, or state that they were intentionally left unchanged because the change has no user-visible effect.
+Report both language files, navigation or asset changes, sources used to verify behavior, validation performed, and any environment-dependent statement that could not be confirmed. For changelogs, report the change records added or reworded; separately report which highlights were selected for What's New or why it was left unchanged.

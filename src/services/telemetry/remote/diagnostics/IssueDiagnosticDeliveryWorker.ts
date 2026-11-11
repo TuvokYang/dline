@@ -3,7 +3,7 @@ import type {
     IssueDiagnosticSettlement,
 } from "@/core/storage/telemetry-remote/IssueDiagnosticOutboxRepository"
 import type { WireResponse } from "../contracts/classification"
-import type { AtomicIssueGrant } from "../contracts/issueGrant"
+import { type AtomicIssueGrant, sameAtomicIssueGrant } from "../contracts/issueGrant"
 import type { IssueDiagnosticTransport } from "../transport/DlineOtelHttpClient"
 import { DlineOtelTransportError } from "../transport/DlineOtelHttpClient"
 
@@ -25,13 +25,14 @@ export class IssueDiagnosticDeliveryWorker {
     }
 
     async deliverOnce(signal?: AbortSignal): Promise<void> {
+        if (signal?.aborted) return
         const grant = this.options.activeGrant()
         if (!grant) {
             await this.options.outbox.clear()
             return
         }
         const batch = await this.options.outbox.claim(this.options.owner, grant, this.clock())
-        if (!batch) return
+        if (!batch || signal?.aborted || !this.isCurrentGrant(grant)) return
         let settlement: IssueDiagnosticSettlement
         try {
             const response = await this.options.transport.sendIssueDiagnostics(
@@ -45,13 +46,19 @@ export class IssueDiagnosticDeliveryWorker {
             )
             settlement = classify(response)
         } catch (error) {
-            settlement =
-                error instanceof DlineOtelTransportError && error.failure === "aborted"
-                    ? { kind: "replay", retryAfterMs: 1_000 }
-                    : { kind: "replay" }
+            if (error instanceof DlineOtelTransportError && error.failure === "aborted") return
+            settlement = { kind: "replay" }
         }
-        await this.options.outbox.settle(this.options.owner, batch.requestId, settlement, this.clock())
-        if (settlement.kind === "sealed") await this.options.seal("revoked")
+        if (signal?.aborted || !this.isCurrentGrant(grant)) return
+        await this.options.outbox.settle(this.options.owner, batch.requestId, settlement, this.clock(), grant)
+        if (settlement.kind === "sealed" && !signal?.aborted && this.isCurrentGrant(grant)) {
+            await this.options.seal("revoked")
+        }
+    }
+
+    private isCurrentGrant(expected: AtomicIssueGrant): boolean {
+        const current = this.options.activeGrant()
+        return current !== undefined && sameAtomicIssueGrant(current, expected)
     }
 }
 

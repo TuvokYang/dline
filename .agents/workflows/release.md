@@ -54,7 +54,7 @@ A failure means the previous release's back-merge is missing. Stop and complete 
 Confirm:
 
 - the target version matches `X.Y.Z`;
-- both changelogs contain `## [X.Y.Z]` and equivalent user-visible content;
+- both changelogs contain `## [X.Y.Z]` and equivalent factual change records;
 - both What's New editions start with a `## X.Y.Z` section that stands alone for this release and has the same number of items, as dev-version-bump requires; the What's New Vitest file passes on the candidate;
 - `package.json` and `package-lock.json` use `X.Y.Z`;
 - the release candidate is not marked as preview;

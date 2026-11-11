@@ -85,7 +85,7 @@ Run the checks appropriate to the blast radius. At minimum, record focused tests
 
 Feature-branch verification does not replace the integration checks that run after the PR enters `dev`.
 
-For user-visible changes, add equivalent entries to the paired `## [Unreleased]` sections of `CHANGELOG.md` (Chinese) and `docs/changelog/CHANGELOG_en.md` (English), following repository-and-release. Do not create separate changelog-entry files. Do not bump `package.json`, freeze `Unreleased` into a version section, or add What's New sections unless the user explicitly requested version preparation; that work belongs to dev-version-bump.
+Record changes as equivalent concise entries in the paired `## [Unreleased]` sections of `CHANGELOG.md` (Chinese) and `docs/changelog/CHANGELOG_en.md` (English), following repository-and-release. Do not create separate changelog-entry files. Do not bump `package.json`, freeze `Unreleased` into a version section, or add What's New sections unless the user explicitly requested version preparation; that work belongs to dev-version-bump.
 
 Typical checks: `npm run check-types`, `npm run lint`, `npm run format`, focused Vitest or `npm run test:run`, `npm run test:smoke`, and `npm run docs:verify` for `docs/` or `assets/docs/` changes. CI runs the `Tests` workflow for PRs into `dev`, and `Docs Check` for docs changes.
 

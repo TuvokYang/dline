@@ -17,6 +17,18 @@ Rules describe project architecture and conventions. Skills teach concrete work 
 - Do not split a file merely because it is large while its responsibilities, change reasons, and dependency direction remain coherent. When a file approaches the limit, extract stable responsibilities or dependency boundaries rather than creating arbitrary forwarding fragments.
 - Generated code, machine-managed lockfiles and snapshots, and fixture data are not hand-written source files and must not be split solely to satisfy this limit.
 
+## Naming
+
+- File names and type names (classes, interfaces, type aliases, and enums) must not exceed four words. Function, method, variable, parameter, field, and constant names must not exceed three words.
+- Names must identify the concrete subject and responsibility or action. A reader should be able to tell what the component does and how it differs from neighboring components.
+- Treat abstract role words (for example, `Owner`, `Projection`, or `Manager`) as a signal to examine what the name communicates. Replace labels that could fit unrelated components equally well with the specific operation, data, or domain concept they represent.
+- Use directory, module, namespace, enclosing-type, and local-scope context to avoid repeating information. Preserve the meaning needed to identify a responsibility and distinguish its consumers.
+- Name functions and methods for their action, and variables for their subject or meaning. Use clear predicates such as `is`, `has`, and `can` for booleans.
+- Count words at camelCase, PascalCase, and separator boundaries. Established acronyms such as API, HTTP, UI, and MCP count as one word. Prefixes and suffixes such as `get`, `create`, `is`, `Options`, `Result`, and `Handler` count toward the limit; split constants at underscores.
+- For file names, count the business stem after removing the extension and conventional test, spec, stories, module, or locale suffixes. Business and test-scenario qualifiers remain part of the count.
+- Use established domain terms and abbreviations. Do not invent abbreviations, join words, change capitalization, or remove necessary meaning to evade the limits.
+- Resolve overlong names by removing repeated context and choosing a more precise name. When a name combines independent responsibilities, review and separate those responsibilities.
+
 ## Searching ignored directories
 
 `search_files` runs through ripgrep, which honours `.gitignore` plus the scan
@@ -149,17 +161,17 @@ When a development task is complete, load `writing-documentation` before editing
 
 ### What's New and changelog content
 
-`CHANGELOG.md` (Chinese) and `docs/changelog/CHANGELOG_en.md` (English) record what shipped. `docs/whats-new/WHATS_NEW.md` (Chinese) and `docs/whats-new/WHATS_NEW_en.md` (English, the edition the dialog renders) present the highlights of one release. Users read all four; maintainers and the implementation are not the audience.
+`CHANGELOG.md` (Chinese) and `docs/changelog/CHANGELOG_en.md` (English) record release changes by category. `docs/whats-new/WHATS_NEW.md` (Chinese) and `docs/whats-new/WHATS_NEW_en.md` (English, the edition the dialog renders) present selected highlights for users.
 
-- An entry states behavior a user can observe. Class, table, protocol, and endpoint names are not entry content, and internal work appears on neither surface unless it changes what a user can observe.
+- Each changelog entry states what changed in one concise sentence.
 - One entry per change; unrelated changes stay separate.
-- Both pairs cover the same changes in the same order. The languages may phrase naturally but must not differ in features, defaults, limits, or support status.
+- Within each Chinese/English pair, keep the entries equivalent and in the same order.
 
 What's New carries at most five entries per version, each within 128 characters counting the bold lead-in, and only these three kinds: a feature the user can notice, a stability improvement, or a fix users hit. A change shipped by an earlier release is not restated as new.
 
 New work belongs under `Unreleased` until the release that carries it is tagged. Published sections describe what users already have; trimming and rewording apply to unreleased entries and to the next version, not to the record of what already shipped.
 
-The file format is a build contract: a bare `## X.Y.Z` newest heading, one flat `- ` list with two-space continuations, and only `**bold**`, backtick code, and absolute `https://` links inline. Run the What's New test at `webview-ui/src/__tests__/vite-whats-new.test.ts` after editing either edition.
+The What's New file format is a build contract: a bare `## X.Y.Z` newest heading, one flat `- ` list with two-space continuations, and only `**bold**`, backtick code, and absolute `https://` links inline. Run the What's New test at `webview-ui/src/__tests__/vite-whats-new.test.ts` after editing either edition.
 
 ## Git and release work
 

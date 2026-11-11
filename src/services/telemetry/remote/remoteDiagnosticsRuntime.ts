@@ -16,6 +16,7 @@ import {
     toDiagnosticRecord,
 } from "./diagnostics/diagnosticRecord"
 import { IssueDiagnosticsOverlay } from "./diagnostics/IssueDiagnosticsOverlay"
+import { purgeIssueDiagnosticCapture } from "./diagnostics/purgeIssueDiagnosticCapture"
 import { ProductionSignalChannels } from "./productionSignalChannels"
 import { DlineOtelHttpClient } from "./transport/DlineOtelHttpClient"
 
@@ -52,6 +53,7 @@ export interface RemoteDiagnosticsRuntimeOptions {
 }
 
 interface RunningDiagnostics {
+    readonly dataDir: string
     readonly outbox: DiagnosticOutboxRepository
     readonly credentials: DeviceCredentialRepository
     readonly worker: DiagnosticDeliveryWorker
@@ -121,6 +123,7 @@ export function startRemoteDiagnostics(options: RemoteDiagnosticsRuntimeOptions)
         log: options.log,
     })
     const state: RunningDiagnostics = {
+        dataDir: options.dataDir,
         outbox,
         credentials,
         worker,
@@ -215,8 +218,13 @@ export async function refreshIssueDiagnosticsOverlay(): Promise<void> {
 /** Local-first terminal boundary used before issue token removal or remote revoke. */
 export async function purgeIssueDiagnosticsOverlay(
     reason: "revoked" | "expired" | "revision_changed" | "deleted",
+    dataDir: string,
 ): Promise<void> {
-    await running?.overlay.deactivate(reason)
+    if (running && path.resolve(running.dataDir) === path.resolve(dataDir)) {
+        await running.overlay.deactivate(reason)
+        return
+    }
+    await purgeIssueDiagnosticCapture(resolveOtelStorageLayout(dataDir), reason)
 }
 
 /** Stop the timers and write what was gathered; bounded, safe to call twice. */

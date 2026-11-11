@@ -888,6 +888,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
         const restored = await canonical.restore({
             messageTs: input.message.ts,
             mode: input.restoreType === "task" ? "chat_only" : "combined",
+            ...(input.editedText === undefined ? {} : { pendingInput: "replace" as const }),
             ...(input.boundary.journalTarget === undefined ? {} : { journalTarget: input.boundary.journalTarget }),
             ...(fallback === undefined ? {} : { fallback }),
             // The checkpoint stores where its row was written, which is not where the

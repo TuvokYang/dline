@@ -41,6 +41,8 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Fixed errors from missing editor options when opening images and other custom-editor files.
 - Marketplace icons and demo GIFs use direct GitHub raw-file links, reducing loading failures caused by web-page redirects.
 - Fixed scrolling back through long chats being repeatedly pulled back after earlier messages load, and visible jumps while browsing history during streaming; scroll-to-top/bottom and automatic following are unchanged.
+- Fixed leftover file locks preventing temporary support telemetry deletion.
+- Fixed running subagents showing an approval request instead of their execution status.
 
 ## [0.14.0]
 

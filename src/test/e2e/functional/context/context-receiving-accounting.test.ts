@@ -116,6 +116,16 @@ async function configureTrajectorySettings(dlineDir: string, profileName: string
     await writeFile(settingsPath(dlineDir), `${JSON.stringify(settings, null, 2)}\n`, "utf8")
 }
 
+/** Complete on-disk setup before any dependent fixture can launch the extension. */
+function configuredProfile(configure: (dlineDir: string) => Promise<void>) {
+    return e2e.extend({
+        dlineDir: async ({ dlineDir }, use) => {
+            await configure(dlineDir)
+            await use(dlineDir)
+        },
+    })
+}
+
 async function selectProfile(sidebar: Frame, profileName: string): Promise<void> {
     const modelSwitcher = sidebar.getByRole("button", { name: "Select model" })
     if ((await modelSwitcher.innerText()).trim() === profileName) return
@@ -239,11 +249,10 @@ function authoritativeSegmentTokens(sample: ContextWindowTraceSample, kind: stri
     return sample.segments.find((segment) => segment.kind === kind)?.authoritativeTokens ?? 0
 }
 
-e2e(
+configuredProfile(configureHostedResponsesProfile)(
     "Context indicator - hosted tool results never inflate Receiving and exact usage calibrates the request",
-    async ({ dlineDir, helper, server, sidebar, userDataDir }, testInfo) => {
+    async ({ helper, server, sidebar, userDataDir }, testInfo) => {
         e2e.setTimeout(180_000)
-        await configureHostedResponsesProfile(dlineDir)
         server.resetOpenAiMock()
 
         const query = "E2E_CONTEXT_RECEIVING_HOSTED_QUERY"
@@ -369,11 +378,10 @@ e2e(
     },
 )
 
-e2e(
+configuredProfile(configureTrajectoryProfile)(
     "Context indicator - a continuation request never re-estimates the full history before exact usage",
-    async ({ dlineDir, helper, server, sidebar, userDataDir }, testInfo) => {
+    async ({ helper, server, sidebar, userDataDir }, testInfo) => {
         e2e.setTimeout(180_000)
-        await configureTrajectoryProfile(dlineDir)
         server.resetOpenAiMock()
         server.enqueueResponses(
             "openai-compatible-responses",
@@ -439,11 +447,10 @@ e2e(
     },
 )
 
-e2e(
+configuredProfile(configureAnthropicTrajectoryProfile)(
     "Context indicator - Anthropic split usage and tool arguments preserve one authoritative trajectory",
-    async ({ dlineDir, helper, server, sidebar, userDataDir }, testInfo) => {
+    async ({ helper, server, sidebar, userDataDir }, testInfo) => {
         e2e.setTimeout(180_000)
-        await configureAnthropicTrajectoryProfile(dlineDir)
         server.resetOpenAiMock()
         const firstCallId = "call_context_anthropic_qna"
         const feedback = "E2E_CONTEXT_ANTHROPIC_FEEDBACK"

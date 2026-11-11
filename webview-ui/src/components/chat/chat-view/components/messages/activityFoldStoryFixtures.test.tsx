@@ -37,7 +37,7 @@ describe("the subagent story fixture", () => {
         // Two failed agents, no completed one: the number of cards has to match
         // the batch count the fold header reports for the same payload.
         expect(cards).toHaveLength(2)
-        expect(screen.getByText("Dline wants to use subagents:")).toBeInTheDocument()
+        expect(screen.getByText("Subagents failed:")).toBeInTheDocument()
         for (const card of cards) expect(card).toHaveTextContent(/Scan src\//)
     })
 
@@ -56,6 +56,6 @@ describe("the subagent story fixture", () => {
         render(<SubagentStatusRow isLast={true} message={subagentBatch(1, "completed")} />)
 
         expect(screen.getAllByTestId("subagent-item")).toHaveLength(1)
-        expect(screen.getByText("Dline wants to use a subagent:")).toBeInTheDocument()
+        expect(screen.getByText("Subagent completed:")).toBeInTheDocument()
     })
 })

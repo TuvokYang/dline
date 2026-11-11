@@ -1,10 +1,11 @@
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { AtomicIssueGrant, IssueGrantRateLimits } from "@/services/telemetry/remote/contracts/issueGrant"
 import type { IssueDiagnosticItem } from "@/services/telemetry/remote/diagnostics/issueDiagnosticRecord"
-import { IssueDiagnosticOutboxRepository } from "../IssueDiagnosticOutboxRepository"
+import { IssueDiagnosticOutboxRepository, purgeIssueDiagnosticOutbox } from "../IssueDiagnosticOutboxRepository"
+import { IssueGrantRepository } from "../IssueGrantRepository"
 import { resolveOtelStorageLayout } from "../OtelStorageLayout"
 
 const NOW = 1_900_000_000_000
@@ -42,6 +43,7 @@ describe("IssueDiagnosticOutboxRepository", () => {
     })
 
     afterEach(async () => {
+        vi.restoreAllMocks()
         await fs.rm(root, { recursive: true, force: true })
     })
 
@@ -105,6 +107,54 @@ describe("IssueDiagnosticOutboxRepository", () => {
         const stored = await outbox.read()
         expect(stored.inflight?.items).toEqual([item("diagnostic.small")])
         expect(stored.items).toEqual([])
+    })
+
+    it("drains an active writer and invalidates queued writes across repository instances before purge", async () => {
+        const layout = resolveOtelStorageLayout(path.join(root, "data"))
+        const first = new IssueDiagnosticOutboxRepository(layout, RESOURCE)
+        const second = new IssueDiagnosticOutboxRepository(layout, RESOURCE)
+        const read = first.read.bind(first)
+        let entered!: () => void
+        let release!: () => void
+        const reading = new Promise<void>((resolve) => {
+            entered = resolve
+        })
+        const gate = new Promise<void>((resolve) => {
+            release = resolve
+        })
+        vi.spyOn(first, "read").mockImplementationOnce(async () => {
+            const current = await read()
+            entered()
+            await gate
+            return current
+        })
+        const active = first.append(grant(), [item("diagnostic.active")], NOW)
+        await reading
+        const readQueued = vi.spyOn(second, "read")
+        const queued = second.append(grant(), [item("diagnostic.queued")], NOW)
+        const purge = purgeIssueDiagnosticOutbox(layout)
+        release()
+        await Promise.all([active, queued, purge])
+
+        expect(readQueued).not.toHaveBeenCalled()
+        await expect(fs.access(layout.issueDiagnosticsOutboxPath)).rejects.toMatchObject({ code: "ENOENT" })
+        await expect(fs.access(`${layout.issueDiagnosticsOutboxPath}.lck`)).rejects.toMatchObject({ code: "ENOENT" })
+    })
+
+    it("refuses a stale writer from another repository after durable revocation", async () => {
+        const layout = resolveOtelStorageLayout(path.join(root, "data"))
+        const grants = new IssueGrantRepository(layout, { clock: () => NOW })
+        await grants.publish(grant())
+        const stale = new IssueDiagnosticOutboxRepository(layout, RESOURCE, grants)
+        await stale.append(grant(), [item("diagnostic.before_delete")], NOW)
+        await new IssueGrantRepository(layout, { clock: () => NOW }).clear("deleted")
+        await purgeIssueDiagnosticOutbox(layout)
+
+        await stale.append(grant(), [item("diagnostic.after_delete")], NOW)
+        expect(await stale.claim("old-owner", grant(), NOW)).toBeUndefined()
+
+        await expect(fs.access(layout.issueDiagnosticsOutboxPath)).rejects.toMatchObject({ code: "ENOENT" })
+        await expect(fs.access(`${layout.issueDiagnosticsOutboxPath}.lck`)).rejects.toMatchObject({ code: "ENOENT" })
     })
 
     it("physically removes the issue partition on clear", async () => {

@@ -1,5 +1,5 @@
 import { hydrate } from "../kernel/hydrate"
-import type { Diagnostic } from "../kernel/types"
+import type { Diagnostic, TaskState } from "../kernel/types"
 import type { DurableTaskSnapshot, JournalWatermark } from "../stores/contracts"
 
 export type CheckpointRestoreMode = "combined" | "chat_only" | "workspace_only"
@@ -50,6 +50,8 @@ export interface CheckpointRestoreInput {
     readonly mode: CheckpointRestoreMode
     /** Where the restored row says the conversation stood; absent, the checkpoint's own boundary is used. */
     readonly row?: CheckpointRestoreRow
+    /** An input edit replaces pending replies; ordinary restores keep accepted material. */
+    readonly pendingInput?: "keep" | "replace"
 }
 
 export type CheckpointRestoreResult =
@@ -62,6 +64,18 @@ export type CheckpointRestoreResult =
 
 function rejected(code: string, message: string): CheckpointRestoreResult {
     return { kind: "rejected", diagnostics: [{ code, message }] }
+}
+
+/** An edit replaces the row's pending reply; an ordinary restore must still send it. */
+function stateForRestore(state: TaskState, pendingInput: CheckpointRestoreInput["pendingInput"]): TaskState {
+    if (pendingInput !== "replace" || !state.roundMaterial || state.flow.terminalReason === "consumed") return state
+    return {
+        ...state,
+        roundMaterial: {
+            ...state.roundMaterial,
+            feedback: state.roundMaterial.feedback.filter((input) => input.source === "intake"),
+        },
+    }
 }
 
 export async function restoreCheckpoint(
@@ -87,7 +101,7 @@ export async function restoreCheckpoint(
     }
     const hydrated = hydrate({
         taskId: input.taskId,
-        snapshot: checkpoint.snapshot.state,
+        snapshot: stateForRestore(checkpoint.snapshot.state, input.pendingInput),
         // The snapshot has to describe the conversation the restore leaves, which
         // is the effective boundary, not the position its bundle was stored at.
         journalTail: boundary,

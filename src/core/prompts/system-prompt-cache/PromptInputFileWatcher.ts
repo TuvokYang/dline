@@ -8,6 +8,8 @@ import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
 export type PromptInputKind = "rule" | "workflow" | "skill" | "subagent" | "scoped_agents"
 export type PromptInputEvent = "add" | "change" | "unlink"
 
+const WRITE_STABILITY_MS = 300
+
 export interface PromptInputFileChange {
     readonly absolutePath: string
     readonly event: PromptInputEvent
@@ -66,6 +68,8 @@ export class PromptInputFileWatcher {
     private settleReadiness?: (outcome: "success" | "degraded" | "superseded") => void
     private disposed = false
     private eventLogTimer?: NodeJS.Timeout
+    private directoryChangeTimer?: NodeJS.Timeout
+    private readonly pendingDirectories = new Map<string, PromptInputFileChange>()
     private totalRelevantEvents = 0
     private readonly exactInputs = new Set<string>()
     private pendingEventCounts: Record<PromptInputKind, number> = {
@@ -174,7 +178,7 @@ export class PromptInputFileWatcher {
             persistent: true,
             ignoreInitial: true,
             atomic: true,
-            awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 },
+            awaitWriteFinish: { stabilityThreshold: WRITE_STABILITY_MS, pollInterval: 100 },
             ignored: (candidate, stats) => stats?.isDirectory() === true && this.shouldIgnoreDirectory(candidate),
         })
         this.watcher = watcher
@@ -188,6 +192,7 @@ export class PromptInputFileWatcher {
         }
         watcher
             .on("add", (candidate) => handle("add", candidate))
+            .on("addDir", (candidate) => this.handleDirectoryCreated(candidate))
             .on("change", (candidate) => handle("change", candidate))
             .on("unlink", (candidate) => handle("unlink", candidate))
             .on("ready", () => settleReadiness("success"))
@@ -203,6 +208,9 @@ export class PromptInputFileWatcher {
         const startedAt = performance.now()
         this.disposed = true
         this.settleReadiness?.("superseded")
+        if (this.directoryChangeTimer) clearTimeout(this.directoryChangeTimer)
+        this.directoryChangeTimer = undefined
+        this.pendingDirectories.clear()
         if (this.eventLogTimer) {
             clearTimeout(this.eventLogTimer)
             this.eventLogTimer = undefined
@@ -223,6 +231,40 @@ export class PromptInputFileWatcher {
                 `[PromptInputWatcherPerf] phase=dispose taskId=${this.taskId} durationMs=${Math.round(performance.now() - startedAt)} totalEvents=${this.totalRelevantEvents}`,
             )
         }
+    }
+
+    /** A host may report only a newly created directory, not each file already inside it. */
+    private handleDirectoryCreated(candidate: unknown): void {
+        if (this.disposed || typeof candidate !== "string") return
+        const absolutePath = path.resolve(candidate)
+        const roots: ReadonlyArray<readonly [PromptInputKind, readonly string[]]> = [
+            [
+                "rule",
+                [this.globalRulesDirectory, path.join(this.cwd, ".agents", "rules"), path.join(this.cwd, ".cursor", "rules")],
+            ],
+            ["workflow", this.workflowDirectories],
+            ["skill", this.skillDirectories],
+            ["subagent", this.subagentDirectories],
+        ]
+        for (const [kind, directories] of roots) {
+            if (directories.some((directory) => isWithin(directory, absolutePath) || isWithin(absolutePath, directory))) {
+                this.pendingDirectories.set(`${kind}:${absolutePath}`, { absolutePath, event: "add", kind })
+            }
+        }
+        if (this.pendingDirectories.size === 0) return
+        if (this.directoryChangeTimer) clearTimeout(this.directoryChangeTimer)
+        // Match file-write settling so discovery reads the populated directory, not its initial empty state.
+        this.directoryChangeTimer = setTimeout(() => {
+            this.directoryChangeTimer = undefined
+            const changes = [...this.pendingDirectories.values()]
+            this.pendingDirectories.clear()
+            if (this.disposed) return
+            for (const change of changes) {
+                this.recordEvent(change.event, change.kind)
+                this.invalidate(change)
+            }
+        }, WRITE_STABILITY_MS)
+        this.directoryChangeTimer.unref?.()
     }
 
     private recordEvent(event: PromptInputEvent, kind: PromptInputKind): void {

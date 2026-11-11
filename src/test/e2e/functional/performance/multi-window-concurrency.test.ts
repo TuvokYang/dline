@@ -442,20 +442,23 @@ async function isActiveElementOfParent(frame: Frame): Promise<boolean> {
 }
 
 async function activateDlinePanelByFrame(group: Locator, frame: Frame): Promise<void> {
-    const tabs = group.locator(".tabs-container > .tab")
-    for (let index = 0; index < (await tabs.count()); index++) {
-        const tab = tabs.nth(index)
-        await tab.click()
-        try {
-            await frame.getByTestId("chat-input").click({ trial: true, timeout: 1_000 })
-            await expect(tab).toHaveClass(/\bactive\b/)
-            await expect(frame.locator("#root")).toBeVisible()
-            return
-        } catch {
-            // The frame exists but another editor surface still owns pointer events.
+    await expect(async () => {
+        const tabs = group.locator(".tabs-container > .tab")
+        for (let index = 0; index < (await tabs.count()); index++) {
+            const tab = tabs.nth(index)
+            await tab.click()
+            try {
+                await frame.getByTestId("chat-input").click({ trial: true, timeout: 1_000 })
+                await expect(tab).toHaveClass(/\bactive\b/)
+                await expect(frame.locator("#root")).toBeVisible()
+                await waitForWebviewFocusHandoff(frame)
+                return
+            } catch {
+                // An in-flight edit can open a file or diff while the panel is activating.
+            }
         }
-    }
-    throw new Error("Dline panel tab for the requested frame was not found")
+        throw new Error("Dline panel tab for the requested frame was not found")
+    }).toPass({ timeout: 30_000 })
 }
 
 async function clickInDlinePanel(group: Locator, frame: Frame, control: Locator): Promise<void> {
@@ -1158,9 +1161,12 @@ e2e(
         await panelA.getByTestId("send-button").click()
         await expectComposerText(panelA.getByTestId("chat-input"), "")
         await expect(panelA.getByText(panelATask, { exact: true }).first()).toBeVisible()
-        await activateDlinePanelByFrame(dlineGroup, panelB)
-        await expect(panelB.getByTestId("chat-input")).toBeVisible()
-        await selectProfile(panelB, E2E_PROFILE_NAMES.mockOpenAiResponses)
+        // Empty panels share the default Profile; switch B only after A owns its task-local Profile.
+        await expect(async () => {
+            await activateDlinePanelByFrame(dlineGroup, panelB)
+            await expect(panelB.getByTestId("chat-input")).toBeVisible()
+            await selectProfile(panelB, E2E_PROFILE_NAMES.mockOpenAiResponses)
+        }).toPass({ timeout: 30_000 })
         await dismissExtensionsDisabledNotification(page)
         await panelB.getByTestId("chat-input").fill(panelBTask)
         const panelBSubmittedAtMs = Date.now()

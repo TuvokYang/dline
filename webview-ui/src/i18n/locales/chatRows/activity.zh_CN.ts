@@ -22,8 +22,24 @@ export const activityZhCN = {
     "chatRows.activity.commandTimeoutAria": ({ timeout }) => `命令超时：${timeout}`,
     "chatRows.activity.tabs.work": "工作",
     "chatRows.activity.tabs.activities": "活动",
-    "chatRows.subagent.title.singular": "Dline 想要使用一个子代理：",
-    "chatRows.subagent.title.plural": "Dline 想要使用多个子代理：",
+    "chatRows.subagent.title": ({ phase, count }) => {
+        switch (phase) {
+            case "approval":
+                return count === 1 ? "Dline 想要使用一个子代理：" : "Dline 想要使用多个子代理："
+            case "running":
+                return "Dline 正在使用子代理："
+            case "completed":
+                return "子代理已完成："
+            case "failed":
+                return "子代理失败："
+            case "timeout":
+                return "子代理已超时："
+            case "cancelled":
+                return "子代理已取消："
+            default:
+                return "子代理任务："
+        }
+    },
     "chatRows.subagent.cancelAll": "全部取消",
     "chatRows.subagent.expandStatus": "展开子代理状态",
     "chatRows.subagent.collapseStatus": "收起子代理状态",

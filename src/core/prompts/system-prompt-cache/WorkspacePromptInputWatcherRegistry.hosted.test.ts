@@ -94,7 +94,7 @@ describe("workspace prompt inputs through the VS Code host adapter", () => {
         globalRulesDirectory,
         workflowDirectories: [path.join(cwd, ".agents", "workflows")],
         skillDirectories: [path.join(cwd, ".agents", "skills")],
-        subagentDirectories: [path.join(cwd, ".agents", "subagents")],
+        subagentDirectories: [path.join(cwd, ".agents", "subagents")] as const,
     }
     let registry: WorkspacePromptInputWatcherRegistry
     let source: EditorWatcher
@@ -180,6 +180,58 @@ describe("workspace prompt inputs through the VS Code host adapter", () => {
         expect(second.invalidate).toHaveBeenCalledTimes(2)
     })
 
+    it("invalidates Subagents when the host coalesces creation to the capability directory", async () => {
+        const { invalidate } = await subscribe()
+        const directory = roots.subagentDirectories[0]
+        present.set(directory, "directory")
+        source.fire("created", directory)
+        await vi.advanceTimersByTimeAsync(299)
+        expect(invalidate).not.toHaveBeenCalled()
+        await vi.advanceTimersByTimeAsync(1)
+        expect(invalidate.mock.calls).toEqual([[{ absolutePath: directory, event: "add", kind: "subagent" }]])
+    })
+
+    it("invalidates every affected source when creation is coalesced to their common parent", async () => {
+        const { invalidate } = await subscribe()
+        const directory = path.join(cwd, ".agents")
+        present.set(directory, "directory")
+        source.fire("created", directory)
+        await vi.advanceTimersByTimeAsync(300)
+        expect(invalidate.mock.calls.map(([change]) => change).sort((a, b) => a.kind.localeCompare(b.kind))).toEqual(
+            ["rule", "skill", "subagent", "workflow"].map((kind) => ({ absolutePath: directory, event: "add", kind })),
+        )
+    })
+
+    it("coalesces repeated creation events without delaying them for unrelated directories", async () => {
+        const { invalidate } = await subscribe()
+        const directory = roots.subagentDirectories[0]
+        present.set(directory, "directory")
+        source.fire("created", directory)
+        await vi.advanceTimersByTimeAsync(100)
+        source.fire("created", directory)
+        await vi.advanceTimersByTimeAsync(100)
+        const unrelatedDirectory = path.join(cwd, "src")
+        present.set(unrelatedDirectory, "directory")
+        source.fire("created", unrelatedDirectory)
+        await vi.advanceTimersByTimeAsync(199)
+        expect(invalidate).not.toHaveBeenCalled()
+        await vi.advanceTimersByTimeAsync(1)
+        expect(invalidate.mock.calls).toEqual([[{ absolutePath: directory, event: "add", kind: "subagent" }]])
+        await vi.advanceTimersByTimeAsync(500)
+        expect(invalidate).toHaveBeenCalledOnce()
+    })
+
+    it("does not publish a pending directory invalidation after all monitors are disposed", async () => {
+        const { invalidate } = await subscribe()
+        const directory = roots.subagentDirectories[0]
+        present.set(directory, "directory")
+        source.fire("created", directory)
+        await vi.advanceTimersByTimeAsync(100)
+        await registry.disposeAll()
+        await vi.advanceTimersByTimeAsync(500)
+        expect(invalidate).not.toHaveBeenCalled()
+    })
+
     it("tracks a newly created Rules directory but cancels its file's pending add when the file is deleted", async () => {
         present.clear()
         const { invalidate } = await subscribe()
@@ -194,7 +246,10 @@ describe("workspace prompt inputs through the VS Code host adapter", () => {
         source.fire("deleted", rule)
         expect(invalidate.mock.calls).toEqual([[{ absolutePath: rule, event: "unlink", kind: "rule" }]])
         await vi.advanceTimersByTimeAsync(500)
-        expect(invalidate).toHaveBeenCalledOnce()
+        expect(invalidate.mock.calls).toEqual([
+            [{ absolutePath: rule, event: "unlink", kind: "rule" }],
+            [{ absolutePath: directory, event: "add", kind: "rule" }],
+        ])
         expect(fs.promises.stat).toHaveBeenCalledTimes(2)
     })
 })

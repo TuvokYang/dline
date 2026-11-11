@@ -370,8 +370,22 @@ export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
         .map((entry) => entry.jobId as string)
     const showCancelButton = Boolean(taskId && cancellableIds.length > 1)
 
-    const singular = data.items.length === 1
-    const title = singular ? t("chatRows.subagent.title.singular") : t("chatRows.subagent.title.plural")
+    const interaction = taskViewState?.activeInteraction
+    const awaitingManualApproval =
+        message.type === "ask" &&
+        message.ask === "use_subagents" &&
+        data.status !== "running" &&
+        data.items.some((entry) => entry.status === "pending") &&
+        interaction?.kind === "tool_approval" &&
+        interaction.status !== "resolving" &&
+        interaction.taskId === taskId &&
+        interaction.taskAsk === "use_subagents" &&
+        interaction.askMessageTs === message.ts &&
+        (!message.interactionId || message.interactionId === interaction.interactionId)
+    const title = t("chatRows.subagent.title", {
+        phase: awaitingManualApproval ? "approval" : data.status,
+        count: data.items.length,
+    })
     const isPromptConstructionRow = message.ask === "use_subagents" || message.say === "use_subagents"
     const statusSummary =
         data.status === "timeout"

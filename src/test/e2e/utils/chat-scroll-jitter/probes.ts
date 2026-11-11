@@ -550,14 +550,16 @@ export async function startPaintSampling(sidebar: Frame, durationMs: number): Pr
                 const bounds = scroller.getBoundingClientRect()
                 const middle = scroller.clientHeight / 2
                 const visible: Record<string, number> = {}
+                const rows: RowObservation[] = []
                 let middleTs: string | null = null
                 let middleDistance = Number.POSITIVE_INFINITY
                 for (const row of scroller.querySelectorAll<HTMLElement>("[data-message-ts]")) {
                     const ts = row.dataset.messageTs
                     if (!ts) continue
                     const rect = row.getBoundingClientRect()
-                    if (rect.bottom <= bounds.top || rect.top >= bounds.bottom) continue
                     const top = rect.top - bounds.top
+                    rows.push({ ts, top })
+                    if (rect.bottom <= bounds.top || rect.top >= bounds.bottom) continue
                     visible[ts] = top
                     const distance = Math.abs(top - middle)
                     if (distance < middleDistance) {
@@ -572,6 +574,8 @@ export async function startPaintSampling(sidebar: Frame, durationMs: number): Pr
                     anchorTop: anchorTs === null ? null : (visible[anchorTs] ?? null),
                     trackedTs: anchorTs,
                     visible,
+                    rows,
+                    viewportHeight: scroller.clientHeight,
                     programmaticTotal: readProgrammaticTotal(),
                     afterResize,
                 }
