@@ -43,11 +43,11 @@ async function createDlinePanel(page: Page): Promise<Frame> {
 }
 
 async function dismissBlockingNotifications(page: Page): Promise<void> {
-    for (const message of [
-        "All installed extensions are temporarily disabled.",
-        "Dline v0.9.1 is installed. Reload VS Code to finish activating the extension.",
+    const dialogs = page.getByRole("dialog")
+    for (const notification of [
+        dialogs.filter({ hasText: "All installed extensions are temporarily disabled." }),
+        dialogs.filter({ has: page.getByRole("button", { name: "Reload Window", exact: true }) }),
     ]) {
-        const notification = page.getByRole("dialog").filter({ hasText: message })
         const clearButton = notification.getByRole("button", { name: "Clear Notification (Del)", exact: true })
         if (await clearButton.isVisible()) await clearButton.click()
     }
