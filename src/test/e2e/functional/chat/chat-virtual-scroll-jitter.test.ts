@@ -1656,7 +1656,8 @@ e2e.describe("Chat virtual scroll jitter", () => {
 
                 // Move off the tail first so the upward run below crosses rows that
                 // are still measuring rather than the already-settled bottom.
-                await scroller.hover()
+                // Use the transcript gutter, not a command card's nested output scroller.
+                await scroller.hover({ position: { x: 4, y: 4 } })
                 await page.mouse.wheel(0, -2_400)
                 await page.waitForTimeout(200)
 
@@ -1677,7 +1678,7 @@ e2e.describe("Chat virtual scroll jitter", () => {
                 // report describes.
                 await startContinuousSampling(sidebar, 3_000)
                 await startPaintSampling(sidebar, 3_000)
-                await scroller.hover()
+                await scroller.hover({ position: { x: 4, y: 4 } })
                 for (let pass = 0; pass < 60; pass++) {
                     await page.mouse.wheel(0, -80)
                     await page.waitForTimeout(16)

@@ -122,7 +122,11 @@ export class VscodeTerminalProcess extends EventEmitter<TerminalProcessEvents> i
 
         const captureTerminalContents = async (preserveLastLine = false): Promise<string | undefined> => {
             try {
-                return await getLatestTerminalOutput({ preserveLastLine, terminal })
+                return await getLatestTerminalOutput({
+                    preserveLastLine,
+                    terminal,
+                    scope: terminal.shellIntegration ? "command" : "buffer",
+                })
             } catch (error) {
                 Logger.error("Error capturing terminal output:", error)
                 return undefined
@@ -577,14 +581,14 @@ export class VscodeTerminalProcess extends EventEmitter<TerminalProcessEvents> i
         }
     }
 
-    /** Adopt this command's exact marker from the whole terminal buffer; returns whether it was found. */
+    /** Adopt this command's exact marker without selecting the terminal or changing keyboard focus. */
     private async adoptMarkerFromTerminalBuffer(trigger: string): Promise<boolean> {
         const token = this.completionMarkerToken
         const terminal = this.terminal
         if (!token || !terminal || !this.isAwaitingMarker()) return false
         let buffer: string
         try {
-            buffer = await getLatestTerminalOutput({ terminal, wholeBuffer: true })
+            buffer = await getLatestTerminalOutput({ terminal, wholeBuffer: true, scope: "command" })
         } catch (error) {
             Logger.error("Error capturing terminal output:", error)
             return false
@@ -595,7 +599,8 @@ export class VscodeTerminalProcess extends EventEmitter<TerminalProcessEvents> i
         if (!completion) return false
         this.exitCode = completion.exitCode
         this.completionVerified = true
-        this.recoveredMarkerOutput = completion.output
+        // Command-scoped output is already isolated from earlier scrollback, even without a wrapper echo.
+        this.recoveredMarkerOutput = completion.output ?? removeInternalCommandExitMarkers(buffer).trim()
         Logger.debug(`[TerminalProcess] completion_source=terminal_buffer trigger=${trigger} exitCode=${completion.exitCode}`)
         this.signalTerminalEnd()
         return true
