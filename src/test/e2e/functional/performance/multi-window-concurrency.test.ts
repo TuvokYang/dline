@@ -1567,10 +1567,10 @@ e2e(
         await expectComposerText(panelInput, panelTurn)
         await dismissExtensionsDisabledNotification(page)
         const submittedAtMs = Date.now()
-        await Promise.all([
-            sidebar.locator('[data-testid="send-button"]:visible').click(),
-            panel.locator('[data-testid="send-button"]:visible').click(),
-        ])
+        // Both frames share one native mouse. Submit in pointer order; the delayed
+        // responses and unchanged timing assertions below still prove concurrent work.
+        await sidebar.locator('[data-testid="send-button"]:visible').click()
+        await panel.locator('[data-testid="send-button"]:visible').click()
         await expectComposerText(concurrentSidebarInput, "")
         await expectComposerText(panelInput, "")
 

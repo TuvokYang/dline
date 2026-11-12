@@ -116,12 +116,18 @@ async function closeAndReopenTask(sidebar: Frame, taskText: string): Promise<voi
 }
 
 for (const protocolCase of PROTOCOL_CASES) {
-    e2e(
-        `generate_report - large streamed arguments preserve turn-end interaction for ${protocolCase.id}`,
-        async ({ dlineDir, helper, server, sidebar, userDataDir }) => {
-            e2e.setTimeout(240_000)
-            await helper.signin(sidebar)
+    // Seed the catalog before app/page/sidebar can start a concurrent Profile reader.
+    const reportE2e = e2e.extend({
+        dlineDir: async ({ dlineDir }, use) => {
             await disableWebSearch(dlineDir, protocolCase.profileName)
+            await use(dlineDir)
+        },
+    })
+    reportE2e(
+        `generate_report - large streamed arguments preserve turn-end interaction for ${protocolCase.id}`,
+        async ({ helper, server, sidebar, userDataDir }) => {
+            reportE2e.setTimeout(240_000)
+            await helper.signin(sidebar)
             await selectProfile(sidebar, protocolCase.profileName)
 
             const report = buildLargeReport(protocolCase.id)
