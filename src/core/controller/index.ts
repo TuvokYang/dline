@@ -3031,6 +3031,11 @@ export class Controller {
             return
         }
         await sendStateUpdate(this, state, this._accountUsage, options)
+        // A fast patch can also overtake a full while delivery is in flight.
+        // Republish its full-only fields without waiting for another task event.
+        if (publication === this.publicationSequence && !this.isStateCurrent(state.stateRevision)) {
+            this.scheduleCoalescedStatePost()
+        }
     }
 
     /** Open a merge window so a burst of ordinary updates builds state once. */
