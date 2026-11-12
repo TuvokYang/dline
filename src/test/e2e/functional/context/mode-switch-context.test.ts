@@ -1558,7 +1558,7 @@ e2e(
 
         const app = await openVSCode(workspaceDir)
         try {
-            const { sidebar } = await openSidebar(app, helper)
+            const { page, sidebar } = await openSidebar(app, helper)
             await sendTask(sidebar, "E2E_MANUAL_COMPACT_TASK")
             await expect(sidebar.getByText("E2E_MANUAL_COMPACT_HISTORY_READY", { exact: false }).last()).toBeVisible({
                 timeout: 60_000,
@@ -1570,6 +1570,8 @@ e2e(
 
             const input = sidebar.getByTestId("chat-input")
             await input.fill("E2E_MANUAL_COMPACT_PRESERVED_DRAFT")
+            // A delayed activity-bar hover can cover the header after the pointer has left it.
+            await E2ETestHelper.dismissWorkbenchHover(page)
             const expandTaskHeader = sidebar.getByLabel("Expand task header")
             if (await expandTaskHeader.isVisible()) await expandTaskHeader.click()
             const progress = sidebar.getByRole("progressbar", { name: "Context window usage progress" })
