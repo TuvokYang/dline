@@ -2,14 +2,19 @@ import * as vscode from "vscode"
 import type { TreeChangeListener, WorkspaceTreeWatchHost } from "@/services/file-watch/WorkspaceTreeWatchHost"
 
 /**
- * Serves Dline's workspace watches from VS Code's own file watcher.
+ * Serves supported workspace watches from VS Code's existing recursive watcher.
  *
- * A `**` pattern below a workspace folder is answered by the recursive watcher
- * VS Code already runs for that folder, so no further handle is opened inside
- * the workspace and `files.watcherExclude` applies as it does for the editor.
+ * Windows and macOS reuse the host's `**` watch without opening another handle
+ * inside the workspace; Linux keeps the filtered path backend for nested changes.
+ * Host-served paths respect `files.watcherExclude` as they do in the editor.
  */
 export class VscodeWorkspaceTreeWatch implements WorkspaceTreeWatchHost {
+    constructor(private readonly platform: NodeJS.Platform = process.platform) {}
+
     roots(): readonly string[] {
+        // Linux host events can miss later writes beneath a newly created directory tree.
+        // Keep those paths on watchPaths' filtered chokidar backend, not a second host watch.
+        if (this.platform === "linux") return []
         return (vscode.workspace.workspaceFolders ?? [])
             .filter((folder) => folder.uri.scheme === "file")
             .map((folder) => folder.uri.fsPath)
