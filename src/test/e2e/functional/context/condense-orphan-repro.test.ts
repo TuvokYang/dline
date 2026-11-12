@@ -446,6 +446,8 @@ e2e(
                 timeout: 60_000,
             })
 
+            // A delayed workbench title hover can cover the task header even after the pointer leaves.
+            await E2ETestHelper.dismissWorkbenchHover(await app.firstWindow())
             // Trigger manual compaction through the task header control.
             const expandTaskHeader = sidebar.getByLabel("Expand task header")
             if (await expandTaskHeader.isVisible()) await expandTaskHeader.click()

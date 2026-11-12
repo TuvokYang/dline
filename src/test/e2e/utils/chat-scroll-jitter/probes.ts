@@ -553,8 +553,10 @@ export async function startPaintSampling(sidebar: Frame, durationMs: number): Pr
                 const rows: RowObservation[] = []
                 let middleTs: string | null = null
                 let middleDistance = Number.POSITIVE_INFINITY
-                for (const row of scroller.querySelectorAll<HTMLElement>("[data-message-ts]")) {
-                    const ts = row.dataset.messageTs
+                // Every rendered row has metadata, including tool and browser groups. Its
+                // wrapper uses display: contents, so measure the enclosing Virtuoso item.
+                for (const row of scroller.querySelectorAll<HTMLElement>("[data-item-index]")) {
+                    const ts = row.querySelector<HTMLElement>("[data-row-ts]")?.dataset.rowTs
                     if (!ts) continue
                     const rect = row.getBoundingClientRect()
                     const top = rect.top - bounds.top
