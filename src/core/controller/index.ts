@@ -103,7 +103,6 @@ import { getLatestAnnouncementId } from "@/utils/announcements"
 import { getCwd, getDesktopDir } from "@/utils/path"
 import { isNativeToolCallingConfig } from "../../utils/model-utils"
 import { ModelRegistry } from "../model-registry/ModelRegistry"
-import { ApiConversation } from "../storage/ApiConversation"
 import {
     ensureMcpServersDirectoryExists,
     ensureSettingsDirectoryExists,
@@ -113,8 +112,8 @@ import {
 import { fetchRemoteConfig } from "../storage/remote-config/fetch"
 import { clearRemoteConfig } from "../storage/remote-config/utils"
 import { type PersistenceErrorEvent, StateManager } from "../storage/StateManager"
+import { openTaskMessages } from "../storage/TaskMessages"
 import { pruneTaskCommandLogs } from "../storage/task-temp"
-import { UIMessage } from "../storage/UIMessage"
 import { anchoredPage, centredPageStart, lastIndexOfTimestamp } from "../storage/UIMessageWindowReader"
 import type { ActiveTaskDescriptor } from "../task/active-tasks/ActiveTaskContextProvider"
 import type { TaskActivityStore } from "../task/activity/TaskActivityStore"
@@ -1374,13 +1373,7 @@ export class Controller {
             // as task-specific settings so the task resumes with the same provider.
             // Mode is persisted separately via setTaskSettings in togglePlanActMode
             // and restored by loadTaskSettings above �?do NOT override it from historyItem.
-            const uiMessage = await UIMessage.open(taskId)
-            // The chat store claims the task's messages.db writer on its first write;
-            // it must not outlive an open that never hands it to a session.
-            const apiConversation = await ApiConversation.open(taskId).catch(async (error: unknown) => {
-                await uiMessage.close().catch(() => undefined)
-                throw error
-            })
+            const { uiMessage, apiConversation } = await openTaskMessages(taskId)
             logInitStage("message_stores_open", taskId)
 
             const terminalExecutionMode = vscodeTerminalExecutionMode ?? "vscodeTerminal"

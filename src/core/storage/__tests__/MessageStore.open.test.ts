@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ApiConversation } from "../ApiConversation"
 import { closeInstanceStoragesUnder } from "../instance"
 import { MIGRATED_SUFFIX } from "../messages/importLegacyUiMessages"
+import { openTaskMessages } from "../TaskMessages"
 import { UIMessage } from "../UIMessage"
 
 describe("message store open boundaries", () => {
@@ -32,6 +33,33 @@ describe("message store open boundaries", () => {
         await mkdir(taskDir, { recursive: true })
         return taskDir
     }
+
+    it("opens both stores together without changing either legacy import", async () => {
+        const taskId = "paired-legacy"
+        const taskDir = await createTaskDir(taskId)
+        const uiSource = `${JSON.stringify({ ts: 100, type: "say", say: "task", text: "legacy task" })}\n`
+        const apiSource = JSON.stringify([{ role: "user", content: "legacy request", ts: 200 }])
+        const uiPath = path.join(taskDir, "ui_messages.jsonl")
+        const apiPath = path.join(taskDir, "api_conversation_history.json")
+        await writeFile(uiPath, uiSource, "utf8")
+        await writeFile(apiPath, apiSource, "utf8")
+
+        for (let opening = 0; opening < 2; opening++) {
+            const stores = await openTaskMessages(taskId)
+            try {
+                expect(stores.uiMessage.getAll()).toEqual([
+                    expect.objectContaining({ ts: 100, say: "task", text: "legacy task" }),
+                ])
+                expect(stores.apiConversation.getAll()).toEqual([
+                    expect.objectContaining({ ts: 200, role: "user", content: "legacy request" }),
+                ])
+            } finally {
+                await Promise.all([stores.uiMessage.close(), stores.apiConversation.close()])
+            }
+        }
+        expect(await readFile(`${uiPath}${MIGRATED_SUFFIX}`, "utf8")).toBe(uiSource)
+        expect(await readFile(apiPath, "utf8")).toBe(apiSource)
+    })
 
     it("imports a UI JSONL file into messages.db once and keeps it byte-for-byte as .migrated", async () => {
         const taskDir = await createTaskDir("canonical-ui")
