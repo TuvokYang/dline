@@ -682,6 +682,8 @@ e2e(
             expect(server.getMockConsumptions("openai-compatible-responses")[4]?.contractError).toBeUndefined()
             expect(E2ETestHelper.readDlineOutputIfPresent(userDataDir) ?? "").not.toContain("hydrated_interaction_mismatch")
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+            // Release the pending Q&A task through its owner before quitting the recovered application.
+            await closeCurrentTask(sidebar)
         } finally {
             await session?.app.close()
         }
