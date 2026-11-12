@@ -110,7 +110,8 @@ export async function submitTask(sidebar: Frame, text: string): Promise<void> {
 
 export async function sendTask(sidebar: Frame, text: string): Promise<void> {
     await submitTask(sidebar, text)
-    await expect(sidebar.getByText(text, { exact: true }).last()).toBeVisible()
+    // A fast, long reply can move the duplicate body row out of view; the task title stays visible.
+    await expect(sidebar.getByText(text, { exact: true }).first()).toBeVisible()
 }
 
 export async function closeCurrentTask(sidebar: Frame): Promise<void> {
