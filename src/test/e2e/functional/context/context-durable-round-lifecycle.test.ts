@@ -79,11 +79,17 @@ async function readSegments(sidebar: Frame): Promise<ContextSegments> {
     })
 }
 
-e2e(
-    "Context indicator - completed rounds become Durable before the next Sending phase",
-    async ({ dlineDir, helper, server, sidebar, userDataDir }) => {
-        e2e.setTimeout(180_000)
+const durableE2e = e2e.extend({
+    dlineDir: async ({ dlineDir }, use) => {
         await configureProfile(dlineDir)
+        await use(dlineDir)
+    },
+})
+
+durableE2e(
+    "Context indicator - completed rounds become Durable before the next Sending phase",
+    async ({ helper, server, sidebar, userDataDir }) => {
+        durableE2e.setTimeout(180_000)
         server.resetOpenAiMock()
         server.enqueueResponses(
             "openai-compatible-responses",
@@ -116,9 +122,12 @@ e2e(
         await expect(progress).toHaveAttribute("data-phase", "receiving")
         expect(beforeContinuation.active).toBeGreaterThan(0)
         expect(beforeContinuation.durable).toBe(0)
+        const beforeEpoch = Number(await progress.getAttribute("data-epoch"))
 
         await sendTask(sidebar, "E2E_DURABLE_LIFECYCLE_FEEDBACK")
         await expect.poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 30_000 }).toBe(2)
+        // Both rounds can be Receiving; wait for the new request's published snapshot, not the previous frame.
+        await expect.poll(async () => Number(await progress.getAttribute("data-epoch"))).toBeGreaterThan(beforeEpoch)
         await expect(progress).toHaveAttribute("data-phase", "receiving", { timeout: 30_000 })
 
         const duringContinuation = await readSegments(sidebar)
