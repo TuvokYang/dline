@@ -1172,6 +1172,9 @@ e2e(
         const panelBSubmittedAtMs = Date.now()
         await clickInDlinePanel(dlineGroup, panelB, panelB.getByTestId("send-button"))
         await expectComposerText(panelB.getByTestId("chat-input"), "")
+        // Auto-approved edits can activate a file tab before the task row is rendered.
+        await expect(panelB.getByText(panelBTask, { exact: true }).first()).toBeAttached()
+        await activateDlinePanelByFrame(dlineGroup, panelB)
         await expect(panelB.getByText(panelBTask, { exact: true }).first()).toBeVisible()
 
         await Promise.all([
