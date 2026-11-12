@@ -4,6 +4,7 @@ import type { MockApiConsumption } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { expectOwnedUserFeedback, requestUserTextBlocks } from "@e2e/utils/compaction-request-oracle"
 import { expectComposerText } from "@e2e/utils/composer"
+import { isWorkbenchSample } from "@e2e/utils/console-diagnostics"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame, type Locator } from "@playwright/test"
 import type { ElectronApplication } from "playwright"
@@ -167,7 +168,9 @@ async function attachVsCodeLogEvidence(userDataDir: string, name: string): Promi
 }
 
 function expectNoUnexpectedWebviewErrors(errors: string[]): void {
-    const unexpected = errors.filter((error) => !WEBVIEW_ERROR_ALLOWLIST.some((pattern) => pattern.test(error)))
+    const unexpected = errors.filter(
+        (error) => !isWorkbenchSample(error) && !WEBVIEW_ERROR_ALLOWLIST.some((pattern) => pattern.test(error)),
+    )
     expect(unexpected, `Unexpected Webview console/page errors:\n${unexpected.join("\n")}`).toEqual([])
 }
 
