@@ -7,6 +7,7 @@ import { encodeTaskPayload } from "@core/task/stores/payload/TaskPayloadCodec"
 import { projectCanonicalTaskView } from "@core/task/view/canonical/projectCanonicalTaskView"
 import type { ExtensionState, TaskViewState, UiMessage } from "@shared/ExtensionMessage"
 import type { PromptFreshnessSnapshot } from "@shared/PromptFreshness"
+import { EmptyRequest } from "@shared/proto/dline/common"
 import type { UiLanguagePreference } from "@shared/UiLanguage"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { Controller } from "../index"
@@ -154,6 +155,93 @@ describe("Controller state publication coalescing", () => {
             expect(sendStatePatch).not.toHaveBeenCalled()
         } finally {
             Object.assign(controller, { disposed: true })
+            vi.clearAllTimers()
+            vi.useRealTimers()
+        }
+    })
+
+    it.each([false, true])("shows input after a patch overtakes delivery (replacement=%s)", async (hasReplacement) => {
+        vi.useFakeTimers()
+        const actual = await vi.importActual<typeof import("../state/subscribeToState")>("../state/subscribeToState")
+        vi.mocked(sendStateUpdate).mockImplementation(actual.sendStateUpdate)
+        vi.mocked(sendStatePatch).mockImplementation(actual.sendStatePatch)
+        const { controller } = createController("task-a")
+        stubTaskView(controller)
+        const rows: UiMessage[] = []
+        let shown: ExtensionState | undefined
+        let release!: () => void
+        let enter!: () => void
+        const entered = new Promise<void>((resolve) => {
+            enter = resolve
+        })
+        const held = new Promise<void>((resolve) => {
+            release = resolve
+        })
+        let blockTitle = true
+        let replacement: Promise<void> | undefined
+        vi.spyOn(controller as Controller & { buildState(r: number): Promise<never> }, "buildState").mockImplementation(
+            async (stateRevision: number) =>
+                ({
+                    stateRevision,
+                    taskTitleMessage: rows.find((row) => row.say === "task"),
+                    taskViewState: { taskId: "task-a" },
+                    totalMessageCount: rows.filter((row) => row.say !== "task").length,
+                }) as never,
+        )
+        try {
+            await actual.subscribeToState(controller, EmptyRequest.create(), async (response) => {
+                const payload = JSON.parse(response.stateJson) as ExtensionState & { __dlineStatePatch?: true }
+                if (!payload.__dlineStatePatch && payload.taskTitleMessage && blockTitle) {
+                    blockTitle = false
+                    enter()
+                    await held
+                }
+                if (payload.stateRevision <= (shown?.stateRevision ?? 0)) return
+                const { __dlineStatePatch: patch, ...fields } = payload
+                shown = (patch ? { ...shown, ...fields } : fields) as ExtensionState
+            })
+            const payloads = new InMemoryTaskPayloadStore()
+            const payloadRef = await payloads.put(
+                encodeTaskPayload({ kind: "user_input", entryId: "entry-a", text: "accepted before any provider reply" }),
+            )
+            const messages = {
+                clineMessages: rows,
+                captureConversationPosition: () => ({ conversationHistoryIndex: -1 }),
+                addToClineMessages: async (row: UiMessage) => {
+                    rows.push(row)
+                },
+            } as unknown as MessageStateHandler
+            const presenter = new TaskInputPresenter(
+                payloads,
+                messages,
+                () => 1000,
+                () => controller.postStateToWebview(),
+            )
+            await (await presenter.prepare({ entryId: "entry-a", payloadRef })).commit()
+            await vi.advanceTimersByTimeAsync(50)
+            await entered
+            // A real fast patch arrives first; the client's revision fence must
+            // reject the held full, not the patch that keeps controls responsive.
+            await controller.postTaskViewPatchToWebview()
+            expect(shown?.taskTitleMessage).toBeUndefined()
+            if (hasReplacement) replacement = controller.postStateToWebview({ immediate: true })
+            release()
+            await replacement
+            await vi.advanceTimersByTimeAsync(50)
+            // Without a replacement, no provider event rescues the accepted input.
+            expect(shown?.taskTitleMessage).toMatchObject({
+                say: "task",
+                text: "accepted before any provider reply",
+                interactionId: "entry-a",
+            })
+            expect(sendStateUpdate).toHaveBeenCalledTimes(2)
+        } finally {
+            release()
+            await replacement
+            actual.cleanupStateSubscriptions(controller)
+            Object.assign(controller, { disposed: true })
+            vi.mocked(sendStateUpdate).mockImplementation(async () => undefined)
+            vi.mocked(sendStatePatch).mockImplementation(async () => undefined)
             vi.clearAllTimers()
             vi.useRealTimers()
         }

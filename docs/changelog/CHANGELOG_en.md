@@ -28,6 +28,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Local Web Fetch retrieves content by URL without an ineffective analysis `prompt`; local search no longer claims extra AI analysis.
 - The VS Code Marketplace stable extension uses separate sidebar, panel, and command IDs instead of sharing UI registrations with development builds and Insiders; existing shortcuts are retained, while configuration and task files keep their shared locations.
 - Extension stores show the English changelog by default, and packages include only that single English changelog.
+- New tasks refresh accepted input and titles independently, without waiting for a later model reply to update the view.
 
 ### Fixed
 - Settings still save automatically and Done only closes the page without waiting or saving again; failed Profile saves show an error and reload saved values while keeping the editor usable, and consecutive pricing edits no longer lose values.
