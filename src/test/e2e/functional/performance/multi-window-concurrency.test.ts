@@ -633,10 +633,10 @@ e2e("Dline task panels preserve independent editor groups across window reload",
     const editorGroups = page.locator(".editor-group-container")
     const editorGroupCountBeforeMove = await editorGroups.count()
     const secondTaskTab = page.locator(`.tab[aria-label*="${secondTask.slice(0, 16)}"]`)
-    // Ctrl+\ creates the destination group for this custom editor without moving it. Invoke
-    // VS Code's command directly instead of relying on submenu pointer/keyboard ownership.
+    // This checks editor layout, not shortcut delivery during the webview focus handoff.
+    // Run the same split command through QuickInput, which owns its keyboard interaction.
     await secondTaskTab.click()
-    await page.keyboard.press("Control+\\")
+    await E2ETestHelper.runCommandPalette(page, "View: Split Editor Right")
     await expect(editorGroups).toHaveCount(editorGroupCountBeforeMove + 1)
     await secondTaskTab.click()
     // VS Code transfers focus into a selected custom-editor iframe asynchronously.
