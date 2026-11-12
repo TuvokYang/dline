@@ -17,13 +17,13 @@ import { expect, type Frame, type Locator, type Page } from "@playwright/test"
 const DLINE_RELOAD_NOTIFICATION =
     /Dline v\d+\.\d+\.\d+(?:-[^ ]+)? is installed\. Reload VS Code to finish activating the extension\./
 
-async function selectProfile(frame: Frame, profileName: string): Promise<void> {
+async function selectProfile(frame: Frame, profileName: string, timeout?: number): Promise<void> {
     const modelSwitcher = frame.getByRole("button", { name: "Select model" })
     if ((await modelSwitcher.innerText()).trim() === profileName) return
-    await modelSwitcher.click()
+    await modelSwitcher.click({ timeout })
     const profileOption = frame.getByRole("option").filter({ has: frame.getByText(profileName, { exact: true }) })
     await expect(profileOption).toHaveCount(1)
-    await profileOption.click()
+    await profileOption.click({ timeout })
     await expect(modelSwitcher).toHaveText(profileName)
 }
 
@@ -441,29 +441,16 @@ async function isActiveElementOfParent(frame: Frame): Promise<boolean> {
     }
 }
 
-async function activateDlinePanelByFrame(group: Locator, frame: Frame): Promise<void> {
-    await expect(async () => {
-        const tabs = group.locator(".tabs-container > .tab")
-        for (let index = 0; index < (await tabs.count()); index++) {
-            const tab = tabs.nth(index)
-            await tab.click()
-            try {
-                await frame.getByTestId("chat-input").click({ trial: true, timeout: 1_000 })
-                await expect(tab).toHaveClass(/\bactive\b/)
-                await expect(frame.locator("#root")).toBeVisible()
-                await waitForWebviewFocusHandoff(frame)
-                return
-            } catch {
-                // An in-flight edit can open a file or diff while the panel is activating.
-            }
-        }
-        throw new Error("Dline panel tab for the requested frame was not found")
-    }).toPass({ timeout: 30_000 })
+async function capturePanelTab(page: Page, name: "a" | "b"): Promise<Locator> {
+    const tab = await findActiveDlineTab(page)
+    // File and diff tabs can be inserted between panels; keep the element identity, not its index.
+    await tab.evaluate((element, key) => element.setAttribute("data-e2e-checkpoint-panel", key), name)
+    return page.locator(`.tabs-container > .tab[data-e2e-checkpoint-panel="${name}"]`)
 }
 
-async function clickInDlinePanel(group: Locator, frame: Frame, control: Locator): Promise<void> {
+async function clickPanelControl(tab: Locator, frame: Frame, control: Locator): Promise<void> {
     await expect(async () => {
-        await activateDlinePanelByFrame(group, frame)
+        await activateDlinePanel(tab, frame)
         await control.click({ timeout: 1_000 })
     }).toPass({ timeout: 30_000 })
 }
@@ -1093,9 +1080,11 @@ e2e(
         await setAutoApproveAction(sidebar, "Edit project files", true)
 
         const panelA = await createDlinePanelFromTitleAction(page)
+        const panelATab = await capturePanelTab(page, "a")
         await E2ETestHelper.dismissWhatsNewModal(panelA)
         await dismissExtensionsDisabledNotification(page)
         const panelB = await createDlinePanelFromTitleAction(page)
+        const panelBTab = await capturePanelTab(page, "b")
         await E2ETestHelper.dismissWhatsNewModal(panelB)
 
         const dlineGroups = dlineEditorGroups(page)
@@ -1152,7 +1141,7 @@ e2e(
             },
         )
 
-        await activateDlinePanelByFrame(dlineGroup, panelA)
+        await activateDlinePanel(panelATab, panelA)
         await expect(panelA.getByTestId("chat-input")).toBeVisible()
         await selectProfile(panelA, E2E_PROFILE_NAMES.mockOpenAi)
         await dismissExtensionsDisabledNotification(page)
@@ -1163,18 +1152,19 @@ e2e(
         await expect(panelA.getByText(panelATask, { exact: true }).first()).toBeVisible()
         // Empty panels share the default Profile; switch B only after A owns its task-local Profile.
         await expect(async () => {
-            await activateDlinePanelByFrame(dlineGroup, panelB)
+            await activateDlinePanel(panelBTab, panelB)
             await expect(panelB.getByTestId("chat-input")).toBeVisible()
-            await selectProfile(panelB, E2E_PROFILE_NAMES.mockOpenAiResponses)
+            // A's edit can activate a file; yield promptly so the outer retry can reactivate B.
+            await selectProfile(panelB, E2E_PROFILE_NAMES.mockOpenAiResponses, 1_000)
         }).toPass({ timeout: 30_000 })
         await dismissExtensionsDisabledNotification(page)
         await panelB.getByTestId("chat-input").fill(panelBTask)
         const panelBSubmittedAtMs = Date.now()
-        await clickInDlinePanel(dlineGroup, panelB, panelB.getByTestId("send-button"))
+        await clickPanelControl(panelBTab, panelB, panelB.getByTestId("send-button"))
         await expectComposerText(panelB.getByTestId("chat-input"), "")
         // Auto-approved edits can activate a file tab before the task row is rendered.
         await expect(panelB.getByText(panelBTask, { exact: true }).first()).toBeAttached()
-        await activateDlinePanelByFrame(dlineGroup, panelB)
+        await activateDlinePanel(panelBTab, panelB)
         await expect(panelB.getByText(panelBTask, { exact: true }).first()).toBeVisible()
 
         await Promise.all([
@@ -1200,10 +1190,10 @@ e2e(
         expect(performance.panelBCommitMs).toBeLessThan(20_000)
         expect(performance.firstRequestDeltaMs).toBeLessThan(10_000)
 
-        await activateDlinePanelByFrame(dlineGroup, panelA)
+        await activateDlinePanel(panelATab, panelA)
         await expect(panelA.getByText(panelATask, { exact: true }).first()).toBeVisible()
         await expect(panelA.locator('vscode-button[aria-label="Start New Task"]')).toBeVisible({ timeout: 60_000 })
-        await activateDlinePanelByFrame(dlineGroup, panelB)
+        await activateDlinePanel(panelBTab, panelB)
         await expect(panelB.getByText(panelBTask, { exact: true }).first()).toBeVisible()
         await expect(panelB.locator('vscode-button[aria-label="Start New Task"]')).toBeVisible({ timeout: 60_000 })
         await expect.poll(() => pathExists(panelAPath)).toBe(true)
@@ -1211,7 +1201,7 @@ e2e(
         expect(normalizeNewlines(await readFile(panelAPath, "utf8"))).toBe("panel A checkpoint content\n")
         expect(normalizeNewlines(await readFile(panelBPath, "utf8"))).toBe("panel B checkpoint content\n")
 
-        await activateDlinePanelByFrame(dlineGroup, panelA)
+        await activateDlinePanel(panelATab, panelA)
         const checkpointLabels = panelA.getByText("Checkpoint", { exact: true })
         await expect.poll(() => checkpointLabels.count()).toBeGreaterThan(0)
         const initialCheckpoint = checkpointLabels.first().locator("..").locator("..")
@@ -1229,7 +1219,7 @@ e2e(
         expect(normalizeNewlines(await readFile(panelBPath, "utf8"))).toBe("panel B checkpoint content\n")
         await expect(panelA.locator('[data-testid="send-button"][data-action="resume"]')).toBeVisible({ timeout: 30_000 })
 
-        await activateDlinePanelByFrame(dlineGroup, panelB)
+        await activateDlinePanel(panelBTab, panelB)
         await expect(panelB.getByText(panelBTask, { exact: true }).first()).toBeVisible()
         await expect(panelB.locator('vscode-button[aria-label="Start New Task"]')).toBeVisible()
         await expect(panelB.getByRole("button", { name: "Select model" })).toHaveText(E2E_PROFILE_NAMES.mockOpenAiResponses)
@@ -1256,7 +1246,7 @@ e2e(
         await expect.poll(() => pathExists(panelBPath)).toBe(true)
         expect(normalizeNewlines(await readFile(panelBPath, "utf8"))).toBe("panel B checkpoint content\n")
 
-        await activateDlinePanelByFrame(dlineGroup, panelA)
+        await activateDlinePanel(panelATab, panelA)
         const panelAResume = panelA.locator('[data-testid="send-button"][data-action="resume"]')
         server.enqueueResponses("openai-compatible-chat", {
             type: "tool",
