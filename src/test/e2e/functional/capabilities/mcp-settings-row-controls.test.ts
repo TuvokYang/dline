@@ -130,8 +130,8 @@ e2e(
             // The extension is active and has reached the server, but nothing may ask the user yet.
             await expect
                 .poll(
-                    async () =>
-                        (await E2ETestHelper.readDlineOutput(userDataDir)).includes(
+                    () =>
+                        (E2ETestHelper.readDlineOutputIfPresent(userDataDir) ?? "").includes(
                             `[MCP ${VARIABLE_MCP_NAME}] waiting for Dline to open`,
                         ),
                     {
