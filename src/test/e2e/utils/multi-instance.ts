@@ -100,9 +100,15 @@ async function attachFailureArtifacts(surface: MultiInstanceSurface, testInfo: T
     }
 }
 
+interface InstanceLaunch {
+    readonly app: ElectronApplication
+    readonly portableRoot: string
+    surface?: MultiInstanceSurface
+}
+
 export class MultiInstanceLauncher {
     private readonly options: MultiInstanceLauncherOptions
-    private readonly surfaces: MultiInstanceSurface[] = []
+    private readonly instances: InstanceLaunch[] = []
     private executablePath?: string
 
     constructor(options: MultiInstanceLauncherOptions) {
@@ -163,15 +169,18 @@ export class MultiInstanceLauncher {
                 this.options.workspaceDir,
             ],
         })
+        // Initialization can fail after Electron starts; dispose must still own that process.
+        const instance: InstanceLaunch = { app, portableRoot }
+        this.instances.push(instance)
         await E2ETestHelper.waitUntil(() => app.windows().length > 0, 30_000)
         const page = await app.firstWindow()
         const helper = new E2ETestHelper()
         await E2ETestHelper.openClineSidebar(page)
         const sidebar = await helper.getSidebar(page)
+        const surface = { app, controlDirectory, helper, label, page, portableRoot, sidebar, userDataDir }
+        instance.surface = surface
         await E2ETestHelper.dismissWhatsNewModal(sidebar)
         await helper.signin(sidebar)
-        const surface = { app, controlDirectory, helper, label, page, portableRoot, sidebar, userDataDir }
-        this.surfaces.push(surface)
         return surface
     }
 
@@ -180,11 +189,11 @@ export class MultiInstanceLauncher {
     }
 
     async dispose(): Promise<void> {
-        for (const surface of [...this.surfaces].reverse()) {
-            await attachFailureArtifacts(surface, this.options.testInfo).catch(() => undefined)
-            await surface.app.close().catch(() => undefined)
-            await E2ETestHelper.rmForRetries(surface.portableRoot, { recursive: true, force: true })
+        for (const instance of [...this.instances].reverse()) {
+            if (instance.surface) await attachFailureArtifacts(instance.surface, this.options.testInfo).catch(() => undefined)
+            await instance.app.close().catch(() => undefined)
+            await E2ETestHelper.rmForRetries(instance.portableRoot, { recursive: true, force: true })
         }
-        this.surfaces.length = 0
+        this.instances.length = 0
     }
 }
