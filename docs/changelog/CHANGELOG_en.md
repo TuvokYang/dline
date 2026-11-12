@@ -44,6 +44,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Fixed leftover file locks preventing temporary support telemetry deletion.
 - Fixed running subagents showing an approval request instead of their execution status.
 - Fixed automated foreground commands revealing the terminal and stealing chat input focus, redirecting an unsent draft into the shell.
+- Removed the fixed pre-save delay after file writes and replacements are approved, avoiding prolonged unsaved edits when a task is restored.
 
 ## [0.14.0]
 
