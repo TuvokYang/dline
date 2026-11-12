@@ -113,7 +113,7 @@ describe("workspace prompt inputs through the VS Code host adapter", () => {
             if (!kind) throw Object.assign(new Error("Virtual file does not exist"), { code: "ENOENT" })
             return { isDirectory: () => kind === "directory", isFile: () => kind === "file" } as fs.Stats
         })
-        const host = new VscodeWorkspaceTreeWatch()
+        const host = new VscodeWorkspaceTreeWatch("win32")
         registry = new WorkspacePromptInputWatcherRegistry({
             watch: (paths, options) =>
                 watchPaths(paths, options, {
@@ -155,6 +155,38 @@ describe("workspace prompt inputs through the VS Code host adapter", () => {
         expect(fs.promises.stat).toHaveBeenNthCalledWith(2, rule)
         expect(editor.createWatcher).toHaveBeenCalledExactlyOnceWith({ baseUri: { scheme: "file", fsPath: cwd }, pattern: "**" })
         expect(fallbackPaths).toEqual([globalRulesDirectory])
+    })
+
+    it("routes Linux Rules and capability roots through the path watcher and releases it at host shutdown", async () => {
+        registry = new WorkspacePromptInputWatcherRegistry({
+            watch: (paths, options) =>
+                watchPaths(paths, options, {
+                    host: new VscodeWorkspaceTreeWatch("linux"),
+                    fallback: (paths) => {
+                        fallbackPaths = [...paths]
+                        fallback = new MemoryFallback()
+                        return fallback
+                    },
+                }),
+        })
+        const { invalidate, subscription } = await subscribe()
+        expect(fallbackPaths).toEqual(
+            expect.arrayContaining([
+                cwd,
+                path.dirname(rule),
+                ...roots.workflowDirectories,
+                ...roots.skillDirectories,
+                ...roots.subagentDirectories,
+                globalRulesDirectory,
+            ]),
+        )
+        fallback.emit("change", rule)
+        expect(invalidate.mock.calls).toEqual([[{ absolutePath: rule, event: "change", kind: "rule" }]])
+        expect(editor.createWatcher).not.toHaveBeenCalled()
+        await subscription.dispose()
+        expect(fallback.closed).toBe(false)
+        await registry.disposeAll()
+        expect(fallback.closed).toBe(true)
     })
 
     it("reuses the host watch after task replacement and routes global fallback changes to the current subscriber", async () => {
