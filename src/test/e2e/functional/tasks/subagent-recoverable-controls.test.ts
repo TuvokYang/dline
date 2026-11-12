@@ -633,10 +633,11 @@ e2e(
 
         await sendTask(sidebar, "Start a subagent that must retry after a usage-only Provider prefix.")
         const usageFirstCard = subagentCardByTask(sidebar, "E2E_SUBAGENT_USAGE_FIRST_TASK")
-        await expect(await showSubagentOutput(usageFirstCard, 120_000)).toContainText(childResult, { timeout: 120_000 })
         await expect(sidebar.getByText("E2E_SUBAGENT_USAGE_FIRST_PARENT_DONE", { exact: false }).last()).toBeVisible({
             timeout: 120_000,
         })
+        // Inspect the settled card after parent updates can remount the running row.
+        await expect(await showSubagentOutput(usageFirstCard, 120_000)).toContainText(childResult, { timeout: 120_000 })
         await expect.poll(() => server.getRequestCount("anthropic-messages"), { timeout: 120_000 }).toBe(2)
         const childConsumptions = server.getMockConsumptions("anthropic-messages")
         expect(childConsumptions[0]).toMatchObject({
