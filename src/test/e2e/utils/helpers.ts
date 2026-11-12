@@ -38,6 +38,7 @@ import {
     resolveVSCodeDownloadPlatform,
     resolveVSCodeDownloadVersion,
 } from "./vscode-version-resolver"
+import { withWorkerDisplay } from "./worker-display"
 
 /** Bound for re-proving a palette option is clickable; a closed QuickInput fails here and is retried. */
 const COMMAND_OPTION_ACTIONABLE_TIMEOUT_MS = 5_000
@@ -65,6 +66,7 @@ interface E2EWorkerDirectories {
 }
 
 interface E2EWorkerFixtures {
+    workerDisplay: void
     server: ClineApiServerMock
     workerDirectories: E2EWorkerDirectories
     dlineStateTemplateDir: string
@@ -570,6 +572,16 @@ export const e2e = test
         devWebview: [false, { option: true }],
     })
     .extend<E2ETestDirectories, E2EWorkerFixtures>({
+        workerDisplay: [
+            async ({}, use, workerInfo) =>
+                withWorkerDisplay(async () => {
+                    if (process.platform === "linux" && process.env.CI) {
+                        console.log(`[E2E] worker=${workerInfo.workerIndex} nativeDisplay=${process.env.DISPLAY}`)
+                    }
+                    await use()
+                }),
+            { scope: "worker", auto: true },
+        ],
         profileMode: ["mock", { scope: "worker", option: true }],
         workerDirectories: [
             async ({}, use, workerInfo) => {
