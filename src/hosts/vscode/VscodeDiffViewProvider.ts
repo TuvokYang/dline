@@ -55,41 +55,53 @@ export class VscodeDiffViewProvider extends DiffViewProvider {
                 preserveFocus: true,
             })
         } else {
-            // Open new diff editor.
-            this.activeDiffEditor = await new Promise<vscode.TextEditor>((resolve, reject) => {
-                const fileName = path.basename(uri.fsPath)
-                const fileExists = this.editType === "modify"
-                const disposable = vscode.window.onDidChangeActiveTextEditor((editor) => {
-                    if (editor && arePathsEqual(editor.document.uri.fsPath, uri.fsPath)) {
-                        disposable.dispose()
-                        resolve(editor)
-                    }
-                })
-                vscode.commands.executeCommand(
-                    "vscode.diff",
-                    vscode.Uri.parse(
-                        `${DIFF_VIEW_URI_SCHEME}:${fileName.replace(/%/g, "%25").replace(/#/g, "%23").replace(/\?/g, "%3F")}`,
-                    ).with({
-                        query: Buffer.from(this.originalContent ?? "").toString("base64"),
-                    }),
-                    uri,
-                    `${fileName}: ${fileExists ? "Original ↔ Cline's Changes" : "New File"} (Editable)`,
-                    {
-                        preserveFocus: true,
-                    },
-                )
-                // This may happen on very slow machines ie project idx
-                setTimeout(() => {
-                    disposable.dispose()
-                    reject(new Error("Failed to open diff editor, please try again..."))
-                }, 10_000)
-            })
+            this.activeDiffEditor = await this.openNewDiff(uri)
         }
 
         this.fadedOverlayController = new DecorationController("fadedOverlay", this.activeDiffEditor)
         this.activeLineController = new DecorationController("activeLine", this.activeDiffEditor)
         // Apply faded overlay to all lines initially
         this.fadedOverlayController.addLines(0, this.activeDiffEditor.document.lineCount)
+    }
+
+    private async openNewDiff(uri: vscode.Uri): Promise<vscode.TextEditor> {
+        const fileName = path.basename(uri.fsPath)
+        const fileExists = this.editType === "modify"
+        let observer: vscode.Disposable | undefined
+        let timeout: ReturnType<typeof setTimeout> | undefined
+        try {
+            return await new Promise<vscode.TextEditor>((resolve, reject) => {
+                let commandFinished = false
+                let revealed: vscode.TextEditor | undefined
+                const observe = (editors: readonly vscode.TextEditor[]) => {
+                    revealed = editors.find((candidate) => arePathsEqual(candidate.document.uri.fsPath, uri.fsPath)) ?? revealed
+                    // Another reveal can hide this editor before its command finishes; the document remains editable.
+                    if (commandFinished && revealed && !revealed.document.isClosed) resolve(revealed)
+                }
+                // A preserve-focus reveal can be visible without ever becoming the active editor.
+                observer = vscode.window.onDidChangeVisibleTextEditors(observe)
+                timeout = setTimeout(() => reject(new Error("Failed to open diff editor, please try again...")), 10_000)
+                vscode.commands
+                    .executeCommand(
+                        "vscode.diff",
+                        vscode.Uri.parse(
+                            `${DIFF_VIEW_URI_SCHEME}:${fileName.replace(/%/g, "%25").replace(/#/g, "%23").replace(/\?/g, "%3F")}`,
+                        ).with({
+                            query: Buffer.from(this.originalContent ?? "").toString("base64"),
+                        }),
+                        uri,
+                        `${fileName}: ${fileExists ? "Original ↔ Cline's Changes" : "New File"} (Editable)`,
+                        { preserveFocus: true, preview: false },
+                    )
+                    .then(() => {
+                        commandFinished = true
+                        observe(vscode.window.visibleTextEditors)
+                    }, reject)
+            })
+        } finally {
+            if (timeout) clearTimeout(timeout)
+            observer?.dispose()
+        }
     }
 
     override async replaceText(
@@ -208,10 +220,16 @@ export class VscodeDiffViewProvider extends DiffViewProvider {
     }
 
     protected async closeAllDiffViews(): Promise<void> {
-        // Close all the cline diff views.
+        if (!this.absolutePath) return
+        // Another task may still be streaming into its own diff in the same editor group.
         const tabs = vscode.window.tabGroups.all
             .flatMap((tg) => tg.tabs)
-            .filter((tab) => tab.input instanceof vscode.TabInputTextDiff && tab.input?.original?.scheme === DIFF_VIEW_URI_SCHEME)
+            .filter(
+                (tab) =>
+                    tab.input instanceof vscode.TabInputTextDiff &&
+                    tab.input.original.scheme === DIFF_VIEW_URI_SCHEME &&
+                    arePathsEqual(tab.input.modified.fsPath, this.absolutePath),
+            )
         for (const tab of tabs) {
             // trying to close dirty views results in save popup
             if (!tab.isDirty) {
