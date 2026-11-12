@@ -128,6 +128,8 @@ async function approveSubagentIfRequested(sidebar: Frame, task: string): Promise
 /** Height of the sticky user message that covers the top of the chat list, plus a margin. */
 const STICKY_USER_MESSAGE_CLEARANCE_PX = 48
 const REVEAL_MARGIN_PX = 24
+// The center can hit a nested Work/output scroller instead of the transcript.
+const SCROLLER_GUTTER_PX = 2
 const MAX_REVEAL_WHEELS = 20
 /** Only an upward wheel hands the viewport to the reader; a programmatic or downward scroll keeps following the tail. */
 const TAKE_OVER_WHEEL_PX = -40
@@ -154,7 +156,7 @@ async function revealInChat(sidebar: Frame, control: Locator): Promise<void> {
     if (!initialList) throw new Error("The chat list has no layout box")
     // Take the viewport first even when the control already looks readable: while the
     // list still follows the tail, the rows that settle after completion move it again.
-    await page.mouse.move(initialList.x + initialList.width / 2, initialList.y + initialList.height / 2)
+    await page.mouse.move(initialList.x + SCROLLER_GUTTER_PX, initialList.y + initialList.height / 2)
     await page.mouse.wheel(0, TAKE_OVER_WHEEL_PX)
     await page.waitForTimeout(REVEAL_SETTLE_MS)
 
@@ -176,7 +178,7 @@ async function revealInChat(sidebar: Frame, control: Locator): Promise<void> {
             target.y < readableTop
                 ? target.y - readableTop - REVEAL_MARGIN_PX
                 : target.y + target.height - readableBottom + REVEAL_MARGIN_PX
-        await page.mouse.move(list.x + list.width / 2, list.y + list.height / 2)
+        await page.mouse.move(list.x + SCROLLER_GUTTER_PX, list.y + list.height / 2)
         await page.mouse.wheel(0, delta)
         await page.waitForTimeout(REVEAL_SETTLE_MS)
     }
@@ -201,7 +203,7 @@ async function returnToLiveTail(sidebar: Frame): Promise<void> {
         const list = await scroller.boundingBox()
         if (!list) throw new Error("The chat list has no layout box")
         // Low in the list: the sticky user message covers its top.
-        await page.mouse.move(list.x + list.width / 2, list.y + list.height - REVEAL_MARGIN_PX)
+        await page.mouse.move(list.x + SCROLLER_GUTTER_PX, list.y + list.height - REVEAL_MARGIN_PX)
         await page.mouse.wheel(0, RETURN_TO_TAIL_WHEEL_PX)
         await page.waitForTimeout(REVEAL_SETTLE_MS)
         if (await scrollToBottom.isVisible()) {
