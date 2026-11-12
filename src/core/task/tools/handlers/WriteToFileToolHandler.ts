@@ -294,8 +294,6 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
                 modelId,
                 filesCreated: fileExists ? 0 : 1,
             })
-            await setTimeoutPromise(3_500)
-
             // Run PreToolUse hook after admission but before execution
             try {
                 const { ToolHookUtils } = await import("../utils/ToolHookUtils")
