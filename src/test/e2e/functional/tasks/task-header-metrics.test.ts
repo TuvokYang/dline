@@ -3,6 +3,7 @@ import * as path from "node:path"
 import type { MockApiTarget, MockTokenUsage } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { countApiSeconds } from "@e2e/utils/rate-metric-oracle"
 import { readTaskApiRateMetrics } from "@e2e/utils/read-task-api-rate-metrics"
 import { readTaskUiMessages } from "@e2e/utils/task-instance-store"
 import { expect, type Frame } from "@playwright/test"
@@ -111,17 +112,6 @@ async function readFinalRequestInfo(dlineDocsDir: string, taskId: string): Promi
     return requests.at(-1)
 }
 
-function storedActivitySeconds(record: StoredRateRecord): { activeSeconds: number; providerActiveSeconds: number } {
-    const signals = record.signals ?? []
-    const taskActive = signals.includes("task_active")
-    const providerActive = signals.includes("provider_active")
-    const legacyActive = !taskActive && !providerActive
-    return {
-        activeSeconds: taskActive || legacyActive ? 1 : 0,
-        providerActiveSeconds: providerActive || legacyActive ? 1 : 0,
-    }
-}
-
 function extrapolatePerMinute(value: number, activeSeconds: number): number {
     return activeSeconds > 0 ? Math.round((value * 60) / activeSeconds) : 0
 }
@@ -144,21 +134,12 @@ async function readRateSummary(dlineDocsDir: string, taskId: string): Promise<Ra
     }
     const records = [...canonical.values()]
     if (records.length === 0) return undefined
-    const activity = records.reduce(
-        (total, record) => {
-            const current = storedActivitySeconds(record)
-            return {
-                activeSeconds: total.activeSeconds + current.activeSeconds,
-                providerActiveSeconds: total.providerActiveSeconds + current.providerActiveSeconds,
-            }
-        },
-        { activeSeconds: 0, providerActiveSeconds: 0 },
-    )
+    const activeSeconds = countApiSeconds(records)
     const requestCount = records.reduce((total, record) => total + (record.requestCount ?? 0), 0)
     const tokenCount = records.reduce((total, record) => total + (record.effectiveTokens ?? 0), 0)
     return {
-        requestsPerMinute: extrapolatePerMinute(requestCount, activity.activeSeconds),
-        tokensPerMinute: extrapolatePerMinute(tokenCount, activity.providerActiveSeconds),
+        requestsPerMinute: extrapolatePerMinute(requestCount, activeSeconds),
+        tokensPerMinute: extrapolatePerMinute(tokenCount, activeSeconds),
         tokenCount,
     }
 }
@@ -212,7 +193,8 @@ async function expectTaskHeaderMetrics(
         if (!persistedRate || persistedRate.tokenCount !== expectedRateTokens(usage)) return undefined
         const ariaLabel = await rate.getAttribute("aria-label")
         if (!ariaLabel?.match(/(?:^|; )RPM: [1-9]\d*(?:;|$)/)) return undefined
-        if (!ariaLabel.includes(`TPM: ${persistedRate.tokensPerMinute}`)) return undefined
+        // Header RPM uses logical execution/request duration; TPM uses API-active seconds.
+        if (!ariaLabel.split("; ").includes(`TPM: ${persistedRate.tokensPerMinute}`)) return undefined
         if (ariaLabel.includes("Request")) return undefined
         return persistedRate
     }, 30_000)

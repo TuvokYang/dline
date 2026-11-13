@@ -112,11 +112,11 @@ import {
 import { fetchRemoteConfig } from "../storage/remote-config/fetch"
 import { clearRemoteConfig } from "../storage/remote-config/utils"
 import { type PersistenceErrorEvent, StateManager } from "../storage/StateManager"
-import { openTaskMessages } from "../storage/TaskMessages"
 import { pruneTaskCommandLogs } from "../storage/task-temp"
 import { anchoredPage, centredPageStart, lastIndexOfTimestamp } from "../storage/UIMessageWindowReader"
 import type { ActiveTaskDescriptor } from "../task/active-tasks/ActiveTaskContextProvider"
 import type { TaskActivityStore } from "../task/activity/TaskActivityStore"
+import { openTaskStores } from "../task/composition/TaskOpeningStores"
 import { TaskSessionCompositionService } from "../task/composition/TaskSessionCompositionService"
 import type { NewTaskHandoff } from "../task/new-task/new-task-handoff"
 import type { ActiveTaskSession, CheckpointRestoreFence } from "../task/session/ActiveTaskSession"
@@ -1373,7 +1373,7 @@ export class Controller {
             // as task-specific settings so the task resumes with the same provider.
             // Mode is persisted separately via setTaskSettings in togglePlanActMode
             // and restored by loadTaskSettings above �?do NOT override it from historyItem.
-            const { uiMessage, apiConversation } = await openTaskMessages(taskId)
+            const { uiMessage, apiConversation, persistence } = await openTaskStores(taskId)
             logInitStage("message_stores_open", taskId)
 
             const terminalExecutionMode = vscodeTerminalExecutionMode ?? "vscodeTerminal"
@@ -1392,6 +1392,7 @@ export class Controller {
                 : undefined
             this.task = await new TaskSessionCompositionService().open({
                 taskId,
+                persistence,
                 taskIncarnationId: opening.taskInstanceId,
                 openReason: historyItem ? (options?.openReason ?? "resume") : "new",
                 collaboration: {
