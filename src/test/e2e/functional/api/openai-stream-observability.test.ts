@@ -3,6 +3,7 @@ import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { countApiSeconds } from "@e2e/utils/rate-metric-oracle"
 import { readTaskApiRateMetrics } from "@e2e/utils/read-task-api-rate-metrics"
 import { readTaskUiMessages } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator, type Page } from "@playwright/test"
@@ -223,24 +224,6 @@ function extrapolatePerMinute(count: number, activeSeconds: number): number {
     return activeSeconds === 0 ? 0 : Math.round((count * 60) / activeSeconds)
 }
 
-function summarizeStoredActivity(records: readonly StoredRateSecondRecord[]): {
-    activeSeconds: number
-    providerActiveSeconds: number
-} {
-    return records.reduce(
-        (total, record) => {
-            const taskActive = record.signals.includes("task_active")
-            const providerActive = record.signals.includes("provider_active")
-            const legacyActive = !taskActive && !providerActive
-            return {
-                activeSeconds: total.activeSeconds + (taskActive || legacyActive ? 1 : 0),
-                providerActiveSeconds: total.providerActiveSeconds + (providerActive || legacyActive ? 1 : 0),
-            }
-        },
-        { activeSeconds: 0, providerActiveSeconds: 0 },
-    )
-}
-
 function formatStoredQuality(records: readonly StoredRateSecondRecord[]): string {
     const qualities = new Set(records.filter((record) => record.effectiveTokens > 0).map((record) => record.tokenQuality))
     if (qualities.size !== 1) return "Mixed"
@@ -249,28 +232,28 @@ function formatStoredQuality(records: readonly StoredRateSecondRecord[]): string
 }
 
 function summarizeStoredRateMetrics(records: readonly StoredRateSecondRecord[]): RateSummary {
-    const activity = summarizeStoredActivity(records)
+    const activeSeconds = countApiSeconds(records)
     const requestCount = records.reduce((total, record) => total + record.requestCount, 0)
     const tokenCount = records.reduce((total, record) => total + record.effectiveTokens, 0)
     const lastSecond = records.at(-1)?.second
     if (lastSecond === undefined) throw new Error("Expected at least one canonical API rate second")
     const lastMinuteStart = Math.floor(lastSecond / 60) * 60
     const lastMinuteRecords = records.filter((record) => record.second >= lastMinuteStart && record.second < lastMinuteStart + 60)
-    const lastMinuteActivity = summarizeStoredActivity(lastMinuteRecords)
+    const lastMinuteActive = countApiSeconds(lastMinuteRecords)
     const lastMinuteRequestCount = lastMinuteRecords.reduce((total, record) => total + record.requestCount, 0)
     const lastMinuteTokenCount = lastMinuteRecords.reduce((total, record) => total + record.effectiveTokens, 0)
     return {
-        activeSeconds: activity.activeSeconds,
+        activeSeconds,
         requestCount,
         tokenCount,
-        requestsPerMinute: extrapolatePerMinute(requestCount, activity.activeSeconds),
-        tokensPerMinute: extrapolatePerMinute(tokenCount, activity.providerActiveSeconds),
+        requestsPerMinute: extrapolatePerMinute(requestCount, activeSeconds),
+        tokensPerMinute: extrapolatePerMinute(tokenCount, activeSeconds),
         lastMinute: {
-            activeSeconds: lastMinuteActivity.activeSeconds,
+            activeSeconds: lastMinuteActive,
             requestCount: lastMinuteRequestCount,
             tokenCount: lastMinuteTokenCount,
-            requestsPerMinute: extrapolatePerMinute(lastMinuteRequestCount, lastMinuteActivity.activeSeconds),
-            tokensPerMinute: extrapolatePerMinute(lastMinuteTokenCount, lastMinuteActivity.providerActiveSeconds),
+            requestsPerMinute: extrapolatePerMinute(lastMinuteRequestCount, lastMinuteActive),
+            tokensPerMinute: extrapolatePerMinute(lastMinuteTokenCount, lastMinuteActive),
             quality: formatStoredQuality(lastMinuteRecords),
         },
     }
@@ -401,7 +384,7 @@ e2e(
             }
             const panelTabs = page.locator(".editor-group-container").first().locator(".tabs-container > .tab")
             await expect(panelTabs).toHaveCount(3)
-            const taskSurfaces = [
+            const taskSurfaces: { taskCase: RateTaskCase | undefined; frame: Frame; tab?: Locator }[] = [
                 { taskCase: taskCases[0], frame: sidebar },
                 ...editorFrames.map((frame, index) => ({ taskCase: taskCases[index + 1], frame, tab: panelTabs.nth(index) })),
             ]
