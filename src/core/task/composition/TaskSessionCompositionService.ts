@@ -215,6 +215,8 @@ export interface OpenTaskSessionCompositionOptions {
     readonly stateManager: StateManager
     readonly taskView: TaskViewPort
     readonly messages: TaskSessionMessageHost
+    /** An already acquired journal transfers to the session with the message stores. */
+    readonly persistence?: TaskPersistenceAssembly
     readonly prompt: TaskSessionPromptHost
     readonly hostFactory: TaskSessionHostFactory
     readonly publishState: (options?: { readonly immediate?: boolean }) => Promise<void>
@@ -225,14 +227,14 @@ export interface OpenTaskSessionCompositionOptions {
 /** The only production composition root for one task incarnation. */
 export class TaskSessionCompositionService {
     async open(options: OpenTaskSessionCompositionOptions): Promise<ActiveTaskSession> {
-        let persistence: TaskPersistenceAssembly | undefined
+        let persistence = options.persistence
         const resources = new SessionResourceScope()
         // Storage closes last: the later owners may still commit while stopping.
         resources.add({ release: async () => persistence?.close?.() })
         resources.add({ release: () => options.messages.uiMessage.close() })
         resources.add({ release: () => options.messages.apiConversation.close() })
         try {
-            persistence = await openTaskPersistence(options.taskId)
+            persistence ??= await openTaskPersistence(options.taskId)
             return await this.compose(options, persistence, resources)
         } catch (error) {
             try {

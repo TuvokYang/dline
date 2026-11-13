@@ -81,6 +81,28 @@ describe("TaskSessionCompositionService", () => {
         expect(stores.apiConversation.close).toHaveBeenCalledOnce()
     })
 
+    it("adopts an acquired journal without reopening it and closes it when composition fails", async () => {
+        const stores = messageStores()
+        let journalOpen = true
+        const persistence = {
+            close: async () => {
+                journalOpen = false
+            },
+        } as unknown as TaskPersistenceAssembly
+        const failure = new Error("composition failed")
+        const compose = vi
+            .spyOn(TaskSessionCompositionService.prototype as unknown as { compose: () => Promise<never> }, "compose")
+            .mockRejectedValue(failure)
+
+        await expect(new TaskSessionCompositionService().open({ ...openOptions(stores), persistence })).rejects.toBe(failure)
+
+        expect(persistenceMock.open).not.toHaveBeenCalled()
+        expect(compose.mock.calls).toHaveLength(1)
+        expect(journalOpen).toBe(false)
+        expect(stores.uiMessage.close).toHaveBeenCalledOnce()
+        expect(stores.apiConversation.close).toHaveBeenCalledOnce()
+    })
+
     it("closes the persistence and the message stores when composition fails, keeping the original error", async () => {
         const stores = messageStores()
         const persistence = { close: vi.fn(async () => undefined) } as unknown as TaskPersistenceAssembly
