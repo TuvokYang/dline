@@ -16,16 +16,32 @@ interface LockPayload {
     pid: number
     /** Unique acquisition identity, including between lock instances in one process. */
     ownerId?: string
-    /** Timestamp when the lock was acquired (ms since epoch) */
+    /** Timestamp when the lease started (ms since epoch). */
     ts: number
+    /** Lease length declared by the owner. Absent on locks written before leases existed. */
+    ttlMs?: number
 }
 
 /**
- * Maximum age of a lock file before it is considered stale (10 seconds).
- * If a process crashes without releasing its lock, another process
- * can break the stale lock after this timeout.
+ * Default lease length for a lock (10 seconds).
+ *
+ * The owner writes this into the lock file, and the same value interprets locks
+ * written before the lease field existed. A lock only becomes a takeover
+ * candidate once its *declared* lease has expired: the file modification time is
+ * not the authority, because synchronisation, backup and indexing tools rewrite
+ * it without the owner knowing.
  */
 const STALE_LOCK_TIMEOUT_MS = 10_000
+
+/**
+ * How long an unreadable lock file may stay unreadable before it counts as abandoned.
+ *
+ * The file is created exclusively and then written, so a live owner's lock is
+ * briefly empty. Taking it over inside that window would hand the resource to
+ * two owners, so only a file that is still unreadable after this grace is
+ * treated as leftover garbage from a failed create or a crashed writer.
+ */
+const UNREADABLE_LOCK_GRACE_MS = 5_000
 
 /**
  * Maximum number of acquire retries when lock is held by another active process.
@@ -65,46 +81,115 @@ function isProcessAlive(pid: number): boolean {
 }
 
 /**
- * Check whether a lock file exists and is still active.
- * A young lock is active unconditionally. An older lock remains active while
- * its owner process exists, preventing a long atomic write from being broken.
+ * What a lock file currently says about its own lease.
+ *
+ * `expired` and `unreadable` are takeover candidates; `active` and `missing`
+ * are not. `raw` and `mtimeMs` are kept so a takeover can prove it is still
+ * acting on the snapshot it judged instead of a lock another owner just wrote.
  */
-async function isLockActive(lockPath: string): Promise<boolean> {
-    try {
-        const stat = await fs.stat(lockPath)
-        const age = Date.now() - stat.mtimeMs
-        if (age < STALE_LOCK_TIMEOUT_MS) return true
-        const payload = JSON.parse(await fs.readFile(lockPath, "utf8")) as LockPayload
-        return typeof payload.ownerId === "string" && payload.ownerId.length > 0 && isProcessAlive(payload.pid)
-    } catch {
-        // Missing or unreadable old lock → not active and eligible for cleanup.
-        return false
-    }
+type LeaseSnapshot =
+    | { readonly kind: "missing" }
+    | { readonly kind: "active" }
+    | { readonly kind: "expired"; readonly raw: string; readonly mtimeMs: number; readonly pid: number; readonly ageMs: number }
+    | { readonly kind: "unreadable"; readonly raw: string; readonly mtimeMs: number; readonly ageMs: number }
+
+function declaredLeaseMs(payload: LockPayload): number {
+    const ttl = payload.ttlMs
+    // Locks written before leases existed carry no ttl; the default interprets them.
+    return typeof ttl === "number" && Number.isFinite(ttl) && ttl > 0 ? ttl : STALE_LOCK_TIMEOUT_MS
 }
 
 /**
- * Remove a stale lock file, logging a warning.
+ * Read the lease a lock file declares.
+ *
+ * A readable lease expires by its own declared start and length, not by the file
+ * modification time, because external tooling rewrites mtime without the owner
+ * knowing. An unreadable file is the `open`-then-`write` window or the leftover
+ * of a failed create, so it only becomes a candidate after the write grace.
  */
-async function breakStaleLock(lockPath: string): Promise<void> {
+async function readLease(lockPath: string): Promise<LeaseSnapshot> {
+    let mtimeMs: number
     try {
-        const raw = await fs.readFile(lockPath, "utf8")
-        const payload = JSON.parse(raw) as LockPayload
-        // The age is the diagnostic value: a lock broken far past the timeout
+        mtimeMs = (await fs.stat(lockPath)).mtimeMs
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return { kind: "missing" }
+        // A stat we were not allowed to make says nothing about the owner; treat
+        // it as held so a transient permission problem cannot destroy a live lock.
+        return { kind: "active" }
+    }
+
+    let raw: string
+    try {
+        raw = await fs.readFile(lockPath, "utf8")
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return { kind: "missing" }
+        return { kind: "active" }
+    }
+
+    let payload: LockPayload
+    try {
+        payload = JSON.parse(raw) as LockPayload
+        if (typeof payload !== "object" || payload === null) throw new Error("Lock payload is not an object")
+    } catch {
+        const ageMs = Date.now() - mtimeMs
+        return ageMs < UNREADABLE_LOCK_GRACE_MS ? { kind: "active" } : { kind: "unreadable", raw, mtimeMs, ageMs }
+    }
+
+    const startedAt = typeof payload.ts === "number" && Number.isFinite(payload.ts) ? payload.ts : mtimeMs
+    const ageMs = Date.now() - startedAt
+    if (ageMs < declaredLeaseMs(payload)) return { kind: "active" }
+    // An expired lease still belongs to a live owner: it may be a suspended or
+    // slow writer, so only a dead process (or a payload without owner identity)
+    // makes the lease a takeover candidate.
+    if (typeof payload.ownerId === "string" && payload.ownerId.length > 0 && isProcessAlive(payload.pid)) {
+        return { kind: "active" }
+    }
+    return { kind: "expired", raw, mtimeMs, pid: payload.pid, ageMs }
+}
+
+/**
+ * Remove a takeover candidate after proving the file is still the same snapshot.
+ *
+ * Two owners that both decide a lock is stale would otherwise both delete, and
+ * the second delete could remove the lock the first just created. Re-reading
+ * before `unlink` narrows that window to the file system's own atomicity.
+ *
+ * @returns `taken` when this caller removed the candidate, `changed` when the
+ * lock was rewritten or removed by another owner and must be re-evaluated.
+ */
+async function takeOverLease(lockPath: string, judged: LeaseSnapshot): Promise<"taken" | "changed"> {
+    if (judged.kind !== "expired" && judged.kind !== "unreadable") return "changed"
+    const current = await readLease(lockPath)
+    // A lock that became `missing` or `active` is no longer the candidate judged
+    // above, so only the same unreadable/expired shape may be removed.
+    if (current.kind !== judged.kind) return "changed"
+    if (current.raw !== judged.raw || current.mtimeMs !== judged.mtimeMs) return "changed"
+
+    if (judged.kind === "unreadable") {
+        // A file still unreadable past the write grace has no writer left; it is
+        // leftover garbage, not a lock this process failed to parse.
+        recordDiagnostic(DiagnosticDomain.Storage, "stale_lock_broken", DiagnosticOutcome.Recovered, { readable: false })
+        Logger.warn(`[FileLock] Breaking stale/corrupted lock: path=${lockPath}, age=${Math.round(judged.ageMs)}ms`)
+    } else {
+        // The age is the diagnostic value: a lock broken far past its lease
         // points at a crashed or suspended owner rather than slow contention.
         recordDiagnostic(DiagnosticDomain.Storage, "stale_lock_broken", DiagnosticOutcome.Recovered, {
-            ageMs: Date.now() - payload.ts,
+            ageMs: judged.ageMs,
             readable: true,
         })
-        Logger.warn(`[FileLock] Breaking stale lock: path=${lockPath}, ownerPid=${payload.pid}, age=${Date.now() - payload.ts}ms`)
-    } catch {
-        // Corrupted lock — just warn generically
-        recordDiagnostic(DiagnosticDomain.Storage, "stale_lock_broken", DiagnosticOutcome.Recovered, { readable: false })
-        Logger.warn(`[FileLock] Breaking stale/corrupted lock: path=${lockPath}`)
+        Logger.warn(`[FileLock] Breaking stale lock: path=${lockPath}, ownerPid=${judged.pid}, age=${Math.round(judged.ageMs)}ms`)
     }
+
     try {
         await fs.unlink(lockPath)
-    } catch {
-        // Best-effort cleanup
+        return "taken"
+    } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        // Another owner already removed it; the next create decides ownership.
+        if (code === "ENOENT") return "taken"
+        // A delete the file system refused is not contention, and retrying the
+        // same rejected delete in a tight loop would only burn the attempt budget.
+        throw new Error(`[FileLock] Failed to break stale lock: ${lockPath}`, { cause: error })
     }
 }
 
@@ -180,6 +265,7 @@ export class FileLock {
                 pid: process.pid,
                 ownerId,
                 ts: Date.now(),
+                ttlMs: STALE_LOCK_TIMEOUT_MS,
             }
 
             try {
@@ -191,11 +277,19 @@ export class FileLock {
                 let writtenAt = openedAt
                 let closedAt = openedAt
                 try {
-                    await handle.writeFile(JSON.stringify(payload), "utf8")
-                    writtenAt = performance.now()
-                } finally {
-                    await handle.close()
-                    closedAt = performance.now()
+                    try {
+                        await handle.writeFile(JSON.stringify(payload), "utf8")
+                        writtenAt = performance.now()
+                    } finally {
+                        await handle.close()
+                        closedAt = performance.now()
+                    }
+                } catch (error) {
+                    // This process created the file and then failed to fill it. Leaving the
+                    // empty file behind is exactly what made the next owner report a
+                    // corrupted lock, so the cleanup belongs to the create that failed.
+                    await fs.unlink(lockPath).catch(() => undefined)
+                    throw error
                 }
                 this.ownedLocks.set(jsonlPath, ownerId)
                 // Bounded retry caps contention at roughly one second, so a longer
@@ -232,9 +326,13 @@ export class FileLock {
                 }
             }
 
-            if (!(await isLockActive(lockPath))) {
-                await breakStaleLock(lockPath)
-                continue
+            const lease = await readLease(lockPath)
+            // `missing` means the owner released it between the failed create and this read.
+            if (lease.kind === "missing") continue
+            if (lease.kind === "expired" || lease.kind === "unreadable") {
+                // A takeover attempt that lost the race falls through to the bounded
+                // wait instead of spinning: another owner is already deciding.
+                if ((await takeOverLease(lockPath, lease)) === "taken") continue
             }
             if (attempt === this.maxAcquireAttempts) {
                 report("timeout", Math.round(performance.now() - startedAt))
