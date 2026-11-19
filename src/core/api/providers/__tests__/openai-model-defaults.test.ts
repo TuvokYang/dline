@@ -30,8 +30,8 @@ describe("OpenAI effective remote metadata", () => {
     })
 
     it("inherits a new Astra minor's reasoning without inheriting billing or hosted tools", () => {
-        const model = createHandler("gpt-6.2-astra", ApiFormat.OPENAI_RESPONSES).getModel()
-        expect(model.id).toBe("gpt-6.2-astra")
+        const model = createHandler("gpt-6.99-astra", ApiFormat.OPENAI_RESPONSES).getModel()
+        expect(model.id).toBe("gpt-6.99-astra")
         expect(model.info.capabilities?.thinking?.effortLevels).toEqual(["low", "medium", "high", "xhigh", "max"])
         expect(model.info.capabilities?.supportsPromptCache).toBe(true)
         expect(model.info.pricing).toBeUndefined()
@@ -44,7 +44,7 @@ describe("OpenAI effective remote metadata", () => {
             { id: "remote-unknown", config: { enableThinking: true, effort: "high" }, effort: "high" },
             { id: "remote-unknown", config: { enableThinking: false }, effort: "none" },
             { id: "remote-unknown", config: { enableThinking: true, effort: "unsupported" }, effort: undefined },
-            { id: "gpt-6.2-astra", config: { enableThinking: true, effort: "max" }, effort: "max" },
+            { id: "gpt-6.99-astra", config: { enableThinking: true, effort: "max" }, effort: "max" },
         ])("sends the selected effort $effort for $id without inventing a default", async ({ id, config, effort }) => {
             const handler = createHandler(id, apiFormat, config)
             const create = vi.fn().mockResolvedValue({ [Symbol.asyncIterator]: async function* () {} })
