@@ -112,6 +112,25 @@ function bandedPricing(bands: readonly { maxInputTokens?: number }[]): ModelPric
 }
 
 describe("ModelConfiguration", () => {
+    it.each([
+        { declared: undefined, override: undefined, expected: true },
+        { declared: false, override: undefined, expected: false },
+        { declared: true, override: false, expected: false },
+        { declared: false, override: true, expected: true },
+    ])("resolves the cache checkbox from override, declaration and product default: %j", ({ declared, override, expected }) => {
+        render(
+            <ModelConfiguration
+                capabilities={{ supportsPromptCache: override }}
+                defaults={{ id: "remote-model", capabilities: { supportsPromptCache: declared } }}
+                fields={{ capabilities: ["supportsPromptCache"] }}
+                onCapabilitiesUpdate={vi.fn()}
+                onPricingUpdate={vi.fn()}
+            />,
+        )
+        fireEvent.click(screen.getByRole("button", { name: /Model Configuration/i }))
+        expect((screen.getByRole("checkbox", { name: "Supports Prompt Cache" }) as HTMLInputElement).checked).toBe(expected)
+    })
+
     it("keeps checkbox draft state while persisted props are stale", () => {
         const onCapabilitiesUpdate = vi.fn()
         const { rerender } = render(

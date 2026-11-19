@@ -59,6 +59,8 @@ export const en = {
         "Use None to disable adaptive thinking. Higher effort increases response detail and token usage.",
     "settings.ui.anthropic.requiredHelp":
         "Adaptive thinking is always enabled for this model. Higher effort increases response detail and token usage.",
+    "settings.ui.anthropic.manualThinkingHelp":
+        "This model has no declared thinking mode. Choose Effort or Budget manually; endpoint support is unverified. No level or token budget is filled in automatically.",
     "settings.ui.openai.headers": "Custom Headers",
     "settings.ui.openai.addHeader": "Add Header",
     "settings.ui.openai.headerName": "Header name",

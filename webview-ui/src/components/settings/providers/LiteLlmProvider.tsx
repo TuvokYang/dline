@@ -1,3 +1,4 @@
+import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import { VSCodeButton, VSCodeLink } from "@vscode/webview-ui-toolkit/react"
 import { RefreshCwIcon } from "lucide-react"
 import { useState } from "react"
@@ -21,8 +22,8 @@ export const LiteLlmProvider = ({ showModelOptions, isPopup, profile, onUpdate }
     const { remoteConfigSettings, liteLlmModels, refreshLiteLlmModels } = useExtensionState()
     const remote = remoteConfigSettings as any
     const [isLoading, setIsLoading] = useState(false)
-    const modelInfo = profile.modelInfo as any
-    const modelId = profile.modelId
+    const modelInfo = resolveProfileModelInfo(profile, { models: liteLlmModels ?? {}, defaultModelId: "" })
+    const modelId = modelInfo.id
 
     return (
         <div>
@@ -82,8 +83,7 @@ export const LiteLlmProvider = ({ showModelOptions, isPopup, profile, onUpdate }
                             </>
                         )}
                     </VSCodeButton>
-                    {modelInfo?.capabilities?.supportsReasoning && <></>}
-                    {modelInfo && <ModelInfoView isPopup={isPopup} modelInfo={modelInfo} selectedModelId={modelId} />}
+                    {modelId && <ModelInfoView isPopup={isPopup} modelInfo={modelInfo} selectedModelId={modelId} />}
                 </>
             )}
             <p style={{ fontSize: "12px", marginTop: "5px", color: "var(--vscode-descriptionForeground)" }}>

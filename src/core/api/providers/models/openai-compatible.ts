@@ -11,7 +11,6 @@ export const openAiModelInfoSaneDefaults: ModelInfo = {
     apiFormats: [ApiFormat.OPENAI_CHAT, ApiFormat.OPENAI_RESPONSES],
     capabilities: {
         supportsImages: true,
-        supportsPromptCache: false,
         supportsTools: true,
         maxTokens: -1,
         contextWindow: 128_000,

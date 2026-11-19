@@ -56,15 +56,14 @@ export class VercelAiGatewayModelSource extends ModelListingSource {
 
     protected override readCapabilities(raw: unknown): ModelCapabilities {
         const supportsReasoning = isRecord(raw) && Array.isArray(raw.tags) ? readTags(raw).includes("reasoning") : undefined
-        const cacheReadsPrice = readPerMillionPrice(raw, "pricing.input_cache_read")
-        const cacheWritesPrice = readPerMillionPrice(raw, "pricing.input_cache_write")
 
         return {
             maxTokens: this.readMaxTokens(raw) ?? 0,
             contextWindow: this.readContextWindow(raw) ?? 0,
             // The gateway does not report image support, so assume every model has it.
             supportsImages: true,
-            supportsPromptCache: cacheReadsPrice !== undefined && cacheWritesPrice !== undefined,
+            // A published cache rate is a price, not a capability flag, so the
+            // capability stays unresolved here; `readPricing` still reads every rate.
             supportsReasoning,
         }
     }

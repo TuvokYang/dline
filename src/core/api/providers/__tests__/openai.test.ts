@@ -110,9 +110,11 @@ describe("OpenAiHandler", () => {
             response?: Record<string, unknown>
         }[] = [
             {
-                name: "missing support",
+                name: "missing control uses compatible effort",
                 capabilities: { supportsReasoning: true },
                 reasoning: { effort: "high", thinkingBudget: 1600 },
+                chat: { reasoning_effort: "high" },
+                response: { effort: "high", summary: "auto" },
             },
             {
                 name: "nested false",
@@ -125,9 +127,11 @@ describe("OpenAiHandler", () => {
                 reasoning: { effort: "high" },
             },
             {
-                name: "missing mode",
+                name: "missing mode uses compatible effort",
                 capabilities: { thinking: { supported: true, effortLevels: ["high"] } },
                 reasoning: { effort: "high" },
+                chat: { reasoning_effort: "high" },
+                response: { effort: "high", summary: "auto" },
             },
             { name: "unknown default", capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["low"] } } },
             {
@@ -251,7 +255,7 @@ describe("OpenAiHandler", () => {
             expect(body.reasoning_effort).to.equal(apiFormat === ApiFormat.OPENAI_CHAT ? chat?.reasoning_effort : undefined)
             expect(body.reasoning).to.deep.equal(apiFormat === ApiFormat.OPENAI_RESPONSES ? response : undefined)
         })
-        it("does not relabel stale model metadata or infer reasoning from the compatible baseline", async () => {
+        it("uses compatible controls rather than relabeling stale model metadata", async () => {
             const modelId = "gpt-private-alias"
             const handler = new OpenAiHandler({
                 profile: ApiProfile.create({
@@ -259,7 +263,7 @@ describe("OpenAiHandler", () => {
                     modelId,
                     modelInfo: {
                         id: "other-model",
-                        capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["high"] } },
+                        capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["max"] } },
                     },
                     openai: { apiFormat, reasoning: { effort: "high" } },
                 }),
@@ -274,9 +278,11 @@ describe("OpenAiHandler", () => {
             }
             const body = create.mock.calls[0][0]
             expect(body.model).to.equal(modelId)
-            expect(body.reasoning_effort).to.equal(undefined)
-            expect(body.reasoning).to.equal(undefined)
-            expect(handler.getModel().info.capabilities?.supportsReasoning).to.equal(undefined)
+            expect(body.reasoning_effort).to.equal(apiFormat === ApiFormat.OPENAI_CHAT ? "high" : undefined)
+            expect(body.reasoning).to.deep.equal(
+                apiFormat === ApiFormat.OPENAI_RESPONSES ? { effort: "high", summary: "auto" } : undefined,
+            )
+            expect(handler.getModel().info.capabilities?.thinking?.effortLevels).to.deep.equal(["none", "low", "medium", "high"])
         })
     })
 

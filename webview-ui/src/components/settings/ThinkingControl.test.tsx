@@ -11,14 +11,16 @@ vi.mock("@vscode/webview-ui-toolkit/react", () => ({
         children,
         disabled,
         onChange,
+        "aria-label": ariaLabel,
     }: {
+        "aria-label"?: string
         checked?: boolean
         children: ReactNode
         disabled?: boolean
         onChange?: React.ChangeEventHandler<HTMLInputElement>
     }) => (
         <label>
-            <input checked={checked} disabled={disabled} onChange={onChange} type="checkbox" />
+            <input aria-label={ariaLabel} checked={checked} disabled={disabled} onChange={onChange} type="checkbox" />
             {children}
         </label>
     ),
@@ -30,12 +32,55 @@ const DISPLAY_OPTIONS = [
     { value: "omitted", label: "Omitted" },
 ]
 
-// The Select trigger carries no accessible name, so the selectors are addressed by the
-// render order used in effort-only mode: effort first, then reasoning display.
-const effortSelector = () => screen.getAllByRole("combobox")[0]
 const displaySelector = () => screen.getAllByRole("combobox")[1]
 
 describe("ThinkingControl", () => {
+    it("leaves a controlled unknown mode unselected despite stored preferences", () => {
+        const onUpdate = vi.fn()
+        render(
+            <ThinkingControl
+                effortOptions={["low", "high"]}
+                mode="both"
+                onReasoningConfigUpdate={onUpdate}
+                reasoningConfig={{ enableThinking: true, effort: "high", thinkingBudget: 2048 }}
+                selectedMode=""
+            />,
+        )
+        expect(screen.getByRole("combobox", { name: "Thinking Mode" })).toHaveTextContent("Choose a thinking mode")
+        expect(screen.queryByRole("combobox", { name: "Reasoning Effort" })).not.toBeInTheDocument()
+        expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument()
+        expect(onUpdate).not.toHaveBeenCalled()
+    })
+
+    it("publishes a controlled mode and cleared preferences as one update without inventing a budget", () => {
+        const onUpdate = vi.fn()
+        const onModeChange = vi.fn()
+        const tree = (selectedMode: "" | "budget") => (
+            <ThinkingControl
+                effortOptions={["low", "high"]}
+                mode="both"
+                onModeChange={onModeChange}
+                onReasoningConfigUpdate={onUpdate}
+                reasoningConfig={{ enableThinking: true, display: "omitted" }}
+                selectedMode={selectedMode}
+            />
+        )
+        const view = render(tree(""))
+        fireEvent.click(screen.getByRole("combobox", { name: "Thinking Mode" }))
+        fireEvent.click(screen.getByRole("option", { name: "Budget", exact: true }))
+        expect(onModeChange).toHaveBeenCalledExactlyOnceWith("budget", {
+            enableThinking: true,
+            effort: undefined,
+            thinkingBudget: undefined,
+            display: "omitted",
+        })
+        expect(onUpdate).not.toHaveBeenCalled()
+        view.rerender(tree("budget"))
+        expect(screen.getByRole("combobox", { name: "Thinking Mode" })).toHaveTextContent("Budget")
+        expect(screen.getByRole("spinbutton")).toHaveValue(null)
+        expect(screen.getByRole("spinbutton")).not.toHaveAttribute("max")
+    })
+
     it("does not fabricate a medium preference when thinking is enabled", () => {
         const onUpdate = vi.fn()
         render(<ThinkingControl effortOptions={["low"]} mode="effort-only" onReasoningConfigUpdate={onUpdate} />)
@@ -61,10 +106,15 @@ describe("ThinkingControl", () => {
             </UiLanguageProvider>
         )
         const view = render(tree("en"))
-        const selector = screen.getByRole("combobox")
+        const selector = screen.getByRole("combobox", { name: "Reasoning Effort" })
+        const checkbox = screen.getByRole("checkbox", { name: "Enable Thinking" })
         for (const language of ["zh-CN", "en"] as const) {
             view.rerender(tree(language))
-            expect(screen.getByRole("combobox")).toBe(selector)
+            const effortLabel = language === "zh-CN" ? "推理强度" : "Reasoning Effort"
+            const thinkingLabel = language === "zh-CN" ? "启用思考" : "Enable Thinking"
+            expect(screen.getByRole("combobox", { name: effortLabel })).toBe(selector)
+            expect(screen.getByRole("checkbox", { name: thinkingLabel })).toBe(checkbox)
+            expect(checkbox).toBeChecked()
             expect(selector).toHaveTextContent("High")
             fireEvent.click(selector)
             expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["Low", "High", "Max"])
@@ -349,7 +399,7 @@ describe("ThinkingControl", () => {
             />,
         )
 
-        fireEvent.click(effortSelector())
+        fireEvent.click(screen.getByRole("combobox", { name: "Adaptive Thinking" }))
         fireEvent.click(screen.getByRole("option", { name: "Low" }))
 
         expect(onReasoningConfigUpdate).toHaveBeenCalledWith({

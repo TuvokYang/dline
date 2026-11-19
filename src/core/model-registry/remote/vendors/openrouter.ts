@@ -76,7 +76,9 @@ export class OpenRouterModelSource extends ModelListingSource {
             maxTokens: this.readMaxTokens(raw) ?? 0,
             contextWindow: this.readContextWindow(raw) ?? 0,
             supportsImages: supportsImageModality(raw),
-            supportsPromptCache: false,
+            // The listing states no cache flag, so the capability stays unresolved
+            // here and the product default applies. Writing `false` would deny
+            // caching for every model this source publishes.
             supportsTools: parameters.includes("tools"),
             // Parameter support does not declare a thinking mode or its bounds.
             supportsReasoning,

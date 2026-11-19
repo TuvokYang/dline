@@ -1,4 +1,5 @@
 import { ModelInfo, openAiModelInfoSaneDefaults } from "@shared/api"
+import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
 import { SELECTOR_SEPARATOR, stringifyVsCodeLmModelSelector } from "@shared/vsCodeSelectorUtils"
 import * as vscode from "vscode"
 import { ClineStorageMessage } from "@/shared/messages/content"
@@ -576,10 +577,11 @@ export class VsCodeLmHandler extends ApiHandler implements SingleCompletionHandl
 
         return {
             id: fallbackId,
-            info: {
-                ...openAiModelInfoSaneDefaults,
-                description: `VSCode Language Model (Fallback): ${fallbackId}`,
-            },
+            info: buildEffectiveModelInfo(
+                fallbackId,
+                { ...openAiModelInfoSaneDefaults, description: `VSCode Language Model (Fallback): ${fallbackId}` },
+                {},
+            ),
         }
     }
 

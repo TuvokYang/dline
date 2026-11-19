@@ -61,7 +61,7 @@ export class OcaModelSource extends ModelListingSource {
             contextWindow: this.readContextWindow(raw),
             maxTokens: this.readMaxTokens(raw),
             supportsImages: readModelInfoFlag(raw, "supports_vision"),
-            supportsPromptCache: readModelInfoFlag(raw, "supports_caching"),
+            supportsPromptCache: readCacheSupport(raw),
             supportsReasoning: readModelInfoFlag(raw, "is_reasoning_model"),
         }
     }
@@ -155,6 +155,16 @@ function readModelInfo(raw: unknown): unknown {
 function readModelInfoFlag(raw: unknown, field: string): boolean {
     const modelInfo = readModelInfo(raw)
     return isRecord(modelInfo) && modelInfo[field] === true
+}
+
+/** Preserve omission separately from an explicit cache opt-out. */
+function readCacheSupport(raw: unknown): boolean | undefined {
+    const modelInfo = readModelInfo(raw)
+    if (!isRecord(modelInfo)) {
+        return undefined
+    }
+    const value = modelInfo.supports_caching
+    return typeof value === "boolean" ? value : undefined
 }
 
 /** Defaults to chat completions, matching OCA models that omit the field. */

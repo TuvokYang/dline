@@ -271,9 +271,12 @@ describe("AnthropicProvider", () => {
             modelId: "claude-opus-unknown",
             anthropic: AnthropicProviderConfig.create({ reasoning: { enableThinking: true, effort: "high" } }),
         } as ApiProfile
-        render(<AnthropicProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
-        expect(screen.queryByTestId("thinking-control")).not.toBeInTheDocument()
+        const onUpdate = vi.fn()
+        render(<AnthropicProvider onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
+        expect(screen.getByTestId("thinking-control")).toBeInTheDocument()
+        expect(screen.getByTestId("thinking-mode")).toHaveTextContent("both")
         expect(screen.getByText("context:")).toBeInTheDocument()
+        expect(onUpdate).not.toHaveBeenCalled()
     })
 
     it("honors a coarse negative override instead of offering nested thinking controls", () => {
@@ -309,7 +312,8 @@ describe("AnthropicProvider", () => {
             anthropic: AnthropicProviderConfig.create({ capabilities: { maxTokens: 1234 } }),
         } as ApiProfile
         render(<AnthropicProvider onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
-        expect(screen.queryByTestId("thinking-control")).not.toBeInTheDocument()
+        expect(screen.getByTestId("thinking-mode")).toHaveTextContent("both")
+        expect(onUpdate).not.toHaveBeenCalled()
         fireEvent.change(screen.getByRole("textbox", { name: "Model" }), { target: { value: "next-opaque-id" } })
         expect(onUpdate).toHaveBeenCalledWith({ modelId: "next-opaque-id", modelInfo: undefined })
         expect(onUpdate.mock.calls[0][0]).toHaveProperty("modelInfo", undefined)

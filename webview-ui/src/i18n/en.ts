@@ -11,6 +11,8 @@ export const en = {
     ...chatRows,
     ...settings,
     ...shell,
+    "settings.ui.openai.compatibilityThinkingHelp":
+        "The model does not declare reasoning levels. These are OpenAI-compatible options; remote support is not guaranteed. Leave the level unselected to use the remote default.",
     "runtime.history.openFailed": ({ task }: { task: string }) => `Could not open task '${task}'.`,
     "runtime.hydration.unknown": "Unknown state subscription failure",
     "runtime.hydration.closed": "State subscription closed before any state arrived",

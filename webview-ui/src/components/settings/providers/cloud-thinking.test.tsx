@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import type { ModelInfo } from "@shared/proto/dline/models"
+import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import { flatMeteredPricing, readPriceSet } from "@shared/providers/pricing-shape"
 import { fireEvent, render, screen } from "@testing-library/react"
@@ -11,13 +12,17 @@ import {
     isValidElement,
     type ReactNode,
     type SelectHTMLAttributes,
+    useState,
 } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { UiLanguageProvider } from "@/i18n/UiLanguageProvider"
 import { AIhubmixProvider } from "./AihubmixProvider"
+import { AnthropicProvider } from "./AnthropicProvider"
 import { AskSageProvider } from "./AskSageProvider"
 import { BasetenProvider } from "./BasetenProvider"
 import { BedrockProvider } from "./BedrockProvider"
 import { CerebrasProvider } from "./CerebrasProvider"
+import { ClaudeCodeProvider } from "./ClaudeCodeProvider"
 import { DeepSeekProvider } from "./DeepSeekProvider"
 import { DoubaoProvider } from "./DoubaoProvider"
 import { FireworksProvider } from "./FireworksProvider"
@@ -66,19 +71,110 @@ const models: Record<string, ModelInfo> = {
     },
 }
 
+const codexModels: Record<string, ModelInfo> = {
+    ...models,
+    "gpt-6-codex": {
+        id: "gpt-6-codex",
+        apiFormats: [ApiFormat.OPENAI_CHAT],
+        pricing: flatMeteredPricing(3, 15),
+        capabilities: {
+            contextWindow: 999_999,
+            maxTokens: 1234,
+            supportsTools: true,
+            tools: [ServerTool.WEB_SEARCH],
+            supportsPromptCache: false,
+            supportsReasoning: true,
+            thinking: {
+                supported: true,
+                mode: "effort",
+                effortLevels: ["low", "high", "max"],
+                defaultEffort: "high",
+                defaultEnabled: true,
+                canDisable: false,
+            },
+        },
+    },
+    "gpt-6.2-codex": {
+        id: "gpt-6.2-codex",
+        capabilities: {
+            supportsPromptCache: false,
+            thinking: {
+                supported: true,
+                mode: "effort",
+                effortLevels: ["none", "low", "medium", "high"],
+                defaultEnabled: true,
+                canDisable: true,
+            },
+        },
+    },
+    "gpt-6.5-codex": { id: "gpt-6.5-codex", capabilities: { thinking: { supported: false } } },
+}
+const claudeModels: Record<string, ModelInfo> = {
+    ...models,
+    "claude-opus-6-1": {
+        id: "claude-opus-6-1",
+        capabilities: {
+            thinking: { supported: true, mode: "effort", effortLevels: ["low"], defaultEffort: "low" },
+        },
+    },
+    "claude-opus-6-2": {
+        id: "claude-opus-6-2",
+        apiFormats: [ApiFormat.ANTHROPIC_CHAT],
+        pricing: flatMeteredPricing(3, 15),
+        capabilities: {
+            contextWindow: 999_999,
+            maxTokens: 1234,
+            supportsTools: true,
+            tools: [ServerTool.WEB_SEARCH],
+            supportsPromptCache: false,
+            supportsReasoning: true,
+            thinking: {
+                supported: true,
+                mode: "effort",
+                effortLevels: ["low", "high", "max"],
+                defaultEffort: "high",
+                defaultEnabled: true,
+                canDisable: false,
+            },
+        },
+    },
+    "claude-sonnet-6-1": {
+        id: "claude-sonnet-6-1",
+        capabilities: {
+            supportsPromptCache: false,
+            supportsReasoning: true,
+            thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 3000, defaultEnabled: true },
+        },
+    },
+    "claude-opus-6-5": { id: "claude-opus-6-5", capabilities: { thinking: { supported: false } } },
+}
+
+function providerModels(providerId: string) {
+    return providerId === "openai-codex"
+        ? codexModels
+        : providerId === "anthropic" || providerId === "claude-code"
+          ? claudeModels
+          : models
+}
+
 vi.mock("./useProviderModels", () => ({
-    useProviderModels: () => ({ models, defaultModelId: "effort-alias", modelInfoSaneDefaults: models["effort-alias"] }),
-}))
-vi.mock("./useProviderModelOptions", () => ({
-    useProviderModelOptions: () => ({
-        models,
+    useProviderModels: (providerId: string) => ({
+        models: providerModels(providerId),
         defaultModelId: "effort-alias",
         modelInfoSaneDefaults: models["effort-alias"],
-        options: models,
+    }),
+}))
+vi.mock("./useProviderModelOptions", () => ({
+    useProviderModelOptions: ({ providerId }: { providerId: string }) => ({
+        models: providerModels(providerId),
+        defaultModelId: "effort-alias",
+        modelInfoSaneDefaults: models["effort-alias"],
+        options: providerModels(providerId),
         refreshRemoteModels: vi.fn(),
     }),
 }))
 vi.mock("./OpenAiCodexOAuthControl", () => ({ OpenAiCodexOAuthControl: () => null }))
+vi.mock("./ClaudeCodeOAuthControl", () => ({ ClaudeCodeOAuthControl: () => null }))
 vi.mock("../common/ModelAutocomplete", () => ({
     ModelAutocomplete: ({ onChange, selectedModelId }: { onChange: (value: string) => void; selectedModelId: string }) => (
         <input aria-label="Model" onChange={(event) => onChange(event.target.value)} value={selectedModelId} />
@@ -126,9 +222,9 @@ vi.mock("@vscode/webview-ui-toolkit/react", () => ({
             {children}
         </button>
     ),
-    VSCodeCheckbox: ({ checked, disabled, onChange, children }: InputHTMLAttributes<HTMLInputElement>) => (
+    VSCodeCheckbox: ({ children, ...props }: InputHTMLAttributes<HTMLInputElement>) => (
         <label>
-            <input checked={checked} disabled={disabled} onChange={onChange} type="checkbox" />
+            <input {...props} type="checkbox" />
             {children}
         </label>
     ),
@@ -298,7 +394,7 @@ for (const [provider, configKey, Panel] of [
             expect(screen.queryByRole("slider")).not.toBeInTheDocument()
         })
 
-        it("does not authorize thinking from a known-looking name, stale metadata or a preference", () => {
+        it("applies the provider's unknown-model policy without borrowing stale thinking metadata", () => {
             const profile = ApiProfile.create({
                 provider,
                 modelId: "claude-opus-4-7-unknown",
@@ -306,11 +402,19 @@ for (const [provider, configKey, Panel] of [
                 [configKey]: { reasoning: { enableThinking: true, effort: "high", thinkingBudget: 2000 } },
             })
             render(<Panel onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
-            expect(screen.queryByRole("checkbox", { name: "Enable Thinking" })).not.toBeInTheDocument()
+            if (provider === "openai" || provider === "openai-codex") {
+                expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).toBeChecked()
+                const info = JSON.parse(screen.getByTestId("model-info").textContent ?? "null")
+                expect(info.capabilities.thinking.effortLevels).toEqual(["none", "low", "medium", "high"])
+                expect(info.capabilities.thinking.canDisable).toBe(true)
+                expect(screen.queryByRole("slider")).not.toBeInTheDocument()
+            } else {
+                expect(screen.queryByRole("checkbox", { name: "Enable Thinking" })).not.toBeInTheDocument()
+            }
             expect(screen.getByTestId("model-id")).toHaveTextContent("claude-opus-4-7-unknown")
         })
 
-        it("does not infer a mode from a declared maximum or coarse reasoning flag", () => {
+        it("does not derive a budget mode from a declared maximum or coarse reasoning flag", () => {
             const profile = ApiProfile.create({
                 provider,
                 modelId: "opaque-no-mode",
@@ -321,7 +425,15 @@ for (const [provider, configKey, Panel] of [
                 [configKey]: { reasoning: { enableThinking: true, effort: "low", thinkingBudget: 2000 } },
             })
             render(<Panel onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
-            expect(screen.queryByRole("checkbox", { name: "Enable Thinking" })).not.toBeInTheDocument()
+            if (provider === "openai" || provider === "openai-codex") {
+                expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).toBeChecked()
+                expect(screen.queryByRole("slider")).not.toBeInTheDocument()
+                const info = JSON.parse(screen.getByTestId("model-info").textContent ?? "null")
+                expect(info.capabilities.thinking.mode).toBe("effort")
+                expect(info.capabilities.thinking.effortLevels).toEqual(["none", "low", "medium", "high"])
+            } else {
+                expect(screen.queryByRole("checkbox", { name: "Enable Thinking" })).not.toBeInTheDocument()
+            }
         })
 
         it("keeps an explicit empty effort list instead of offering a provider-wide whitelist", () => {
@@ -486,6 +598,393 @@ for (const [provider, configKey, Panel] of [
             expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).toBeChecked()
             expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).toBeDisabled()
             expect(onUpdate).not.toHaveBeenCalled()
+        })
+    })
+}
+
+function projectedModel(): ModelInfo {
+    return JSON.parse(screen.getByTestId("model-info").textContent ?? "null")
+}
+
+describe("Anthropic manual thinking", () => {
+    function renderProfile(
+        initialProfile = ApiProfile.create({ id: "manual", provider: "anthropic", modelId: "opaque-manual" }),
+    ) {
+        const onUpdate = vi.fn()
+        function Fixture() {
+            const [profile, setProfile] = useState(initialProfile)
+            return (
+                <AnthropicProvider
+                    onUpdate={(updates) => {
+                        onUpdate(updates)
+                        setProfile((current) => ({ ...current, ...updates }))
+                    }}
+                    profile={profile}
+                    showModelOptions
+                />
+            )
+        }
+        render(<Fixture />)
+        return onUpdate
+    }
+
+    function selectMode(mode: "Effort" | "Budget") {
+        fireEvent.click(screen.getByRole("combobox", { name: "Thinking Mode" }))
+        fireEvent.click(screen.getByRole("option", { name: mode, exact: true }))
+    }
+
+    it("exposes the existing manual controls without inferring or saving a mode", () => {
+        const onUpdate = renderProfile()
+        expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).not.toBeChecked()
+        expect(projectedModel().capabilities?.thinking).toBeUndefined()
+        expect(onUpdate).not.toHaveBeenCalled()
+        fireEvent.click(screen.getByRole("checkbox", { name: "Enable Thinking" }))
+        expect(screen.getByRole("combobox", { name: "Thinking Mode" })).toHaveTextContent("Choose a thinking mode")
+        expect(screen.queryByRole("combobox", { name: "Adaptive Thinking" })).not.toBeInTheDocument()
+        expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument()
+        expect(projectedModel().capabilities?.thinking).toBeUndefined()
+        expect(onUpdate.mock.calls.at(-1)?.[0].anthropic.reasoning).toMatchObject({ enableThinking: true })
+        expect(onUpdate.mock.calls.at(-1)?.[0].anthropic.reasoning.effort).toBeUndefined()
+        expect(onUpdate.mock.calls.at(-1)?.[0].anthropic.reasoning.thinkingBudget).toBeUndefined()
+    })
+
+    it("saves a manually selected effort as a Profile override without fabricating a level", () => {
+        const onUpdate = renderProfile()
+        fireEvent.click(screen.getByRole("checkbox", { name: "Enable Thinking" }))
+        selectMode("Effort")
+        expect(screen.getByRole("combobox", { name: "Thinking Mode" })).toHaveTextContent("Effort")
+        expect(screen.getByRole("combobox", { name: "Adaptive Thinking" })).toHaveTextContent("Provider default")
+        expect(projectedModel().capabilities?.thinking).toMatchObject({ supported: true, mode: "effort" })
+        expect(projectedModel().capabilities?.thinking?.defaultEffort).toBeUndefined()
+        expect(onUpdate.mock.calls.at(-1)?.[0].anthropic.reasoning.effort).toBeUndefined()
+        fireEvent.click(screen.getByRole("combobox", { name: "Adaptive Thinking" }))
+        fireEvent.click(screen.getByRole("option", { name: "High", exact: true }))
+        const saved = onUpdate.mock.calls.at(-1)?.[0].anthropic
+        expect(saved.capabilities.thinking).toMatchObject({ supported: true, mode: "effort" })
+        expect(saved.reasoning).toMatchObject({ enableThinking: true, effort: "high" })
+        expect(saved.reasoning.thinkingBudget).toBeUndefined()
+        expect(onUpdate.mock.calls.every(([patch]) => !Object.hasOwn(patch, "modelInfo"))).toBe(true)
+    })
+
+    it("keeps Budget selected before entering tokens and clears inactive values when switching modes", () => {
+        const onUpdate = renderProfile(
+            ApiProfile.create({
+                id: "manual-budget",
+                provider: "anthropic",
+                modelId: "opaque-manual",
+                anthropic: { reasoning: { display: "omitted" } },
+            }),
+        )
+        fireEvent.click(screen.getByRole("checkbox", { name: "Enable Thinking" }))
+        selectMode("Budget")
+        expect(screen.getByRole("combobox", { name: "Thinking Mode" })).toHaveTextContent("Budget")
+        const budget = screen.getByRole("spinbutton")
+        expect(budget).not.toHaveAttribute("max")
+        expect(onUpdate.mock.calls.at(-1)?.[0].anthropic.reasoning.thinkingBudget).toBeUndefined()
+        fireEvent.change(budget, { target: { value: "4096" } })
+        fireEvent.blur(budget)
+        expect(onUpdate.mock.calls.at(-1)?.[0].anthropic.reasoning).toEqual({
+            enableThinking: true,
+            effort: undefined,
+            thinkingBudget: 4096,
+            display: "omitted",
+        })
+        selectMode("Effort")
+        expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument()
+        const saved = onUpdate.mock.calls.at(-1)?.[0].anthropic
+        expect(saved.capabilities.thinking.mode).toBe("effort")
+        expect(saved.reasoning.thinkingBudget).toBeUndefined()
+        expect(saved.reasoning.effort).toBeUndefined()
+        expect(saved.reasoning.display).toBe("omitted")
+        fireEvent.click(screen.getByRole("checkbox", { name: "Enable Thinking" }))
+        expect(onUpdate.mock.calls.at(-1)?.[0].anthropic.reasoning.enableThinking).toBe(false)
+        expect(screen.queryByRole("combobox", { name: "Thinking Mode" })).not.toBeInTheDocument()
+    })
+})
+
+describe("Codex compatible inheritance", () => {
+    it("enables opaque thinking without saving or selecting medium", () => {
+        const onUpdate = vi.fn()
+        const profile = ApiProfile.create({
+            id: "codex-opaque",
+            provider: "openai-codex",
+            modelId: "opaque-ui",
+            modelInfo: codexModels["gpt-6-codex"],
+        })
+        render(<OpenAiCodexProvider onUpdate={onUpdate} profile={profile} showModelOptions />)
+        expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).toBeChecked()
+        expect(screen.getByRole("combobox", { name: "Reasoning Effort" })).toHaveTextContent("Provider default")
+        expect(screen.getByText(/The model does not declare reasoning levels/)).toBeInTheDocument()
+        expect(projectedModel().capabilities?.thinking).toEqual({
+            supported: true,
+            mode: "effort",
+            effortLevels: ["none", "low", "medium", "high"],
+            defaultEnabled: true,
+            canDisable: true,
+        })
+        expect(onUpdate).not.toHaveBeenCalled()
+    })
+
+    it.each([
+        ["gpt-6.1-codex", ["low", "high", "max"], "high"],
+        ["gpt-6.2-codex", ["none", "low", "medium", "high"], "high"],
+        ["gpt-6.3-codex", ["none", "low", "medium", "high"], undefined],
+        ["gpt-6.1-codex-fast", ["none", "low", "medium", "high"], undefined],
+        ["gpt-7.1-codex", ["none", "low", "medium", "high"], undefined],
+        ["gpt-6.1", ["none", "low", "medium", "high"], undefined],
+    ])("resolves %s only within the Codex major and exact variant", (modelId, effortLevels, defaultEffort) => {
+        const profile = ApiProfile.create({ provider: "openai-codex", modelId })
+        render(<OpenAiCodexProvider onUpdate={vi.fn()} profile={profile} showModelOptions />)
+        expect(projectedModel().capabilities?.thinking?.effortLevels).toEqual(effortLevels)
+        expect(projectedModel().capabilities?.thinking?.defaultEffort).toBe(defaultEffort)
+    })
+
+    it("keeps inherited explicit levels out of the compatibility explanation even when they match its choices", () => {
+        const profile = ApiProfile.create({ provider: "openai-codex", modelId: "gpt-6.3-codex" })
+        render(<OpenAiCodexProvider onUpdate={vi.fn()} profile={profile} showModelOptions />)
+        expect(projectedModel().capabilities?.supportsPromptCache).toBe(false)
+        expect(screen.queryByText(/The model does not declare reasoning levels/)).not.toBeInTheDocument()
+    })
+
+    it("does not copy an ancestor's prices, context, tools or protocol", () => {
+        const profile = ApiProfile.create({ provider: "openai-codex", modelId: "gpt-6.1-codex" })
+        render(<OpenAiCodexProvider onUpdate={vi.fn()} profile={profile} showModelOptions />)
+        expect(projectedModel()).toEqual({
+            id: "gpt-6.1-codex",
+            capabilities: {
+                supportsPromptCache: false,
+                supportsReasoning: true,
+                thinking: codexModels["gpt-6-codex"].capabilities?.thinking,
+            },
+        })
+        expect(screen.getByRole("combobox", { name: "API Format" })).toHaveValue(String(ApiFormat.OPENAI_RESPONSES))
+    })
+})
+
+for (const [provider, configKey, Panel] of [
+    ["anthropic", "anthropic", AnthropicProvider],
+    ["claude-code", "claudeCode", ClaudeCodeProvider],
+] as const) {
+    describe(`${provider} Claude inheritance`, () => {
+        it.each(["claude-opus-6-3", "claude-opus-6.3"])("inherits the nearest older effort declaration for %s", (modelId) => {
+            const onUpdate = vi.fn()
+            const profile = ApiProfile.create({ provider, modelId, modelInfo: models["budget-alias"] })
+            render(<Panel onUpdate={onUpdate} profile={profile} showModelOptions />)
+            expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).toBeChecked()
+            expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).toBeDisabled()
+            expect(screen.getByRole("combobox", { name: "Adaptive Thinking" })).toHaveTextContent("High")
+            expect(projectedModel().capabilities?.thinking?.effortLevels).toEqual(["low", "high", "max"])
+            expect(onUpdate).not.toHaveBeenCalled()
+        })
+
+        it("inherits a native budget declaration and persists a bounded edit", () => {
+            const onUpdate = vi.fn()
+            const profile = ApiProfile.create({
+                provider,
+                modelId: "claude-sonnet-6-2",
+                [configKey]: { reasoning: { thinkingBudget: 1500, display: "omitted" } },
+            })
+            render(<Panel onUpdate={onUpdate} profile={profile} showModelOptions />)
+            const slider = screen.getByRole("slider")
+            expect(slider).toHaveAttribute("min", "17")
+            expect(slider).toHaveAttribute("max", "3000")
+            expect(screen.queryByRole("combobox", { name: "Adaptive Thinking" })).not.toBeInTheDocument()
+            fireEvent.change(slider, { target: { value: "2400" } })
+            fireEvent.mouseUp(slider)
+            expect(onUpdate.mock.calls[0][0][configKey].reasoning).toEqual({
+                enableThinking: true,
+                effort: undefined,
+                thinkingBudget: 2400,
+                display: "omitted",
+            })
+        })
+
+        it.each([
+            "claude-opus-6-0",
+            "claude-opus-7-1",
+            "claude-haiku-6-3",
+            "claude-opus-6-3:fast",
+            "claude-opus-6-3-20261119",
+            "claude-opus-6-20261119",
+            "claude-sonnet-6-20261119",
+            "opaque-ui",
+        ])("does not invent a mode or borrow stale metadata for %s", (modelId) => {
+            const onUpdate = vi.fn()
+            const profile = ApiProfile.create({
+                provider,
+                modelId,
+                modelInfo: claudeModels["claude-opus-6-2"],
+                [configKey]: { reasoning: { enableThinking: true, effort: "high", thinkingBudget: 1500 } },
+            })
+            render(<Panel onUpdate={onUpdate} profile={profile} showModelOptions />)
+            expect(projectedModel()).toEqual({ id: modelId, capabilities: { supportsPromptCache: true } })
+            if (provider === "anthropic") {
+                expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).toBeChecked()
+                expect(screen.getByRole("combobox", { name: "Thinking Mode" })).toHaveTextContent("Choose a thinking mode")
+                expect(screen.queryByRole("combobox", { name: "Adaptive Thinking" })).not.toBeInTheDocument()
+                expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument()
+            } else {
+                expect(screen.queryByRole("checkbox", { name: "Enable Thinking" })).not.toBeInTheDocument()
+            }
+            expect(onUpdate).not.toHaveBeenCalled()
+        })
+
+        it.each([
+            { supportsReasoning: false },
+            { thinking: { supported: false } },
+        ])("honors an explicit negative base declaration %j", (capabilities) => {
+            const profile = ApiProfile.create({
+                provider,
+                modelId: "claude-opus-6-3",
+                modelInfo: { id: "claude-opus-6-3", capabilities },
+            })
+            render(<Panel onUpdate={vi.fn()} profile={profile} showModelOptions />)
+            expect(screen.queryByRole("checkbox", { name: "Enable Thinking" })).not.toBeInTheDocument()
+        })
+
+        it("keeps a base empty effort list and user override above inherited declarations", () => {
+            const profile = ApiProfile.create({
+                provider,
+                modelId: "claude-opus-6-3",
+                modelInfo: { id: "claude-opus-6-3", capabilities: { thinking: { effortLevels: [] } } },
+                [configKey]: { capabilities: { supportsPromptCache: true, thinking: { canDisable: true } } },
+            })
+            render(<Panel onUpdate={vi.fn()} profile={profile} showModelOptions />)
+            expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).toBeChecked()
+            expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).not.toBeDisabled()
+            expect(screen.queryByRole("combobox", { name: "Adaptive Thinking" })).not.toBeInTheDocument()
+            expect(projectedModel().capabilities).toMatchObject({
+                supportsPromptCache: true,
+                thinking: { effortLevels: [], canDisable: true, mode: "effort" },
+            })
+        })
+
+        it("keeps a user negative override above an inherited declaration", () => {
+            const profile = ApiProfile.create({
+                provider,
+                modelId: "claude-opus-6-3",
+                [configKey]: { capabilities: { thinking: { supported: false } } },
+            })
+            render(<Panel onUpdate={vi.fn()} profile={profile} showModelOptions />)
+            expect(projectedModel().capabilities?.thinking?.supported).toBe(false)
+            expect(screen.queryByRole("checkbox", { name: "Enable Thinking" })).not.toBeInTheDocument()
+        })
+
+        it("does not copy an ancestor's prices, context, tools or protocol", () => {
+            const profile = ApiProfile.create({ provider, modelId: "claude-opus-6-3" })
+            render(<Panel onUpdate={vi.fn()} profile={profile} showModelOptions />)
+            expect(projectedModel()).toEqual({
+                id: "claude-opus-6-3",
+                capabilities: {
+                    supportsPromptCache: false,
+                    supportsReasoning: true,
+                    thinking: claudeModels["claude-opus-6-2"].capabilities?.thinking,
+                },
+            })
+        })
+
+        it("preserves the provider's existing base priority", () => {
+            const profile = ApiProfile.create({
+                provider,
+                modelId: "claude-opus-6-2",
+                modelInfo: { id: "claude-opus-6-2", capabilities: { thinking: { supported: false } } },
+            })
+            render(<Panel onUpdate={vi.fn()} profile={profile} showModelOptions />)
+            expect(projectedModel().capabilities?.thinking?.supported).toBe(provider === "anthropic")
+        })
+    })
+}
+
+for (const [provider, configKey, Panel, modelId] of [
+    ["openai-codex", "openaiCodex", OpenAiCodexProvider, "gpt-6.1-codex"],
+    ["anthropic", "anthropic", AnthropicProvider, "claude-opus-6-3"],
+    ["claude-code", "claudeCode", ClaudeCodeProvider, "claude-opus-6-3"],
+] as const) {
+    describe(`${provider} inherited state isolation`, () => {
+        it("persists only the raw selected metadata, never the inherited projection", () => {
+            const onUpdate = vi.fn()
+            const profile = ApiProfile.create({ provider, modelId })
+            const view = render(<Panel onUpdate={onUpdate} profile={profile} showModelOptions />)
+            const catalog = providerModels(provider)
+            fireEvent.change(screen.getByRole("textbox", { name: "Model" }), { target: { value: "budget-alias" } })
+            expect(onUpdate).toHaveBeenLastCalledWith({ modelId: "budget-alias", modelInfo: catalog["budget-alias"] })
+            expect(onUpdate.mock.calls.at(-1)?.[0].modelInfo).toBe(catalog["budget-alias"])
+            view.rerender(
+                <Panel
+                    onUpdate={onUpdate}
+                    profile={{ ...profile, modelId: "budget-alias", modelInfo: catalog["budget-alias"] }}
+                    showModelOptions
+                />,
+            )
+            fireEvent.change(screen.getByRole("textbox", { name: "Model" }), { target: { value: modelId } })
+            expect(onUpdate).toHaveBeenLastCalledWith({ modelId, modelInfo: undefined })
+            expect(onUpdate.mock.calls.at(-1)?.[0]).toHaveProperty("modelInfo", undefined)
+            view.rerender(
+                <Panel onUpdate={onUpdate} profile={{ ...profile, modelInfo: catalog["budget-alias"] }} showModelOptions />,
+            )
+            expect(projectedModel().capabilities?.thinking?.mode).toBe("effort")
+        })
+
+        it("does not leak the old Profile's override or reasoning into a new Profile", () => {
+            const onUpdate = vi.fn()
+            const profile = ApiProfile.create({
+                id: "old-profile",
+                provider,
+                modelId,
+                [configKey]: { capabilities: { thinking: { supported: false } }, reasoning: { effort: "low" } },
+            })
+            const view = render(<Panel onUpdate={onUpdate} profile={profile} showModelOptions />)
+            expect(screen.queryByRole("checkbox", { name: "Enable Thinking" })).not.toBeInTheDocument()
+            view.rerender(
+                <Panel
+                    onUpdate={onUpdate}
+                    profile={ApiProfile.create({ id: "new-profile", provider, modelId })}
+                    showModelOptions
+                />,
+            )
+            expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).toBeChecked()
+            expect(
+                screen.getByRole("combobox", { name: provider === "openai-codex" ? "Reasoning Effort" : "Adaptive Thinking" }),
+            ).toHaveTextContent("High")
+            expect(onUpdate).not.toHaveBeenCalled()
+        })
+
+        it("saves a real effort and preserves raw reasoning through English/Chinese switches", () => {
+            const onUpdate = vi.fn()
+            let profile = ApiProfile.create({
+                id: "language-profile",
+                provider,
+                modelId,
+                [configKey]: { reasoning: { display: "omitted" } },
+            })
+            const tree = (language: "en" | "zh-CN") => (
+                <UiLanguageProvider language={language}>
+                    <Panel onUpdate={onUpdate} profile={profile} showModelOptions />
+                </UiLanguageProvider>
+            )
+            const view = render(tree("en"))
+            fireEvent.click(
+                screen.getByRole("combobox", { name: provider === "openai-codex" ? "Reasoning Effort" : "Adaptive Thinking" }),
+            )
+            fireEvent.click(screen.getByRole("option", { name: "Max" }))
+            const saved = onUpdate.mock.calls[0][0][configKey]
+            expect(saved.reasoning).toEqual({
+                enableThinking: true,
+                effort: "max",
+                thinkingBudget: undefined,
+                display: "omitted",
+            })
+            profile = { ...profile, [configKey]: saved }
+            view.rerender(tree("zh-CN"))
+            const selector = screen.getByRole("combobox", { name: provider === "openai-codex" ? "推理强度" : "自适应思考" })
+            expect(selector).toHaveTextContent("Max")
+            view.rerender(tree("en"))
+            expect(
+                screen.getByRole("combobox", { name: provider === "openai-codex" ? "Reasoning Effort" : "Adaptive Thinking" }),
+            ).toBe(selector)
+            expect(selector).toHaveTextContent("Max")
+            expect(profile[configKey]?.reasoning?.effort).toBe("max")
+            expect(onUpdate).toHaveBeenCalledTimes(1)
         })
     })
 }

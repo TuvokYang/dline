@@ -2,6 +2,8 @@ import { ApiFormat, type ModelCapabilities, type ModelPricing } from "@shared/pr
 import { OpenAiCodexProviderConfig } from "@shared/proto/dline/provider/openai_codex"
 import { resolveApiFormat } from "@shared/providers/api-format"
 import { buildEffectiveModelInfo, mergeCapabilities, mergePricing } from "@shared/providers/effective-model-info"
+import { inheritModelInfo } from "@shared/providers/model-inheritance"
+import { resolveOpenAIModel } from "@shared/providers/openai-model-info"
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import { useUiTranslation } from "@/i18n/UiLanguageProvider"
@@ -51,7 +53,11 @@ export const OpenAiCodexProvider = ({ showModelOptions, isPopup, profile, onUpda
     })
     const modelId = resolveProfileModelId(profile, { defaultModelId })
     const registryModel = models[modelId]
-    const baseModel = profile.modelInfo?.id === modelId ? profile.modelInfo : registryModel
+    const rawModel = profile.modelInfo?.id === modelId ? profile.modelInfo : registryModel
+    // Retain the declared layer for help attribution; inherited effort levels are
+    // declarations too, even when they equal the generic compatibility choices.
+    const declaredModel = inheritModelInfo(modelId, rawModel, models, "gpt")
+    const baseModel = resolveOpenAIModel(modelId, rawModel, models)
     const modelInfo = buildEffectiveModelInfo(modelId, baseModel, {
         capabilities: pc.capabilities,
         pricing: pc.pricing,
@@ -60,6 +66,8 @@ export const OpenAiCodexProvider = ({ showModelOptions, isPopup, profile, onUpda
     const thinkingSupported = thinking?.supported === true && modelInfo.capabilities?.supportsReasoning !== false
     const effortSupported = thinkingSupported && thinking?.mode === "effort"
     const budgetSupported = thinkingSupported && thinking?.mode === "budget"
+    const compatibilityThinking =
+        declaredModel.capabilities?.thinking === undefined && pc.capabilities?.thinking === undefined && effortSupported
     const supportedApiFormats = baseModel?.apiFormats ?? modelInfoSaneDefaults.apiFormats ?? [ApiFormat.OPENAI_RESPONSES]
     const baseApiFormats = supportedApiFormats.filter((apiFormat) => apiFormat !== ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE)
     const apiFormats = baseApiFormats.length > 0 ? baseApiFormats : [ApiFormat.OPENAI_RESPONSES]
@@ -125,6 +133,9 @@ export const OpenAiCodexProvider = ({ showModelOptions, isPopup, profile, onUpda
                             defaultEffort={thinking?.defaultEffort}
                             defaultEnabled={thinking?.defaultEnabled}
                             disableSupported={thinking?.canDisable !== false}
+                            effortDescription={
+                                compatibilityThinking ? t("settings.ui.openai.compatibilityThinkingHelp") : undefined
+                            }
                             effortOptions={thinking?.effortLevels}
                             maxBudget={thinking?.maxBudget}
                             minBudget={thinking?.minBudget}

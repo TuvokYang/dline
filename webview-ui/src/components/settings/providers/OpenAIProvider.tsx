@@ -3,6 +3,7 @@ import { ApiFormat, type ModelCapabilities, type ModelPricing, ServerTool } from
 import { OpenAiProviderConfig } from "@shared/proto/dline/provider/openai"
 import { openAiEndpointToApiFormat, resolveApiFormat } from "@shared/providers/api-format"
 import { buildEffectiveModelInfo, mergeCapabilities, mergePricing } from "@shared/providers/effective-model-info"
+import { resolveOpenAIModel } from "@shared/providers/openai-model-info"
 import { DEFAULT_OPENAI_RESPONSES_STREAM_IDLE_TIMEOUT_SECONDS } from "@shared/providers/openai-stream"
 import { hasBands } from "@shared/providers/pricing-shape"
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
@@ -92,7 +93,7 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
     const modelId = resolveProfileModelId(profile, customModelEnabled ? undefined : { defaultModelId })
     const registryModel = customModelEnabled ? undefined : models[modelId]
     const matchingModel = profile.modelInfo?.id === modelId ? profile.modelInfo : undefined
-    const baseModel = matchingModel ?? registryModel ?? openAiModelInfoSaneDefaults
+    const baseModel = resolveOpenAIModel(modelId, matchingModel ?? registryModel ?? openAiModelInfoSaneDefaults, models)
     const modelInfo: ModelInfo = buildEffectiveModelInfo(modelId, baseModel, {
         capabilities: pc.capabilities,
         pricing: pc.pricing,
@@ -126,6 +127,16 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
     const thinkingSupported = thinking?.supported === true && modelInfo.capabilities?.supportsReasoning !== false
     const effortSupported = thinkingSupported && thinking?.mode === "effort"
     const budgetSupported = thinkingSupported && thinking?.mode === "budget"
+    // Only describe the helper's undeclared compatibility fallback as tentative.
+    // Inherited catalog levels and explicit model/profile declarations keep their normal help.
+    const compatibilityThinking =
+        (matchingModel ?? registryModel ?? openAiModelInfoSaneDefaults).capabilities?.thinking === undefined &&
+        pc.capabilities?.thinking === undefined &&
+        thinking?.mode === "effort" &&
+        thinking.defaultEffort === undefined &&
+        thinking.defaultEnabled === true &&
+        thinking.canDisable === true &&
+        thinking.effortLevels?.join(",") === "none,low,medium,high"
     const openAiHeaders = pc.openAiHeaders ?? {}
     const headerEntries: [string, string][] = Object.entries(openAiHeaders)
 
@@ -275,6 +286,9 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
                             defaultEffort={thinking?.defaultEffort}
                             defaultEnabled={thinking?.defaultEnabled}
                             disableSupported={thinking?.canDisable !== false}
+                            effortDescription={
+                                compatibilityThinking ? t("settings.ui.openai.compatibilityThinkingHelp") : undefined
+                            }
                             effortOptions={thinking?.effortLevels}
                             maxBudget={thinking?.maxBudget}
                             minBudget={thinking?.minBudget}

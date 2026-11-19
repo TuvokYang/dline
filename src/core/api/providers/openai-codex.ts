@@ -8,6 +8,8 @@ import {
 } from "@core/context/context-management/compaction-dev-diagnostics"
 import { ModelInfo, OpenAiCodexModelId, openAiCodexDefaultModelId, openAiCodexModels } from "@shared/api"
 import { providerFetch } from "@shared/net"
+import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
+import { resolveOpenAIModel } from "@shared/providers/openai-model-info"
 import { normalizeOpenAiServiceTier } from "@shared/storage/types"
 import OpenAI from "openai"
 import type { ChatCompletionTool } from "openai/resources/chat/completions"
@@ -942,8 +944,11 @@ export class OpenAiCodexHandler extends ApiHandler {
 
     getModel(): { id: OpenAiCodexModelId; info: ModelInfo } {
         const id = (this.modelId || this.modelInfo?.id || openAiCodexDefaultModelId) as OpenAiCodexModelId
-        const info =
-            this.modelInfo?.id === id ? this.modelInfo : (openAiCodexModels[id] ?? { ...openAiCodexModelInfoSaneDefaults, id })
+        if (this.modelInfo?.id === id) return { id, info: this.modelInfo }
+        const base = openAiCodexModels[id] ?? { ...openAiCodexModelInfoSaneDefaults, id }
+        const info = buildEffectiveModelInfo(id, resolveOpenAIModel(id, base, openAiCodexModels), {
+            capabilities: this.config?.capabilities,
+        })
         return { id, info }
     }
 }

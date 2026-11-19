@@ -97,10 +97,10 @@ describe("Task runtime Profile overrides", () => {
         expect(runtimeProfile.openai?.serviceTier).toBe("default")
     })
 
-    it("does not admit overrides through misleading model names or an enabled Profile preference", () => {
+    it("does not bypass an explicit model veto through names or an enabled Profile preference", () => {
         const profile = createOpenAiProfile()
         profile.modelId = "gpt-claude-deepseek-test"
-        profile.modelInfo = { id: profile.modelId, capabilities: { supportsReasoning: true } }
+        profile.modelInfo = { id: profile.modelId, capabilities: { supportsReasoning: false } }
         expect(() =>
             applyTaskRuntimeOverrides(profile, { actModeReasoningOverride: { kind: "effort", effort: "high" } }, "act"),
         ).toThrow("Reasoning effort 'high' is not supported by the selected model.")

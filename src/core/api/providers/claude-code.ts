@@ -1,6 +1,7 @@
 import type { Anthropic } from "@anthropic-ai/sdk"
 import { Tool as AnthropicTool } from "@anthropic-ai/sdk/resources/index"
 import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
+import { inheritModelInfo } from "@shared/providers/model-inheritance"
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import type { BillingAttributionMessage } from "@/integrations/anthropic-claude-code/billing-attribution"
 import { getClaudeCodeProfileSessionRegistry } from "@/integrations/anthropic-claude-code/registry"
@@ -201,13 +202,13 @@ export class ClaudeCodeHandler extends ApiHandler {
     /**
      * Build effective metadata for one model ID.
      *
-     * The bundled catalog is only a base: a remotely discovered model is absent
-     * from it and carries its metadata on the Profile instead, which also wins
-     * over a catalog entry so a newer capability set is not downgraded.
+     * Matching Profile metadata is the factory's final result. Only direct
+     * construction without that result falls back to the bundled catalog.
      */
     private buildModelInfo(modelId: string): ModelInfo {
-        const matchingInfo = this.modelInfo?.id === modelId ? this.modelInfo : undefined
-        return buildEffectiveModelInfo(modelId, matchingInfo ?? claudeCodeModels[modelId], {
+        if (this.modelInfo?.id === modelId) return this.modelInfo
+        const base = inheritModelInfo(modelId, claudeCodeModels[modelId], claudeCodeModels, "claude")
+        return buildEffectiveModelInfo(modelId, base, {
             capabilities: this.config?.capabilities,
         })
     }

@@ -57,6 +57,8 @@ export const zhCN = {
     "settings.ui.anthropic.omitted": "省略",
     "settings.ui.anthropic.effortHelp": "选择“无”可禁用自适应思考。更高的强度会增加回复细节和 Token 用量。",
     "settings.ui.anthropic.requiredHelp": "此模型始终启用自适应思考。更高的强度会增加回复细节和 Token 用量。",
+    "settings.ui.anthropic.manualThinkingHelp":
+        "此模型未声明思考模式。可手动选择强度或预算模式，端点支持情况未经验证；不会自动填写等级或 Token 预算。",
     "settings.ui.openai.headers": "自定义请求头",
     "settings.ui.openai.addHeader": "添加请求头",
     "settings.ui.openai.headerName": "请求头名称",

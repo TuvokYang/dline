@@ -95,6 +95,10 @@ interface ThinkingControlProps {
     showModeSelector?: boolean
     modeSelectorLabel?: string
     modeSelectorOptions?: Array<{ value: ThinkingMode; label: string }>
+    /** An empty controlled mode leaves an undeclared model unselected. */
+    selectedMode?: ThinkingMode | ""
+    /** Persist a manual mode and its cleared preferences in one Profile update. */
+    onModeChange?: (mode: ThinkingMode, config: ReasoningConfig) => void
 
     // === Reasoning display, for providers that expose the choice ===
     displayOptions?: readonly ThinkingDisplayOption[]
@@ -122,6 +126,8 @@ const ThinkingControl = ({
     showModeSelector = true,
     modeSelectorLabel: customModeSelectorLabel,
     modeSelectorOptions: customModeSelectorOptions,
+    selectedMode,
+    onModeChange,
     displayOptions,
     displayLabel: customDisplayLabel,
     displayDescription,
@@ -157,12 +163,13 @@ const ThinkingControl = ({
         reasoningConfig?.thinkingBudget,
     ])
 
-    const activeType = useMemo<ThinkingMode>(() => {
+    const activeType = useMemo<ThinkingMode | "">(() => {
+        if (selectedMode !== undefined) return selectedMode
         if (reasoningConfig?.thinkingBudget != null && reasoningConfig.thinkingBudget > 0) {
             return "budget"
         }
         return "effort"
-    }, [reasoningConfig?.thinkingBudget])
+    }, [reasoningConfig?.thinkingBudget, selectedMode])
 
     const effort = reasoningConfig?.effort
     const budget = reasoningConfig?.thinkingBudget ?? 0
@@ -197,7 +204,7 @@ const ThinkingControl = ({
             }
             if (checked) {
                 // Enable with default values based on mode
-                const defaultMode = mode === "budget-only" ? "budget" : "effort"
+                const defaultMode = selectedMode ?? (mode === "budget-only" ? "budget" : "effort")
                 onReasoningConfigUpdate({
                     enableThinking: true,
                     effort: defaultMode === "effort" && selectedEffort !== "none" ? selectedEffort || undefined : undefined,
@@ -214,7 +221,7 @@ const ThinkingControl = ({
                 })
             }
         },
-        [disableSupported, display, mode, onReasoningConfigUpdate, selectedEffort, storedBudget],
+        [disableSupported, display, mode, onReasoningConfigUpdate, selectedEffort, selectedMode, storedBudget],
     )
 
     const handleEffortChange = useCallback(
@@ -255,14 +262,16 @@ const ThinkingControl = ({
         (value: string) => {
             if (value !== "effort" && value !== "budget") return
             const newMode = value
-            onReasoningConfigUpdate({
+            const config: ReasoningConfig = {
                 enableThinking: true,
                 effort: newMode === "effort" && selectedEffort !== "none" ? selectedEffort || undefined : undefined,
                 thinkingBudget: newMode === "budget" ? storedBudget : undefined,
                 display,
-            })
+            }
+            if (onModeChange) onModeChange(newMode, config)
+            else onReasoningConfigUpdate(config)
         },
-        [display, onReasoningConfigUpdate, selectedEffort, storedBudget],
+        [display, onModeChange, onReasoningConfigUpdate, selectedEffort, storedBudget],
     )
 
     const handleDisplayChange = useCallback(
@@ -295,6 +304,7 @@ const ThinkingControl = ({
         <div className="w-full" style={{ marginTop: 10, marginBottom: 10 }}>
             {/* Enable Thinking Checkbox */}
             <VSCodeCheckbox
+                aria-label={t("settings.ui.enableThinking")}
                 checked={enableThinking}
                 disabled={!disableSupported}
                 onChange={(event) => {
@@ -311,8 +321,8 @@ const ThinkingControl = ({
                         <div style={{ marginTop: 10, marginBottom: 5 }}>
                             <Label className="text-xs font-medium">{modeSelectorLabel}</Label>
                             <Select onValueChange={handleModeChange} value={activeType}>
-                                <SelectTrigger className="w-full mt-1">
-                                    <SelectValue />
+                                <SelectTrigger aria-label={modeSelectorLabel} className="w-full mt-1">
+                                    <SelectValue placeholder={t("settings.ui.chooseThinkingMode")} />
                                 </SelectTrigger>
                                 <SelectContent>
                                     {modeSelectorOptions.map((option) => (
@@ -330,7 +340,7 @@ const ThinkingControl = ({
                         <div style={{ marginTop: 10, marginBottom: 5 }}>
                             <Label className="text-xs font-medium">{effortLabel}</Label>
                             <Select onValueChange={handleEffortChange} value={selectedEffort}>
-                                <SelectTrigger className="w-full mt-1">
+                                <SelectTrigger aria-label={effortLabel} className="w-full mt-1">
                                     <SelectValue placeholder={t("settings.ui.providerDefault")} />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -423,7 +433,13 @@ const ThinkingControl = ({
                                         onChange={handleBudgetSliderChange}
                                         step={1}
                                         type="number"
-                                        value={localBudget}
+                                        value={
+                                            selectedMode !== undefined &&
+                                            localBudget === 0 &&
+                                            reasoningConfig?.thinkingBudget === undefined
+                                                ? ""
+                                                : localBudget
+                                        }
                                     />
                                 )}
                             </Container>

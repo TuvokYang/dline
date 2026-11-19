@@ -25,6 +25,22 @@ function readFlag(raw: unknown, field: string): boolean {
     return isRecord(raw) && isRecord(raw.model_info) && raw.model_info[field] === true
 }
 
+/**
+ * Read a `model_info` flag without turning "not stated" into a denial.
+ *
+ * Only the cache flag is read this way. A deployment that omits the field, or
+ * states a nested object, a null or a non-boolean there, has said nothing about
+ * caching, and the product default fills that silence; an explicit `false` is a
+ * statement and must survive.
+ */
+function readOptionalFlag(raw: unknown, field: string): boolean | undefined {
+    if (!isRecord(raw) || !isRecord(raw.model_info)) {
+        return undefined
+    }
+    const value = raw.model_info[field]
+    return typeof value === "boolean" ? value : undefined
+}
+
 /** LiteLLM reports costs per token as plain numbers. */
 function readPerMillionCost(raw: unknown, field: string): number | undefined {
     const perToken = readNonNegativeNumber(raw, `model_info.${field}`)
@@ -68,7 +84,7 @@ export class LiteLlmModelSource extends ModelListingSource {
             maxTokens: this.readMaxTokens(raw),
             contextWindow: this.readContextWindow(raw),
             supportsImages: readFlag(raw, "supports_vision"),
-            supportsPromptCache: readFlag(raw, "supports_prompt_caching"),
+            supportsPromptCache: readOptionalFlag(raw, "supports_prompt_caching"),
             supportsReasoning: readFlag(raw, "supports_reasoning"),
         }
     }

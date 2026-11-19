@@ -1,6 +1,7 @@
 import type { ModelCapabilities, ModelPricing, ServerTool } from "@shared/proto/dline/models/metadata"
 import type { ApiProfile } from "@shared/proto/dline/profile"
 import { AnthropicProviderConfig } from "@shared/proto/dline/provider/anthropic"
+import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
 import {
     buildEffectiveModelInfo,
     mergeCapabilities,
@@ -8,6 +9,7 @@ import {
     selectContextTier,
     updateSelectedContextWindow,
 } from "@shared/providers/effective-model-info"
+import { inheritModelInfo } from "@shared/providers/model-inheritance"
 import { hasBands } from "@shared/providers/pricing-shape"
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
@@ -28,6 +30,9 @@ import { anthropicThinkingDisplayOptions } from "./anthropicThinkingDisplay"
 import { ClaudeCodeIdentitySection } from "./shared/ClaudeCodeIdentitySection"
 import { usePendingProviderConfig } from "./usePendingProviderConfig"
 import { useProviderModelOptions } from "./useProviderModelOptions"
+
+// Manual protocol choices, not a claim that an undeclared model accepts every level.
+const manualEfforts = ["none", "low", "medium", "high", "xhigh", "max"] as const
 
 const StyledCheckbox = styled(VSCodeCheckbox)`
 	margin-bottom: 4px;
@@ -85,7 +90,12 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
     // capabilities, including its hosted server tools.
     const { t } = useUiTranslation()
     const customModelEnabled = pc.customModelEnabled === true
-    const registryModel = anthropicModels[modelId] ?? (profile.modelInfo?.id === modelId ? profile.modelInfo : { id: modelId })
+    const registryModel = inheritModelInfo(
+        modelId,
+        anthropicModels[modelId] ?? (profile.modelInfo?.id === modelId ? profile.modelInfo : { id: modelId }),
+        anthropicModels,
+        "claude",
+    )
     const contextWindowTiersEnabled = customModelEnabled || Boolean(registryModel.capabilities?.contextWindowTiers?.length)
     // The 1M long-context option is enabled by default; only an explicit false disables it.
     const enableLongContext = pc.enableLongContext !== false
@@ -105,6 +115,38 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
     const isAdaptiveThinkingModel = thinkingSupported && thinking?.mode === "effort"
     const budgetThinkingSupported = thinkingSupported && thinking?.mode === "budget"
     const thinkingDisableSupported = thinking?.canDisable !== false
+    const declaredMode = registryModel.capabilities?.thinking?.mode
+    const manualThinking =
+        declaredMode !== "effort" &&
+        declaredMode !== "budget" &&
+        modelInfo.capabilities?.supportsReasoning !== false &&
+        thinking?.supported !== false
+    const selectedMode = thinking?.mode === "effort" || thinking?.mode === "budget" ? thinking.mode : ""
+
+    /** Only an explicit control edit declares an unknown model's native mode. */
+    const updateReasoning = (reasoning: ReasoningConfig, mode = selectedMode) => {
+        const current = configToUpdate()
+        const capabilities =
+            manualThinking && mode
+                ? mergeCapabilities(current.capabilities, {
+                      supportsReasoning: true,
+                      thinking: {
+                          supported: true,
+                          mode,
+                          ...(mode === "effort"
+                              ? {
+                                    effortLevels: [
+                                        ...(current.capabilities?.thinking?.effortLevels ??
+                                            thinking?.effortLevels ??
+                                            manualEfforts),
+                                    ],
+                                }
+                              : {}),
+                      },
+                  })
+                : current.capabilities
+        onUpdate({ anthropic: { ...current, capabilities, reasoning } })
+    }
 
     // --- Handlers ---
     /** Commits a model id from the merged picker without touching the custom-model switch. */
@@ -229,10 +271,10 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
                         </StyledCheckbox>
                     ) : null}
 
-                    {(isAdaptiveThinkingModel || budgetThinkingSupported) && (
+                    {(isAdaptiveThinkingModel || budgetThinkingSupported || manualThinking) && (
                         <ThinkingControl
                             defaultEffort={thinking?.defaultEffort}
-                            defaultEnabled={thinking?.defaultEnabled}
+                            defaultEnabled={manualThinking ? false : thinking?.defaultEnabled}
                             disableSupported={thinkingDisableSupported}
                             displayDescription={t("settings.ui.anthropic.displayHelp")}
                             displayLabel={t("settings.ui.thinkingDisplay")}
@@ -243,16 +285,20 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
                                     : t("settings.ui.anthropic.requiredHelp")
                             }
                             effortLabel={t("settings.ui.adaptiveThinking")}
-                            effortOptions={thinking?.effortLevels ?? []}
+                            effortOptions={thinking?.effortLevels ?? (manualThinking ? manualEfforts : [])}
                             maxBudget={thinking?.maxBudget}
                             minBudget={thinking?.minBudget}
-                            mode={isAdaptiveThinkingModel ? "effort-only" : "budget-only"}
-                            onReasoningConfigUpdate={(reasoning) => {
-                                onUpdate({ anthropic: { ...configToUpdate(), reasoning } })
-                            }}
+                            mode={manualThinking ? "both" : isAdaptiveThinkingModel ? "effort-only" : "budget-only"}
+                            onModeChange={manualThinking ? (mode, reasoning) => updateReasoning(reasoning, mode) : undefined}
+                            onReasoningConfigUpdate={updateReasoning}
                             reasoningConfig={pc.reasoning}
-                            showModeSelector={false}
+                            selectedMode={manualThinking ? selectedMode : undefined}
+                            showModeSelector={manualThinking}
                         />
+                    )}
+
+                    {manualThinking && (
+                        <p className="m-0 text-xs text-description">{t("settings.ui.anthropic.manualThinkingHelp")}</p>
                     )}
 
                     <ModelConfiguration
