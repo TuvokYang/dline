@@ -63,9 +63,8 @@ export const ActivityFoldRenderer: React.FC<ActivityFoldRendererProps> = ({ fold
                             {parts.map((part, index) => (
                                 <span key={part.kind}>
                                     {index === 0 ? "" : " · "}
-                                    {/* A lost edit, command or subagent is the first thing a
-                                        reader looks for, so error counts carry the error tone
-                                        while the rest of the line stays muted. */}
+                                    {/* Categories containing failures carry the error tone,
+                                        while categories without failures stay muted. */}
                                     <span className={part.isFailure ? "text-error" : undefined}>{part.text}</span>
                                 </span>
                             ))}

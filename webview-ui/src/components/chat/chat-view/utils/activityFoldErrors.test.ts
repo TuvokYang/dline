@@ -41,7 +41,7 @@ describe("a failed work item stays inside its block", () => {
         expect(blocks[0].map((message) => message.ts)).toEqual([3, 4, 5])
     })
 
-    it("counts a failed command as one failed cmd and not as a cmd", () => {
+    it("includes a failed command in its total and reports its failed subset inline", () => {
         const transcript = [
             userTask(1, "Run the checks"),
             finishedRequest(2),
@@ -53,11 +53,14 @@ describe("a failed work item stays inside its block", () => {
         const block = folds(transcript)[0]
         const summary = summarizeActivityFold(block, new Map())
         expect(summary.failures.get("command")).toBe(1)
-        expect(summary.work.get("command")).toBe(1)
-        expect(describeActivityFold(summary)).toContain("1 cmd failed")
+        expect(summary.work.get("command")).toBe(2)
+        expect(describeActivityFoldParts(summary).filter((part) => part.kind === "work.command")).toEqual([
+            { kind: "work.command", text: "2 cmds (1 failed)", isFailure: true },
+        ])
+        expect(describeActivityFoldParts(summary).some((part) => part.kind.startsWith("failure."))).toBe(false)
     })
 
-    it("counts a failed edit as a failed file edit without counting it as one", () => {
+    it("keeps a category containing only failed edits", () => {
         const transcript = [
             userTask(1, "Fix the parser"),
             finishedRequest(2),
@@ -68,9 +71,12 @@ describe("a failed work item stays inside its block", () => {
         const block = folds(transcript)[0]
         const summary = summarizeActivityFold(block, new Map())
         expect(summary.failures.get("edit")).toBe(1)
-        // A failed edit is one error, not also a completed write.
-        expect(summary.work.get("write")).toBeUndefined()
-        expect(describeActivityFold(summary)).toContain("1 file edit failed")
+        expect(summary.work.get("write")).toBe(1)
+        expect(describeActivityFoldParts(summary).find((part) => part.kind === "work.write")).toEqual({
+            kind: "work.write",
+            text: "1 file edit (1 failed)",
+            isFailure: true,
+        })
     })
 
     it("states each category separately in the header", () => {
@@ -85,8 +91,8 @@ describe("a failed work item stays inside its block", () => {
 
         const summary = summarizeActivityFold(folds(transcript)[0], new Map())
         const text = describeActivityFold(summary)
-        expect(text).toContain("2 file edit failed")
-        expect(text).toContain("1 cmd failed")
+        expect(text).toContain("2 file edits (2 failed)")
+        expect(text).toContain("1 cmd (1 failed)")
         expect(text).not.toContain("subagent failed")
     })
 })
@@ -123,7 +129,30 @@ describe("the block keeps a failure it cannot account for out of it", () => {
         expect(block.map((message) => message.ts)).toEqual([3, 4])
         const summary = summarizeActivityFold(block, new Map())
         expect(summary.failures.get("subagent")).toBe(2)
-        expect(describeActivityFold(summary)).toContain("2 subagent failed")
+        expect(summary.work.get("subagent")).toBe(2)
+        expect(describeActivityFold(summary)).toContain("2 subagents (2 failed)")
+    })
+
+    it.each([
+        "cancelled",
+        "interrupted",
+    ] as const)("does not count a %s command or its kill request as a failure", (commandStatus) => {
+        const transcript: UiMessage[] = [
+            userTask(1, "Stop the server"),
+            finishedRequest(2),
+            { ...finishedCommand(3, "npm run dev"), activityId: "cmd-1", commandStatus },
+            { ts: 4, type: "say", say: "tool", text: JSON.stringify({ tool: "killCommand", activityId: "cmd-1" }) },
+            completion(5, "Stopped."),
+        ]
+        const block = folds(transcript)[0]
+        expect(block.map((message) => message.ts)).toEqual([3, 4])
+        const summary = summarizeActivityFold(block, new Map())
+        expect(summary.failures.size).toBe(0)
+        expect(Array.from(summary.work)).toEqual([
+            ["command", 1],
+            ["other", 1],
+        ])
+        expect(summary.tools.get("killCommand")).toBe(1)
     })
 
     it("does not count a cancelled subagent batch as an error", () => {
@@ -152,7 +181,7 @@ describe("the block keeps a failure it cannot account for out of it", () => {
         const parts = describeActivityFoldParts(summarizeActivityFold(folds(transcript)[0], new Map()))
         // The renderer paints `isFailure` parts in the error tone, so this is what
         // makes an error count read as an error rather than as another tally.
-        expect(parts.filter((part) => part.isFailure).map((part) => part.text)).toEqual(["1 cmd failed"])
+        expect(parts.filter((part) => part.isFailure).map((part) => part.text)).toEqual(["1 cmd (1 failed)"])
         expect(parts.filter((part) => !part.isFailure).map((part) => part.text)).toContain("1 file edit")
     })
 

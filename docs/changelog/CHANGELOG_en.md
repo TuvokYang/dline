@@ -12,4 +12,6 @@
 - The root CHANGELOG.md and English entry hold only current notes, with one history file per language, shared extraction, and explicit archiving commands.
 
 ### Fixed
+- Activity summaries keep failed counts in parentheses within each category's total instead of adding separate failure entries.
+- Kill-command rows fold with finished activity once their target command has ended, while running, unknown, and interactive rows remain visible.
 - Fixed absent cache metadata being treated as disabled for OpenAI, OpenRouter/Cline, AIhubmix, Vercel, LiteLLM, OCA, and Anthropic/Claude Code, preserving explicit opt-outs and consistent defaults in settings and requests.

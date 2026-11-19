@@ -12,4 +12,6 @@
 - 根 CHANGELOG.md 与英文入口直接维护当前正文，每种语言使用单一 history 文件，共享提取逻辑并通过显式命令归档。
 
 ### Fixed
+- 活动摘要将失败次数内联到对应分类的括号中，总数包含失败子集，不再单独追加失败项。
+- 目标命令已结束的终止命令行可随活动折叠，运行中、状态未知和待交互的行仍保持可见。
 - 修复 OpenAI、OpenRouter/Cline、AIhubmix、Vercel、LiteLLM、OCA 及 Anthropic/Claude Code 将未声明缓存能力误判为关闭的问题，保留明确关闭并统一设置与请求的缺省值。

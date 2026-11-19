@@ -379,9 +379,9 @@ describe("summarizeActivityFold", () => {
             assistantMessages: 4,
             failures: new Map([
                 ["edit", 1],
-                ["read", 2],
+                ["read", 1],
                 ["subagent", 3],
-                ["command", 4],
+                ["command", 2],
                 ["web", 5],
                 ["browser", 6],
             ]),
@@ -398,12 +398,6 @@ describe("summarizeActivityFold", () => {
             "thoughts",
             "checkpoints",
             "messages",
-            "failure.edit",
-            "failure.read",
-            "failure.subagent",
-            "failure.command",
-            "failure.web",
-            "failure.browser",
         ]
         const english = describeActivityFoldParts(summary)
         const chinese = describeActivityFoldParts(summary, (key, ...args) => translateUi("zh-CN", key, ...args))
@@ -417,10 +411,53 @@ describe("summarizeActivityFold", () => {
         for (const parts of [english, chinese, changedCounts, sameText]) {
             expect(parts.map((part) => part.kind)).toEqual(expectedKinds)
             expect(new Set(parts.map((part) => part.kind)).size).toBe(parts.length)
-            expect(parts.filter((part) => part.isFailure).map((part) => part.kind)).toEqual(expectedKinds.slice(-6))
+            expect(parts.filter((part) => part.isFailure).map((part) => part.kind)).toEqual(expectedKinds.slice(1, 7))
         }
         expect(chinese.map((part) => part.text)).not.toEqual(english.map((part) => part.text))
         expect(changedCounts.map((part) => part.text)).not.toEqual(english.map((part) => part.text))
+    })
+
+    it.each([
+        ["read", "read", "3 file reads (1 failed)", "3 次文件读取（1 次失败）"],
+        ["write", "edit", "3 file edits (1 failed)", "3 次文件编辑（1 次失败）"],
+        ["command", "command", "3 cmds (1 failed)", "3 条命令（1 次失败）"],
+        ["subagent", "subagent", "3 subagents (1 failed)", "3 个子代理（1 次失败）"],
+        ["web", "web", "3 web tools (1 failed)", "3 次网络工具调用（1 次失败）"],
+        ["browser", "browser", "3 browsers (1 failed)", "3 次浏览器操作（1 次失败）"],
+    ] as const)("keeps %s failures in a single localized work fact", (work, failure, english, chinese) => {
+        const summary: ActivityFoldSummary = {
+            work: new Map([[work, 3]]),
+            failures: new Map([[failure, 1]]),
+            external: new Map(),
+            tools: new Map(),
+            subagents: new Map(),
+            thoughts: 0,
+            checkpoints: 0,
+            assistantMessages: 0,
+        }
+        expect(describeActivityFoldParts(summary)).toEqual([{ kind: `work.${work}`, text: english, isFailure: true }])
+        expect(describeActivityFoldParts(summary, (key, ...args) => translateUi("zh-CN", key, ...args))).toEqual([
+            { kind: `work.${work}`, text: chinese, isFailure: true },
+        ])
+    })
+
+    it("combines external and failure subsets without adding another category", () => {
+        const summary: ActivityFoldSummary = {
+            work: new Map([["command", 3]]),
+            failures: new Map([["command", 1]]),
+            external: new Map([["command", 2]]),
+            tools: new Map(),
+            subagents: new Map(),
+            thoughts: 0,
+            checkpoints: 0,
+            assistantMessages: 0,
+        }
+        expect(describeActivityFoldParts(summary)).toEqual([
+            { kind: "work.command", text: "3 cmds (2 external, 1 failed)", isFailure: true },
+        ])
+        expect(describeActivityFold(summary, (key, ...args) => translateUi("zh-CN", key, ...args))).toBe(
+            "3 条命令（2 次位于工作区外，1 次失败）",
+        )
     })
 
     it("keeps the fallback fact's identity when translated", () => {
