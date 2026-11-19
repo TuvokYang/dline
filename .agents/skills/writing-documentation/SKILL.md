@@ -49,7 +49,7 @@ Treat old docs as evidence to verify, not as an authority. Remove or update stal
 Create one content outline shared by the Chinese and English versions:
 
 1. reader goal and prerequisites;
-2. where the feature is available;
+2. the UI or command entry point and availability conditions that affect the workflow;
 3. the shortest successful workflow;
 4. a realistic example;
 5. limits, permissions, failure paths, and recovery;
@@ -75,6 +75,25 @@ Keep prose direct and scannable:
 
 Do not anthropomorphize Dline or assign a gender. Refer to the product as `Dline`, `the agent`, or `it`, according to sentence context.
 
+### Describe behavior and actionable limits
+
+Build each explanation from the reader's goal, the action to take, the observable result, and any condition that changes that action or result. Keep implementation-task scope, untouched components, delivery history, and verification reports in task records or completion reports. A developer guide describes current responsibilities and wiring rather than what one task delivered or deferred.
+
+Review a limiting sentence by asking what the reader must do differently because of it:
+
+- If it changes availability, permissions, compatibility, stored data, safety, or recovery, state the concrete condition and its consequence or next action.
+- If it repeats the page's subject, lists unrelated features left unchanged, denies an imagined promise, or merely justifies the work, remove it.
+- If a capability claim lacks evidence, verify it or omit that claim. Describe the actual fallback and configuration choices instead of appending a stock disclaimer.
+
+| Counterexample | Reader-facing replacement |
+|---|---|
+| "This manual entry only applies to Anthropic and does not change Claude Code or other providers." | On the Anthropic page: "Enable Thinking, then choose Effort or Budget and set a value supported by your endpoint." |
+| "This fallback does not mean the new model's capabilities have been verified." | "Missing thinking settings come from the nearest older catalog entry; explicit model declarations and Profile overrides take precedence." |
+| "No new persistence setting or migration authority is introduced." | "The selection is saved in the current Profile." State editor-local or session-only storage when that is the actual behavior. |
+| "A word list or directory audit does not establish that the page is translated." | "Switch languages in the same mounted view and check labels, menus, retained values, and save failure/retry." |
+
+These are semantic decisions, not a ban on words such as "only", "not", or "does not". "Only workspace commands use this configuration" can be a necessary operating condition; "This does not add an unrelated feature" is task-scope narration. Preserve real restrictions and uncertainty without inventing guarantees or deleting safety guidance. Apply the same editing decision to both language editions.
+
 ## 5. Document contracts and failure paths
 
 For user-visible features, include the applicable details:
@@ -88,7 +107,7 @@ For user-visible features, include the applicable details:
 - common failures and actionable diagnostics;
 - compatibility or migration constraints.
 
-Do not hide a limitation behind promotional language. If behavior is not verified, label it as unverified or omit it.
+Describe limitations through affected configurations, actual behavior, and the action or recovery available to the reader. Separate current behavior from planned behavior, and publish capability claims supported by product evidence. For an unresolved compatibility case, identify the configuration and what remains unknown when that information is needed for the reader's decision; otherwise omit the unsupported claim. Use the section 4 examples instead of generic disclaimers.
 
 ## 6. Use Starlight components only when they help
 
@@ -186,6 +205,7 @@ Verify at least:
 - headings, frontmatter (`title` and `description` are required), links, anchors, code fences, and MDX syntax are valid;
 - English pages contain no CJK text outside code;
 - commands and UI labels match current source;
+- limiting statements give concrete operating conditions or actions; remove task-scope narration, generic disclaimers, and repeated self-justification using section 4;
 - referenced paths and assets exist;
 - examples do not expose secrets or destructive defaults;
 - no stale product names remain outside intentional migration context;
