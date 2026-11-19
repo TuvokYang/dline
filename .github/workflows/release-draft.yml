@@ -152,7 +152,7 @@ jobs:
         env:
           VERSION: ${{ needs.verify-tag.outputs.version }}
         shell: bash
-        run: node scripts/extract-changelog-section.mjs CHANGELOG.md "$VERSION" "$RUNNER_TEMP/release-notes.md"
+        run: node scripts/extract-changelog-section.mjs --version "$VERSION" --language zh-CN --output "$RUNNER_TEMP/release-notes.md"
 
       - name: Create or update public GitHub pre-release
         env:

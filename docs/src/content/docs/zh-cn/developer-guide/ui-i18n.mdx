@@ -23,7 +23,11 @@ Dline 的 Webview 产品界面支持英文与简体中文，覆盖设置与提�
 
 界面语言不会改变模型语言偏好、模型请求、用户或模型正文、代码、路径、工具原始输出、币种或时间规则。切换不会刷新 Webview，也不会重置草稿和导航；“完成”只关闭设置。
 
-What's New 显示当前语言版本。完整更新日志链接在中文界面打开 `CHANGELOG.md`，英文界面打开 `docs/changelog/CHANGELOG_en.md`；发布版本与确认状态保持不变。
+What's New 显示当前语言版本。完整更新日志链接在中文界面打开 `CHANGELOG.md`，英文界面打开 `docs/changelog/CHANGELOG_en.md`。这两份文件本身就是对应语言的当前更新日志正文，链接直接打开真实说明，发布版本与确认状态保持不变。
+
+当前正文就是 `CHANGELOG.md` 和 `docs/changelog/CHANGELOG_en.md`，两份都只包含一个同名区块：开发期为 `## [Unreleased]`，版本冻结且与 manifest 一致后替换为一个准确的 `## [X.Y.Z]`。历史版本位于 `docs/changelog/history.zh-CN.md` 和 `docs/changelog/history.en.md`：每种语言一个历史文件，不使用每版本一个目录。版本准备时，若当前仍有旧准确版本，先用 `npm run changelog:append -- --version <X.Y.Z> [--dry-run]` 归档；若从 `Unreleased` 准备，则核实基线与最终净变化后把该区块改名为冻结候选。随后同步 package/lock 和双语 What's New，运行只读的 `npm run changelog:check`；没有需要刷新的生成索引。完整流程见[参与贡献](/zh-cn/developer-guide/contributing/#更新日志与版本)。
+
+打包更新日志的语言导航显示为 `English | 中文`：当前语言是纯文本，仅另一语言带链接，指向包所固定 tag 或 commit 下该语言的当前正文。标签不再带“在线”后缀，但这不代表包内离线语言切换，也不保证未推送 ref 可达。四份临时 `dist/docs` 文档仍提供两个官方英文 README/Changelog 资产和两个普通中文副本，不增加离线阅读器或重复英文正文。
 
 ## 翻译组件
 

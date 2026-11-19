@@ -214,7 +214,7 @@ jobs:
           vsix_path="release-artifact/$ASSET_NAME"
           notes_path="$RUNNER_TEMP/insiders-notes.md"
           unreleased_notes_path="$RUNNER_TEMP/unreleased-notes.md"
-          node scripts/extract-changelog-section.mjs CHANGELOG.md Unreleased "$unreleased_notes_path" --allow-empty
+          node scripts/extract-changelog-section.mjs --version Unreleased --language zh-CN --output "$unreleased_notes_path" --allow-empty
           cat > "$notes_path" <<EOF
           Automated Insiders build for dev commit \`$COMMIT_SHA\`.
 

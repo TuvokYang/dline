@@ -13,7 +13,7 @@ Follow `repository-and-release`. Discover repository identity, remote URLs and w
 
 - `dev-version-bump` preparation was completed on `dev`, either directly or through an ordinary PR from an independent source branch.
 - The integrated `dev` commit is unambiguous and the working tree used for verification is clean.
-- `package.json`, `package-lock.json`, `CHANGELOG.md`, `docs/changelog/CHANGELOG_en.md`, `docs/whats-new/WHATS_NEW.md`, and `docs/whats-new/WHATS_NEW_en.md` describe the same target version.
+- `package.json`, `package-lock.json`, the single current changelog section in `CHANGELOG.md` and `docs/changelog/CHANGELOG_en.md`, `docs/whats-new/WHATS_NEW.md`, and `docs/whats-new/WHATS_NEW_en.md` describe the same target version.
 - No unresolved release blocker or unrelated work is being included.
 - The release version has an even minor, as the version bump rules in repository-and-release require; stop and prepare a new version with dev-version-bump when it is odd.
 - The user has not yet implicitly authorized any commit, push, merge, tag, Release edit, or Marketplace publication.
@@ -54,7 +54,7 @@ A failure means the previous release's back-merge is missing. Stop and complete 
 Confirm:
 
 - the target version matches `X.Y.Z`;
-- both changelogs contain `## [X.Y.Z]` and equivalent factual change records;
+- both current changelog bodies contain the single `## [X.Y.Z]` section (one frozen version, no `Unreleased` beside it and no concatenated history) with equivalent factual change records;
 - both What's New editions start with a `## X.Y.Z` section that stands alone for this release and has the same number of items, as dev-version-bump requires; the What's New Vitest file passes on the candidate;
 - `package.json` and `package-lock.json` use `X.Y.Z`;
 - the release candidate is not marked as preview;

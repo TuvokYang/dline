@@ -47,11 +47,20 @@ cli/**
 sdk/**
 
 # Sources for the Marketplace listing and its GitHub-hosted Chinese edition.
-# The VSIX only contains README.md, swapped by scripts/marketplace-readme.mjs.
-# The sources and a backup left by an aborted swap must not ship in the VSIX.
+# The packaged documents are generated from them into dist/docs (see below), so
+# the sources and a backup left by an aborted swap must not ship in the VSIX.
 README.marketplace.md
 marketplace.zh-cn.md
 .README.github.bak
+
+# The repository landing page. Local packaging entries pass an explicit VSCE
+# `readmePath` pointing at the generated English edition, and VSCE always forces
+# the named readme in while the root README.md would otherwise ship unchanged as
+# `extension/README.md`. Those two paths differ only by case, which VSCE rejects as
+# a duplicate, so the root page must be excluded. The legacy publish scripts keep
+# working: they pass no `readmePath`, and VSCE's default force-include of
+# `README.md` re-adds the swapped listing content.
+README.md
 
 # Custom
 **/assets/docs/
@@ -87,6 +96,29 @@ webview-ui/tsconfig*.json
 # Ignore docs
 docs/**
 old_docs/**
+
+# Changelog sources are maintained in both languages and ship as generated
+# single-language notes. `docs/**` excludes the English current and both history
+# files; the root Chinese current is excluded here, so no maintenance source
+# is packaged alongside the generated English asset and Chinese sidecar.
+# An explicit VSCE `changelogPath` does not cancel ignore rules, so the generated
+# files must stay collectable instead of being merely referenced.
+CHANGELOG.md
+
+# Generated packaged documents: exactly four files, two official English assets and
+# two ordinary Chinese editions.
+#
+# `dist/docs/**` is excluded by default so only the four generated documents can
+# ever ship, and each is re-included by its exact path. The older single bilingual
+# note is excluded explicitly: merely dropping its negation is not enough, because
+# everything under `dist/` is packaged by default. Nothing here removes a file from
+# disk; a leftover output or a foreign file simply stays out of the VSIX.
+dist/docs/**
+!dist/docs/README.en.md
+!dist/docs/README.zh-CN.md
+!dist/docs/CHANGELOG.en.md
+!dist/docs/CHANGELOG.zh-CN.md
+dist/CHANGELOG.vsix.md
 
 # Include default themes JSON files used in getTheme
 !src/integrations/theme/default-themes/**

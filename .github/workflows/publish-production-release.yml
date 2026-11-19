@@ -113,8 +113,9 @@ jobs:
       - name: Build release notes from changelog
         env:
           VERSION: ${{ inputs.version }}
+          NOTES_PATH: ${{ runner.temp }}/release-notes.md
         shell: bash
-        run: node scripts/extract-changelog-section.mjs CHANGELOG.md "$VERSION" "$RUNNER_TEMP/release-notes.md"
+        run: node scripts/extract-changelog-section.mjs --version "$VERSION" --language zh-CN --output "$NOTES_PATH"
 
       - name: Create or update stable GitHub release
         env:

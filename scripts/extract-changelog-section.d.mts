@@ -1,5 +1,8 @@
-export interface ExtractChangelogSectionOptions {
-    allowEmpty?: boolean
+/** Options accepted by the notes CLI, keyed by their `--flag` spelling. */
+export declare function parseArguments(argv: string[]): {
+    options: Record<string, string | true>
+    help: boolean
 }
 
-export function extractChangelogSection(source: string, version: string, options?: ExtractChangelogSectionOptions): string
+/** Command entry point of the notes CLI. */
+export declare function main(argv?: string[]): Promise<void>

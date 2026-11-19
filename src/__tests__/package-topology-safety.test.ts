@@ -69,7 +69,9 @@ describe("package topology safety", () => {
         expect(automaticWorkflow).toContain("uses: ./.github/workflows/publish-production-release.yml")
         expect(manualWorkflow).toContain("uses: ./.github/workflows/publish-production-release.yml")
         expect(productionPublisher).toContain('gh release upload "$TAG" "$VSIX_PATH" --clobber')
-        expect(productionPublisher).toContain('node scripts/extract-changelog-section.mjs CHANGELOG.md "$VERSION"')
+        expect(productionPublisher).toContain(
+            'node scripts/extract-changelog-section.mjs --version "$VERSION" --language zh-CN --output "$NOTES_PATH"',
+        )
         expect(productionPublisher).toContain('gh release create "$TAG" "$VSIX_PATH" --verify-tag --notes-file "$NOTES_PATH"')
         expect(productionPublisher).not.toContain("--generate-notes")
         expect(productionPublisher).toContain("Verify stable GitHub release asset")
@@ -82,7 +84,7 @@ describe("package topology safety", () => {
         expect(insidersWorkflow).toContain("ref: ${{ needs.verify-insiders.outputs.commit_sha }}")
         expect(insidersWorkflow).toContain("persist-credentials: false")
         expect(insidersWorkflow).toContain(
-            'node scripts/extract-changelog-section.mjs CHANGELOG.md Unreleased "$unreleased_notes_path" --allow-empty',
+            'node scripts/extract-changelog-section.mjs --version Unreleased --language zh-CN --output "$unreleased_notes_path" --allow-empty',
         )
         expect(insidersWorkflow).toContain('if [[ -s "$unreleased_notes_path" ]]; then')
         expect(insidersWorkflow).toContain('cat "$unreleased_notes_path" >> "$notes_path"')
@@ -237,20 +239,60 @@ describe("package topology safety", () => {
         expect(lockRunner).toContain("acquireDistLock")
 
         // The lock lives inside dist/, which vsce packages verbatim.
-        expect(await readProjectFile(".vscodeignore")).toContain("dist/.e2e-lock/")
+        const vscodeIgnore = await readProjectFile(".vscodeignore")
+        expect(vscodeIgnore).toContain("dist/.e2e-lock/")
+        // The root Chinese index, `docs/**` (both current notes, every history
+        // snapshot and the English index) and the two listing editions stay out of
+        // the VSIX; they are sources of the generated documents, never packaged
+        // content.
+        const vscodeIgnoreLines = vscodeIgnore.split(/\r?\n/)
+        for (const source of ["CHANGELOG.md", "docs/**", "README.marketplace.md", "marketplace.zh-cn.md"]) {
+            expect(vscodeIgnoreLines).toContain(source)
+        }
+        // A per-version snapshot is only reachable through `docs/**`, so a negated or
+        // narrowed rule here would silently package maintenance sources. The only
+        // negations naming a changelog are the two generated documents re-included by
+        // their exact path below.
+        expect(vscodeIgnoreLines.filter((line) => /^!.*(current|history)/.test(line))).toEqual([])
+        expect(vscodeIgnore).not.toMatch(/^!docs\/changelog/im)
+        // The repository landing page is excluded because local packaging passes an
+        // explicit `readmePath`; the root `README.md` would otherwise ship alongside
+        // `extension/readme.md` as a case-only duplicate. The legacy publish scripts
+        // still work because VSCE force-includes the default README.
+        expect(vscodeIgnore.split(/\r?\n/)).toContain("README.md")
+        // `dist/docs/**` is excluded and only the four generated documents are
+        // re-included by exact path, and the older single bilingual note is excluded
+        // explicitly because everything under `dist/` is packaged by default.
+        expect(vscodeIgnore.split(/\r?\n/)).toContain("dist/docs/**")
+        expect(vscodeIgnore.match(/^!.*CHANGELOG.*$/gim) ?? []).toEqual([
+            "!dist/docs/CHANGELOG.en.md",
+            "!dist/docs/CHANGELOG.zh-CN.md",
+        ])
+        expect(vscodeIgnore.split(/\r?\n/)).toContain("dist/CHANGELOG.vsix.md")
     })
 
     it("disables dependency scanning in every extension packaging entry point", async () => {
         const packageJson = JSON.parse(await readProjectFile("package.json")) as RootPackageJson
-        expect(packageJson.scripts?.["test:e2e:build"]).toContain("--no-dependencies")
+        // The E2E script now enters the shared adapter, which disables dependency
+        // scanning for every caller; a bare `vsce package` here would bypass that.
+        expect(packageJson.scripts?.["test:e2e:build"]).toContain("scripts/e2e-package.mjs")
+        expect(packageJson.scripts?.["test:e2e:build"]).not.toMatch(/\bvsce\s+package\b/)
 
         const packageDev = await readProjectFile("scripts/package-dev.mjs")
         const packageVsix = await readProjectFile("scripts/package-vsix.mjs")
+        const e2ePackage = await readProjectFile("scripts/e2e-package.mjs")
         const packageAdapter = await readProjectFile("scripts/vsix-packager.mjs")
         expect(packageDev).toContain('mode: "pack-only"')
         expect(packageVsix).toContain('mode: "build-and-pack"')
+        expect(e2ePackage).toContain('mode: "build-and-pack"')
         expect(packageAdapter).toMatch(/dependencies:\s*false/)
         expect(packageAdapter).toContain("execFileSync(process.execPath")
+        // Every local entry reaches VSCE through the adapter only.
+        for (const entry of ["scripts/package-dev.mjs", "scripts/package-vsix.mjs", "scripts/e2e-package.mjs"]) {
+            expect(await readProjectFile(entry), `${entry} must package through the shared adapter`).not.toMatch(
+                /require\("@vscode\/vsce/,
+            )
+        }
         expectDirectVsceCommandsToDisableDependencyScanning(packageVsix, "scripts/package-vsix.mjs")
 
         const publishInsiders = await readProjectFile("scripts/publish-insiders.mjs")

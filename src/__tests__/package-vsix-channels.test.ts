@@ -1,21 +1,105 @@
 import fs from "node:fs/promises"
 import path from "node:path"
+import { runInNewContext } from "node:vm"
+import { ts } from "ts-morph"
 import { describe, expect, it } from "vitest"
 import packageJson from "../../package.json"
+import { readChangelog } from "../../scripts/changelog.mjs"
+import { parseChangelog } from "../../scripts/changelog-parser.mjs"
 import {
     createDistributionManifest,
     resolveTargetIdentity,
     VSCODE_MARKETPLACE_PACKAGE_NAME,
 } from "../../scripts/extension-manifest-identity.mjs"
+import {
+    assertChannelVersion,
+    createInsidersVersion as createPolicyInsidersVersion,
+} from "../../scripts/release-version-policy.mjs"
+// @ts-expect-error -- packaging scripts are plain ESM without type declarations.
+import { UNRELEASED_SECTION } from "../../scripts/vsix-changelog.mjs"
 
-/**
- * The packaging script is a standalone ESM entry that resolves its channel at
- * import time and calls vsce, so it cannot be imported here without packaging.
- * These tests therefore pin the release contract at the source level: the rules
- * below are the ones a mis-tagged or under-documented release would violate.
- */
+/** Standalone entries are evaluated only at their selection boundary, without running a build. */
 
 const PROJECT_ROOT = process.cwd()
+
+interface ResolvedChannel {
+    channel: string
+    version: string
+    tag: string | null
+    changelogSection: string
+}
+
+interface ChannelHarness {
+    selectChangelogSection: (tag: string | null) => string
+    resolveRequestedChannel: (requestedChannel: string, packageVersion: string) => ResolvedChannel
+}
+
+const BINDINGS = { UNRELEASED_SECTION, assertChannelVersion, createPolicyInsidersVersion }
+
+/** Execute the entry's actual declarations; never evaluate its top-level build or filesystem operations. */
+async function loadChannelHarness(
+    relativePath: string,
+    names: readonly (keyof ChannelHarness)[],
+    git: { branch: string | null; tags: string[] },
+    bindings: typeof BINDINGS,
+): Promise<ChannelHarness> {
+    const source = await fs.readFile(path.join(PROJECT_ROOT, relativePath), "utf8")
+    const file = ts.createSourceFile(relativePath, source, ts.ScriptTarget.Latest, true)
+    // This explicit fixture boundary is intentionally not a dependency-discovery engine.
+    const dependencies = names.includes("selectChangelogSection")
+        ? ["RELEASE_TAG_PATTERN", "selectChangelogSection"]
+        : [
+              "PRODUCTION_TAG_PATTERN",
+              "DEV_TAG_PATTERN",
+              "INSIDERS_DRAFT_TAG_PATTERN",
+              "PRE_RELEASE_CHANNEL",
+              "tryGit",
+              "getExactTag",
+              "getCurrentBranch",
+              "fail",
+              "assertReleaseVersionConsistency",
+              "createInsidersVersion",
+              "resolveChannel",
+              "resolveRequestedChannel",
+          ]
+    const declarations = new Map<string, string>()
+    for (const statement of file.statements) {
+        if (ts.isFunctionDeclaration(statement) && statement.name && dependencies.includes(statement.name.text)) {
+            declarations.set(statement.name.text, statement.getText(file))
+        }
+        if (ts.isVariableStatement(statement)) {
+            for (const declaration of statement.declarationList.declarations) {
+                if (ts.isIdentifier(declaration.name) && dependencies.includes(declaration.name.text)) {
+                    declarations.set(declaration.name.text, `const ${declaration.getText(file)};`)
+                }
+            }
+        }
+    }
+    for (const name of dependencies) {
+        if (!declarations.has(name)) throw new Error(`${relativePath} declares no ${name}`)
+    }
+    const gitCommands: Record<string, string | null> = {
+        "git branch --show-current": git.branch,
+        "git tag --points-at HEAD": git.tags.join("\n"),
+    }
+    const reported: string[] = []
+    return runInNewContext(`${[...declarations.values()].join("\n")}\n;({${names.join(",")}})`, {
+        ...bindings,
+        PROJECT_ROOT,
+        console: { error: (message: string) => reported.push(message) },
+        process: {
+            exit: (code: number) => {
+                throw new Error(reported.at(-1) ?? `Process exited with ${code}.`)
+            },
+        },
+        execSync: (command: string) => {
+            if (!(command in gitCommands)) throw new Error(`Unexpected Git command: ${command}`)
+            const output = gitCommands[command]
+            if (output === null) throw new Error(`Git command failed: ${command}`)
+            return output
+        },
+    }) as ChannelHarness
+}
 
 interface ManifestKeybinding {
     command: string
@@ -127,12 +211,99 @@ describe("package-vsix release channels", () => {
         expect(draft).toContain("package_channel: pre-release")
         expect(draft).toContain('.name == "dline" and')
         expect(draft).toContain("Microsoft.VisualStudio.Code.PreRelease")
-        expect(draft).toContain('node scripts/extract-changelog-section.mjs CHANGELOG.md "$VERSION"')
+        // The notes step reads the accurate version from the shared reader through the
+        // thin CLI, never from the generated entry pages.
+        expect(draft).toContain(
+            'node scripts/extract-changelog-section.mjs --version "$VERSION" --language zh-CN --output "$RUNNER_TEMP/release-notes.md"',
+        )
+        expect(draft).not.toContain("extract-changelog-section.mjs CHANGELOG.md")
         expect(draft).not.toContain("dline-preview")
         expect(registries).toContain('($channel == "pre-release" and .preview != true and .version == $version)')
         expect(registries).toContain("track_args=(--pre-release)")
         expect(registries).toContain("Error: production VSIX is marked as a pre-release.")
         expect(packager).toContain("preRelease: options.preRelease")
+        // The generated documents are the only Readme and Changelog assets VSCE is
+        // told to read, and the worker refuses to package without both of them.
+        expect(packager).toContain("readmePath")
+        expect(packager).toContain("packageOptions.readmePath = options.readmePath")
+        expect(packager).toContain("packageOptions.changelogPath = options.changelogPath")
+        expect(packager).toContain("refusing to package without them")
+    })
+
+    it.each([
+        // A formal version tag of either channel documents that exact section.
+        ["v0.14.0", "0.14.0"],
+        ["dev-v0.13.0", "0.13.0"],
+        // Every untagged or non-version commit has no released section yet.
+        [null, UNRELEASED_SECTION],
+        ["nightly", UNRELEASED_SECTION],
+        ["insiders-0123456789abcdef0123456789abcdef01234567", UNRELEASED_SECTION],
+    ])("selects %s as the local development changelog section", async (tag, expected) => {
+        const harness = await loadChannelHarness(
+            "scripts/package-dev.mjs",
+            ["selectChangelogSection"],
+            { branch: "dev", tags: tag === null ? [] : [tag] },
+            BINDINGS,
+        )
+
+        expect(harness.selectChangelogSection(tag)).toBe(expected)
+    })
+
+    it("keeps the local development and E2E entries on the shared adapter", async () => {
+        const packageDev = await fs.readFile(path.join(PROJECT_ROOT, "scripts/package-dev.mjs"), "utf8")
+        const e2e = await fs.readFile(path.join(PROJECT_ROOT, "scripts/e2e-package.mjs"), "utf8")
+
+        for (const [source, expected] of [
+            [packageDev, { mode: "pack-only", changelogSection: "$changelogSection", documentationRef: "$documentationRef" }],
+            [e2e, { mode: "build-and-pack", changelogSection: "current", documentationRef: "$documentationRef" }],
+        ] as const) {
+            const parsed = ts.createSourceFile("entry.mjs", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
+            const calls: Record<string, string>[] = []
+            const visit = (node: ts.Node): void => {
+                if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "packageVsix") {
+                    const [argument] = node.arguments
+                    if (argument && ts.isObjectLiteralExpression(argument)) {
+                        const fields: Record<string, string> = {}
+                        for (const property of argument.properties) {
+                            if (ts.isShorthandPropertyAssignment(property)) fields[property.name.text] = `$${property.name.text}`
+                            else if (ts.isPropertyAssignment(property)) {
+                                fields[property.name.getText(parsed)] = ts.isStringLiteral(property.initializer)
+                                    ? property.initializer.text
+                                    : `$${property.initializer.getText(parsed)}`
+                            }
+                        }
+                        calls.push(fields)
+                    }
+                }
+                ts.forEachChild(node, visit)
+            }
+            visit(parsed)
+            expect(calls).toEqual([expect.objectContaining(expected)])
+        }
+    })
+
+    it("packages the generated documents by path instead of swapping the root README", async () => {
+        for (const entry of ["scripts/package-vsix.mjs", "scripts/package-dev.mjs"]) {
+            const source = await fs.readFile(path.join(PROJECT_ROOT, entry), "utf8")
+
+            // Local entries pass explicit VSCE paths, so the root README stays a
+            // repository landing page and only this call's manifest is restored.
+            expect(source, `${entry} must keep the manifest cleanup owner`).toContain("withSignalSafeCleanup(")
+            expect(source, `${entry} must restore package.json`).toContain("cleanups.defer(")
+            expect(source, `${entry} must not swap the root README`).not.toContain("withMarketplaceReadme")
+            expect(source, `${entry} must not swap the root README`).not.toContain("swapIn")
+        }
+
+        // The legacy publish consumers keep the swap API and its CLI untouched.
+        for (const legacy of ["scripts/publish-marketplace.mjs", "scripts/publish-insiders.mjs"]) {
+            const source = await fs.readFile(path.join(PROJECT_ROOT, legacy), "utf8")
+            expect(source, `${legacy} must keep the legacy README swap`).toContain("swapIn")
+        }
+        const readme = await fs.readFile(path.join(PROJECT_ROOT, "scripts/marketplace-readme.mjs"), "utf8")
+        expect(readme).toContain("export function swapIn")
+        expect(readme).toContain("export function restore")
+        expect(readme).toContain("export async function withMarketplaceReadme")
+        expect(readme).toContain('if (cmd === "swap-in")')
     })
 
     it("packages an explicit Insiders build even when a dev-vX.Y.Z tag names the same commit", async () => {
@@ -143,7 +314,7 @@ describe("package-vsix release channels", () => {
         // before any tag lookup instead of rejecting a tagged commit.
         expect(source).not.toContain("Insiders packaging requires an untagged commit")
         const insidersBranch = source.slice(source.indexOf('if (requestedChannel === "insiders") {'))
-        const insidersReturn = insidersBranch.indexOf('return { channel: "insiders"')
+        const insidersReturn = insidersBranch.indexOf('channel: "insiders"')
         expect(insidersReturn).toBeGreaterThan(-1)
         expect(insidersReturn).toBeLessThan(insidersBranch.indexOf("getExactTag()"))
     })
@@ -156,13 +327,65 @@ describe("package-vsix release channels", () => {
         expect(source).toContain("createPolicyInsidersVersion(packageVersion)")
     })
 
-    it("gates tagged channels on version and changelog consistency", async () => {
+    it("gates tagged channels on the tag matching the version it publishes", async () => {
         const source = await readPackageVsix()
 
         expect(source).toContain("assertReleaseVersionConsistency")
-        expect(source).toContain("CHANGELOG.md")
-        expect(source).toContain("CHANGELOG_en.md")
-        expect(source).toContain("changelogDocumentsVersion")
+        expect(source).toContain("Bump the version first.")
+        // The bilingual notes themselves are validated by the generator, so the
+        // channel gate no longer reads either history directly.
+        expect(source).not.toContain("changelogDocumentsVersion")
+        expect(source).not.toContain('path.join(PROJECT_ROOT, "CHANGELOG.md")')
+    })
+
+    const builds: [string, string, string[], string, string, string][] = [
+        ["auto", "main", ["v0.14.0"], "0.14.0", "production", "0.14.0"],
+        ["auto", "dev", ["dev-v0.15.0"], "0.15.0", "pre-release", "0.15.0"],
+        ["auto", "dev", [], "0.14.0", "insiders", "Unreleased"],
+        ["ci", "dev", [], "0.14.0", "ci", "current"],
+        ["insiders", "dev", ["dev-v0.15.0"], "0.15.0", "insiders", "Unreleased"],
+        ["production", "main", ["v0.14.0"], "0.14.0", "production", "0.14.0"],
+        ["pre-release", "dev", ["dev-v0.15.0"], "0.15.0", "pre-release", "0.15.0"],
+    ]
+    for (const [requested, branch, tags, version, channel, section] of builds) {
+        it(`selects ${requested} on ${branch} with ${tags.join(",") || "no tag"} as ${section}`, async () => {
+            const harness = await loadChannelHarness(
+                "scripts/package-vsix.mjs",
+                ["resolveRequestedChannel"],
+                { branch, tags },
+                BINDINGS,
+            )
+            const resolved = harness.resolveRequestedChannel(requested, version)
+
+            expect(resolved.channel).toBe(channel)
+            expect(resolved.changelogSection).toBe(section)
+        })
+    }
+
+    it("rejects a release channel that has no matching version tag instead of selecting a section", async () => {
+        const harness = await loadChannelHarness(
+            "scripts/package-vsix.mjs",
+            ["resolveRequestedChannel"],
+            { branch: "dev", tags: [] },
+            BINDINGS,
+        )
+
+        expect(() => harness.resolveRequestedChannel("production", "0.14.0")).toThrow(
+            "production packaging requires an exact vX.Y.Z tag at HEAD.",
+        )
+        expect(() => harness.resolveRequestedChannel("pre-release", "0.15.0")).toThrow(
+            "pre-release packaging requires an exact dev-vX.Y.Z tag at HEAD.",
+        )
+    })
+
+    it("delegates section selection and the generated notes to the shared adapter", async () => {
+        const source = await readPackageVsix()
+
+        // The entry selects the section; the adapter renders and displays it.
+        expect(source).toContain("await packageVsix({")
+        expect(source).toContain("changelogSection,")
+        expect(source).not.toContain("withEnglishChangelog")
+        expect(source).not.toContain("CHANGELOG_en.md")
     })
 
     it("rejects untagged main and unknown branches instead of guessing a channel", async () => {
@@ -183,14 +406,30 @@ describe("package-vsix release channels", () => {
 })
 
 describe("changelog language editions", () => {
-    it("documents the current package version in both editions", async () => {
+    it("keeps current in the original language files without a generated version index", async () => {
+        const notes = readChangelog({ root: PROJECT_ROOT, version: "current" })
         const pkg = JSON.parse(await fs.readFile(path.join(PROJECT_ROOT, "package.json"), "utf8")) as { version: string }
-        const heading = `## [${pkg.version}]`
-
-        for (const relativePath of ["CHANGELOG.md", "docs/changelog/CHANGELOG_en.md"]) {
-            const content = await fs.readFile(path.join(PROJECT_ROOT, relativePath), "utf8")
-            const hasHeading = content.split(/\r?\n/).some((line) => line.trim() === heading)
-            expect(hasHeading, `${relativePath} must contain '${heading}'`).toBe(true)
+        const lock = JSON.parse(await fs.readFile(path.join(PROJECT_ROOT, "package-lock.json"), "utf8")) as {
+            version: string
+            packages: Record<string, { version: string }>
         }
+        expect([lock.version, lock.packages[""].version]).toEqual([pkg.version, pkg.version])
+        for (const language of ["english", "chinese"] as const) {
+            const content = await fs.readFile(path.join(PROJECT_ROOT, notes[language].sourcePath), "utf8")
+            const parsed = parseChangelog(content)
+            expect(parsed.sections.map((section) => section.version)).toEqual([notes.version])
+            expect(parsed.sections[0].body).toBe(notes[language].body)
+            expect(content).not.toMatch(/\]\([^)]*history[^)]*\)/)
+        }
+        expect(notes.english.sourcePath).toBe("docs/changelog/CHANGELOG_en.md")
+        expect(notes.chinese.sourcePath).toBe("CHANGELOG.md")
+    })
+
+    it("reads the old package-version body from the single history files explicitly", () => {
+        const notes = readChangelog({ root: PROJECT_ROOT, version: packageJson.version, source: "history" })
+        expect(notes.english.sourcePath).toBe("docs/changelog/history.en.md")
+        expect(notes.chinese.sourcePath).toBe("docs/changelog/history.zh-CN.md")
+        expect(notes.english.body.trim().length).toBeGreaterThan(0)
+        expect(notes.chinese.body.trim().length).toBeGreaterThan(0)
     })
 })

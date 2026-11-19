@@ -56,7 +56,38 @@ Use the Conventional Commits format, such as `feat:`, `fix:`, or `docs:`, and re
 
 ## Changelog and versions
 
-Contributors do not write changelog entries in pull requests. Maintainers handle version numbers and the changelog at release time: the Chinese edition is `CHANGELOG.md` in the repository root, and the English edition is `docs/changelog/CHANGELOG_en.md`. When a tagged version is packaged, both changelogs must contain the matching `## [X.Y.Z]` heading.
+Contributors do not write changelog entries in pull requests. Maintainers own version numbers and the two current bodies: `CHANGELOG.md` (Chinese) and `docs/changelog/CHANGELOG_en.md` (English). Each file is the whole current changelog and holds exactly one section with the same name in both languages: `## [Unreleased]` during development, or one exact `## [X.Y.Z]` once that version is frozen and matches the manifest. It never holds an old version next to `Unreleased`, stacks several versions, or uses links instead of the body.
+
+Older versions live in `docs/changelog/history.zh-CN.md` and `docs/changelog/history.en.md`: one history file per language with one section per archived version, not one directory per version.
+
+Prepare the next version in this order:
+
+1. Verify the current section, target version and release baselines against implementation, tests and package/lock. Compare the section name and both top What's New sections with the existing package version before changing anything.
+2. Run the read-only check, then append the older exact version if current still holds one, using its version for `<current-version>`:
+
+   ```text
+   npm run changelog:check
+   npm run changelog:append -- --version <current-version> --dry-run
+   npm run changelog:append -- --version <current-version>
+   ```
+
+3. Confirm both history files. Replace the single current section in both bodies: either the older exact version you just appended, or the cumulative `Unreleased` section after checking the baseline and the final net change and renaming it to the exact candidate. Use real, curated target-version changes; do not keep the old section alongside it or relabel its body as the new version.
+4. Synchronize package/lock and both What's New editions to the target, then run the checks below and review all six release facts: package, lockfile, both current section names and both top What's New versions. Both bodies must be non-empty and describe the same scope and order; a missing or mismatched current version blocks packaging, without falling back to history.
+
+   ```text
+   npm run changelog:check
+   npx vitest run webview-ui/src/__tests__/vite-whats-new.test.ts
+   ```
+
+Normal append requires `--version <X.Y.Z>`, archives that frozen current into both history files and leaves current unchanged; it never archives `Unreleased`, changes package/lock or What's New, or publishes. Identical existing bilingual content is a no-op; differing text or unrelated missing versions are conflicts. The two history replacements are not a cross-file power-loss transaction. After interruption, inspect any remaining guard/temp first; a retry can complete only an identical partial prepend of the same frozen current version with otherwise paired history. Unknown state is never adopted. Check is read-only; builds, Insiders timestamps and temporary manifest edits never write history.
+
+Keep `Unreleased` as the cumulative final net changes since the latest verified actual production publication. A pre-release snapshot follows its applicable delta range, but preparation does not clear that cumulative record. Production notes must include the final net changes from the production baseline, including pre-release work, not just the last delta or a concatenation of history. Only after verifying an actual production publication should maintainers adjust the baseline and remove what shipped, retaining later dev changes. Neither archive nor preparation assigns a publication date.
+
+What's New is separately curated for every real version bump: a bare `## X.Y.Z` top heading, at most five highlights, each within 128 characters including its bold lead-in, and the same bilingual version, scope, order and item count. `## Unreleased`, placeholder highlights and automatic concatenation of changelog entries are not substitutes.
+
+Preparation spans multiple files, not one atomic transaction. On an interrupted or inconsistent update, retain the complete history files, report the mismatch and stop packaging until repaired. Do not restore old notes under a new version or assume that `finally` cleanup can recover a power interruption.
+
+`CHANGELOG.md` and `docs/changelog/CHANGELOG_en.md` are the current bodies themselves; no generated index, compatibility entry page or source footer is built around them.
 
 ## Changing the documentation
 

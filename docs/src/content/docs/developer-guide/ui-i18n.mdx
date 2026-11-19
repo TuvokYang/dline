@@ -23,7 +23,11 @@ The separate **Model response language** setting controls model replies. Its opt
 
 Interface language does not change the model preference, model requests, user/model text, code, paths, raw tool output, currency or time policy. Switching does not reload the Webview or reset drafts and navigation. **Done** only closes settings.
 
-What's New shows the active language edition. Its full changelog link opens `CHANGELOG.md` for Chinese and `docs/changelog/CHANGELOG_en.md` for English; the release version and acknowledgment remain the same.
+What's New shows the active language edition. Its full changelog link opens `CHANGELOG.md` for Chinese and `docs/changelog/CHANGELOG_en.md` for English. Each of these files is that language's current changelog body, so the link opens the real notes; the release version and acknowledgment remain the same.
+
+The current bodies are `CHANGELOG.md` and `docs/changelog/CHANGELOG_en.md`, and each holds exactly one section with the same name in both languages: `## [Unreleased]` during development, replaced by one exact `## [X.Y.Z]` once that version is frozen and matches the manifest. Older versions live in `docs/changelog/history.zh-CN.md` and `docs/changelog/history.en.md`: one history file per language, not one directory per version. Version preparation appends the older exact version with `npm run changelog:append -- --version <X.Y.Z> [--dry-run]` when current still holds one, or verifies the `Unreleased` baseline and renames that section to the frozen candidate, then synchronizes package/lock and both What's New editions and runs the read-only `npm run changelog:check`. There is no generated index to refresh. See [Contributing](/developer-guide/contributing/#changelog-and-versions) for the full procedure.
+
+Packaged changelog navigation reads `English | 中文`: the current language is plain text and only the other language is linked, at the package's fixed tag or commit and that language's current body. The labels have no online suffix, but this is not an offline language switch or a guarantee that an unpushed ref is reachable. The four temporary `dist/docs` documents still supply two official English README/changelog assets and two ordinary Chinese copies; no additional offline reader or duplicate English body is added.
 
 ## Translate a component
 

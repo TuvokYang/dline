@@ -1,52 +1,161 @@
+#!/usr/bin/env node
+/**
+ * Bilingual changelog notes CLI.
+ *
+ * This is a thin wrapper: it parses arguments, asks the shared reader
+ * (`changelog.mjs`) for one validated section, writes the returned body, and
+ * exits non-zero on any failure. It owns no parsing rule, no version selection
+ * and no fallback - a missing section is an error, never a different version.
+ *
+ * Usage:
+ *   node scripts/extract-changelog-section.mjs --version <current|X.Y.Z|Unreleased>
+ *       --language <en|zh-CN> --output <path> [--root <dir>]
+ *       [--source current|history] [--allow-empty]
+ *   node scripts/extract-changelog-section.mjs --check [--root <dir>]
+ *
+ * `--source current` is the default, so a packaged build reads only the current
+ * notes and never scans the whole history. `--source history` reads the snapshot
+ * of exactly the named version. `Unreleased` exists only in the current notes.
+ * `--allow-empty` tolerates an empty rolling section and is rejected for a
+ * released version, so a release can never ship empty notes.
+ *
+ * `--check` is the explicit maintenance gate behind `npm run changelog:check`: it
+ * validates the sole current section, a numbered current against the manifest,
+ * and both single-file histories. It never rewrites the maintained sources.
+ */
+
 import fs from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { checkChangelogSet, readChangelog } from "./changelog.mjs"
+import { UNRELEASED_SECTION } from "./changelog-parser.mjs"
 
-/** Extract one version section without including its heading or the next version. */
-export function extractChangelogSection(source, version, options = {}) {
-    const normalizedVersion = version.trim()
-    if (!normalizedVersion) throw new Error("Changelog version must not be empty.")
-    if (options.allowEmpty && normalizedVersion !== "Unreleased") {
-        throw new Error("allowEmpty is supported only for the Unreleased changelog section.")
-    }
+/** Language flags accepted on the command line, in their file spelling. */
+const LANGUAGE_FLAGS = { en: "english", "zh-CN": "chinese" }
 
-    const lines = source.replace(/\r\n/g, "\n").split("\n")
-    const versionHeading = /^##\s+\[?([^\]\s]+)\]?\s*$/
-    const start = lines.findIndex((line) => versionHeading.exec(line)?.[1] === normalizedVersion)
-    if (start === -1) throw new Error(`CHANGELOG section '${normalizedVersion}' was not found.`)
+/** Options that take a value. */
+const VALUE_OPTIONS = new Set(["--version", "--language", "--output", "--root", "--source"])
 
-    let end = lines.length
-    for (let index = start + 1; index < lines.length; index++) {
-        if (/^##\s+/.test(lines[index])) {
-            end = index
-            break
+/** Options that are flags only. */
+const BOOLEAN_OPTIONS = new Set(["--allow-empty", "--check", "--help"])
+
+/** Human-readable usage text, also printed on a usage error. */
+const USAGE = [
+    "Usage: node scripts/extract-changelog-section.mjs --version <current|X.Y.Z|Unreleased> --language <en|zh-CN> --output <path>",
+    "           [--root <dir>] [--source current|history] [--allow-empty]",
+    "       node scripts/extract-changelog-section.mjs --check [--root <dir>]",
+].join("\n")
+
+/**
+ * Split command-line arguments into known options.
+ *
+ * Unknown options and a repeated option are caller errors: silently ignoring
+ * either would let a mistyped notes command read a different section than the one
+ * a release publishes.
+ *
+ * @param {string[]} argv Arguments without the node executable and script path.
+ * @returns {{ options: Record<string, string|true>, help: boolean }} Parsed options.
+ */
+export function parseArguments(argv) {
+    /** @type {Record<string, string|true>} */
+    const options = {}
+    for (let index = 0; index < argv.length; index += 1) {
+        const argument = argv[index]
+        if (argument === "--help" || argument === "-h") {
+            options["--help"] = true
+            continue
         }
+        if (!VALUE_OPTIONS.has(argument) && !BOOLEAN_OPTIONS.has(argument)) {
+            throw new Error(`Unsupported option '${argument}'.\n${USAGE}`)
+        }
+        if (argument in options) throw new Error(`Option '${argument}' was given more than once.`)
+        if (BOOLEAN_OPTIONS.has(argument)) {
+            options[argument] = true
+            continue
+        }
+        const value = argv[index + 1]
+        if (value === undefined || value.startsWith("--")) {
+            throw new Error(`Option '${argument}' requires a value.\n${USAGE}`)
+        }
+        options[argument] = value
+        index += 1
     }
-
-    const body = lines
-        .slice(start + 1, end)
-        .join("\n")
-        .trim()
-    if (!body) {
-        if (options.allowEmpty) return ""
-        throw new Error(`CHANGELOG section '${normalizedVersion}' is empty.`)
-    }
-    return `${body}\n`
+    return { options, help: options["--help"] === true }
 }
 
-async function main() {
-    const [sourcePath, version, outputPath, ...flags] = process.argv.slice(2)
-    if (!sourcePath || !version || !outputPath) {
-        throw new Error("Usage: node scripts/extract-changelog-section.mjs <changelog> <version> <output> [--allow-empty]")
+/**
+ * Read one validated section and return the exact body to write.
+ *
+ * @param {{ options: Record<string, string|true> }} parsed Parsed command line.
+ * @returns {Promise<{ output: string|null, body: string, description: string }>} Output path and body.
+ */
+async function extract(parsed) {
+    const { options } = parsed
+    const version = String(options["--version"] ?? "").trim()
+    const languageFlag = String(options["--language"] ?? "").trim()
+    const outputPath = String(options["--output"] ?? "").trim()
+    const source = String(options["--source"] ?? "current").trim()
+    const allowEmpty = options["--allow-empty"] === true
+    if (!version) throw new Error(`Missing --version.\n${USAGE}`)
+    if (!languageFlag) throw new Error(`Missing --language.\n${USAGE}`)
+    if (!outputPath) throw new Error(`Missing --output.\n${USAGE}`)
+    const language = LANGUAGE_FLAGS[languageFlag]
+    if (!language) throw new Error(`Unsupported --language '${languageFlag}'; use 'en' or 'zh-CN'.`)
+    const root = path.resolve(String(options["--root"] ?? process.cwd()))
+    const notes = readChangelog({ root, version, source })
+    if (allowEmpty && notes.version !== UNRELEASED_SECTION) {
+        throw new Error("--allow-empty is supported only for the Unreleased changelog section.")
     }
-    const unsupportedFlags = flags.filter((flag) => flag !== "--allow-empty")
-    if (unsupportedFlags.length > 0) throw new Error(`Unsupported option: ${unsupportedFlags.join(", ")}`)
-    const source = await fs.readFile(sourcePath, "utf8")
-    await fs.writeFile(
-        outputPath,
-        extractChangelogSection(source, version, { allowEmpty: flags.includes("--allow-empty") }),
-        "utf8",
+    const section = notes[language]
+    if (section.empty && !allowEmpty) throw new Error(`CHANGELOG section '${version}' is empty.`)
+    return {
+        output: path.resolve(outputPath),
+        body: section.empty ? "" : `${section.body}\n`,
+        description: `${notes.version} (${languageFlag}) from ${section.sourcePath}`,
+    }
+}
+
+/**
+ * Run the maintenance check and print its verdict.
+ *
+ * @param {Record<string, string|true>} options Parsed command line.
+ * @returns {string} Summary line.
+ */
+function check(options) {
+    const root = path.resolve(String(options["--root"] ?? process.cwd()))
+    const result = checkChangelogSet({ root })
+    return (
+        `changelog: current ${result.version} and ${result.historyVersions.length} history version(s) are valid; ` +
+        `current sources: ${result.currentFiles.join(", ")}.`
     )
+}
+
+/**
+ * Command entry point.
+ *
+ * @param {string[]} [argv] Arguments without the node executable and script path.
+ * @returns {Promise<void>}
+ */
+export async function main(argv = process.argv.slice(2)) {
+    const parsed = parseArguments(argv)
+    if (parsed.help) {
+        console.log(USAGE)
+        return
+    }
+    if (parsed.options["--check"] === true) {
+        for (const option of Object.keys(parsed.options)) {
+            if (option !== "--check" && option !== "--root" && option !== "--help") {
+                throw new Error(`--check does not accept '${option}'.`)
+            }
+        }
+        console.log(check(parsed.options))
+        return
+    }
+    const result = await extract(parsed)
+    if (!result.output) throw new Error("No output path was resolved.")
+    await fs.mkdir(path.dirname(result.output), { recursive: true })
+    await fs.writeFile(result.output, result.body, "utf8")
+    console.log(`changelog: wrote ${result.description} to ${result.output}`)
 }
 
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : ""
