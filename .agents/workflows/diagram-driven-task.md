@@ -40,7 +40,8 @@ Load `designing-workstream-diagrams`. Add or update the task's `## Architecture 
 - `%% answers:` for the question it refines;
 - repeatable `%% artifact:` for each declaration, assembly, writer, reader, emitter, receiver or generated projection (`%% module:` is only compatibility shorthand);
 - `%% concept:` where the task uses a different id than the Workstream for the same thing;
-- `%% local-only:` for task-local detail;
+- `%% local-only:` for task-local detail; it scopes identity, not permission to hide a dependency path;
+- external `ports`/`port` inventories and exact `edge-ports` decorations where the current black-box contract is settled; use partial inventories for selective views and preserve parent direction/type/required obligations, without expanding internal members;
 - `%% cycle: allowed nodes=A|B owner=… reason="…"` only for a genuinely required solid structure SCC; the node set must exactly match that SCC. A solid command plus dotted response fact needs no exemption.
 
 Keep the diagram smaller than the Workstream diagram it refines. A task diagram that restates the whole Workstream proves nothing.
@@ -59,7 +60,7 @@ Use `--scope task:<TASK-ID>` only to diagnose a finding; a focused scope is neve
 
 The mutation self-test runs by default; do not pass `--no-self-test` in this workflow.
 
-When the task changes a shared contract, the plan's Task Graph, or several task diagrams, also run `--scope cross-task`.
+When the task changes a shared contract, the plan's Task Graph, or several task diagrams, also run `--scope cross-task`. Check the merged structure DAG, not only each diagram: flow order does not explain dependencies, private nodes remain on paths, and display-label changes cannot split an anchored authority. Check that consumed, mapped artifacts have producing-Task prerequisites; review unanchored consumption manually rather than inferring production from `owns` alone.
 
 Read the exit code by what produced it. Blocking findings in a declared pairing or in the task's own diagram are design verdicts. Findings the report marks as inferred (`workstream-reference-inferred`, `refinement-undeclared`) are review items: declare the anchor instead of accepting them.
 
@@ -67,15 +68,20 @@ Read the exit code by what produced it. Blocking findings in a declared pairing 
 
 | Finding | Where it is repaired |
 | --- | --- |
-| `[diagram]` local to this task | back to step 3 |
-| `[diagram]` attributed to the Workstream | back to the Workstream diagrams, not this task |
+| Unrefined box/relationship warning (`coarse-node-not-refined`, `coarse-edge-not-refined`) | keep the separate warning inventory; refine the relevant box in its owning Task before implementation, not all future Tasks now; this is not verified coverage |
+| Blocking/unverifiable `[diagram]` local to this task | back to step 3 |
+| Blocking/unverifiable `[diagram]` attributed to the Workstream | back to the Workstream diagrams, not this task |
 | `[record]` | the task record: either the status or the verification claim is wrong |
 | `pending` | nothing; the task is genuinely unfinished and stays that way |
 | `unverifiable` | resolve the identity (`%% concept:`), declare the anchor (`%% refines:`), bind the edge, or record the decision needed |
-| `depends-on-not-explained-by-diagram` | the Workstream diagram omits an edge or the task cut is wrong; repair in the Workstream, not by editing `Depends On` |
+| `depends-on-not-explained-by-diagram` / `task-consumption-undeclared` | verify structural production/consumption and the prerequisite path; correct the owning contract/DAG with confirmation, never add a fake edge or infer production from permission |
+| Merged structure cycle or unresolved shared identity | repair the actual dependency/authority at its owning layer; splitting views, renaming labels or marking a command as a fact is not a fix |
+| Port mismatch, undeclared endpoint or changed parent obligation | repair the external contract or annotation; a missing internal refinement warning does not waive it |
+| Undeclared workspace reference or unresolved symbol | inspect the emitting Task/function and each used import binding against its exact structure/evidence counterpart; `reads` is context, not import permission, and cannot supply a missing edge |
+| Prose import restriction | manually compare the applicable constraint with the actual imports and record evidence; a mechanical counterpart does not override type-only, public-entry or other textual restrictions |
 | tooling problem, exit code 2 | stop relying on the affected automatic result, then apply the triage below; do not read it as a product or design defect |
 
-Never clear a Workstream-attributed finding inside the task diagram. That hides the defect instead of fixing it.
+Never hide a real Workstream-attributed contradiction inside the task diagram. Unrefined warnings preserve the existing external contract while deferring internal design; they do not waive actual wiring or required behavior checks for the Task being implemented.
 
 ### Triage parser limits and verify the architecture
 

@@ -18,17 +18,21 @@ function fixture(t, files) {
     return repoRoot
 }
 
-function task(id, symbol = "changed") {
+function task(id, symbol = "changed", target = "good.ts") {
     const parsed = parseFlowchart(
         [
             "flowchart LR",
             `%% id: ${id}`,
             `%% artifact: Source role=declaration path=subject.ts${symbol ? ` symbol=${symbol}` : ""} expect=present`,
             "Source[Source]",
+            ...(target
+                ? [`%% artifact: Target role=receiver path=${target} expect=present`, "Source -->|uses| Target[Target]"]
+                : []),
         ],
         { file: `${id}/plan.md`, firstLine: 1 },
     )
     assert.deepEqual(parsed.problems, [])
+    if (target) parsed.diagram.artifacts.get("Target")[0].inspection = "support"
     return {
         id,
         status: "active",
@@ -89,6 +93,23 @@ test("missing or incorrectly qualified diagram functions never become valid defi
     }
 })
 
+test("only missing planned artifacts are deferred; existing wrong symbols remain unverifiable", async (t) => {
+    const missing = fixture(t, {})
+    for (const [status, severity] of [
+        ["planned", "warning"],
+        ["active", "unverifiable"],
+        ["completed", "unverifiable"],
+    ]) {
+        const source = { ...task("TASK-A"), status }
+        const findings = await run(missing, [source])
+        assert.equal(findings.find((entry) => entry.rule === "diagram-symbol-unverifiable")?.severity, severity)
+    }
+    const existing = fixture(t, sources)
+    const source = { ...task("TASK-A", "Missing.run"), status: "planned" }
+    const findings = await run(existing, [source])
+    assert.equal(findings.find((entry) => entry.rule === "diagram-symbol-unverifiable")?.severity, "unverifiable")
+})
+
 test("read interfaces support graph checks without auditing their unrelated implementation dependencies", async (t) => {
     const root = fixture(t, {
         ...sources,
@@ -100,8 +121,7 @@ test("read interfaces support graph checks without auditing their unrelated impl
 test("shared-file graph functions preserve their emitting Task's dependency boundary", async (t) => {
     const root = fixture(t, { ...sources, "subject.ts": sources["subject.ts"].replace("return legacy()", "return good()") })
     const a = task("TASK-A")
-    const b = task("TASK-B", "untouched")
-    b.reads = []
+    const b = task("TASK-B", "untouched", null)
     const found = dependencies(await run(root, [a, b]))
     assert.equal(found.length, 1)
     assert.equal(found[0].task, "TASK-B")
@@ -123,10 +143,10 @@ test("declared directory interfaces do not authorize similarly named neighbourin
         "contracts/good.ts": "export function good() { return 1 }",
         "contracts-old/legacy.ts": "export function legacy() { return 2 }",
     })
-    const source = task("TASK-A")
+    const source = task("TASK-A", "changed", "contracts")
     source.reads = [{ path: "contracts", kind: "module" }]
     assert.deepEqual(dependencies(await run(root, [source])), [])
-    const wholeModule = task("TASK-A", null)
+    const wholeModule = task("TASK-A", null, "contracts")
     wholeModule.reads = source.reads
     const found = dependencies(await run(root, [wholeModule]))
     assert.equal(found.length, 1)
@@ -146,7 +166,7 @@ test("local parameter shadowing does not forge a dependency, while module initia
 })
 
 function evidenceTask(artifacts) {
-    const source = task("TASK-A", null)
+    const source = task("TASK-A", null, null)
     source.diagrams[0].diagram.artifacts.clear()
     const entries = artifacts
         .map(
@@ -175,9 +195,43 @@ test("explicit support bindings validate definitions without promoting their unr
         ...sources,
         "good.ts": 'import { legacy } from "./legacy"; export function good() { return legacy() }',
     })
-    assert.deepEqual(dependencies(await run(root, [source])), [])
+    const found = dependencies(await run(root, [source]))
+    assert.deepEqual(
+        found.map((entry) => entry.file),
+        ["subject.ts"],
+    )
+    assert.match(found[0].message, /good\.ts/)
+    // A support mapping validates the endpoint, but supplies no import edge and does
+    // not promote good.ts's unrelated implementation into an inspection subject.
     source.architectureEvidence.nodes.get("Source").artifacts[1].symbol = "missing"
     assert.ok((await run(root, [source])).some((entry) => entry.rule === "diagram-symbol-unverifiable"))
+})
+
+test("Evidence module mappings allow internal imports but not neighbouring modules", async (t) => {
+    const source = evidenceTask([{ id: "module", path: "module", role: "declaration" }])
+    source.owns = [{ path: "module", kind: "module" }]
+    const internal = {
+        "module/service.ts": 'import { helper } from "./helper"; export function run() { return helper() }',
+        "module/helper.ts": "export function helper() { return 1 }",
+    }
+    const valid = await run(fixture(t, internal), [source])
+    assert.deepEqual(
+        valid.filter((entry) => entry.rule.startsWith("actual-edge-") || entry.rule.includes("symbol-unverifiable")),
+        [],
+    )
+
+    const outside = fixture(t, {
+        ...internal,
+        "module/service.ts":
+            'import { helper } from "./helper"; import { legacy } from "../module-other/legacy"; export function run() { return helper() + legacy() }',
+        "module-other/legacy.ts": "export function legacy() { return 2 }",
+    })
+    const found = dependencies(await run(outside, [source]))
+    assert.equal(found.length, 1)
+    assert.equal(found[0].file, "module/service.ts")
+    assert.equal(found[0].rule, "actual-edge-outbound-boundary")
+    assert.equal(found[0].severity, "blocking")
+    assert.match(found[0].message, /module-other\/legacy\.ts/)
 })
 
 test("module bindings inspect production sources and detect a dependency absent from the graph", async (t) => {
@@ -210,8 +264,7 @@ test("one Task's drawn import edge does not authorize another Task's shared-file
             { file: a.planPath, firstLine: 1 },
         ),
     ]
-    const b = task("TASK-B", "untouched")
-    b.reads = []
+    const b = task("TASK-B", "untouched", null)
     const root = fixture(t, { ...sources, "subject.ts": sources["subject.ts"].replace("return legacy()", "return good()") })
     const found = dependencies(await run(root, [a, b]))
     assert.equal(found.length, 1)

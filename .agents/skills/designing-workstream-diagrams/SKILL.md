@@ -49,8 +49,14 @@ One diagram per question group. Layer tags are mandatory and are the mechanism t
 Rules:
 
 - A layer may hold several diagrams; each diagram answers one question unless it is declared cross-cutting as above. Do not merge two questions merely to save a diagram.
-- Never skip a layer to hide an unresolved decision. If L3 cannot be drawn, the design is not ready.
+- Never skip a layer to hide an unresolved external decision. L3 must settle the handoff contract, not every internal implementation step.
 - Lower layers refine upper layers. Never let a lower layer decide what an upper layer owns.
+
+### Progressive refinement
+
+Architecture settles a box's responsibility, owner, inputs/outputs, dependency direction, lifetime and externally visible failure/release contract. Its algorithms, members, storage layout and internal wiring may stay opaque until the owning Task is designed for implementation. Name that Task in the diagram or layer prose; do not invent detailed nodes merely to make coverage complete.
+
+The verifier lists unrefined boxes and relationships separately as warnings. Missing expansion is not a contradiction or verified implementation. Existing detail may evolve while preserving the external contract; a new writer, reversed dependency, changed public behavior or missing external contract still requires an architecture decision. Before implementing a Task, refine the relevant boxes and validate their real wiring and original acceptance checks, without requiring unrelated future Tasks to be expanded first.
 
 ### Two diagram kinds
 
@@ -99,6 +105,30 @@ flowchart TB
 | `%% ignore: owner=<task> reason=<why>` | skip this diagram; owner and reason are mandatory |
 | `%% note: <text>` | prose for the verifier report; it does not render, so a constraint the reader must see goes in a note node |
 
+### Black-box port inventories
+
+Use ports for stable external inputs, outputs and dependencies, not to freeze internal members. The Mermaid edge remains the topology authority; an `edge-ports` annotation only decorates one existing edge selected by exact endpoints, style and label.
+
+```mermaid
+flowchart LR
+    %% id: boundary-example
+    %% layer: L0
+    %% kind: structure
+    %% answers: which contract the caller requires
+    %% ports: Caller completeness=complete
+    %% ports: Service completeness=complete
+    %% port: Caller.api mode=requires type=ServicePort.v1 required=true
+    %% port: Service.api mode=provides type=ServicePort.v1 required=true
+    %% edge-ports: from=Caller to=Service style=solid label="uses" from_port=api to_port=api
+    Caller[Caller] -->|uses| Service[Service black box]
+```
+
+- Declare `completeness=complete` only when this view settles the whole external inventory of that box. It requires every required port and every incident edge endpoint to be bound. Use `partial` for a selective view; missing or partial inventories remain explicitly not checked, not silently complete.
+- `mode` is `in`, `out`, `requires` or `provides`; connections are `out -> in` or `requires -> provides`. A dependency requires a solid edge. Result/failure facts remain dotted and do not grant an import of the caller.
+- `type` is an opaque exact contract id, including case and version. It is not TypeScript syntax or assignability evidence. Give `required=true|false` explicitly; do not use `any` or `unknown` to manufacture compatibility.
+- Preserve parent port identity, mode, nominal type and required obligations during refinement. A partial child view may select a subset without claiming full coverage; a complete child cannot omit required parent ports or add a port beyond a complete parent boundary.
+- No annotations means legacy compatibility with port checks reported as not checked. Add inventories where they clarify the current architecture; do not annotate all internals just to improve counts. Actual source signatures and wiring still belong to the owning Task's evidence and tests.
+
 ## 3. Node rules
 
 1. A node is a stable architectural concept, not a class, file or path. Class names and paths belong in `%% module:`.
@@ -118,7 +148,7 @@ The two edge styles carry different semantics, and the verifier checks them sepa
 | `-->` solid | intent, command, composition and its effect | no |
 | `-.->` dotted | completion, failure, durability or state fact; or a constraint | yes |
 
-1. **In a structure diagram, solid edges form the dependency graph and must be acyclic.** A cycle in solid edges is a design defect, not a rendering accident. In a flow diagram a loop is a step of the protocol and is accepted only when some solid edge leaves it.
+1. **Structure dependencies must be acyclic both per diagram and across the selected set:** Workstream views, multiple views of one Task, and cross-Task views. Splitting a cycle across diagrams or routing it through a private node does not remove it. `local-only` identities are scoped per diagram, but their edges remain in cycle checks. Flow order and dotted facts do not grant structural dependency or import permission.
 2. **Dotted edges report facts or state constraints; they never grant the lower layer authority to orchestrate the upper layer.** A lower layer may call back into a port the upper layer injected, but it must not import the upper layer's concrete module, hold it as a concrete type, or branch on a callback result to choose the next lifecycle step.
 3. A dotted edge may not carry a command. If the label is an instruction, use a solid edge and fix the direction.
 4. A dotted edge may not carry a pure annotation. Use `%% note:`. An edge that expresses nothing is a false relation.
@@ -140,11 +170,11 @@ Cut tasks from the graph, not from the file tree.
 
 1. One task owns one coherent authority or one coherent stage transition.
 2. The task's `owns` boundaries name the modules and symbols that realize its nodes.
-3. The Workstream plan's Task Graph mirrors the diagram dependencies. `Depends On` requires a nonzero solid Workstream path from an artifact-owned node of A to an artifact-owned node of B; a shared node alone is not reachability.
+3. The Workstream plan's Task Graph mirrors declared production and consumption. `Depends On` requires a nonzero solid path through structure views from an artifact-owned node of A to an artifact-owned node of B; a shared node or flow order is not evidence. A `reads` entry consuming another Task's explicitly mapped, owned declaration/writer/generated artifact must have a prerequisite path to that Task. `owns` alone proves no producer; manually check consumption that has no precise artifact mapping.
 4. If a task needs an edge that no diagram declares, the diagram is wrong. Fix the diagram before the task.
 5. A task diagram lives in the task's `plan.md` under `## Architecture Design`; that is the only place the verifier reads task diagrams from.
-6. Put the single machine source under `## Architecture Evidence` as one YAML block with `architecture_evidence.schema_version: 2`. Give every node artifact a stable `id`, role, path, optional symbol and expectation. Edge endpoints are `{node, artifact}` references: `emit` must bind the edge source to an `emitter`, `receive` the target to a `receiver`, and optional contract/assembly endpoints to `declaration`/`assembly` artifacts. Endpoint-local paths or symbols are forbidden. Tables may render this data but must not become a second fact source; schema v1 is migration-only and cannot establish completed conformance.
-7. `owns` grants write permission only. Declare artifact expectation and writer authority in artifact/evidence records; never infer them from `owns` or imports.
+6. During Task-local refinement before implementation, put the single machine source under `## Architecture Evidence` as one YAML block with `architecture_evidence.schema_version: 2`. Give every node artifact a stable `id`, role, path, optional symbol and expectation. Edge endpoints are `{node, artifact}` references: `emit` must bind the edge source to an `emitter`, `receive` the target to a `receiver`, and optional contract/assembly endpoints to `declaration`/`assembly` artifacts. Endpoint-local paths or symbols are forbidden. Tables may render this data but must not become a second fact source; schema v1 is migration-only and cannot establish completed conformance.
+7. `owns` grants write permission only; `reads` lists read-only references, never import permission. Declare artifact expectation, writer authority and structural dependencies in the existing diagram/evidence records, not a second allowlist. Prose restrictions remain manual review obligations under `verify-architecture-diagrams`; do not encode them by removing necessary reading references.
 
 ## 7. Flow
 
@@ -172,7 +202,7 @@ Cut tasks from the graph, not from the file tree.
 
 **5 Contracts and acceptance.** Write acceptance criteria that a verifier can check: ownership, direction, lifecycle, failure path. Do not use "the diagram is reviewed" as an acceptance criterion.
 
-**6 Verify the set.** Load `verify-architecture-diagrams` and run it. Fix findings whose attribution is local; return to the owning layer for findings whose attribution is overall.
+**6 Verify the set.** Load `verify-architecture-diagrams` and run it. Resolve actual contradictions at their owning layer. Keep the separate warning inventory of unrefined boxes/relationships for their owning Tasks; do not expand all internals merely to remove warnings, and do not report warnings as verified coverage.
 
 **7 Independent review and confirmation.** Architecture changes require an independent review and explicit user confirmation before implementation. A pure clarification with identical semantics may proceed.
 
@@ -206,3 +236,4 @@ A spec written before this skill has diagrams without annotations, and the verif
 | a lower diagram with no `%% refines:` | its anchor is guessed, and its findings cannot block |
 | `not yet verified` without an owning task | an orphan that never converges |
 | diagrams that skip L3 to look finished | the handoff risk is hidden, not removed |
+| expanding every box to clear coverage warnings during architecture design | implementation choices are frozen before the owning Task has evidence |

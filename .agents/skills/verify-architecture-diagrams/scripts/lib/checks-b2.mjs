@@ -4,6 +4,7 @@
 import { normalizeArchitectureIdentity } from "./architecture-identity.mjs"
 import { resolveNode } from "./checks-interlevel.mjs"
 import { effectiveKind } from "./checks-intra.mjs"
+import { checkPortRefinement } from "./port-refinement.mjs"
 
 const VOCABULARY_LAYERS = new Set(["L0", "L1"])
 const normalize = normalizeArchitectureIdentity
@@ -41,7 +42,30 @@ export function pickWorkstreamReference(taskDiagram, wsDiagrams) {
     return best && best.overlap > 0 ? { diagram: best.diagram, declared: false } : null
 }
 
-function checkTaskAgainstReference({ taskId, taskDiagram, labelVocabulary, specText, reference, allowedLocalNodes = new Set() }) {
+function hasSiblingEdge(edge, taskDiagram, references, current) {
+    return references.some((reference) => {
+        if (reference === current) return false
+        const from = resolveNode(taskDiagram.nodes.get(edge.from), reference.diagram, taskDiagram).node
+        const to = resolveNode(taskDiagram.nodes.get(edge.to), reference.diagram, taskDiagram).node
+        return (
+            from &&
+            to &&
+            reference.diagram.edges.some(
+                (candidate) => candidate.from === from.id && candidate.to === to.id && candidate.style === edge.style,
+            )
+        )
+    })
+}
+
+function checkTaskAgainstReference({
+    taskId,
+    taskDiagram,
+    labelVocabulary,
+    specText,
+    reference,
+    references = [],
+    allowedLocalNodes = new Set(),
+}) {
     const findings = []
 
     if (!reference) {
@@ -115,6 +139,7 @@ function checkTaskAgainstReference({ taskId, taskDiagram, labelVocabulary, specT
                           (candidate) => candidate.from === to && candidate.to === from && candidate.style === "solid",
                       )
                     : null
+            if (!reverse && hasSiblingEdge(edge, taskDiagram, references, reference)) continue
             findings.push(
                 finding(
                     edge.style === "solid" ? "blocking" : "not-checked",
@@ -141,6 +166,19 @@ function checkTaskAgainstReference({ taskId, taskDiagram, labelVocabulary, specT
                     edge,
                     "task-edge-style-downgraded",
                     `task draws a fact edge where the Workstream declares a command edge`,
+                    taskId,
+                ),
+            )
+        }
+        if (wsEdge.style === "dotted" && edge.style === "solid") {
+            findings.push(
+                finding(
+                    "blocking",
+                    "diagram",
+                    taskDiagram,
+                    edge,
+                    "task-fact-upgraded-to-command",
+                    `task draws a command edge where the Workstream declares a fact edge`,
                     taskId,
                 ),
             )
@@ -211,7 +249,7 @@ function checkTaskAgainstReference({ taskId, taskDiagram, labelVocabulary, specT
 }
 
 export function checkTaskAgainstWorkstream({ taskId, taskDiagram, wsDiagrams, labelVocabulary, specText }) {
-    if ((taskDiagram.refines ?? []).length <= 1) {
+    if ((taskDiagram.refines ?? []).length === 0) {
         return checkTaskAgainstReference({
             taskId,
             taskDiagram,
@@ -242,6 +280,9 @@ export function checkTaskAgainstWorkstream({ taskId, taskDiagram, wsDiagrams, la
         references.push({ diagram, declared: true })
     }
     for (const reference of references) {
+        findings.push(
+            ...checkPortRefinement(reference.diagram, taskDiagram).map((entry) => ({ ...entry, stage: "4", task: taskId })),
+        )
         const allowedLocalNodes = new Set()
         for (const node of taskDiagram.nodes.values()) {
             if (resolveNode(node, reference.diagram, taskDiagram).node) continue
@@ -256,6 +297,7 @@ export function checkTaskAgainstWorkstream({ taskId, taskDiagram, wsDiagrams, la
                 labelVocabulary,
                 specText,
                 reference,
+                references,
                 allowedLocalNodes,
             }),
         )

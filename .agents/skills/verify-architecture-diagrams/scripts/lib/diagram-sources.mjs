@@ -13,9 +13,9 @@ const canonical = (value) =>
 const excludedDirectories = new Set([".git", "node_modules", "__tests__", "__fixtures__", "dist", "build", "out", "tmp"])
 const testFile = /\.(?:test|spec)\.[cm]?[jt]sx?$/
 
-function definitionFinding(record, message) {
+function definitionFinding(record, message, missing) {
     return {
-        severity: "unverifiable",
+        severity: record.status === "planned" && missing ? "warning" : "unverifiable",
         attribution: "record",
         stage: "7",
         rule: "diagram-symbol-unverifiable",
@@ -60,7 +60,7 @@ export function expandDiagramSources(records, repoRoot) {
     return expanded
 }
 
-export function bindDiagramSources(records, snapshot) {
+export function bindDiagramSources(records, snapshot, presentArtifacts = null) {
     const findings = []
     const subjects = []
     const taskBoundPaths = new Set(records.filter((record) => record.task).map((record) => canonical(record.artifact.path)))
@@ -81,6 +81,7 @@ export function bindDiagramSources(records, snapshot) {
                     definitionFinding(
                         record,
                         `diagram binding ${artifact.path}#${artifact.symbol} cannot be located: ${selected.reason}`,
+                        presentArtifacts !== null && !presentArtifacts.has(canonical(artifact.path)),
                     ),
                 )
                 continue

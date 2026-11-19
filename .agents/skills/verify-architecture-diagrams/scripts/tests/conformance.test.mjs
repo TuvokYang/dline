@@ -92,6 +92,24 @@ flowchart LR
     assert.equal(canonicalNodeKey(coarse, "First"), canonicalNodeKey(coarse, "Second"))
 })
 
+test("explicit concepts cannot fall back to a conflicting id or label", () => {
+    const fine = diagram("flowchart LR\n%% concept: Shared = RequiredAuthority\nShared[Same label]")
+    for (const annotation of ["", "%% concept: Shared = DifferentAuthority\n"]) {
+        const coarse = diagram(`flowchart LR\n${annotation}Shared[Same label]`)
+        assert.equal(resolveArchitectureNode(fine.nodes.get("Shared"), coarse, fine).node, null)
+    }
+    // A concept may explicitly name a parent id, even under a broader concept.
+    const explicitId = diagram("flowchart LR\n%% concept: RequiredAuthority = Authority\nRequiredAuthority[RequiredAuthority]")
+    assert.equal(resolveArchitectureNode(fine.nodes.get("Shared"), explicitId, fine).node?.id, "RequiredAuthority")
+    for (const coarse of [
+        diagram("flowchart LR\n%% concept: Renamed = RequiredAuthority\nRenamed[Other label]"),
+        diagram("flowchart LR\nRequiredAuthority[Other label]"),
+        diagram("flowchart LR\nRenamed[RequiredAuthority]"),
+    ]) {
+        assert.equal(resolveArchitectureNode(fine.nodes.get("Shared"), coarse, fine).strategy, "concept")
+    }
+})
+
 test("collects repeatable artifact annotations and keeps invalid node, role and expectation as actionable findings", () => {
     const parsed = parseFlowchart(
         [

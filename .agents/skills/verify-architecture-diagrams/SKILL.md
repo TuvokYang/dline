@@ -5,7 +5,7 @@ description: Verify a Workstream or task diagram set top-down for acyclic depend
 
 # Verify Architecture Diagrams
 
-Run the verifier, read its five report sections, and act on the finding that owns the defect. Do not repair a lower layer to make an upper-layer finding disappear.
+Run the verifier, read its report sections, and act on the finding that owns the defect. Do not repair a lower layer to make an upper-layer finding disappear. Architecture may retain black boxes: missing internal refinement is a warning for the owning Task, not a reason to invent implementation detail now.
 
 Companion skill: `designing-workstream-diagrams` owns how a diagram set is authored. This skill only decides whether an existing set holds.
 
@@ -23,8 +23,8 @@ node .agents/skills/verify-architecture-diagrams/scripts/verify-diagrams.mjs \
 | Option | Meaning |
 | --- | --- |
 | omitted / `--scope all` | Workstream, every current Task in sorted order, cross-task, then code conformance; one deduplicated report |
-| `--scope workstream` | Workstream spec diagrams: parsing, cycles, intra-diagram structure, inter-level refinement |
-| `--scope task:<ID>` | one task: its own diagrams, its Workstream mapping, then its recorded implementation gate |
+| `--scope workstream` | Workstream parsing, individual and merged structure cycles, port contracts, intra-diagram checks and inter-level refinement |
+| `--scope task:<ID>` | one Task's individual and merged structure views, ports, Workstream mapping and recorded implementation gate |
 | `--scope cross-task` | the plan's `Depends On` against Workstream reachability, then horizontal comparison across every task diagram |
 | `--json` | schema-versioned machine report with coverage, self-test evidence, metrics and findings; exit code is unchanged |
 | `--no-self-test` | skip the vendored Tree-sitter mutation self-test; coverage becomes incomplete and the run cannot be `conformant` |
@@ -90,6 +90,7 @@ Two graphs are built from one diagram, and which one must be acyclic depends on 
 - Dotted edges are never part of cycle detection. A request/response pair is `A --> B` plus `B -.-> A`; that is the control model, not a defect.
 - A genuinely required structure cycle must be declared as `%% cycle: allowed nodes=A|B owner=<task> reason="<why>"`. The sorted node set must exactly equal one detected SCC; one declaration never exempts another SCC. Missing fields, duplicate node sets and unmatched declarations are blocking.
 - Note nodes are excluded from both graphs.
+- The same structural DAG check also runs over the selected Workstream set, all diagrams of one Task, and the cross-Task set. Shared identities follow explicit parent mappings, so display-label changes cannot split a known boundary. Private nodes keep diagram-local identity but remain on dependency paths; a private bridge cannot hide a public cycle. Flow views and dotted facts contribute no dependency edges.
 
 ## 5. Stage 2: intra-diagram structure
 
@@ -113,6 +114,14 @@ Three decisions are deliberate:
 2. **The sentence binds ownership and control composition, which only L0 and L1 structure diagrams express.** A hot-path, failure or delivery diagram describes behaviour and is not held to it.
 3. **Lifetime containment is not declared by the spec.** Two subgraphs in one diagram may legitimately nest. Crossing them is therefore a review item rather than a defect.
 
+### Optional external port checks
+
+The authoring syntax is in `designing-workstream-diagrams` under Black-box port inventories. The parser accepts `%% ports: Node completeness=complete|partial`, `%% port: Node.name mode=in|out|requires|provides type=ExactId required=true|false`, and `%% edge-ports: from=Node to=Other style=solid|dotted label="exact existing label" from_port=name to_port=name`. All fields are explicit; malformed, duplicate or unknown fields are not silently ignored.
+
+Check port annotations in every selected Workstream/Task diagram, without waiting for Stage 6 or code existence. The edge selector must resolve to exactly one already drawn edge, never create topology. Validate both endpoints, `out -> in` or solid `requires -> provides`, and exact nominal type equality. For complete inventories, every required port must have a valid connection and every incident edge endpoint must be bound. Partial inventories validate declared items but cannot prove missing-port completeness. Missing annotations, selective inventories and absent code-type/runtime proof are separately `not-checked`.
+
+Explicit parent/child port views preserve mode, nominal type and required obligations. A complete parent rejects new public ports; a complete child must include required parent ports, including when its own inventory is empty. These are blocking contract contradictions, not unrefined-box warnings. Nominal equality proves no code assignability, execution or actual connection. Do not create a parallel connection registry or a type inference engine to avoid this limitation.
+
 ## 6. Stage 3: B1 inter-level refinement
 
 A finer layer may refine a coarser one. It may not invent authority, scope, direction or style.
@@ -129,10 +138,12 @@ Pairing comes from `%% refines:`. When a diagram declares none, the verifier pai
 | Coarse solid command drawn as a fine fact edge | blocking |
 | Coarse fact edge drawn as a fine command edge | blocking |
 | Fine subgraph introduces a lifetime absent from the coarse layer | unverifiable |
-| Coarse node never appears in any declared descendant refinement | not checked; sibling selective views are evaluated collectively, inferred pairs do not prove coverage |
-| Coarse edge has no nonzero same-style path in any declared descendant refinement | unverifiable; placing the endpoints in disconnected selective views does not prove the relationship |
+| Coarse node never appears in any declared descendant refinement | warning; an unrefined black box, listed for its owning Task |
+| Coarse edge has no nonzero same-style path in any declared descendant refinement | warning; an unexpanded relationship, not a proven path or a contradiction |
 | Additional fine fact has no coarse fact counterpart | not checked; reverse direction and a fact/constraint label do not prove a missing coarse contract |
 | A layer is skipped | unverifiable |
+
+Coverage is checked once across the selected set, not demanded again from each selective pair. `--scope all` includes explicitly anchored Task diagrams that pass their structure and Workstream checks as possible descendant witnesses; `--scope workstream` cannot borrow Task diagrams. Sibling views collectively cover nodes, but disconnected endpoints never prove an edge: a nonzero same-style path must exist in one valid descendant. Its absence is kept in the warning inventory for later Task-local refinement, not promoted to coverage or used to block architecture completion. This does not infer that every leaf needs another diagram. For multiple declared parents, a Task edge may be stated by one parent without repetition in every parent; a reverse direction, conflicting edge style, undeclared authority or invalid identity remains a defect.
 
 ## 7. Stage 4: B2 task diagram against the Workstream
 
@@ -152,13 +163,13 @@ A task diagram that shares no node with any Workstream diagram is unverifiable: 
 
 ## 8. Stage 5: B3 Depends On and task against task
 
-The plan's Task Graph is checked first: when B depends on A, a solid path through the merged Workstream diagrams must lead from a node A draws to a node B draws (identity: concept, then normalized label, then id). A dependency the diagrams cannot explain is `unverifiable` (`depends-on-not-explained-by-diagram`); a dependency involving a task with no anchored diagram is counted once as not checked; a cross-Workstream dependency (`WS-xxx/TASK-yyy`) is not judged locally.
+The plan's Task Graph is checked first: when B depends on A, a nonzero solid path through merged Workstream structure views must lead from A's explicitly mapped, owned artifact node to B's. Identity follows concept, exact id, then normalized label through the declared parents. A dependency the diagrams cannot explain is `unverifiable` (`depends-on-not-explained-by-diagram`); an unanchored side is not checked. Conversely, a `reads` entry consuming another Task's explicitly mapped and owned declaration/writer/generated artifact requires a prerequisite path (`task-consumption-undeclared`, blocking). Write permission alone does not establish a producer, and prose `produces` descriptions are not parsed as proof. Cross-Workstream dependencies are not resolved by scanning sibling Workstreams; consumption without exact local artifact evidence still needs manual review.
 
 | Rule | Severity |
 | --- | --- |
 | Two tasks draw the same edge in opposite directions | blocking |
-| Two tasks both commit to the same node | blocking, split authority |
-| Merging the task graphs forms a solid cycle | blocking, the task cut is wrong |
+| Multiple nodes of one diagram resolve to the same shared authority | blocking, ambiguous identity |
+| Merging structure views of one or several Tasks forms a solid cycle | blocking, even through diagram-local intermediate nodes |
 | The same node is drawn with different shapes | unverifiable |
 | A task participates while its own gate is postponed | pending |
 
@@ -200,7 +211,7 @@ A stale `status.yml` projection is **not** a defect. `progress.md` is authoritat
 
 The verification unit is the architectural relationships inside the declared Workstream boundary, not every source edit. It includes responsibility and state ownership, dependency direction, interfaces and injection, data and control flow, lifetimes, actual calls and their order, and relationships missing from the diagram. These are not a closed checklist: check both the drawn claims and the actual architecture within the boundary.
 
-Workstream and Task module/function/interface mappings define the inspection subjects. Exact function symbols select their actual source definitions; a module binding selects its declared module. Missing, incorrectly qualified or ambiguous symbols remain unverifiable. Actual dependencies originating inside a bound subject are compared with diagram/interface contracts, so a relationship need not have been drawn to be detected. Shared-file references retain the emitting Task identity and cannot inherit another Task's read contract.
+Workstream and Task module/function/interface mappings define the inspection subjects. Exact function symbols select their actual source definitions; a module binding selects its declared module. A planned Task whose artifact file does not yet exist receives an unfinished-expectation warning. Incorrect or ambiguous symbols in existing files, and missing symbols for active/completed Tasks, remain unverifiable. Actual dependencies originating inside a bound subject are compared with diagram/evidence contracts, so a relationship need not have been drawn to be detected. Shared-file references retain the emitting Task identity and cannot inherit another Task's declared dependency.
 
 Architecture Evidence artifacts default to `inspection: subject`. An explicit `inspection: support` keeps endpoint existence, exact definitions, edge identity, wiring, direction and writer checks, but does not turn an existing integration container into an audit emitter for unrelated implementation dependencies. Unknown inspection modes are invalid. A subject directory expands to its production source files; tests/fixtures and build/dependency directories are excluded unless mapped as explicit files. A support directory does not imply recursive source inspection; proof endpoints must name their concrete source file.
 
@@ -210,9 +221,11 @@ From bound sources and explicit supporting interfaces, the Skill builds a bounde
 
 Architecture Evidence is the sole Task-local diagram-to-code fact source. Every node and relationship in the selected Task diagram, including dotted result/data flows, must have a mapping; checking an evidence subset does not cover the rest of the graph. Schema v2 gives every node artifact a Workstream-stable `id`; each edge endpoint is `{node, artifact}` and must resolve to the edge's source/target node and the required role (`emitter`, `receiver`, `declaration` contract or `assembly`). Endpoint-local paths or symbols are rejected so an unrelated file cannot prove an edge. Schema v1 remains readable only for migration and cannot establish completed conformance. Evidence validates exact diagram edge identity and supports `direct_import`, `injected_port`, `composition`, `event`, `callback` and canonical Proto `rpc` proofs. `owns` is write permission, not artifact existence or writer authority.
 
-Completed expectation, direct-runtime contradiction, prohibited runtime SCC, conflicting completed writer claims and computable completed boundary overlaps block. Unfinished expectations warn. A `direct_import` can prove its structural import relation, never a runtime delivery claim. Composition imports alone cannot prove construction or connected instance identity. Missing direct imports do not contradict contextual or injected bindings; unsupported composition, injected-port, event, callback and RPC delivery remains `unverifiable`. Actual code edges absent from the current WS contract warn; type-only and external-package facts never become runtime writer/cycle blockers.
+Completed expectation, conflicting completed writer claims and computable completed boundary overlaps block; unfinished expectations warn. Actual undeclared workspace references, direct-runtime reversal and runtime SCCs block for active/blocked/completed Tasks, while planned expectations warn. An unmapped workspace target is not an exemption. Type-only references still require a declared counterpart but are excluded from runtime SCCs; external packages/builtins are reported as outside this conformance scope. A `direct_import` proves only a structural dependency in its exact emitting region and receive declaration identity, never delivery. Composition imports alone do not prove construction or instance identity. Missing direct imports do not contradict contextual/injected bindings; unsupported wiring stays `unverifiable`.
 
-Diagram dependency counterparts and Task `reads` contracts are matched to the actual emitting Task, not merged into a Workstream-global permission set. Internal dependencies within one explicitly mapped module/node do not require invented cross-node arrows; they remain subject to cycle checks. File or directory paths cover only their exact path or descendants at a path-segment boundary; `contracts` does not cover `contracts-old`. This records a declared read dependency, not execution, injection or write authority. A shared-file Task cannot inherit another Task's counterpart/read contract merely because their importer path is the same. A `direct_import` with an exact emitting symbol checks uses inside that definition, not imports borrowed from sibling functions; it still proves only a structural dependency, not a method call or delivery.
+Automatic import permission comes only from this Task's structural dependency or explicit Architecture Evidence counterpart, matched by emitting region and every used imported binding. Only solid structure edges declare diagram dependencies; flow order and dotted facts do not authorize imports. A mapped module covers descendants at path-segment boundaries; a symbol counterpart requires the exact resolved declaration, preserving aliases and qualified names rather than comparing member suffixes. One public symbol cannot authorize a secret on the same import line or borrow another function's edge. Unresolved provenance is unverifiable, not whole-file permission. Internal dependencies inside an explicitly mapped module need no invented cross-node arrows but still undergo cycle checks. Task `reads` entries remain read-only references for supporting analysis and declared artifact-consumption checks; neither string nor structured reads grant import permission, widen a counterpart or turn a missing dependency into an unresolved read contract. Do not delete necessary semantic references or invent another permission list to clear a diagnostic.
+
+Prose restrictions are checked manually, not parsed as automatic allow/deny policy. Read the applicable spec and Task constraints, inspect the actual emitting symbols and imported declarations, and record the evidence and conclusion separately from the machine result. For example, a declared dependency may still be restricted to type-only imports or public entry points by prose; a mechanical counterpart does not waive that restriction. An unperformed manual check remains unverified, and an actual violation still needs correction. This does not require expanding deferred box internals before their owning Task begins.
 
 Canonical RPC prerequisites require a unique service and method, the exact service declaration file, and request/response message identities resolved through Proto namespace and import visibility. An unimported same-name type, ambiguous declaration or enum cannot satisfy a message identity. These facts are necessary prerequisites, never endpoint delivery evidence.
 
@@ -223,27 +236,29 @@ Identity is shared by every stage: concept, exact id, then NFKC/lowercase Unicod
 ## 11. Node identity
 
 ```
-1. declared concept match (%% concept: on the fine node, against the coarse node's concept, id or label)
-2. exact id match
-3. normalized label match (whitespace, case and punctuation removed)
+1. declared concept match (against the coarse node's concept, id or label); no match remains unresolved
+2. when the fine node has no concept, exact id match
+3. when the fine node has no concept, normalized label match (whitespace, case and punctuation removed)
 4. otherwise unresolved -> unverifiable
 ```
 
-Level 1 lets one concept carry different ids and label suffixes across diagrams without being read as several authorities. Level 3 keeps a renamed node from being read as a newly invented authority. Level 4 refuses to guess.
+Level 1 lets one concept carry different ids and label suffixes across diagrams without being read as several authorities. Level 3 keeps a renamed node from being read as a newly invented authority. Level 4 refuses to guess. Merged dependencies and explicit writer claims use this same parent-bound resolver. One explicit multi-parent node may join differently labelled views of the same boundary, but cannot merge parents that declare different authorities; ambiguity stays unverifiable.
 
 ## 12. Report sections
 
 ```
 Tooling problem   tool defect; design verdict withheld; exit code 2
 Blocking          [diagram], [record] or [code] contradiction
-Warning           incomplete or diagram-undeclared implementation; exit remains 0
+Warning           unrefined boxes/relationships or incomplete implementation; exit remains 0
 Pending           postponed work with its reason
 Unverifiable      an undecidable relation; still blocks
 Not checked       skipped checks, exemptions, accepted descriptive labels
 Not applicable    exact opt-in marker is absent
 ```
 
-Rule of thumb when reading: a finding is repaired at the layer that owns it. A `[diagram]` finding in stage 3 or 4 is repaired in the coarser diagram, not in the task.
+Text reports list `Unrefined boxes and relationships` separately inside Warning, retaining each node/edge's source location. JSON keeps the same warning findings, identified by `coarse-node-not-refined` and `coarse-edge-not-refined`; no finding is dropped or counted twice. The owning Task refines its internal design and verifies actual wiring before implementation/completion as applicable. Do not weaken code-conformance evidence or genuine cross-box contract checks because architecture detail was deferred.
+
+Rule of thumb when reading: an actual defect is repaired at the layer that owns it. A `[diagram]` contradiction in stage 3 or 4 is resolved at the owning boundary; an unrefined warning is deferred to the owning Task rather than forcing more overall diagrams.
 
 Verdicts are `conformant | incomplete | not_applicable | failed | tooling_error`. `conformant` additionally requires delivery coverage: `--scope all`, every required scope executed, and the default Skill-local self-test passed. Focused scopes and `--no-self-test` are diagnostic only. Warning, pending and not-checked produce `incomplete` but do not change the 0/1/2 exit code.
 
