@@ -75,21 +75,21 @@ The local public-holiday calendar currently covers China in 2025 and 2026. Sourc
 |---|---|
 | DeepSeek | Fixed time-of-day strategy; explicit default/window rates are editable. Published window geometry is fixed. The real settings footer renders the same effective pricing and proportional configuration bar. A legacy flat override is preserved until an explicit Reset, not converted with a guessed discount. |
 | OpenAI / Anthropic | The custom-base-URL **switch** enables pricing modes and structure editing, even before a URL is entered. It is independent of custom model ID. Flat pricing exposes Add Pricing Tier; it becomes a valid banded declaration. |
-| Other `ModelInfoView` consumers | Read-only pricing summary; this component does not grant those Providers a new editing surface. |
+| Other `ModelInfoView` consumers | Display a pricing summary through `PricingEditor` in read-only mode. |
 
-Turning custom URL off retains the existing URL-clearing behavior but does not delete pricing. The enabled-but-empty switch is editor-local and is not a new persistent setting. Profile/model keys isolate local pricing drafts.
+Turning custom URL off clears the URL and preserves pricing. When the URL is empty, the switch's enabled state is stored locally in the editor. Profile/model keys isolate local pricing drafts.
 
-The horizontal time bar is configuration geometry: a window's width is its minute duration out of 1440, with the default behind gaps. Labels state seller time, applicable days and configured holiday conditions. It is **not** today's resolved calendar, current rate, next boundary or countdown. The frontend does not implement those billing decisions.
+The editor's horizontal time bar renders the configuration: a window's width is its minute duration out of 1440, gaps show the default rate, and labels state seller time, applicable days and holiday conditions. DeepSeek's read-only summary uses `DailyPricing` to show the day's periods according to the seller date and applicable-day rules. It refreshes at the next day boundary, when the window regains focus, or when it becomes visible again.
 
 ## Saving and failure paths
 
 Edits publish complete pricing declarations. Latest-draft references keep adjacent debounced fields from replacing each other; stale echoes cannot roll the draft back. Flush pending inputs before structural changes and Reset so a late field cannot modify a different row or recreate a removed override. Flush failure retains the structure and reports an alert.
 
-The existing Profile save path validates new or changed explicit pricing before mutation. Reset/absence is allowed. An unchanged malformed legacy declaration does not block an unrelated rename; editing that declaration requires a valid replacement. No new migration or persistence authority is introduced. See [Storage Ownership](/developer-guide/storage/) for repository consistency.
+The Profile save path validates new or changed explicit pricing before mutation. Reset/absence is allowed. An unchanged malformed legacy declaration does not block an unrelated rename; editing that declaration requires a valid replacement. See [Storage Ownership](/developer-guide/storage/) for repository consistency.
 
-Provider adapters call the base method where their existing standard response usage is available. Messages responses combine their input and final output before calculation; a `pause_turn` continuation uses its own send time and response usage. Internal retries and transport fallbacks also pass the time of the actual send, not the outer `createMessage` entry time. This does not change token collection or snapshot/delta semantics.
+Provider adapters call the base method where standard response usage is available. Messages responses combine their input and final output before calculation; a `pause_turn` continuation uses its own send time and response usage. Internal retries and transport fallbacks also use the time of each actual send.
 
-A valid Provider-reported amount, including zero, takes precedence over local calculation. Carry its supplied or protocol-defined currency with it; do not label an unknown currency using Profile defaults. Existing consumers receive resolved money and currency without selecting prices or recalculating accumulated tokens. Amounts retain the existing accumulation rules and currency follows the latest amount; no exchange or multi-currency settlement layer is introduced.
+A valid Provider-reported amount, including zero, takes precedence over local calculation. Carry its supplied or protocol-defined currency with it; do not label an unknown currency using Profile defaults. Consumers receive resolved amounts and currencies without selecting prices again or recalculating accumulated tokens. Within one request, a snapshot amount replaces the current amount, a delta amount is added, and the currency comes from the same usage chunk's `currency` field. Aggregation across rounds omits the aggregate currency field when it encounters mixed currencies.
 
 ## Verification entry points
 

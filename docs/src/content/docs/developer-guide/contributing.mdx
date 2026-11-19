@@ -87,8 +87,6 @@ What's New is separately curated for every real version bump: a bare `## X.Y.Z` 
 
 Preparation spans multiple files, not one atomic transaction. On an interrupted or inconsistent update, retain the complete history files, report the mismatch and stop packaging until repaired. Do not restore old notes under a new version or assume that `finally` cleanup can recover a power interruption.
 
-`CHANGELOG.md` and `docs/changelog/CHANGELOG_en.md` are the current bodies themselves; no generated index, compatibility entry page or source footer is built around them.
-
 ## Changing the documentation
 
 This site is a separate Astro Starlight project under `docs/` and requires Node.js `>=22.12.0`:

@@ -74,9 +74,9 @@ type ToolDomainSurface = UserFacingSurface | DeniedSurface
 
 目前生产环境唯一的执行域装配使用 `UserFacingSurface`；子智能体通过自己的 runner 执行已接纳的处理器。`DeniedSurface` 装配目前在单元测试中验证。
 
-## 与整体运行时收敛的关系
+## 运行时接入
 
-这个执行域是目标架构中一个执行器的提前实现，不是它的替代品。这里交付的是工具执行域和 `tool.*` 命令与事件词汇，以及仅限本执行域的资源归属和停止回执。统一内核、替代当前运行时分发的事件循环，以及服务商、对话、组合、后台和协作任务等执行器，仍属于更大范围的运行时收敛工作。
+`ToolCommandExecutor` 将内核的 `tool.run` 命令交给 `ToolExecutionDomain`，并把执行结果转换为 `tool.completed`、`tool.failed` 或 `tool.cancelled` 事件提交给任务运行时。停止时先阻止新工作并取消活动操作，再等待执行域和结果反馈排空。
 
 ## 测试
 
