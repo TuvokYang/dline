@@ -62,6 +62,84 @@ const writeTool = (ts: number, tool: string): UiMessage => ({
 })
 
 describe("summarizeActivityFold", () => {
+    const compactionCard = (ts: number, status?: "completed" | "running" | "failed"): UiMessage => ({
+        ts,
+        type: "say",
+        say: "tool",
+        text: JSON.stringify({
+            tool: "summarizeTask",
+            content: "Retained context",
+            compactionStatus: status,
+            compactionOperationId: `compaction-${ts}`,
+        }),
+    })
+
+    it.each([
+        "round",
+        "message_segment",
+        "user_turn",
+    ] as const)("counts completed and legacy compaction cards separately from other work in %s mode", (level) => {
+        const messages = [
+            userTask(1, "Continue after compaction"),
+            restorePoint(10, "files-1"),
+            finishedRequest(11),
+            compactionCard(12, "completed"),
+            compactionCard(13),
+            finishedRequest(14),
+            completion(15, "Done."),
+        ]
+        const folds = groupChatRows(messages, undefined, { level }).filter(isActivityFold)
+        const summaries = folds.map((fold) => summarizeActivityFold(fold, new Map()))
+        expect(summaries.flatMap((summary) => Array.from(summary.work))).toEqual([["compaction", 2]])
+        const summary = summaries.find((value) => value.work.size > 0)
+        expect(summary).toBeDefined()
+        if (!summary) throw new Error("expected a compaction summary")
+        expect(describeActivityFoldParts(summary)).toContainEqual({
+            kind: "work.compaction",
+            text: "2 context compactions",
+            isFailure: false,
+        })
+        expect(describeActivityFoldParts(summary, (key, ...args) => translateUi("zh-CN", key, ...args))).toContainEqual({
+            kind: "work.compaction",
+            text: "2 次上下文压缩",
+            isFailure: false,
+        })
+    })
+
+    it("keeps compaction, file reads and genuine other operations in independent categories", () => {
+        const summary = summaryOf([
+            userTask(1, "Read and continue"),
+            restorePoint(10, "files-1"),
+            finishedRequest(11),
+            writeTool(12, "readFile"),
+            compactionCard(13, "completed"),
+            writeTool(14, "genericTool"),
+            finishedRequest(15),
+            completion(16, "Done."),
+        ])
+        expect(Array.from(summary.work)).toEqual([
+            ["read", 1],
+            ["compaction", 1],
+            ["other", 1],
+        ])
+        expect(summary.tools.get("summarizeTask")).toBe(1)
+    })
+
+    it.each(["running", "failed"] as const)("keeps a %s compaction visible rather than counting folded work", (status) => {
+        const messages = [
+            userTask(1, "Continue"),
+            restorePoint(10, "files-1"),
+            finishedRequest(11),
+            compactionCard(12, status),
+            finishedRequest(13),
+            completion(14, "Done."),
+        ]
+        const rows = groupChatRows(messages, undefined, { level: "user_turn" })
+        expect(rows.some((row) => !Array.isArray(row) && row.ts === 12)).toBe(true)
+        const summaries = rows.filter(isActivityFold).map((fold) => summarizeActivityFold(fold, new Map()))
+        expect(summaries.flatMap((summary) => Array.from(summary.work))).toEqual([])
+    })
+
     it("counts a whole turn including prose, using actual requests rather than nested wrappers", () => {
         const summary = summaryOf(finishedTurnTranscript)
         expect(summary).toMatchObject({ rounds: 4, thoughts: 2, checkpoints: 4, assistantMessages: 1 })
@@ -366,7 +444,8 @@ describe("summarizeActivityFold", () => {
                 ["subagent", 4],
                 ["web", 5],
                 ["browser", 6],
-                ["other", 7],
+                ["compaction", 7],
+                ["other", 8],
             ]),
             external: new Map([
                 ["read", 1],
@@ -394,6 +473,7 @@ describe("summarizeActivityFold", () => {
             "work.subagent",
             "work.web",
             "work.browser",
+            "work.compaction",
             "work.other",
             "thoughts",
             "checkpoints",

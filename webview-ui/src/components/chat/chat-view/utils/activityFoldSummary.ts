@@ -17,7 +17,7 @@ const englishUi: UiTranslator = (key, ...args) => translateUi("en", key, ...args
  * workspace file. Reaching outside the workspace is not a kind either; it
  * qualifies only the file and command kinds.
  */
-export type FoldWorkKind = "read" | "write" | "command" | "subagent" | "web" | "browser" | "other"
+export type FoldWorkKind = "read" | "write" | "command" | "subagent" | "web" | "browser" | "compaction" | "other"
 
 /**
  * Facts a fold header states about its members.
@@ -93,17 +93,6 @@ const EXTERNAL_COMMAND_TOOLS = new Set(["codeExecution"])
 /** Tools that render as an assistant update rather than as work. */
 const ASSISTANT_TOOLS = new Set(["actModeRespond", "statusUpdate"])
 
-/** Tools with no reader-facing verb of their own. */
-const OTHER_TOOLS = new Set([
-    "summarizeTask",
-    "generateImage",
-    "killCommand",
-    "loadCapability",
-    "useSkill",
-    "focusChainChanged",
-    "genericTool",
-])
-
 export interface FoldSummaryContext {
     /** Directories a command may run in and still be inside the workspace. */
     readonly workspaceRoots?: readonly string[]
@@ -156,7 +145,8 @@ export function summarizeActivityFold(
                 continue
             }
             count(tools, name)
-            if (READ_TOOLS.has(name)) {
+            if (name === "summarizeTask") count(work, "compaction")
+            else if (READ_TOOLS.has(name)) {
                 count(work, "read")
                 if (EXTERNAL_READ_TOOLS.has(name)) count(external, "read")
             } else if (WRITE_TOOLS.has(name)) count(work, "write")
@@ -284,7 +274,7 @@ export interface ActivityFoldPart {
  * kind: it qualifies only the local file and command kinds, which is why
  * `OUTSIDE_KINDS` below is narrower than this list.
  */
-const WORK_KINDS: readonly FoldWorkKind[] = ["read", "write", "command", "subagent", "web", "browser", "other"]
+const WORK_KINDS: readonly FoldWorkKind[] = ["read", "write", "command", "subagent", "web", "browser", "compaction", "other"]
 
 /**
  * The kinds a workspace boundary can qualify.

@@ -243,6 +243,106 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe("SubagentRow independent capability editor", () => {
+    it("counts the full directory even without ordinary selections and includes required entries", async () => {
+        mount(makeAgent())
+        await expand()
+        for (const [name, ratio] of [
+            ["Rules", "1/3"],
+            ["Skills", "1/3"],
+            ["Workflows", "1/2"],
+            ["MCP", "0/4"],
+        ]) {
+            expect(screen.getByRole("tab", { name: new RegExp(`^${name} \\(`) })).toHaveTextContent(ratio)
+        }
+        expect(FileServiceClient.updateSubagentConfig).not.toHaveBeenCalled()
+    })
+
+    it("updates active totals through selection and loader failure without changing the denominator or stored choices", async () => {
+        const agent = makeAgent()
+        mount(agent)
+        await expand()
+        tab("Skills")
+        const category = screen.getByRole("tab", { name: /^Skills / })
+        expect(category).toHaveTextContent("1/3")
+        fireEvent.click(checkbox("Use skill use-vitest"))
+        await saved()
+        expect(category).toHaveTextContent("2/3")
+        fireEvent.change(screen.getByRole("searchbox", { name: "Search Skills" }), { target: { value: "no-match" } })
+        expect(category).toHaveTextContent("2/3")
+        tab("Tools")
+        fireEvent.click(checkbox("Use load_skill"))
+        await saved()
+        tab("Skills")
+        expect(category).toHaveTextContent("0/3")
+        const selected = checkbox("Use skill use-vitest")
+        expect(selected).toBeChecked()
+        expect(selected).toHaveAttribute("aria-invalid", "true")
+        expect(selected.closest("label")).toHaveClass("text-error")
+        expect(stored.get(agent.path)?.skills).toEqual(["use-vitest"])
+        fireEvent.click(screen.getByRole("button", { name: "Enable load_skill" }))
+        await saved()
+        expect(category).toHaveTextContent("2/3")
+        expect(selected).not.toHaveAttribute("aria-invalid")
+    })
+
+    it("marks disconnected MCP selections as invalid while retaining every catalog item in the total", async () => {
+        const catalog = directory()
+        catalog.mcp[0].available = false
+        catalog.mcp[0].unavailableReason = "Server disconnected"
+        vi.mocked(FileServiceClient.getSubagentCapabilities).mockResolvedValue(catalog)
+        mount(
+            makeAgent({
+                mcp: [
+                    { server: "owner/github", tools: ["search_issues"], resources: [] },
+                    { server: "other/github", tools: ["search_issues"], resources: [] },
+                ],
+            }),
+        )
+        await expand()
+        tab("MCP")
+        expect(screen.getByRole("tab", { name: /^MCP / })).toHaveTextContent("1/4")
+        const invalid = checkbox("Use MCP tool owner/github/search_issues")
+        expect(invalid).toBeChecked()
+        expect(invalid).toHaveAttribute("aria-invalid", "true")
+        expect(invalid.closest("label")).toHaveClass("text-error")
+        expect(checkbox("Use MCP tool other/github/search_issues")).not.toHaveAttribute("aria-invalid")
+        expect(FileServiceClient.updateSubagentConfig).not.toHaveBeenCalled()
+    })
+
+    it("hides skill and workflow file locations but preserves source, selection identity and live count translation", async () => {
+        const catalog = directory()
+        catalog.skills[0].path = "C:\\private\\workspace\\.agents\\skills\\use-vitest\\SKILL.md"
+        catalog.workflows[0].path = "C:\\private\\workspace\\.agents\\workflows\\e2e.md"
+        vi.mocked(FileServiceClient.getSubagentCapabilities).mockResolvedValue(catalog)
+        const agent = makeAgent()
+        stored.set(agent.path, agent)
+        const tree = (language: "en" | "zh-CN") => (
+            <UiLanguageProvider language={language}>
+                <SubagentRow agent={agent} isGlobal={false} onDelete={vi.fn()} onToggle={vi.fn()} />
+            </UiLanguageProvider>
+        )
+        const view = render(tree("en"))
+        await expand()
+        tab("Skills")
+        const selected = checkbox("Use skill use-vitest")
+        expect(selected.closest("label")).toHaveTextContent("Workspace")
+        expect(screen.queryByText(catalog.skills[0].path)).not.toBeInTheDocument()
+        fireEvent.click(selected)
+        await saved()
+        expect(stored.get(agent.path)?.skills).toEqual(["use-vitest"])
+        const category = screen.getByRole("tab", { name: "Skills (2 active, 3 total, 1 required)" })
+        view.rerender(tree("zh-CN"))
+        expect(screen.getByRole("tab", { name: "技能（2 项生效，共 3 项，1 项必需）" })).toBe(category)
+        expect(category).toHaveTextContent("2/3")
+        view.rerender(tree("en"))
+        expect(screen.getByRole("tab", { name: "Skills (2 active, 3 total, 1 required)" })).toBe(category)
+        tab("Workflows")
+        expect(screen.queryByText(catalog.workflows[0].path)).not.toBeInTheDocument()
+        fireEvent.click(checkbox("Use workflow e2e-validation"))
+        await saved()
+        expect(stored.get(agent.path)?.workflows).toEqual(["e2e-validation"])
+    })
+
     it("reads on expansion only and searches all five keyboard tabs without mutating hidden choices", async () => {
         const agent = makeAgent({ skills: ["use-vitest"] })
         mount(agent)
@@ -263,7 +363,7 @@ describe("SubagentRow independent capability editor", () => {
         expect(checkbox("Use skill review-checklist")).toBeInTheDocument()
         fireEvent.change(screen.getByRole("searchbox", { name: "Search Skills" }), { target: { value: "no-such-capability" } })
         expect(screen.getByText("No matching capabilities.")).toBeInTheDocument()
-        expect(screen.getByLabelText("Active skills")).toHaveTextContent("1")
+        expect(screen.getByLabelText("Active skills")).toHaveTextContent("2")
         fireEvent.change(screen.getByRole("searchbox", { name: "Search Skills" }), { target: { value: "" } })
         expect(checkbox("Use skill use-vitest")).toBeChecked()
         fireEvent.keyDown(screen.getByRole("tab", { name: /^Skills / }), { key: "ArrowRight" })
@@ -328,7 +428,7 @@ describe("SubagentRow independent capability editor", () => {
             ],
             replaceRules: true,
         })
-        expect(screen.getByLabelText("Active rules")).toHaveTextContent("2")
+        expect(screen.getByLabelText("Active rules")).toHaveTextContent("3")
     })
 
     it("allows Rules without a readable tool directory because Rules have no loader prerequisite", async () => {
@@ -357,13 +457,13 @@ describe("SubagentRow independent capability editor", () => {
         await saved()
         expectPatch(1, agent, { tools: ["read_file", "load_skill"], replaceTools: true })
         expect(checkbox("Use skill use-vitest")).toBeEnabled()
-        expect(screen.getByLabelText("Active skills")).toHaveTextContent("1")
+        expect(screen.getByLabelText("Active skills")).toHaveTextContent("2")
         tab("Workflows")
         expect(checkbox("Use workflow e2e-validation")).toBeChecked()
         expect(checkbox("Use workflow e2e-validation")).toBeDisabled()
         fireEvent.click(screen.getByRole("button", { name: "Enable load_workflow" }))
         await saved()
-        expect(screen.getByLabelText("Active workflows")).toHaveTextContent("1")
+        expect(screen.getByLabelText("Active workflows")).toHaveTextContent("2")
         tab("Tools")
         fireEvent.click(checkbox("Use load_skill"))
         await saved()
@@ -380,7 +480,7 @@ describe("SubagentRow independent capability editor", () => {
         expect(checkbox("Use skill use-vitest")).toBeDisabled()
         fireEvent.click(screen.getByRole("button", { name: "Enable load_skill" }))
         await saved()
-        expect(screen.getByLabelText("Active skills")).toHaveTextContent("1")
+        expect(screen.getByLabelText("Active skills")).toHaveTextContent("2")
     })
 
     it.each(["skills", "workflows"] as const)("does not persist required %s as an ordinary selection", async (kind) => {

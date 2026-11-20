@@ -28,6 +28,7 @@ export const timelineEn = {
     "chatInput.fold.work.subagent": ({ count }: { count: number }) => plural(count, "subagent"),
     "chatInput.fold.work.web": ({ count }: { count: number }) => `${count} web tools`,
     "chatInput.fold.work.browser": ({ count }: { count: number }) => plural(count, "browser"),
+    "chatInput.fold.work.compaction": ({ count }: { count: number }) => plural(count, "context compaction"),
     "chatInput.fold.work.other": ({ count }: { count: number }) => plural(count, "other"),
     "chatInput.fold.mcp": ({ servers, tools, failed }: { servers: number; tools: number; failed: number }) =>
         `${servers} MCP (${plural(tools, "tool")}, ${failed} failed)`,
@@ -47,6 +48,7 @@ export const timelineEn = {
     "chatInput.fold.kind.subagent": "subagent",
     "chatInput.fold.kind.web": "web",
     "chatInput.fold.kind.browser": "browser",
+    "chatInput.fold.kind.compaction": "context compaction",
     "chatInput.fold.kind.other": "other",
     "chatInput.fold.usageTokens": ({ input, output }: { input: string; output: string }) => `${input} in / ${output} out`,
     "chatInput.tool.matchScale": (args: ScaleArgs) => scale(args, "match", "matches"),

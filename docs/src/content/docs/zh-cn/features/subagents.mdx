@@ -128,7 +128,7 @@ MCP 按 server 逐项选择：分别勾选工具与精确的资源 URI。在 Sta
 
 ### 在界面中管理
 
-在 **Manage Dline Rules & Workflows** 面板的 **Subagents** 标签页中，可以看到 **Global Subagents** 与 **Workspace Subagents** 两组，各有 **New subagent...** 按钮。每一行可以启用或停用、编辑或删除，并选择 **Profile**。展开一行后可以看到 **Tools**、**Rules**、**Skills**、**Workflows**、**MCP** 五个标签页。每个标签页显示生效与已选数量；缺少对应 loader 工具的选择会保留但不生效，重新启用工具后恢复，能力修改在下一次子代理运行时生效。
+在 **Manage Dline Rules & Workflows** 面板的 **Subagents** 标签页中，可以看到 **Global Subagents** 与 **Workspace Subagents** 两组，各有 **New subagent...** 按钮。每一行可以启用或停用、编辑或删除，并选择 **Profile**。展开一行后可以看到 **Tools**、**Rules**、**Skills**、**Workflows**、**MCP** 五个标签页。每个标签页显示**生效 / 总数**，包含必需项和保留的不可用选项，搜索不改变计数。失效项标红并说明原因。技能和工作流只显示名称、描述和来源，不展开文件位置。缺少对应 loader 工具的选择会保留，重新启用工具后恢复，能力修改在下一次子代理运行时生效。
 
 ![能力面板的 Subagents 标签：Global Subagents 中的内置 default 与 Workspace Subagents 中的 code-researcher，两组各有 New subagent... 按钮](@docs-assets/ui/capabilities-subagents.png)
 

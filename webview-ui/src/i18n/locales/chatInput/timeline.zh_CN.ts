@@ -23,6 +23,7 @@ export const timelineZhCN = {
     "chatInput.fold.work.subagent": ({ count }) => `${count} 个子代理`,
     "chatInput.fold.work.web": ({ count }) => `${count} 次网络工具调用`,
     "chatInput.fold.work.browser": ({ count }) => `${count} 次浏览器操作`,
+    "chatInput.fold.work.compaction": ({ count }) => `${count} 次上下文压缩`,
     "chatInput.fold.work.other": ({ count }) => `${count} 次其他操作`,
     "chatInput.fold.mcp": ({ servers, tools, failed }) => `${servers} 个 MCP（${tools} 次工具调用，${failed} 次失败）`,
     "chatInput.fold.thoughts": ({ count }) => `${count} 段思考`,
@@ -41,6 +42,7 @@ export const timelineZhCN = {
     "chatInput.fold.kind.subagent": "子代理",
     "chatInput.fold.kind.web": "网络",
     "chatInput.fold.kind.browser": "浏览器",
+    "chatInput.fold.kind.compaction": "上下文压缩",
     "chatInput.fold.kind.other": "其他",
     "chatInput.fold.usageTokens": ({ input, output }) => `输入 ${input} / 输出 ${output}`,
     "chatInput.tool.matchScale": ({ count, files, truncated }) =>

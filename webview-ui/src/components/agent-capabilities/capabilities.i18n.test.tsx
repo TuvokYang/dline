@@ -1,5 +1,12 @@
 import { Empty } from "@shared/proto/dline/common"
-import { RefreshedDlineToggles, RuleScope } from "@shared/proto/dline/file"
+import {
+    AvailableToolsResponse,
+    RefreshedDlineToggles,
+    RefreshedSubagents,
+    RuleScope,
+    SubagentCapabilitiesResponse,
+    SubagentInfo,
+} from "@shared/proto/dline/file"
 import { createTaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -15,6 +22,10 @@ const mocks = vi.hoisted(() => ({
     refreshRules: vi.fn(),
     toggleClineRule: vi.fn(),
     createSubagentFile: vi.fn(),
+    refreshSubagents: vi.fn(),
+    getAvailableTools: vi.fn(),
+    getSubagentCapabilities: vi.fn(),
+    getApiProfiles: vi.fn(),
     setGlobal: vi.fn(),
     setLocal: vi.fn(),
     noop: vi.fn(),
@@ -61,6 +72,10 @@ vi.mock("@/services/grpc-client", () => ({
         refreshRules: mocks.refreshRules,
         toggleClineRule: mocks.toggleClineRule,
         createSubagentFile: mocks.createSubagentFile,
+        refreshSubagents: mocks.refreshSubagents,
+        getAvailableTools: mocks.getAvailableTools,
+        getSubagentCapabilities: mocks.getSubagentCapabilities,
+        getApiProfiles: mocks.getApiProfiles,
     },
 }))
 // Environment UI has a different owner; this test exercises the real capability popup and rows.
@@ -93,6 +108,50 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe("capability scope and popup live language", () => {
+    it("renders the approved capability counts and invalid choices through the real popup entry", async () => {
+        const agent = SubagentInfo.create({
+            name: "preview-checker",
+            path: "C:\\workspace\\.agents\\subagents\\preview-checker.yml",
+            enabled: true,
+            tools: ["read_file", "load_skill"],
+            skills: ["inspect", "gone"],
+        })
+        const skillPath = "C:\\workspace\\.agents\\skills\\inspect\\SKILL.md"
+        mocks.refreshSubagents.mockResolvedValue(RefreshedSubagents.create({ localSubagents: [agent] }))
+        mocks.getApiProfiles.mockResolvedValue({ profiles: [] })
+        mocks.getAvailableTools.mockResolvedValue(
+            AvailableToolsResponse.create({
+                groups: [{ name: "Tools", tools: [{ name: "read_file" }, { name: "load_skill" }] }],
+            }),
+        )
+        mocks.getSubagentCapabilities.mockResolvedValue(
+            SubagentCapabilitiesResponse.create({
+                skills: [
+                    { name: "inspect", description: "Inspect behavior", scope: "workspace", path: skillPath, available: true },
+                    { name: "verify", scope: "global", path: "C:\\global\\skills\\verify\\SKILL.md", available: true },
+                ],
+            }),
+        )
+        render(
+            <UiLanguageProvider language="en">
+                <ClineRulesToggleModal />
+            </UiLanguageProvider>,
+        )
+        fireEvent.click(screen.getByRole("button", { name: "Show Dline Rules & Workflows" }))
+        fireEvent.click(screen.getByRole("button", { name: "Subagents" }))
+        fireEvent.click(await screen.findByRole("button", { name: "Configure subagent preview-checker" }))
+        const category = await screen.findByRole("tab", { name: "Skills (1 active, 3 total, 0 required)" })
+        fireEvent.click(category)
+        expect(category).toHaveTextContent("1/3")
+        expect(screen.getByRole("checkbox", { name: "Use skill inspect" })).toBeChecked()
+        const invalid = screen.getByRole("checkbox", { name: "Use skill gone" })
+        expect(invalid).toBeChecked()
+        expect(invalid).toHaveAttribute("aria-invalid", "true")
+        expect(invalid.closest("label")).toHaveClass("text-error")
+        expect(screen.queryByText(skillPath)).not.toBeInTheDocument()
+        expect(mocks.getSubagentCapabilities).toHaveBeenCalledWith({ subagentPath: agent.path })
+    })
+
     it("updates the already-open real tooltip portal in both directions without opening or refreshing the popup", async () => {
         const tree = (language: "en" | "zh-CN") => (
             <UiLanguageProvider language={language}>

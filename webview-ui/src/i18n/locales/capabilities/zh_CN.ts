@@ -125,7 +125,7 @@ export const zhCN = {
     "capabilities.subagent.configure": ({ name }) => `配置子智能体 ${name}`,
     "capabilities.subagent.global": "全局子智能体",
     "capabilities.subagent.workspace": "工作区子智能体",
-    "capabilities.subagent.toolSummary": ({ selected, required }) => `工具：${selected} 项已选 + ${required} 项必需`,
+    "capabilities.subagent.toolSummary": ({ active, total }) => `工具：${active}/${total} 项生效`,
     "capabilities.subagent.enable": ({ name }) => `启用子智能体 ${name}`,
     "capabilities.subagent.edit": "编辑子智能体文件",
     "capabilities.subagent.delete": "删除子智能体文件",
@@ -139,9 +139,10 @@ export const zhCN = {
     "capabilities.subagent.toolDirectory": "工具",
     "capabilities.subagent.retryDirectories": "重试能力目录",
     "capabilities.subagent.categories": "能力分类",
-    "capabilities.subagent.categoryCount": ({ name, active, selected, required }) =>
-        `${name}（${active} 项生效，${selected} 项已选，${required} 项必需）`,
-    "capabilities.subagent.requiredCount": ({ count }) => `+${count} 项必需`,
+    "capabilities.subagent.categoryCount": ({ name, active, total, required }) =>
+        `${name}（${active} 项生效，共 ${total} 项，${required} 项必需）`,
+    "capabilities.subagent.requiredCount": ({ count }) => `${count} 项必需`,
+    "capabilities.subagent.inactive": "失效",
     "capabilities.subagent.search": ({ name }) => `搜索${name}`,
     "capabilities.subagent.searchPlaceholder": ({ name }) => `搜索${name}…`,
     "capabilities.subagent.ruleHelp": "所选规则会直接注入此子智能体的系统提示词，无需加载工具。",
@@ -170,7 +171,7 @@ export const zhCN = {
     "capabilities.subagent.workflowsCount": ({ count }) => `${count} 项工作流生效`,
     "capabilities.subagent.mcpCount": ({ count }) => `${count} 项 MCP 项目生效`,
     "capabilities.subagent.countHelp":
-        "计数显示生效 / 已选的普通选项；必需项另计。规则条件、运行时可用性及实际审批仍然适用。更改将在下次运行子智能体时生效。",
+        "计数显示生效 / 总数，包含必需项和保留的不可用选项。失效项标红。规则条件及审批仍然适用；更改将在下次运行子智能体时生效。",
     "capabilities.subagent.saveStatus": "子智能体配置保存状态",
     "capabilities.subagent.saving": "正在保存子智能体配置…",
     "capabilities.subagent.unsaved": "部分更改未保存。",
