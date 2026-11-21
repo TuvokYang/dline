@@ -1,9 +1,9 @@
 # Changelog
 
-## [Unreleased]
+## [0.14.2]
 
 ### Added
-- Added GPT-6.2 Astra and Sol metadata, separating OpenAI API input-token price bands from ChatGPT Subscription default context windows.
+- Added GPT-6.2 Astra, GPT-6.2 Sol, and GPT-6.1 Terra, with OpenAI API price bands and separate ChatGPT subscription metadata.
 - OpenAI-compatible and ChatGPT Subscription remote models without declared reasoning levels offer thinking enabled by default and compatible effort choices, leaving the endpoint default unchanged when no effort is selected.
 - New minor versions in OpenAI, ChatGPT Subscription, Anthropic, and Claude Code can inherit cache and thinking capabilities from the nearest older catalog declaration in the same family.
 - Anthropic models without a declared or inherited thinking mode allow manually enabling and selecting Effort or Budget.
@@ -15,4 +15,6 @@
 ### Fixed
 - Activity summaries keep failed counts in parentheses within each category's total instead of adding separate failure entries.
 - Kill-command rows fold with finished activity once their target command has ended, while running, unknown, and interactive rows remain visible.
+- Completed context compactions are counted separately from other operations.
+- Fixed a file-lock recovery issue where the previous holder could interfere with the new holder.
 - Fixed absent cache metadata being treated as disabled for OpenAI, OpenRouter/Cline, AIhubmix, Vercel, LiteLLM, OCA, and Anthropic/Claude Code, preserving explicit opt-outs and consistent defaults in settings and requests.

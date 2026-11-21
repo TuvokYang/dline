@@ -15,6 +15,14 @@ Format rules, enforced by webview-ui/vite-whats-new.ts at build time:
   Unit tests enforce both.
 -->
 
+## 0.14.2
+
+- **New OpenAI models**: Select GPT-6.2 Astra, GPT-6.2 Sol, or GPT-6.1 Terra in an OpenAI or ChatGPT subscription Profile.
+- **Reasoning controls**: Choose a compatible effort level even when an OpenAI-compatible endpoint doesn't list its levels.
+- **Manual Anthropic thinking**: Choose Effort or Budget when the model has no declared or inherited thinking mode.
+- **Subagent capability counts**: See how many capabilities are active out of the total, with inactive selections marked in red.
+- **Clearer failure counts**: Activity summaries show failures beside the total for each category.
+
 ## 0.14.1
 
 - **English/Chinese UI**: follow VS Code or switch manually; model replies can follow your language automatically.

@@ -103,11 +103,13 @@ async function extract(parsed) {
     if (!language) throw new Error(`Unsupported --language '${languageFlag}'; use 'en' or 'zh-CN'.`)
     const root = path.resolve(String(options["--root"] ?? process.cwd()))
     const notes = readChangelog({ root, version, source })
-    if (allowEmpty && notes.version !== UNRELEASED_SECTION) {
-        throw new Error("--allow-empty is supported only for the Unreleased changelog section.")
+    if (allowEmpty && version !== "current" && notes.version !== UNRELEASED_SECTION) {
+        throw new Error("--allow-empty is supported only for the Unreleased section or the current selector.")
     }
     const section = notes[language]
-    if (section.empty && !allowEmpty) throw new Error(`CHANGELOG section '${version}' is empty.`)
+    if (section.empty && !(allowEmpty && notes.version === UNRELEASED_SECTION)) {
+        throw new Error(`CHANGELOG section '${notes.version}' is empty.`)
+    }
     return {
         output: path.resolve(outputPath),
         body: section.empty ? "" : `${section.body}\n`,

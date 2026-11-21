@@ -4,6 +4,8 @@
  * GPT-6.2 verified on 2026-11-19 UTC:
  * https://developers.openai.com/api/docs/models/gpt-6.2-astra
  * https://developers.openai.com/api/docs/models/gpt-6.2-sol
+ * GPT-6.1 Terra verified on 2026-11-21 UTC:
+ * https://developers.openai.com/api/docs/models/gpt-6.1-terra
  * Standard rates include 30-minute cache writes; other service tiers and TTLs are not modeled here.
  */
 
@@ -138,6 +140,18 @@ export const openAiModels: Record<string, ModelInfo> = {
             defaultEffort: "medium",
             defaultEnabled: true,
             canDisable: false,
+            usagePricing: true,
+        },
+    ),
+    "gpt-6.1-terra": frontierModel(
+        "gpt-6.1-terra",
+        { inputPrice: 1, outputPrice: 5, cacheReadsPrice: 0.05, cacheWritesPrice: 1.25 },
+        {
+            name: "GPT-6.1 Terra",
+            effortLevels: ["none", "low", "medium", "high", "xhigh", "max"],
+            defaultEffort: "medium",
+            defaultEnabled: true,
+            canDisable: true,
             usagePricing: true,
         },
     ),

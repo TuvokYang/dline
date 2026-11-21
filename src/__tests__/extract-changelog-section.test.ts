@@ -201,18 +201,18 @@ describe("extract-changelog-section.mjs", () => {
         await expect(fs.access(output)).rejects.toMatchObject({ code: "ENOENT" })
     })
 
-    it("writes an empty rolling section only when it is explicitly allowed", async () => {
+    it.each(["Unreleased", "current"])("allows empty rolling notes only explicitly via %s", async (selector) => {
         await fs.writeFile(path.join(root, "docs/changelog/CHANGELOG_en.md"), "# Changelog\n\n## [Unreleased]\n")
         await fs.writeFile(path.join(root, "CHANGELOG.md"), "# Changelog\n\n## [Unreleased]\n")
         const output = path.join(root, "rolling.md")
 
-        const refused = await run(["--version", "Unreleased", "--language", "en", "--output", output, "--root", root])
+        const refused = await run(["--version", selector, "--language", "en", "--output", output, "--root", root])
         expect(refused.code).not.toBe(0)
         expect(refused.message).toContain("CHANGELOG section 'Unreleased' is empty.")
 
         const allowed = await run([
             "--version",
-            "Unreleased",
+            selector,
             "--language",
             "en",
             "--output",
@@ -222,6 +222,34 @@ describe("extract-changelog-section.mjs", () => {
             "--allow-empty",
         ])
         expect(allowed.code).toBe(0)
+        expect(await fs.readFile(output, "utf8")).toBe("")
+    })
+
+    it("uses the Insiders draft command on frozen and rolling notes without permitting empty release notes", async () => {
+        const workflow = await fs.readFile(path.join(PROJECT_ROOT, ".github/workflows/publish-insiders.yml"), "utf8")
+        const invocation = workflow.match(/^\s*node scripts\/extract-changelog-section\.mjs ([^\r\n]+)$/m)?.[1]
+        expect(invocation).toBeDefined()
+        const output = path.join(root, "insiders.md")
+        const args = invocation?.trim().split(/\s+/) ?? []
+        expect(args).toContain('"$current_notes_path"')
+        const draftArgs = [...args.map((arg) => (arg === '"$current_notes_path"' ? output : arg)), "--root", root]
+
+        const frozen = await run(draftArgs)
+        expect(frozen.message).toBe("")
+        expect(frozen.code).toBe(0)
+        const published = await fs.readFile(output, "utf8")
+        expect(published).toBe("### Fixed\n- 已发布条目\n")
+
+        await fs.writeFile(path.join(root, "docs/changelog/CHANGELOG_en.md"), "# Changelog\n\n## [1.2.3]\n")
+        await fs.writeFile(path.join(root, "CHANGELOG.md"), "# Changelog\n\n## [1.2.3]\n")
+        const empty = await run(draftArgs)
+        expect(empty.code).not.toBe(0)
+        expect(empty.message).toContain("1.2.3")
+        expect(await fs.readFile(output, "utf8")).toBe(published)
+
+        await fs.writeFile(path.join(root, "docs/changelog/CHANGELOG_en.md"), "# Changelog\n\n## [Unreleased]\n")
+        await fs.writeFile(path.join(root, "CHANGELOG.md"), "# Changelog\n\n## [Unreleased]\n")
+        expect((await run(draftArgs)).code).toBe(0)
         expect(await fs.readFile(output, "utf8")).toBe("")
     })
 

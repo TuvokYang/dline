@@ -83,11 +83,10 @@ describe("package topology safety", () => {
         expect(insidersWorkflow).toContain("name: Checkout tested dev commit")
         expect(insidersWorkflow).toContain("ref: ${{ needs.verify-insiders.outputs.commit_sha }}")
         expect(insidersWorkflow).toContain("persist-credentials: false")
-        expect(insidersWorkflow).toContain(
-            'node scripts/extract-changelog-section.mjs --version Unreleased --language zh-CN --output "$unreleased_notes_path" --allow-empty',
+        // The CLI arguments are exercised against real notes in extract-changelog-section.test.ts.
+        expect(insidersWorkflow).toMatch(
+            /if \[\[ -s "\$current_notes_path" \]\]; then\s.*?\n\s*cat "\$current_notes_path" >> "\$notes_path"\s*\n\s*fi/s,
         )
-        expect(insidersWorkflow).toContain('if [[ -s "$unreleased_notes_path" ]]; then')
-        expect(insidersWorkflow).toContain('cat "$unreleased_notes_path" >> "$notes_path"')
         expect(insidersWorkflow).toContain("Prune older Insiders drafts")
         expect(insidersWorkflow).toContain("select(.draft == true and .tag_name != $keep)")
         expect(insidersWorkflow).toContain('gh release delete "$stale_tag" --yes')

@@ -6,8 +6,8 @@ import { fetch } from "@/shared/net"
 /** Official npm dist-tag endpoint used by sub2api to discover the current Codex CLI version. */
 export const OPENAI_CODEX_CLIENT_VERSION_REGISTRY_URL = "https://registry.npmjs.org/@openai/codex/latest"
 
-/** Known-good floor required to keep the GPT-6-Astra catalog entry visible. */
-export const OPENAI_CODEX_MODEL_LIST_MINIMUM_VERSION = "0.153.0"
+/** GPT-6.1 Terra requires Codex CLI 0.159.0 or newer (https://developers.openai.com/codex/models). */
+export const OPENAI_CODEX_MODEL_LIST_MINIMUM_VERSION = "0.159.0"
 
 export const OPENAI_CODEX_CLIENT_VERSION_SUCCESS_TTL_MS = 60 * 60 * 1000
 export const OPENAI_CODEX_CLIENT_VERSION_FAILURE_TTL_MS = 5 * 60 * 1000

@@ -27,9 +27,9 @@
  *   including the dev head that a dev-vX.Y.Z tag names.
  *
  * Tagged channels require the tag and package.json to agree, and each channel
- * selects its content section here: a tagged release uses the exact tag version,
- * CI uses the original package.json version, and the rolling insiders channel
- * uses `Unreleased` while still displaying its timestamped version.
+ * selects its content section here: a tagged release uses the exact tag version.
+ * CI and Insiders read the sole current section, while displaying the manifest
+ * version or the timestamped version, respectively.
  * package.json is restored even when packaging aborts; the README is no longer
  * swapped, because generated documents are handed to VSCE by explicit path.
  *
@@ -49,7 +49,6 @@ import { fileURLToPath } from "node:url"
 import { createDistributionManifest, resolveTargetIdentity } from "./extension-manifest-identity.mjs"
 import { assertChannelVersion, createInsidersVersion as createPolicyInsidersVersion } from "./release-version-policy.mjs"
 import { withSignalSafeCleanup } from "./signal-safe-cleanup.mjs"
-import { UNRELEASED_SECTION } from "./vsix-changelog.mjs"
 import { packageVsix } from "./vsix-packager.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
@@ -257,8 +256,7 @@ function resolveChannel(packageVersion) {
         channel: "insiders",
         version: createInsidersVersion(packageVersion),
         tag: null,
-        // A timestamped rolling version has no released section of its own.
-        changelogSection: UNRELEASED_SECTION,
+        changelogSection: "current",
     }
 }
 
@@ -283,7 +281,7 @@ function resolveRequestedChannel(requestedChannel, packageVersion) {
             channel: "insiders",
             version: createInsidersVersion(packageVersion),
             tag: null,
-            changelogSection: UNRELEASED_SECTION,
+            changelogSection: "current",
         }
     }
 

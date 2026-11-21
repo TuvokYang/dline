@@ -341,9 +341,9 @@ describe("package-vsix release channels", () => {
     const builds: [string, string, string[], string, string, string][] = [
         ["auto", "main", ["v0.14.0"], "0.14.0", "production", "0.14.0"],
         ["auto", "dev", ["dev-v0.15.0"], "0.15.0", "pre-release", "0.15.0"],
-        ["auto", "dev", [], "0.14.0", "insiders", "Unreleased"],
+        ["auto", "dev", [], "0.14.0", "insiders", "current"],
         ["ci", "dev", [], "0.14.0", "ci", "current"],
-        ["insiders", "dev", ["dev-v0.15.0"], "0.15.0", "insiders", "Unreleased"],
+        ["insiders", "dev", ["dev-v0.15.0"], "0.15.0", "insiders", "current"],
         ["production", "main", ["v0.14.0"], "0.14.0", "production", "0.14.0"],
         ["pre-release", "dev", ["dev-v0.15.0"], "0.15.0", "pre-release", "0.15.0"],
     ]
@@ -425,8 +425,9 @@ describe("changelog language editions", () => {
         expect(notes.chinese.sourcePath).toBe("CHANGELOG.md")
     })
 
-    it("reads the old package-version body from the single history files explicitly", () => {
-        const notes = readChangelog({ root: PROJECT_ROOT, version: packageJson.version, source: "history" })
+    it("reads a published version from the single history files explicitly", () => {
+        const notes = readChangelog({ root: PROJECT_ROOT, version: "0.14.1", source: "history" })
+        expect(notes.version).toBe("0.14.1")
         expect(notes.english.sourcePath).toBe("docs/changelog/history.en.md")
         expect(notes.chinese.sourcePath).toBe("docs/changelog/history.zh-CN.md")
         expect(notes.english.body.trim().length).toBeGreaterThan(0)

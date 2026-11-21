@@ -3,7 +3,6 @@ import { ExtensionRegistryInfo } from "@/registry"
 import { Logger } from "@/shared/services/Logger"
 import {
     OPENAI_CODEX_CLIENT_VERSION_REGISTRY_URL,
-    OPENAI_CODEX_MODEL_LIST_MINIMUM_VERSION,
     OpenAiCodexClientVersionResolver,
 } from "../vendors/openai-codex-client-version"
 
@@ -16,7 +15,7 @@ describe("OpenAiCodexClientVersionResolver", () => {
 
     it("reads the official npm latest endpoint with Dline identity, logs resolution, emits telemetry, and refreshes after the TTL", async () => {
         let now = 1_000
-        const registryVersions = ["0.154.0", "0.155.0"]
+        const registryVersions = ["0.160.0", "0.161.0"]
         const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             expect(String(input)).toBe(OPENAI_CODEX_CLIENT_VERSION_REGISTRY_URL)
             expect(new Headers(init?.headers).get("User-Agent")).toBe(`Dline/${ExtensionRegistryInfo.version}`)
@@ -32,7 +31,7 @@ describe("OpenAiCodexClientVersionResolver", () => {
             onResolution,
         })
 
-        await expect(Promise.all([resolver.resolve(), resolver.resolve()])).resolves.toEqual(["0.154.0", "0.154.0"])
+        await expect(Promise.all([resolver.resolve(), resolver.resolve()])).resolves.toEqual(["0.160.0", "0.160.0"])
         expect(fetchImpl).toHaveBeenCalledTimes(1)
         expect(debug).toHaveBeenCalledWith(expect.stringContaining("Fetching registry version"))
         expect(onResolution).toHaveBeenNthCalledWith(
@@ -40,30 +39,30 @@ describe("OpenAiCodexClientVersionResolver", () => {
             expect.objectContaining({
                 outcome: "resolved",
                 source: "registry",
-                registryVersion: "0.154.0",
-                selectedVersion: "0.154.0",
+                registryVersion: "0.160.0",
+                selectedVersion: "0.160.0",
                 floorApplied: false,
             }),
         )
 
         now = 1_999
-        await expect(resolver.resolve()).resolves.toBe("0.154.0")
+        await expect(resolver.resolve()).resolves.toBe("0.160.0")
         expect(fetchImpl).toHaveBeenCalledTimes(1)
 
         now = 2_000
-        await expect(resolver.resolve()).resolves.toBe("0.155.0")
+        await expect(resolver.resolve()).resolves.toBe("0.161.0")
         expect(fetchImpl).toHaveBeenCalledTimes(2)
         expect(onResolution).toHaveBeenCalledTimes(2)
     })
 
-    it("never downgrades below the known Astra-compatible minimum", async () => {
+    it("never downgrades below the documented Terra-compatible minimum", async () => {
         const onResolution = vi.fn()
         const resolver = new OpenAiCodexClientVersionResolver({
             fetchImpl: vi.fn(async () => jsonResponse({ version: "0.111.0" })),
             onResolution,
         })
 
-        await expect(resolver.resolve()).resolves.toBe(OPENAI_CODEX_MODEL_LIST_MINIMUM_VERSION)
+        await expect(resolver.resolve()).resolves.toBe("0.159.0")
         expect(onResolution).toHaveBeenCalledWith(
             expect.objectContaining({ outcome: "resolved", source: "minimum", floorApplied: true }),
         )
@@ -84,7 +83,7 @@ describe("OpenAiCodexClientVersionResolver", () => {
             onResolution,
         })
 
-        await expect(resolver.resolve()).resolves.toBe(OPENAI_CODEX_MODEL_LIST_MINIMUM_VERSION)
+        await expect(resolver.resolve()).resolves.toBe("0.159.0")
         expect(onResolution).toHaveBeenNthCalledWith(
             1,
             expect.objectContaining({
@@ -94,7 +93,7 @@ describe("OpenAiCodexClientVersionResolver", () => {
             }),
         )
         now = 10_099
-        await expect(resolver.resolve()).resolves.toBe(OPENAI_CODEX_MODEL_LIST_MINIMUM_VERSION)
+        await expect(resolver.resolve()).resolves.toBe("0.159.0")
         expect(fetchImpl).toHaveBeenCalledTimes(1)
 
         now = 10_100
