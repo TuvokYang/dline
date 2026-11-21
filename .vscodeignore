@@ -85,6 +85,7 @@ webview-ui/package.json
 webview-ui/package-lock.json
 webview-ui/node_modules/**
 webview-ui/node_modules
+webview-ui/tmp/**
 webview-ui/.vite-port
 webview-ui/.storybook/**
 webview-ui/storybook-static/**

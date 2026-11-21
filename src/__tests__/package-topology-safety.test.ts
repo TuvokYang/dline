@@ -1,5 +1,8 @@
+import { execFile } from "node:child_process"
 import fs from "node:fs/promises"
+import os from "node:os"
 import path from "node:path"
+import { promisify } from "node:util"
 import { load as parseYaml } from "js-yaml"
 import { describe, expect, it } from "vitest"
 
@@ -203,6 +206,31 @@ describe("package topology safety", () => {
             }
         }
         expect(offending).toEqual([])
+    })
+
+    it("ships the webview build but not nested local test artifacts", async () => {
+        const root = await fs.mkdtemp(path.join(os.tmpdir(), "dline-vsix-files-"))
+        try {
+            const build = "webview-ui/build/index.html"
+            const artifact = "webview-ui/tmp/test-result/attempt/trace.zip"
+            for (const relative of [build, artifact]) {
+                const file = path.join(root, relative)
+                await fs.mkdir(path.dirname(file), { recursive: true })
+                await fs.writeFile(file, "fixture")
+            }
+            await fs.copyFile(path.join(PROJECT_ROOT, ".vscodeignore"), path.join(root, ".vscodeignore"))
+            await fs.writeFile(
+                path.join(root, "package.json"),
+                JSON.stringify({ name: "fixture", publisher: "fixture", version: "1.0.0", engines: { vscode: "^1.90.0" } }),
+            )
+            const vsce = path.join(PROJECT_ROOT, "node_modules/@vscode/vsce/vsce")
+            const { stdout } = await promisify(execFile)(process.execPath, [vsce, "ls", "--no-dependencies"], { cwd: root })
+            const files = stdout.split(/\r?\n/)
+            expect(files).toContain(build)
+            expect(files).not.toContain(artifact)
+        } finally {
+            await fs.rm(root, { recursive: true, force: true })
+        }
     })
 
     it("serializes builds against concurrent runs of the shared dist output", async () => {
