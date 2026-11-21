@@ -1,6 +1,7 @@
 import { StringRequest } from "@shared/proto/dline/common"
 import { OcaCompatibleModelInfo, OcaModelInfo as ProtoOcaModelInfo } from "@shared/proto/dline/models"
 import { ApiFormat, type ModelPricing } from "@shared/proto/dline/models/metadata"
+import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
 import { readPriceSet } from "@shared/providers/pricing-shape"
 import { persistProviderCatalog } from "@/core/model-registry/provider-catalog-storage"
 import { ocaModelSource } from "@/core/model-registry/remote/vendors/oca"
@@ -78,12 +79,14 @@ export async function refreshOcaModels(controller: Controller, request: StringRe
             // have no place in the shared catalog, so they travel separately to
             // the OCA settings UI.
             const extras = listing.extras[modelId]
+            // The required proto bool must use the shared default, not treat omission as false.
+            const effective = buildEffectiveModelInfo(modelId, catalogModel, {})
 
             models[modelId] = ProtoOcaModelInfo.create({
                 maxTokens: catalogModel.capabilities?.maxTokens ?? -1,
                 contextWindow: catalogModel.capabilities?.contextWindow,
                 supportsImages: catalogModel.capabilities?.supportsImages ?? false,
-                supportsPromptCache: catalogModel.capabilities?.supportsPromptCache ?? false,
+                supportsPromptCache: effective.capabilities?.supportsPromptCache === true,
                 ...readPricingFields(catalogModel.pricing),
                 description: catalogModel.description,
                 thinkingConfig: catalogModel.capabilities?.thinking,

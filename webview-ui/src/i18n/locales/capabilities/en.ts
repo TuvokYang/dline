@@ -128,8 +128,8 @@ export const en = {
     "capabilities.subagent.configure": ({ name }: { name: string }) => `Configure subagent ${name}`,
     "capabilities.subagent.global": "Global subagent",
     "capabilities.subagent.workspace": "Workspace subagent",
-    "capabilities.subagent.toolSummary": ({ selected, required }: { selected: number; required: number }) =>
-        `tools: ${selected} + ${required} required`,
+    "capabilities.subagent.toolSummary": ({ active, total }: { active: number; total: number }) =>
+        `tools: ${active}/${total} active`,
     "capabilities.subagent.enable": ({ name }: { name: string }) => `Enable subagent ${name}`,
     "capabilities.subagent.edit": "Edit subagent file",
     "capabilities.subagent.delete": "Delete subagent file",
@@ -147,15 +147,16 @@ export const en = {
     "capabilities.subagent.categoryCount": ({
         name,
         active,
-        selected,
+        total,
         required,
     }: {
         name: string
         active: number
-        selected: number
+        total: number
         required: number
-    }) => `${name} (${active} active, ${selected} selected, ${required} required)`,
-    "capabilities.subagent.requiredCount": ({ count }: { count: number }) => `+${count} required`,
+    }) => `${name} (${active} active, ${total} total, ${required} required)`,
+    "capabilities.subagent.requiredCount": ({ count }: { count: number }) => `${count} required`,
+    "capabilities.subagent.inactive": "Inactive",
     "capabilities.subagent.search": ({ name }: { name: string }) => `Search ${name}`,
     "capabilities.subagent.searchPlaceholder": ({ name }: { name: string }) => `Search ${name.toLowerCase()}...`,
     "capabilities.subagent.ruleHelp":
@@ -186,7 +187,7 @@ export const en = {
     "capabilities.subagent.workflowsCount": ({ count }: { count: string }) => `${count} workflows active`,
     "capabilities.subagent.mcpCount": ({ count }: { count: string }) => `${count} MCP items active`,
     "capabilities.subagent.countHelp":
-        "Counts show active / selected ordinary choices; required items are separate. Rule conditions, runtime availability and real approval still apply. Changes apply to the next subagent run.",
+        "Counts show active / total entries, including required items and retained unavailable choices. Inactive choices are marked in red. Rule conditions and approval still apply; changes apply to the next subagent run.",
     "capabilities.subagent.saveStatus": "Subagent configuration save status",
     "capabilities.subagent.saving": "Saving subagent configuration...",
     "capabilities.subagent.unsaved": "Some changes were not saved.",

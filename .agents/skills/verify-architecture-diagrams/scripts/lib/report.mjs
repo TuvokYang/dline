@@ -3,6 +3,7 @@
 
 const SEVERITY_ORDER = { tooling: 0, blocking: 1, unverifiable: 2, warning: 3, pending: 4, "not-checked": 5, "not-applicable": 6 }
 const GROUP_ORDER = ["tooling", "blocking", "warning", "pending", "unverifiable", "not-checked", "not-applicable"]
+const REFINEMENT_RULES = new Set(["coarse-node-not-refined", "coarse-edge-not-refined"])
 const TITLES = {
     tooling: "Tooling problem",
     blocking: "Blocking",
@@ -36,6 +37,14 @@ function group(findings) {
     return groups
 }
 
+function appendFindings(lines, entries, severity) {
+    for (const item of entries) {
+        lines.push(`- ${severity === "blocking" ? `[${item.attribution}] ` : ""}${label(item)}`)
+        lines.push(`  ${item.message}`)
+        if (item.reproduce) lines.push(`  reproduce: ${item.reproduce}`)
+    }
+}
+
 export function renderTextReport({ findings, summary }) {
     const groups = group(findings)
     const coverage = summary.coverage ?? {
@@ -62,11 +71,16 @@ export function renderTextReport({ findings, summary }) {
             if (key === "tooling")
                 lines.push(`${entries.length} problem(s). Design conclusions from this run are not trustworthy.`)
             if (key === "unverifiable") lines.push("Counted as blocking: an undecidable relation is never treated as a pass.")
-            for (const item of entries) {
-                lines.push(`- ${key === "blocking" ? `[${item.attribution}] ` : ""}${label(item)}`)
-                lines.push(`  ${item.message}`)
-                if (item.reproduce) lines.push(`  reproduce: ${item.reproduce}`)
-            }
+            const refinements = key === "warning" ? entries.filter((item) => REFINEMENT_RULES.has(item.rule)) : []
+            if (refinements.length > 0) {
+                lines.push("### Unrefined boxes and relationships")
+                appendFindings(lines, refinements, key)
+                const others = entries.filter((item) => !REFINEMENT_RULES.has(item.rule))
+                if (others.length > 0) {
+                    lines.push("### Other warnings")
+                    appendFindings(lines, others, key)
+                }
+            } else appendFindings(lines, entries, key)
         }
         lines.push("")
     }

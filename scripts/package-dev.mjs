@@ -11,15 +11,16 @@
  * This script:
  * 1. Checks if current HEAD is on main branch or a git tag
  * 2. If not, backs up package.json and temporarily modifies version to include hash
- * 3. Swaps README.marketplace.md into README.md and runs vsce package
- * 4. Restores README.md and package.json
+ * 3. Generates the four packaged documents and runs vsce package
+ * 4. Restores package.json
  */
 
 import { execSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { withMarketplaceReadme } from "./marketplace-readme.mjs"
+import { withSignalSafeCleanup } from "./signal-safe-cleanup.mjs"
+import { UNRELEASED_SECTION } from "./vsix-changelog.mjs"
 import { packageVsix } from "./vsix-packager.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
@@ -27,6 +28,15 @@ const __dirname = path.dirname(__filename)
 
 const PROJECT_ROOT = path.join(__dirname, "..")
 const PACKAGE_JSON_PATH = path.join(PROJECT_ROOT, "package.json")
+
+/**
+ * Formal release tags: production `vX.Y.Z` and pre-release `dev-vX.Y.Z`.
+ *
+ * Both name a released changelog section, so a local build of that commit
+ * documents it. The packaged version keeps its own strategy, which this
+ * pattern does not change.
+ */
+const RELEASE_TAG_PATTERN = /^(?:dev-)?v(\d+\.\d+\.\d+)$/
 
 /**
  * Get short git hash of current HEAD.
@@ -51,19 +61,35 @@ function tryGitFullHash() {
 }
 
 /**
- * Check if current HEAD is on a git tag.
- * @returns {boolean}
+ * Exact tag at HEAD, or null when the commit is untagged.
+ * @returns {string|null}
  */
-function isOnTag() {
+function getExactTag() {
     try {
-        execSync("git describe --tags --exact-match", {
+        return execSync("git describe --tags --exact-match", {
             cwd: PROJECT_ROOT,
-            stdio: "ignore",
-        })
-        return true
+            encoding: "utf-8",
+            stdio: ["ignore", "pipe", "ignore"],
+        }).trim()
     } catch {
-        return false
+        return null
     }
+}
+
+/**
+ * Content section this development build documents.
+ *
+ * A development package keeps its own version strategy (the packaged manifest
+ * version may carry a hash suffix), so the notes are separate from it: a formal
+ * version tag, production `vX.Y.Z` or pre-release `dev-vX.Y.Z`, names the
+ * released section, while every untagged or non-release commit has no released
+ * version yet and shows the rolling section.
+ *
+ * @param {string|null} tag Exact tag at HEAD.
+ * @returns {string}
+ */
+function selectChangelogSection(tag) {
+    return tag?.match(RELEASE_TAG_PATTERN)?.[1] ?? UNRELEASED_SECTION
 }
 
 /**
@@ -101,11 +127,13 @@ function writePackageJson(pkg) {
 
 // --- Main ---
 
-const onTag = isOnTag()
+const tag = getExactTag()
+const onTag = tag !== null
 const onMain = isOnMainBranch()
 const hash = getGitHash()
+const changelogSection = selectChangelogSection(tag)
 
-// A dev VSIX is built from an arbitrary branch, so the marketplace README's
+// A dev VSIX is built from an arbitrary branch, so the generated documents'
 // repository links are pinned to the exact commit being packaged rather than
 // the default branch.
 const documentationRef = tryGitFullHash()
@@ -113,6 +141,7 @@ const documentationRef = tryGitFullHash()
 console.log(`[package-dev] Git hash: ${hash}`)
 console.log(`[package-dev] On tag: ${onTag}`)
 console.log(`[package-dev] On main branch: ${onMain}`)
+console.log(`[package-dev] Changelog section: ${changelogSection}`)
 console.log(`[package-dev] Documentation ref: ${documentationRef}`)
 
 /**
@@ -137,51 +166,54 @@ function assertDevBundle() {
     console.log("[package-dev] Verified dist/extension.js is a dev bundle.")
 }
 
-await withMarketplaceReadme(
-    async (cleanups) => {
-        if (onTag || onMain) {
-            console.log("[package-dev] On main branch or tag, packaging with original version...")
-        } else {
-            const originalContent = fs.readFileSync(PACKAGE_JSON_PATH, "utf-8")
-            const pkg = JSON.parse(originalContent)
-            const originalVersion = pkg.version
+// Generated documents are handed to VSCE by explicit path, so this entry only
+// restores its temporary manifest and never swaps the root README.
+await withSignalSafeCleanup(async (cleanups) => {
+    if (onTag || onMain) {
+        console.log("[package-dev] On main branch or tag, packaging with original version...")
+    } else {
+        const originalContent = fs.readFileSync(PACKAGE_JSON_PATH, "utf-8")
+        const pkg = JSON.parse(originalContent)
+        const originalVersion = pkg.version
 
-            // Register restoration before mutating package.json so signals during any
-            // subsequent build or pack step restore both temporary files.
-            cleanups.defer(() => {
-                console.log(`[package-dev] Restoring original version: ${originalVersion}`)
-                fs.writeFileSync(PACKAGE_JSON_PATH, originalContent)
-            })
-            pkg.version = `${pkg.version}-${hash}`
-            writePackageJson(pkg)
-            console.log(`[package-dev] Modified version: ${originalVersion} → ${pkg.version}`)
-        }
-
-        // 1. Run the same validation and Webview build as vscode:prepublish,
-        // then produce a dev extension bundle with IS_DEV=true and source maps.
-        console.log("[package-dev] Building extension in dev mode...")
-        for (const command of ["npm run check-types", "npm run build:webview", "npm run lint", "node esbuild.mjs"]) {
-            execSync(command, {
-                cwd: PROJECT_ROOT,
-                stdio: "inherit",
-                shell: true,
-            })
-        }
-
-        // 2. Pack the already-built files without running vscode:prepublish, which
-        // would overwrite dist with a production bundle.
-        assertDevBundle()
-        const packageManifest = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, "utf-8"))
-        const expectedPackagePath = path.join(PROJECT_ROOT, `${packageManifest.name}-${packageManifest.version}.vsix`)
-        console.log("[package-dev] Creating VSIX through the shared VSCE API adapter...")
-        const { packagePath } = await packageVsix({
-            cwd: PROJECT_ROOT,
-            cleanups,
-            mode: "pack-only",
-            packagePath: expectedPackagePath,
+        // Register restoration before mutating package.json so signals during any
+        // subsequent build or pack step restore the temporary manifest.
+        cleanups.defer(() => {
+            console.log(`[package-dev] Restoring original version: ${originalVersion}`)
+            fs.writeFileSync(PACKAGE_JSON_PATH, originalContent)
         })
-        const packageSizeMb = fs.statSync(packagePath).size / 1_000_000
-        console.log(`[package-dev] Package completed: ${packagePath} (${packageSizeMb.toFixed(2)} MB)`)
-    },
-    { ref: documentationRef },
-)
+        pkg.version = `${pkg.version}-${hash}`
+        writePackageJson(pkg)
+        console.log(`[package-dev] Modified version: ${originalVersion} → ${pkg.version}`)
+    }
+
+    // 1. Run the same validation and Webview build as vscode:prepublish,
+    // then produce a dev extension bundle with IS_DEV=true and source maps.
+    console.log("[package-dev] Building extension in dev mode...")
+    for (const command of ["npm run check-types", "npm run build:webview", "npm run lint", "node esbuild.mjs"]) {
+        execSync(command, {
+            cwd: PROJECT_ROOT,
+            stdio: "inherit",
+            shell: true,
+        })
+    }
+
+    // 2. Pack the already-built files without running vscode:prepublish, which
+    // would overwrite dist with a production bundle.
+    assertDevBundle()
+    const packageManifest = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, "utf-8"))
+    const expectedPackagePath = path.join(PROJECT_ROOT, `${packageManifest.name}-${packageManifest.version}.vsix`)
+    console.log("[package-dev] Creating VSIX through the shared VSCE API adapter...")
+    const { packagePath } = await packageVsix({
+        cwd: PROJECT_ROOT,
+        cleanups,
+        mode: "pack-only",
+        packagePath: expectedPackagePath,
+        // The section is the selected content; the adapter displays whatever
+        // version this build wrote into package.json.
+        changelogSection,
+        documentationRef,
+    })
+    const packageSizeMb = fs.statSync(packagePath).size / 1_000_000
+    console.log(`[package-dev] Package completed: ${packagePath} (${packageSizeMb.toFixed(2)} MB)`)
+})

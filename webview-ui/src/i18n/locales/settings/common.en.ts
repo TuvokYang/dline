@@ -66,6 +66,7 @@ export const en = {
     "settings.ui.effortHelp": "Higher effort improves depth, but uses more tokens.",
     "settings.ui.thinkingBudget": "Thinking Budget",
     "settings.ui.thinkingMode": "Thinking Mode",
+    "settings.ui.chooseThinkingMode": "Choose a thinking mode",
     "settings.ui.effort": "Effort",
     "settings.ui.budget": "Budget",
     "settings.ui.reasoningDisplay": "Reasoning Display",

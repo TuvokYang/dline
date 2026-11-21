@@ -59,7 +59,8 @@ export class AiHubMixModelSource extends ModelListingSource {
             contextWindow: this.readContextWindow(raw),
             maxTokens: this.readMaxTokens(raw),
             supportsImages: supportsImageInput(raw),
-            supportsPromptCache: supportsPromptCache(raw),
+            // No vendor field declares caching, so the capability stays unresolved
+            // here instead of being guessed from a ratio or a price.
             supportsReasoning: hasFeature(raw, "thinking"),
         }
     }
@@ -89,27 +90,6 @@ function hasFeature(raw: unknown, feature: string): boolean {
 function supportsImageInput(raw: unknown): boolean {
     const advertised = [...readStringArray(raw, "modalities"), ...readStringArray(raw, "features")]
     return IMAGE_MARKERS.some((marker) => advertised.includes(marker))
-}
-
-/**
- * AIhubmix does not publish a cache flag. A cache ratio other than 1, or a read
- * price that undercuts the input price, is what marks a cache-capable model.
- */
-function supportsPromptCache(raw: unknown): boolean {
-    if (!isRecord(raw)) {
-        return false
-    }
-    const cacheRatio = raw.cache_ratio
-    if (typeof cacheRatio === "number" && cacheRatio !== 1) {
-        return true
-    }
-    const pricing = raw.pricing
-    if (!isRecord(pricing)) {
-        return false
-    }
-    const cacheRead = pricing.cache_read
-    const input = pricing.input
-    return typeof cacheRead === "number" && typeof input === "number" && cacheRead !== input
 }
 
 export const aiHubMixModelSource = new AiHubMixModelSource()

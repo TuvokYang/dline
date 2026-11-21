@@ -11,6 +11,8 @@ export const zhCN = {
     ...chatRows,
     ...settings,
     ...shell,
+    "settings.ui.openai.compatibilityThinkingHelp":
+        "模型未声明推理等级。以下为 OpenAI 兼容选项，不保证远端支持；不选择等级时使用远端默认值。",
     "runtime.history.openFailed": ({ task }) => `无法打开任务“${task}”。`,
     "runtime.hydration.unknown": "状态订阅发生未知错误",
     "runtime.hydration.closed": "状态订阅在收到任何状态之前已关闭",

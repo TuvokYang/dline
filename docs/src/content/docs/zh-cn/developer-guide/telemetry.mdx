@@ -104,7 +104,7 @@ account identity ingress ────┘
   -> diagnostic bundle read view
 ```
 
-在目标形态中，权威 usage settlement 因为需要 awaited durable handoff，继续使用类型化 durable ingress，但它必须服从相同 consent、policy epoch、channel catalog、privacy admission 和审计规则，不构成第二套遥测系统。
+在目标形态中，权威 usage settlement 因为需要 awaited durable handoff，继续使用类型化 durable ingress，但它必须服从相同 consent、policy epoch、channel catalog、privacy admission 和审计规则。
 
 本地 journal 迁移必须先复现当前 file size、cleanup selection、顺序、崩溃证据、取消、bundle export 和 restart recovery，parity 通过后才能停止兼容写入。任何 grouping、count、age、active-file protection 或 byte budget 变化都需要独立批准的 storage 约定。
 

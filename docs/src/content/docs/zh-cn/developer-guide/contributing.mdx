@@ -56,7 +56,36 @@ PR 描述应当说明改了什么、如何测试、是否有破坏性变更；�
 
 ## 更新日志与版本
 
-贡献者不需要在 PR 中编写更新日志条目。版本号和更新日志由维护者在发布时整理：中文版在仓库根目录的 `CHANGELOG.md`，英文版在 `docs/changelog/CHANGELOG_en.md`。打包带标签的版本时，两份更新日志都必须包含对应的 `## [X.Y.Z]` 标题。
+贡献者不需要在 PR 中编写更新日志条目。版本号和两份当前正文由维护者负责：`CHANGELOG.md`（中文）和 `docs/changelog/CHANGELOG_en.md`（英文）。每份文件本身就是完整的当前更新日志，只包含一个同名区块，中英文名称一致：开发期为 `## [Unreleased]`，版本冻结且与 manifest 一致后为一个准确的 `## [X.Y.Z]`。它不会同时保留旧版本和 `Unreleased`，不会把多个版本拼在一起，也不会用链接代替正文。
+
+历史版本位于 `docs/changelog/history.zh-CN.md` 和 `docs/changelog/history.en.md`：每种语言一个历史文件，每个归档版本一个区块，不使用每版本一个目录。
+
+准备下一个版本时按以下顺序维护：
+
+1. 根据实现、测试和 package/lock，核实当前区块、目标版本与发布基线。改动前，比较区块名称和双语 What's New 顶节是否与现有 package 版本一致。
+2. 运行只读检查；若当前仍是旧准确版本，则归档该版本，`<current-version>` 填它的版本：
+
+   ```text
+   npm run changelog:check
+   npm run changelog:append -- --version <current-version> --dry-run
+   npm run changelog:append -- --version <current-version>
+   ```
+
+3. 确认两个历史文件。替换两份正文中唯一的当前区块：可以是刚归档的旧准确版本，也可以是累计 `Unreleased` 区块，后者需先核实基线与最终净变化，再改名为准确候选。使用真实整理过的目标版本变化，不把旧区块并列保留，也不把旧正文改名冒充新版。
+4. 将 package/lock 和双语 What's New 同步到目标版本，然后运行下列检查并核对六项发布事实：package、lockfile、两份当前区块名称和两份 What's New 顶节版本。两份正文必须非空、scope 与顺序等价；当前版本缺失或不一致时阻止打包，不能回退到 history。
+
+   ```text
+   npm run changelog:check
+   npx vitest run webview-ui/src/__tests__/vite-whats-new.test.ts
+   ```
+
+普通 append 必须指定 `--version <X.Y.Z>`，只把该冻结 current 归档到两份历史文件，不改 current、不归档 `Unreleased`、不改 package/lock 或 What's New，也不发布。已有双语正文均相同则为 no-op；异文或其它版本缺少语言属于冲突。两份历史文件的替换不是跨文件断电事务；中断后须先检查残留 guard/temp，只有同一冻结 current 版本已写入的正文完全一致、其它历史版本完整成对时，才可重跑补齐。不采用未知状态。Check 只读，构建、Insiders 时间戳和临时 manifest 修改都不写历史。
+
+`Unreleased` 累计记录相对于最近一次经核验的真实 production 发布的最终净变化。预发布快照遵循适用的 delta 范围，但版本准备不会清空累计记录。正式版说明必须覆盖 production 基线以来的最终净变化，包含预发布工作，不能只取最后一份 delta，也不能机械拼接 history。只有核验真实 production 发布后，维护者才依据实际已发布内容调整基线、移除已覆盖记录，并保留后续 dev 变化。归档或准备都不填写发布日期。
+
+每次真实升版都单独精选 What's New：顶节使用裸版本 `## X.Y.Z`，最多五项，每项含加粗引导语不超过 128 字符，双语版本、scope、顺序与条目数一致。`## Unreleased`、占位亮点和自动拼接更新日志都不能替代这一步。
+
+版本准备涉及多个文件，不是整体原子事务。中断或出现不一致时，保留完整历史文件，报告差异并阻止打包，修复后才能继续。
 
 ## 修改文档
 

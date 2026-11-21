@@ -26,10 +26,20 @@
  * - every dev push publishes a per-commit maintainers-only Insiders draft and registries,
  *   including the dev head that a dev-vX.Y.Z tag names.
  *
- * Tagged channels require the tag, package.json, and both changelogs to agree.
- * The rolling insiders channel replaces the patch with a timestamp and skips
- * the changelog gate. package.json and README.md are restored even when
- * packaging aborts.
+ * Tagged channels require the tag and package.json to agree, and each channel
+ * selects its content section here: a tagged release uses the exact tag version.
+ * CI and Insiders read the sole current section, while displaying the manifest
+ * version or the timestamped version, respectively.
+ * package.json is restored even when packaging aborts; the README is no longer
+ * swapped, because generated documents are handed to VSCE by explicit path.
+ *
+ * @typedef {{
+ *   channel: "ci"|"production"|"pre-release"|"insiders",
+ *   version: string,
+ *   tag: string|null,
+ *   changelogSection: string,
+ * }} ResolvedChannel `version` is the packaged display version; `changelogSection`
+ *   is the content section this entry selects, which is separate from it.
  */
 
 import { execSync } from "node:child_process"
@@ -37,8 +47,8 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { createDistributionManifest, resolveTargetIdentity } from "./extension-manifest-identity.mjs"
-import { withMarketplaceReadme } from "./marketplace-readme.mjs"
 import { assertChannelVersion, createInsidersVersion as createPolicyInsidersVersion } from "./release-version-policy.mjs"
+import { withSignalSafeCleanup } from "./signal-safe-cleanup.mjs"
 import { packageVsix } from "./vsix-packager.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
@@ -47,8 +57,6 @@ const __dirname = path.dirname(__filename)
 const PROJECT_ROOT = path.join(__dirname, "..")
 const PACKAGE_JSON_PATH = path.join(PROJECT_ROOT, "package.json")
 const DIST_DIR = path.join(PROJECT_ROOT, "dist")
-
-const CHANGELOG_PATHS = [path.join(PROJECT_ROOT, "CHANGELOG.md"), path.join(PROJECT_ROOT, "docs", "changelog", "CHANGELOG_en.md")]
 
 const PRODUCTION_TAG_PATTERN = /^v(\d+\.\d+\.\d+)$/
 const DEV_TAG_PATTERN = /^dev-v(\d+\.\d+\.\d+)$/
@@ -169,23 +177,10 @@ function fail(reason) {
 }
 
 /**
- * Check whether a changelog documents the released version.
- *
- * Both language editions use `## [X.Y.Z]` section headings, so a missing
- * heading means the release notes were not written for this version.
- *
- * @param {string} changelogPath Absolute path to a changelog file.
- * @param {string} version Version expected to have a section.
- * @returns {boolean}
- */
-function changelogDocumentsVersion(changelogPath, version) {
-    if (!fs.existsSync(changelogPath)) return false
-    const content = fs.readFileSync(changelogPath, "utf-8")
-    return content.split(/\r?\n/).some((line) => line.trim() === `## [${version}]`)
-}
-
-/**
  * Reject a tagged release whose version is not consistent everywhere.
+ *
+ * The bilingual notes for that version are validated by the shared generator, so
+ * this gate only refuses a tag that disagrees with the version it publishes.
  *
  * @param {"production"|"pre-release"} channel Channel the tag selects.
  * @param {string} tag Tag pointing at HEAD.
@@ -200,12 +195,6 @@ function assertReleaseVersionConsistency(channel, tag, tagVersion, packageVersio
     }
     if (tagVersion !== packageVersion) {
         fail(`Tag '${tag}' declares version ${tagVersion} but package.json is ${packageVersion}. Bump the version first.`)
-    }
-
-    const missing = CHANGELOG_PATHS.filter((changelogPath) => !changelogDocumentsVersion(changelogPath, tagVersion))
-    if (missing.length > 0) {
-        const names = missing.map((changelogPath) => path.relative(PROJECT_ROOT, changelogPath)).join(", ")
-        fail(`No '## [${tagVersion}]' section found in: ${names}. Release notes must exist in every language edition.`)
     }
 }
 
@@ -227,7 +216,7 @@ function createInsidersVersion(packageVersion) {
  * Resolve which channel the current HEAD belongs to.
  *
  * @param {string} packageVersion Version currently in package.json.
- * @returns {{channel: "production"|"pre-release"|"insiders", version: string, tag: string|null}}
+ * @returns {ResolvedChannel}
  */
 function resolveChannel(packageVersion) {
     const branch = getCurrentBranch()
@@ -240,7 +229,7 @@ function resolveChannel(packageVersion) {
             fail(`Production tag '${tag}' is checked out on '${branch}'. A production tag must live on main.`)
         }
         assertReleaseVersionConsistency("production", tag, productionTag[1], packageVersion)
-        return { channel: "production", version: productionTag[1], tag }
+        return { channel: "production", version: productionTag[1], tag, changelogSection: productionTag[1] }
     }
 
     if (devTag) {
@@ -248,7 +237,7 @@ function resolveChannel(packageVersion) {
             fail(`Development tag '${tag}' is checked out on '${branch}'. A dev release tag must live on dev.`)
         }
         assertReleaseVersionConsistency(PRE_RELEASE_CHANNEL, tag, devTag[1], packageVersion)
-        return { channel: PRE_RELEASE_CHANNEL, version: devTag[1], tag }
+        return { channel: PRE_RELEASE_CHANNEL, version: devTag[1], tag, changelogSection: devTag[1] }
     }
 
     if (tag !== null) {
@@ -263,7 +252,12 @@ function resolveChannel(packageVersion) {
         fail(`Branch '${branch ?? "detached HEAD"}' has no packaging channel. Package from main, dev, or a release tag.`)
     }
 
-    return { channel: "insiders", version: createInsidersVersion(packageVersion), tag: null }
+    return {
+        channel: "insiders",
+        version: createInsidersVersion(packageVersion),
+        tag: null,
+        changelogSection: "current",
+    }
 }
 
 /**
@@ -271,7 +265,7 @@ function resolveChannel(packageVersion) {
  *
  * @param {string} requestedChannel Requested channel.
  * @param {string} packageVersion Version currently in package.json.
- * @returns {{channel: "ci"|"production"|"pre-release"|"insiders", version: string, tag: string|null}}
+ * @returns {ResolvedChannel}
  */
 function resolveRequestedChannel(requestedChannel, packageVersion) {
     if (requestedChannel === "auto") {
@@ -283,12 +277,19 @@ function resolveRequestedChannel(requestedChannel, packageVersion) {
         // tag cannot change its identity. A dev-vX.Y.Z tag must name the dev head,
         // which is exactly the commit the dev push packages as Insiders; rejecting
         // tagged commits would fail every pre-release's dev Tests run.
-        return { channel: "insiders", version: createInsidersVersion(packageVersion), tag: null }
+        return {
+            channel: "insiders",
+            version: createInsidersVersion(packageVersion),
+            tag: null,
+            changelogSection: "current",
+        }
     }
 
     const tag = getExactTag()
     if (requestedChannel === "ci") {
-        return { channel: "ci", version: packageVersion, tag }
+        // CI documents the checkout's sole current section without inventing a
+        // numbered candidate beside development notes.
+        return { channel: "ci", version: packageVersion, tag, changelogSection: "current" }
     }
 
     const pattern = requestedChannel === "production" ? PRODUCTION_TAG_PATTERN : DEV_TAG_PATTERN
@@ -298,7 +299,7 @@ function resolveRequestedChannel(requestedChannel, packageVersion) {
         fail(`${requestedChannel} packaging requires an exact ${expected} tag at HEAD.`)
     }
     assertReleaseVersionConsistency(requestedChannel, tag, match[1], packageVersion)
-    return { channel: requestedChannel, version: match[1], tag }
+    return { channel: requestedChannel, version: match[1], tag, changelogSection: match[1] }
 }
 
 /**
@@ -383,7 +384,7 @@ function applyChannelIdentity(pkg, channel, version, publisherOverride, registry
 
 const { requestedChannel, outputPath, publisherOverride, registry } = parseArguments(process.argv.slice(2))
 const packageVersion = readPackageJson().version
-const { channel, version, tag } = resolveRequestedChannel(requestedChannel, packageVersion)
+const { channel, version, tag, changelogSection } = resolveRequestedChannel(requestedChannel, packageVersion)
 const resolvedOutputPath = outputPath ? (path.isAbsolute(outputPath) ? outputPath : path.join(PROJECT_ROOT, outputPath)) : null
 
 const documentationRef = resolveDocumentationRef(tag)
@@ -392,46 +393,50 @@ console.log(`[package-vsix] Git hash: ${getGitHash()}`)
 console.log(`[package-vsix] Tag: ${tag ?? "(none)"}`)
 console.log(`[package-vsix] Channel: ${channel}`)
 console.log(`[package-vsix] Version: ${version}`)
+console.log(`[package-vsix] Changelog section: ${changelogSection}`)
 console.log(`[package-vsix] Documentation ref: ${documentationRef}`)
 
-await withMarketplaceReadme(
-    async (cleanups) => {
-        const originalContent = fs.readFileSync(PACKAGE_JSON_PATH, "utf-8")
-        const pkg = JSON.parse(originalContent)
+// The root README is never swapped here: generated documents are handed to VSCE
+// by explicit path, so only this entry's temporary manifest needs restoring.
+await withSignalSafeCleanup(async (cleanups) => {
+    const originalContent = fs.readFileSync(PACKAGE_JSON_PATH, "utf-8")
+    const pkg = JSON.parse(originalContent)
 
-        // Register restoration before mutating package.json so signals during
-        // vscode:prepublish or vsce packaging restore both temporary files.
-        cleanups.defer(() => {
-            console.log("[package-vsix] Restoring original package.json")
-            fs.writeFileSync(PACKAGE_JSON_PATH, originalContent)
-        })
+    // Register restoration before mutating package.json so signals during
+    // vscode:prepublish or vsce packaging restore the temporary manifest.
+    cleanups.defer(() => {
+        console.log("[package-vsix] Restoring original package.json")
+        fs.writeFileSync(PACKAGE_JSON_PATH, originalContent)
+    })
 
-        if (applyChannelIdentity(pkg, channel, version, publisherOverride, registry)) {
-            writePackageJson(pkg)
-            console.log(
-                `[package-vsix] Applied ${channel} identity: publisher=${pkg.publisher}, name=${pkg.name}, version=${pkg.version}`,
-            )
-        } else {
-            console.log(`[package-vsix] Packaging ${channel} identity: name=${pkg.name}, version=${pkg.version}`)
-        }
-
-        const destinationDirectory = resolvedOutputPath ? path.dirname(resolvedOutputPath) : DIST_DIR
-        if (!fs.existsSync(destinationDirectory)) {
-            fs.mkdirSync(destinationDirectory, { recursive: true })
-        }
-
-        const preRelease = channel === PRE_RELEASE_CHANNEL
+    if (applyChannelIdentity(pkg, channel, version, publisherOverride, registry)) {
+        writePackageJson(pkg)
         console.log(
-            `[package-vsix] Packaging through the VSCE API${preRelease ? " as a pre-release" : ""}${resolvedOutputPath ? `: ${resolvedOutputPath}` : ""}`,
+            `[package-vsix] Applied ${channel} identity: publisher=${pkg.publisher}, name=${pkg.name}, version=${pkg.version}`,
         )
-        await packageVsix({
-            cwd: PROJECT_ROOT,
-            cleanups,
-            mode: "build-and-pack",
-            packagePath: resolvedOutputPath,
-            preRelease,
-        })
-        console.log("[package-vsix] Package completed successfully!")
-    },
-    { ref: documentationRef },
-)
+    } else {
+        console.log(`[package-vsix] Packaging ${channel} identity: name=${pkg.name}, version=${pkg.version}`)
+    }
+
+    const destinationDirectory = resolvedOutputPath ? path.dirname(resolvedOutputPath) : DIST_DIR
+    if (!fs.existsSync(destinationDirectory)) {
+        fs.mkdirSync(destinationDirectory, { recursive: true })
+    }
+
+    const preRelease = channel === PRE_RELEASE_CHANNEL
+    console.log(
+        `[package-vsix] Packaging through the VSCE API${preRelease ? " as a pre-release" : ""}${resolvedOutputPath ? `: ${resolvedOutputPath}` : ""}`,
+    )
+    await packageVsix({
+        cwd: PROJECT_ROOT,
+        cleanups,
+        mode: "build-and-pack",
+        packagePath: resolvedOutputPath,
+        preRelease,
+        // The channel selects the content section; the adapter displays the
+        // version this package actually declares.
+        changelogSection,
+        documentationRef,
+    })
+    console.log("[package-vsix] Package completed successfully!")
+})

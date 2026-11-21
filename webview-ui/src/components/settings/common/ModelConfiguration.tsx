@@ -146,7 +146,7 @@ export const ModelConfiguration = ({
                         case "supportsImages":
                             return capabilities.supportsImages ?? false
                         case "supportsPromptCache":
-                            return capabilities.supportsPromptCache ?? true
+                            return capabilities.supportsPromptCache ?? defaults?.capabilities?.supportsPromptCache ?? true
                         case "supportsTools":
                             return capabilities.supportsTools ?? defaults?.capabilities?.supportsTools ?? false
                         case "hostedWebSearchEnabled":
@@ -174,6 +174,7 @@ export const ModelConfiguration = ({
         capabilities.supportsBrowserAction,
         disabledServerTools,
         defaults?.capabilities?.supportsTools,
+        defaults?.capabilities?.supportsPromptCache,
         defaults?.capabilities?.supportsBrowserAction,
         draftChecks,
     ])
@@ -229,7 +230,8 @@ export const ModelConfiguration = ({
     const capabilityFields = fields.capabilities ?? []
     const pricingFields = fields.pricing ?? []
     const supportsImages = draftChecks.supportsImages ?? capabilities.supportsImages ?? false
-    const supportsPromptCache = draftChecks.supportsPromptCache ?? capabilities.supportsPromptCache ?? true
+    const supportsPromptCache =
+        draftChecks.supportsPromptCache ?? capabilities.supportsPromptCache ?? defaults?.capabilities?.supportsPromptCache ?? true
     const supportsTools =
         draftChecks.supportsTools ?? capabilities.supportsTools ?? defaults?.capabilities?.supportsTools ?? false
     const modelServerTools = declaredServerTools(defaults?.capabilities)

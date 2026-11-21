@@ -34,39 +34,60 @@ git --no-pager log --oneline <previous-version-ref>..HEAD
 git --no-pager diff --stat <previous-version-ref>..HEAD
 ```
 
-Review implementation and tests to establish the actual changes for the changelog.
+Review implementation and tests to establish the actual changes for the changelog. Separately verify the latest actual production publication and its tag/commit for the cumulative `Unreleased` baseline; a pre-release delta ref does not replace that baseline.
+
+Before writing, read the single current section in `CHANGELOG.md` and `docs/changelog/CHANGELOG_en.md`, package/lock versions and both top What's New sections. Establish whether current still holds an older exact version `<current-version>` or the cumulative `Unreleased` section, and read its complete bilingual content. Stop on missing, empty, conflicting or mismatched section content. Archive and version preparation are not publication evidence and must not assign a release date or advance the production baseline.
 
 ## 3. Update the release files
 
 Update all six release facts together; every version bump, including a patch or pre-release, touches all of them:
 
-- `CHANGELOG.md` (Chinese);
-- `docs/changelog/CHANGELOG_en.md` (English);
+- `CHANGELOG.md` (Chinese current body);
+- `docs/changelog/CHANGELOG_en.md` (English current body);
 - `docs/whats-new/WHATS_NEW.md` (Chinese);
-- `docs/whats-new/WHATS_NEW_en.md` (English, rendered in the What's New dialog);
+- `docs/whats-new/WHATS_NEW_en.md` (English default; the dialog renders the active language edition);
 - `package.json`;
 - `package-lock.json`.
 
-Freeze the paired changelogs according to repository-and-release before changing the package version:
+### Append the older exact version before replacing current
 
-- For a new pre-release or a production patch, move the applicable non-empty `Unreleased` body into the exact `## [X.Y.Z]` section.
-- For a production release after one or more pre-releases, write a standalone cumulative `## [X.Y.Z]` section covering the actual release changes since the preceding production release; consolidate the odd-minor pre-release sections and any final `Unreleased` delta instead of copying only the latest delta or referring readers elsewhere.
-- Recreate an empty `## [Unreleased]` section above the new version and keep all prior version sections as history.
-- Stop if the target section already exists with conflicting content, the two language editions describe different scopes, or the target section would be empty.
+Follow `repository-and-release`. When current holds an older exact version, run the maintenance check and preview append for that version, not the target version. When current holds `Unreleased`, no append happens here; verify the baseline and final net change before renaming that section in the step below.
 
-Use the existing changelog structure and include only sections that contain real entries below the empty rolling section:
-
-```markdown
-## [Unreleased]
-
-## [X.Y.Z]
-
-### Features
-### Changed
-### Fixed
+```text
+npm run changelog:check
+npm run changelog:append -- --version <current-version> --dry-run
 ```
 
-The two changelogs record the same changes in the same order, using one concise sentence per entry. Routine dev integrations update only `Unreleased`; they do not update package versions or What's New until this version-preparation workflow runs.
+Review the preview, then explicitly append that version (skip both commands when current holds `Unreleased`):
+
+```text
+npm run changelog:append -- --version <current-version>
+```
+
+Normal append requires `--version <X.Y.Z>` with a numeric version and reads only that exact frozen section from the current bodies. It archives it into `docs/changelog/history.zh-CN.md` and `docs/changelog/history.en.md` (one file per language, one section per version, never a per-version directory) and leaves current unchanged. Append never modifies current, package/lock or What's New, does not archive `Unreleased` and does not publish anything; builds, Insiders timestamps and temporary manifest edits do not invoke it.
+
+An existing version with identical content in both languages is a no-op. Different content, unrelated missing versions, or unknown guard/temp state stops the operation without permission to overwrite. Confirm both history files before replacing current. The two files are sequential replacements, not a cross-file power-loss transaction: inspect any guard/temp left by an interrupted run first. Only the same frozen current version with identical already-published text and otherwise paired history can resume; preserve unknown state for manual investigation.
+
+### Replace the single current section with the target
+
+Write both current bodies so each keeps exactly one section. There are two preparation paths:
+
+```markdown
+## [Unreleased]     # development: the only section in both current bodies
+
+## [X.Y.Z]          # frozen: replaces Unreleased once the target is exact and matches the manifest
+```
+
+- If current already holds an older exact version, append it as above, then replace that section with a genuinely curated target section and do not leave the old body relabelled as the target.
+- If current holds `Unreleased`, verify the production baseline and the final net change for the target, then rename that one section to the exact candidate.
+
+Either way current keeps exactly one section with the same name in both languages and never holds `Unreleased` and a version together. The target section must be non-empty and standalone, with only categories that have real entries. Both languages must describe the same changes in the same order, using one concise sentence per entry. Stop if the target conflicts with existing history, the editions differ in scope, or either body is empty.
+
+- A pre-release snapshot covers the applicable delta established in step 2; do not clear the cumulative `Unreleased` record on each pre-release or preparation.
+- A production snapshot covers the final net changes since the preceding verified production publication, including the pre-release work and final dev changes. Reconcile against implementation and tests; neither the last delta alone nor a mechanical concatenation of historical snapshots is sufficient.
+- After an actual production publication is verified, explicitly maintain the cumulative record against what that release shipped. Retain newer dev changes if development has continued. Neither append nor this preparation advances that baseline.
+
+Routine dev integrations update cumulative `Unreleased`; they do not create a permanent Insiders version or change package/What's New on each commit.
 
 Add a What's New section for the exact target version at the top of both What's New files, above the previous release, which stays below as history:
 
@@ -76,12 +97,20 @@ Add a What's New section for the exact target version at the top of both What's 
 - **Short summary**: one sentence on what users can now do or what no longer goes wrong.
 ```
 
-- The webview build ships only the first `##` section, and its heading must be a bare `X.Y.Z`. Do not place any other `##` heading above it.
+- The webview build ships only the first `##` section, and its heading must be a bare `X.Y.Z`. `## Unreleased` is invalid here, not a draft section. Do not place any other `##` heading above it.
 - That section must stand alone for the version. For a patch, carry forward the highlights of the current minor line that still apply and add the patch's user-visible fixes; do not write only "bug fixes".
-- Write at most five highlights selected from the changelog, each led by a bold summary; do not pad the list to reach a minimum count. Allowed syntax is one flat `- ` list, two-space continuation lines, `**bold**`, `` `code` ``, and absolute `https://` links, without nesting; anything else fails the build.
-- The Chinese edition carries the same version, the same number of items, and the same meaning.
+- Independently select at most five highlights from the target changelog, each within 128 characters including its bold lead-in. Do not pad the list, insert placeholder highlights, or generate it by concatenating changelog entries. Allowed syntax is one flat `- ` list, two-space continuation lines, `**bold**`, `` `code` ``, and absolute `https://` links, without nesting; unsupported syntax fails the build.
+- The Chinese edition carries the same version, scope, number of items and order, with equivalent meaning.
 
-Update package and lockfile versions without changing dependency ranges. If using a package-manager command to synchronize them, that dependency/tooling operation requires the applicable authorization and its resulting diff must be reviewed.
+After the current content is written (and the older exact version is appended, when current held one), synchronize package/lock and both What's New editions to the target without changing dependency ranges. If using a package-manager command to synchronize versions, that dependency/tooling operation requires the applicable authorization and its resulting diff must be reviewed. Then run the read-only consistency check:
+
+```text
+npm run changelog:check
+```
+
+There is no generated index to refresh: `CHANGELOG.md` and `docs/changelog/CHANGELOG_en.md` are the current bodies, so writing them is the only current-side step. Check and build never write, and no compatibility index or source footer is generated around the bodies.
+
+This multi-file preparation is not one atomic transaction. If interrupted or left inconsistent, keep the complete history, report the mismatched files and stop packaging until the intended target state is repaired. Do not automatically restore old notes under a new version, and do not claim that temporary-file cleanup or `finally` recovers a power interruption.
 
 ## 4. Validate the prepared state
 
@@ -91,10 +120,11 @@ At minimum run:
 npm run check-types
 npm run lint
 npm run test:smoke
-npx vitest run webview-ui/src/__tests__/vite-whats-new.test.ts
+npm run changelog:check
+npx vitest run webview-ui/src/__tests__/vite-whats-new.test.ts src/__tests__/changelog.test.ts src/__tests__/extract-changelog-section.test.ts
 ```
 
-The What's New test fails when either edition is malformed, when the first section's version differs from `package.json`, or when the two editions differ in version or item count.
+`changelog:check` uses the shared extraction CLI's read-only `--check` mode to validate current/manifest, bilingual versions and complete history, and it never writes. CI and E2E packaging use the same one read-only current body and report the effective manifest version. The What's New test fails when either edition is malformed, when the first section's version differs from `package.json`, or when the two editions differ in version or item count. Review scope, order, the five-item/128-character budgets and lockfile version separately; all six release facts must match the target. Missing or mismatched current content must block packaging, never select old history as fallback notes.
 
 Run focused Vitest, functional E2E, Storybook, or package checks required by the changed release surface. When preparing the exact integrated release candidate, load `e2e-validation` and run `npm run test:e2e:work`; do not substitute full functional or dev-tier E2E for the required work gate. Review the final diff and ensure only intended release-preparation files and approved companion changes are present.
 

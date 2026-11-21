@@ -219,6 +219,97 @@ describe("FileLock", () => {
         await upgradedLock.release(jsonlPath)
     })
 
+    it("should record a lease the next owner can judge without the file mtime", async () => {
+        const dir = await mkTmpDir()
+        const jsonlPath = path.join(dir, "lease-payload.jsonl")
+        const lockPath = `${jsonlPath}.lck`
+
+        await lock.acquire(jsonlPath)
+        const payload = JSON.parse(await fs.readFile(lockPath, "utf8"))
+        // The lease length is written by the owner, so an external tool rewriting
+        // mtime cannot move the takeover deadline.
+        payload.ttlMs.should.equal(10_000)
+        payload.ownerId.should.be.type("string")
+        await lock.release(jsonlPath)
+    })
+
+    it("should keep an empty lock while its writer may still fill it", async () => {
+        const dir = await mkTmpDir()
+        const jsonlPath = path.join(dir, "empty-young.jsonl")
+        const lockPath = `${jsonlPath}.lck`
+        // `open(wx)` creates the file before the payload is written, so an empty
+        // file inside the write grace belongs to a live writer, not to garbage.
+        await fs.writeFile(lockPath, "", "utf8")
+
+        const contender = new FileLock({ maxAcquireAttempts: 2 })
+        await contender.acquire(jsonlPath).should.be.rejectedWith(/Failed to acquire lock/)
+        const stillEmpty = await fs.readFile(lockPath, "utf8")
+        stillEmpty.should.equal("")
+    })
+
+    it("should break an abandoned unreadable lock after the write grace", async () => {
+        const dir = await mkTmpDir()
+        const jsonlPath = path.join(dir, "empty-abandoned.jsonl")
+        const lockPath = `${jsonlPath}.lck`
+        // A crashed writer leaves the empty file behind; past the grace nobody can
+        // still be filling it.
+        await fs.writeFile(lockPath, "", "utf8")
+        const oldTime = new Date(Date.now() - 15_000)
+        await fs.utimes(lockPath, oldTime, oldTime)
+
+        const contender = new FileLock()
+        await contender.acquire(jsonlPath)
+
+        const payload = JSON.parse(await fs.readFile(lockPath, "utf8"))
+        payload.pid.should.equal(process.pid)
+        await contender.release(jsonlPath)
+    })
+
+    it("should take over an expired lease whose owner is gone even when the mtime is fresh", async () => {
+        const dir = await mkTmpDir()
+        const jsonlPath = path.join(dir, "expired-lease-fresh-mtime.jsonl")
+        const lockPath = `${jsonlPath}.lck`
+        // The owner died 30s ago, but a sync or backup tool touched mtime just now.
+        // Judging by mtime would keep the abandoned lock alive for another full lease.
+        await fs.writeFile(
+            lockPath,
+            JSON.stringify({ pid: 999_999, ownerId: "gone-owner", ts: Date.now() - 30_000, ttlMs: 10_000 }),
+            "utf8",
+        )
+
+        await lock.acquire(jsonlPath)
+
+        const payload = JSON.parse(await fs.readFile(lockPath, "utf8"))
+        payload.pid.should.equal(process.pid)
+        await lock.release(jsonlPath)
+    })
+
+    it("should not leave its own lock behind when the payload write fails", async () => {
+        const dir = await mkTmpDir()
+        const jsonlPath = path.join(dir, "failed-write.jsonl")
+        const lockPath = `${jsonlPath}.lck`
+        const originalOpen = fs.open.bind(fs)
+        const handleFailure = Object.assign(new Error("no space left on device"), { code: "ENOSPC" })
+        const openSpy = vi.spyOn(fs, "open").mockImplementationOnce(async (...args: Parameters<typeof fs.open>) => {
+            const handle = await originalOpen(...args)
+            // Fail the write of the payload, not the exclusive create itself.
+            return Object.assign(Object.create(Object.getPrototypeOf(handle)), handle, {
+                writeFile: async () => {
+                    throw handleFailure
+                },
+            })
+        })
+
+        await new FileLock({ maxAcquireAttempts: 1 }).acquire(jsonlPath).should.be.rejectedWith(/no space left on device/)
+
+        const lckExists = await fs
+            .stat(lockPath)
+            .then(() => true)
+            .catch(() => false)
+        lckExists.should.equal(false)
+        openSpy.mockRestore()
+    })
+
     it("should break stale locks (older than 10s)", async () => {
         const dir = await mkTmpDir()
         const jsonlPath = path.join(dir, "stale.jsonl")

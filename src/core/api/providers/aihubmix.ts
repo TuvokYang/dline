@@ -2,6 +2,7 @@ import { Anthropic } from "@anthropic-ai/sdk"
 import { GenerateContentConfig, GoogleGenAI } from "@google/genai"
 import { ModelInfo } from "@shared/api"
 import { providerFetch } from "@shared/net"
+import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import OpenAI from "openai"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
@@ -380,16 +381,15 @@ export class AIhubmixHandler extends ApiHandler {
                 matchingInfo ??
                 (selectedId
                     ? { id }
-                    : {
+                    : buildEffectiveModelInfo(
                           id,
-                          description: "AIhubmix unified model provider",
-                          capabilities: {
-                              maxTokens: 8192,
-                              contextWindow: 128000,
-                              supportsImages: true,
-                              supportsPromptCache: false,
+                          {
+                              id,
+                              description: "AIhubmix unified model provider",
+                              capabilities: { maxTokens: 8192, contextWindow: 128000, supportsImages: true },
                           },
-                      }),
+                          {},
+                      )),
         }
     }
 }

@@ -89,6 +89,18 @@ Claude models that support thinking show thinking settings below the model selec
 
 Thinking content counts toward token usage. For how it works, how it interacts with tool use and prompt caching, and how it is billed, see [Anthropic's extended thinking documentation](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking).
 
+### Manual mode for an undeclared Anthropic model
+
+For a model without a declared or inherited thinking mode, check **Enable Thinking**, then select **Effort** or **Budget** under **Thinking Mode**. The mode starts empty; set the effort level or token budget manually.
+
+Choose an effort level or enter a positive integer token budget supported by your endpoint. The configuration is saved in the current Profile. Switching modes clears the other mode's request value and keeps **Thinking Display**. Models with a declared mode show the corresponding effort or budget control directly; models explicitly marked as not supporting thinking hide the thinking controls.
+
+### New minor versions
+
+For Anthropic and Claude Code, a canonical new Claude minor version can fill missing cache and thinking capabilities from the nearest older declaration with the same family, major version, and exact variant in that provider's catalog. For example, `claude-opus-5-6` can inherit those declarations from `claude-opus-5-5`.
+
+The selected model's declarations and explicit Profile overrides win, including `false` and an empty effort list. Inherited effort and budget modes keep their native request format; without a usable ancestor, Dline does not guess a thinking mode. Prices, context/output limits, images, hosted tools, and protocols do not inherit. Unrecognized aliases and dated snapshots are not automatically mapped to a family.
+
 ## Tips
 
 - **Prompt caching:** Claude models support [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching), which can significantly reduce cost and latency for repeated requests.

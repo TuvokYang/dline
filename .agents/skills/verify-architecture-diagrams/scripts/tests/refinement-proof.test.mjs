@@ -1,8 +1,10 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { checkTaskAgainstWorkstream } from "../lib/checks-b2.mjs"
 import { checkInterLevel, checkRefinementCoverage } from "../lib/checks-interlevel.mjs"
 import { checkIntraLayer } from "../lib/checks-intra.mjs"
 import { parseFlowchart } from "../lib/mermaid-parse.mjs"
+import { computeExitCode, computeVerdict } from "../lib/report.mjs"
 
 function diagram(id, layer, body, kind = "structure") {
     const parsed = parseFlowchart(
@@ -84,6 +86,54 @@ test("coarse node coverage is the union of declared descendant refinements, neve
     )
 })
 
+test("set coverage does not also require every selective pair to cover the same edge", () => {
+    const coarse = diagram("parent", "L0", "A[A] -->|injects| B[B]")
+    const selective = diagram(
+        "selective",
+        "L1",
+        "%% local-only: X\n%% local-only: Y\nA[A] -->|injects| X[X]\nB[B] -->|injects| Y[Y]",
+    )
+    const connected = diagram("connected", "L1", "A[A] -->|injects| B[B]")
+    const pairs = [selective, connected].map((fine) => ({ coarse, fine, declared: true }))
+    assert.equal(
+        checkInterLevel(coarse, selective, { declared: true }).some((finding) => finding.rule === "coarse-edge-not-refined"),
+        true,
+    )
+    assert.deepEqual(checkInterLevel(coarse, selective, { declared: true, coverageCheckedAtSet: true }), [])
+    assert.deepEqual(checkRefinementCoverage([coarse, selective, connected], pairs), [])
+    assert.equal(
+        checkRefinementCoverage([coarse, selective], pairs.slice(0, 1)).some(
+            (finding) => finding.rule === "coarse-edge-not-refined",
+        ),
+        true,
+    )
+})
+
+test("a task edge may be declared by one parent without being duplicated in every parent", () => {
+    const primary = diagram("primary", "L1", "A[A] -->|injects| B[B]")
+    const selective = diagram("selective", "L1", "A[A] -->|injects| C[C]\nB[B]")
+    const task = diagram("task", "L2", "%% refines: primary, selective\nA[A] -->|injects| B[B]")
+    const check = (parents) =>
+        checkTaskAgainstWorkstream({
+            taskId: "TASK-001",
+            taskDiagram: task,
+            wsDiagrams: parents,
+            labelVocabulary: new Set(["injects"]),
+            specText: "",
+        })
+    assert.deepEqual(check([primary, selective]), [])
+    selective.edges.push({ from: "B", to: "A", style: "solid", label: "injects", line: 8 })
+    assert.equal(
+        check([primary, selective]).some((finding) => finding.rule === "task-edge-inverted"),
+        true,
+    )
+    task.refines = ["missing"]
+    assert.equal(
+        check([primary]).some((finding) => finding.rule === "task-refines-unknown"),
+        true,
+    )
+})
+
 test("separately covered endpoints cannot discharge the missing coarse relationship", () => {
     const coarse = diagram("parent", "L0", "A[A] -->|injects| B[B]")
     const first = diagram("first", "L1", "%% local-only: X\nA[A] -->|injects| X[X]")
@@ -94,15 +144,71 @@ test("separately covered endpoints cannot discharge the missing coarse relations
     ]
     const missing = checkRefinementCoverage([coarse, first, second], pairs)
     assert.equal(
-        missing.some((finding) => finding.rule === "coarse-edge-not-refined" && finding.severity === "unverifiable"),
+        missing.some((finding) => finding.rule === "coarse-edge-not-refined" && finding.severity === "warning"),
         true,
     )
     const connected = diagram("connected", "L1", "%% local-only: X\nA[A] -->|injects| X[X]\nX -->|injects| B[B]")
     assert.deepEqual(checkRefinementCoverage([coarse, connected], [{ coarse, fine: connected, declared: true }]), [])
 })
 
+test("unrefined boxes warn without proving coverage or hiding contradictory refinements", () => {
+    const coarse = diagram("parent", "L0", "A[A] -->|injects| B[B]")
+    const fine = diagram("selective", "L1", "%% local-only: X\nA[A] -->|injects| X[X]")
+    const pending = checkRefinementCoverage([coarse, fine], [{ coarse, fine, declared: true }])
+    assert.deepEqual(
+        pending.map(({ rule, severity }) => ({ rule, severity })),
+        [
+            { rule: "coarse-node-not-refined", severity: "warning" },
+            { rule: "coarse-edge-not-refined", severity: "warning" },
+        ],
+    )
+    assert.equal(computeExitCode(pending), 0)
+    assert.equal(computeVerdict(pending), "incomplete")
+    const pair = checkInterLevel(coarse, fine, { declared: true })
+    assert.equal(pair.find((item) => item.rule === "coarse-node-not-refined")?.severity, "warning")
+    const disconnected = diagram(
+        "disconnected",
+        "L1",
+        "%% local-only: X\n%% local-only: Y\nA[A] -->|injects| X[X]\nB[B] -->|injects| Y[Y]",
+    )
+    assert.equal(
+        checkInterLevel(coarse, disconnected, { declared: true }).find((item) => item.rule === "coarse-edge-not-refined")
+            ?.severity,
+        "warning",
+    )
+    for (const [body, rule] of [
+        ["B[B] -->|injects| A[A]", "edge-direction-inverted"],
+        ["A[A] -.->|result fact| B[B]", "edge-style-downgraded"],
+        ["A[A] -->|injects| C[C]", "node-unresolved"],
+    ]) {
+        const conflict = checkInterLevel(coarse, diagram("conflict", "L1", body), { declared: true })
+        assert.equal(
+            conflict.some((item) => item.rule === rule),
+            true,
+            rule,
+        )
+        assert.equal(computeExitCode([...pending, ...conflict]), 1, rule)
+    }
+})
+
 test("a fact noun cannot mask an explicit dotted command", () => {
-    for (const label of ["submit result", "call committed state", "delete published evidence", "persist readiness"]) {
+    for (const label of [
+        "submit result",
+        "call committed state",
+        "delete published evidence",
+        "persist readiness",
+        "commit result fact",
+        "open file result fact",
+        "result fact; then delete records",
+        "result fact and delete records",
+        "no new work and delete records",
+        "never submit work; then delete records",
+        "must not persist facts and delete records",
+        "result fact; Runtime must commit records",
+        "Runtime shall publish readiness",
+        "Runtime must release facts",
+        "Runtime should open matching receipt",
+    ]) {
         const findings = checkIntraLayer(
             diagram("command", "L0", `A[A] -->|injects| B[B]\nB -.->|${label}| A`),
             new Set(["injects"]),
@@ -113,10 +219,44 @@ test("a fact noun cannot mask an explicit dotted command", () => {
             label,
         )
     }
-    for (const label of ["dispatch held", "release facts", "accepted result fact"]) {
+    for (const label of [
+        "dispatch held",
+        "release facts",
+        "accepted result fact",
+        "open enrollment receipt or closed rejection fact",
+        "prepare failed settled or maintenance-not-required fact",
+        "close release unavailable or foreign-lock facts",
+        "canonical commit and revision facts",
+        "original sealed delete handle or typed pending fact; never an owner handle",
+        "aggregate health fact; never ordinary submit",
+        "open matching receipt or closed/rejected fact",
+        "non-authorizing maintenance observation facts; Runtime commits before projection",
+        "decision proposal fact; durable only after Runtime commit",
+        "committed child create open close result acknowledgement reclaim or orphan-cleanup intent fact",
+        "correlated main closed fact after endpoint unpublish and child drain",
+        "sealed quiesced resumed closed completed recovery-needed and boundary facts as events; writes held until resume or publish",
+        "while open: durable enrollment receipt; while closed: typed rejection",
+        "main closed only after its child stop closed and handle-release receipts settle",
+        "all sealed delete handles and coordination receipts released; no child ownership",
+        "view query and read-handle release or still-pending facts",
+        "Runtime must not commit records",
+        "Runtime shall never publish records",
+    ]) {
         assert.deepEqual(
             checkIntraLayer(diagram("fact", "L0", `A[A] -->|injects| B[B]\nB -.->|${label}| A`), new Set(["injects"])),
             [],
+        )
+    }
+})
+
+test("unclassified dotted prose remains unverifiable rather than being treated as a fact", () => {
+    for (const label of ["Runtime commits records", "an arbitrary description"]) {
+        assert.equal(
+            checkIntraLayer(diagram("unknown", "L0", `A[A] -->|injects| B[B]\nB -.->|${label}| A`), new Set(["injects"])).some(
+                (finding) => finding.rule === "dotted-edge-semantics-unknown",
+            ),
+            true,
+            label,
         )
     }
 })

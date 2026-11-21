@@ -30,10 +30,10 @@ describe("capabilities resource contract", () => {
             "无法验证刷新的配置：Raw ENOENT /User Path/中文.md。已保留最新的本地选项。",
         )
         expect(
-            translateUi("en", "capabilities.subagent.categoryCount", { name: "Tools", active: 2, selected: 3, required: 1 }),
-        ).toBe("Tools (2 active, 3 selected, 1 required)")
+            translateUi("en", "capabilities.subagent.categoryCount", { name: "Tools", active: 2, total: 3, required: 1 }),
+        ).toBe("Tools (2 active, 3 total, 1 required)")
         expect(
-            translateUi("zh-CN", "capabilities.subagent.categoryCount", { name: "工具", active: 2, selected: 3, required: 1 }),
-        ).toBe("工具（2 项生效，3 项已选，1 项必需）")
+            translateUi("zh-CN", "capabilities.subagent.categoryCount", { name: "工具", active: 2, total: 3, required: 1 }),
+        ).toBe("工具（2 项生效，共 3 项，1 项必需）")
     })
 })

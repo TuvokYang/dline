@@ -3,10 +3,11 @@
 
 import fs from "node:fs"
 import path from "node:path"
-import { canonicalNodeKey, normalizeArchitectureIdentity } from "./architecture-identity.mjs"
+import { createDiagramResolver, normalizeArchitectureIdentity } from "./architecture-identity.mjs"
 import { createCodeFactSnapshot } from "./code-facts.mjs"
 import { bindDiagramSources, expandDiagramSources } from "./diagram-sources.mjs"
 import { validateEvidenceAgainstDiagram } from "./evidence-model.mjs"
+import { counterpartAllows, declaredCounterparts, referenceParts, signalState } from "./reference-contracts.mjs"
 import { importsInScriptRegions, resolveScriptRegion } from "./script-regions.mjs"
 import { proveScriptWiring } from "./script-wiring.mjs"
 import { buildDependencyClosure } from "./tree-sitter-dependencies.mjs"
@@ -14,6 +15,10 @@ import { languageForPath } from "./tree-sitter-runtime.mjs"
 
 const COMPUTABLE_BOUNDARIES = new Set(["whole_file", "module", "symbol"])
 const COMPLETED = "completed"
+// A Task that has begun implementing is accountable for its actual dependency
+// direction; a planned Task has no runtime of its own yet.
+const IMPLEMENTED = new Set(["active", "blocked", COMPLETED])
+const contradictionSeverity = (status) => (IMPLEMENTED.has(status) ? "blocking" : "warning")
 
 function canonicalPath(value) {
     return String(value ?? "")
@@ -63,12 +68,35 @@ function importTargets(edge, targetPath, { runtime = false } = {}) {
     )
 }
 
-function hasImport(codeSnapshot, importer, target, { runtime = false } = {}) {
+// Every import statement that could carry this dependency, so a symbol claim can be
+// checked against the identity it states rather than against the file alone.
+function mateEdges(codeSnapshot, importer, target, { runtime = false } = {}) {
     const source = canonicalPath(importer)
-    return codeSnapshot.imports.some(
+    return codeSnapshot.imports.filter(
         (edge) =>
             canonicalPath(edge.importer) === source && (!runtime || !edge.typeOnly) && importTargets(edge, target, { runtime }),
     )
+}
+
+function hasImport(codeSnapshot, importer, target, { runtime = false } = {}) {
+    return mateEdges(codeSnapshot, importer, target, { runtime }).length > 0
+}
+
+// Both endpoints of a direct_import name an identity, so importing the receive file is not
+// the claim: the emitting boundary must import that exact symbol. An unresolved alias or
+// barrel chain stays unverifiable instead of being read as a whole-file import.
+function receiveIdentity(imports, importer, endpoint) {
+    if (!endpoint?.symbol) return { state: "module" }
+    const states = mateEdges({ imports }, importer, endpoint.path, { runtime: true }).map((edge) =>
+        signalState(edge, endpoint.symbol, { path: endpoint.path, runtime: true }),
+    )
+    if (states.some((state) => state.state === "resolved")) return { state: "resolved" }
+    if (states.some((state) => state.state === "unverifiable" || state.state === "type-only"))
+        return {
+            state: "unverifiable",
+            reason: `${endpoint.path} is imported, but ${endpoint.symbol} cannot be resolved by import identity`,
+        }
+    return { state: "absent" }
 }
 
 function endpointPresent(endpoint, presentArtifacts) {
@@ -104,9 +132,14 @@ export function proveEvidenceEdge({ edge, codeSnapshot, presentArtifacts }) {
                 return unverifiable("the exact emitting function cannot be resolved for its structural dependency")
             imports = importsInScriptRegions(codeSnapshot, entry[0], [selected])
         }
-        return hasImport({ ...codeSnapshot, imports }, edge.emit.path, edge.receive.path, { runtime: true })
-            ? proven("runtime import used within the declared emitting boundary connects emit to receive")
-            : contradicted("no runtime import within the declared emitting boundary connects emit to receive")
+        if (!hasImport({ ...codeSnapshot, imports }, edge.emit.path, edge.receive.path, { runtime: true }))
+            return contradicted("no runtime import within the declared emitting boundary connects emit to receive")
+        // The receive endpoint is an identity, not only a file: an import of the module that
+        // cannot carry that symbol is unproven, not proven.
+        const identity = receiveIdentity(imports, edge.emit.path, edge.receive)
+        if (identity.state === "unverifiable") return unverifiable(identity.reason)
+        if (identity.state === "absent") return contradicted("no imported binding reaches the declared receive identity")
+        return proven("runtime import used within the declared emitting boundary connects emit to receive")
     }
     if (kind === "injected_port") {
         if (!edge.contract || !endpointPresent(edge.contract, presentArtifacts))
@@ -229,6 +262,11 @@ export function findBoundaryConflicts(tasks) {
     return findings
 }
 
+function writerIdentity(writer) {
+    const [file, ...symbol] = String(writer).split("#")
+    return `${canonicalPath(file)}#${symbol.join("#")}`
+}
+
 export function findAuthorityConflicts(claims) {
     const findings = []
     const byFact = new Map()
@@ -239,10 +277,10 @@ export function findAuthorityConflicts(claims) {
         byFact.get(fact).push({ ...claim, canonicalFact: fact })
     }
     for (const group of byFact.values()) {
-        const writers = new Set(group.map((claim) => canonicalPath(claim.writer)))
+        const writers = new Set(group.map((claim) => writerIdentity(claim.writer)))
         if (writers.size <= 1) continue
         const completedWriters = new Set(
-            group.filter((claim) => claim.status === COMPLETED).map((claim) => canonicalPath(claim.writer)),
+            group.filter((claim) => claim.status === COMPLETED).map((claim) => writerIdentity(claim.writer)),
         )
         const severity = completedWriters.size > 1 ? "blocking" : "warning"
         findings.push(
@@ -334,49 +372,11 @@ async function buildBoundedSnapshot({ repoRoot, artifactPaths, supportPaths, gen
     })
 }
 
+// Every Task keeps its own counterparts: the emitting Task identity decides, and a
+// shared file never inherits a sibling Task's diagram or evidence permission.
 function declaredRelations(taskEntries) {
     const relations = new Map()
-    for (const entry of taskEntries) {
-        const pairs = []
-        relations.set(entry.task.id, pairs)
-        const add = (from, to) => pairs.push({ from: canonicalPath(from), to: canonicalPath(to) })
-        const internal = (artifacts) => {
-            for (const from of artifacts) for (const to of artifacts) add(from.path, to.path)
-        }
-        const evidence = entry.task.architectureEvidence
-        if (evidence) {
-            for (const node of evidence.nodes.values()) internal(node.artifacts)
-            for (const edge of evidence.edges) {
-                if (!edge.emit?.path || !edge.receive?.path) continue
-                if (edge.kind === "direct_import") {
-                    add(edge.emit.path, edge.receive.path)
-                } else if (edge.kind === "composition") {
-                    if (edge.assembly?.path) {
-                        add(edge.assembly.path, edge.emit.path)
-                        add(edge.assembly.path, edge.receive.path)
-                    } else {
-                        add(edge.receive.path, edge.emit.path)
-                    }
-                } else if (["injected_port", "event", "callback"].includes(edge.kind) && edge.contract?.path) {
-                    add(edge.emit.path, edge.contract.path)
-                    add(edge.receive.path, edge.contract.path)
-                }
-            }
-        }
-        for (const parsed of entry.task.diagrams) {
-            if (parsed.problems.length > 0 || parsed.diagram.ignored) continue
-            const diagram = parsed.diagram
-            for (const artifacts of diagram.artifacts.values()) internal(artifacts)
-            for (const edge of diagram.edges) {
-                if (edge.style !== "solid") continue
-                const fromArtifacts = diagram.artifacts.get(edge.from) ?? []
-                const toArtifacts = diagram.artifacts.get(edge.to) ?? []
-                for (const from of fromArtifacts) {
-                    for (const to of toArtifacts) add(from.path, to.path)
-                }
-            }
-        }
-    }
+    for (const entry of taskEntries) relations.set(entry.task.id, declaredCounterparts(entry.task))
     return relations
 }
 
@@ -449,7 +449,7 @@ function runtimeContradictionFindings({
         if (!reverse) continue
         findings.push(
             finding(
-                contract.status === COMPLETED ? "blocking" : "warning",
+                contradictionSeverity(contract.status),
                 "runtime-edge-direction-contradiction",
                 `runtime edge ${reverse.importer} -> ${contract.from} reverses direct-import evidence ${contract.edgeId}`,
                 { task: contract.taskId, file: reverse.importer, line: reverse.line },
@@ -483,10 +483,10 @@ function runtimeContradictionFindings({
         const hasCycle = component.length > 1 || [...(outgoing.get(component[0]) ?? [])].some((target) => target === component[0])
         if (!hasCycle) continue
         const taskIds = [...new Set(component.map((member) => tasksByPath.get(member)).filter(Boolean))].sort()
-        const completed = taskIds.length > 0 && taskIds.every((taskId) => taskStatusById.get(taskId) === COMPLETED)
+        const implemented = taskIds.length > 0 && taskIds.every((taskId) => IMPLEMENTED.has(taskStatusById.get(taskId)))
         findings.push(
             finding(
-                completed ? "blocking" : "warning",
+                implemented ? "blocking" : "warning",
                 "runtime-scc",
                 `bounded runtime import graph forms SCC ${component.slice().sort().join(" -> ")}; type-only edges are excluded`,
                 { task: taskIds.join(",") || null },
@@ -496,19 +496,18 @@ function runtimeContradictionFindings({
     return findings
 }
 
-function hasDeclaredTaskRead(task, importer, target) {
-    if (!task) return false
-    const contains = (file, boundary) => {
-        const root = canonicalPath(boundary.path).replace(/\/$/, "")
-        return root && (file === root || file.startsWith(`${root}/`))
-    }
-    return task.owns.some((owned) => contains(importer, owned)) && task.reads.some((read) => contains(target, read))
-}
-
-function actualEdgeFindings({ codeSnapshot, artifactPaths, declared, tasksByPath, tasks, requireResolved = false }) {
+function actualEdgeFindings({
+    codeSnapshot,
+    artifactPaths,
+    declared,
+    tasksByPath,
+    tasks,
+    taskStatusById,
+    requireResolved = false,
+}) {
     const findings = []
     let externalCount = 0
-    for (const edge of codeSnapshot.imports) {
+    for (const edge of codeSnapshot.imports.flatMap(referenceParts)) {
         const importer = canonicalPath(edge.importer)
         if (!artifactPaths.has(importer)) continue
         if (edge.target.kind === "package" || edge.target.kind === "builtin") {
@@ -528,16 +527,36 @@ function actualEdgeFindings({ codeSnapshot, artifactPaths, declared, tasksByPath
             continue
         }
         const target = canonicalPath(edge.target.path)
-        const task = edge.taskId ?? tasksByPath.get(importer) ?? null
-        const contains = (file, boundary) => file === boundary || file.startsWith(`${boundary.replace(/\/$/, "")}/`)
-        const declaredForTask = declared.get(task)?.some((pair) => contains(importer, pair.from) && contains(target, pair.to))
-        if (declaredForTask || hasDeclaredTaskRead(tasks.get(task), importer, target)) continue
+        const taskId = edge.taskId ?? tasksByPath.get(importer) ?? null
+        const owner = tasks.get(taskId)
+        // Reads provide inspection context, never import permission. Only this Task's
+        // structural or evidence counterpart can authorize the emitting binding.
+        const reference = { edge, importer, target }
+        const permissions = (declared.get(taskId) ?? []).map((declaration) =>
+            counterpartAllows(declaration, reference, { codeSnapshot }),
+        )
+        if (permissions.some((permission) => permission.state === "allowed")) continue
+        // A contract that names this target but a different identity is not absence: the
+        // reference stays unproven rather than becoming a silent default warning.
+        const open = permissions.find((permission) => permission.state === "unverifiable")
+        if (open) {
+            findings.push(
+                finding("unverifiable", "actual-edge-unverifiable", open.reason, {
+                    task: taskId,
+                    file: edge.importer,
+                    line: edge.line,
+                }),
+            )
+            continue
+        }
+        const bound = artifactPaths.has(target)
+        const status = taskId ? (taskStatusById?.get(taskId) ?? owner?.status ?? null) : null
         findings.push(
             finding(
-                "warning",
-                artifactPaths.has(target) ? "actual-edge-undeclared" : "actual-edge-outbound-boundary",
-                `${edge.typeOnly ? "type-only" : "runtime"} edge ${edge.importer} -> ${edge.target.path} has no diagram/read/evidence counterpart`,
-                { task, file: edge.importer, line: edge.line },
+                contradictionSeverity(status),
+                bound ? "actual-edge-undeclared" : "actual-edge-outbound-boundary",
+                `${edge.typeOnly ? "type-only" : "runtime"} edge ${edge.importer} -> ${edge.target.path}${edge.bindings?.length ? ` (${edge.bindings.map((binding) => binding.imported).join(", ")})` : ""} has no diagram/evidence counterpart`,
+                { task: taskId, file: edge.importer, line: edge.line },
             ),
         )
     }
@@ -567,6 +586,12 @@ export async function checkCodeConformance(context) {
     const findings = []
     const taskEntries = [...context.tasks.values()].map((task) => ({ task, status: task.status ?? "unknown" }))
     const taskStatusById = new Map(taskEntries.map(({ task, status }) => [task.id, status]))
+    const validDiagrams = (parsed) =>
+        parsed.filter((entry) => !entry.problems.length && !entry.diagram.ignored).map((entry) => entry.diagram)
+    const resolver = createDiagramResolver(
+        taskEntries.flatMap(({ task }) => validDiagrams(task.diagrams)),
+        validDiagrams(context.spec.diagrams),
+    )
     const supportPaths = new Set(taskEntries.flatMap(({ task }) => task.reads.map((read) => read.path)))
     const artifactRecords = []
     // Comparison keys are case-normalized, but filesystem reads retain the
@@ -634,7 +659,7 @@ export async function checkCodeConformance(context) {
                     authorityClaims.push({
                         taskId: task.id,
                         status,
-                        fact: canonicalNodeKey(diagram, record.nodeId),
+                        fact: resolver.keyOf(diagram, record.nodeId),
                         writer: `${record.artifact.path}${record.artifact.symbol ? `#${record.artifact.symbol}` : ""}`,
                         file: diagram.file,
                     })
@@ -715,7 +740,7 @@ export async function checkCodeConformance(context) {
             .map(([canonical]) => canonical),
     )
 
-    const bound = bindDiagramSources(sourceRecords, codeSnapshot)
+    const bound = bindDiagramSources(sourceRecords, codeSnapshot, presentArtifacts)
     findings.push(...bound.findings)
     for (const diagnostic of codeSnapshot.diagnostics) {
         if ((diagnostic.path || diagnostic.file) && !artifactPaths.has(canonicalPath(diagnostic.path ?? diagnostic.file)))
@@ -817,7 +842,7 @@ export async function checkCodeConformance(context) {
         }
     }
 
-    findings.push(...findAuthorityConflicts(authorityClaims))
+    findings.push(...resolver.findings, ...findAuthorityConflicts(authorityClaims))
     findings.push(
         ...findBoundaryConflicts(
             taskEntries.map(({ task, status }) => ({
@@ -859,6 +884,7 @@ export async function checkCodeConformance(context) {
             declared,
             tasksByPath,
             tasks: context.tasks,
+            taskStatusById,
             requireResolved: true,
         }),
     )

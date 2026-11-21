@@ -1,6 +1,6 @@
 import { LiteLlmHandler, type LiteLlmModelInfoResponse } from "@core/api/providers/litellm"
 import { convertToOpenAiMessages } from "@core/api/transform/openai-format"
-import { ModelRegistry } from "@core/model-registry/ModelRegistry" // used in getModel tests
+import { ModelRegistry } from "@core/model-registry/ModelRegistry"
 import { liteLlmDefaultModelId } from "@shared/api"
 import type { ModelInfo } from "@shared/proto/dline/models"
 import { ApiProfile } from "@shared/proto/dline/profile"
@@ -95,7 +95,7 @@ describe("LiteLlmHandler", () => {
     }
 
     describe("prompt cache", () => {
-        const setModelData = (model: string, supportsPromptCaching: boolean) => {
+        const setModelData = (model: string, supportsPromptCaching: boolean | undefined) => {
             mockModelFetch({
                 model_name: model,
                 litellm_params: {
@@ -108,6 +108,43 @@ describe("LiteLlmHandler", () => {
                 },
             })
         }
+
+        it.each([
+            { declared: undefined, effective: undefined, override: undefined, expected: true },
+            { declared: false, effective: true, override: undefined, expected: false },
+            { declared: true, effective: false, override: undefined, expected: false },
+            { declared: undefined, effective: true, override: false, expected: false },
+            { declared: true, effective: true, override: undefined, expected: true },
+        ])("uses the shared cache default without losing a declared or user false: %j", async ({
+            declared,
+            effective,
+            override,
+            expected,
+        }) => {
+            const model = "remote-cache-model"
+            handler = new LiteLlmHandler({
+                profile: ApiProfile.create({
+                    provider: "litellm",
+                    modelId: model,
+                    modelInfo: { id: model, capabilities: { supportsPromptCache: effective } },
+                    litellm: { capabilities: { supportsPromptCache: override } },
+                }),
+                mode: "act",
+            })
+            mockHandlerChat()
+            setModelData(model, declared)
+            for await (const _chunk of handler.createMessage("system", [{ role: "user", content: "hello" }])) {
+            }
+            const body = fakeClient.chat.completions.create.mock.calls[0][0]
+            expect(JSON.stringify(body.messages).includes('"cache_control"')).to.equal(expected)
+            if (expected) {
+                expect(body.messages[0].content[0].cache_control).to.deep.equal({ type: "ephemeral" })
+                expect(body.messages[1].content[0].cache_control).to.deep.equal({ type: "ephemeral" })
+            } else {
+                expect(body.messages[0].content).to.equal("system")
+                expect(body.messages[1].content).to.equal("hello")
+            }
+        })
 
         describe("when the model doesn't support prompt caching", () => {
             const model = "openai/gpt-5"

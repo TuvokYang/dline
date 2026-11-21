@@ -89,6 +89,20 @@ describe("foldActivity canonical policies", () => {
         expect(foldActivity(rows, STANDARD_FOLD, buildFoldContext(workedExample, indexRequestRounds(workedExample)))).toBe(rows)
     })
 
+    it("folds a terminated command and its later kill request in their own request rounds", () => {
+        const messages = [
+            task(1),
+            request(2),
+            command(3, { activityId: "cmd-1", commandStatus: "cancelled" }),
+            request(4),
+            tool(5, { tool: "killCommand", activityId: "cmd-1" }),
+            request(6),
+            completion(7),
+        ]
+        expect(layoutAt(messages, "round")).toEqual([1, { fold: [3] }, { fold: [5] }, 7])
+        expect(layoutAt(messages, "none")).toEqual([1, 3, 5, 7])
+    })
+
     it("folds across requests but stops at assistant messages in message mode", () => {
         expect(layoutAt(workedExample, "message_segment")).toEqual([
             1,
@@ -184,7 +198,7 @@ const splitterCases: Array<[string, UiMessage[], Layout[]]> = [
     ["a failed compaction", [compaction("failed")], [50]],
     ["a partial row", [tool(50, { tool: "newFileCreated", path: "b.ts" }, { partial: true })], [50]],
     ["a subagent status row", [say(50, "subagent", { text: "{}" })], [50]],
-    ["a kill-command row", [tool(50, { tool: "killCommand", activityId: "cmd-1" })], [50]],
+    ["a kill-command row without a known target outcome", [tool(50, { tool: "killCommand", activityId: "cmd-1" })], [50]],
     ["a request that failed in its own row", [request(50, { streamingFailedMessage: "connection reset" })], [50]],
     ["a request whose failure arrives as a separate ask", [request(50), ask(51, "api_req_failed", { text: "overloaded" })], [50]],
     ["an error row", [say(50, "error", { text: "boom" })], [50]],
@@ -265,6 +279,89 @@ describe.each(levels)("%s safety and settlement", (level) => {
 
     it.each(settledCases)("folds %s with its neighbours", (_name, rows) => {
         expect(layoutAt(settledTurnAround(rows), level)).toEqual([1, { fold: [10, 11, 50, 20, 21] }, 99])
+    })
+
+    it.each([
+        "completed",
+        "failed",
+        "cancelled",
+        "interrupted",
+        "skipped",
+    ] as const)("folds a kill-command row after its target is %s", (commandStatus) => {
+        const messages = settledTurnAround([
+            command(49, { activityId: "cmd-1", commandStatus }),
+            tool(50, { tool: "killCommand", activityId: "cmd-1" }),
+        ])
+        expect(layoutAt(messages, level)).toEqual([1, { fold: [10, 11, 49, 50, 20, 21] }, 99])
+    })
+
+    it.each(["pending", "running", undefined] as const)("keeps kill-command visible while its target is %s", (commandStatus) => {
+        const messages = settledTurnAround([
+            command(49, { activityId: "cmd-1", commandStatus }),
+            tool(50, { tool: "killCommand", activityId: "cmd-1" }),
+        ])
+        expect(rowsAt(messages, level).some((row) => !Array.isArray(row) && row.ts === 50)).toBe(true)
+    })
+
+    it("folds a kill-command row with no matching command", () => {
+        expect(layoutAt(settledTurnAround([tool(50, { tool: "killCommand" })]), level)).toEqual([
+            1,
+            { fold: [10, 11, 50, 20, 21] },
+            99,
+        ])
+    })
+
+    it("does not use another command's terminal status", () => {
+        const messages = settledTurnAround([
+            command(49, { activityId: "cmd-2", commandStatus: "cancelled" }),
+            tool(50, { tool: "killCommand", activityId: "cmd-1" }),
+        ])
+        expect(layoutAt(messages, level)).toEqual([1, { fold: [10, 11, 49] }, 50, { fold: [20, 21] }, 99])
+    })
+
+    it("folds the same kill-command row when the target's terminal update arrives", () => {
+        const target = say(49, "command", { activityId: "cmd-1", commandStatus: "running" })
+        const kill = tool(50, { tool: "killCommand", activityId: "cmd-1" })
+        const messages = settledTurnAround([target, kill])
+        expect(layoutAt(messages, level)).toEqual([1, { fold: [10, 11] }, 49, 50, { fold: [20, 21] }, 99])
+        expect(
+            layoutAt(
+                messages.map((row) => (row === target ? { ...row, commandStatus: "cancelled" } : row)),
+                level,
+            ),
+        ).toEqual([1, { fold: [10, 11, 49, 50, 20, 21] }, 99])
+    })
+
+    it("keeps partial and active kill-command interactions visible after the target ends", () => {
+        const target = command(49, { activityId: "cmd-1", commandStatus: "cancelled" })
+        const kill = tool(50, { tool: "killCommand", activityId: "cmd-1" }, { partial: true })
+        const messages = settledTurnAround([target, kill])
+        expect(layoutAt(messages, level)).toEqual([1, { fold: [10, 11, 49] }, 50, { fold: [20, 21] }, 99])
+        expect(
+            layoutAt(
+                messages.map((row) => (row === kill ? { ...row, partial: false } : row)),
+                level,
+                { activeAskTs: 50 },
+            ),
+        ).toEqual([1, { fold: [10, 11, 49] }, 50, { fold: [20, 21] }, 99])
+    })
+
+    it("reads a hidden target from the full transcript", () => {
+        const target = command(49, { activityId: "cmd-1", commandStatus: "cancelled" })
+        const messages = settledTurnAround([target, tool(50, { tool: "killCommand", activityId: "cmd-1" })])
+        const visible = messages.filter((row) => row !== target)
+        expect(groupChatRows(messages, visible, { level }).map(layoutOf)).toEqual([1, { fold: [10, 11, 50, 20, 21] }, 99])
+    })
+
+    it.each([
+        { commandStatus: "cancelled" as const, partial: true },
+        { commandStatus: "future-status" as never },
+    ])("does not infer a target end from incomplete or unknown status: %o", (state) => {
+        const messages = settledTurnAround([
+            command(49, { activityId: "cmd-1", ...state }),
+            tool(50, { tool: "killCommand", activityId: "cmd-1" }),
+        ])
+        expect(layoutAt(messages, level)).toEqual([1, { fold: [10, 11] }, 49, 50, { fold: [20, 21] }, 99])
     })
 
     it("keeps the active interaction's ask outside", () => {

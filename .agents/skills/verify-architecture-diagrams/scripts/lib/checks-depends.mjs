@@ -3,8 +3,8 @@
 // upstream-owned node to a downstream-owned node. Sharing one node is zero hops
 // and therefore is not evidence of ordering.
 
-import { canonicalNodeKey } from "./architecture-identity.mjs"
 import { resolveNode } from "./checks-interlevel.mjs"
+import { buildDependencyGraph } from "./dependency-graph.mjs"
 import { graphNodeIds } from "./mermaid-parse.mjs"
 
 function canonicalPath(value) {
@@ -15,29 +15,8 @@ function canonicalPath(value) {
         .toLowerCase()
 }
 
-function identityKey(diagram, nodeId) {
-    return canonicalNodeKey(diagram, nodeId)
-}
-
 export function mergedWorkstreamGraph(wsDiagrams) {
-    const outgoing = new Map()
-    for (const diagram of wsDiagrams) {
-        const members = new Set(graphNodeIds(diagram))
-        for (const nodeId of members) {
-            const key = identityKey(diagram, nodeId)
-            if (!outgoing.has(key)) outgoing.set(key, new Set())
-        }
-        for (const edge of diagram.edges) {
-            if (edge.style !== "solid") continue
-            if (!members.has(edge.from) || !members.has(edge.to)) continue
-            const from = identityKey(diagram, edge.from)
-            const to = identityKey(diagram, edge.to)
-            if (!outgoing.has(from)) outgoing.set(from, new Set())
-            outgoing.get(from).add(to)
-            if (!outgoing.has(to)) outgoing.set(to, new Set())
-        }
-    }
-    return outgoing
+    return buildDependencyGraph(wsDiagrams.map((diagram) => ({ diagram }))).outgoing
 }
 
 export function hasNonZeroPath(outgoing, sources, targets) {
@@ -67,12 +46,15 @@ function nodeArtifacts(task, diagram, nodeId) {
 
 function taskOwnsPath(task, artifactPath) {
     const wanted = canonicalPath(artifactPath)
-    return task.owns.some((boundary) => canonicalPath(boundary.path) === wanted)
+    return task.owns.some((boundary) => {
+        const root = canonicalPath(boundary.path).replace(/\/$/, "")
+        return root === wanted || (boundary.kind === "module" && wanted.startsWith(`${root}/`))
+    })
 }
 
 // Resolve only nodes that the task may write through an explicitly bound artifact.
 // `owns` remains permission; it does not create an artifact or authority claim.
-function taskOwnedIdentities(task, wsDiagrams) {
+function taskOwnedIdentities(task, wsDiagrams, resolver) {
     const keys = new Set()
     for (const parsed of task.diagrams) {
         if (parsed.problems.length > 0 || parsed.diagram.ignored) continue
@@ -82,9 +64,14 @@ function taskOwnedIdentities(task, wsDiagrams) {
             const artifacts = nodeArtifacts(task, diagram, nodeId)
             if (!artifacts.some((artifact) => artifact.path && taskOwnsPath(task, artifact.path))) continue
             const node = diagram.nodes.get(nodeId)
-            for (const wsDiagram of wsDiagrams) {
+            const references = diagram.refines?.length
+                ? wsDiagrams.filter((parent) => diagram.refines.includes(parent.id))
+                : wsDiagrams
+            for (const wsDiagram of references) {
                 const match = resolveNode(node, wsDiagram, diagram)
-                if (match.node) keys.add(identityKey(wsDiagram, match.node.id))
+                if (!match.node) continue
+                const key = resolver.keyOf(wsDiagram, match.node.id)
+                if (key !== null) keys.add(key)
             }
         }
     }
@@ -105,12 +92,91 @@ function finding(severity, rule, message, task, file, line) {
     }
 }
 
+function coversRead(owned, read) {
+    const root = canonicalPath(owned.path).replace(/\/$/, "")
+    const target = canonicalPath(read.path)
+    if (owned.kind === "module") return target === root || target.startsWith(`${root}/`)
+    if (target !== root) return false
+    if (owned.kind === "whole_file") return true
+    return (
+        owned.kind === "symbol" &&
+        read.kind === "symbol" &&
+        owned.selector &&
+        read.selector &&
+        (read.selector === owned.selector || read.selector.startsWith(`${owned.selector}.`))
+    )
+}
+
+function checkConsumedTasks(tasks, planGraph, planPath) {
+    const findings = []
+    const prerequisites = new Map(planGraph.tasks.map((row) => [row.id, new Set(row.dependsOn)]))
+    // Write permission alone does not establish production of an interface.
+    // Require an explicit architectural artifact owned by that Task as well.
+    const boundaries = [...tasks.values()].flatMap((task) =>
+        task.diagrams.flatMap((parsed) => {
+            if (parsed.problems.length || parsed.diagram.ignored) return []
+            return [...parsed.diagram.nodes.keys()]
+                .flatMap((nodeId) => nodeArtifacts(task, parsed.diagram, nodeId))
+                .filter(
+                    (artifact) =>
+                        ["declaration", "writer", "generated"].includes(artifact.role) &&
+                        artifact.inspection !== "support" &&
+                        task.owns.some((owned) =>
+                            coversRead(owned, {
+                                path: artifact.path,
+                                kind: artifact.symbol ? "symbol" : "module",
+                                selector: artifact.symbol,
+                            }),
+                        ),
+                )
+                .map((artifact) => ({
+                    task,
+                    owned: {
+                        path: artifact.path,
+                        kind: artifact.symbol ? "symbol" : "module",
+                        selector: artifact.symbol,
+                    },
+                }))
+        }),
+    )
+    const seen = new Set()
+    for (const consumer of tasks.values()) {
+        for (const read of consumer.reads ?? []) {
+            const matches = boundaries.filter(({ owned }) => coversRead(owned, read))
+            if (matches.length === 0) continue
+            const depth = Math.max(...matches.map(({ owned }) => canonicalPath(owned.path).length))
+            const producers = new Set(
+                matches.filter(({ owned }) => canonicalPath(owned.path).length === depth).map(({ task }) => task.id),
+            )
+            for (const producer of producers) {
+                if (producer === consumer.id || hasNonZeroPath(prerequisites, [consumer.id], [producer])) continue
+                const key = `${consumer.id}:${producer}:${read.path}`
+                if (seen.has(key)) continue
+                seen.add(key)
+                findings.push(
+                    finding(
+                        "blocking",
+                        "task-consumption-undeclared",
+                        `${consumer.id} declares a read of ${read.path} produced within ${producer}'s boundary, but its dependency DAG has no prerequisite path to ${producer}`,
+                        consumer.id,
+                        planPath,
+                        planGraph.tasks.find((row) => row.id === consumer.id)?.line,
+                    ),
+                )
+            }
+        }
+    }
+    return findings
+}
+
 export function checkDependsOnReachability({ tasks, planGraph, wsDiagrams, planPath }) {
     const findings = []
     if (!planGraph || planGraph.error || planGraph.tasks.length === 0) return findings
-    const outgoing = mergedWorkstreamGraph(wsDiagrams)
+    const graph = buildDependencyGraph(wsDiagrams.map((diagram) => ({ diagram })))
+    const outgoing = graph.outgoing
+    findings.push(...graph.resolver.findings, ...checkConsumedTasks(tasks, planGraph, planPath))
     const identities = new Map()
-    for (const task of tasks.values()) identities.set(task.id, taskOwnedIdentities(task, wsDiagrams))
+    for (const task of tasks.values()) identities.set(task.id, taskOwnedIdentities(task, wsDiagrams, graph.resolver))
 
     let unanchored = 0
     for (const row of planGraph.tasks) {

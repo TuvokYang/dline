@@ -3,6 +3,7 @@ import { Tool as AnthropicTool } from "@anthropic-ai/sdk/resources/index"
 import { ANTHROPIC_FAST_MODE_SUFFIX, AnthropicModelId, anthropicDefaultModelId, anthropicModels, ModelInfo } from "@shared/api"
 import { prioritizeApiFormat } from "@shared/providers/api-format"
 import { buildEffectiveModelInfo, selectContextTier } from "@shared/providers/effective-model-info"
+import { inheritModelInfo } from "@shared/providers/model-inheritance"
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import type { BillingAttributionMessage } from "@/integrations/anthropic-claude-code/billing-attribution"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
@@ -100,7 +101,7 @@ export class AnthropicHandler extends ApiHandler {
     // The 1M long-context option is enabled by default; only an explicit false disables it.
     // This must match the provider UI default so tasks resolve to the same context window.
     private buildCustomModelInfo(modelId: string): ModelInfo {
-        return buildEffectiveModelInfo(modelId, undefined, {
+        return buildEffectiveModelInfo(modelId, inheritModelInfo(modelId, undefined, anthropicModels, "claude"), {
             capabilities: this.config?.capabilities,
             pricing: this.config?.pricing,
             enableLongContext: this.config?.enableLongContext !== false,
@@ -117,7 +118,7 @@ export class AnthropicHandler extends ApiHandler {
      * @returns Effective model metadata for display and request handling.
      */
     private buildRegistryModelInfo(modelId: string): ModelInfo {
-        return buildEffectiveModelInfo(modelId, anthropicModels[modelId], {
+        return buildEffectiveModelInfo(modelId, inheritModelInfo(modelId, anthropicModels[modelId], anthropicModels, "claude"), {
             capabilities: this.config?.capabilities,
             pricing: this.config?.pricing,
             enableLongContext: this.config?.enableLongContext !== false,
@@ -233,20 +234,8 @@ export class AnthropicHandler extends ApiHandler {
     getModel(): { id: AnthropicModelId; info: ModelInfo } {
         const mid = this.modelId
         if (mid && this.modelInfo?.id === mid) {
-            return {
-                id: mid as AnthropicModelId,
-                info: prioritizeApiFormat(
-                    buildEffectiveModelInfo(mid, this.modelInfo, {
-                        capabilities: this.config?.capabilities,
-                        pricing: this.config?.pricing,
-                        enableLongContext: this.config?.enableLongContext !== false,
-                        pricingTiersEnabled: this.config?.pricingTiersEnabled,
-                        preferContextWindowTier: true,
-                        contextWindowTiersEnabled: this.contextWindowTiersEnabled(mid),
-                    }),
-                    ApiFormat.ANTHROPIC_CHAT,
-                ),
-            }
+            // The factory already resolved this Profile against its runtime catalog.
+            return { id: mid as AnthropicModelId, info: this.modelInfo }
         }
         if (mid && anthropicModels[mid]) {
             const id = mid as AnthropicModelId

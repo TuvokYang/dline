@@ -338,8 +338,10 @@ describe("OpenAiCodexHandler hosted Web Search", () => {
         expect(handler.getModel()).to.deep.include({ id: "gpt-codex-remote" })
         expect(handler.getModel().info).to.deep.include({ id: "gpt-codex-remote" })
         expect(handler.getModel().info.capabilities?.supportsPromptCache).to.equal(true)
-        expect(handler.getModel().info.capabilities?.supportsReasoning).to.equal(undefined)
-        expect(handler.getModel().info.capabilities?.thinking).to.equal(undefined)
+        expect(handler.getModel().info.capabilities?.supportsReasoning).to.equal(true)
+        expect(handler.getModel().info.capabilities?.thinking?.effortLevels).to.deep.equal(["none", "low", "medium", "high"])
+        expect(handler.getModel().info.capabilities?.thinking?.defaultEnabled).to.equal(true)
+        expect(handler.getModel().info.capabilities?.thinking?.defaultEffort).to.equal(undefined)
     })
 
     it("omits the unsupported request-scoped compaction cap from primary and fallback Responses bodies", () => {

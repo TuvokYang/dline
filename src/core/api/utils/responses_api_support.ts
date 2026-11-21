@@ -360,7 +360,6 @@ export async function* handleResponsesApiStreamResponse(
                 const cacheReadTokens = usage.input_tokens_details?.cached_tokens || 0
                 const cacheWriteTokens = getResponsesCacheWriteTokens(usage.input_tokens_details)
                 const reasoningTokens = usage.output_tokens_details?.reasoning_tokens || 0
-                const totalTokens = usage.total_tokens || 0
                 // Responses `output_tokens` already includes `reasoning_tokens`.
                 const reportedCost = readReportedCost?.(usage)
                 const nonCachedInputTokens = Math.max(0, inputTokens - cacheReadTokens - cacheWriteTokens)
@@ -384,7 +383,6 @@ export async function* handleResponsesApiStreamResponse(
                         : cost?.kind === "calculated"
                           ? { totalCost: cost.amount, currency: cost.currency }
                           : undefined
-                Logger.log(`Total tokens from Responses API usage: ${totalTokens}`)
                 const stopReason = normalizeResponsesStopReason(chunk.response.status)
                 yield {
                     type: "usage",

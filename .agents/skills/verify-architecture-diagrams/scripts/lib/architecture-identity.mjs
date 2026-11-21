@@ -46,8 +46,8 @@ export function resolveArchitectureNode(fineNode, coarseDiagram, fineDiagram = n
             )
             if (values.includes(concept)) conceptMatches.push(candidate)
         }
-        const matched = resolution(conceptMatches, "concept")
-        if (matched) return matched
+        // An explicit identity cannot silently become an unrelated same-name node.
+        return resolution(conceptMatches, "concept") ?? { node: null, strategy: "unresolved-concept", candidates: [] }
     }
 
     const exact = coarseDiagram.nodes.get(fineNode.id)
@@ -63,6 +63,121 @@ export function resolveArchitectureNode(fineNode, coarseDiagram, fineDiagram = n
     }
 
     return { node: null, strategy: "unresolved", candidates: [] }
+}
+
+// Resolve graph identities through the same explicit parents used by B1/B2.
+// A local id is scoped to its diagram, never promoted to a shared authority.
+export function createDiagramResolver(diagrams, anchors = []) {
+    const all = [...new Set([...anchors, ...diagrams])]
+    const records = new Map()
+    const byId = new Map()
+    const findings = []
+    for (const [index, diagram] of all.entries()) {
+        if (diagram.id) {
+            if (!byId.has(diagram.id)) byId.set(diagram.id, [])
+            byId.get(diagram.id).push(diagram)
+        }
+        const nodes = new Map()
+        for (const node of diagram.nodes.values()) {
+            if (diagram.noteNodes.has(node.id)) continue
+            const record = {
+                diagram,
+                node,
+                scope: `${diagram.file}:${diagram.id ?? diagram.line ?? index}:${node.id}`,
+                local: diagram.localOnly.has(node.id),
+                matches: [],
+                invalid: false,
+                parent: null,
+                keys: new Set(),
+                concepts: new Set(),
+            }
+            record.parent = record
+            nodes.set(node.id, record)
+        }
+        records.set(diagram, nodes)
+    }
+    const fail = (record, reason) => {
+        if (record.invalid) return
+        record.invalid = true
+        findings.push({
+            severity: "unverifiable",
+            attribution: "diagram",
+            stage: "3",
+            file: record.diagram.file,
+            line: record.node.line,
+            diagram: record.diagram.id,
+            rule: "graph-identity-unresolved",
+            message: `${record.diagram.id ?? record.diagram.file} node ${record.node.id}: ${reason}`,
+        })
+    }
+    const rootOf = (record) => {
+        while (record.parent !== record) {
+            record.parent = record.parent.parent
+            record = record.parent
+        }
+        return record
+    }
+    const merge = (left, right) => {
+        left = rootOf(left)
+        right = rootOf(right)
+        if (left === right) return
+        right.parent = left
+        for (const key of right.keys) left.keys.add(key)
+        for (const concept of right.concepts) left.concepts.add(concept)
+    }
+    const named = new Map()
+    for (const [diagram, nodes] of records) {
+        const references = diagram.refines?.length
+            ? diagram.refines.flatMap((id) => byId.get(id) ?? [])
+            : anchors.includes(diagram)
+              ? []
+              : anchors
+        for (const record of nodes.values()) {
+            if (record.local) {
+                record.keys.add(`local:${record.scope}`)
+                continue
+            }
+            for (const reference of references) {
+                if (reference === diagram) continue
+                const match = resolveArchitectureNode(record.node, reference, diagram)
+                if (match.candidates?.length > 1) fail(record, "ambiguous node in a parent diagram")
+                const target = match.node && records.get(reference)?.get(match.node.id)
+                if (target && !target.local) record.matches.push(target)
+            }
+            if (record.matches.length > 0) continue
+            const key = canonicalNodeKey(diagram, record.node.id)
+            record.keys.add(key)
+            const concept = normalizeArchitectureIdentity(diagram.concepts.get(record.node.id))
+            if (concept) record.concepts.add(concept)
+            if (named.has(key)) merge(named.get(key), record)
+            else named.set(key, record)
+        }
+    }
+    const ordered = [...records.values()]
+        .flatMap((nodes) => [...nodes.values()])
+        .sort((left, right) => Number(left.diagram.layer?.slice(1) ?? 0) - Number(right.diagram.layer?.slice(1) ?? 0))
+    for (const record of ordered) {
+        if (record.local || record.invalid || record.matches.length === 0) continue
+        const concepts = new Set(record.matches.flatMap((match) => [...rootOf(match).concepts]))
+        if (concepts.size > 1 || record.matches.some((match) => match.invalid)) {
+            fail(record, "parents declare different or unresolved authorities")
+            continue
+        }
+        // One explicitly anchored node can join differently labelled views of
+        // the same boundary, but cannot merge two distinct declared authorities.
+        for (const match of record.matches) merge(record, match)
+    }
+    const keyOf = (diagram, nodeId) => {
+        const record = records.get(diagram)?.get(nodeId)
+        if (!record || record.invalid) return null
+        const root = rootOf(record)
+        if (root.keys.size === 0) {
+            fail(record, "refinement has no rooted identity")
+            return null
+        }
+        return [...root.keys].sort()[0]
+    }
+    return { keyOf, findings }
 }
 
 export function identityAmbiguities(diagram) {

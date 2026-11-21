@@ -75,21 +75,21 @@ Billing 没有时钟、请求身份、存储、重试、累计或用量归一化
 |---|---|
 | DeepSeek | 固定分时策略，可编辑显式默认价／窗口价，已公布窗口几何固定。真实设置底部渲染同一有效价格和比例配置色条。保留历史 flat 覆盖，直到显式 Reset，不猜折扣转换。 |
 | OpenAI／Anthropic | custom base URL **开关**开启后开放价格模式和结构编辑，即使尚未输入 URL；与 custom model ID 无关。Flat 也显示 Add Pricing Tier，点击后成为合法档位声明。 |
-| 其他 `ModelInfoView` 消费者 | 只读价格摘要；共用组件不等于为这些 Provider 新增编辑入口。 |
+| 其他 `ModelInfoView` 消费者 | 使用 `PricingEditor` 的只读模式展示价格摘要。 |
 
-关闭 custom URL 保留既有清空 URL 行为，但不删除价格。开启而 URL 为空的开关状态只在编辑器本地，不新增持久 setting。Profile／model key 隔离本地价格草稿。
+关闭 custom URL 时清空 URL，保留价格。URL 为空时，开关的启用状态保存在编辑器本地。Profile／model key 隔离本地价格草稿。
 
-横向时段图是配置几何：窗口宽度为其分钟时长占 1440 的比例，空档显示底层默认价。标签说明卖家时间、适用日及已配置假日条件。它**不是**今天的实际日历、当前费率、下一边界或倒计时；前端不实现这些计费判断。
+编辑器的横向时段图按配置绘制：窗口宽度为其分钟时长占 1440 的比例，空档显示默认价，标签说明卖家时间、适用日和假日条件。DeepSeek 的只读摘要通过 `DailyPricing` 按卖家日期和适用日规则展示当日时段，并在跨日、窗口重新获得焦点或恢复可见时刷新。
 
 ## 保存与失败路径
 
 编辑发布完整价格声明。最新草稿引用保证相邻 debounce 输入不互相覆盖，滞后回声不能回退草稿。结构操作与 Reset 前排空输入，防止迟到值修改其他行或重新建立已清除的覆盖。排空失败则保留结构并显示 alert。
 
-既有 Profile 保存链在 mutation 前校验新增或实际改动的显式价格。Reset／缺失可通过；未编辑的非法 legacy 声明不阻塞无关重命名，但修改该声明需要提交合法替代值。不新增迁移或持久化权威。仓库一致性见[存储所有权](/zh-cn/developer-guide/storage/)。
+Profile 保存链在 mutation 前校验新增或实际改动的显式价格。Reset／缺失可通过；未编辑的非法 legacy 声明不阻塞无关重命名，但修改该声明需要提交合法替代值。仓库一致性见[存储所有权](/zh-cn/developer-guide/storage/)。
 
-Provider 适配器在既有标准响应 usage 可用的位置调用基类方法。Messages 先组合该响应的输入和最终输出再算金额；`pause_turn` 续发使用自己的发送时间和响应 usage。内部重试、传输 fallback 同样传入真实发送时间，不以外层 `createMessage` 的进入时间代替。不改变 token 采集或 snapshot／delta 语义。
+Provider 适配器在标准响应 usage 可用的位置调用基类方法。Messages 先组合该响应的输入和最终输出再算金额；`pause_turn` 续发使用自己的发送时间和响应 usage。内部重试、传输 fallback 同样使用每次实际发送的时间。
 
-Provider 有效实报金额（含零）优先于本地计算，币种随实报字段或该协议明确单位传递；币种未知时不借 Profile 默认值补标签。既有消费者只接收已解析的金额和币种，不选价、不对累计 token 重算。金额沿现有规则累计，currency 随最新金额更新；不引入换汇或多币种结算层。
+Provider 有效实报金额（含零）优先于本地计算，币种随实报字段或该协议明确单位传递；币种未知时不借 Profile 默认值补标签。消费者接收已解析的金额和币种，不重新选价或根据累计 token 重算。单次请求中，snapshot 金额替换当前金额，delta 金额累加，币种取同一个 usage 块的 `currency`。跨 round 汇总遇到混合币种时，省略汇总的币种字段。
 
 ## 验证入口
 

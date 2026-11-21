@@ -74,9 +74,9 @@ Denial is explicit: work that genuinely needs a user throws `SurfaceDeniedError`
 
 Today the only production assembly of the domain uses `UserFacingSurface`; subagents run admitted handlers through their own runner. Assembly with `DeniedSurface` is currently exercised by unit tests.
 
-## Relationship to the wider runtime convergence
+## Runtime integration
 
-This domain is an early implementation of one executor in the target architecture, not a replacement for it. It delivers the tool domain and the `tool.*` command and event vocabulary, plus resource ownership and the halt receipt for this domain only. The unified kernel, the event loop that replaces the current runtime dispatch, and the provider, dialog, compose, background, and cotask executors remain part of the broader runtime convergence work.
+`ToolCommandExecutor` passes the kernel's `tool.run` commands to `ToolExecutionDomain` and submits their results to the task runtime as `tool.completed`, `tool.failed`, or `tool.cancelled` events. Stopping first fences new work and cancels active operations, then waits for the domain and result feedback to drain.
 
 ## Testing
 

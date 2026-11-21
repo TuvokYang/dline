@@ -215,11 +215,13 @@ function SelectionRow({
     const { t } = useUiTranslation()
     const id = useId()
     const locked = disabled || item.required || !item.available || missing.length > 0
+    const invalid = (item.required || item.selected) && (!item.available || missing.length > 0)
     return (
-        <div className="rounded px-2 py-2 hover:bg-text-block-background">
-            <label className={`flex gap-2.5 ${locked ? "opacity-70" : "cursor-pointer"}`}>
+        <div className="rounded px-2 py-2 hover:bg-foreground/5">
+            <label className={`flex gap-2.5 ${invalid ? "text-error" : locked ? "opacity-70" : "cursor-pointer"}`}>
                 <input
                     aria-describedby={`${id}-description`}
+                    aria-invalid={invalid || undefined}
                     aria-label={choiceLabel(tab, item, t)}
                     checked={item.required || item.selected}
                     className="mt-0.5 shrink-0 accent-[var(--vscode-button-background)]"
@@ -230,6 +232,9 @@ function SelectionRow({
                 <span className="min-w-0 flex-1">
                     <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
                         <span className="break-all text-xs font-medium">{item.name}</span>
+                        {invalid && (
+                            <span className="text-[10px] font-medium text-error">{t("capabilities.subagent.inactive")}</span>
+                        )}
                         {item.kind && (
                             <span className="text-[10px] text-description">
                                 {t(item.kind === "tools" ? "capabilities.subagent.tool" : "capabilities.subagent.resource")}
@@ -239,20 +244,22 @@ function SelectionRow({
                     </span>
                     <span className="mt-1 block text-xs text-description" id={`${id}-description`}>
                         {item.description}
-                        {item.path && item.path !== item.name && <span className="block break-all">{item.path}</span>}
+                        {tab === "rules" && item.path && item.path !== item.name && (
+                            <span className="block break-all">{item.path}</span>
+                        )}
                         {item.kind === "resources" && item.value !== item.name && (
                             <span className="block break-all">{item.value}</span>
                         )}
                         {item.required && <span className="block">{t("capabilities.subagent.requiredSelection")}</span>}
                         {!item.available && (
-                            <span className="block text-warning">
+                            <span className={`block ${invalid ? "text-error" : "text-warning"}`}>
                                 {t("capabilities.subagent.unavailable", {
                                     reason: item.unavailableReason || t("capabilities.subagent.notAvailable"),
                                 })}
                             </span>
                         )}
                         {missing.length > 0 && (
-                            <span className="block text-warning">
+                            <span className={`block ${invalid ? "text-error" : "text-warning"}`}>
                                 {t("capabilities.subagent.requires", { tools: missing.join(" + ") })}
                             </span>
                         )}
@@ -391,9 +398,9 @@ const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onTog
     }
     const missingTools = (item: Choice) => item.requires.filter((tool) => !effectiveTools.has(tool))
     const counts = (kind: Tab) => ({
-        selected: inventory[kind].filter((item) => !item.required && item.selected).length,
+        total: inventory[kind].length,
         active: inventory[kind].filter(
-            (item) => !item.required && item.selected && item.available && missingTools(item).length === 0,
+            (item) => (item.required || item.selected) && item.available && missingTools(item).length === 0,
         ).length,
         required: inventory[kind].filter((item) => item.required).length,
     })
@@ -484,7 +491,7 @@ const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onTog
 
     return (
         <div className="mb-2.5">
-            <div className="flex items-center rounded bg-text-block-background px-2 py-2">
+            <div className="flex items-center rounded bg-foreground/5 px-2 py-2">
                 <button
                     aria-controls={`${id}-configuration`}
                     aria-expanded={expanded}
@@ -504,8 +511,8 @@ const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onTog
                     )}
                     <span className="ml-2 text-xs text-description">
                         {t("capabilities.subagent.toolSummary", {
-                            selected: counts("tools").selected,
-                            required: requiredTools.size,
+                            active: counts("tools").active,
+                            total: counts("tools").total,
                         })}
                     </span>
                 </span>
@@ -547,7 +554,7 @@ const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onTog
             {expanded && (
                 <section
                     aria-label={t("capabilities.subagent.configuration", { name: agent.name })}
-                    className="ml-6 mt-1 rounded bg-input-background p-3"
+                    className="ml-6 mt-1 rounded border border-editor-group-border bg-foreground/3 p-3"
                     id={`${id}-configuration`}>
                     <label className="mb-3 flex flex-col gap-1 text-xs" htmlFor={`${id}-profile`}>
                         <span className="font-medium">{t("capabilities.subagent.profile")}</span>
@@ -629,8 +636,8 @@ const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onTog
                                     tabIndex={tab === kind ? 0 : -1}
                                     type="button">
                                     {t(LABELS[kind])}
-                                    <span className="rounded bg-text-block-background px-1 text-[10px]">
-                                        {count.active}/{count.selected}
+                                    <span className="rounded bg-foreground/5 px-1 text-[10px]">
+                                        {count.active}/{count.total}
                                     </span>
                                     {count.required > 0 && (
                                         <span className="text-[10px]">
@@ -663,9 +670,7 @@ const SubagentRowContent: React.FC<SubagentRowProps> = ({ agent, isGlobal, onTog
                             </p>
                         )}
                         {prerequisites.length > 0 && !loading.tools && !errors.tools && (
-                            <div
-                                className="mb-2 rounded border border-editor-group-border bg-text-block-background p-2.5"
-                                role="note">
+                            <div className="mb-2 rounded border border-editor-group-border bg-foreground/3 p-2.5" role="note">
                                 <div className="flex items-center gap-1.5 text-xs font-medium">
                                     <LockKeyhole size={13} /> {t("capabilities.subagent.missingPrerequisites")}
                                 </div>

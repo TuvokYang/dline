@@ -62,6 +62,84 @@ const writeTool = (ts: number, tool: string): UiMessage => ({
 })
 
 describe("summarizeActivityFold", () => {
+    const compactionCard = (ts: number, status?: "completed" | "running" | "failed"): UiMessage => ({
+        ts,
+        type: "say",
+        say: "tool",
+        text: JSON.stringify({
+            tool: "summarizeTask",
+            content: "Retained context",
+            compactionStatus: status,
+            compactionOperationId: `compaction-${ts}`,
+        }),
+    })
+
+    it.each([
+        "round",
+        "message_segment",
+        "user_turn",
+    ] as const)("counts completed and legacy compaction cards separately from other work in %s mode", (level) => {
+        const messages = [
+            userTask(1, "Continue after compaction"),
+            restorePoint(10, "files-1"),
+            finishedRequest(11),
+            compactionCard(12, "completed"),
+            compactionCard(13),
+            finishedRequest(14),
+            completion(15, "Done."),
+        ]
+        const folds = groupChatRows(messages, undefined, { level }).filter(isActivityFold)
+        const summaries = folds.map((fold) => summarizeActivityFold(fold, new Map()))
+        expect(summaries.flatMap((summary) => Array.from(summary.work))).toEqual([["compaction", 2]])
+        const summary = summaries.find((value) => value.work.size > 0)
+        expect(summary).toBeDefined()
+        if (!summary) throw new Error("expected a compaction summary")
+        expect(describeActivityFoldParts(summary)).toContainEqual({
+            kind: "work.compaction",
+            text: "2 context compactions",
+            isFailure: false,
+        })
+        expect(describeActivityFoldParts(summary, (key, ...args) => translateUi("zh-CN", key, ...args))).toContainEqual({
+            kind: "work.compaction",
+            text: "2 次上下文压缩",
+            isFailure: false,
+        })
+    })
+
+    it("keeps compaction, file reads and genuine other operations in independent categories", () => {
+        const summary = summaryOf([
+            userTask(1, "Read and continue"),
+            restorePoint(10, "files-1"),
+            finishedRequest(11),
+            writeTool(12, "readFile"),
+            compactionCard(13, "completed"),
+            writeTool(14, "genericTool"),
+            finishedRequest(15),
+            completion(16, "Done."),
+        ])
+        expect(Array.from(summary.work)).toEqual([
+            ["read", 1],
+            ["compaction", 1],
+            ["other", 1],
+        ])
+        expect(summary.tools.get("summarizeTask")).toBe(1)
+    })
+
+    it.each(["running", "failed"] as const)("keeps a %s compaction visible rather than counting folded work", (status) => {
+        const messages = [
+            userTask(1, "Continue"),
+            restorePoint(10, "files-1"),
+            finishedRequest(11),
+            compactionCard(12, status),
+            finishedRequest(13),
+            completion(14, "Done."),
+        ]
+        const rows = groupChatRows(messages, undefined, { level: "user_turn" })
+        expect(rows.some((row) => !Array.isArray(row) && row.ts === 12)).toBe(true)
+        const summaries = rows.filter(isActivityFold).map((fold) => summarizeActivityFold(fold, new Map()))
+        expect(summaries.flatMap((summary) => Array.from(summary.work))).toEqual([])
+    })
+
     it("counts a whole turn including prose, using actual requests rather than nested wrappers", () => {
         const summary = summaryOf(finishedTurnTranscript)
         expect(summary).toMatchObject({ rounds: 4, thoughts: 2, checkpoints: 4, assistantMessages: 1 })
@@ -366,7 +444,8 @@ describe("summarizeActivityFold", () => {
                 ["subagent", 4],
                 ["web", 5],
                 ["browser", 6],
-                ["other", 7],
+                ["compaction", 7],
+                ["other", 8],
             ]),
             external: new Map([
                 ["read", 1],
@@ -379,9 +458,9 @@ describe("summarizeActivityFold", () => {
             assistantMessages: 4,
             failures: new Map([
                 ["edit", 1],
-                ["read", 2],
+                ["read", 1],
                 ["subagent", 3],
-                ["command", 4],
+                ["command", 2],
                 ["web", 5],
                 ["browser", 6],
             ]),
@@ -394,16 +473,11 @@ describe("summarizeActivityFold", () => {
             "work.subagent",
             "work.web",
             "work.browser",
+            "work.compaction",
             "work.other",
             "thoughts",
             "checkpoints",
             "messages",
-            "failure.edit",
-            "failure.read",
-            "failure.subagent",
-            "failure.command",
-            "failure.web",
-            "failure.browser",
         ]
         const english = describeActivityFoldParts(summary)
         const chinese = describeActivityFoldParts(summary, (key, ...args) => translateUi("zh-CN", key, ...args))
@@ -417,10 +491,53 @@ describe("summarizeActivityFold", () => {
         for (const parts of [english, chinese, changedCounts, sameText]) {
             expect(parts.map((part) => part.kind)).toEqual(expectedKinds)
             expect(new Set(parts.map((part) => part.kind)).size).toBe(parts.length)
-            expect(parts.filter((part) => part.isFailure).map((part) => part.kind)).toEqual(expectedKinds.slice(-6))
+            expect(parts.filter((part) => part.isFailure).map((part) => part.kind)).toEqual(expectedKinds.slice(1, 7))
         }
         expect(chinese.map((part) => part.text)).not.toEqual(english.map((part) => part.text))
         expect(changedCounts.map((part) => part.text)).not.toEqual(english.map((part) => part.text))
+    })
+
+    it.each([
+        ["read", "read", "3 file reads (1 failed)", "3 次文件读取（1 次失败）"],
+        ["write", "edit", "3 file edits (1 failed)", "3 次文件编辑（1 次失败）"],
+        ["command", "command", "3 cmds (1 failed)", "3 条命令（1 次失败）"],
+        ["subagent", "subagent", "3 subagents (1 failed)", "3 个子代理（1 次失败）"],
+        ["web", "web", "3 web tools (1 failed)", "3 次网络工具调用（1 次失败）"],
+        ["browser", "browser", "3 browsers (1 failed)", "3 次浏览器操作（1 次失败）"],
+    ] as const)("keeps %s failures in a single localized work fact", (work, failure, english, chinese) => {
+        const summary: ActivityFoldSummary = {
+            work: new Map([[work, 3]]),
+            failures: new Map([[failure, 1]]),
+            external: new Map(),
+            tools: new Map(),
+            subagents: new Map(),
+            thoughts: 0,
+            checkpoints: 0,
+            assistantMessages: 0,
+        }
+        expect(describeActivityFoldParts(summary)).toEqual([{ kind: `work.${work}`, text: english, isFailure: true }])
+        expect(describeActivityFoldParts(summary, (key, ...args) => translateUi("zh-CN", key, ...args))).toEqual([
+            { kind: `work.${work}`, text: chinese, isFailure: true },
+        ])
+    })
+
+    it("combines external and failure subsets without adding another category", () => {
+        const summary: ActivityFoldSummary = {
+            work: new Map([["command", 3]]),
+            failures: new Map([["command", 1]]),
+            external: new Map([["command", 2]]),
+            tools: new Map(),
+            subagents: new Map(),
+            thoughts: 0,
+            checkpoints: 0,
+            assistantMessages: 0,
+        }
+        expect(describeActivityFoldParts(summary)).toEqual([
+            { kind: "work.command", text: "3 cmds (2 external, 1 failed)", isFailure: true },
+        ])
+        expect(describeActivityFold(summary, (key, ...args) => translateUi("zh-CN", key, ...args))).toBe(
+            "3 条命令（2 次位于工作区外，1 次失败）",
+        )
     })
 
     it("keeps the fallback fact's identity when translated", () => {

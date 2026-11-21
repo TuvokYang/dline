@@ -13,8 +13,11 @@ import { checkDependsOnReachability } from "./lib/checks-depends.mjs"
 import { checkInterLevel, checkLayerSequence, checkRefinementCoverage, resolveNode } from "./lib/checks-interlevel.mjs"
 import { checkCycles, checkIntraLayer } from "./lib/checks-intra.mjs"
 import { checkTaskGraph } from "./lib/checks-task-graph.mjs"
+import { buildDependencyGraph, checkDependencyCycles } from "./lib/dependency-graph.mjs"
 import { evaluateAllGates } from "./lib/gate.mjs"
 import { CODE_CONFORMANCE_SCOPE, dedupeFindings, runCodeConformanceScope, scopeSequence } from "./lib/invocation.mjs"
+import { checkPortContracts } from "./lib/port-contracts.mjs"
+import { checkPortRefinement } from "./lib/port-refinement.mjs"
 import { computeExitCode, computeVerdict, renderJsonReport, renderTextReport } from "./lib/report.mjs"
 import { findStaleProjections, readWorkstreamStatus } from "./lib/status-model.mjs"
 import { findRecordContradictions, readPlanGraph, readTasks } from "./lib/task-model.mjs"
@@ -252,7 +255,7 @@ function reportSetAnnotations(checked, findings) {
     }
 }
 
-function runWorkstreamScope({ spec, findings }) {
+function runWorkstreamScope({ spec, findings, deferCoverage = false }) {
     for (const parsed of spec.diagrams) {
         for (const problem of parsed.problems) {
             findings.push(
@@ -279,13 +282,16 @@ function runWorkstreamScope({ spec, findings }) {
     for (const diagram of checked) {
         findings.push(...checkCycles(diagram))
         findings.push(...checkIntraLayer(diagram, spec.labelVocabulary))
+        findings.push(...checkPortContracts(diagram))
     }
 
+    findings.push(...checkDependencyCycles(buildDependencyGraph(checked.map((diagram) => ({ diagram }))), "workstream"))
     const pairs = refinementPairs(checked, findings)
     for (const { coarse, fine, declared, allowedLocalNodes } of pairs) {
         findings.push(...checkInterLevel(coarse, fine, { declared, allowedLocalNodes, coverageCheckedAtSet: true }))
+        if (declared) findings.push(...checkPortRefinement(coarse, fine))
     }
-    findings.push(...checkRefinementCoverage(checked, pairs))
+    if (!deferCoverage) findings.push(...checkRefinementCoverage(checked, pairs))
     return checked
 }
 
@@ -317,17 +323,16 @@ async function runTaskScope({ spec, tasks, gates, scopeTaskId, findings, repoRoo
     }
     findings.push(...checkLayerSequence(checked, { scope: "task" }))
 
-    for (const diagram of checked) {
-        findings.push(...checkCycles(diagram))
-        findings.push(...checkIntraLayer(diagram, spec.labelVocabulary))
-    }
-
+    const eligible = []
     const wsDiagrams = spec.diagrams
         .filter((parsed) => parsed.problems.length === 0 && !parsed.diagram.ignored)
         .map((parsed) => parsed.diagram)
 
     for (const diagram of checked) {
-        findings.push(
+        const checks = [
+            ...checkCycles(diagram),
+            ...checkIntraLayer(diagram, spec.labelVocabulary),
+            ...checkPortContracts(diagram),
             ...checkTaskAgainstWorkstream({
                 taskId: task.id,
                 taskDiagram: diagram,
@@ -335,9 +340,14 @@ async function runTaskScope({ spec, tasks, gates, scopeTaskId, findings, repoRoo
                 labelVocabulary: spec.labelVocabulary,
                 specText: spec.specText,
             }),
-        )
+        ]
+        findings.push(...checks)
+        if (!checks.some((entry) => ["blocking", "unverifiable", "tooling"].includes(entry.severity))) {
+            eligible.push(diagram)
+        }
     }
 
+    findings.push(...checkTaskHorizontally({ entries: checked.map((diagram) => ({ taskId: task.id, diagram })), wsDiagrams }))
     const gate = gates.get(task.id)
     if (gate.astAllowed) {
         if (checked.length === 0) {
@@ -371,7 +381,7 @@ async function runTaskScope({ spec, tasks, gates, scopeTaskId, findings, repoRoo
             task: task.id,
         })
     }
-    return task
+    return eligible
 }
 
 function runCrossTaskScope({ spec, tasks, gates, planGraph, planPath, findings }) {
@@ -401,7 +411,7 @@ function runCrossTaskScope({ spec, tasks, gates, planGraph, planPath, findings }
         })
         return
     }
-    findings.push(...checkTaskHorizontally({ entries }))
+    findings.push(...checkTaskHorizontally({ entries, wsDiagrams }))
 
     // A task that cannot run its own gate cannot support a horizontal claim either.
     for (const task of tasks.values()) {
@@ -639,11 +649,13 @@ async function main() {
         }
     }
 
+    let wsCoverage = []
+    const taskCoverage = []
     const requestedScopes = scopeSequence(options.scope, [...taskModel.tasks.keys()])
     for (const scope of requestedScopes) {
         let executed = true
         if (scope === "workstream") {
-            runWorkstreamScope({ spec, findings })
+            wsCoverage = runWorkstreamScope({ spec, findings, deferCoverage: options.scope === "all" })
         } else if (scope === "cross-task") {
             runCrossTaskScope({
                 spec,
@@ -654,7 +666,7 @@ async function main() {
                 findings,
             })
         } else if (scope.startsWith("task:") && scope.length > "task:".length) {
-            await runTaskScope({
+            const eligible = await runTaskScope({
                 spec,
                 tasks: taskModel.tasks,
                 gates,
@@ -662,6 +674,7 @@ async function main() {
                 findings,
                 repoRoot,
             })
+            taskCoverage.push(...(eligible ?? []))
         } else if (scope === CODE_CONFORMANCE_SCOPE) {
             findings.push(
                 ...(await runCodeConformanceScope({
@@ -679,6 +692,13 @@ async function main() {
             findings.push(toolingFinding(null, null, `unknown --scope value: ${scope}`, "use --help to inspect supported scopes"))
         }
         if (executed) executedScopes.push(scope)
+    }
+
+    if (options.scope === "all") {
+        const diagrams = [...wsCoverage, ...taskCoverage]
+        reportSetAnnotations(diagrams, findings)
+        const pairs = refinementPairs(diagrams, findings)
+        findings.push(...checkRefinementCoverage(wsCoverage, pairs))
     }
 
     if (options.selfTest) {

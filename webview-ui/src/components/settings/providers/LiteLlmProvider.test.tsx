@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { ModelInfo } from "@shared/proto/dline/models"
 import type { ApiProfile } from "@shared/proto/dline/profile"
 import { render, screen } from "@testing-library/react"
 import type { ReactNode } from "react"
@@ -22,9 +23,9 @@ vi.mock("../common/ModelAutocomplete", () => ({
 }))
 
 vi.mock("../common/ModelInfoView", () => ({
-    ModelInfoView: ({ modelInfo }: { modelInfo?: unknown }) => {
+    ModelInfoView: ({ modelInfo }: { modelInfo?: ModelInfo }) => {
         if (!modelInfo) throw new Error("ModelInfoView requires modelInfo")
-        return <div>Model info</div>
+        return <div>{modelInfo.capabilities?.supportsPromptCache ? "Cache enabled" : "Cache disabled"}</div>
     },
 }))
 
@@ -48,6 +49,17 @@ describe("LiteLlmProvider", () => {
 
         expect(() => render(<LiteLlmProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)).not.toThrow()
         expect(screen.getByText("Model selector")).toBeInTheDocument()
-        expect(screen.queryByText("Model info")).not.toBeInTheDocument()
+        expect(screen.queryByText(/Cache (enabled|disabled)/)).not.toBeInTheDocument()
+    })
+
+    it.each([undefined, true, false])("displays the effective remote cache capability %s", (supportsPromptCache) => {
+        const profile = {
+            id: "remote-profile",
+            provider: "litellm",
+            modelId: "remote-model",
+            modelInfo: { id: "remote-model", capabilities: { supportsPromptCache } },
+        } as ApiProfile
+        render(<LiteLlmProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
+        expect(screen.getByText(supportsPromptCache === false ? "Cache disabled" : "Cache enabled")).toBeInTheDocument()
     })
 })

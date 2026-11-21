@@ -1,6 +1,6 @@
 // Minimal YAML reader for the memory-bank documents this verifier reads.
 // It supports only what goals.yaml and progress.md frontmatter use: nested maps,
-// scalar and map sequences, inline flow maps/arrays and quoted scalars.
+// scalar and map sequences, inline flow maps/arrays, quoted and block scalars.
 // Anything else raises a tooling error so the caller can report a parser limitation.
 
 export class YamlLiteError extends Error {}
@@ -106,7 +106,11 @@ export function parseScalar(raw) {
     if (text === "null" || text === "~") return null
     if (text === "true") return true
     if (text === "false") return false
-    if (text.startsWith('"') || text.startsWith("'")) return parseQuoted(text).value
+    if (text.startsWith('"') || text.startsWith("'")) {
+        const parsed = parseQuoted(text)
+        if (parsed.rest) throw new YamlLiteError(`unexpected content after quoted scalar: ${parsed.rest}`)
+        return parsed.value
+    }
     if (text.startsWith("[")) {
         if (!text.endsWith("]")) throw new YamlLiteError(`unterminated inline array: ${text}`)
         const body = text.slice(1, -1).trim()
@@ -130,15 +134,93 @@ export function parseScalar(raw) {
     return text
 }
 
+function blockHeader(content, indent, line) {
+    const sequence = isSequenceItem(content)
+    const rest = sequence ? content.slice(1).trimStart() : content
+    const pair = splitKeyValue(rest)
+    const value = pair ? pair.value : rest
+    if (!/^[|>]/.test(value)) return null
+    const match = /^([|>])(?:([1-9])([+-]?)|([+-])([1-9]?))?$/.exec(value)
+    if (!match) throw new YamlLiteError(`line ${line}: unsupported block scalar header: ${value}`)
+    return {
+        folded: match[1] === ">",
+        chomp: match[3] || match[4] || "",
+        offset: Number(match[2] || match[5]) || null,
+        indent: indent + (sequence && pair ? content.indexOf(rest) : 0),
+    }
+}
+
+function readBlockScalar(lines, start, header) {
+    let end = start
+    let indent = header.offset === null ? null : header.indent + header.offset
+    while (end < lines.length) {
+        const raw = lines[end]
+        if (raw.trim()) {
+            const width = raw.match(/^ */)[0].length
+            if (width <= header.indent) break
+            indent ??= width
+            if (width < indent) throw new YamlLiteError(`line ${end + 1}: invalid block scalar indentation`)
+        }
+        end += 1
+    }
+
+    let value = ""
+    let breaks = 0
+    let previous = null
+    for (let index = start; index < end; index += 1) {
+        const raw = lines[index]
+        const hasBreak = index < lines.length - 1
+        if (!raw.trim()) {
+            if (previous === null && indent !== null && raw.length > indent) {
+                throw new YamlLiteError(`line ${index + 1}: leading blank line exceeds block indentation`)
+            }
+            breaks += Number(hasBreak)
+            continue
+        }
+        const body = raw.slice(indent)
+        const fold = header.folded && previous !== null && !/^\s/.test(previous) && !/^\s/.test(body)
+        value += fold ? (breaks === 1 ? " " : "\n".repeat(Math.max(0, breaks - 1))) : "\n".repeat(breaks)
+        value += body
+        previous = body
+        breaks = Number(hasBreak)
+    }
+    value += "\n".repeat(breaks)
+    if (header.chomp !== "+") {
+        value = value.replace(/\n+$/, "")
+        if (header.chomp !== "-" && previous !== null && breaks > 0) value += "\n"
+    }
+    return { value, end }
+}
+
 function tokenize(text) {
     const entries = []
-    const lines = text.split(/\r?\n/)
+    const lines = text.replace(/\r\n?/g, "\n").split("\n")
+    let started = false
+    let ended = false
     for (let index = 0; index < lines.length; index += 1) {
-        const stripped = stripComment(lines[index]).replace(/\t/g, "  ")
+        const stripped = stripComment(lines[index])
         if (stripped.trim().length === 0) continue
-        if (stripped.trim() === "---" || stripped.trim() === "...") continue
+        if (/^ *\t/.test(stripped)) throw new YamlLiteError(`line ${index + 1}: tab indentation is unsupported`)
         const indent = stripped.length - stripped.trimStart().length
-        entries.push({ indent, content: stripped.trim(), line: index + 1 })
+        const content = stripped.trim()
+        if (ended) throw new YamlLiteError(`line ${index + 1}: content after document end`)
+        if (indent === 0 && content === "---") {
+            if (started || entries.length) throw new YamlLiteError(`line ${index + 1}: multiple YAML documents are unsupported`)
+            started = true
+            continue
+        }
+        if (indent === 0 && content === "...") {
+            ended = true
+            continue
+        }
+        const entry = { indent, content, line: index + 1 }
+        const header = blockHeader(content, indent, entry.line)
+        if (header) {
+            const block = readBlockScalar(lines, index + 1, header)
+            entry.blockValue = block.value
+            index = block.end - 1
+        }
+        entries.push(entry)
     }
     return entries
 }
@@ -158,7 +240,7 @@ function parseMap(state, indent) {
         }
         state.index += 1
         if (pair.value.length > 0) {
-            map[pair.key] = parseScalar(pair.value)
+            map[pair.key] = entry.blockValue ?? parseScalar(pair.value)
             continue
         }
         const next = state.entries[state.index]
@@ -194,11 +276,11 @@ function parseSequence(state, indent) {
         }
         const pair = splitKeyValue(rest)
         if (!pair) {
-            items.push(parseScalar(rest))
+            items.push(entry.blockValue ?? parseScalar(rest))
             continue
         }
         const item = {}
-        if (pair.value.length > 0) item[pair.key] = parseScalar(pair.value)
+        if (pair.value.length > 0) item[pair.key] = entry.blockValue ?? parseScalar(pair.value)
         else {
             const next = state.entries[state.index]
             item[pair.key] = next && next.indent > indent ? parseBlock(state, next.indent) : null
@@ -223,13 +305,17 @@ function parseBlock(state, indent) {
 export function parseYamlLite(text) {
     const state = { entries: tokenize(text), index: 0 }
     if (state.entries.length === 0) return {}
-    return parseBlock(state, state.entries[0].indent)
+    const value = parseBlock(state, state.entries[0].indent)
+    if (state.index !== state.entries.length) {
+        throw new YamlLiteError(`line ${state.entries[state.index].line}: unconsumed YAML content`)
+    }
+    return value
 }
 
 export function parseFrontmatter(markdown) {
     const lines = markdown.split(/\r?\n/)
     if (lines[0]?.trim() !== "---") return { data: {}, body: markdown, lineOffset: 0 }
-    const closing = lines.findIndex((line, index) => index > 0 && line.trim() === "---")
+    const closing = lines.findIndex((line, index) => index > 0 && /^---\s*$/.test(line))
     if (closing === -1) throw new YamlLiteError("unterminated frontmatter block")
     return {
         data: parseYamlLite(lines.slice(1, closing).join("\n")),

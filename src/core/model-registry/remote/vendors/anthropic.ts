@@ -32,7 +32,14 @@ function readCapabilityLeaf(raw: unknown, name: string): boolean | undefined {
     return typeof supported === "boolean" ? supported : undefined
 }
 
-/** Prompt caching shows up under context management rather than a single flag. */
+/**
+ * Prompt caching shows up under context management rather than a single flag.
+ *
+ * The block is a tree of `{ supported }` leaves, and only the leaves that state
+ * a boolean carry a statement. An empty block, or one whose leaves are all
+ * unrecognised shapes, has said nothing, so the capability stays unresolved and
+ * the product default applies instead of being denied.
+ */
 function readPromptCacheSupport(raw: unknown): boolean | undefined {
     if (!isRecord(raw)) {
         return undefined
@@ -45,7 +52,13 @@ function readPromptCacheSupport(raw: unknown): boolean | undefined {
     if (!isRecord(contextManagement)) {
         return undefined
     }
-    return Object.values(contextManagement).some((leaf) => isRecord(leaf) && leaf.supported === true)
+    const declared = Object.values(contextManagement)
+        .filter((leaf): leaf is { supported: boolean } => isRecord(leaf) && typeof leaf.supported === "boolean")
+        .map((leaf) => leaf.supported)
+    if (declared.length === 0) {
+        return undefined
+    }
+    return declared.some((supported) => supported)
 }
 
 export class AnthropicModelSource extends ModelListingSource {

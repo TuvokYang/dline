@@ -213,7 +213,7 @@ function checkInterLevelDeclared(coarse, fine, context) {
         if (!fineByCoarse.has(coarseId)) fineByCoarse.set(coarseId, [])
         fineByCoarse.get(coarseId).push(fineId)
     }
-    for (const coarseEdge of coarse.edges) {
+    for (const coarseEdge of context?.coverageCheckedAtSet ? [] : coarse.edges) {
         if (coarse.noteNodes.has(coarseEdge.from) || coarse.noteNodes.has(coarseEdge.to)) continue
         const sources = fineByCoarse.get(coarseEdge.from) ?? []
         const targets = fineByCoarse.get(coarseEdge.to) ?? []
@@ -221,11 +221,11 @@ function checkInterLevelDeclared(coarse, fine, context) {
         if (hasRefinementPath(fine, sources, targets, coarseEdge.style)) continue
         findings.push(
             finding(
-                "unverifiable",
+                "warning",
                 fine,
                 null,
                 "coarse-edge-not-refined",
-                `${coarse.layer} ${coarseEdge.style} edge ${coarseEdge.from} -> ${coarseEdge.to} (${coarseEdge.label || "unlabelled"}) has no nonzero ${fine.layer} path of the same style; fine source nodes=${sources.join("|")} target nodes=${targets.join("|")}`,
+                `${coarse.id ?? coarse.layer} ${coarseEdge.style} edge ${coarseEdge.from} -> ${coarseEdge.to} (${coarseEdge.label || "unlabelled"}) is not expanded by a nonzero ${fine.layer} path of the same style; detail remains for the owning Task, not verified coverage; fine source nodes=${sources.join("|")} target nodes=${targets.join("|")}`,
             ),
         )
     }
@@ -252,11 +252,11 @@ function checkInterLevelDeclared(coarse, fine, context) {
         if ([...resolved.values()].includes(nodeId)) continue
         findings.push({
             ...finding(
-                "not-checked",
+                "warning",
                 fine,
                 null,
                 "coarse-node-not-refined",
-                `${coarse.layer} node ${nodeId} does not appear in ${fine.layer}; coverage of that node is not verified`,
+                `${coarse.id ?? coarse.layer} black box ${nodeId} is not expanded in ${fine.layer}; refine its internal detail in the owning Task before implementation`,
             ),
         })
     }
@@ -264,9 +264,9 @@ function checkInterLevelDeclared(coarse, fine, context) {
     return findings
 }
 
-// Coverage is a property of the declared refinement set. A selective view need
-// not repeat every sibling view, but both nodes and relationships need witnesses.
-// Inferred pairs cannot discharge an explicit coverage obligation.
+// Missing detail is a warning, not a contradiction or proof of coverage.
+// A selective view need not repeat its siblings; only explicit descendants can
+// witness a node or relationship. Pair checks still reject contradictory detail.
 export function checkRefinementCoverage(diagrams, pairs) {
     const findings = []
     for (const coarse of diagrams) {
@@ -293,11 +293,11 @@ export function checkRefinementCoverage(diagrams, pairs) {
             if (!covered)
                 findings.push(
                     finding(
-                        "not-checked",
+                        "warning",
                         coarse,
                         node,
                         "coarse-node-not-refined",
-                        `${coarse.layer} node ${node.id} has no node in any declared descendant refinement`,
+                        `${coarse.id ?? coarse.layer} black box ${node.id} ("${node.label ?? node.id}") has no node in any declared descendant refinement; internal detail remains for the owning Task`,
                     ),
                 )
         }
@@ -314,11 +314,11 @@ export function checkRefinementCoverage(diagrams, pairs) {
             if (!covered)
                 findings.push(
                     finding(
-                        "unverifiable",
+                        "warning",
                         coarse,
                         edge,
                         "coarse-edge-not-refined",
-                        `${coarse.layer} ${edge.style} edge ${edge.from} -> ${edge.to} has no nonzero same-style path in any declared descendant refinement`,
+                        `${coarse.id ?? coarse.layer} ${edge.style} edge ${edge.from} -> ${edge.to} has no nonzero same-style path in any declared descendant refinement; internal detail remains for the owning Task, not verified coverage`,
                     ),
                 )
         }

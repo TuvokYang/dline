@@ -1,11 +1,14 @@
 // @vitest-environment jsdom
 import type { ModelInfo } from "@shared/proto/dline/models"
-import { ApiFormat, type ModelCapabilities, type ModelPricing } from "@shared/proto/dline/models/metadata"
+import { ApiFormat, type ModelCapabilities, type ModelPricing, ServerTool } from "@shared/proto/dline/models/metadata"
 import { WebToolsMode } from "@shared/proto/dline/provider/common"
 import { OpenAiProviderConfig } from "@shared/proto/dline/provider/openai"
 import { flatMeteredPricing } from "@shared/providers/pricing-shape"
+import type { UiLanguage } from "@shared/UiLanguage"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { type ComponentProps, useState } from "react"
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
+import { UiLanguageProvider } from "@/i18n/UiLanguageProvider"
 import { OpenAIProvider } from "./OpenAIProvider"
 import type { ApiProfile } from "./ProviderProfile"
 
@@ -33,7 +36,28 @@ const multiFormatModel: ModelInfo = {
     } as ModelCapabilities,
 }
 
-const catalogModels = { "gpt-multi": multiFormatModel, "gpt-custom": registryModel }
+// Family inheritance must not copy the known model's pricing, context, or hosted tools.
+const astraModel: ModelInfo = {
+    id: "gpt-6-astra",
+    name: "GPT-6 Astra",
+    apiFormats: [ApiFormat.OPENAI_RESPONSES],
+    capabilities: {
+        contextWindow: 1_050_000,
+        supportsPromptCache: true,
+        supportsReasoning: true,
+        tools: [ServerTool.WEB_SEARCH, ServerTool.IMAGE_GENERATION],
+        thinking: {
+            supported: true,
+            mode: "effort",
+            effortLevels: ["low", "medium", "high", "xhigh", "max"],
+            defaultEnabled: true,
+            canDisable: false,
+        },
+    },
+    pricing: flatMeteredPricing(10, 50),
+}
+
+const catalogModels = { "gpt-multi": multiFormatModel, "gpt-custom": registryModel, "gpt-6-astra": astraModel }
 
 const refreshRemoteModels = vi.fn()
 
@@ -93,6 +117,8 @@ vi.mock("../common/ModelInfoView", () => ({
             <span>max:{modelInfo.capabilities?.maxTokens}</span>
             <span>input:{modelInfo.pricing?.strategy?.flat?.prices?.inputPrice}</span>
             <span>output:{modelInfo.pricing?.strategy?.flat?.prices?.outputPrice}</span>
+            <span>Prompt caching: {modelInfo.capabilities?.supportsPromptCache ? "supported" : "unsupported"}</span>
+            <span>Hosted tools: {modelInfo.capabilities?.tools?.join(",") || "not declared"}</span>
         </div>
     ),
 }))
@@ -141,11 +167,6 @@ vi.mock("../common/ModelAutocomplete", () => ({
         </div>
     ),
 }))
-vi.mock("../ThinkingControl", () => ({
-    default: ({ effortOptions }: { effortOptions?: readonly string[] }) => (
-        <div data-testid="thinking-efforts">{effortOptions?.join(",")}</div>
-    ),
-}))
 vi.mock("../OpenAIServiceTierSelector", () => ({
     default: ({
         onServiceTierChange,
@@ -168,14 +189,14 @@ vi.mock("../OpenAIServiceTierSelector", () => ({
     ),
 }))
 vi.mock("@vscode/webview-ui-toolkit/react", () => ({
-    VSCodeButton: ({ children, onClick }: any) => (
+    VSCodeButton: ({ children, onClick }: ComponentProps<"button">) => (
         <button onClick={onClick} type="button">
             {children}
         </button>
     ),
-    VSCodeCheckbox: ({ checked, children, onChange }: any) => (
+    VSCodeCheckbox: ({ checked, children, disabled, onChange }: ComponentProps<"input">) => (
         <label>
-            <input checked={checked} onChange={onChange} type="checkbox" />
+            <input checked={checked} disabled={disabled} onChange={onChange} type="checkbox" />
             {children}
         </label>
     ),
@@ -183,6 +204,52 @@ vi.mock("@vscode/webview-ui-toolkit/react", () => ({
 vi.mock("@/services/grpc-client", () => ({
     ModelsServiceClient: { refreshOpenAiModels: vi.fn(), refreshProviderModels: vi.fn() },
 }))
+
+function remoteProfile(updates: Partial<ApiProfile> = {}): ApiProfile {
+    return {
+        id: "remote-openai",
+        provider: "openai",
+        modelId: "gpt-listed-only",
+        openai: OpenAiProviderConfig.create(),
+        ...updates,
+    } as ApiProfile
+}
+
+/** Echo the host's save back without remounting the card on a language change. */
+function EditableProfile({
+    initialProfile,
+    language = "en",
+    onUpdate,
+}: {
+    initialProfile: ApiProfile
+    language?: UiLanguage
+    onUpdate: (updates: Partial<ApiProfile>) => void
+}) {
+    const [profile, setProfile] = useState(initialProfile)
+    return (
+        <UiLanguageProvider language={language}>
+            <OpenAIProvider
+                onUpdate={(updates) => {
+                    onUpdate(updates)
+                    setProfile((current) => ({ ...current, ...updates }))
+                }}
+                profile={profile}
+                showModelOptions
+            />
+        </UiLanguageProvider>
+    )
+}
+
+const effortSelector = () => screen.getByRole("combobox", { name: "Reasoning Effort" })
+const compatibilityHelp = /The model does not declare reasoning levels/
+
+// Radix focuses the persisted option when reopening; jsdom has no scrolling implementation.
+const originalScrollIntoView = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView")
+beforeAll(() => Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() }))
+afterAll(() => {
+    if (originalScrollIntoView) Object.defineProperty(HTMLElement.prototype, "scrollIntoView", originalScrollIntoView)
+    else Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView")
+})
 
 describe("OpenAIProvider", () => {
     beforeEach(() => {
@@ -382,6 +449,197 @@ describe("OpenAIProvider", () => {
         })
     })
 
+    it("shows compatible thinking enabled by default for a listing-only model without persisting an effort", () => {
+        const onUpdate = vi.fn()
+        render(<OpenAIProvider onUpdate={onUpdate} profile={remoteProfile()} showModelOptions />)
+
+        expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).toBeChecked()
+        expect(effortSelector()).toHaveTextContent("Provider default")
+        expect(screen.getByText(compatibilityHelp)).toHaveTextContent("OpenAI-compatible options")
+        expect(screen.getByText(compatibilityHelp)).toHaveTextContent("not guaranteed")
+        expect(screen.getByText(compatibilityHelp)).toHaveTextContent("remote default")
+        expect(screen.getByText("Prompt caching: supported")).toBeInTheDocument()
+        fireEvent.click(effortSelector())
+        expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["None", "Low", "Medium", "High"])
+        expect(onUpdate).not.toHaveBeenCalled()
+    })
+
+    it.each([
+        { enableThinking: false },
+        { effort: "none" },
+        { enableThinking: true, effort: "none" },
+    ])("keeps an explicit remote thinking opt-out off: %j", (reasoning) => {
+        const onUpdate = vi.fn()
+        const profile = remoteProfile({ openai: OpenAiProviderConfig.create({ reasoning }) })
+        render(<OpenAIProvider onUpdate={onUpdate} profile={profile} showModelOptions />)
+
+        expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).not.toBeChecked()
+        expect(screen.queryByRole("combobox", { name: "Reasoning Effort" })).not.toBeInTheDocument()
+        expect(onUpdate).not.toHaveBeenCalled()
+    })
+
+    it("persists disabling and re-enabling remote thinking without fabricating a default effort", () => {
+        const onUpdate = vi.fn()
+        const initialProfile = remoteProfile()
+        render(<EditableProfile initialProfile={initialProfile} onUpdate={onUpdate} />)
+
+        fireEvent.click(screen.getByRole("checkbox", { name: "Enable Thinking" }))
+        expect(onUpdate).toHaveBeenLastCalledWith({
+            openai: {
+                ...initialProfile.openai,
+                reasoning: { enableThinking: false, effort: undefined, thinkingBudget: undefined, display: undefined },
+            },
+        })
+        expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).not.toBeChecked()
+        expect(screen.queryByRole("combobox", { name: "Reasoning Effort" })).not.toBeInTheDocument()
+
+        fireEvent.click(screen.getByRole("checkbox", { name: "Enable Thinking" }))
+        expect(onUpdate).toHaveBeenLastCalledWith({
+            openai: {
+                ...initialProfile.openai,
+                reasoning: { enableThinking: true, effort: undefined, thinkingBudget: undefined, display: undefined },
+            },
+        })
+        expect(effortSelector()).toHaveTextContent("Provider default")
+    })
+
+    it("persists High and retains the same selection and open portal while switching languages both ways", async () => {
+        const onUpdate = vi.fn()
+        const initialProfile = remoteProfile({
+            openai: OpenAiProviderConfig.create({ serviceTier: "priority", reasoning: { display: "omitted" } }),
+        })
+        const tree = (language: UiLanguage) => (
+            <EditableProfile initialProfile={initialProfile} language={language} onUpdate={onUpdate} />
+        )
+        const view = render(tree("en"))
+        const selector = effortSelector()
+        fireEvent.click(selector)
+        fireEvent.click(screen.getByRole("option", { name: "High", exact: true }))
+        expect(onUpdate).toHaveBeenLastCalledWith({
+            openai: {
+                ...initialProfile.openai,
+                reasoning: { enableThinking: true, effort: "high", thinkingBudget: undefined, display: "omitted" },
+            },
+        })
+        expect(selector).toHaveTextContent("High")
+        fireEvent.click(selector)
+        const highOption = screen.getByRole("option", { name: "High", exact: true })
+        await waitFor(() => expect(highOption).toHaveAttribute("aria-selected", "true"))
+
+        view.rerender(tree("zh-CN"))
+        // Radix hides the rest of the page from the accessibility tree while its portal is open.
+        expect(screen.getByLabelText("启用思考")).toBeChecked()
+        expect(selector).toBeInTheDocument()
+        expect(selector).toHaveAccessibleName("推理强度")
+        expect(selector).toHaveTextContent("High")
+        expect(screen.getByRole("option", { name: "High", exact: true })).toBe(highOption)
+        expect(screen.getByText(/模型未声明推理等级/)).toHaveTextContent("远端默认值")
+
+        view.rerender(tree("en"))
+        expect(selector).toBeInTheDocument()
+        expect(screen.getByLabelText("Enable Thinking")).toBeChecked()
+        expect(screen.getByRole("option", { name: "High", exact: true })).toHaveAttribute("aria-selected", "true")
+        expect(screen.getByText(compatibilityHelp)).toBeInTheDocument()
+        fireEvent.keyDown(screen.getByRole("listbox"), { key: "Escape" })
+        expect(effortSelector()).toBe(selector)
+        expect(selector).toHaveTextContent("High")
+        expect(onUpdate).toHaveBeenCalledTimes(1)
+    })
+
+    it("inherits Astra thinking and cache without copying hosted tools, prices, or context", () => {
+        const profile = remoteProfile({ modelId: "gpt-6.2-astra" })
+        render(<OpenAIProvider onUpdate={vi.fn()} profile={profile} showModelOptions />)
+
+        const checkbox = screen.getByRole("checkbox", { name: "Enable Thinking" })
+        expect(checkbox).toBeChecked()
+        expect(checkbox).toBeDisabled()
+        expect(screen.getByText("Prompt caching: supported")).toBeInTheDocument()
+        expect(screen.getByText("Hosted tools: not declared")).toBeInTheDocument()
+        expect(screen.getByText("input:")).toBeInTheDocument()
+        expect(screen.getByText("output:")).toBeInTheDocument()
+        expect(screen.queryByText("context:1050000")).not.toBeInTheDocument()
+        expect(screen.queryByText(compatibilityHelp)).not.toBeInTheDocument()
+        fireEvent.click(effortSelector())
+        expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+            "Low",
+            "Medium",
+            "High",
+            "Xhigh",
+            "Max",
+        ])
+    })
+
+    it.each([
+        { supportsReasoning: false },
+        { thinking: { supported: false } },
+        {
+            supportsReasoning: false,
+            thinking: { supported: true, mode: "effort", effortLevels: ["high"], defaultEnabled: true },
+        },
+    ] as ModelCapabilities[])("hides thinking when matching model metadata explicitly rejects it: %j", (capabilities) => {
+        const profile = remoteProfile({ modelInfo: { id: "gpt-listed-only", capabilities } })
+        render(<OpenAIProvider onUpdate={vi.fn()} profile={profile} showModelOptions />)
+
+        expect(screen.queryByRole("checkbox", { name: "Enable Thinking" })).not.toBeInTheDocument()
+        expect(screen.queryByRole("combobox", { name: "Reasoning Effort" })).not.toBeInTheDocument()
+        expect(screen.queryByText(compatibilityHelp)).not.toBeInTheDocument()
+    })
+
+    it("preserves explicit false cache and reasoning on a matching remote model instead of family defaults", () => {
+        const profile = remoteProfile({
+            modelId: "gpt-6.2-astra",
+            modelInfo: { id: "gpt-6.2-astra", capabilities: { supportsPromptCache: false, supportsReasoning: false } },
+        })
+        render(<OpenAIProvider onUpdate={vi.fn()} profile={profile} showModelOptions />)
+
+        expect(screen.getByText("Prompt caching: unsupported")).toBeInTheDocument()
+        expect(screen.queryByRole("checkbox", { name: "Enable Thinking" })).not.toBeInTheDocument()
+    })
+
+    it("applies provider cache and reasoning opt-outs after inherited family capabilities", () => {
+        const profile = remoteProfile({
+            modelId: "gpt-6.2-astra",
+            openai: OpenAiProviderConfig.create({ capabilities: { supportsPromptCache: false, supportsReasoning: false } }),
+        })
+        render(<OpenAIProvider onUpdate={vi.fn()} profile={profile} showModelOptions />)
+
+        expect(screen.getByText("Prompt caching: unsupported")).toBeInTheDocument()
+        expect(screen.queryByRole("checkbox", { name: "Enable Thinking" })).not.toBeInTheDocument()
+    })
+
+    it("keeps an explicitly empty effort list instead of replacing it with compatibility options", () => {
+        const profile = remoteProfile({
+            modelInfo: {
+                id: "gpt-listed-only",
+                capabilities: { thinking: { supported: true, mode: "effort", effortLevels: [], defaultEnabled: true } },
+            },
+        })
+        render(<OpenAIProvider onUpdate={vi.fn()} profile={profile} showModelOptions />)
+
+        expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).toBeChecked()
+        expect(screen.queryByRole("combobox", { name: "Reasoning Effort" })).not.toBeInTheDocument()
+        expect(screen.queryByText(compatibilityHelp)).not.toBeInTheDocument()
+    })
+
+    it("keeps a declared budget and its bounds rather than offering compatibility efforts", () => {
+        const profile = remoteProfile({
+            modelInfo: {
+                id: "gpt-listed-only",
+                capabilities: {
+                    thinking: { supported: true, mode: "budget", minBudget: 1024, maxBudget: 8192, defaultEnabled: true },
+                },
+            },
+            openai: OpenAiProviderConfig.create({ reasoning: { thinkingBudget: 2048 } }),
+        })
+        render(<OpenAIProvider onUpdate={vi.fn()} profile={profile} showModelOptions />)
+
+        expect(screen.getByRole("slider")).toHaveAttribute("min", "1024")
+        expect(screen.getByRole("slider")).toHaveAttribute("max", "8192")
+        expect(screen.getByRole("slider")).toHaveValue("2048")
+        expect(screen.queryByRole("combobox", { name: "Reasoning Effort" })).not.toBeInTheDocument()
+        expect(screen.queryByText(compatibilityHelp)).not.toBeInTheDocument()
+    })
+
     it("uses the declared compatible efforts while preserving OpenAI request options", () => {
         const onUpdate = vi.fn()
         const profile = {
@@ -391,13 +649,27 @@ describe("OpenAIProvider", () => {
             modelInfo: {
                 id: "gpt-custom",
                 capabilities: {
-                    thinking: { supported: true, mode: "effort", effortLevels: ["none", "custom"] },
+                    thinking: {
+                        supported: true,
+                        mode: "effort",
+                        effortLevels: ["none", "custom"],
+                        defaultEnabled: true,
+                        defaultEffort: "custom",
+                    },
                 },
             },
             openai: OpenAiProviderConfig.create({ customModelEnabled: true, serviceTier: "auto", serviceTierEnabled: true }),
         } as unknown as ApiProfile
 
         render(<OpenAIProvider onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
+
+        expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).toBeChecked()
+        expect(effortSelector()).toHaveTextContent("Custom")
+        expect(screen.queryByText(compatibilityHelp)).not.toBeInTheDocument()
+        fireEvent.click(effortSelector())
+        expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["None", "Custom"])
+        fireEvent.keyDown(screen.getByRole("listbox"), { key: "Escape" })
+        expect(onUpdate).not.toHaveBeenCalled()
 
         // Each control replaces the whole provider config, and the profile prop
         // only echoes a save back after the backend commits it. Editing several

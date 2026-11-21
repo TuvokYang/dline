@@ -98,7 +98,9 @@ function isRepositoryPath(target) {
  * @param {"blob"|"raw"} view `raw` serves the file itself (images); `blob` renders it.
  * @param {string} target Path relative to the repository root, optionally with a fragment or query.
  */
-function pinnedUrl(repositoryUrl, ref, view, target) {
+export function repositoryPathUrl(repositoryUrl, ref, view, target) {
+    if (!repositoryUrl) throw new Error("package.json declares no repository URL; documentation links cannot be built.")
+    if (!ref) throw new Error("No ref to link documentation at.")
     const suffixStart = target.search(/[?#]/)
     const filePath = suffixStart === -1 ? target : target.slice(0, suffixStart)
     const suffix = suffixStart === -1 ? "" : target.slice(suffixStart)
@@ -152,7 +154,7 @@ function pinLine(line, pin) {
 export function pinRepositoryLinks(content, repositoryUrl, ref) {
     if (!repositoryUrl) throw new Error("package.json declares no repository URL; README links cannot be pinned.")
     if (!ref) throw new Error("No ref to pin README links to.")
-    const pin = (view, target) => pinnedUrl(repositoryUrl, ref, view, target)
+    const pin = (view, target) => repositoryPathUrl(repositoryUrl, ref, view, target)
     let inFence = false
     return content
         .split("\n")

@@ -160,7 +160,7 @@ describe("ProviderProfileCard", () => {
 
         expect(screen.getByText("openai:model-a")).toBeInTheDocument()
         expect(screen.queryByDisplayValue("openai:model-a")).not.toBeInTheDocument()
-        expect(screen.getByText("openai · model-a")).toBeInTheDocument()
+        expect(screen.getByText("openai · model-a · Thinking: On")).toBeInTheDocument()
     })
 
     it("keeps the profile name input editable while expanded", () => {
@@ -349,11 +349,14 @@ describe("ProviderProfileCard", () => {
             thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 11 },
             reasoning: { enableThinking: true, thinkingBudget: 23 },
         },
-    ])("renders the effective declaration: $name", ({ thinking, reasoning, summary }) => {
+    ])("renders a declaration without OpenAI compatibility defaults: $name", ({ thinking, reasoning, summary }) => {
         const onUpdate = vi.fn()
         const profile = ApiProfile.create({
             ...buildProfile(),
-            openai: { capabilities: { thinking }, reasoning },
+            name: "gemini:gemini-chat",
+            provider: "gemini",
+            modelId: "gemini-chat",
+            gemini: BaseProviderConfig.create({ capabilities: { thinking }, reasoning }),
         })
         render(
             <ProviderProfileCard
@@ -367,8 +370,73 @@ describe("ProviderProfileCard", () => {
                 providerOptions={providerOptions}
             />,
         )
+        expect(screen.getByText(["gemini", "gemini-chat", summary].filter(Boolean).join(" · "))).toBeInTheDocument()
+        expect(onUpdate).not.toHaveBeenCalled()
+    })
+
+    it.each<{
+        name: string
+        thinking?: ThinkingConfig
+        reasoning?: ReasoningConfig
+        summary?: string
+    }>([
+        { name: "no preference uses the enabled default", summary: "Thinking: On" },
+        {
+            name: "a stale budget does not disable default-enabled effort",
+            thinking: { supported: true, mode: "effort", effortLevels: ["low"] },
+            reasoning: { thinkingBudget: 1500 },
+            summary: "Thinking: On",
+        },
+        {
+            name: "a budget override inherits the enabled default without inventing tokens",
+            thinking: { supported: true, mode: "budget", maxBudget: 2000 },
+            reasoning: { effort: "low" },
+            summary: "Thinking: Budget",
+        },
+        {
+            name: "a maximum alone keeps compatible effort instead of inferring budget mode",
+            thinking: { supported: true, maxBudget: 2000 },
+            reasoning: { enableThinking: true, thinkingBudget: 1500 },
+            summary: "Thinking: On",
+        },
+        {
+            name: "an explicit disabled effort default overrides compatibility",
+            thinking: { supported: true, mode: "effort", effortLevels: ["low"], defaultEnabled: false },
+            reasoning: {},
+        },
+        {
+            name: "an explicit disabled budget default overrides compatibility",
+            thinking: { supported: true, mode: "budget", maxBudget: 2000, defaultEnabled: false },
+            reasoning: { effort: "low" },
+        },
+        {
+            name: "a disabled reasoning preference overrides compatibility",
+            reasoning: { enableThinking: false },
+            summary: "Thinking: Off",
+        },
+    ])("keeps OpenAI compatibility and explicit overrides distinct: $name", ({ thinking, reasoning, summary }) => {
+        const onUpdate = vi.fn()
+        const profile = ApiProfile.create({
+            ...buildProfile(),
+            openai: OpenAiProviderConfig.create({ capabilities: thinking ? { thinking } : undefined, reasoning }),
+        })
+        const saved = ApiProfile.toJSON(profile)
+        render(
+            <ProviderProfileCard
+                currentMode="act"
+                editMode={false}
+                isExpanded={false}
+                onDelete={vi.fn()}
+                onToggleExpand={vi.fn()}
+                onUpdate={onUpdate}
+                profile={profile}
+                providerOptions={providerOptions}
+            />,
+        )
+
         expect(screen.getByText(["openai", "model-a", summary].filter(Boolean).join(" · "))).toBeInTheDocument()
         expect(onUpdate).not.toHaveBeenCalled()
+        expect(ApiProfile.toJSON(profile)).toEqual(saved)
     })
 
     it("keeps usage badges and capability icons in a right-aligned tail", () => {

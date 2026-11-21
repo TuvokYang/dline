@@ -17,7 +17,7 @@ const englishUi: UiTranslator = (key, ...args) => translateUi("en", key, ...args
  * workspace file. Reaching outside the workspace is not a kind either; it
  * qualifies only the file and command kinds.
  */
-export type FoldWorkKind = "read" | "write" | "command" | "subagent" | "web" | "browser" | "other"
+export type FoldWorkKind = "read" | "write" | "command" | "subagent" | "web" | "browser" | "compaction" | "other"
 
 /**
  * Facts a fold header states about its members.
@@ -28,7 +28,7 @@ export type FoldWorkKind = "read" | "write" | "command" | "subagent" | "web" | "
 export interface ActivityFoldSummary {
     /** Distinct request rounds in the block. */
     readonly rounds?: number
-    /** Work by kind. */
+    /** Total attempted work by kind, including its failed subset. */
     readonly work: ReadonlyMap<FoldWorkKind, number>
     /**
      * How much of each kind reached outside the workspace, by kind.
@@ -93,17 +93,6 @@ const EXTERNAL_COMMAND_TOOLS = new Set(["codeExecution"])
 /** Tools that render as an assistant update rather than as work. */
 const ASSISTANT_TOOLS = new Set(["actModeRespond", "statusUpdate"])
 
-/** Tools with no reader-facing verb of their own. */
-const OTHER_TOOLS = new Set([
-    "summarizeTask",
-    "generateImage",
-    "killCommand",
-    "loadCapability",
-    "useSkill",
-    "focusChainChanged",
-    "genericTool",
-])
-
 export interface FoldSummaryContext {
     /** Directories a command may run in and still be inside the workspace. */
     readonly workspaceRoots?: readonly string[]
@@ -134,10 +123,8 @@ export function summarizeActivityFold(
             count(tools, `${mcpTool.serverName}:${mcpTool.toolName}`)
             continue
         }
-        // A failed edit, command or subagent is reported as an error, not also as
-        // a successful call. The block recorded exactly which members failed, so
-        // a settled call of the same kind still counts as one.
-        if (fold._failedMemberTs?.has(member.ts)) continue
+        // Failures are a subset of each category's total, as they are for MCP.
+        // Count every member once; the fold already owns its failure outcome.
         if (member.say === "checkpoint_created") checkpoints += 1
         else if (member.say === "reasoning") thoughts += 1
         else if (member.say === "command" || member.ask === "command") {
@@ -158,7 +145,8 @@ export function summarizeActivityFold(
                 continue
             }
             count(tools, name)
-            if (READ_TOOLS.has(name)) {
+            if (name === "summarizeTask") count(work, "compaction")
+            else if (READ_TOOLS.has(name)) {
                 count(work, "read")
                 if (EXTERNAL_READ_TOOLS.has(name)) count(external, "read")
             } else if (WRITE_TOOLS.has(name)) count(work, "write")
@@ -267,18 +255,10 @@ export function describeActivityFold(summary: ActivityFoldSummary, t: UiTranslat
         .join(" · ")
 }
 
-/** One stated fact about a block, and whether it is an error count. */
+/** One stated fact about a block, and whether it includes failed work. */
 export interface ActivityFoldPart {
     /** Stable presentation identity, independent of translated text and changing counts. */
-    readonly kind:
-        | "rounds"
-        | "mcp"
-        | `work.${FoldWorkKind}`
-        | "thoughts"
-        | "checkpoints"
-        | "messages"
-        | `failure.${FoldFailureKind}`
-        | "finished"
+    readonly kind: "rounds" | "mcp" | `work.${FoldWorkKind}` | "thoughts" | "checkpoints" | "messages" | "finished"
     readonly text: string
     readonly isFailure: boolean
 }
@@ -294,7 +274,7 @@ export interface ActivityFoldPart {
  * kind: it qualifies only the local file and command kinds, which is why
  * `OUTSIDE_KINDS` below is narrower than this list.
  */
-const WORK_KINDS: readonly FoldWorkKind[] = ["read", "write", "command", "subagent", "web", "browser", "other"]
+const WORK_KINDS: readonly FoldWorkKind[] = ["read", "write", "command", "subagent", "web", "browser", "compaction", "other"]
 
 /**
  * The kinds a workspace boundary can qualify.
@@ -306,10 +286,8 @@ const WORK_KINDS: readonly FoldWorkKind[] = ["read", "write", "command", "subage
 const OUTSIDE_KINDS: ReadonlySet<FoldWorkKind> = new Set<FoldWorkKind>(["read", "write", "command"])
 
 /**
- * The header facts in reading order, keeping error counts apart from the rest.
- *
- * A reader scans the line for what went wrong, so the renderer needs to know
- * which parts are failure counts without re-parsing the sentence.
+ * One fact per work category, with external reach and failures kept inline.
+ * The renderer can emphasize categories with failures without parsing text.
  */
 export function describeActivityFoldParts(summary: ActivityFoldSummary, t: UiTranslator = englishUi): ActivityFoldPart[] {
     const parts: ActivityFoldPart[] = []
@@ -320,10 +298,12 @@ export function describeActivityFoldParts(summary: ActivityFoldSummary, t: UiTra
         if (count === 0) continue
         const work = t(`chatInput.fold.work.${kind}`, { count })
         const external = OUTSIDE_KINDS.has(kind) ? (summary.external.get(kind) ?? 0) : 0
+        const failureKind = FAILURE_KIND[kind]
+        const failed = failureKind ? (summary.failures.get(failureKind) ?? 0) : 0
         parts.push({
             kind: `work.${kind}`,
-            text: external > 0 ? t("chatInput.fold.withExternal", { work, external }) : work,
-            isFailure: false,
+            text: describeWork(work, external, failed, t),
+            isFailure: failed > 0,
         })
     }
     if (summary.mcp) {
@@ -337,16 +317,26 @@ export function describeActivityFoldParts(summary: ActivityFoldSummary, t: UiTra
     for (const [count, kind] of otherFacts) {
         if (count !== 0) parts.push({ kind, text: t(`chatInput.fold.${kind}`, { count }), isFailure: false })
     }
-    for (const kind of FAILURE_KINDS) {
-        const count = summary.failures?.get(kind) ?? 0
-        if (count !== 0)
-            parts.push({ kind: `failure.${kind}`, text: t(`chatInput.fold.failure.${kind}`, { count }), isFailure: true })
-    }
     return parts.length > 0 ? parts : [{ kind: "finished", text: t("chatInput.fold.finished"), isFailure: false }]
 }
 
-/** Singular nouns for counted failures, in the order a reader wants them. */
-const FAILURE_KINDS: readonly Exclude<FoldFailureKind, "mcp">[] = ["edit", "read", "subagent", "command", "web", "browser"]
+const FAILURE_KIND: Readonly<Partial<Record<FoldWorkKind, FoldFailureKind>>> = {
+    read: "read",
+    write: "edit",
+    command: "command",
+    subagent: "subagent",
+    web: "web",
+    browser: "browser",
+}
+
+function describeWork(work: string, external: number, failed: number, t: UiTranslator): string {
+    if (failed > 0) {
+        return external > 0
+            ? t("chatInput.fold.withExternalFailures", { work, external, failed })
+            : t("chatInput.fold.withFailures", { work, failed })
+    }
+    return external > 0 ? t("chatInput.fold.withExternal", { work, external }) : work
+}
 
 /** Tool names with their counts, for the header's tooltip. */
 export function describeToolCalls(summary: ActivityFoldSummary): string {

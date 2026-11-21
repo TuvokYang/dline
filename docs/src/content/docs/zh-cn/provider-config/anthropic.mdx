@@ -89,6 +89,18 @@ Dline 提供两种使用 Claude 的方式：
 
 思考内容会计入 token 消耗。工作机制、与工具调用和提示缓存的交互以及计费规则，见 [Anthropic 扩展思考文档](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking)。
 
+### Anthropic 未声明模式时的手动配置
+
+模型没有声明或可继承的思考模式时，勾选 **启用思考**，再在 **思考模式** 中选择 **强度（Effort）** 或 **预算（Budget）**。模式初始为空，等级和 Token 预算由你手动设置。
+
+请根据端点支持的方式选择强度等级，或输入正整数 Token 预算。配置保存在当前 Profile 中；切换模式会清除另一模式的请求值，并保留 **思考显示**。已声明模式的模型直接显示对应的等级或预算控件；明确标为不支持思考的模型不显示思考控件。
+
+### 新次版本的能力继承
+
+在 Anthropic 和 Claude Code 中，使用规范版本 ID 的新 Claude 次版本可以从当前 provider 目录内相同家族、主版本和完整变体的最近旧声明补齐缓存与思考能力。例如，`claude-opus-5-6` 可以继承 `claude-opus-5-5` 的对应声明。
+
+目标模型声明和 Profile 显式配置优先，包括 `false` 和空等级列表。继承的等级或预算模式继续使用原生请求格式；没有可用祖先时，Dline 不猜测思考模式。不继承价格、上下文/输出限制、图像、托管工具或协议，不自动把未知别名和日期快照归入家族。
+
 ## 提示
 
 - **提示缓存：** Claude 模型支持[提示缓存](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching)，可以显著降低重复请求的费用和延迟。

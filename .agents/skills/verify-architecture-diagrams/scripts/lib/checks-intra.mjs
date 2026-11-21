@@ -114,6 +114,9 @@ const FACT_NOUNS = [
     "diagnostics",
     "evidence",
     "confirmation",
+    "closed",
+    "receipt",
+    "receipts",
 ]
 
 const CONSTRAINT_FORMS = [/\bno new\b/i, /\bremains\b/i, /\bmust not\b/i, /\bnever\b/i, /\bwithout\b/i, /\bnot yet\b/i]
@@ -121,24 +124,56 @@ const CONSTRAINT_FORMS = [/\bno new\b/i, /\bremains\b/i, /\bmust not\b/i, /\bnev
 function words(label) {
     return label
         .toLowerCase()
-        .replace(/[^a-z0-9\s]/g, " ")
+        .replace(/[^a-z0-9\s-]/g, " ")
         .split(/\s+/)
         .filter(Boolean)
 }
 
-// A noun elsewhere in an instruction cannot turn that instruction into a fact.
-// Only the declared short nominal forms disambiguate imperative-looking heads.
+const PHASE_NAMES = new Set(["open", "close", "prepare", "commit", "release", "dispatch"])
+const PHASE_STATES = new Set(["failed", "settled", "held", "stopped", "rejected", "unavailable"])
+const RECEIPT_HEADS = new Set(["receipt", "receipts", "enrollment", "boundary", "settlement"])
+const RECEIPT_MODIFIERS = new Set(["matching", "original", "durable", "typed", "correlated"])
+const DIRECTIVE_MODALS = new Set(["must", "shall", "should"])
+const NEGATIONS = new Set(["no", "never", "not", "without"])
+
+function nominalAction(tokens, index) {
+    const action = tokens[index]
+    const next = tokens[index + 1]
+    if (PHASE_NAMES.has(action) && (PHASE_STATES.has(next) || RECEIPT_HEADS.has(next))) return true
+    if (PHASE_NAMES.has(action) && RECEIPT_MODIFIERS.has(next) && RECEIPT_HEADS.has(tokens[index + 2])) return true
+    if (action === "open" && next === "terminal-deleted") return true
+    if (action === "close" && next === "release" && PHASE_STATES.has(tokens[index + 2])) return true
+    if (action === "release" && next === "facts") return true
+    if (action === "commit" && tokens[index - 1] === "canonical" && next === "and") return true
+    return action === "delete" && tokens[index - 1] === "sealed" && next === "handle"
+}
+
+// Only imperative heads and explicit directives establish commands. A verb in
+// descriptive prose is not sufficient; without fact/constraint evidence that
+// prose remains unknown. Conjunctions bound negation to its own action clause.
 export function classifyDottedLabel(label) {
     if (label === null || label === undefined) return { kind: "missing" }
     const lower = label.toLowerCase()
-    const tokens = words(label)
-    const fact = tokens.find((token) => FACT_NOUNS.includes(token))
+    const fact = words(label).find((token) => FACT_NOUNS.includes(token))
     const constraint = CONSTRAINT_FORMS.some((form) => form.test(lower))
-    const imperative = tokens.find((token) => IMPERATIVE.includes(token))
-    const nominal =
-        tokens.length === 2 &&
-        ((tokens[0] === "dispatch" && tokens[1] === "held") || (tokens[0] === "release" && tokens[1] === "facts"))
-    if (imperative && !nominal) return imperative === tokens[0] ? { kind: "command", imperative } : { kind: "unknown" }
+    for (const clause of lower.split(/;|\bthen\b/)) {
+        const tokens = words(clause)
+        let actionStart = 0
+        for (let index = 0; index < tokens.length; index += 1) {
+            const imperative = tokens[index]
+            if (imperative === "and" || imperative === "but") {
+                actionStart = index + 1
+                continue
+            }
+            if (!IMPERATIVE.includes(imperative)) continue
+            const prefix = tokens.slice(actionStart, index)
+            const modal = prefix.findLastIndex((token) => DIRECTIVE_MODALS.has(token))
+            const scope = modal === -1 ? prefix : prefix.slice(modal + 1)
+            if (scope.some((token) => NEGATIONS.has(token))) continue
+            if (modal !== -1) return { kind: "command", imperative }
+            if (index === actionStart && !nominalAction(tokens, index)) return { kind: "command", imperative }
+        }
+    }
     if (fact) return { kind: "fact", fact }
     if (constraint) return { kind: "constraint" }
     return { kind: "unknown" }

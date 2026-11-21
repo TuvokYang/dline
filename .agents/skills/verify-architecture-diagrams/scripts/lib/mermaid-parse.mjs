@@ -3,6 +3,7 @@
 
 import { normalizeArchitectureIdentity } from "./architecture-identity.mjs"
 import { ARTIFACT_EXPECTATIONS, ARTIFACT_ROLES } from "./evidence-model.mjs"
+import { createPortContracts, parsePortAnnotation } from "./port-contracts.mjs"
 
 const NODE_ID = /^[A-Za-z0-9_][A-Za-z0-9_.-]*/
 
@@ -262,6 +263,8 @@ export function createDiagram(file, line) {
         // Repeatable node-to-code bindings. %% module: is projected into this
         // collection as declaration/present for backward compatibility.
         artifacts: new Map(),
+        // Optional black-box contracts; annotations never add graph edges.
+        portContracts: createPortContracts(),
         annotationFindings: [],
         annotationTargets: [],
         // nodeId -> concept name: the stable identity of a node across diagrams
@@ -313,6 +316,7 @@ function trackAnnotationTarget(diagram, nodeId, kind, line) {
 function applyAnnotation(diagram, text, line) {
     const body = text.replace(/^%%\s*/, "").trim()
     if (body.startsWith("{")) return
+    if (parsePortAnnotation(diagram, body, line)) return
     const idMatch = /^id:\s*([A-Za-z0-9_][A-Za-z0-9_.-]*)\s*$/i.exec(body)
     if (idMatch) {
         diagram.id = idMatch[1]

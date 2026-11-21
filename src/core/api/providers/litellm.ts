@@ -1,5 +1,6 @@
 import { Anthropic } from "@anthropic-ai/sdk"
 import { LiteLLMModelInfo, liteLlmDefaultModelId, liteLlmModelInfoSaneDefaults, ModelInfo } from "@shared/api"
+import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import OpenAI from "openai"
 import { findCatalogModel } from "@/core/model-registry/provider-model-lookup"
@@ -186,9 +187,12 @@ export class LiteLlmHandler extends ApiHandler {
         if (reasoning?.adaptive || reasoning?.enabled || (isOminiModel && effort && effort !== "none")) {
             temperature = undefined
         }
-        // Automatically enable caching if the model supports it
-        const cacheControl =
-            (fetchedModelInfo?.model_info.supports_prompt_caching ?? false) ? { cache_control: { type: "ephemeral" } } : undefined
+        // Keep an explicit endpoint denial or Profile opt-out; only silence uses the shared default.
+        const cacheInfo = buildEffectiveModelInfo(modelId, model.info, { capabilities: this.config?.capabilities })
+        const cacheEnabled =
+            cacheInfo.capabilities?.supportsPromptCache === true &&
+            fetchedModelInfo?.model_info?.supports_prompt_caching !== false
+        const cacheControl = cacheEnabled ? { cache_control: { type: "ephemeral" } } : undefined
 
         if (cacheControl) {
             // Add cache_control to system message if enabled

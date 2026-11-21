@@ -68,6 +68,7 @@ export const zhCN = {
     "settings.ui.effortHelp": "更高的强度可加深推理，但会消耗更多 Token。",
     "settings.ui.thinkingBudget": "思考预算",
     "settings.ui.thinkingMode": "思考模式",
+    "settings.ui.chooseThinkingMode": "选择思考模式",
     "settings.ui.effort": "强度",
     "settings.ui.budget": "预算",
     "settings.ui.reasoningDisplay": "推理显示",

@@ -1,5 +1,6 @@
 import { ClaudeCodeProviderConfig } from "@shared/proto/dline/provider/claude_code"
 import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
+import { inheritModelInfo } from "@shared/providers/model-inheritance"
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import { useUiTranslation } from "@/i18n/UiLanguageProvider"
 import { ModelInfoView } from "../common/ModelInfoView"
@@ -29,7 +30,12 @@ export const ClaudeCodeProvider = ({ showModelOptions, isPopup, profile, onUpdat
 
     const pc = profile.claudeCode ?? ClaudeCodeProviderConfig.create()
     const modelId = resolveProfileModelId(profile, { defaultModelId: claudeCodeDefaultModelId })
-    const baseModel = profile.modelInfo?.id === modelId ? profile.modelInfo : claudeCodeModels[modelId]
+    const baseModel = inheritModelInfo(
+        modelId,
+        profile.modelInfo?.id === modelId ? profile.modelInfo : claudeCodeModels[modelId],
+        claudeCodeModels,
+        "claude",
+    )
     const modelInfo = buildEffectiveModelInfo(modelId, baseModel, { capabilities: pc.capabilities })
 
     // The request shape follows the model's declared thinking mode: an adaptive

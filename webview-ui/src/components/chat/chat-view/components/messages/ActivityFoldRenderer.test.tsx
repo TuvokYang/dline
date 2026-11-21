@@ -8,7 +8,16 @@ import type { MessageHandlers } from "../../types/chatTypes"
 import { isActivityFold } from "../../utils/chatRowKinds"
 import { groupChatRows } from "../../utils/messageUtils"
 import { rowIdentity } from "../../utils/rowCoordinate"
-import { completion, finishedRequest, finishedTurnTranscript, userTask } from "./activityFoldStoryFixtures"
+import {
+    completion,
+    editFile,
+    failedCommand,
+    failedEdit,
+    finishedCommand,
+    finishedRequest,
+    finishedTurnTranscript,
+    userTask,
+} from "./activityFoldStoryFixtures"
 import { MessageRenderer } from "./MessageRenderer"
 
 void React
@@ -38,7 +47,7 @@ function Harness({
     level = "user_turn",
     messages = finishedTurnTranscript,
 }: {
-    level?: "none" | "message_segment" | "user_turn"
+    level?: "none" | "round" | "message_segment" | "user_turn"
     messages?: UiMessage[]
 }) {
     const [expandedRows, setExpandedRows] = useState<Record<number, boolean>>({})
@@ -117,6 +126,43 @@ describe("ActivityFoldRenderer", () => {
         view.rerender(tree("en"))
         expect(header).toHaveTextContent("1 MCP (1 tool, 1 failed)")
         expect(header).toHaveAttribute("aria-expanded", "true")
+    })
+
+    it.each([
+        "round",
+        "message_segment",
+        "user_turn",
+    ] as const)("%s keeps failures inline when switching languages and expanding", (level) => {
+        const messages = [
+            userTask(1, "Run the checks"),
+            finishedRequest(2),
+            editFile(3, "src/a.ts"),
+            failedEdit(4, "src/b.ts"),
+            finishedCommand(5, "npm run lint"),
+            failedCommand(6, "npm test"),
+            completion(7, "Checked."),
+        ]
+        const tree = (language: "en" | "zh-CN") => (
+            <UiLanguageProvider language={language}>
+                <Harness level={level} messages={messages} />
+            </UiLanguageProvider>
+        )
+        const view = render(tree("en"))
+        const header = screen.getByTestId("activity-fold-header")
+        const failedParts = () => Array.from(header.querySelectorAll(".text-error"), (part) => part.textContent)
+        expect(failedParts()).toEqual(["2 file edits (1 failed)", "2 cmds (1 failed)"])
+        fireEvent.click(header)
+        const children = screen.getByTestId("activity-fold-children")
+        expect(children.querySelectorAll("[data-chat-row-ts]")).toHaveLength(4)
+        view.rerender(tree("zh-CN"))
+        expect(screen.getByTestId("activity-fold-header")).toBe(header)
+        expect(failedParts()).toEqual(["2 次文件编辑（1 次失败）", "2 条命令（1 次失败）"])
+        expect(header).toHaveAttribute("aria-expanded", "true")
+        expect(screen.getByTestId("activity-fold-children")).toBe(children)
+        view.rerender(tree("en"))
+        expect(failedParts()).toEqual(["2 file edits (1 failed)", "2 cmds (1 failed)"])
+        fireEvent.click(header)
+        expect(screen.queryByTestId("activity-fold-children")).toBeNull()
     })
 
     it("draws a whole-turn summary including prose, not nested request folds", () => {

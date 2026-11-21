@@ -148,20 +148,24 @@ Follow `network`. Extension/core code must not introduce global `fetch`, an unco
 - User conversation uses Chinese unless explicitly changed.
 - `.agents` files use English.
 - `docs/` changes require Chinese and English deliverables for the same scope.
-- Root README and changelog files follow their established bilingual pairs.
+- Root README files follow their established bilingual pair; the changelog current bodies and the per-language history files have the distinct ownership below.
 
 ## Documentation after development
 
-When a development task is complete, load `writing-documentation` before editing documentation, including the paired changelog and What's New files.
+When a development task is complete, load `writing-documentation` before editing documentation, including the current changelog bodies and What's New files.
 
 - Update documentation only for behavior the task actually changed. Leave unrelated pages, released sections, and files that do not describe the change untouched.
-- Documentation includes everything under `docs/` and the paired user-facing files: `CHANGELOG.md` with `docs/changelog/CHANGELOG_en.md`, and `docs/whats-new/WHATS_NEW.md` with `docs/whats-new/WHATS_NEW_en.md`.
+- Documentation includes everything under `docs/`, the maintained `CHANGELOG.md` (Chinese) and `docs/changelog/CHANGELOG_en.md` (English) current bodies, and `docs/whats-new/WHATS_NEW.md` / `WHATS_NEW_en.md`. Do not invent a generated compatibility index or duplicate changelog body.
 - A change with no user-noticeable capability needs no What's New entry, even when it is a fix worth recording in the changelog.
 - What's New is version-scoped: the dialog appears only when the shown version differs from the last acknowledged one, so a build that does not change the version does not show it again. Never invent a section to force it to appear.
 
 ### What's New and changelog content
 
-`CHANGELOG.md` (Chinese) and `docs/changelog/CHANGELOG_en.md` (English) record release changes by category. `docs/whats-new/WHATS_NEW.md` (Chinese) and `docs/whats-new/WHATS_NEW_en.md` (English, the edition the dialog renders) present selected highlights for users.
+`CHANGELOG.md` (Chinese) and `docs/changelog/CHANGELOG_en.md` (English) are the current changelog bodies themselves, not generated pages or indexes that concatenate versions. Each holds exactly one bilingual section with the same name: `## [Unreleased]` while changes are in development, replaced by the single exact version section once that version is frozen and matches `package.json`.
+
+The current body records changes by category with one concise sentence per entry. Explicit append requires `--version <X.Y.Z>`, archives that frozen version into `docs/changelog/history.zh-CN.md` and `docs/changelog/history.en.md` (one file per language, never a per-version directory) and leaves current unchanged; `Unreleased` is never archived. Append the older exact current before replacing it, or verify cumulative `Unreleased` and rename that one section to the frozen candidate. Synchronize package/lock and both What's New editions, then run `npm run changelog:check`; no index needs refreshing and check/build never write. Identical existing bilingual history is a no-op; conflicts and unknown partial state are refused. Two history replacements are not a cross-file transaction: inspect leftover guard/temp first; only identical partial publication of the same current version with otherwise paired history may resume. Follow `repository-and-release` and `dev-version-bump` for the source contract and procedure.
+
+`docs/whats-new/WHATS_NEW.md` (Chinese) and `docs/whats-new/WHATS_NEW_en.md` (English default) are independently selected highlights. The dialog renders the active language edition. Packaged changelog navigation uses the selected maintenance source at a fixed tag or commit, not a `dist/docs` path: `English | 中文`, with only the other language linked. Removing the online suffix does not add an offline reader or guarantee that an unpushed ref is reachable.
 
 - Each changelog entry states what changed in one concise sentence.
 - One entry per change; unrelated changes stay separate.
@@ -169,7 +173,7 @@ When a development task is complete, load `writing-documentation` before editing
 
 What's New carries at most five entries per version, each within 128 characters counting the bold lead-in, and only these three kinds: a feature the user can notice, a stability improvement, or a fix users hit. A change shipped by an earlier release is not restated as new.
 
-New work belongs under `Unreleased` until the release that carries it is tagged. Published sections describe what users already have; trimming and rewording apply to unreleased entries and to the next version, not to the record of what already shipped.
+New work belongs in current's cumulative `Unreleased`, measured from the last verified production publication. Preparing a candidate or archiving it does not clear this record, advance that baseline or assign a publication date. After actual production is verified, maintain the record against what shipped while retaining later dev changes. Historical records preserve their version's content; published records are not rewritten as part of routine maintenance. What's New has no `Unreleased` top section: each real version bump gets independently curated, matching-version highlights in both languages.
 
 The What's New file format is a build contract: a bare `## X.Y.Z` newest heading, one flat `- ` list with two-space continuations, and only `**bold**`, backtick code, and absolute `https://` links inline. Run the What's New test at `webview-ui/src/__tests__/vite-whats-new.test.ts` after editing either edition.
 

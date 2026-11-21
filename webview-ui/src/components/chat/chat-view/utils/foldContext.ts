@@ -25,7 +25,8 @@ import type { RequestRounds } from "./messageUtils"
 export interface FoldContext {
     /** Rows whose request, compaction or MCP tool failed, by the shared failure-ownership rules. */
     readonly failedTs: ReadonlySet<number>
-    /** Subagent batches that ended, so their approval row is no longer the live fact. */
+    /** Commands with an explicit terminal status, keyed by their shared activity identity. */
+    readonly commandEnds: ReadonlySet<string>
     /** Tool rows that own a pre-edit checkpoint the user checked out. */
     readonly checkedOutOwners: ReadonlySet<number>
     /** Request round of every message, indexed on the full transcript. */
@@ -33,7 +34,24 @@ export interface FoldContext {
 }
 
 export function buildFoldContext(messages: readonly UiMessage[], rounds: RequestRounds): FoldContext {
-    return { failedTs: failedRowTimestamps(messages), checkedOutOwners: checkedOutAttachmentOwners(messages), rounds }
+    return {
+        failedTs: failedRowTimestamps(messages),
+        commandEnds: indexCommandEnds(messages),
+        checkedOutOwners: checkedOutAttachmentOwners(messages),
+        rounds,
+    }
+}
+
+function indexCommandEnds(messages: readonly UiMessage[]): ReadonlySet<string> {
+    const ended = new Set<string>()
+    for (const message of messages) {
+        if ((message.say !== "command" && message.ask !== "command") || !message.activityId) continue
+        // Legacy rows without a status cannot prove a kill request has settled.
+        if (!message.partial && message.commandStatus !== undefined && commandState(message) !== "live") {
+            ended.add(message.activityId)
+        } else ended.delete(message.activityId)
+    }
+    return ended
 }
 
 /**
@@ -202,7 +220,7 @@ export function rowState(message: UiMessage, context: FoldContext): RowState {
             case "use_subagents":
                 return "live"
             case "tool":
-                return toolRowState(message)
+                return toolRowState(message, context)
             default:
                 return "settled"
         }
@@ -229,7 +247,7 @@ export function rowState(message: UiMessage, context: FoldContext): RowState {
         case "use_subagents":
             return "live"
         case "tool":
-            return toolRowState(message)
+            return toolRowState(message, context)
         default:
             return "settled"
     }
@@ -317,15 +335,15 @@ function explanationState(message: UiMessage): RowState {
     }
 }
 
-function toolRowState(message: UiMessage): RowState {
+function toolRowState(message: UiMessage, context: FoldContext): RowState {
     const imageGeneration = message.imageGeneration
     const tool = parseJsonObject<UiSayTool>(message.text)
     if (!tool) return imageGeneration ? imageGenerationState(imageGeneration) : "settled"
 
     switch (tool.tool) {
-        // A kill request's outcome is projected from the activity store, not written to the row.
         case "killCommand":
-            return "live"
+            // The target command carries the durable outcome; no identity means no command matched.
+            return !tool.activityId || context.commandEnds.has(tool.activityId) ? "settled" : "live"
         case "summarizeTask":
             return tool.compactionStatus ? compactionState(tool.compactionStatus) : "settled"
         case "loadCapability":

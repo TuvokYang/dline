@@ -3,6 +3,8 @@ import { ApiFormat, type ModelCapabilities, type ModelPricing, type ServerTool }
 import type { ApiProfile } from "@shared/proto/dline/profile"
 import { prioritizeApiFormat, resolveApiFormat } from "./api-format"
 import { buildEffectiveModelInfo, type ProviderModelOverrides } from "./effective-model-info"
+import { inheritModelInfo } from "./model-inheritance"
+import { resolveOpenAIModel } from "./openai-model-info"
 import { type OpenCodeMode, type ProviderRegion, resolveCatalogProviderKey } from "./provider-catalog-key"
 import { readProviderConfigField } from "./provider-config"
 import type { ProviderModelsConfig } from "./types"
@@ -251,7 +253,14 @@ export function resolveProfileModelInfo(
             : undefined
     const configuredBase = configuredBaseId ? providerModels?.models?.[configuredBaseId] : undefined
     const matchingModel = profile.modelInfo?.id === modelId ? profile.modelInfo : undefined
-    const baseModel = registryModel ?? configuredBase ?? matchingModel ?? (profile.modelId ? undefined : defaultModel)
+    const selectedBase = registryModel ?? configuredBase ?? matchingModel ?? (profile.modelId ? undefined : defaultModel)
+    const models = providerModels?.models ?? {}
+    const baseModel =
+        profile.provider === "openai" || profile.provider === "openai-codex"
+            ? resolveOpenAIModel(modelId, selectedBase, models)
+            : profile.provider === "anthropic" || profile.provider === "claude-code"
+              ? inheritModelInfo(modelId, selectedBase, models, "claude")
+              : selectedBase
 
     const modelInfo = buildEffectiveModelInfo(modelId || baseModel?.id, baseModel, {
         ...resolveProfileOverrides(profile),

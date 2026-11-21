@@ -12,6 +12,7 @@ import { ImageGenerationSource } from "@shared/proto/dline/profile"
 import { OpenAiPromptCacheMode } from "@shared/proto/dline/provider/openai"
 import { openAiEndpointToApiFormat, prioritizeApiFormat, resolveApiFormat } from "@shared/providers/api-format"
 import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
+import { resolveOpenAIModel } from "@shared/providers/openai-model-info"
 import { normalizeOpenAIResponsesStreamIdleTimeoutSeconds } from "@shared/providers/openai-stream"
 import { normalizeOpenAiServiceTier } from "@shared/storage/types"
 import OpenAI from "openai"
@@ -208,18 +209,16 @@ export class OpenAiHandler extends ApiHandler {
     }
 
     private buildModelInfo(): ModelInfo {
-        return buildEffectiveModelInfo(
-            this.modelId,
+        const base =
             (this.modelInfo?.id === this.modelId ? this.modelInfo : undefined) ??
-                openAiModels[this.modelId] ??
-                openAiModelInfoSaneDefaults,
-            {
-                capabilities: this.config?.capabilities,
-                pricing: this.config?.pricing,
-                enableLongContext: this.config?.enableLongContext,
-                pricingTiersEnabled: this.config?.pricingTiersEnabled,
-            },
-        )
+            openAiModels[this.modelId] ??
+            openAiModelInfoSaneDefaults
+        return buildEffectiveModelInfo(this.modelId, resolveOpenAIModel(this.modelId, base, openAiModels), {
+            capabilities: this.config?.capabilities,
+            pricing: this.config?.pricing,
+            enableLongContext: this.config?.enableLongContext,
+            pricingTiersEnabled: this.config?.pricingTiersEnabled,
+        })
     }
 
     private ensureClient(): OpenAI {

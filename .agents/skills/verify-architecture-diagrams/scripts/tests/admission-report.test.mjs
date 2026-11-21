@@ -7,7 +7,7 @@ import test from "node:test"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
 import { dedupeFindings, scopeSequence } from "../lib/invocation.mjs"
-import { computeExitCode, computeVerdict, renderJsonReport } from "../lib/report.mjs"
+import { computeExitCode, computeVerdict, renderJsonReport, renderTextReport } from "../lib/report.mjs"
 import { readArchitectureMode } from "../lib/ws-model.mjs"
 
 const exact = "# WS-001 Example\n\nArchitecture-Mode: diagram-driven-v1\n\n## Goal\n"
@@ -82,6 +82,168 @@ test("keeps exit code and verdict orthogonal", () => {
     assert.equal(computeVerdict([], { applicable: false }), "not_applicable")
     assert.equal(computeVerdict([{ severity: "blocking", attribution: "diagram" }], { applicable: true }), "failed")
     assert.equal(computeVerdict([{ severity: "tooling", attribution: "tooling" }], { applicable: true }), "tooling_error")
+})
+
+test("CLI exit status includes contracts after block scalars and rejects truncated input", (t) => {
+    const fixture = createFixture(
+        t,
+        "# WS-TEST Target\n\nArchitecture-Mode: diagram-driven-v1\n\nArrow labels are normative: `owns`.\n",
+    )
+    const taskDir = path.join(fixture.target, "tasks", "TASK-001-example")
+    fs.mkdirSync(taskDir, { recursive: true })
+    const goals = path.join(taskDir, "goals.yaml")
+    const progress = path.join(taskDir, "progress.md")
+    fs.writeFileSync(
+        goals,
+        "id: TASK-001\nobjective: >-\n  A folded objective.\nrequired_verification:\n  VER-ONE:\n    required_result: passed\n    claim: >-\n      Required behavior.\n",
+    )
+    fs.writeFileSync(progress, "---\nstatus: completed\nverification: []\n---\n")
+    const cliArgs = ["--scope", "workstream", "--no-self-test"]
+    let result = runVerifier({ ...fixture, cliArgs })
+    let report = JSON.parse(result.stdout)
+    assert.equal(result.status, 1, result.stderr || result.stdout)
+    assert.equal(report.exitCode, 1)
+    assert.equal(
+        report.findings.some(
+            (finding) => finding.rule === "completed_without_required_verification" && finding.task === "TASK-001",
+        ),
+        true,
+    )
+
+    fs.writeFileSync(
+        progress,
+        "---\nstatus: completed\nverification:\n  - check: VER-ONE\n    result: passed\n    conclusion: Observed the required behavior.\n---\n",
+    )
+    result = runVerifier({ ...fixture, cliArgs })
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    assert.equal(JSON.parse(result.stdout).exitCode, 0)
+
+    fs.writeFileSync(goals, "id: TASK-001\nobjective: plain\n  hidden: invalid indentation\n")
+    result = runVerifier({ ...fixture, cliArgs })
+    report = JSON.parse(result.stdout)
+    assert.equal(result.status, 2, result.stderr || result.stdout)
+    assert.equal(report.exitCode, 2)
+    assert.equal(report.verdict, "tooling_error")
+})
+
+test("all counts a validated Task refinement while workstream scope cannot borrow it", (t) => {
+    const fixture = createFixture(
+        t,
+        `${exact}\nArrow labels are normative: \`injects\`.\n
+\`\`\`mermaid
+flowchart LR
+%% id: parent
+%% layer: L0
+%% kind: structure
+%% answers: ownership
+A[A] -->|injects| B[B]
+\`\`\`
+\`\`\`mermaid
+flowchart LR
+%% id: selective
+%% layer: L1
+%% kind: structure
+%% refines: parent
+%% answers: selective details
+%% local-only: X
+%% local-only: Y
+A[A] -->|injects| X[X]
+B[B] -->|injects| Y[Y]
+\`\`\`
+`,
+    )
+    const taskDir = path.join(fixture.target, "tasks", "TASK-001-example")
+    fs.mkdirSync(taskDir, { recursive: true })
+    fs.writeFileSync(path.join(taskDir, "goals.yaml"), "id: TASK-001\nrequired_verification: {}\n")
+    fs.writeFileSync(path.join(taskDir, "progress.md"), "---\nstatus: planned\n---\n")
+    const taskPlan = (parent, edge = "A[A] -->|injects| B[B]") =>
+        `# Task\n\n## Architecture Design\n\n\`\`\`mermaid\nflowchart LR\n%% id: task-detail\n%% layer: L2\n%% kind: structure\n%% refines: ${parent}\n%% answers: task implementation\n${edge}\n\`\`\`\n`
+    fs.writeFileSync(path.join(taskDir, "plan.md"), taskPlan("parent"))
+    let result = runVerifier({ ...fixture, cliArgs: ["--scope", "workstream", "--no-self-test"] })
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    const focused = JSON.parse(result.stdout)
+    assert.equal(focused.verdict, "incomplete")
+    assert.equal(focused.findings.find((item) => item.rule === "coarse-edge-not-refined")?.severity, "warning")
+    result = runVerifier(fixture)
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    assert.equal(
+        JSON.parse(result.stdout).findings.some((item) => item.rule === "coarse-edge-not-refined"),
+        false,
+    )
+    for (const content of [taskPlan("missing"), taskPlan("parent", "A[A] -.->|result fact| B[B]")]) {
+        fs.writeFileSync(path.join(taskDir, "plan.md"), content)
+        result = runVerifier(fixture)
+        assert.equal(result.status, 1)
+        assert.equal(
+            JSON.parse(result.stdout).findings.some((item) => item.rule === "coarse-edge-not-refined"),
+            true,
+        )
+    }
+})
+
+test("reports unrefined boxes separately without losing or duplicating warning identities", () => {
+    const findings = [
+        {
+            severity: "warning",
+            attribution: "diagram",
+            rule: "coarse-node-not-refined",
+            file: "box.md",
+            line: 10,
+            message: "B needs detail",
+        },
+        {
+            severity: "warning",
+            attribution: "diagram",
+            rule: "coarse-edge-not-refined",
+            file: "edge.md",
+            line: 20,
+            message: "A to B needs detail",
+        },
+        {
+            severity: "warning",
+            attribution: "code",
+            rule: "unfinished-expectation",
+            file: "code.ts",
+            line: 30,
+            message: "Implementation pending",
+        },
+    ]
+    const summary = {
+        workstream: "ws",
+        scope: "all",
+        diagramCount: 2,
+        taskDiagramCount: 0,
+        taskCount: 1,
+        astGatedCount: 0,
+        staleProjections: [],
+        verdict: computeVerdict(findings),
+        exitCode: computeExitCode(findings),
+    }
+    const text = renderTextReport({ findings, summary })
+    const warnings = text.split("## Warning\n")[1].split("## Pending\n")[0]
+    const sections = warnings.split(/^### /m).slice(1)
+    assert.equal(sections.length, 2)
+    assert.deepEqual(
+        sections[0].split("\n").filter((line) => line.startsWith("- ")),
+        ["- coarse-node-not-refined · box.md:10", "- coarse-edge-not-refined · edge.md:20"],
+    )
+    assert.deepEqual(
+        sections[1].split("\n").filter((line) => line.startsWith("- ")),
+        ["- unfinished-expectation · code.ts:30"],
+    )
+    const report = JSON.parse(renderJsonReport({ findings, summary }))
+    assert.equal(report.exitCode, 0)
+    assert.equal(report.verdict, "incomplete")
+    assert.equal(report.counts.warning, 3)
+    assert.equal(report.counts.unverifiable, 0)
+    assert.deepEqual(
+        report.findings.map(({ rule, file, line }) => ({ rule, file, line })),
+        [
+            { rule: "coarse-node-not-refined", file: "box.md", line: 10 },
+            { rule: "coarse-edge-not-refined", file: "edge.md", line: 20 },
+            { rule: "unfinished-expectation", file: "code.ts", line: 30 },
+        ],
+    )
 })
 
 test("renders warning and not-applicable counts in JSON", () => {
