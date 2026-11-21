@@ -11,11 +11,10 @@ import { expect, type Frame } from "@playwright/test"
 
 const CHAT_TARGET = "openai-compatible-chat"
 
-async function sendTask(sidebar: Frame, text: string): Promise<void> {
+async function submitTask(sidebar: Frame, text: string): Promise<void> {
     const input = sidebar.getByTestId("chat-input")
     await input.fill(text)
     await sidebar.getByTestId("send-button").click()
-    await expect(sidebar.getByText(text, { exact: true }).first()).toBeVisible()
 }
 
 async function closeCurrentTask(sidebar: Frame): Promise<void> {
@@ -137,7 +136,8 @@ e2e(
             },
         )
 
-        await sendTask(sidebar, taskText)
+        await submitTask(sidebar, taskText)
+        await expect(userFeedback(sidebar, taskText)).toBeVisible()
         await expect(sidebar.getByText("E2E_PROMOTION_COMPLETED_RESULT", { exact: false }).last()).toBeVisible({
             timeout: 60_000,
         })
@@ -188,8 +188,11 @@ e2e(
             },
         )
 
-        await sendTask(sidebar, taskText)
+        await submitTask(sidebar, taskText)
+        // The cold task must be on the wire before it can be interrupted. Cold store setup is not the promotion under test.
         await expect.poll(() => server.getRequestCount(CHAT_TARGET), { timeout: 60_000 }).toBe(1)
+        expect(server.getMockConsumptions(CHAT_TARGET)[0]?.contractError).toBeUndefined()
+        await expect(userFeedback(sidebar, taskText)).toBeVisible()
         await closeCurrentTask(sidebar)
         await expect.poll(() => server.getMockConsumptions(CHAT_TARGET)[0]?.abortedAtMs, { timeout: 30_000 }).not.toBeUndefined()
 

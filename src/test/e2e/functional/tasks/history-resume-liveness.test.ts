@@ -2,7 +2,7 @@ import { readdir } from "node:fs/promises"
 import * as path from "node:path"
 import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
-import { rewriteTaskActivities } from "@e2e/utils/task-instance-store"
+import { rewriteTaskActivities, waitForTaskRelease } from "@e2e/utils/task-instance-store"
 import { expect, type Frame } from "@playwright/test"
 import type { TaskActivityRecord } from "@shared/task-activity"
 
@@ -136,6 +136,8 @@ e2e(
         await closeCurrentTask(sidebar)
 
         const taskId = await onlyTaskId(dlineDocsDir)
+        // The UI detaches before the old writer closes. Seed only after the durable lock is released.
+        await waitForTaskRelease(dlineDocsDir, taskId)
         await seedLargeTransientActivityHistory(dlineDocsDir, taskId)
 
         const historyTask = sidebar.getByText(taskText, { exact: true }).last()
