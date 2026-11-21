@@ -344,17 +344,19 @@ e2e(
                 timeout: 60_000,
             })
 
-            // The failed command is finished work inside the turn, so it is not
-            // drawn on its own: it lives behind a block whose header states the
-            // count. Assert the header that owns the failed row rather than the
-            // number of blocks, because a turn may hold more than one block.
-            const header = sidebar.getByTestId("activity-fold-header").filter({ hasText: "1 cmd failed" })
-            await expect(header).toHaveCount(1)
+            // This turn executed one command, and that command failed. Both counts belong to the same category.
+            const header = sidebar.getByTestId("activity-fold-header").filter({
+                has: sidebar.getByText("1 cmd (1 failed)", { exact: true }),
+            })
+            const children = sidebar.getByTestId("activity-fold").filter({ has: header }).getByTestId("activity-fold-children")
+            await expect(header).toHaveAttribute("aria-expanded", "false")
+            await expect(children).toHaveCount(0)
             await testInfo.attach("folding-failed-command", { body: await page.screenshot(), contentType: "image/png" })
 
-            // Opening the block still shows the failed command itself.
+            // Opening this block reveals the actual failed command, not a row elsewhere in the turn.
             await header.click()
-            await expect(sidebar.getByText("E2E_FOLDING_COMMAND_FAILED", { exact: false }).last()).toBeVisible({
+            await expect(header).toHaveAttribute("aria-expanded", "true")
+            await expect(children.getByText("E2E_FOLDING_COMMAND_FAILED", { exact: false }).last()).toBeVisible({
                 timeout: 30_000,
             })
             // The error tone itself is asserted in the component test, where the

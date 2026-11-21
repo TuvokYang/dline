@@ -512,6 +512,18 @@ e2e(
             return profiles.find((profile) => profile.id === profileId)?.provider === "openai-codex"
         })
 
+        // Pin a catalog entry so adding or reordering models does not change which limits this test checks.
+        const modelId = "gpt-6.2-astra"
+        const modelSearch = profileCard.locator('vscode-text-field[placeholder="Search, select, or enter a model ID..."] input')
+        await modelSearch.click()
+        await modelSearch.fill(modelId)
+        await sidebar.getByRole("option", { name: /^gpt-6\.2-astra(?: New)?$/ }).click()
+        await expect(modelSearch).toHaveValue(modelId)
+        await E2ETestHelper.waitUntil(async () => {
+            const profiles = await readJson<StoredProfile[]>(profilesPath)
+            return profiles.find((profile) => profile.id === profileId)?.modelId === modelId
+        })
+
         const apiFormat = profileCard.getByRole("combobox", { name: "API Format" })
         await expect(apiFormat).toBeVisible()
         await expect(apiFormat).toHaveValue(String(ApiFormat.OPENAI_RESPONSES))
@@ -532,7 +544,7 @@ e2e(
             await profileCard.getByRole("button", { name: "Model Configuration" }).click()
         }
         const maxTokens = profileCard.getByRole("textbox", { name: "Max Output Tokens" })
-        await expect(contextWindow).toHaveValue("372000")
+        await expect(contextWindow).toHaveValue("272000")
         await expect(maxTokens).toHaveValue("128000")
         await contextWindow.fill("400000")
         await contextWindow.press("Tab")
