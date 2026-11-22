@@ -1,16 +1,16 @@
 .visibility {
-    --floating-control-hide-delay: 1s;
     --floating-control-fade-duration: 200ms;
 
     opacity: 0;
     pointer-events: none;
     transition:
-        opacity var(--floating-control-fade-duration) ease-out var(--floating-control-hide-delay),
-        pointer-events 0s calc(var(--floating-control-hide-delay) + var(--floating-control-fade-duration)) allow-discrete;
+        opacity var(--floating-control-fade-duration) ease-out,
+        pointer-events 0s var(--floating-control-fade-duration) allow-discrete;
 }
 
-/* Retain hit testing through the hold and fade without removing idle controls from the tab order. */
-[class~="group/messages"]:hover .visibility,
+/* ScrollReveal owns the hold; only the controls themselves retain pointer interaction. */
+[class~="group/floating"][data-floating-active="true"] .visibility,
+[class~="group/floating"]:hover .visibility,
 [class~="group/floating"]:has(:focus-visible) .visibility {
     opacity: 1;
     pointer-events: auto;

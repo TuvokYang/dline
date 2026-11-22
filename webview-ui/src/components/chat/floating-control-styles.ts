@@ -11,5 +11,5 @@ export const FLOATING_CONTROL_LAYOUT_STYLE = {
 /** One translucent surface for the trajectory and every floating action. */
 export const FLOATING_CONTROL_SURFACE = "bg-background/35 backdrop-blur-sm"
 
-/** Messages own hover; the floating group keeps every control shown while one has keyboard focus. */
+/** Scroll activity reveals the group; pointer interaction and keyboard focus keep it usable. */
 export const FLOATING_CONTROL_VISIBILITY = styles.visibility

@@ -104,14 +104,17 @@ describe("ConversationTrajectoryRail source-index points", () => {
         expect(select.mock.calls[0][0]).toBe(attempts[0].turns[1])
     })
 
-    it("portals the preview inside the message hover scope but outside the scrolling rail", async () => {
+    it("portals the preview inside the floating interaction group but outside the scrolling rail", async () => {
         const view = render(
             <div className="group/messages">
-                <ConversationTrajectoryRail attempts={attempts} onSelectTurn={vi.fn()} />
+                <div className="group/floating" data-testid="floating-group">
+                    <ConversationTrajectoryRail attempts={attempts} onSelectTurn={vi.fn()} />
+                </div>
             </div>,
         )
         fireEvent.focus(screen.getAllByTestId("trajectory-turn")[1])
         const preview = await screen.findByTestId("trajectory-turn-preview")
+        expect(screen.getByTestId("floating-group")).toContainElement(preview)
         expect(view.container.firstElementChild).toContainElement(preview)
         expect(screen.getByTestId("trajectory-rail")).not.toContainElement(preview)
     })

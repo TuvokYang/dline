@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
+import { ScrollReveal } from "@/components/chat/ScrollReveal"
 import { ConversationTrajectoryRail } from "./ConversationTrajectoryRail"
 import type { TrajectoryAttempt, TrajectoryTurn } from "./trajectory-model"
 
@@ -93,7 +94,7 @@ const meta: Meta<typeof ConversationTrajectoryRail> = {
 export default meta
 type Story = StoryObj<typeof meta>
 
-/** Hover the mock chat or focus a bar to reveal the rail; scrolling only updates the current turn. */
+/** Scroll the mock chat to reveal the rail; controls, previews and keyboard focus retain it. */
 export const InChat: Story = {
     render: () => <ChatFixture attempts={ATTEMPTS} />,
 }
@@ -115,16 +116,15 @@ export const Overflowing: Story = {
 
 interface ChatFixtureProps {
     attempts: TrajectoryAttempt[]
-    /** Holds the rail up without requiring hover or keyboard focus. */
+    /** Holds the rail up without requiring scroll or keyboard focus. */
     alwaysVisible?: boolean
 }
 
 function ChatFixture({ attempts, alwaysVisible = false }: ChatFixtureProps) {
-    const scrollerRef = useRef<HTMLDivElement>(null)
+    const [scroller, setScroller] = useState<HTMLDivElement | null>(null)
     const [activeTurnSeq, setActiveTurnSeq] = useState<number | undefined>(attempts[0]?.turns[0]?.seq)
 
     useEffect(() => {
-        const scroller = scrollerRef.current
         if (!scroller) return
         const onScroll = () => {
             const anchors = Array.from(scroller.querySelectorAll<HTMLElement>("[data-anchor-seq]"))
@@ -135,17 +135,19 @@ function ChatFixture({ attempts, alwaysVisible = false }: ChatFixtureProps) {
         return () => {
             scroller.removeEventListener("scroll", onScroll)
         }
-    }, [])
+    }, [scroller])
 
-    const jumpToTurn = useCallback((turn: TrajectoryTurn) => {
-        scrollerRef.current
-            ?.querySelector(`[data-anchor-seq="${turn.seq}"]`)
-            ?.scrollIntoView({ behavior: "smooth", block: "start" })
-    }, [])
+    const jumpToTurn = useCallback(
+        (turn: TrajectoryTurn) => {
+            scroller?.querySelector(`[data-anchor-seq="${turn.seq}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" })
+        },
+        [scroller],
+    )
+    const rail = <ConversationTrajectoryRail activeTurnSeq={activeTurnSeq} attempts={attempts} onSelectTurn={jumpToTurn} />
 
     return (
-        <div className="group/messages group/floating relative h-[640px] w-full max-w-[460px] overflow-hidden border border-muted-foreground/30 bg-background">
-            <div className="h-full overflow-y-auto px-3 [scrollbar-width:none]" ref={scrollerRef}>
+        <div className="group/messages relative h-[640px] w-full max-w-[460px] overflow-hidden border border-muted-foreground/30 bg-background">
+            <div className="h-full overflow-y-auto px-3 [scrollbar-width:none]" ref={setScroller}>
                 {attempts.map((attempt) => (
                     <div key={attempt.id}>
                         {attempt.turns.map((chatTurn) => (
@@ -159,12 +161,15 @@ function ChatFixture({ attempts, alwaysVisible = false }: ChatFixtureProps) {
                     </div>
                 ))}
             </div>
-            <ConversationTrajectoryRail
-                activeTurnSeq={activeTurnSeq}
-                attempts={attempts}
-                className={alwaysVisible ? "opacity-100 pointer-events-auto" : undefined}
-                onSelectTurn={jumpToTurn}
-            />
+            {alwaysVisible ? (
+                <div className="group/floating pointer-events-none absolute inset-0" data-floating-active="true">
+                    {rail}
+                </div>
+            ) : (
+                <ScrollReveal className="absolute inset-0" scroller={scroller}>
+                    {rail}
+                </ScrollReveal>
+            )}
         </div>
     )
 }

@@ -54,6 +54,8 @@ for (const preset of ["collapsed", "partially-expanded", "all-expanded"] as cons
         await expect(rail).toHaveCSS("opacity", "1")
         await expect(rail).toBeInViewport()
         await expect(rail).toHaveCSS("pointer-events", "auto")
+        // Retain the scroll-revealed control while the screenshot is captured.
+        await rail.locator('[data-turn-ts="1101"]').hover()
         await testInfo.attach(`${preset}-scroll`, { body: await page.screenshot(), contentType: "image/png" })
 
         // No synthetic focus or forced click: the scroll must have made this bar usable.

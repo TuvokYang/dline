@@ -150,7 +150,7 @@ async function expectHidden(sidebar: Frame) {
 }
 
 floatingE2e(
-    "Floating controls - hover reveals without scrolling and leaving hides without side effects",
+    "Floating controls - only scrolling reveals and message hover does not retain controls",
     async ({ chat }, testInfo) => {
         const { page, sidebar, requestCount } = chat
         const scroller = chatScroller(sidebar)
@@ -163,13 +163,9 @@ floatingE2e(
         const requests = requestCount()
         await scroller.hover({ position: { x: 2, y: 100 } })
         await capture(sidebar, testInfo, "hover-without-scroll")
-        await expectShown(sidebar)
-        // The former five-second timer must not take controls away from a resting pointer.
-        const until = Date.now() + 5_200
-        while (Date.now() < until) {
-            await expectShown(sidebar)
-            await page.waitForTimeout(250) // Samples a duration contract, not asynchronous business completion.
-        }
+        await expectHidden(sidebar)
+        await page.waitForTimeout(1300) // Samples idle hover beyond the hold and fade.
+        await expectHidden(sidebar)
         expect(
             await scroller.evaluate((element) => ({
                 top: element.scrollTop,
@@ -177,13 +173,19 @@ floatingE2e(
             })),
         ).toEqual(before)
         expect(requestCount()).toBe(requests)
-        await pointerOutside(page, sidebar)
-        await expectHidden(sidebar)
         const oldTop = await scroller.evaluate((element) => element.scrollTop)
+        await page.mouse.wheel(0, -120)
+        await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).not.toBe(oldTop)
+        await expectShown(sidebar)
+        // A stationary pointer in the messages no longer prevents the idle fade.
+        await expectHidden(sidebar)
+        await pointerOutside(page, sidebar)
+        const beforeJump = await scroller.evaluate((element) => element.scrollTop)
         await scroller.evaluate((element) => {
             element.scrollTop = Math.max(0, element.scrollTop - 120)
         })
-        await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).not.toBe(oldTop)
+        await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).not.toBe(beforeJump)
+        await expectShown(sidebar)
         await expectHidden(sidebar)
         // A hidden overlay does not win hit-testing in its former area.
         for (const surface of [trajectoryRail(sidebar).rail, foldButton(sidebar), scrollButton(sidebar)]) {
@@ -196,7 +198,10 @@ floatingE2e(
             ).toBe(false)
         }
         await scroller.hover({ position: { x: 2, y: 100 } })
+        await expectHidden(sidebar)
+        await page.mouse.wheel(0, 120)
         await expectShown(sidebar)
+        expect(requestCount()).toBe(requests)
     },
 )
 
@@ -231,14 +236,17 @@ floatingE2e(
         const { page, sidebar, base } = chat
         const scroller = chatScroller(sidebar)
         const rail = trajectoryRail(sidebar)
-        // Wheel establishes the existing top-direction affordance; not a visibility prerequisite.
+        // Actual list scrolling reveals the controls and establishes the top-direction affordance.
         await scroller.hover({ position: { x: 2, y: 100 } })
         await page.mouse.wheel(0, -220)
         await expect(sidebar.getByRole("button", { name: "Scroll to top", exact: true })).toBeAttached()
         for (const height of [900, 600, 780]) {
             await page.setViewportSize({ width: 1200, height })
             await scroller.hover({ position: { x: 2, y: 60 } })
+            await page.mouse.wheel(0, -40)
             await expectShown(sidebar)
+            // Hold the revealed control during screenshot capture without changing the reveal trigger.
+            await foldButton(sidebar).hover()
             await expectDisjoint(sidebar, testInfo, `layout-${height}-collapsed`)
             await foldButton(sidebar).click()
             await expect(sidebar.getByRole("button", { name: "Collapse all activity", exact: true })).toBeAttached()
@@ -247,6 +255,7 @@ floatingE2e(
         }
         await page.setViewportSize({ width: 1200, height: 600 })
         await scroller.hover({ position: { x: 2, y: 60 } })
+        await page.mouse.wheel(0, -40)
         const railScroller = rail.rail.locator(":scope > div")
         expect(await railScroller.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true)
         await railScroller.hover()
