@@ -9,6 +9,7 @@ import {
     FLOATING_CONTROL_SURFACE,
     FLOATING_CONTROL_VISIBILITY,
 } from "@/components/chat/floating-control-styles"
+import { ScrollReveal } from "@/components/chat/ScrollReveal"
 import { StickyUserMessage } from "@/components/chat/task-header/StickyUserMessage"
 import { TrajectoryRailOverlay } from "@/components/chat/trajectory/TrajectoryRailOverlay"
 import type { TrajectoryTurn } from "@/components/chat/trajectory/trajectory-model"
@@ -1211,11 +1212,13 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                 />
 
                 {/* Separate layout rows keep the rail out of the controls' painted and clickable area. */}
-                <div
+                <ScrollReveal
                     className={cn(
-                        "group/floating pointer-events-none absolute inset-0 z-10 grid grid-rows-[minmax(0,1fr)_auto]",
+                        "absolute inset-0 z-10 grid grid-rows-[minmax(0,1fr)_auto]",
                         (foldControlVisible || showScrollToBottom) && "gap-2 pb-4",
-                    )}>
+                    )}
+                    scope={taskKey}
+                    scroller={scroller}>
                     <div className="relative min-h-0">
                         <TrajectoryRailOverlay
                             onSelectTurn={selectTrajectoryTurn}
@@ -1296,7 +1299,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
                             </div>
                         </div>
                     )}
-                </div>
+                </ScrollReveal>
             </div>
         </div>
     )

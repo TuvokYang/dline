@@ -193,12 +193,12 @@ e2e("BUG264 B01 - mixed bulk", async ({ dlineDir, dlineDocsDir, helper, openVSCo
         await headers.first().click()
         await expect(headers.first()).toHaveAttribute("aria-expanded", "true")
         await expect(headers.last()).toHaveAttribute("aria-expanded", "false")
-        await sidebar.getByRole("button", { name: "Expand all activity", exact: true }).click()
+        await sidebar.getByRole("button", { name: "Expand all activity", exact: true }).press("Enter")
         await evidence(sidebar, testInfo, {
             states: await headers.evaluateAll((items) => items.map((item) => item.getAttribute("aria-expanded"))),
         })
         for (const header of await headers.all()) await expect(header).toHaveAttribute("aria-expanded", "true")
-        await sidebar.getByRole("button", { name: "Collapse all activity", exact: true }).click()
+        await sidebar.getByRole("button", { name: "Collapse all activity", exact: true }).press("Enter")
         for (const header of await headers.all()) await expect(header).toHaveAttribute("aria-expanded", "false")
         await expect(sidebar.getByTestId("activity-fold-children")).toHaveCount(0)
     } finally {

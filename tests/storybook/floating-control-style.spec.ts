@@ -87,26 +87,17 @@ for (const width of [380, 1280]) {
     })
 }
 
-async function floatingPresentation(control: Locator, elapsed?: number) {
-    return control.evaluate((element, elapsed) => {
-        // Seek the browser's actual CSS transitions, not a JS timer or a copied style constant.
-        if (elapsed !== undefined) {
-            for (const animation of element.getAnimations()) {
-                if (animation instanceof CSSTransition) {
-                    animation.pause()
-                    animation.currentTime = elapsed
-                }
-            }
-        }
+async function floatingPresentation(control: Locator) {
+    return control.evaluate((element) => {
         const style = getComputedStyle(element)
         const bounds = element.getBoundingClientRect()
         const hit = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
         return { opacity: style.opacity, pointerEvents: style.pointerEvents, hit: element === hit || element.contains(hit) }
-    }, elapsed)
+    })
 }
 
 for (const direction of ["top", "bottom"] as const) {
-    test(`the whole floating group delays hiding for one second with the ${direction} action`, async ({ page }) => {
+    test(`scroll reveals the whole floating group without message hover with the ${direction} action`, async ({ page }) => {
         await page.goto("/iframe.html?id=chat-folding-and-trajectory--message-segments&viewMode=story")
         const fixture = page.getByTestId("folding-trajectory-fixture")
         const scroller = fixture.locator("[data-virtuoso-scroller]")
@@ -118,7 +109,9 @@ for (const direction of ["top", "bottom"] as const) {
             .toBeLessThanOrEqual(10)
         await page.mouse.wheel(0, -100_000)
         await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBeLessThan(1)
-        if (direction === "bottom") await page.mouse.wheel(0, 200)
+        await page.mouse.wheel(0, 200)
+        await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(100)
+        if (direction === "top") await page.mouse.wheel(0, -50)
 
         const scroll = fixture.getByRole("button", { name: `Scroll to ${direction}`, exact: true })
         await expect(scroll).toBeVisible()
@@ -128,17 +121,42 @@ for (const direction of ["top", "bottom"] as const) {
         const hidden = { opacity: "0", pointerEvents: "none", hit: false }
         for (const control of controls) await expect(control).toHaveCSS("opacity", "1")
 
+        // Resting over the messages must not keep the overlays visible after scrolling stops.
+        for (const control of controls) await expect(control).toHaveCSS("opacity", "0")
+        await scroller.hover({ position: { x: 5, y: 100 } })
+        await page.waitForTimeout(1300) // Samples the idle visibility contract, not business completion.
+        for (const control of controls) expect(await floatingPresentation(control)).toEqual(hidden)
+
+        const before = await scroller.evaluate((element) => element.scrollTop)
+        await page.mouse.wheel(0, direction === "top" ? -50 : 150)
+        await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).not.toBe(before)
+        for (const control of controls) await expect(control).toHaveCSS("opacity", "1")
         await page.mouse.move(1100, 850)
-        for (const control of controls) expect(await floatingPresentation(control, 999)).toEqual(shown)
-        // A real pointer return must abandon the pending hide for every member of the group.
+        for (const control of controls) expect(await floatingPresentation(control)).toEqual(shown)
+
+        // Only the revealed controls, not the whole chat, retain pointer use.
         await scroll.hover()
         await page.waitForTimeout(1300)
         for (const control of controls) expect(await floatingPresentation(control)).toEqual(shown)
 
+        const firstBar = rail.getByTestId("trajectory-turn").first()
+        await firstBar.hover()
+        const preview = fixture.getByTestId("trajectory-turn-preview")
+        await expect(preview).toBeVisible()
+        const railBounds = await rail.boundingBox()
+        const foldBounds = await fixture.getByTestId("folding-controls").boundingBox()
+        await preview.hover()
+        await page.waitForTimeout(1300) // Preview interaction must outlast both the hold and fade.
+        await expect(preview).toBeVisible()
+        for (const control of controls) expect(await floatingPresentation(control)).toEqual(shown)
+        expect((await floatingPresentation(preview)).hit).toBe(true)
+        expect(await rail.boundingBox()).toEqual(railBounds)
+        expect(await fixture.getByTestId("folding-controls").boundingBox()).toEqual(foldBounds)
+
         await page.mouse.move(1100, 850)
-        for (const control of controls) expect(await floatingPresentation(control, 999)).toEqual(shown)
-        // Preserve the existing 200ms fade only after the full 1s hold; hidden controls must not intercept clicks.
-        for (const control of controls) expect(await floatingPresentation(control, 1200)).toEqual(hidden)
+        await expect(preview).toHaveCount(0)
+        for (const control of controls) await expect(control).toHaveCSS("opacity", "0")
+        for (const control of controls) expect(await floatingPresentation(control)).toEqual(hidden)
 
         // Keyboard focus must still reveal the entire group while the pointer remains outside the chat.
         await page.keyboard.press("Tab")

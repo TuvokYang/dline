@@ -61,9 +61,11 @@ export function ConversationTrajectoryRail({
     if (attempts.length === 0) return null
 
     const fadeMask = edgeFadeMask(edges)
-    // A body portal breaks native message hover as the pointer crosses its preview.
-    // Keep the fixed-position card outside the rail's scrolling/backdrop container.
-    const previewContainer = rail?.closest<HTMLElement>('[class~="group/messages"]') ?? undefined
+    // Keep the preview in the floating interaction group, outside the rail's scrolling/backdrop container.
+    const previewContainer =
+        rail?.closest<HTMLElement>('[class~="group/floating"]') ??
+        rail?.closest<HTMLElement>('[class~="group/messages"]') ??
+        undefined
 
     const releaseFocus = (event: FocusEvent<HTMLElement>) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setEngaged(false)
@@ -157,7 +159,7 @@ function TrajectoryBar({ turn, turnNumber, attemptNumber, active, onSelect, prev
             <HoverCardContent
                 align="end"
                 arrowClassName="hidden"
-                className="w-60 border-foreground/10 bg-code/50 p-0 backdrop-blur-md"
+                className="pointer-events-auto w-60 border-foreground/10 bg-code/50 p-0 backdrop-blur-md"
                 portalContainer={previewContainer}
                 side="left"
                 sideOffset={10}>
