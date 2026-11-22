@@ -15,6 +15,10 @@ Format rules, enforced by webview-ui/vite-whats-new.ts at build time:
   Unit tests enforce both.
 -->
 
+## 0.14.3
+
+- **Scroll to reveal**: Scrolling reveals chat navigation and trajectory; hover previews and keyboard controls stay unchanged.
+
 ## 0.14.2
 
 - **New OpenAI models**: Select GPT-6.2 Astra, GPT-6.2 Sol, or GPT-6.1 Terra in an OpenAI or ChatGPT subscription Profile.
