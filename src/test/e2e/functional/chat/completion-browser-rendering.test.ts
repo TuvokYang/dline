@@ -236,7 +236,7 @@ e2e(
             timeout: 120_000,
         })
         const scrollToBottom = sidebar.getByRole("button", { name: "Scroll to bottom", exact: true })
-        if (await scrollToBottom.isVisible()) await scrollToBottom.click()
+        if (await scrollToBottom.isVisible()) await scrollToBottom.press("Enter")
         await expect(sidebar.getByText(completionMarker, { exact: false }).last()).toBeVisible({ timeout: 120_000 })
         const consumptions = server.getMockConsumptions("openai-compatible-responses")
         expect(consumptions.every((entry) => entry.contractError === undefined)).toBe(true)

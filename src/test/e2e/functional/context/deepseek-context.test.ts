@@ -161,12 +161,11 @@ e2e(
             expect(receivingVisual.segments.reduce((total, segment) => total + segment.authoritativeTokens, 0)).toBe(630100)
 
             const focusableContextSegment = sidebar.getByTestId("context-window-tooltip-trigger")
-            await focusableContextSegment.hover()
+            await focusableContextSegment.focus()
             const hoverCardContent = sidebar.locator('[data-slot="hover-card-content"]')
             await expect(hoverCardContent).toBeVisible()
             const contextWindowSummary = hoverCardContent.getByText("Context Window", { exact: true })
             await expect(contextWindowSummary).toBeVisible()
-            await contextWindowSummary.click()
             const segmentDetails = hoverCardContent.getByTestId("context-window-segment-details")
             await expect(segmentDetails).toBeVisible()
             for (const kind of ["durable", "active", "staged", "environment"] as const) {
